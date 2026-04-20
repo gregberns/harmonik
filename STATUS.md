@@ -2,7 +2,7 @@
 
 > Snapshot of where the harmonik knowledge base stands. Updated when significant work lands.
 >
-> Last updated: 2026-04-19
+> Last updated: 2026-04-19 (overnight autonomous run; see `OVERNIGHT_RUN_2026-04-19.md` for the narrative)
 
 ## What Harmonik Is
 
@@ -10,7 +10,18 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 
 ## Current Phase
 
-**Knowledge base build-out.** No code has been written. The repo contains structured documentation of the problems harmonik solves, the goals it pursues, the concepts it draws from, and the subsystems it decomposes into. The next phase is firming up the plan to the point where bootstrap implementation can begin.
+**Spec-first foundation work.** No code has been written. Kerf initialized with `spec` as the default jig. The first kerf work, `harmonik-foundation`, has advanced through problem-space (converged round 3), decompose (converged round 2), and research (complete — 7 parallel sub-agents, one per component). Remaining passes for the foundation work: change-design, spec-draft, integration, tasks.
+
+**Work location.** Kerf work artifacts live at `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/` (outside the repo until `kerf finalize`). The structure:
+- `01-problem-space.md` — converged at round 3
+- `02-components.md` — converged at round 2; 7 components (architecture, execution-model, event-model, handler-contract, workspace-model, control-points, operator-nfr)
+- `03-research/{component}/findings.md` — 7 per-component research outputs
+- `03-research/SYNTHESIS.md` — cross-component synthesis (~20 recommended positions, ~37 user-decision items, 6 tensions resolved)
+- `reviewers/PERSONAS.md` — reusable reviewer persona prompts
+- `reviews/01-problem-space/` and `reviews/02-components/` — all reviewer outputs
+
+**Recon findings** (inputs to the foundation work) live at `.kerf/recon/` inside the repo (gitignored):
+- `kilroy-findings.md`, `attractor-findings.md`, `subsystem-audit.md`, `nfr-inventory.md`
 
 ## What's In the Knowledge Base
 
@@ -72,4 +83,7 @@ These were noted during decisions but pushed to "later, before implementation be
 
 ## Where to Start Next Session
 
-See [TASKS.md](TASKS.md).
+1. Read [OVERNIGHT_RUN_2026-04-19.md](OVERNIGHT_RUN_2026-04-19.md) for what happened overnight.
+2. Review [QUESTIONS.md](QUESTIONS.md) — ~37 user-decision items awaiting confirmation or redirection. Two (Q-F1, Q-R4) are provisionally resolved by the orchestrator; confirm or overrule.
+3. Decide whether to advance the foundation work to change-design (next kerf pass) or redirect based on research findings. The research findings in `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/03-research/` are the substantive input.
+4. Consult [TASKS.md](TASKS.md) for the broader backlog.

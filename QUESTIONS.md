@@ -151,6 +151,46 @@ Listed here for completeness. Full framing is in TASKS.md and docs/bootstrap.md.
 
 ---
 
+## Open — Surfaced by foundation research pass (2026-04-19 overnight)
+
+~37 user-decision items surfaced across 7 per-component research sub-agents. Full detail in the research findings and `03-research/SYNTHESIS.md` inside the kerf work. This section lists the architecture- or UX-critical ones grouped by component. The rest are recorded in the synthesis.
+
+### Architecture
+- **Verifier role disposition.** Drop from the AlphaGo 7-role set given locked decision #9 (verification-as-node-type)? Research lean: yes, drop — keep only Planner, Builder, Reviewer MVH-required + Researcher, Scheduler, Governor declared-but-deferred.
+- **Deferred AlphaGo abstractions** (MetricHook, PolicyPatch, Experiment): named in foundation glossary vs elided? Research lean: name in glossary to prevent subsystem specs from inventing competing names.
+- **Amendment SLA.** Confirm 24h async default with tiered-by-risk refinement (high-risk changes in-session).
+
+### Execution model — the biggest open call
+- **Workflow format: DOT, YAML, Go-as-code, or hybrid?** Research delivers the criteria table but refuses to decide. Hinges on (a) whether harmonik wants a NL→workflow ingestor like Kilroy (→DOT) and (b) policy-embedding richness (rich→hybrid/YAML; light→DOT attributes).
+- **Outcome shape.** Adopt Attractor shape + `error_category` + `failure_reason` (Option B), or minimal shape (Option A)? Research lean: B.
+- **Failure taxonomy.** Adopt all 6 classes (transient, structural, deterministic, canceled, budget_exhausted, compilation_loop) or defer `compilation_loop`? Research lean: all 6.
+- **Backtracking representation.** Hybrid (transition-kind + `rollback_to_state_id` for architectural+policy types only), or distinct transition types per rollback, or `parent_state` field? Research lean: hybrid.
+- **Cycle detection scope.** Kilroy-parity (per-edge cap + failure-signature hash) or add state-repetition detection? Research lean: Kilroy-parity for MVH.
+
+### Event model
+- **Taxonomy additions (4 new types).** Accept `consumer_failed`, `dead_letter_enqueued`, `guard_denied` (from control-points R2-M1), `workspace_interrupted` (from workspace-model Q6). Taxonomy grows 33 → 37 types.
+- **Fsync timer-flush default.** Research recommends 250ms enabled by default; operator-configurable. Alternative: 100ms (higher overhead, smaller loss window).
+
+### Workspace
+- **Merge-conflict resolution role** (Q-P3 from STATUS.md). Research lean: original implementer resolves for MVH; escalate to human via gate if unresolvable.
+- **Interrupt-state representation.** Orthogonal `interrupt_cause` field on workspace (recommended) vs doubled states (e.g., `leased-interrupted`). Research lean: orthogonal field.
+
+### Control points
+- **Policy predicate grammar.** Is `expr-lang/expr` (external dep) acceptable or must the evaluator be hand-rolled? Research lean: `expr-lang` for ~200 LoC savings; dependency is well-maintained.
+- **Cognition evaluator replay-safety.** Persist verdict as transition-event field so replay uses persisted verdict (not re-query model)? Research strong recommendation: yes.
+
+### Operator NFRs
+- **Queue format: SQLite.** Research lean: SQLite (WAL mode) for queue; JSONL for events. Confirm this split?
+- **Audit retention: 180 days.** Default defensible without specific compliance regime. If SOC2/HIPAA targeted, push to 365/2555.
+- **`harmonik bench replay` and `harmonik version-compat check` CLIs.** Include in MVH? Research lean: yes, both.
+
+**The full list of ~37 items lives in the kerf work** at `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/03-research/SYNTHESIS.md`. The ~20 items the research recommended committing normatively without user input are also in the synthesis.
+
+---
+
 ## Resolved
 
-_(Moved here as questions are answered. Empty at project start.)_
+_(Moved here as questions are answered.)_
+
+- **Q-F1** (operator CLI scope). Resolved 2026-04-19 by orchestrator: semantics in foundation; surface deferred. Pending user confirmation.
+- **Q-R4** (binary signing for pause-to-upgrade). Resolved 2026-04-19 by orchestrator: commit-hash check for MVH, full signing post-MVH. Pending user confirmation.

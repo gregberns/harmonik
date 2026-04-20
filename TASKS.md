@@ -87,3 +87,10 @@ Things worth doing but not yet prioritized:
 - [ ] Concept doc: budget enforcement (token + wall-clock budgets per task / per workflow / per cycle).
 - [ ] Concept doc: agent inter-communication patterns (with agent-mail dropped, what's the canonical "agent A asks agent B a question" mechanism — orchestrator-mediated transition? direct via hooks?).
 - [ ] Component digest update: NTM and CASS docs should reflect what we now know we'll use them for (and what we won't).
+
+### Doc corrections surfaced during 2026-04-19 overnight recon
+
+- [ ] **Correct Attractor framing** in `docs/subsystems/orchestrator-core.md` line 52. Current text calls Attractor "spec for distributed workflow coordination; likely covers patterns we need around durable execution and replay." Attractor is actually a DOT-based pipeline runner with JSON-snapshot durability and single-threaded traversal — same family as Kilroy, not DTW. See `.kerf/recon/attractor-findings.md` for details. (Related: QUESTIONS.md Q-R1.)
+- [ ] **Update Kilroy concept digest** in `docs/concepts/kilroy.md`. Current digest says 3 failure classes and 4 fidelity modes; Kilroy actually has 6 failure classes (transient_infra, budget_exhausted, compilation_loop, deterministic, canceled, structural) and 6 fidelity modes (full, truncate, compact, summary:low/medium/high). Also note: `stack.manager_loop` is stubbed to FAIL in v1 per spec-compliance-audit. (Related: QUESTIONS.md Q-R3.)
+- [ ] **Clarify in orchestrator-core.md** that Kilroy is fast-forward-only for fan-in, which means harmonik's merge-based convergence (Gas Town pattern) is a genuine divergence from Kilroy, not a parameter tweak.
+- [ ] **Log entry for overnight 2026-04-19 run.** Create `docs/log/2026-04-19-overnight-recon-and-foundation-start.md` summarizing the recon pass, problem-space draft, review process, and any revisions.

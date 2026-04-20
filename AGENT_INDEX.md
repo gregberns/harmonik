@@ -1,6 +1,8 @@
 # Harmonik -- Agent Discovery Index
 
 > **Start here.** This is the master index for the harmonik knowledge base. Every document in the project is reachable from this file within two hops.
+>
+> **For project state and what to do next, see [STATUS.md](STATUS.md) and [TASKS.md](TASKS.md).**
 
 ## What Is Harmonik?
 
@@ -38,6 +40,8 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 | G03 | [Independent Process-Following Actors](docs/goals/independent-process-following-actors.md) | Agents that reliably follow defined processes |
 | G04 | [Learning and Improvement Loops](docs/goals/learning-and-improvement-loops.md) | Systems that learn from execution and improve over time |
 | G05 | [Idea-to-Implementation Pipeline](docs/goals/idea-to-implementation-pipeline.md) | End-to-end automation from goal to working software |
+| G06 | [Bootstrapping and Self-Building](docs/goals/bootstrapping-self-building.md) | Hand-build a minimum viable harmonik, then have it build itself |
+| G07 | [End-to-End Testability Without Real Agents](docs/goals/end-to-end-testability.md) | Full system testable via digital twin binaries; no token spend in tests |
 
 ### Concepts -- External Ideas We're Drawing From
 [docs/concepts/INDEX.md](docs/concepts/INDEX.md)
@@ -50,6 +54,7 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 | [Zero Framework Cognition](docs/concepts/zero-framework-cognition.md) | Thin shells, delegate all cognition, mechanism vs policy |
 | [AlphaGo-Modeled System](docs/concepts/alphago-system.md) | Deterministic skeleton, controlled openings, meta-process |
 | [Gas Town Hooks](docs/concepts/gas-town-hooks.md) | Hook-driven behavior enforcement, bead lifecycle events |
+| [Digital Twins](docs/concepts/digital-twins.md) | Separate twin binaries simulate real agent processes for token-free testing |
 
 ### Components -- Tools We Have
 [docs/components/INDEX.md](docs/components/INDEX.md)
@@ -80,7 +85,8 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 | S04 | [Agent Runner](docs/subsystems/agent-runner.md) | Spawn, monitor, manage agent processes | ntm |
 | S05 | [Hook System](docs/subsystems/hook-system.md) | Bridge between agents and workflow | Claude Code hooks |
 | S06 | [Workspace Manager](docs/subsystems/workspace-manager.md) | Isolated work environments | adze, agent-mail |
-| S07 | [Verifier Layer](docs/subsystems/verifier-layer.md) | Quality gates + automated verification | CI tools, LLM |
+| S07 | [Scenario Harness](docs/subsystems/scenario-harness.md) | End-to-end test harness driving full workflows against twin agent binaries | digital twins, orchestrator |
+| ~~S07~~ | ~~[Verifier Layer (archived)](docs/subsystems/verifier-layer.md)~~ | ~~Quality gates~~ -- *responsibilities migrated to orchestrator + policy* | -- |
 | S08 | [Memory Layer](docs/subsystems/memory-layer.md) | Long-term knowledge storage + retrieval | CASS, CASS memory |
 | S09 | [Improvement Loop](docs/subsystems/improvement-loop.md) | Self-improving meta-process | memory, event bus |
 
@@ -102,6 +108,9 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 
 Most recent entries:
 - [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture
+
+## Plans
+- [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)
 
 ## Deep References
 - [AlphaGo-Modeled Orchestration System](refs/AlphaGo-modeled-orch-system.md) -- 800+ line architectural reference document

@@ -4,9 +4,10 @@ status: seed
 type: subsystem
 solves: [P06]
 uses: [all subsystems]
-related: [docs/concepts/kilroy.md, docs/concepts/alphago-system.md, docs/subsystems/orchestrator-core.md, docs/subsystems/improvement-loop.md]
+language: Go
+related: [docs/concepts/kilroy.md, docs/concepts/alphago-system.md, docs/subsystems/orchestrator-core.md, docs/subsystems/improvement-loop.md, docs/subsystems/memory-layer.md]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-19
 ---
 
 # S03: Event Bus
@@ -58,13 +59,29 @@ event:
 - **Schema-first.** Define event schemas before implementing producers or consumers. Schemas are the contract. Changes to schemas follow a versioning protocol.
 - **Replay-safe.** The event stream can be replayed from any point to reconstruct system state. This means events must be idempotent or consumers must handle deduplication.
 
-## Candidate Implementations
-- **In-process event bus.** For single-machine deployment: a typed pub/sub library within the harmonik process. Advantage: zero infrastructure, low latency. Risk: no persistence without explicit storage layer.
-- **Redis Streams.** Persistent, ordered event log with consumer groups. Advantage: mature, supports backpressure, built-in persistence. Risk: external dependency.
-- **NATS JetStream.** Lightweight message broker with persistence. Advantage: designed for this exact use case. Risk: another moving part.
-- **File-based event log.** Append-only files (one per workflow). Advantage: zero dependencies, git-friendly. Risk: limited query capabilities, no real-time pub/sub.
+## Implementation Direction
+
+**Decision: in-process pub/sub backed by JSONL files on disk.**
+
+- **In-process pub/sub** for live subscribers (other subsystems within the running harmonik process). Low latency, zero infrastructure, fits the single-machine MVH (see [bootstrap.md](../bootstrap.md)).
+- **JSONL persistence on disk** for every published event. One line per event, append-only files, organized by workflow ID (and rotated by size or time within a workflow). The file is the source of truth; the in-process bus is a notification mechanism over it.
+- **Improvement loop (S09) reads the JSONL** -- it does not need to be a live subscriber. Reading-from-disk decouples slow analysis from real-time execution.
+- **CASS / memory layer (S08) also reads the JSONL** for events it needs (separate from agent-process logs, which are sourced from agent-specific log files -- see [memory-layer.md](memory-layer.md)).
+
+Graduation path: if/when distributed deployment is needed, swap the in-process bus for NATS JetStream or Redis Streams, *keeping* the JSONL persistence as the canonical record. JSONL files remain the audit trail regardless of transport.
+
+### Storage Considerations
+
+JSONL volume is going to be substantial. A single self-build cycle will emit hundreds-to-thousands of events; many concurrent cycles compound it. Open considerations:
+
+- **Rotation.** Per-workflow files capped by size; older segments compressed or moved to cold storage.
+- **Indexing.** JSONL alone does not support fast filtered queries; for the improvement loop we may need to build a sidecar index (sqlite over the JSONL, for instance) when query patterns crystallize.
+- **Retention.** Indefinite retention is cheap until it isn't. We need an explicit retention policy before storage costs become a surprise.
+- **Location.** Single canonical event-log root directory (configurable, defaulting to something like `~/.harmonik/events/<workflow-id>/`) so consumers (improvement loop, scenario harness assertions, debugging tools) all know where to look.
 
 ## Open Questions
-1. Should the event bus start as an in-process library (simplest) and graduate to an external broker (Redis/NATS) only when distributed deployment is needed?
-2. How long should events be retained? Indefinitely for analysis, or with a TTL and archival strategy?
-3. What is the right event granularity -- should every agent output line be an event, or only significant lifecycle moments (started, completed, failed)?
+1. JSONL rotation policy -- size-based, time-based, or workflow-end-based?
+2. Retention policy -- indefinite by default, or TTL with archival to cold storage?
+3. Sidecar index format -- sqlite, DuckDB, or defer until query patterns are known?
+4. What is the right event granularity -- should every agent output line be an event, or only significant lifecycle moments (started, completed, failed)?
+5. How are agent-process logs (e.g., Claude's `~/.claude/projects/<uuid>.jsonl`) related to the event bus? They are *not* the same stream -- agent-process logs are produced by the agent binary and consumed by CASS; events are produced by harmonik subsystems. Need to be clear on both flows in any consumer doc.

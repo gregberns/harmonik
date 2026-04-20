@@ -3,62 +3,77 @@ title: "S08: Memory Layer"
 status: seed
 type: subsystem
 solves: [P03, P07]
-uses: [CASS, CASS Memory]
-related: [docs/components/external/cass.md, docs/components/external/cass-memory.md, docs/subsystems/improvement-loop.md, docs/subsystems/event-bus.md]
+uses: [CASS]
+language: Go
+related: [docs/components/external/cass.md, docs/components/external/cass-memory.md, docs/subsystems/improvement-loop.md, docs/subsystems/event-bus.md, docs/subsystems/agent-runner.md]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-19
 ---
 
 # S08: Memory Layer
 
 ## Summary
-The memory layer stores, retrieves, and evolves institutional knowledge for the system. It implements a three-layer cognitive architecture: episodic memory (raw session records), working memory (structured summaries and diary entries), and procedural memory (actionable rules and playbook entries). Knowledge flows upward through these layers over time, from raw experience to distilled operational wisdom.
+The memory layer ingests agent session logs into CASS so that future agents can search prior sessions and the improvement loop can analyze patterns. The MVH scope is intentionally minimal: just CASS, pointed at the canonical session-log directory. The richer three-layer cognitive architecture (episodic / working / procedural) is deferred until usage clarifies what curation is actually needed.
 
 ## Purpose
 Agent sessions are ephemeral. When a session ends, everything the agent learned -- what worked, what failed, which approaches were tried and abandoned -- dies with it (P03). The next agent working on a related problem starts from scratch. Multiply this across hundreds of agent sessions and the system is perpetually re-learning the same lessons.
 
-The memory layer captures what agents learn and makes it available to future agents. Before an agent starts a task, the memory layer provides relevant context: previous approaches to similar problems, known pitfalls, established patterns, and accumulated institutional knowledge. The system remembers what it has done before, and each session builds on the last.
+The memory layer captures what agents do and makes it searchable. CASS handles the indexing and retrieval. Future agents query CASS for relevant prior sessions when assembling context. The improvement loop (S09) reads CASS-indexed sessions to find patterns.
 
-## Key Responsibilities
-- **Episodic memory (indexing).** Index all agent sessions -- inputs, outputs, tool calls, decisions, outcomes -- via CASS. This is the raw experience layer: complete, unprocessed records of what happened.
-- **Working memory (summarization).** Generate structured summaries from episodic records. Working memory captures the gist of sessions: what was attempted, what succeeded, what failed, and why. Diary entries and session summaries live here.
-- **Procedural memory (distillation).** Distill actionable rules from working memory patterns. "When deploying to staging, always run migration checks first" is a procedural memory entry. These are the system's operational playbook.
-- **Context provision.** Before agent task execution, query the memory layer for relevant knowledge. Assemble a context package with: similar past sessions, relevant procedural rules, known constraints for the problem domain.
-- **Knowledge lifecycle management.** Track knowledge through maturity stages: candidate (newly observed), established (confirmed by multiple observations), proven (validated by successful outcomes), deprecated (superseded or invalidated). Prune deprecated knowledge.
+## Key Responsibilities (MVH scope)
+- **CASS configuration and operation.** Run a CASS instance configured to index the canonical session-log directory.
+- **Session-log capture orchestration.** Ensure that every agent's session log lands somewhere CASS can read. The agent runner (S04) is responsible for *producing* logs at known locations per agent type; the memory layer is responsible for ensuring CASS *consumes* them.
+- **Context provision (basic).** When the agent runner assembles a prompt, query CASS for relevant prior sessions and include them in context. Initial query strategy: keyword + recency. More sophisticated retrieval is deferred.
+
+## How Logs Flow to CASS
+
+This is the critical detail that has to work for the memory layer to be useful at all. Agent processes do not feed the event bus directly -- their internal state and tool calls are too high-volume and live inside the agent binary's process boundary. Each agent type writes its own session log to a known filesystem location:
+
+| Agent type | Session log location | Format |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` | Claude session JSONL |
+| Pi | TBD by handler -- needs investigation | TBD |
+| (future agents) | Per-handler convention | Per-handler format |
+
+To make CASS work:
+
+1. **Canonical aggregation directory.** Every harmonik-launched session writes to a directory CASS already knows how to read. For Claude Code that means workspaces / launch configurations are arranged so all session logs land under the same `~/.claude/projects/...` tree (not scattered across per-worktree `.claude` directories).
+2. **Session UUID injection.** The agent runner pre-supplies the session UUID (or asks the agent to use a known one) at launch, so the resulting log file location is predictable.
+3. **Session-log location event.** At launch, the runner emits a `session_log_location` event so consumers (memory layer, scenario harness, debugging tools) can find each session's file without having to guess.
+4. **CASS pointed at the right roots.** Memory-layer config tells CASS which root directories to watch. For each agent type CASS already supports natively, this is the only configuration needed. For agent types CASS does not support, we either need a CASS extension or a translation layer (open question).
+
+This needs to be made to work in the Phase-1 bootstrap; a self-build cycle without memory has no learning loop.
 
 ## Interfaces
 
 **Inputs:**
-- Agent session records from event bus (S03)
-- Explicit knowledge contributions from agents (via agent-mail or hooks)
-- Feedback signals from verifier layer (S07) -- which approaches succeeded or failed
+- `session_log_location` events from agent runner (S04)
+- Filesystem watches on the configured session-log roots
+- Direct queries from the agent runner during prompt assembly
 
 **Outputs:**
-- Context packages provided to agent runner (S04) for prompt assembly
-- Knowledge queries answered for any subsystem
-- Memory update events emitted to event bus (S03)
-- Knowledge maturity reports for improvement loop (S09)
+- CASS indexes maintained over the session-log corpus
+- Query responses to subsystems requesting relevant prior context
+- Memory-layer status events emitted to event bus (S03)
 
-## Design Principles
-- **Deterministic curation.** The system learns, but the integration of learning into operational rules is deterministic. No LLM in the curation loop. New procedural rules are proposed by the analysis process, reviewed through governance, and applied through version-controlled configuration. This prevents feedback drift -- where an LLM gradually shifts operational rules in unpredictable directions.
-- **Three layers, not one.** Raw session logs (episodic) are too noisy for agents. Distilled rules (procedural) are too compressed to understand context. Working memory bridges the gap -- structured enough to be useful, detailed enough to explain why. All three layers serve different needs.
-- **Knowledge is versioned.** Memory entries are version-controlled like code. Changes to procedural memory are reviewable, diffable, and reversible. The system's knowledge base has a clear history.
-
-## Candidate Implementations
-- **CASS + CASS Memory.** Use CASS for session indexing and search (episodic layer), CASS Memory System for structured knowledge management (working and procedural layers). Advantage: purpose-built for this exact use case. Risk: dependency on external projects' stability and API evolution.
-- **Git-backed knowledge store.** Store working and procedural memory as version-controlled files (YAML, Markdown) in a dedicated knowledge repository. CASS handles episodic search. Advantage: fully auditable, uses familiar tooling. Risk: search across file-based knowledge may be slow.
-- **Hybrid with embeddings.** CASS for search, git for storage, vector embeddings for semantic retrieval of relevant knowledge. Advantage: enables "find knowledge similar to this problem" queries. Risk: embedding quality and maintenance overhead.
+## Design Principles (MVH)
+- **Start simple, expand on evidence.** Just CASS for now. Three-layer cognition (episodic / working / procedural), curation rules, knowledge maturity tracking, deterministic-curation-only -- all deferred. We adopt them when concrete usage shows we need them, not before.
+- **Canonical session-log location.** The whole memory pipeline depends on session logs landing where CASS can find them. This is a deployment / configuration concern that the workspace manager and agent runner must cooperate on.
+- **No in-process log capture.** Agent process logs are *not* tee'd through harmonik's event bus -- the volume is wrong and the boundary is wrong. Read them from the agent's own log files.
 
 ## Open Questions
-1. How do we prevent the memory layer from becoming a junk drawer of accumulated noise? What are the concrete criteria for promoting knowledge from episodic to working to procedural?
-2. How should conflicting knowledge entries be handled -- when two procedural rules contradict each other because they were derived from different contexts?
-3. What is the right retrieval strategy for context provision? Keyword search, semantic similarity, recency, or a weighted combination? How do we measure retrieval quality?
+1. Pi's session log format and location -- needs concrete investigation. If CASS doesn't natively understand Pi logs, we need either a CASS extension or a translator (and this affects the Phase-1 build order).
+2. Does the workspace manager need to set environment variables (e.g., `CLAUDE_PROJECT_DIR`) so that per-worktree sessions still aggregate into the same `~/.claude/projects/...` tree, or do we accept per-worktree logs and point CASS at multiple roots?
+3. When do we re-introduce the three-layer architecture (working memory summaries, procedural rules)? What concrete signal tells us the simple "just CASS" approach is no longer enough?
+4. Retrieval strategy beyond keyword + recency -- when do we add semantic similarity, and what's the embedding/storage approach?
+5. Retention -- session logs accumulate forever by default. Same retention question as event JSONL: indefinite, TTL, archive policy?
 
 ## Cross-References
-- [S09: Improvement Loop](improvement-loop.md) -- consumes memory data, produces new procedural entries
-- [S04: Agent Runner](agent-runner.md) -- receives context packages for agent prompt assembly
-- [S03: Event Bus](event-bus.md) -- source of session records for episodic indexing
-- [S07: Verifier Layer](verifier-layer.md) -- success/failure signals inform knowledge maturity
+- [S04: Agent Runner](agent-runner.md) -- emits `session_log_location` events; owns per-agent-type log conventions
+- [S06: Workspace Manager](workspace-manager.md) -- workspace setup must place session logs where CASS can find them
+- [S03: Event Bus](event-bus.md) -- transports `session_log_location` events; *not* the carrier for raw agent logs
+- [S09: Improvement Loop](improvement-loop.md) -- reads from CASS for execution-pattern analysis
 - [P03: Knowledge Loss Across Sessions](../problems/knowledge-loss.md) -- the core problem this subsystem addresses
 - [P07: Feedback Loop Absence](../problems/feedback-loops.md) -- memory enables feedback loops
-- [CASS component](../components/external/cass.md) -- episodic memory search engine
+- [CASS component](../components/external/cass.md) -- the index/search engine this subsystem operates
+- [docs/bootstrap.md](../bootstrap.md) -- step ordering for getting CASS online during Phase 1

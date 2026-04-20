@@ -3,10 +3,11 @@ title: "S01: Orchestrator Core"
 status: seed
 type: subsystem
 solves: [P02, P06]
-uses: [kilroy, event bus]
+uses: [kilroy, attractor, event bus]
+language: Go
 related: [docs/concepts/kilroy.md, docs/concepts/alphago-system.md, docs/subsystems/policy-engine.md, docs/subsystems/event-bus.md]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-19
 ---
 
 # S01: Orchestrator Core
@@ -43,15 +44,22 @@ Every composed workflow needs something to drive it forward: advance states, sel
 - **ZFC-compliant.** The orchestrator is pure mechanism. It routes, transitions, and dispatches. It never inspects agent output semantically. If a semantic decision is needed (e.g., "is this code review sufficient?"), the orchestrator delegates that question to an LLM via the hook system.
 - **Graph-as-workflow.** Following Kilroy's model, the workflow definition IS the execution plan. No hidden control flow. The graph is visual, diffable, and version-controlled.
 
-## Candidate Implementations
-- **Kilroy's engine directly.** Use Kilroy as the execution engine, wrapping its DOT-based pipeline model. Advantage: mature, tested. Risk: may be too rigid for dynamic workflow modification.
-- **Custom state machine.** Build a minimal state machine library tuned to harmonik's needs. Advantage: full control. Risk: reinventing tested patterns.
-- **Hybrid.** Use Kilroy for static workflow execution, with a thin custom layer for dynamic node addition/removal at runtime.
+## Implementation Direction
+
+- **Language: Go.** Matches the surrounding tooling (kerf, adze, NTM wrapper) and gives strong process-management primitives.
+- **Reference implementations to study:**
+  - **Kilroy** -- Already provides graph-as-workflow, deterministic edge selection, git-native checkpointing, parallel isolation. Strongest direct model.
+  - **Attractor** ([strongdm/attractor](https://github.com/strongdm/attractor)) -- Spec for distributed workflow coordination; likely covers patterns we need around durable execution and replay.
+- **Candidate paths:**
+  - Use Kilroy directly, wrapping its DOT pipeline model -- fastest path, may be too rigid for dynamic graph modification.
+  - Build a Go-native state machine using Kilroy + Attractor as the design reference -- more work, more control, better fit for harmonik's specific needs.
+  - Hybrid: Kilroy or an Attractor-shaped engine for static execution, thin custom layer for dynamic modifications.
 
 ## Open Questions
 1. How do we handle dynamic workflow modification -- adding or removing nodes at runtime based on agent discoveries -- without losing the deterministic guarantees of the static graph?
 2. What is the right persistence model for checkpoints: one git commit per transition (Kilroy-style), a dedicated state store, or an event-sourced model backed by the event bus?
 3. How should the orchestrator handle workflows that span multiple repositories or require coordination across independent harmonik instances?
+4. **Node types and output-based routing** (parked detail). With the verifier layer collapsed into the graph, "non-agentic" nodes (test runs, lint checks, scripts) are now first-class node types. They produce structured stdout/stderr/exit-codes that downstream edges must be able to route on. Need a "node types" doc later that defines: node type taxonomy, the contract for capturing process output, how policy expressions consume that output to choose edges, and how the agent runner vs orchestrator divide responsibility for execution. Parked because the immediate path can use simple "exit-code-zero advances, anything else loops back" semantics; the richer routing is needed once workflows get more complex.
 
 ## Cross-References
 - [S02: Policy Engine](policy-engine.md) -- evaluates transition guards before the orchestrator advances state

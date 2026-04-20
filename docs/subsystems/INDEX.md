@@ -24,7 +24,8 @@ Subsystems consume components (documented in [components/INDEX.md](../components
 | S04 | [Agent Runner](agent-runner.md) | Agent process spawning, monitoring, and lifecycle | P02, P05 | NTM, Claude Code hooks | seed |
 | S05 | [Hook System](hook-system.md) | Bridge between probabilistic agents and deterministic workflows | P05, P06 | Claude Code hooks, agent-runner, orchestrator-core | seed |
 | S06 | [Workspace Manager](workspace-manager.md) | Isolated working environments for agents | P04 | adze, agent-mail, git | seed |
-| S07 | [Verifier Layer](verifier-layer.md) | Automated validation at quality gates | P04, P07 | CI tools, linters, test suites, LLM | seed |
+| S07 | [Scenario Harness](scenario-harness.md) | End-to-end test harness driving full workflows against digital twin agent binaries | P04, P05, P07 | orchestrator, agent-runner, event-bus, twin binaries | seed |
+| ~~S07~~ | ~~[Verifier Layer (archived)](verifier-layer.md)~~ | ~~Automated validation at quality gates~~ -- *responsibilities migrated to orchestrator + policy engine; node types parked* | -- | -- | archived |
 | S08 | [Memory Layer](memory-layer.md) | Long-term knowledge storage and retrieval | P03, P07 | CASS, CASS Memory | seed |
 | S09 | [Improvement Loop](improvement-loop.md) | Self-improving meta-process | P07, P03 | memory-layer, event-bus | seed |
 
@@ -45,26 +46,30 @@ The subsystems form a layered dependency structure:
   S02      S04      S05
   Policy   Agent    Hook
   Engine   Runner   System
-            |        |
-            v        v
-           S06      S07
-           Workspace Verifier
-           Manager   Layer
+            |
+            v
+           S06
+           Workspace
+           Manager
+
+  S07 Scenario Harness drives the entire stack end-to-end
+  using digital twin binaries in place of real agents.
 ```
 
 ## Design Principles
 
 1. **Composable, not monolithic.** Subsystems communicate through events and defined interfaces. No subsystem reaches into another's internals.
 2. **Deterministic skeleton, probabilistic organs.** The orchestrator, policy engine, and event bus are fully deterministic. Agents and the improvement loop introduce controlled non-determinism.
-3. **ZFC-compliant boundaries.** Subsystems that belong to the framework (S01-S03, S06) contain zero cognition. Subsystems that involve semantic judgment (S07 review, S09 analysis) delegate cognition to models.
+3. **ZFC-compliant boundaries.** Subsystems that belong to the framework (S01-S03, S06, S07) contain zero cognition. Subsystems that involve semantic judgment (S09 analysis, agentic nodes inside the orchestrator) delegate cognition to models. Verification, formerly its own subsystem, is now a node type executed by the orchestrator -- semantic verification (code review) is just an agentic node; mechanical verification (tests, lint) is a non-agentic node.
 
 ## Documents
 - [S01: Orchestrator Core](orchestrator-core.md) -- State machine and workflow execution
 - [S02: Policy Engine](policy-engine.md) -- Permissions, constraints, freedom profiles
-- [S03: Event Bus](event-bus.md) -- Communication backbone
-- [S04: Agent Runner](agent-runner.md) -- Agent process lifecycle
+- [S03: Event Bus](event-bus.md) -- Communication backbone (in-process pub/sub + JSONL on disk)
+- [S04: Agent Runner](agent-runner.md) -- Agent process lifecycle (NTM-wrapped, Claude+Pi, twin binary support)
 - [S05: Hook System](hook-system.md) -- Probabilistic-to-deterministic bridge
-- [S06: Workspace Manager](workspace-manager.md) -- Isolated environments
-- [S07: Verifier Layer](verifier-layer.md) -- Quality gates
-- [S08: Memory Layer](memory-layer.md) -- Knowledge storage and retrieval
+- [S06: Workspace Manager](workspace-manager.md) -- Worktree-per-workflow-branch with merges (Gas Town pattern)
+- [S07: Scenario Harness](scenario-harness.md) -- End-to-end test harness against digital twin agents
+- [S07-archived: Verifier Layer](verifier-layer.md) -- Superseded; responsibilities migrated to orchestrator + policy
+- [S08: Memory Layer](memory-layer.md) -- CASS-based session indexing (MVH scope)
 - [S09: Improvement Loop](improvement-loop.md) -- Self-improving meta-process

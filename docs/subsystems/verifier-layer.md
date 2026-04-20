@@ -1,17 +1,32 @@
 ---
-title: "S07: Verifier Layer"
-status: seed
+title: "S07: Verifier Layer (ARCHIVED -- superseded)"
+status: archived
 type: subsystem
 solves: [P04, P07]
 uses: [CI tools, linters, test suites, LLM]
-related: [docs/concepts/kilroy.md, docs/concepts/harness-engineering.md, docs/subsystems/hook-system.md, docs/subsystems/orchestrator-core.md]
+related: [docs/subsystems/orchestrator-core.md, docs/subsystems/policy-engine.md, docs/subsystems/scenario-harness.md]
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-19
+superseded_by: [docs/subsystems/orchestrator-core.md, docs/subsystems/policy-engine.md]
 ---
 
-# S07: Verifier Layer
+# S07: Verifier Layer (ARCHIVED -- superseded)
 
-## Summary
+> **Status: archived 2026-04-19.** The "verifier layer" framing was rejected in design discussion. Verification is not a distinct subsystem -- it is a *kind of node* in the workflow graph. A test run is a non-agentic node; a code review is an agentic node. The orchestrator (S01) executes whichever node type the graph specifies. The policy engine (S02) decides what happens with the result (advance, loop back, escalate).
+>
+> What lives elsewhere now:
+>
+> - **Running checks (tests, lints, builds)**: orchestrator dispatches non-agentic nodes that exec scripts and capture stdout/stderr/exit-code. Output capture is a generalized concern that the agent runner (S04) and orchestrator share -- *parked as an open detail; needs a "node types" doc later*.
+> - **Pass/fail/loop-back decisions**: policy engine (S02). Transition guards consume node results and decide which edge fires.
+> - **Structured feedback to agents**: workflow design pattern -- failed-check output becomes input context to the retry node. Not a subsystem responsibility.
+> - **AI-based semantic review**: just an agentic node like any other (a reviewer agent in a review state).
+> - **The S07 slot is now occupied by [Scenario Harness](scenario-harness.md)** -- the test infrastructure that runs full workflows against digital twin agent binaries.
+>
+> The original content below is preserved for historical reference per the methodology's "nothing is deleted" rule.
+
+---
+
+## Summary (original, archived)
 The verifier layer validates that agent work meets defined criteria before state transitions advance. It runs automated verification suites -- tests, linters, type checks, structural validation, and optionally AI-based semantic review -- at quality gates throughout the workflow. Verification results determine whether work advances, loops back for revision, or escalates for human review.
 
 ## Purpose

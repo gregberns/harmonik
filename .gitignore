@@ -2,3 +2,7 @@
 *.swp
 *.swo
 *~
+
+# kerf working state — tracked project identifier only
+.kerf/*
+!.kerf/project-identifier

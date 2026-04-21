@@ -14,6 +14,7 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 
 - [Methodology](docs/methodology/METHODOLOGY.md) -- Document conventions, status lifecycle, cross-reference rules
 - [Agent Guide](docs/methodology/AGENT_GUIDE.md) -- How to navigate, create, and update documents
+- [Testing Methodology](docs/methodology/TESTING.md) -- Five test layers (unit / integration / scenario / crash-recovery / property); coverage targets; twin conformance; testing during bootstrap and self-build
 
 ## Knowledge Base Map
 

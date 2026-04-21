@@ -55,8 +55,58 @@ From original TASKS.md §Phase 0:
 ## Recommended next session flow
 
 1. Read this file and the files it points to.
-2. Pick a discussion thread. User's preference is discrete topics, not batches (see feedback memory). Recommend starting with **#12 (feature-branch strategy)** because it ties Beads's parent-child edges to the workspace/merge model and will shape the execution-model and workspace-model specs.
+2. Pick a discussion thread. User's preference is discrete topics, not batches (see feedback memory). Recommend starting with **#15 (state source of truth)** — it's the precondition for #12 (feature-branch strategy) and #13 (task ingestion). See the §"State source of truth" section below for the framing.
 3. Before reviving the kerf research-to-change-design advancement, address the four foundation updates listed above (DOT as workflow format, bead-ID trailer, Beads-integration component, skill-injection obligation). These are small and well-scoped; can be done as foundation amendments.
+
+## State source of truth — the open design question
+
+User flagged 2026-04-21: "We'll want to think about this — where are we storing state. We really need to nail this down. I'm slightly leaning toward US (harmonik) being the source of truth."
+
+The underlying question has multiple layers; the next session should work through each:
+
+### Layer 1: Completion (is this task actually done?)
+
+**Currently decided:** git history is the source of truth. A task is "complete" iff a merge commit exists with `Harmonik-Bead-ID: <id>` carrying the terminal status. Queue (SQLite) and Beads are caches reconciled on restart by scanning git log.
+
+This layer is stable; the user hasn't challenged it.
+
+### Layer 2: Workflow execution state (where is this task in its workflow?)
+
+**Currently decided (per Beads integration memory):** harmonik owns fine-grained workflow state in its JSONL event log; Beads sees only terminal transitions (claim / close / reopen).
+
+This layer is stable; the user hasn't challenged it.
+
+### Layer 3: Feature / task composition (how does a feature relate to its tasks?)
+
+**Open.** This is what #15 / #12 are about. Three candidate structures:
+
+- **Option A — Beads holds the parent-child tree.** A feature bead has child task beads via Beads's native `parent-child` edge type. Harmonik reads the tree from Beads and executes. Feature bead closes when all children close.
+  - Pro: Beads's data model supports it natively; external tools see the structure.
+  - Con: Two places define "what feature is this task part of" if harmonik also names features in its workflow graph.
+
+- **Option B — Harmonik's workflow graph (DOT) holds feature composition.** A feature is a workflow; tasks are nodes (or sub-workflows) inside it. Beads beads are leaves (the actual work items); the structure connecting them is harmonik's workflow DOT graph.
+  - Pro: One source of truth for workflow structure; feature is defined in-spec.
+  - Con: Feature metadata (title, description, rationale) needs a home; if not in Beads, where? Also, if workflows are ephemeral (per-task), feature composition has no persistence across sessions.
+
+- **Option C — Hybrid.** Feature = a kerf-produced spec artifact. Task beads are generated from the spec (inheriting a `spec_ref` field pointing back). Harmonik's runtime workflow is per-task; the feature-level composition is the spec doc + the set of beads it generated. Beads has parent-child but optionally (only when a feature spec actually produces structured sub-tasks).
+  - Pro: Feature = spec (a thing that exists anyway); tasks are derived; nothing is duplicated.
+  - Con: Requires a spec → beads ingestion mechanism (task #13).
+
+**User's lean:** harmonik is source of truth. This maps most cleanly to Option B or Option C. Option A has Beads as structural authority, which the user is pulling against.
+
+### Related: layer 4 — merge / branch strategy
+
+User's prior point from task #12: "If a feature is 10 tasks, we don't want each task merged to main. Feature branch holds the 10; main gets the whole feature."
+
+This ties back: whichever option above wins, it determines **when a merge to main happens**. If feature is in harmonik (Option B/C), harmonik decides "all tasks done → time to merge feature to main." If feature is in Beads (Option A), harmonik watches for the parent bead to close and triggers the merge.
+
+### Next-session action
+
+1. Confirm or challenge layers 1 and 2 (should be quick — these are current-design positions).
+2. Focus discussion on layer 3: pick A / B / C.
+3. Let layer 4 (#12 merge strategy) fall out of the layer-3 decision.
+
+Then #13 (task ingestion) becomes answerable: "how do spec artifacts become beads?"
 
 ## What should NOT be re-opened
 
@@ -79,5 +129,15 @@ Saved to auto-memory, but worth restating:
 - `.kerf/recon/` — the overnight recon findings (Kilroy, Attractor, subsystem audit, NFR inventory, Beads). Gitignored but present locally.
 - `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/` — the kerf work artifacts; outside the repo. If you lose track, run `kerf show harmonik-foundation`.
 - `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/` — auto-memory; MEMORY.md is the index; individual feedback files carry design preferences and collaboration mode.
+- `docs/methodology/TESTING.md` — testing methodology (five layers: unit, integration, scenario, crash-recovery, property). New 2026-04-21.
+
+## Backlog context worth preserving
+
+Things that might otherwise be forgotten across sessions:
+
+- **Scenario test suite for Beads+harmonik crash recovery** is a named backlog item in TASKS.md. User explicitly requested it (2026-04-21) because the harmonik-Beads interaction introduces new failure modes (bead claimed but work not started; merge landed but bead not closed; etc.). This is the first real exercise of the crash-recovery test layer in `TESTING.md`.
+- **Four foundation amendments** are queued in TASKS.md: DOT as workflow format, `Harmonik-Bead-ID` checkpoint trailer, Beads-integration component spec, handler-contract skill-injection obligation. Small changes, well-scoped; can happen before resuming the kerf research→change-design advancement.
+- **Handler-contract skill injection** is a more general pattern than Beads-CLI: any workflow node that requires an agent to use a specific tool/skill should be able to declare it, and the handler should equip the agent. Beads is just the first instance.
+- **Feature metadata** (title, description, rationale) has no settled home. If we pick Option B or C for state source of truth, this becomes an explicit design question.
 
 Good luck.

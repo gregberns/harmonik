@@ -2,7 +2,9 @@
 
 > Snapshot of where the harmonik knowledge base stands. Updated when significant work lands.
 >
-> Last updated: 2026-04-19 (overnight autonomous run; see `OVERNIGHT_RUN_2026-04-19.md` for the narrative)
+> Last updated: 2026-04-21 (Beads as task ledger decided; workflow format = DOT; DTW not adopted).
+>
+> Session handoff: see `SESSION_HANDOFF.md` for what the next session should pick up.
 
 ## What Harmonik Is
 
@@ -34,6 +36,15 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 | Subsystems (S01-S09) | **Active** | S01, S03, S04, S06, S07, S08 substantially updated 2026-04-19; S07 Verifier archived and replaced with Scenario Harness; S02, S05, S09 still hold pre-2026-04-19 framing and need a refresh pass |
 | Ideas (I01-I07) | Untouched this session | Worth revisiting once subsystem decisions firm up |
 | Log | Underused | No new log entries from this session yet |
+
+## Decisions Added 2026-04-20 and 2026-04-21
+
+These are in addition to the 10 original locked-in decisions below. Treated as candidate positions in the design (not permanent commitments) but load-bearing for ongoing spec work.
+
+11. **Workflow definition format: DOT** (2026-04-20). Declarative graph, Graphviz-renderable, NL→DOT ingestor path available. Policies reference YAML policy documents by name; policies themselves remain YAML.
+12. **DTW is NOT adopted** (2026-04-20). Harmonik uses JSONL events + git checkpoints + SQLite queue + deterministic restart reconciliation. Git history is source of truth for completion; queue is a cache. Temporal / Restate / DBOS are conceptual references only.
+13. **Beads (`Dicklesworthstone/beads_rust`) is the task ledger** (2026-04-21). SQLite-backed; harmonik is the workflow engine layered on top. Beads holds bead data + typed dependency edges + coarse status; harmonik holds fine-grained workflow state in its event log. Interaction via `br` CLI only (NOT Beads's MCP server). Agents get a Beads-CLI skill via handler-contract skill injection.
+14. **Handler contract must support skill injection** (2026-04-21). Handlers are responsible for ensuring the agent process has access to skills/tools the assigned workflow node requires. Beads-CLI is the first instance; applies generally. Pending as a foundation amendment.
 
 ## Decisions Locked In (2026-04-19)
 

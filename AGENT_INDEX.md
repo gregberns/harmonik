@@ -108,7 +108,27 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 [docs/log/INDEX.md](docs/log/INDEX.md)
 
 Most recent entries:
+- [2026-04-24: Spec Corpus Foundation Pass](docs/log/2026-04-24-spec-corpus-foundation.md) -- 10 specs authored; 5 reviewed
+- [2026-04-24: Round-2 Foundation Amendments](docs/log/2026-04-24-round-2-foundation-amendments.md) -- Phase 3 findings applied across six clusters
 - [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture
+
+### Specs (normative)
+- [specs/](specs/) — 10 foundation specs + `_registry.yaml` prefix reservations
+- 5 reviewed (v0.3): architecture, execution-model, event-model, handler-contract, control-points
+- 5 draft (v0.1): workspace-model, process-lifecycle, operator-nfr, reconciliation, beads-integration
+- Template: [docs/foundation/spec-template.md](docs/foundation/spec-template.md) (v1.1)
+
+### Foundation alignment
+- [docs/foundation/](docs/foundation/) — problem-space, components, OVERVIEW, core-scope, spec-template, project-level/
+
+### Reviews
+- [docs/reviews/2026-04-23-foundation-phase3/](docs/reviews/2026-04-23-foundation-phase3/) — six-persona Phase 3 review of foundation
+- [docs/reviews/2026-04-24-project-level/](docs/reviews/2026-04-24-project-level/) — three-persona review of project-level docs
+- [docs/reviews/2026-04-24-spec-template/](docs/reviews/2026-04-24-spec-template/) — implementer + critic review of template
+- `docs/reviews/2026-04-24-{architecture,execution-model,event-model,handler-contract,control-points}-r{1,2}/` — 6 reviewers per batch-1 spec
+
+### Reviews
+- [2026-04-23 Foundation Phase 3 Review](docs/reviews/2026-04-23-foundation-phase3/README.md) -- Six reviewer personas on the amended 10-component foundation; synthesis + round-2 amendment plan
 
 ## Plans
 - [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)

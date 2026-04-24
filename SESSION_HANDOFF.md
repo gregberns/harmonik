@@ -2,142 +2,112 @@
 
 > Message to the next agent picking up this project. Overwritten at each session boundary; git history preserves prior handoffs.
 >
-> Written 2026-04-21.
+> Written 2026-04-24 at the end of a long overnight session that produced the entire foundation spec corpus.
 
 ## Read this first
 
-1. **`CLAUDE.md`** — agent instructions, kerf workflow guidance, knowledge-base reading order.
-2. **`STATUS.md`** — project state; note the new decisions 11–14 added to the top of §Decisions before the original ten from 2026-04-19.
-3. **`QUESTIONS.md`** — decision items and their status. §Resolved at the bottom now contains the 2026-04-20/21 decisions with full reasoning.
-4. **`TASKS.md`** — Phase 0 work + backlog. New "Beads integration" section surfaced 2026-04-21.
-5. **`OVERNIGHT_RUN_2026-04-19.md`** — narrative of the 2026-04-19 autonomous run (produced the foundation-work problem-space + decompose + research).
+1. **`CLAUDE.md`** — agent instructions, kerf workflow guidance.
+2. **`STATUS.md`** — project state. Spec corpus exists; 5 reviewed, 5 draft.
+3. **`TASKS.md`** — task list; major work this session captured under spec-cycle tasks.
+4. **`docs/foundation/spec-template.md`** v1.1 — the normative template every spec follows. Read before drafting/integrating any spec.
+5. **`specs/_registry.yaml`** — prefix reservations for all 10 specs.
+6. **`docs/log/2026-04-24-spec-corpus-foundation.md`** — log entry summarizing this session.
 
-## What's decided as of 2026-04-21
+## What landed this session (2026-04-24, overnight autonomous run)
 
-Beyond the original ten decisions:
+**Pre-spec alignment work** (early session, with user):
+- 10-section walkthrough of foundation positions (5 core + 5 project-level), each section aligned interactively. Captured in `docs/foundation/core-scope.md`.
+- 5 project-level recommendation docs at `docs/foundation/project-level/{subsystem-organization, testing, quality-checks, build-practices, agent-configuration}.md`. Reviewed by 3 reviewer personas; integrated.
+- Foundation spec corpus (`docs/foundation/components.md`, `problem-space.md`) copied from kerf-internal to repo at `docs/foundation/`. Round-2 amendments included.
+- Several user-direction shifts captured: AGENTS.md canonical with CLAUDE.md symlink; `CONSTITUTION.md` as non-recursive trust anchor; JSON-structured `agent-reviewer` verdict; direct-to-main + agent-reviewer-every-commit (no PRs for MVH); aggressive coverage targets (95% core / 90% floor / <0.3% regression gate); `depguard` v2 alone (drop `go-arch-lint`).
 
-- **Workflow format: DOT.** Graphviz-renderable. Policies embed as DOT node/edge attributes referencing YAML policy documents.
-- **DTW not adopted.** Harmonik uses JSONL events + git checkpoints + SQLite queue + deterministic restart reconciliation. Git history = source of truth for completion; queue is a cache.
-- **Beads is the task ledger.** Specifically `github.com/Dicklesworthstone/beads_rust` (SQLite-backed; NOT the Dolt-backed fork). Harmonik is the workflow engine on top. Interaction via `br` CLI only — NOT Beads's MCP server. Agents get a Beads-CLI skill via the handler contract.
-- **Workflow-state split.** Harmonik owns fine-grained workflow state in its event log. Beads sees only terminal transitions (claim / close / reopen).
-- **Bead IDs in harmonik tracking.** Run metadata, checkpoint commit trailers (`Harmonik-Bead-ID`), and event payloads carry the bead ID when a run is tied to a bead.
-- **Handler contract owns skill injection.** New foundation-amendment obligation: handlers ensure their agent process has the workflow-required skills/tools.
+**Spec-template authored** at `docs/foundation/spec-template.md` (v1.1, 594 lines). Reviewed by Implementer + Critic; integrated. Key features: numeric outline §0–12+§A, RFC 2119 discipline, requirement IDs `<prefix>-NNN`, mechanism/cognition + four-axis tagging (default-baseline rule), single tag-grammar pinned, INTERFACE + RECORD + tabular schema shapes, multi-file split by content-type, lint-enforced vs reviewer-enforced conformance split, prefix registry at `specs/_registry.yaml`.
 
-## Where the foundation kerf work stands
+**10 spec drafts produced** — every foundation component has a normative spec.
 
-`harmonik-foundation` kerf work is at `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/`. Passes completed:
+**5 batch-1 specs through full 2-round review cycle (status: reviewed):**
 
-- Problem space — converged round 3
-- Decompose (7 components) — converged round 2
-- Research (7 parallel sub-agents) — complete; synthesis at `03-research/SYNTHESIS.md`
+| Spec | Lines | Reqs | Inv | OQs | Notes |
+|---|---|---|---|---|---|
+| `specs/architecture.md` (AR) | 643 | 52 | 2 | 4+ | Meta-rules: ZFC, four-axis, envelope, centralized-controller, three-artifact |
+| `specs/execution-model.md` (EM) | 1091 | 65 | 3 | 7 | Run/checkpoint/transition/outcome; main-loop pseudocode in §7.4 |
+| `specs/event-model.md` (EV) | 1032 | 42+ | 6 | 5+ | 70 events; taxonomy-first; subscription record + consumer hooks |
+| `specs/handler-contract.md` (HC) | 949 | 57+ | 5+ | 7+ | Handler interface; NDJSON Unix socket; skill injection; twin parity |
+| `specs/control-points.md` (CP) | 1124 | 54+ | 3 | 5+ | Gate/Hook/Guard/Budget; expr-lang/expr; envelope-hash replay-safety |
 
-**Not yet done:** change-design, spec-draft, integration, tasks. These should proceed but the foundation will need some updates to absorb the 2026-04-20/21 decisions before advancing:
-- Execution-model component must reflect DOT as the workflow format (lock in among the research pass's "workflow format TBD" options — Option DOT).
-- Execution-model's checkpoint schema needs `Harmonik-Bead-ID` trailer (foundation amendment).
-- A new component (or addition to an existing one) is needed for Beads integration — the task-ledger layer sits between the operator-queue surface and the workflow engine. The research already committed to "SQLite for the queue"; Beads IS the SQLite queue, just richer than originally envisioned.
-- Handler-contract component must reflect the skill-injection obligation.
+Each ran through: draft → 3 round-1 reviewers → integration → 3 round-2 reviewers → integration → status: reviewed. ID frozen at status transition.
 
-## Open discussion threads (TaskList)
+**5 batch-2 specs at v0.1 draft** — drafted in parallel with batch-1; review cycles deferred per the "5 first, then refine, then expand" process the user reaffirmed mid-session:
 
-From the 2026-04-21 session:
+| Spec | Lines | Reqs | Inv | OQs |
+|---|---|---|---|---|
+| `specs/workspace-model.md` (WM) | 606 | 40 | 5 | 4 |
+| `specs/process-lifecycle.md` (PL) | 489 | 28 | 3 | 3 |
+| `specs/operator-nfr.md` (ON) | 696 | 46 | 5 | 5 |
+| `specs/reconciliation/{spec,schemas}.md` (RC, split) | 929 | 31 | 5 | 4 |
+| `specs/beads-integration.md` (BI) | 506 | 32 | 4 | 3 |
 
-- **#11 Commit-per-node git pattern.** User likes Kilroy's one-commit-per-workflow-step pattern and wants it confirmed. Likely a quick confirmation + note in execution-model.md's checkpoint semantics.
-- **#12 Feature-branch strategy.** User pushed back on "merge to main per task" — a feature = 10 tasks, feature branch holds the 10, main only gets the whole feature. Related to #14 via Beads's `parent-child` edge (feature bead → task beads). Worth a focused design exchange. **Recommended next conversation topic.**
-- **#13 Task ingestion pipeline.** How does a kerf-produced spec become beads in harmonik? Batch import? Agent-authored? Ingestion mechanism is undefined.
-- **#14 Task management model** — **resolved this session.** Beads is the store. Keeping the task in the list so the next session can see its history.
+**Reviewer artifacts** at `docs/reviews/`:
+- `2026-04-24-spec-template/` — implementer + critic
+- `2026-04-24-execution-model-r1/` — implementer + cross-spec-architect + critic
+- `2026-04-24-execution-model-r2/` — orchestrator-implementer + skeptic + crash-adversary
+- `2026-04-24-architecture-r1/`, `r2/` — 6 reviewers
+- `2026-04-24-event-model-r1/`, `r2/` — 6 reviewers
+- `2026-04-24-handler-contract-r1/`, `r2/` — 6 reviewers
+- `2026-04-24-control-points-r1/`, `r2/` — 6 reviewers
+- `2026-04-24-project-level/` — skeptic + go-ecosystem + agent-coded critic (from earlier in the session)
 
-From original TASKS.md §Phase 0:
-- Group A (bootstrap.md decisions)
-- Group B (subsystem docs refresh — S02/S05/S09 still stale)
-- Group C (parked architectural details)
-- Group D (knowledge-base hygiene)
+Total: ~30 reviewer outputs.
 
-## Recommended next session flow
+## What's NOT done
 
-1. Read this file and the files it points to.
-2. Pick a discussion thread. User's preference is discrete topics, not batches (see feedback memory). Recommend starting with **#15 (state source of truth)** — it's the precondition for #12 (feature-branch strategy) and #13 (task ingestion). See the §"State source of truth" section below for the framing.
-3. Before reviving the kerf research-to-change-design advancement, address the four foundation updates listed above (DOT as workflow format, bead-ID trailer, Beads-integration component, skill-injection obligation). These are small and well-scoped; can be done as foundation amendments.
+1. **Batch 2 review cycles.** WM, PL, ON, RC, BI are at draft only. Each needs 2 rounds × 3 reviewers + 2 integrations to reach `reviewed`. Recommend the same pattern: implementer + cross-spec-architect + critic for round 1; skeptic + crash-adversary + spec-specific persona (e.g., for RC: investigator-author; for ON: operator-persona; for PL: daemon-author; for BI: adapter-author; for WM: git-expert) for round 2.
 
-## State source of truth — the open design question
+2. **Cross-spec citation drift.** Multiple specs cite each other at section numbers that don't match the actual structure (template puts normative content at §4.x; many citations use legacy `§1.x`/`§6.x`/`§9.x`/`§10.x` from `components.md`'s structure). AR-INTEGRATION revision-history NOTE flags this; CP integration explicitly migrated its OWN outgoing citations; other specs need a coordinated cross-spec-citation pass. Tracked in OQ-EM-005 + similar OQs in each batch-1 spec.
 
-User flagged 2026-04-21: "We'll want to think about this — where are we storing state. We really need to nail this down. I'm slightly leaning toward US (harmonik) being the source of truth."
+3. **`handler_type` → `agent_type` rename.** AR-027 mandates the rename; EV §8.3.x, HC-008, WM §5.3a still use `handler_type`. Track as a corpus-wide rename.
 
-The underlying question has multiple layers; the next session should work through each:
+4. **Cross-spec reverse-index `depended-on-by` field.** Removed from front matter per template v1.1; computation tool not built. Manual or post-MVH.
 
-### Layer 1: Completion (is this task actually done?)
+5. **No code yet.** Ten specs exist but no Go module. Phase 1 (bootstrap implementation) blocked on (a) batch 2 review completion, (b) cross-spec citation cleanup, (c) user sign-off on the spec corpus.
 
-**Currently decided:** git history is the source of truth. A task is "complete" iff a merge commit exists with `Harmonik-Bead-ID: <id>` carrying the terminal status. Queue (SQLite) and Beads are caches reconciled on restart by scanning git log.
+## Recommended next-session flow
 
-This layer is stable; the user hasn't challenged it.
+1. **Read this handoff + skim STATUS.md + glance at one or two `specs/` files** to verify the shape matches what you expect.
+2. **Decide:** advance to batch 2 review cycles, OR pause for user review of batch 1 first. Strong recommendation: get user sign-off on batch 1 before grinding through batch 2 — if the format/depth is wrong, fixing 5 is cheaper than fixing 10.
+3. **Cross-cutting cleanup pass.** Cross-spec citation migration + `handler_type` → `agent_type` rename. Single subagent can do this corpus-wide; estimate ~30 minutes.
+4. **Batch 2 review cycles** (if user signs off on batch 1). Same pattern as batch 1: ~6 reviewers per spec × 5 specs = 30 reviewers + 10 integrations. Roughly the same scope as half of tonight's work.
+5. **After all 10 specs reviewed:** decompose-to-tasks pass. The user's defined process: spec → review → decompose → tasks → beads → implement. Tasks become beads in the Beads CLI; implementation begins.
 
-### Layer 2: Workflow execution state (where is this task in its workflow?)
+## Critical context for continuing
 
-**Currently decided (per Beads integration memory):** harmonik owns fine-grained workflow state in its JSONL event log; Beads sees only terminal transitions (claim / close / reopen).
-
-This layer is stable; the user hasn't challenged it.
-
-### Layer 3: Feature / task composition (how does a feature relate to its tasks?)
-
-**Open.** This is what #15 / #12 are about. Three candidate structures:
-
-- **Option A — Beads holds the parent-child tree.** A feature bead has child task beads via Beads's native `parent-child` edge type. Harmonik reads the tree from Beads and executes. Feature bead closes when all children close.
-  - Pro: Beads's data model supports it natively; external tools see the structure.
-  - Con: Two places define "what feature is this task part of" if harmonik also names features in its workflow graph.
-
-- **Option B — Harmonik's workflow graph (DOT) holds feature composition.** A feature is a workflow; tasks are nodes (or sub-workflows) inside it. Beads beads are leaves (the actual work items); the structure connecting them is harmonik's workflow DOT graph.
-  - Pro: One source of truth for workflow structure; feature is defined in-spec.
-  - Con: Feature metadata (title, description, rationale) needs a home; if not in Beads, where? Also, if workflows are ephemeral (per-task), feature composition has no persistence across sessions.
-
-- **Option C — Hybrid.** Feature = a kerf-produced spec artifact. Task beads are generated from the spec (inheriting a `spec_ref` field pointing back). Harmonik's runtime workflow is per-task; the feature-level composition is the spec doc + the set of beads it generated. Beads has parent-child but optionally (only when a feature spec actually produces structured sub-tasks).
-  - Pro: Feature = spec (a thing that exists anyway); tasks are derived; nothing is duplicated.
-  - Con: Requires a spec → beads ingestion mechanism (task #13).
-
-**User's lean:** harmonik is source of truth. This maps most cleanly to Option B or Option C. Option A has Beads as structural authority, which the user is pulling against.
-
-### Related: layer 4 — merge / branch strategy
-
-User's prior point from task #12: "If a feature is 10 tasks, we don't want each task merged to main. Feature branch holds the 10; main gets the whole feature."
-
-This ties back: whichever option above wins, it determines **when a merge to main happens**. If feature is in harmonik (Option B/C), harmonik decides "all tasks done → time to merge feature to main." If feature is in Beads (Option A), harmonik watches for the parent bead to close and triggers the merge.
-
-### Next-session action
-
-1. Confirm or challenge layers 1 and 2 (should be quick — these are current-design positions).
-2. Focus discussion on layer 3: pick A / B / C.
-3. Let layer 4 (#12 merge strategy) fall out of the layer-3 decision.
-
-Then #13 (task ingestion) becomes answerable: "how do spec artifacts become beads?"
+- **User's batch-of-5 process directive**: do 5 most cross-cutting first, refine based on what you learn, then 5 more. I drifted from this initially (launched all 9 batch-2 specs in parallel as drafts); user corrected; I deferred batch-2 review cycles. Don't drift again.
+- **Spec template v1.1 is normative.** Every spec follows it. Template is at `docs/foundation/spec-template.md`. Updates to the template MUST bump every spec's `spec-template-version` and revisit conformance.
+- **Specs are at `specs/` in the repo.** `_registry.yaml` lists prefix reservations. Authoring a new spec requires updating the registry (lint check enforces).
+- **Cross-cutting decisions still in core-scope.md.** Sections 1-10 of `docs/foundation/core-scope.md` capture the walkthrough; specs reference these in OQs and rationale.
+- **No PRs at this phase.** Direct commits to main per build-practices. Agent-reviewer runs on every non-trivial commit (currently aspirational — the actual `agent-reviewer` skill doesn't exist yet, but the discipline is in spec).
 
 ## What should NOT be re-opened
 
-- The 10 locked decisions from 2026-04-19.
-- The 4 decisions added 2026-04-20/21 (DOT, no DTW, Beads, skill injection) unless the user explicitly raises them.
-- The foundation problem-space and decompose artifacts — both converged through multi-round review. Amendments via the amendment protocol, not rewrites.
-
-## Notes on user collaboration style
-
-Saved to auto-memory, but worth restating:
-
-- **Design stage, no commitments yet.** Frame features as capabilities that enable other behaviors, not as requirements. Replay is the archetype: rarely used directly but the architecture it requires enables debugging, scenario tests, crash recovery.
-- **Discuss one topic at a time.** Large batch responses are hard to work through. Use TaskCreate to track; handle each discretely.
-- **Make the calls yourself for straightforward decisions.** Bring the user in on architecture- or UX-critical calls.
-- **Describe content, not labels.** File names alone are not proposals.
-- **Numerous reviewer agents on decisions.** Foundation works used 5 personas × 3 rounds.
+- The 10 locked decisions from 2026-04-19 + 4 candidate decisions from 2026-04-20/21.
+- Reconciliation taxonomy (Q-P3-1, resolved 2026-04-24: 6 detection categories + §9.2a action-mapping).
+- Direct-to-main + agent-reviewer-every-commit + no PRs for MVH.
+- AGENTS.md canonical with CLAUDE.md symlink.
+- CONSTITUTION.md as non-recursive trust anchor.
+- JSON-structured `agent-reviewer` verdict.
+- Aggressive coverage targets (95% core etc.).
+- `depguard` v2 alone (no `go-arch-lint`).
+- Three-tier `make check-fast` / `check` / `check-full`.
+- Spec-template structure (numeric outline, RFC 2119, requirement IDs, default-baseline Axes).
 
 ## Files worth knowing about
 
-- `.kerf/recon/` — the overnight recon findings (Kilroy, Attractor, subsystem audit, NFR inventory, Beads). Gitignored but present locally.
-- `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/` — the kerf work artifacts; outside the repo. If you lose track, run `kerf show harmonik-foundation`.
-- `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/` — auto-memory; MEMORY.md is the index; individual feedback files carry design preferences and collaboration mode.
-- `docs/methodology/TESTING.md` — testing methodology (five layers: unit, integration, scenario, crash-recovery, property). New 2026-04-21.
-
-## Backlog context worth preserving
-
-Things that might otherwise be forgotten across sessions:
-
-- **Scenario test suite for Beads+harmonik crash recovery** is a named backlog item in TASKS.md. User explicitly requested it (2026-04-21) because the harmonik-Beads interaction introduces new failure modes (bead claimed but work not started; merge landed but bead not closed; etc.). This is the first real exercise of the crash-recovery test layer in `TESTING.md`.
-- **Four foundation amendments** are queued in TASKS.md: DOT as workflow format, `Harmonik-Bead-ID` checkpoint trailer, Beads-integration component spec, handler-contract skill-injection obligation. Small changes, well-scoped; can happen before resuming the kerf research→change-design advancement.
-- **Handler-contract skill injection** is a more general pattern than Beads-CLI: any workflow node that requires an agent to use a specific tool/skill should be able to declare it, and the handler should equip the agent. Beads is just the first instance.
-- **Feature metadata** (title, description, rationale) has no settled home. If we pick Option B or C for state source of truth, this becomes an explicit design question.
+- `specs/` — the 10 normative specs + `_registry.yaml`.
+- `docs/foundation/spec-template.md` — the template (v1.1).
+- `docs/foundation/{problem-space,components,OVERVIEW,core-scope}.md` — the foundation alignment docs.
+- `docs/foundation/project-level/` — 5 project-level recommendation docs.
+- `docs/reviews/2026-04-24-*` — ~30 reviewer outputs from this session.
+- `docs/log/2026-04-24-spec-corpus-foundation.md` — this session's log entry.
+- `/Users/gb/.claude/projects/-Users-gb-github-harmonik/memory/MEMORY.md` — auto-memory (no new memories needed this session — execution of prior decisions, not new ones).
 
 Good luck.

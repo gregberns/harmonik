@@ -22,9 +22,35 @@ Researching **planning protocols**: reusable shapes of human-agent interaction d
 
 ## What this track contains
 
-- `METHODOLOGY.md` -- research question, phased approach, rules
+**Entry / governance** (read these first):
+- `CLAUDE.md` -- this file
+- `METHODOLOGY.md` -- research question, phased approach, rules, folder conventions
 - `STATUS.md` -- live state, session history
+- `INDEX.md` -- navigation map (reading paths by audience, full document map)
+
+**Top-level deliverables** (the canonical research outputs — stay at root):
+- `research-statement.md` -- Phase 1 final output, Phase 2 briefing
+- `phase-2-findings.md` -- Phase 2 main deliverable
+- `evaluation-framework.md` -- Phase 2 durable instrument
+- `phase-2-kerf-integration-draft.md` -- Phase 2 deliverable, DRAFT
+- `protocol-trial-roadmap.md` -- active forward-work roadmap
+
+**Subdirectories** (purpose-bounded):
 - `01-corpus/` -- extracted planning session dialogs (input data)
-- `02-analysis/` -- findings from applying analytical lenses (Phase 1D output)
+- `02-analysis/` -- analysis outputs (Phase 1D lenses + all Phase 2 step outputs)
 - `references/` -- external/imported source material
-- `research-statement.md` -- Phase 1 final output (not yet written)
+- `scripts/` -- tooling (extraction, etc.)
+- `plans/` -- forward-work plans + their reviews (parked work; e.g., `step-4.5-plan.md` and reviews)
+- `prompts/` -- paste-in session-starter prompts (e.g., `phase-2-kickoff-prompt.md`, `deep-dive-prompt.md`)
+
+## Where new artifacts go
+
+When producing a new artifact, place it by *purpose*, not chronology:
+
+- **New top-level deliverable** (a self-contained document anyone exploring the project should see) → root.
+- **Step-internal analysis output** (a sub-agent's findings, one of many in a phase) → `02-analysis/`.
+- **Forward-work plan or its review** → `plans/`. If the plan becomes active and produces output, that output graduates to the appropriate purpose location.
+- **Paste-in prompt for a fresh session** → `prompts/`. Do not put `HANDOFF.md` here — that name is reserved for the `/session-handoff` skill convention.
+- **External source material being imported** → `references/`.
+
+If unsure between root and `02-analysis/`, ask: "would a returning agent need to find this on day one, or only when investigating a specific step?" Day-one → root; step-specific → `02-analysis/`.

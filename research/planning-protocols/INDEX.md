@@ -4,7 +4,7 @@
 >
 > This document explains *what exists, where to find it, what it's for, and what order to read it in.* It does not repeat content from the artifacts themselves.
 >
-> Last updated: 2026-04-23 (Phase 2 main session close).
+> Last updated: 2026-04-27 (root-folder cleanup + skill trial added).
 
 ---
 
@@ -20,7 +20,8 @@ Findings are intended to feed back into kerf (harmonik's planning CLI). Findings
 
 - **Phase 1:** CLOSED. Produced [`research-statement.md`](research-statement.md).
 - **Phase 2 main session:** CLOSED. Produced [`phase-2-findings.md`](phase-2-findings.md), [`evaluation-framework.md`](evaluation-framework.md), and [`phase-2-kerf-integration-draft.md`](phase-2-kerf-integration-draft.md).
-- **Step 4.5 (corpus-signal filter):** DEFERRED pending user authorization. This is the main blocker on empirically weighting the Phase 2 rankings.
+- **Skill trial:** ACTIVE. `/session-handoff` + `/session-resume` user-level skills embed 5 Layer-1/5/6 protocols. Adopt-and-notice testing across real working sessions. See [`protocol-trial-roadmap.md`](protocol-trial-roadmap.md).
+- **Step 4.5 (corpus-signal filter):** DEFERRED pending user authorization. This is the main blocker on empirically weighting the Phase 2 rankings. Plan + reviews in [`plans/`](plans/).
 - **Layer 7 A/B experiments:** SPEC'd, not RUN. User authorization needed.
 - **Kerf integration:** DRAFT only. User review needed before turning into a kerf work.
 
@@ -109,7 +110,6 @@ You're checking whether the Phase 2 conclusions are defensible. Read order:
 | File | Purpose |
 |---|---|
 | [`research-statement.md`](research-statement.md) | Phase 1 output and Phase 2 briefing. Sharpened question, evaluation-criteria caveat, dimensions of variation, observed regions, unexplored regions, counter-hypotheses, Phase 2 methodology. Still the authoritative briefing despite Phase 2 refinements. |
-| [`phase-2-kickoff-prompt.md`](phase-2-kickoff-prompt.md) | The kickoff prompt used to start the Phase 2 session. Reference only. |
 | [`01-corpus/INDEX.md`](01-corpus/INDEX.md) | Per-project catalogs of the user's session corpus (195 sessions across 4 projects). |
 | [`01-corpus/<project>/<session-id>.md`](01-corpus/) | 10 extracted planning-dialog sessions. Primary evidence for Phase 1 lens analyses. |
 | [`02-analysis/decision-delegation.md`](02-analysis/decision-delegation.md), [`misaligned-assumption.md`](02-analysis/misaligned-assumption.md), [`writing-load.md`](02-analysis/writing-load.md), [`form-vs-content.md`](02-analysis/form-vs-content.md), [`topic-tree.md`](02-analysis/topic-tree.md), [`context-switch.md`](02-analysis/context-switch.md) | Six Phase 1 lens reports. Evidence, not conclusions. Cited by Phase 2 but not authoritative. |
@@ -178,6 +178,22 @@ All reviewers operate on the unified catalog. Each applies a distinct challenge 
 | File | Purpose |
 |---|---|
 | [`phase-2-kerf-integration-draft.md`](phase-2-kerf-integration-draft.md) | **DRAFT only.** Maps Layer 1 foundation + Layer 6 safe swaps onto kerf's pass/jig/reviewer structure. §8 names open questions needing user input before being turned into a kerf work. |
+
+### Forward work — active trial and parked plans
+
+| File | Purpose |
+|---|---|
+| [`protocol-trial-roadmap.md`](protocol-trial-roadmap.md) | **Active.** Roadmap for the `/session-handoff` + `/session-resume` skill trial; calibration items to watch; layered-in additions parked behind trial signal. |
+| [`plans/step-4.5-plan.md`](plans/step-4.5-plan.md) | Parked. Implementation plan for Step 4.5 corpus-signal filter (transcript-only harness across 195 sessions). Authorization-gated. |
+| [`plans/step-4.5-plan.review-1-coherence.md`](plans/step-4.5-plan.review-1-coherence.md) | Parked. Coherence review of Step 4.5 plan — flagged FP-inflation in correction-detection as primary concern. |
+| [`plans/step-4.5-plan.review-2-risk.md`](plans/step-4.5-plan.review-2-risk.md) | Parked. Risk review of Step 4.5 plan — flagged NE-6 phase confound as primary push-back. |
+
+### Session-starter prompts (paste-ins)
+
+| File | Purpose |
+|---|---|
+| [`prompts/phase-2-kickoff-prompt.md`](prompts/phase-2-kickoff-prompt.md) | Paste-in prompt used to start the Phase 2 session. Historical / reference only — Phase 2 main session is closed. |
+| [`prompts/deep-dive-prompt.md`](prompts/deep-dive-prompt.md) | Paste-in prompt for a fresh agent session that wants to walk the user through digesting Phase 1 + Phase 2 output. Renamed from `HANDOFF.md` 2026-04-27 to disambiguate from the `/session-handoff` skill convention. |
 
 ### Supporting infrastructure
 

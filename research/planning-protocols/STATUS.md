@@ -139,7 +139,7 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 **Subsequent work:** wrote extraction script (`scripts/extract_dialog.py`), validated on small session, ran on 10 primary+borderline sessions. Wrote `references/session-type-discriminator.md` and `references/tried-protocols.md`. Updated `01-corpus/INDEX.md`.
 
 **What the next session should do:**
-1. Read the Phase 2 kickoff prompt at `phase-2-kickoff-prompt.md` OR have it pasted in by the user.
+1. Read the Phase 2 kickoff prompt at `prompts/phase-2-kickoff-prompt.md` OR have it pasted in by the user.
 2. Follow its instructions (read order: CLAUDE.md → STATUS.md → research-statement.md → METHODOLOGY.md).
 3. Execute Phase 2 methodology in research-statement §7, starting with Step 1 (criteria interrogation).
 
@@ -185,3 +185,28 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 - Multi-framing requirement (added in Step 1) was load-bearing in Step 5 multi-framing reviewer's output — it surfaced the trap-candidate pattern that no single-frame reviewer caught.
 - Counter-pattern generation (Step 3) paid off: several counter-patterns survived all six reviewer frames as hidden gems. Without deliberate steel-manning, they would not have been represented in the catalog.
 - External-source triangulation (Step 2) paid off: the numbered-close aviation-CRM anti-pattern finding is pure external validation against an observed pattern, and no amount of within-corpus analysis would have surfaced it.
+
+### 2026-04-27 -- Skill trial active + root-folder cleanup
+
+**What happened:**
+
+- Skill trial of `/session-handoff` + `/session-resume` (5 embedded Layer-1/5/6 protocols) was set up earlier in the day in a prior session. Trial roadmap captured at `protocol-trial-roadmap.md`.
+- The trial's `HANDOFF.md` was written to repo root, colliding with the harmonik-main session that also writes there. Resolved this session: skills updated to accept an optional path argument (default `./HANDOFF.md`); for this track, use `/session-handoff research/planning-protocols/HANDOFF.md`. Path-arg convention noted in the trial roadmap.
+- Useful content from the root trial-handoff was integrated into `protocol-trial-roadmap.md` (new "Trial calibration items to watch" section + path-convention note); root `HANDOFF.md` deleted to free the canonical location for the harmonik-main session.
+- Root of `research/planning-protocols/` had degraded into 14 mixed-purpose files. Reorganized into `plans/` (forward-work plans + reviews) and `prompts/` (paste-in session-starter prompts). Five files moved; one renamed (`HANDOFF.md` → `prompts/deep-dive-prompt.md` to disambiguate from the skill-output filename).
+- `CLAUDE.md` and `METHODOLOGY.md` updated with new placement rules so future agents know where new artifacts go.
+- `INDEX.md` updated: new "Forward work" and "Session-starter prompts" sections; phase-2-kickoff-prompt removed from misclassified Phase 1 row; current-state entry added for the active skill trial.
+
+**Decisions made:**
+
+- Path argument added to `/session-handoff` and `/session-resume` skills. Default unchanged (`./HANDOFF.md`); pair-by-path required when explicit path is used.
+- Root `./HANDOFF.md` reserved for the harmonik-main session. This research track uses `research/planning-protocols/HANDOFF.md` (not currently present; will be created on next `/session-handoff` from this track).
+- Root of `research/planning-protocols/` holds only entry/governance + canonical deliverables + the active forward-work roadmap. Step outputs live in `02-analysis/`, plans in `plans/`, paste-in prompts in `prompts/`. Encoded in CLAUDE.md and METHODOLOGY.md.
+- `prompts/deep-dive-prompt.md` (formerly `HANDOFF.md`) retains its content as a paste-in prompt for fresh-session digestion of Phase 1+2 output. Filename change is the only modification.
+
+**What the next session should do:**
+
+1. If continuing the skill trial: run `/session-resume research/planning-protocols/HANDOFF.md` if a handoff exists; otherwise pick a real working session and produce a `/session-handoff` to that path at the end.
+2. If continuing the research track (Step 4.5, kerf integration, etc.): standard read-in via `CLAUDE.md` → `STATUS.md` → `INDEX.md`. Forward-work options listed in `phase-2-findings.md` §10 and `protocol-trial-roadmap.md`.
+
+**Open after this session:** Memory entry `project_planning_protocols_skill_trial.md` was updated to reflect the new path of `step-4.5-plan*.md` and the path-arg skill convention.

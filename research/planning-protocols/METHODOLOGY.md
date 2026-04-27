@@ -100,21 +100,49 @@ This track will span many sessions. Each session must preserve prior state.
 
 ```
 planning-protocols/
-  CLAUDE.md                    -- entry point for agents
-  METHODOLOGY.md               -- this file
-  STATUS.md                    -- live state and session history
-  01-corpus/                   -- extracted planning sessions
-    INDEX.md                   -- aggregated catalog across projects (written last, after per-project catalogs)
+  CLAUDE.md                            -- entry point for agents
+  METHODOLOGY.md                       -- this file
+  STATUS.md                            -- live state and session history
+  INDEX.md                             -- navigation map (reading paths, document map)
+
+  -- Top-level deliverables (stay at root) --
+  research-statement.md                -- Phase 1 final output (produced in 1E)
+  phase-2-findings.md                  -- Phase 2 main deliverable (Step 6)
+  evaluation-framework.md              -- Phase 2 durable instrument (Step 1 spinoff)
+  phase-2-kerf-integration-draft.md    -- Phase 2 deliverable (Step 7), DRAFT
+  protocol-trial-roadmap.md            -- active forward-work roadmap
+
+  -- Subdirectories --
+  01-corpus/                           -- extracted planning sessions
+    INDEX.md                           -- aggregated catalog across projects (written last)
     <project>/
-      _catalog.md              -- this project's session catalog (produced in 1A)
-      <session-id>.md          -- cleaned dialog-only extract (produced in 1C)
-  02-analysis/                 -- lens findings (produced in 1D)
-    <lens>.md
-  references/                  -- imported/linked source material
-    perplexity-initial-research.md
-    session-type-discriminator.md   -- produced in 1B
-  research-statement.md        -- Phase 1 final output (produced in 1E)
+      _catalog.md                      -- per-project session catalog (1A)
+      <session-id>.md                  -- cleaned dialog-only extract (1C)
+  02-analysis/                         -- lens findings (1D) + all Phase 2 step outputs
+    <lens>.md                          -- Phase 1D
+    counter-pattern-candidates.md      -- Phase 2 Step 3
+    unified-protocol-catalog.md        -- Phase 2 Step 4
+    reviewer-<frame>.md                -- Phase 2 Step 5
+    evaluation-criteria-refinement*.md -- Phase 2 Step 1
+    external-sources/<domain>.md       -- Phase 2 Step 2
+  references/                          -- imported/linked source material
+  scripts/                             -- tooling (e.g., extract_dialog.py)
+  plans/                               -- forward-work plans + their reviews
+  prompts/                             -- paste-in session-starter prompts
+                                          (NOT a place for /session-handoff outputs)
 ```
+
+### Placement rules
+
+When producing a new artifact, route it by *purpose*:
+
+- **Self-contained top-level deliverable** → root. Anything a returning agent should discover on day one.
+- **One step-internal output among many** → `02-analysis/`. Use a descriptive name; reviewer outputs already follow `reviewer-<frame>.md`.
+- **Forward-work plan or its review** (parked, awaiting authorization) → `plans/`. If the plan executes, its output graduates to the matching purpose location.
+- **Paste-in prompt for a fresh session** → `prompts/`. Do not put `HANDOFF.md` (the `/session-handoff` skill output) here — that filename is reserved for the skill convention.
+- **External source material being brought in** → `references/`.
+
+Root must stay lean: governance + navigation + canonical deliverables only. If the root is collecting step outputs, plans, prompts, or other narrowly-purposed artifacts, they belong in a subdirectory.
 
 ## What NOT to do
 

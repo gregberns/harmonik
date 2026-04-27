@@ -14,12 +14,12 @@
 
 | Artifact | Path | Summary |
 |---|---|---|
-| Refined evaluation criteria | [02-analysis/evaluation-criteria-refinement.md](02-analysis/evaluation-criteria-refinement.md) | Provisional criteria → pair-graph of required-paired metrics; 3 rival framings (A/B/C); no fundamental rejections. |
-| Evaluation framework | [evaluation-framework.md](evaluation-framework.md) | First-class deliverable. Pipeline (generate→filter→confirm), operationalized criteria, transcript-only harness, multi-framing requirement, A/B and test-suite specs. |
-| External-source catalogs (10) | [02-analysis/external-sources/](02-analysis/external-sources/) | 10 domains, ~70 candidate protocols. |
-| Counter-pattern candidates | [02-analysis/counter-pattern-candidates.md](02-analysis/counter-pattern-candidates.md) | 8 steel-manned counter-protocols. |
-| Unified catalog | [02-analysis/unified-protocol-catalog.md](02-analysis/unified-protocol-catalog.md) | 87 distinct protocols on shared schema. |
-| Reviewer evaluations (6) | [02-analysis/reviewer-*.md](02-analysis/) | Ergonomics / cognitive-load / fatigue-robustness / adaptability / challenge-observed / multi-framing. |
+| Refined evaluation criteria | [phases/phase-2/analysis/evaluation-criteria-refinement.md](phases/phase-2/analysis/evaluation-criteria-refinement.md) | Provisional criteria → pair-graph of required-paired metrics; 3 rival framings (A/B/C); no fundamental rejections. |
+| Evaluation framework | [evaluation-framework.md](phases/phase-2/evaluation-framework.md) | First-class deliverable. Pipeline (generate→filter→confirm), operationalized criteria, transcript-only harness, multi-framing requirement, A/B and test-suite specs. |
+| External-source catalogs (10) | [phases/phase-2/analysis/external-sources/](phases/phase-2/analysis/external-sources/) | 10 domains, ~70 candidate protocols. |
+| Counter-pattern candidates | [phases/phase-2/analysis/counter-pattern-candidates.md](phases/phase-2/analysis/counter-pattern-candidates.md) | 8 steel-manned counter-protocols. |
+| Unified catalog | [phases/phase-2/analysis/unified-protocol-catalog.md](phases/phase-2/analysis/unified-protocol-catalog.md) | 87 distinct protocols on shared schema. |
+| Reviewer evaluations (6) | [phases/phase-2/analysis/reviewer-*.md](phases/phase-2/analysis/) | Ergonomics / cognitive-load / fatigue-robustness / adaptability / challenge-observed / multi-framing. |
 
 Scope the user should know: **every concrete finding below is an analytical prediction, not a corpus-filter-validated one.** Step 4.5 (corpus signal filter over 195 sessions) was not executed this session because it requires scripting work the locked choices constrain. The recommendations below should be treated as high-priority hypotheses for filter validation and targeted A/B confirmation, not as settled answers.
 

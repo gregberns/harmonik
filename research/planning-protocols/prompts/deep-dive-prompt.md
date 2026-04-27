@@ -12,14 +12,14 @@ I want to do a deep-dive review of the planning-protocols research track in this
 
 1. Read `/Users/gb/github/harmonik/research/planning-protocols/INDEX.md` -- this is the entry point and it names the reading path for my role (Path A -- user deep-dive).
 2. Read in the order INDEX §4 Path A prescribes:
-   - `/Users/gb/github/harmonik/research/planning-protocols/phase-2-findings.md` -- full read
-   - `/Users/gb/github/harmonik/research/planning-protocols/evaluation-framework.md` §1-§5
-   - `/Users/gb/github/harmonik/research/planning-protocols/02-analysis/reviewer-challenge-observed.md`
-   - `/Users/gb/github/harmonik/research/planning-protocols/02-analysis/reviewer-multi-framing.md`
-   - `/Users/gb/github/harmonik/research/planning-protocols/phase-2-kerf-integration-draft.md`
+   - `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/findings.md` -- full read
+   - `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/evaluation-framework.md` §1-§5
+   - `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/analysis/reviewer-challenge-observed.md`
+   - `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/analysis/reviewer-multi-framing.md`
+   - `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/kerf-integration-draft.md`
 3. Read `/Users/gb/github/harmonik/research/planning-protocols/STATUS.md` for the full session history, especially the Phase 2 session entry.
-4. Skim `/Users/gb/github/harmonik/research/planning-protocols/02-analysis/unified-protocol-catalog.md` -- 87 protocols on a shared schema; you don't need to absorb all of them, but you need to be able to find any one I ask about.
-5. Read `/Users/gb/github/harmonik/research/planning-protocols/research-statement.md` if you need Phase 1 context.
+4. Skim `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-2/analysis/unified-protocol-catalog.md` -- 87 protocols on a shared schema; you don't need to absorb all of them, but you need to be able to find any one I ask about.
+5. Read `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-1/research-statement.md` if you need Phase 1 context.
 
 Once you've done that, check in with me. Don't summarize everything -- just tell me you're ready and ask where I want to start. I'll drive from there.
 

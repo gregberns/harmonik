@@ -66,7 +66,7 @@ A protocol is a *tuple* of values across these dimensions. Most observed pattern
 
 ## 4. Observed region of the space
 
-**This section is descriptive, not prescriptive.** These are the patterns the user has already tried; Phase 1 evidence for each is in `02-analysis/` (six lens reports) and `references/tried-protocols.md`. They are data points, not the starting protocol set for Phase 2.
+**This section is descriptive, not prescriptive.** These are the patterns the user has already tried; Phase 1 evidence for each is in `phases/phase-2/analysis/` (six lens reports) and `phases/phase-1/tried-protocols.md`. They are data points, not the starting protocol set for Phase 2.
 
 Observed patterns mapped to dimensions:
 
@@ -144,7 +144,7 @@ Before external-source work begins, Phase 2 must pause to question the provision
 - Is there a way to evaluate protocols **empirically** rather than by analysis? Can sessions be A/B-tested at reasonable cost? What natural experiments exist in the existing corpus or in kerf's historical works?
 - Could a formal evaluation framework itself be a research deliverable? Test-suite-of-planning-problems that protocols are run against?
 
-Output: `02-analysis/evaluation-criteria-refinement.md`. Any refinement should be applied back to §2 (with a revision note).
+Output: `phases/phase-2/analysis/evaluation-criteria-refinement.md`. Any refinement should be applied back to §2 (with a revision note).
 
 **If this step surfaces fundamental issues with the criteria, pause and surface to the user before proceeding to Step 2.** The rest of Phase 2 is premised on the criteria being at least roughly right.
 
@@ -163,7 +163,7 @@ Mine the following adjacent domains for planning / alignment / coordination prot
 - **Consulting engagements** -- discovery phase structures, stakeholder interview protocols.
 - **Military briefings** -- commander's intent, five-paragraph order, back-brief.
 
-For each domain, extract candidate protocols and map them onto the dimensions of variation (Section 3). Produce: `02-analysis/external-sources/<domain>.md` per domain.
+For each domain, extract candidate protocols and map them onto the dimensions of variation (Section 3). Produce: `phases/phase-2/analysis/external-sources/<domain>.md` per domain.
 
 **Step 3: Counter-pattern generation.**
 
@@ -238,10 +238,10 @@ Phase 2 should read:
 
 - This document (`research-statement.md`).
 - [`METHODOLOGY.md`](METHODOLOGY.md) for research-track conventions and multi-session safety rules.
-- [`references/tried-protocols.md`](references/tried-protocols.md) for the 5-variant taxonomy.
-- [`references/session-type-discriminator.md`](references/session-type-discriminator.md) for how to identify planning-dialog sessions if more corpus is needed.
-- [`02-analysis/*.md`](02-analysis/) -- the six Phase 1 lens reports (decision-delegation, misaligned-assumption, writing-load, form-vs-content, topic-tree, context-switch). These are *evidence*, not *conclusions* to build on.
-- [`01-corpus/INDEX.md`](01-corpus/INDEX.md) for the 10 extracted planning-dialog sessions, if direct inspection is needed.
+- [`phases/phase-1/tried-protocols.md`](phases/phase-1/tried-protocols.md) for the 5-variant taxonomy.
+- [`phases/phase-1/session-type-discriminator.md`](phases/phase-1/session-type-discriminator.md) for how to identify planning-dialog sessions if more corpus is needed.
+- [`phases/phase-2/analysis/*.md`](phases/phase-2/analysis/) -- the six Phase 1 lens reports (decision-delegation, misaligned-assumption, writing-load, form-vs-content, topic-tree, context-switch). These are *evidence*, not *conclusions* to build on.
+- [`phases/phase-1/corpus/INDEX.md`](phases/phase-1/corpus/INDEX.md) for the 10 extracted planning-dialog sessions, if direct inspection is needed.
 - [`references/perplexity-initial-research.md`](references/perplexity-initial-research.md) for the starting-point brainstorm (shallow but useful as a reminder of the original framing).
 
 Phase 2 should **not** treat any of the Phase 1 findings as established. They are the *starting provocations*.

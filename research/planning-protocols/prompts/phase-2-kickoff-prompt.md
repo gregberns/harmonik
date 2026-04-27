@@ -14,7 +14,7 @@ Read these files in order:
 
 1. `/Users/gb/github/harmonik/research/planning-protocols/CLAUDE.md` -- track rules for all sessions
 2. `/Users/gb/github/harmonik/research/planning-protocols/STATUS.md` -- current state. Append a session-history entry when you pause or finish
-3. `/Users/gb/github/harmonik/research/planning-protocols/research-statement.md` -- Phase 1 output; your main briefing. Pay close attention to §2 (evaluation-criteria caveat), §3 (dimensions of variation), §5-6 (unexplored regions + counter-hypotheses), §7 (Phase 2 methodology), §9 (what NOT to do)
+3. `/Users/gb/github/harmonik/research/planning-protocols/phases/phase-1/research-statement.md` -- Phase 1 output; your main briefing. Pay close attention to §2 (evaluation-criteria caveat), §3 (dimensions of variation), §5-6 (unexplored regions + counter-hypotheses), §7 (Phase 2 methodology), §9 (what NOT to do)
 4. `/Users/gb/github/harmonik/research/planning-protocols/METHODOLOGY.md` -- research-track methodology and multi-session safety rules
 
 Only after reading all four, begin the methodology in §7.
@@ -41,7 +41,7 @@ Execute the Phase 2 methodology in research-statement §7, in order. Go as far a
 
 Fan out with parallel sub-agents wherever work decomposes cleanly:
 
-- **Step 2 (external sources):** one sub-agent per domain. 10 domains are named in research-statement §7 Step 2 (pair programming, Socratic method, medical handoffs, design review, negotiation, incident command, pilot-controller, therapy intake, consulting discovery, military briefings). Outputs to `02-analysis/external-sources/<domain>.md`. Launch them in a single message for parallelism.
+- **Step 2 (external sources):** one sub-agent per domain. 10 domains are named in research-statement §7 Step 2 (pair programming, Socratic method, medical handoffs, design review, negotiation, incident command, pilot-controller, therapy intake, consulting discovery, military briefings). Outputs to `phases/phase-2/analysis/external-sources/<domain>.md`. Launch them in a single message for parallelism.
 
 - **Step 5 (reviewer evaluation):** multiple reviewer sub-agents with distinct frames. At minimum: ergonomics, cognitive-load, robustness-to-user-fatigue, adaptability-to-task-types, and one explicitly-framed "challenge observed patterns" reviewer.
 
@@ -49,11 +49,11 @@ Every sub-agent prompt must be self-contained: include the research question, th
 
 ## Outputs per step
 
-- Step 1: `02-analysis/evaluation-criteria-refinement.md`
-- Step 2: `02-analysis/external-sources/<domain>.md` per domain
-- Step 3: `02-analysis/counter-pattern-candidates.md`
-- Step 4: `02-analysis/unified-protocol-catalog.md`
-- Step 5: `02-analysis/reviewer-evaluation.md`
+- Step 1: `phases/phase-2/analysis/evaluation-criteria-refinement.md`
+- Step 2: `phases/phase-2/analysis/external-sources/<domain>.md` per domain
+- Step 3: `phases/phase-2/analysis/counter-pattern-candidates.md`
+- Step 4: `phases/phase-2/analysis/unified-protocol-catalog.md`
+- Step 5: `phases/phase-2/analysis/reviewer-evaluation.md`
 - Step 6: `phase-2-findings.md` in `research/planning-protocols/` (ranked recommendations, conditional on task-type / session-phase / user-state)
 - Step 7: (deferred -- DRAFT only for user review if time permits, as `phase-2-kerf-integration-draft.md`)
 - If a formal evaluation framework emerges from Step 1: `evaluation-framework.md` in the track root

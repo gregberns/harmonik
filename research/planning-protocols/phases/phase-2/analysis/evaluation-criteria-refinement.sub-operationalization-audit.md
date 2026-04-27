@@ -9,7 +9,7 @@ This audit interrogates the provisional evaluation criteria in `research-stateme
 
 The audit's lens is deliberately narrow: **what can be measured, from what source, at what cost, with what confounds.** It does not yet propose protocol designs.
 
-Primary data source assumed throughout: the 10 extracted planning-dialog transcripts under `01-corpus/`, plus the corpus-wide character counts, turn counts, autonomous-run markers, gap durations, and tool-call counts already surfaced by the Phase 1 lens reports. Where external signals are required (implementation outcome, user self-report, cross-session comparison), that is explicitly flagged as an expense.
+Primary data source assumed throughout: the 10 extracted planning-dialog transcripts under `phases/phase-1/corpus/`, plus the corpus-wide character counts, turn counts, autonomous-run markers, gap durations, and tool-call counts already surfaced by the Phase 1 lens reports. Where external signals are required (implementation outcome, user self-report, cross-session comparison), that is explicitly flagged as an expense.
 
 One operational convention used throughout: "transcript-only" = derivable from the JSONL or extracted markdown without asking the user anything. "User-report" = requires the user (the one named in this research) to answer a follow-up. "Outcome-linked" = requires joining the transcript to downstream implementation artifacts (commits, bug reports, spec revisions, time-to-merge) to interpret.
 

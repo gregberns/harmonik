@@ -57,7 +57,7 @@ The plan addresses **all operationalized measurements** from evaluation-framewor
 - **False-positive guards partially defined:** benign-phrase blocklist given (line 82–84); "actually" mid-sentence rule sketched (line 83); hmm + agreement rule stated (line 84).
 - **Missing:** How to operationalize "surrounding clause is affirmative" for the "actually" guard? Pattern for "sentence-end punctuation"? The rule is intuitive but requires regex implementation choices.
 - **Missing:** The requirement that human turn be ≥ 40 chars (line 85) is stated but the ratio of false-positives this guards against is not quantified. Will the hand-validation pass (§7, line 343) test this threshold?
-- **Ground-truth dependencies:** Plan references `02-analysis/misaligned-assumption.md` §Incident Table (lines 88, 343) for hand-labeled correction sets. That file was read; it contains incident citations (3bf5774c H#3, 3bf5774c H#4, f588ff0c H#4/5) but the incident-table structure is not visible in the plan. Implementer must have direct access to that file to extract the ground-truth labels.
+- **Ground-truth dependencies:** Plan references `phases/phase-1/analysis/misaligned-assumption.md` §Incident Table (lines 88, 343) for hand-labeled correction sets. That file was read; it contains incident citations (3bf5774c H#3, 3bf5774c H#4, f588ff0c H#4/5) but the incident-table structure is not visible in the plan. Implementer must have direct access to that file to extract the ground-truth labels.
 - **Validation spec clear:** "hand-label correction incidents in the 10 primary-corpus sessions… Compare detector output; require precision ≥ 0.85 on the hand-labeled set before running corpus-wide" (lines 343–344). This is executable.
 
 **Verdict:** Lexicon is ready, guards are partially ready. The hand-validation step is the gate. Implementer should proceed but expect iteration during validation.
@@ -90,7 +90,7 @@ The plan addresses **all operationalized measurements** from evaluation-framewor
   - Category (a) framing: "turn_index == 1 and len > 300" — why 300? Is this length of the human turn or agent turn following? The rule checks `turn_index`, implying human turn index, but framing is typically a *agent* turn feature.
   - Categories are labeled for *human* turns (per Phase 1 lens), but rule line 134 references "parent_agent_turn_had_question" — is this correctly scoped?
   - The order of rule branches (lines 129–136) appears to have overlaps: a turn matching both administrative and pushback lexicons will match (g) before (b), giving misleading categorization.
-- **Ground-truth dependency:** The plan defers to `02-analysis/writing-load.md` for category definitions but does not re-specify them inline. Implementer must have that file and must reconcile the skeleton rule with its definitions.
+- **Ground-truth dependency:** The plan defers to `phases/phase-1/analysis/writing-load.md` for category definitions but does not re-specify them inline. Implementer must have that file and must reconcile the skeleton rule with its definitions.
 - **Validation:** No hand-validation step specified for W1. The plan specifies hand-validation only for C1/M1 (lines 343–344), not for W1/category-tagging. This is a gap.
 
 **Verdict:** The structure is there, but rule-branch ordering and scope ambiguities need clarification before hand-validation. High risk of systematic mis-categorization.
@@ -158,7 +158,7 @@ Framework §4.3 names seven NEs. Plan §5 specifies which are in first-pass scop
 
 ### 3.3 Broken references between sections
 
-**Session-type discriminator (§2.1):** References `references/session-type-discriminator.md` verbatim. File exists and was read. ✓
+**Session-type discriminator (§2.1):** References `phases/phase-1/session-type-discriminator.md` verbatim. File exists and was read. ✓
 
 **Extraction extension (§3):** Plan says "The harness imports the extractor as a library function" and describes extending extract_dialog.py to emit JSON with timestamps and tool-activity counters. Extract_dialog.py exists and has the right infrastructure (parse_ts, content_text, content_tools functions). Extractor library-ification is implementable. ✓
 
@@ -168,7 +168,7 @@ Framework §4.3 names seven NEs. Plan §5 specifies which are in first-pass scop
 
 **Writing-load.md (referenced for category a–h definitions):** File exists but plan does not re-inline the category definitions. Medium risk: implementer may misinterpret skeletal rules without access to that file.
 
-**02-analysis/misaligned-assumption.md (ground-truth incident table):** Referenced for hand-validation (lines 343). File was not read to verify it has the incident-table structure the plan expects.
+**phases/phase-1/analysis/misaligned-assumption.md (ground-truth incident table):** Referenced for hand-validation (lines 343). File was not read to verify it has the incident-table structure the plan expects.
 
 **Frame:** Plan's internal references are consistent and mostly resolvable. Category-definition and incident-table references require ground-truth file access.
 

@@ -40,12 +40,12 @@ Phase 1 scoping work wrapped 2026-04-23 earlier the same day. `research-statemen
 
 ## What's done (this session)
 
-- **1A -- Corpus discovery.** 4 per-project catalogs at `01-corpus/<project>/_catalog.md`.
+- **1A -- Corpus discovery.** 4 per-project catalogs at `phases/phase-1/corpus/<project>/_catalog.md`.
 - **1A -- Re-classification.** Whole-session classification was too coarse; re-classified all 195 sessions by `n_human_text_turns` signal.
-- **1B -- Session-type discriminator.** `references/session-type-discriminator.md`.
-- **1C -- Corpus extraction.** 10 sessions extracted to `01-corpus/<project>/<session-id>.md`. Compression ratio 0.7–14% vs raw JSONL. Extraction script at `scripts/extract_dialog.py`.
-- **Tried-protocols catalog.** `references/tried-protocols.md` -- 5 interaction variants from user practice.
-- **1D -- Multi-lens analysis.** 6 parallel sub-agents ran: decision-delegation, misaligned-assumption, writing-load, form-vs-content, topic-tree, context-switch. Outputs at `02-analysis/<lens>.md`.
+- **1B -- Session-type discriminator.** `phases/phase-1/session-type-discriminator.md`.
+- **1C -- Corpus extraction.** 10 sessions extracted to `phases/phase-1/corpus/<project>/<session-id>.md`. Compression ratio 0.7–14% vs raw JSONL. Extraction script at `scripts/extract_dialog.py`.
+- **Tried-protocols catalog.** `phases/phase-1/tried-protocols.md` -- 5 interaction variants from user practice.
+- **1D -- Multi-lens analysis.** 6 parallel sub-agents ran: decision-delegation, misaligned-assumption, writing-load, form-vs-content, topic-tree, context-switch. Outputs at `phases/phase-1/analysis/<lens>.md`.
 - **1E -- Research statement.** `research-statement.md` drafted. Restructured mid-draft to guard against local-maxima anchoring (user's concern): dimensions-of-variation-first, observed-region-as-data-not-anchor, counter-hypotheses, external-source-first Phase 2 methodology.
 
 ## What Phase 2 should do
@@ -95,7 +95,7 @@ Plus 3 borderline worth inspecting: 13493c8d (harmonik, 5 huge-message turns —
 4. **Context-dump** — few but very long human messages (13493c8d had 5294/1903/3441-char turns with 164 assistant responses).
 5. **Session-recovery handoff** — inter-session continuation (729dad16 opens "# Session Recovery Context").
 
-Variants 2-5 are out of core scope but will be captured in `references/tried-protocols.md` for comparative analysis. This was user-approved as "list of things that have been tried."
+Variants 2-5 are out of core scope but will be captured in `phases/phase-1/tried-protocols.md` for comparative analysis. This was user-approved as "list of things that have been tried."
 
 **Reclassified data:** `/tmp/reclass.tsv` holds per-session metrics (ht, sidechain_count, assistant_count, size_kb, project, session_id, first_msg_preview) — regenerable via `/tmp/reclass.sh`.
 
@@ -136,7 +136,7 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 
 **Mid-session correction:** User flagged that the initial whole-session classification missed the real signal. Planning dialog is a within-session phase, not a whole-session label. Many sessions tagged IMPLEMENTATION had rich planning dialog at the front; some "emblematic" sessions were actually single-directive dispatches. Re-investigated JSONL mechanics, discovered `(type=="user") AND isSidechain==false AND content-is-string` filter cleanly isolates real human text turns. Re-classified all 195 sessions.
 
-**Subsequent work:** wrote extraction script (`scripts/extract_dialog.py`), validated on small session, ran on 10 primary+borderline sessions. Wrote `references/session-type-discriminator.md` and `references/tried-protocols.md`. Updated `01-corpus/INDEX.md`.
+**Subsequent work:** wrote extraction script (`scripts/extract_dialog.py`), validated on small session, ran on 10 primary+borderline sessions. Wrote `phases/phase-1/session-type-discriminator.md` and `phases/phase-1/tried-protocols.md`. Updated `phases/phase-1/corpus/INDEX.md`.
 
 **What the next session should do:**
 1. Read the Phase 2 kickoff prompt at `prompts/phase-2-kickoff-prompt.md` OR have it pasted in by the user.
@@ -154,12 +154,12 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 **What happened:**
 
 - Executed the Phase 2 methodology from research-statement §7 in one session. Produced the Phase 2 main output (`phase-2-findings.md`) plus a first-class durable deliverable (`evaluation-framework.md`) plus a kerf-integration DRAFT (`phase-2-kerf-integration-draft.md`).
-- **Step 1 (criteria interrogation).** Three parallel sub-agents with distinct challenge frames: rival framings, operationalization audit, empirical-evaluation design. Synthesis at `02-analysis/evaluation-criteria-refinement.md`. Three sub-analyses at `02-analysis/evaluation-criteria-refinement.sub-*.md`. No fundamental issues surfaced; Phase 2 proceeded without user pause. Refinements: provisional criteria replaced by pair-graph of required-paired metrics; multi-framing scoring requirement added (Framings A/B/C); formal evaluation framework elevated to first-class deliverable.
-- **Step 2 (external-source pass).** 10 parallel sub-agents, one per domain, outputs at `02-analysis/external-sources/<domain>.md`. Domains: pair-programming, socratic-method, medical-handoffs, design-review, negotiation-mediation, incident-command, pilot-controller, therapy-intake, consulting-discovery, military-briefings. ~70 candidate protocols extracted.
-- **Step 3 (counter-pattern generation).** Single sub-agent steel-manned 8 counter-hypotheses from research-statement §6 into specific protocol instances. Output at `02-analysis/counter-pattern-candidates.md`.
-- **Step 4 (unified catalog).** Single sub-agent consolidated observed + unexplored + external + counter-pattern into 87 distinct protocols on shared 8-field schema. Output at `02-analysis/unified-protocol-catalog.md`. Surfaced gaps (scope-decomposition dependency-awareness; research-scoping question-quality).
+- **Step 1 (criteria interrogation).** Three parallel sub-agents with distinct challenge frames: rival framings, operationalization audit, empirical-evaluation design. Synthesis at `phases/phase-2/analysis/evaluation-criteria-refinement.md`. Three sub-analyses at `phases/phase-2/analysis/evaluation-criteria-refinement.sub-*.md`. No fundamental issues surfaced; Phase 2 proceeded without user pause. Refinements: provisional criteria replaced by pair-graph of required-paired metrics; multi-framing scoring requirement added (Framings A/B/C); formal evaluation framework elevated to first-class deliverable.
+- **Step 2 (external-source pass).** 10 parallel sub-agents, one per domain, outputs at `phases/phase-2/analysis/external-sources/<domain>.md`. Domains: pair-programming, socratic-method, medical-handoffs, design-review, negotiation-mediation, incident-command, pilot-controller, therapy-intake, consulting-discovery, military-briefings. ~70 candidate protocols extracted.
+- **Step 3 (counter-pattern generation).** Single sub-agent steel-manned 8 counter-hypotheses from research-statement §6 into specific protocol instances. Output at `phases/phase-2/analysis/counter-pattern-candidates.md`.
+- **Step 4 (unified catalog).** Single sub-agent consolidated observed + unexplored + external + counter-pattern into 87 distinct protocols on shared 8-field schema. Output at `phases/phase-2/analysis/unified-protocol-catalog.md`. Surfaced gaps (scope-decomposition dependency-awareness; research-scoping question-quality).
 - **Step 4.5 (corpus-signal filter) DEFERRED.** The evaluation framework specifies this as required before Step 5 ranking. It requires ~1–2 days of scripting over all 195 sessions; treated as user-authorization-gated per the "no code" locked choice interpretation. All Step 5 rankings carry `[filter-dep]` flags for candidates whose ranking needs filter validation.
-- **Step 5 (reviewer-challenged evaluation).** Six parallel reviewer sub-agents: ergonomics, cognitive-load, fatigue-robustness, task-type-adaptability, challenge-observed-patterns (local-maxima guardian), and multi-framing. Outputs at `02-analysis/reviewer-*.md`. Strong cross-frame convergence on winners and losers.
+- **Step 5 (reviewer-challenged evaluation).** Six parallel reviewer sub-agents: ergonomics, cognitive-load, fatigue-robustness, task-type-adaptability, challenge-observed-patterns (local-maxima guardian), and multi-framing. Outputs at `phases/phase-2/analysis/reviewer-*.md`. Strong cross-frame convergence on winners and losers.
 - **Step 6 (ranked recommendations).** Main-thread synthesis at `phase-2-findings.md`. Organized as composition layers: Layer 1 always-on foundation; Layer 2 task-shape openers; Layer 3 mid-session stack; Layer 4 user-state adapters; Layer 5 close-of-session; Layer 6 safe swaps; Layer 7 experiments. Plus qualitative overlays (§5) and explicit honest-limits (§8).
 - **Step 7 (kerf integration DRAFT).** Produced as DRAFT for user review at `phase-2-kerf-integration-draft.md`. Maps Layer 1 and Layer 6 onto kerf's pass/jig/reviewer structure. Explicit user-decision points throughout. Not final.
 
@@ -201,7 +201,7 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 
 - Path argument added to `/session-handoff` and `/session-resume` skills. Default unchanged (`./HANDOFF.md`); pair-by-path required when explicit path is used.
 - Root `./HANDOFF.md` reserved for the harmonik-main session. This research track uses `research/planning-protocols/HANDOFF.md` (not currently present; will be created on next `/session-handoff` from this track).
-- Root of `research/planning-protocols/` holds only entry/governance + canonical deliverables + the active forward-work roadmap. Step outputs live in `02-analysis/`, plans in `plans/`, paste-in prompts in `prompts/`. Encoded in CLAUDE.md and METHODOLOGY.md.
+- Root of `research/planning-protocols/` holds only entry/governance + canonical deliverables + the active forward-work roadmap. Step outputs live in `phases/phase-2/analysis/`, plans in `plans/`, paste-in prompts in `prompts/`. Encoded in CLAUDE.md and METHODOLOGY.md.
 - `prompts/deep-dive-prompt.md` (formerly `HANDOFF.md`) retains its content as a paste-in prompt for fresh-session digestion of Phase 1+2 output. Filename change is the only modification.
 
 **What the next session should do:**
@@ -210,3 +210,37 @@ Variants 2-5 are out of core scope but will be captured in `references/tried-pro
 2. If continuing the research track (Step 4.5, kerf integration, etc.): standard read-in via `CLAUDE.md` → `STATUS.md` → `INDEX.md`. Forward-work options listed in `phase-2-findings.md` §10 and `protocol-trial-roadmap.md`.
 
 **Open after this session:** Memory entry `project_planning_protocols_skill_trial.md` was updated to reflect the new path of `step-4.5-plan*.md` and the path-arg skill convention.
+
+### 2026-04-27 -- Per-phase folder structure (phases/phase-N/)
+
+**What happened:**
+
+- Earlier in the day's cleanup, root still held 4 phase-2 deliverables + research-statement.md alongside `01-corpus/` and `02-analysis/` (the latter mixing Phase 1D lens reports with Phase 2 step outputs). Pattern wouldn't scale — by Phase 10 root would hold 9+ phase deliverables, and `02-analysis/` would be an undifferentiated grab bag.
+- Introduced `phases/phase-N/` structure as the load-bearing organizing axis. Per-phase deliverables and per-phase work products both live in their phase's directory; cross-phase work products (corpus, scripts, references, plans, prompts) stay in cross-phase subdirectories at track root.
+- Moves executed:
+  - `research-statement.md` → `phases/phase-1/research-statement.md`
+  - `phase-2-findings.md` → `phases/phase-2/findings.md` (drop redundant `phase-2-` prefix; folder context implies it)
+  - `phase-2-kerf-integration-draft.md` → `phases/phase-2/kerf-integration-draft.md`
+  - `evaluation-framework.md` → `phases/phase-2/evaluation-framework.md`
+  - `01-corpus/` → `phases/phase-1/corpus/`
+  - `02-analysis/{6 Phase 1D lens reports}` → `phases/phase-1/analysis/`
+  - `02-analysis/{Phase 2 Step 1-5 outputs}` → `phases/phase-2/analysis/` (preserves the `external-sources/` subdirectory)
+  - `references/session-type-discriminator.md` (Phase 1B output) → `phases/phase-1/`
+  - `references/tried-protocols.md` (Phase 1A output) → `phases/phase-1/`
+  - `references/perplexity-initial-research.md` stayed in `references/` (genuine external import)
+- Path references updated across all governance docs (`CLAUDE.md`, `METHODOLOGY.md`, `STATUS.md`, `INDEX.md`), the active roadmap, and both prompt files. Internal cross-references inside moved files (e.g., `phases/phase-1/corpus/INDEX.md` referencing `../session-type-discriminator.md`) recomputed for the new depth.
+- `METHODOLOGY.md` "Phase 2" section updated from "future, not started" (stale) to a Step-by-Step description of the closed Phase 2 work; new "Phase N pattern" subsection captures the convention so a future Phase 3 inherits the structure without rediscovery.
+
+**Decisions made:**
+
+- Per-phase content lives in `phases/phase-N/`. New phases create their own directory.
+- Phase deliverables drop the redundant `phase-N-` filename prefix when the folder context implies it (e.g., `phases/phase-2/findings.md`, not `phases/phase-2/phase-2-findings.md`).
+- Cross-phase work products (`corpus/` was Phase 1-specific; `scripts/`, `references/`, `plans/`, `prompts/` are cross-phase by nature) stay at track root.
+- `references/` is reserved for genuine external imports. Phase outputs that happen to define classifiers/taxonomies belong in their phase folder, not in `references/`.
+- The active forward-work roadmap (`protocol-trial-roadmap.md`) is the only "deliverable" allowed at track root — it's cross-phase by definition.
+
+**What the next session should do:**
+
+- Standard read-in via `CLAUDE.md` → `STATUS.md` → `INDEX.md`. Both files now describe the per-phase structure; new agents should not need to rediscover it.
+- For the active skill trial: `/session-resume research/planning-protocols/HANDOFF.md` if a handoff exists; otherwise produce one at session end.
+- For Phase 3 work (whenever it begins): `mkdir phases/phase-3/`, follow the convention captured in `METHODOLOGY.md` "Phase N pattern."

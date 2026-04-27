@@ -1,6 +1,6 @@
 # External Source Analysis -- Pair Programming
 
-**Phase 2, Step 2 artifact.** Author: sub-agent, 2026-04-23. Scope: extract candidate planning protocols from pair-programming literature and practice, map each onto the dimensions of variation in `research/planning-protocols/02-analysis/evaluation-criteria-refinement.md`, and note how the mapping survives or breaks when one party is an LLM-agent rather than a human.
+**Phase 2, Step 2 artifact.** Author: sub-agent, 2026-04-23. Scope: extract candidate planning protocols from pair-programming literature and practice, map each onto the dimensions of variation in `research/planning-protocols/phases/phase-2/analysis/evaluation-criteria-refinement.md`, and note how the mapping survives or breaks when one party is an LLM-agent rather than a human.
 
 ## Domain orientation
 

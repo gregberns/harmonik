@@ -84,4 +84,4 @@ The script `scripts/extract_dialog.py` applies the extraction filter. For classi
 - Signal discovered 2026-04-23 during sub-phase 1A user-correction pass.
 - Applied across 195 sessions from harmonik, kerf, machine-setup, secure-dev, and Developer-secure-dev projects.
 - Verified manually on: 79a42399 (planning), fa557b32 (dispatch-disguised-as-planning), a9cff2d0 (template dispatch), b7eca5d2 (controller), 729dad16 (session-recovery).
-- 10 sessions extracted using this filter; output at `01-corpus/<project>/<session-id>.md`.
+- 10 sessions extracted using this filter; output at `phases/phase-1/corpus/<project>/<session-id>.md`.

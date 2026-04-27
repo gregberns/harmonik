@@ -10,7 +10,7 @@ Every entry has eight mandatory fields:
 
 1. **Name** — `kebab-case-id` + human-readable name. Alternate source names listed where they help.
 2. **Origin** — one or more of:
-   - `observed` — from Phase 1 corpus analysis (research-statement §4, `references/tried-protocols.md`, or six lens reports).
+   - `observed` — from Phase 1 corpus analysis (research-statement §4, `phases/phase-1/tried-protocols.md`, or six lens reports).
    - `unexplored` — from research-statement §5 (unexplored-region candidates).
    - `external:<domain>` — from one of the 10 Step 2 external-source files (e.g., `external:medical-handoffs`, `external:military-briefings`).
    - `counter-pattern:<N>` — from the eight Step 3 counter-protocols (`counter-pattern-candidates.md`).
@@ -25,9 +25,9 @@ Every entry has eight mandatory fields:
 
 | Tag | Source file | Content |
 |---|---|---|
-| `observed` | research-statement §4, `references/tried-protocols.md`, six lens reports | Patterns already tried in the user's own sessions |
+| `observed` | research-statement §4, `phases/phase-1/tried-protocols.md`, six lens reports | Patterns already tried in the user's own sessions |
 | `unexplored` | research-statement §5 | Regions the user's practice has not meaningfully populated |
-| `counter-pattern:N` | `02-analysis/counter-pattern-candidates.md` | Steel-manned inverses of Phase 1 findings (N = 1..8) |
+| `counter-pattern:N` | `phases/phase-2/analysis/counter-pattern-candidates.md` | Steel-manned inverses of Phase 1 findings (N = 1..8) |
 | `external:pair-programming` | `external-sources/pair-programming.md` | Driver-navigator, strong-style, ping-pong, mob |
 | `external:socratic-method` | `external-sources/socratic-method.md` | Elenchus, maieutics, dialectic, Bloom/Graesser/Paul-Elder, Five Whys |
 | `external:medical-handoffs` | `external-sources/medical-handoffs.md` | SBAR, I-PASS, teach-back, CUS, mnemonic variants |

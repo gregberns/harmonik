@@ -9,8 +9,8 @@
 Step 4.5 is the Filter stage of the Generate → Filter → Confirm pipeline (framework §2). Its single job: produce quantitative corpus-signal support for the 87-entry unified protocol catalog, so that Step 5 reviewer evaluation receives a filtered slate rather than an unfiltered one.
 
 Inputs:
-- All `~/.claude/projects/-Users-gb-github-*/*.jsonl` session files (the four project dirs enumerated in `01-corpus/INDEX.md`: harmonik, kerf, machine-setup, secure-dev; 195 sessions total).
-- `02-analysis/unified-protocol-catalog.md` (87 candidate protocols in 8 groups).
+- All `~/.claude/projects/-Users-gb-github-*/*.jsonl` session files (the four project dirs enumerated in `phases/phase-1/corpus/INDEX.md`: harmonik, kerf, machine-setup, secure-dev; 195 sessions total).
+- `phases/phase-2/analysis/unified-protocol-catalog.md` (87 candidate protocols in 8 groups).
 - `evaluation-framework.md` §3 (pair-graph criteria), §4 (harness spec), §4.3 (seven natural experiments).
 
 Outputs (all under `research/planning-protocols/03-filter/`, new directory — does not overwrite any existing artifact):
@@ -34,7 +34,7 @@ The harness is a pipeline of small classifiers over extracted turn text. Each cl
 
 ### 2.1 Session-type classifier (T — already specified)
 
-Reuses `references/session-type-discriminator.md` verbatim. Output: one of {`autonomous-dispatch`, `controller-orchestration`, `session-recovery-handoff`, `planning-dialog`, `context-dump`, `scratch`}. Implementation already sketched in that reference. Sessions tagged `scratch` or `controller-orchestration` are still ingested but most pair-graph metrics are omitted as non-meaningful (e.g., M1 framing corrections in a controller session).
+Reuses `phases/phase-1/session-type-discriminator.md` verbatim. Output: one of {`autonomous-dispatch`, `controller-orchestration`, `session-recovery-handoff`, `planning-dialog`, `context-dump`, `scratch`}. Implementation already sketched in that reference. Sessions tagged `scratch` or `controller-orchestration` are still ingested but most pair-graph metrics are omitted as non-meaningful (e.g., M1 framing corrections in a controller session).
 
 ### 2.2 Opener-shape detector (M)
 
@@ -123,7 +123,7 @@ This is the single most load-bearing classifier — it's the basis of NE-6, the 
 
 ### 2.9 Writing-load category tagger (a–h) (H)
 
-Categories from `02-analysis/writing-load.md` (a) framing, (b) correction, (c) clarification, (d) approval, (e) scope-expansion, (f) decision-response, (g) administrative, (h) other. Rule sketch:
+Categories from `phases/phase-1/analysis/writing-load.md` (a) framing, (b) correction, (c) clarification, (d) approval, (e) scope-expansion, (f) decision-response, (g) administrative, (h) other. Rule sketch:
 
 ```
 if turn_index == 1 and len > 300: (a)
@@ -340,7 +340,7 @@ The tagger walks each catalog entry, runs its identifying predicate against all 
 - Tier-1 tokens must be turn-start (char 0–20); turn-mid matches ignored.
 - Benign-phrase blocklist ("no problem", "no worries", "wait a sec", "hmm yes").
 - Require correction incident to reference a substantive prior agent claim (agent turn ≥ 300 chars or contains a concrete technical noun).
-- Validation: hand-label correction incidents in the 10 primary-corpus sessions (already extracted in `01-corpus/`). Correction-set ground truth exists in `02-analysis/misaligned-assumption.md` §Incident Table. Compare detector output; require precision ≥ 0.85 on the hand-labeled set before running corpus-wide.
+- Validation: hand-label correction incidents in the 10 primary-corpus sessions (already extracted in `phases/phase-1/corpus/`). Correction-set ground truth exists in `phases/phase-1/analysis/misaligned-assumption.md` §Incident Table. Compare detector output; require precision ≥ 0.85 on the hand-labeled set before running corpus-wide.
 
 **Session-boundary ambiguity.** Claude Code sometimes splits what is logically one planning session into two JSONL files (fresh session after compaction). Guard: if two sessions on the same project have `last_ts` and `first_ts` within 2 minutes AND the second opens with `# Session Recovery Context` OR a near-duplicate of the first's tail, tag as `continuation`. Report continuation pairs in a separate list; do not count both independently when computing per-session metrics.
 
@@ -352,7 +352,7 @@ The tagger walks each catalog entry, runs its identifying predicate against all 
 
 **Multi-message structured directives inflate ht** (caveat 1). In b7eca5d2 the controller directive split across 5+ consecutive user events gave ht=59. Guard: collapse adjacent human events with no intervening assistant event into a single logical turn. This is a classifier-input preprocessing step, not a new classifier.
 
-**Project-name assumption.** The prompt says `~/.claude/projects/-Users-gb-github-*/`. The actual project directories per `01-corpus/INDEX.md` are harmonik, kerf, machine-setup, secure-dev (plus the filtered 8 ntm-worktree dirs under secure-dev, and a `Developer-secure-dev` variant mentioned once in the discriminator provenance). Enumerate explicitly; do not glob blindly, to avoid pulling in unrelated projects the user has added since.
+**Project-name assumption.** The prompt says `~/.claude/projects/-Users-gb-github-*/`. The actual project directories per `phases/phase-1/corpus/INDEX.md` are harmonik, kerf, machine-setup, secure-dev (plus the filtered 8 ntm-worktree dirs under secure-dev, and a `Developer-secure-dev` variant mentioned once in the discriminator provenance). Enumerate explicitly; do not glob blindly, to avoid pulling in unrelated projects the user has added since.
 
 ---
 
@@ -410,7 +410,7 @@ Recommendation: build the trimmed version first (NE-6 is the primary target and 
 
 Three discrete authorizations:
 1. **Scope.** Trimmed harness (NE-6 + NE-2 + NE-7, ~12 h) or full harness (all NEs except NE-3, ~32 h)?
-2. **Location.** Confirm `research/planning-protocols/03-filter/` as the output directory. (Append-only; does not touch `01-corpus/`, `02-analysis/`, or `evaluation-framework.md`.)
+2. **Location.** Confirm `research/planning-protocols/03-filter/` as the output directory. (Append-only; does not touch `phases/phase-1/corpus/`, `phases/phase-2/analysis/`, or `evaluation-framework.md`.)
 3. **Validation bar.** The correction-incident detector must hit precision ≥ 0.85 on the hand-labeled 10-session primary corpus before being run across all 195. If it doesn't, does the user want the harness to proceed anyway with the detector disabled (C1/M1 left uncomputed) or to pause for lexicon iteration?
 
 The plan does not run Step 4.5. Phase-2-findings.md §9 open question #1 remains the gating user decision.
@@ -420,7 +420,7 @@ The plan does not run Step 4.5. Phase-2-findings.md §9 open question #1 remains
 ### Critical Files for Implementation
 
 - `research/planning-protocols/scripts/extract_dialog.py`
-- `research/planning-protocols/references/session-type-discriminator.md`
+- `research/planning-protocols/phases/phase-1/session-type-discriminator.md`
 - `research/planning-protocols/evaluation-framework.md`
-- `research/planning-protocols/02-analysis/unified-protocol-catalog.md`
-- `research/planning-protocols/02-analysis/evaluation-criteria-refinement.sub-empirical-design.md`
+- `research/planning-protocols/phases/phase-2/analysis/unified-protocol-catalog.md`
+- `research/planning-protocols/phases/phase-2/analysis/evaluation-criteria-refinement.sub-empirical-design.md`

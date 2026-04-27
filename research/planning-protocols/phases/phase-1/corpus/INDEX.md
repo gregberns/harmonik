@@ -11,11 +11,11 @@ Last updated: 2026-04-23
 - [machine-setup](machine-setup/_catalog.md) — 4 sessions cataloged (exhaustive)
 - [secure-dev](secure-dev/_catalog.md) — 133 sessions cataloged (sampled, 8 ntm-worktree dirs excluded)
 
-Note: sub-agent emblematic flags in these catalogs were re-evaluated against the `n_human_text_turns` signal; several initial flags were false positives (controller sessions, single-directive dispatches). See `../references/session-type-discriminator.md` for the refined classifier.
+Note: sub-agent emblematic flags in these catalogs were re-evaluated against the `n_human_text_turns` signal; several initial flags were false positives (controller sessions, single-directive dispatches). See `../session-type-discriminator.md` for the refined classifier.
 
 ## Dialog extracts (sub-phase 1C)
 
-Produced by `../scripts/extract_dialog.py` applying the human-text-turn filter.
+Produced by `../../../scripts/extract_dialog.py` applying the human-text-turn filter.
 
 ### Primary planning-dialog corpus
 
@@ -43,6 +43,6 @@ Average: 4.5% (range 0.7%–14%). Most of raw JSONL is tool_result content; dial
 
 ## References produced in this phase
 
-- [`../references/session-type-discriminator.md`](../references/session-type-discriminator.md) — The classifier filter and `n_human_text_turns` signal.
-- [`../references/tried-protocols.md`](../references/tried-protocols.md) — Taxonomy of 5 interaction variants discovered in the user's actual practice.
-- [`../references/perplexity-initial-research.md`](../references/perplexity-initial-research.md) — Starting-point brainstorm (pre-research).
+- [`../session-type-discriminator.md`](../session-type-discriminator.md) — The classifier filter and `n_human_text_turns` signal.
+- [`../tried-protocols.md`](../tried-protocols.md) — Taxonomy of 5 interaction variants discovered in the user's actual practice.
+- [`../../../references/perplexity-initial-research.md`](../../../references/perplexity-initial-research.md) — Starting-point brainstorm (pre-research).

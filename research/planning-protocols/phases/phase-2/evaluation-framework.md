@@ -6,7 +6,7 @@
 >
 > Written as a specification. Not all procedures in §6–§9 will be executed during Phase 2; they are committed so that later work can pick up without re-deriving them.
 >
-> Last updated: 2026-04-23. Derived from [02-analysis/evaluation-criteria-refinement.md](02-analysis/evaluation-criteria-refinement.md) and its three sub-analyses.
+> Last updated: 2026-04-23. Derived from [phases/phase-2/analysis/evaluation-criteria-refinement.md](phases/phase-2/analysis/evaluation-criteria-refinement.md) and its three sub-analyses.
 
 ## 1. Purpose and scope
 
@@ -148,7 +148,7 @@ Anything the harness cannot measure is noted as a qualitative overlay, not force
 
 ## 5. Multi-framing scoring requirement
 
-Every top-ranked protocol in Step 6 must be independently scored on at least one rival framing (from [rival-framings sub-analysis](02-analysis/evaluation-criteria-refinement.sub-rival-framings.md)):
+Every top-ranked protocol in Step 6 must be independently scored on at least one rival framing (from [rival-framings sub-analysis](phases/phase-2/analysis/evaluation-criteria-refinement.sub-rival-framings.md)):
 
 - **Framing A — Commitment-Deferral.** Time-to-first-irreversible-commitment, branch-width at mid-plan, cost-of-reversal, drift-surfacing latency, exploratory yield.
 - **Framing B — Mental-Model Coupling.** Prediction-accuracy across the gap, novel-case transfer, vocabulary convergence, explanatory reciprocity, decay robustness.

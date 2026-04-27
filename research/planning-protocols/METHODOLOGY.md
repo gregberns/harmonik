@@ -59,9 +59,9 @@ The goal of Phase 1 is a **research statement** that a fresh session can use as 
 
 **Phase 1 sub-phases:**
 
-- **1A -- Corpus discovery.** Catalog the sessions in `~/.claude/projects/{kerf, harmonik, machine-setup, secure-dev}` and related dirs. For each session: metadata, size, classification (planning / mixed / implementation / other), 1-3 sentence summary, "emblematic" flag if it looks especially rich. Output: `01-corpus/<project>/_catalog.md` per project, plus `01-corpus/INDEX.md` aggregating.
-- **1B -- Session-type discriminator.** Investigate whether tool-call signatures mechanically distinguish planning from implementation sessions. If so, document the heuristic. Output: `references/session-type-discriminator.md`. (This is user-flagged "excellent research for another day" -- document findings even if small.)
-- **1C -- Corpus extraction.** For each session flagged as planning-relevant, produce a clean dialog-only extract (human and agent text, no tool calls, no system events). Output: `01-corpus/<project>/<session-id>.md`.
+- **1A -- Corpus discovery.** Catalog the sessions in `~/.claude/projects/{kerf, harmonik, machine-setup, secure-dev}` and related dirs. For each session: metadata, size, classification (planning / mixed / implementation / other), 1-3 sentence summary, "emblematic" flag if it looks especially rich. Output: `phases/phase-1/corpus/<project>/_catalog.md` per project, plus `phases/phase-1/corpus/INDEX.md` aggregating.
+- **1B -- Session-type discriminator.** Investigate whether tool-call signatures mechanically distinguish planning from implementation sessions. If so, document the heuristic. Output: `phases/phase-1/session-type-discriminator.md`. (This is user-flagged "excellent research for another day" -- document findings even if small.)
+- **1C -- Corpus extraction.** For each session flagged as planning-relevant, produce a clean dialog-only extract (human and agent text, no tool calls, no system events). Output: `phases/phase-1/corpus/<project>/<session-id>.md`.
 - **1D -- Multi-lens analysis.** Apply several analytical lenses to the extracted corpus in parallel. Each lens is its own sub-agent. Candidate lenses (expand as warranted):
   - **Decision-delegation.** When did the agent ask vs decide? What should have gone the other way?
   - **Misaligned-assumption.** Where did agent drift show up? How many turns before the human caught it?
@@ -69,12 +69,32 @@ The goal of Phase 1 is a **research statement** that a fresh session can use as 
   - **Form-vs-content.** Does the shape of discussion (turn length, question style, batching) predict alignment speed independently of topic?
   - **Writing-load.** Where did human writing pile up? Could a better-structured agent question have compressed it?
   - **Context-switch.** How long are the runs of "agent working without human input"? Can they be longer?
-  Output: `02-analysis/<lens>.md` per lens.
-- **1E -- Synthesis.** Cross-cut the lens findings to identify candidate planning protocols. Draft the research statement. Output: `research-statement.md` in this directory.
+  Output: `phases/phase-1/analysis/<lens>.md` per lens.
+- **1E -- Synthesis.** Cross-cut the lens findings to identify candidate planning protocols. Draft the research statement. Output: `phases/phase-1/research-statement.md`.
 
-### Phase 2 -- Deep research (future, new session)
+### Phase 2 -- Deep research (CLOSED 2026-04-23)
 
-Not started. Will use the Phase 1 research statement as its only required input (plus re-reading this methodology for context).
+Used the Phase 1 research statement as its only required input. Executed in seven steps; produced three top-level deliverables and a step-output catalog.
+
+**Phase 2 steps:**
+
+- **Step 1 -- Criteria interrogation.** Three parallel sub-agents (rival framings; operationalization audit; empirical-evaluation design). Synthesis at `phases/phase-2/analysis/evaluation-criteria-refinement.md`. Spinoff: `phases/phase-2/evaluation-framework.md` elevated to first-class deliverable.
+- **Step 2 -- External-source pass.** 10 parallel sub-agents, one per domain. Outputs at `phases/phase-2/analysis/external-sources/<domain>.md`. ~70 candidate protocols extracted.
+- **Step 3 -- Counter-pattern generation.** Single sub-agent steel-mans 8 counter-hypotheses from research-statement §6 into protocol instances. Output: `phases/phase-2/analysis/counter-pattern-candidates.md`.
+- **Step 4 -- Unified catalog.** Single sub-agent consolidates observed + unexplored + external + counter-pattern into 87 protocols on shared 8-field schema. Output: `phases/phase-2/analysis/unified-protocol-catalog.md`.
+- **Step 4.5 -- Corpus-signal filter.** DEFERRED pending user authorization. Plan + reviews on disk in `plans/`.
+- **Step 5 -- Reviewer-challenged evaluation.** Six parallel reviewer sub-agents (ergonomics, cognitive-load, fatigue-robustness, adaptability, challenge-observed, multi-framing). Outputs at `phases/phase-2/analysis/reviewer-<frame>.md`.
+- **Step 6 -- Ranked recommendations.** Main-thread synthesis at `phases/phase-2/findings.md`.
+- **Step 7 -- Kerf integration draft.** DRAFT only at `phases/phase-2/kerf-integration-draft.md`. Not finalized; user review pending.
+
+### Phase N pattern (for any new phase)
+
+When opening a new phase, create `phases/phase-N/` with at minimum:
+- One or more deliverable file(s) at the phase root (e.g., `phases/phase-N/findings.md`).
+- An `analysis/` subdirectory for sub-agent step outputs, intermediate artifacts, and reviewer outputs.
+- Any phase-specific reference material that isn't a step output (taxonomies, classifiers) at the phase root, not in `analysis/`.
+
+Cross-phase work products (corpus, scripts, references, plans, prompts) stay in their cross-phase subdirectories at the track root, not duplicated per phase.
 
 ## Session-safety rules
 
@@ -100,31 +120,41 @@ This track will span many sessions. Each session must preserve prior state.
 
 ```
 planning-protocols/
+  -- Entry / governance (root) --
   CLAUDE.md                            -- entry point for agents
   METHODOLOGY.md                       -- this file
   STATUS.md                            -- live state and session history
   INDEX.md                             -- navigation map (reading paths, document map)
 
-  -- Top-level deliverables (stay at root) --
-  research-statement.md                -- Phase 1 final output (produced in 1E)
-  phase-2-findings.md                  -- Phase 2 main deliverable (Step 6)
-  evaluation-framework.md              -- Phase 2 durable instrument (Step 1 spinoff)
-  phase-2-kerf-integration-draft.md    -- Phase 2 deliverable (Step 7), DRAFT
-  protocol-trial-roadmap.md            -- active forward-work roadmap
+  -- Active forward-work (root) --
+  protocol-trial-roadmap.md            -- current roadmap; calibration items; layered-in additions
 
-  -- Subdirectories --
-  01-corpus/                           -- extracted planning sessions
-    INDEX.md                           -- aggregated catalog across projects (written last)
-    <project>/
-      _catalog.md                      -- per-project session catalog (1A)
-      <session-id>.md                  -- cleaned dialog-only extract (1C)
-  02-analysis/                         -- lens findings (1D) + all Phase 2 step outputs
-    <lens>.md                          -- Phase 1D
-    counter-pattern-candidates.md      -- Phase 2 Step 3
-    unified-protocol-catalog.md        -- Phase 2 Step 4
-    reviewer-<frame>.md                -- Phase 2 Step 5
-    evaluation-criteria-refinement*.md -- Phase 2 Step 1
-    external-sources/<domain>.md       -- Phase 2 Step 2
+  -- Per-phase content --
+  phases/
+    phase-1/
+      research-statement.md            -- Phase 1 final output (produced in 1E)
+      session-type-discriminator.md    -- 1B output
+      tried-protocols.md               -- 1A output (interaction-variant taxonomy)
+      corpus/                          -- extracted planning sessions
+        INDEX.md                       -- aggregated catalog across projects (written last)
+        <project>/
+          _catalog.md                  -- per-project session catalog (1A)
+          <session-id>.md              -- cleaned dialog-only extract (1C)
+      analysis/                        -- Phase 1D lens reports
+        <lens>.md
+    phase-2/
+      findings.md                      -- Phase 2 main deliverable (Step 6)
+      evaluation-framework.md          -- Phase 2 durable instrument (Step 1 spinoff)
+      kerf-integration-draft.md        -- Phase 2 deliverable (Step 7), DRAFT
+      analysis/                        -- Phase 2 step outputs
+        evaluation-criteria-refinement.md             -- Step 1
+        evaluation-criteria-refinement.sub-*.md       -- Step 1 sub-analyses
+        external-sources/<domain>.md                  -- Step 2
+        counter-pattern-candidates.md                 -- Step 3
+        unified-protocol-catalog.md                   -- Step 4
+        reviewer-<frame>.md                           -- Step 5
+
+  -- Cross-phase subdirectories (root) --
   references/                          -- imported/linked source material
   scripts/                             -- tooling (e.g., extract_dialog.py)
   plans/                               -- forward-work plans + their reviews
@@ -136,13 +166,16 @@ planning-protocols/
 
 When producing a new artifact, route it by *purpose*:
 
-- **Self-contained top-level deliverable** → root. Anything a returning agent should discover on day one.
-- **One step-internal output among many** → `02-analysis/`. Use a descriptive name; reviewer outputs already follow `reviewer-<frame>.md`.
-- **Forward-work plan or its review** (parked, awaiting authorization) → `plans/`. If the plan executes, its output graduates to the matching purpose location.
-- **Paste-in prompt for a fresh session** → `prompts/`. Do not put `HANDOFF.md` (the `/session-handoff` skill output) here — that filename is reserved for the skill convention.
+- **Per-phase deliverable** (a phase's canonical synthesis output) → `phases/phase-N/<name>.md`.
+- **Step-internal analysis output** (a sub-agent's findings, one of many in a phase's process) → `phases/phase-N/analysis/`.
+- **Phase input that isn't itself analysis** (e.g., classifier definitions, taxonomies discovered during a sub-step) → `phases/phase-N/` directly.
+- **Cross-phase deliverable** (truly spans phases — rare; the active forward-work roadmap is one example) → root.
+- **Forward-work plan or its review** (parked, awaiting authorization) → `plans/`. If the plan executes, its output graduates to the relevant per-phase location.
+- **Paste-in prompt for a fresh session** → `prompts/`. The filename `HANDOFF.md` is reserved for the `/session-handoff` skill convention.
 - **External source material being brought in** → `references/`.
+- **Tooling reusable across phases** → `scripts/`.
 
-Root must stay lean: governance + navigation + canonical deliverables only. If the root is collecting step outputs, plans, prompts, or other narrowly-purposed artifacts, they belong in a subdirectory.
+Root must stay lean: governance + navigation + active forward-work only. If a returning agent shouldn't see a file on day one, it belongs in a subdirectory.
 
 ## What NOT to do
 

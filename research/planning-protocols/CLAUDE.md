@@ -22,35 +22,40 @@ Researching **planning protocols**: reusable shapes of human-agent interaction d
 
 ## What this track contains
 
-**Entry / governance** (read these first):
+**Entry / governance** (root-level — read these first):
 - `CLAUDE.md` -- this file
 - `METHODOLOGY.md` -- research question, phased approach, rules, folder conventions
 - `STATUS.md` -- live state, session history
 - `INDEX.md` -- navigation map (reading paths by audience, full document map)
 
-**Top-level deliverables** (the canonical research outputs — stay at root):
-- `research-statement.md` -- Phase 1 final output, Phase 2 briefing
-- `phase-2-findings.md` -- Phase 2 main deliverable
-- `evaluation-framework.md` -- Phase 2 durable instrument
-- `phase-2-kerf-integration-draft.md` -- Phase 2 deliverable, DRAFT
-- `protocol-trial-roadmap.md` -- active forward-work roadmap
+**Active forward-work** (root-level):
+- `protocol-trial-roadmap.md` -- current roadmap; calibration items to watch; layered-in additions parked behind trial signal
 
-**Subdirectories** (purpose-bounded):
-- `01-corpus/` -- extracted planning session dialogs (input data)
-- `02-analysis/` -- analysis outputs (Phase 1D lenses + all Phase 2 step outputs)
-- `references/` -- external/imported source material
-- `scripts/` -- tooling (extraction, etc.)
-- `plans/` -- forward-work plans + their reviews (parked work; e.g., `step-4.5-plan.md` and reviews)
-- `prompts/` -- paste-in session-starter prompts (e.g., `phase-2-kickoff-prompt.md`, `deep-dive-prompt.md`)
+**Per-phase content** (`phases/phase-N/`):
+- `phases/phase-1/` -- Phase 1 deliverable + Phase 1 work products (corpus, lens analyses, sub-step outputs)
+  - `research-statement.md`, `session-type-discriminator.md`, `tried-protocols.md`
+  - `corpus/` -- extracted planning session dialogs (input data, 1A + 1C)
+  - `analysis/` -- Phase 1D lens reports
+- `phases/phase-2/` -- Phase 2 deliverables + Phase 2 step outputs
+  - `findings.md`, `evaluation-framework.md`, `kerf-integration-draft.md`
+  - `analysis/` -- Step 1-5 sub-agent outputs (criteria refinement, external sources, counter-patterns, unified catalog, reviewers)
+
+**Cross-phase subdirectories**:
+- `references/` -- external/imported source material (e.g., starting-point brainstorms)
+- `scripts/` -- tooling reusable across phases (e.g., `extract_dialog.py`)
+- `plans/` -- forward-work plans + their reviews (parked work; e.g., `step-4.5-plan.md`)
+- `prompts/` -- paste-in session-starter prompts (NOT a place for `/session-handoff` skill output)
 
 ## Where new artifacts go
 
 When producing a new artifact, place it by *purpose*, not chronology:
 
-- **New top-level deliverable** (a self-contained document anyone exploring the project should see) → root.
-- **Step-internal analysis output** (a sub-agent's findings, one of many in a phase) → `02-analysis/`.
-- **Forward-work plan or its review** → `plans/`. If the plan becomes active and produces output, that output graduates to the appropriate purpose location.
-- **Paste-in prompt for a fresh session** → `prompts/`. Do not put `HANDOFF.md` here — that name is reserved for the `/session-handoff` skill convention.
+- **Per-phase deliverable** (a phase's canonical synthesis output) → `phases/phase-N/<name>.md`.
+- **Step-internal analysis output** (a sub-agent's findings, one of many in a phase's process) → `phases/phase-N/analysis/`.
+- **Phase input that isn't itself analysis** (e.g., classifier definitions, taxonomies discovered during a sub-step) → `phases/phase-N/` directly.
+- **Cross-phase deliverable** (truly spans phases — rare; the active forward-work roadmap is one example) → root.
+- **Forward-work plan or its review** → `plans/`. If the plan executes, its output graduates to the relevant per-phase location.
+- **Paste-in prompt for a fresh session** → `prompts/`. The filename `HANDOFF.md` is reserved for the `/session-handoff` skill convention.
 - **External source material being imported** → `references/`.
 
-If unsure between root and `02-analysis/`, ask: "would a returning agent need to find this on day one, or only when investigating a specific step?" Day-one → root; step-specific → `02-analysis/`.
+Root must stay lean: governance + navigation + active forward-work only. New phases get their own `phases/phase-N/` directory; cross-phase work products go in the cross-phase subdirectories above.

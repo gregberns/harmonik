@@ -244,3 +244,39 @@ Variants 2-5 are out of core scope but will be captured in `phases/phase-1/tried
 - Standard read-in via `CLAUDE.md` → `STATUS.md` → `INDEX.md`. Both files now describe the per-phase structure; new agents should not need to rediscover it.
 - For the active skill trial: `/session-resume research/planning-protocols/HANDOFF.md` if a handoff exists; otherwise produce one at session end.
 - For Phase 3 work (whenever it begins): `mkdir phases/phase-3/`, follow the convention captured in `METHODOLOGY.md` "Phase N pattern."
+
+### 2026-04-28 -- Trial finding 1 + v2 skill iteration (overnight)
+
+**What happened:**
+
+- User-flagged failure mode in two real sessions (basata `426257cc` under `/session-resume`; harmonik `a121e7f1` independent, no `/session-resume`). Diagnostic conversation surfaced 8 named failure causes in the v1 skills. Documented in `trial-findings/2026-04-27-skills-too-verbose-and-procedural.md` (first named trial finding).
+- User authorized acting on the n=2 signal rather than waiting for n=3-5 (methodology default). Reasoning: signal strength clear; cost of continuing v1 use was actively damaging the alignment the skills were meant to improve.
+- Autonomous overnight iteration: research → draft → review → revise pipeline.
+- **Round 1 (3 parallel research agents):** I-PASS deep-dive + translation; external-form comparison across medical/military/incident-command sources; anti-anchored fresh draft from user's two-sentence brief alone.
+- **Round 2 (synthesis):** v2 draft 1 — 24 + 18 lines (vs v1's 104 + 102).
+- **Round 3 (4 parallel reviews):** skeptic-of-fix (with trial-finding context), adversarial completeness (no context), self-application test (produced an actual 17-line handoff from a fake mini-session — strongest evidence of v2 working), plain-language read.
+- **Round 4 (revision):** v2 draft 2 — 17 + 15 lines. Highest-leverage edit: collapsed bulleted slots into prose (R1's argument: a smaller schema is still a schema). Other edits: branch + date on first line (R2 freshness/wrong-tree concern); dropped explicit root-file list in resume (R2 nested-doc concern); wording polish (R4).
+- Created two new cross-phase subdirectories: `trial-findings/` (one finding so far) and `skill-iterations/` (one iteration so far). Conventions captured at `skill-iterations/CONVENTIONS.md` so future iterations follow the same shape.
+
+**Decisions made (autonomous):**
+
+- `trial-findings/` and `skill-iterations/` placed at track root as cross-phase subdirectories, consistent with `references/`, `scripts/`, `plans/`, `prompts/`. METHODOLOGY.md, CLAUDE.md, INDEX.md updated.
+- v2 trial flag: `<!-- PP-TRIAL:v2 YYYY-MM-DD <branch-name> -->`.
+- v2 keeps the I-PASS one-word severity tag idea as `green / blocked / broken`.
+- v2 has no Decisions Made / Decisions Parked / Open Questions / Out of Scope / Load-Bearing Tokens sections.
+- The pre-review v2 cut and post-review v2 cut both kept on disk for traceability; revisions doc attributes each change to the review that surfaced it.
+
+**Decisions made post-overnight (user signed off morning of 2026-04-28):**
+
+- v2 revised drafts approved. Deployed to `~/.claude/skills/session-{handoff,resume}/SKILL.md`. v1 snapshotted at `skill-iterations/v1-baseline/` for revert/comparison.
+
+**Decisions parked (for user):**
+
+1. **Phase 3 question.** Should the trial + iteration work be formalized as Phase 3 (creating `phases/phase-3/`), or kept as cross-phase active forward-work (current placement)? See HANDOFF.md.
+2. **Deeper pattern.** harmonik conversation showed the failure mode isn't unique to these skills — pilot-review and other structured protocols produce the same shape. Worth a separate trial finding or research thread; deferred.
+
+**What the next session should do:**
+
+1. Read `HANDOFF.md` (track-local, in `research/planning-protocols/`).
+2. If continuing planning-protocols work: pick up the two parked decisions above, or move to other forward-work in `protocol-trial-roadmap.md`.
+3. v2 skills are now live. The next real planning session that uses `/session-handoff` and `/session-resume` produces the n=3 trial signal; observe whether the v2 shape holds up or surfaces new failure modes.

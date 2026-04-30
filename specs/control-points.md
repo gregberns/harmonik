@@ -7,7 +7,7 @@ spec-id: control-points
 requirement-prefix: CP
 status: reviewed
 spec-shape: requirements-first
-version: 0.3.0
+version: 0.3.2
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-04-24
@@ -52,7 +52,7 @@ It is a separate spec from `execution-model.md` because control-points is the no
 - Policy document schema evolution (field-level migration paths) — deferred per OQ-CP-001.
 - Skill storage layout and injection mechanism — owned by [handler-contract.md §4.11]; this spec owns only the *declaration* surface.
 - Role names, MVH-required vs. deferred role list, and role semantics — owned by [architecture.md §4.8]; this spec owns permission schemas keyed by those role names.
-- Event payload shapes for control-point-emitted events — owned by [event-model.md §3.2]; this spec owns the emission WHEN.
+- Event payload shapes for control-point-emitted events — owned by [event-model.md §6.3]; this spec owns the emission WHEN.
 - The DOT workflow grammar itself — owned by [execution-model.md §4.1].
 
 ## 3. Glossary
@@ -134,7 +134,7 @@ Tags: mechanism
 
 #### CP-009 — Gate denial leaves the run in the source state
 
-On evaluator `deny`, the run MUST remain in the source state; the transition MUST NOT advance. A `gate_denied` event is emitted per [event-model.md §3.2] with payload `{run_id, gate_name, reason}`. Retry policy (if any) is governed by the node's policy per [execution-model.md §4.2], not by the Gate record.
+On evaluator `deny`, the run MUST remain in the source state; the transition MUST NOT advance. A `gate_denied` event is emitted per [event-model.md §8.2] with payload `{run_id, gate_name, reason}`. Retry policy (if any) is governed by the node's policy per [execution-model.md §4.2], not by the Gate record.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -163,7 +163,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### CP-013 — Hook lifecycle event types
 
-A Hook's `trigger` MUST match one of the declared lifecycle event types. The MVH-baseline Hook-trigger set MUST include: `on_agent_started`, `on_agent_output`, `on_agent_completed`, `on_timeout`, `on_review_required`, `on_transition_attempted`, `on_checkpoint_written`, `on_checkpoint_failed`. Hook-trigger names form a separate Hook-namespace that maps to [event-model.md §3.2] event types (e.g., `on_agent_started` subscribes to the `agent_started` event; `on_checkpoint_written` subscribes to the `checkpoint_written` event per [operator-nfr.md §4.5]); the `on_` prefix distinguishes Hook-subscription names from raw event-type names. Subsystems MAY declare additional Hook trigger types via the subsystem envelope per [architecture.md §4.4]; declared triggers are registered at daemon init. An unrecognized trigger fails registration.
+A Hook's `trigger` MUST match one of the declared lifecycle event types. The MVH-baseline Hook-trigger set MUST include: `on_agent_started`, `on_agent_output`, `on_agent_completed`, `on_timeout`, `on_review_required`, `on_transition_attempted`, `on_checkpoint_written`, `on_checkpoint_failed`. Hook-trigger names form a separate Hook-namespace that maps to [event-model.md §8] event types (e.g., `on_agent_started` subscribes to the `agent_started` event; `on_checkpoint_written` subscribes to the `checkpoint_written` event per [operator-nfr.md §4.5]); the `on_` prefix distinguishes Hook-subscription names from raw event-type names. Subsystems MAY declare additional Hook trigger types via the subsystem envelope per [architecture.md §4.4]; declared triggers are registered at daemon init. An unrecognized trigger fails registration.
 
 Tags: mechanism
 
@@ -181,7 +181,7 @@ Tags: mechanism
 
 #### CP-016 — Hook dispatch is owned by S05; delivery is at-least-once
 
-Hook dispatch (subscribing to the event bus, ordering, side-effect application, failure-isolation) MUST be performed by S05 (Hook System) consulting the §4.9 registry. This spec defines the Hook record and its outcome semantics; it does NOT define the dispatch loop — that belongs to the S05 subsystem spec and [event-model.md §4.3] (consumer taxonomy) and [event-model.md §3.2] (event shapes).
+Hook dispatch (subscribing to the event bus, ordering, side-effect application, failure-isolation) MUST be performed by S05 (Hook System) consulting the §4.9 registry. This spec defines the Hook record and its outcome semantics; it does NOT define the dispatch loop — that belongs to the S05 subsystem spec and [event-model.md §4.3] (consumer taxonomy) and [event-model.md §6.3] (event shapes).
 
 S05 MUST deliver each Hook's side-effect **at least once**. Duplicate delivery is acceptable for side-effects declared as `idempotency_class = idempotent` on the Hook's `SideEffect` record (§6.1.6); for `idempotency_class = non-idempotent`, S05 MUST bound delivery to at-most-once using a persisted delivery-receipt mechanism owned by the S05 subsystem spec. This spec names the at-least-once floor and the `idempotency_class` declaration; S05 owns the receipt mechanism.
 
@@ -230,34 +230,34 @@ Tags: mechanism
 
 #### CP-023 — Budget is enforced at dispatch
 
-The agent runner MUST check the Budget's remaining allowance AT DISPATCH (pre-exhaustion). If the pending dispatch would exceed the remaining limit, the runner MUST emit a `budget_exhausted` event per [event-model.md §3.2] and DENY the dispatch (the handler is NOT launched). The run's failure class MUST be `budget_exhausted` per [execution-model.md §8.5].
+The agent runner MUST check the Budget's remaining allowance AT DISPATCH (pre-exhaustion). If the pending dispatch would exceed the remaining limit, the runner MUST emit a `budget_exhausted` event per [event-model.md §8.4] and DENY the dispatch (the handler is NOT launched). The run's failure class MUST be `budget_exhausted` per [execution-model.md §8.5].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### CP-024 — Budget accrual is per-chunk
 
-Every agent-output chunk MUST emit a `budget_accrual` event within the same handler tick that produces the chunk (bounded by the handler's chunk-emission cadence per [handler-contract.md §4.2]). Per-chunk granularity is explicitly retained for MVH per [event-model.md §3.2]; a future log-level filter MAY suppress chunk events at consumer boundaries without changing the emission contract.
+Every agent-output chunk MUST emit a `budget_accrual` event within the same handler tick that produces the chunk (bounded by the handler's chunk-emission cadence per [handler-contract.md §4.2]). Per-chunk granularity is explicitly retained for MVH per [event-model.md §8.9]; a future log-level filter MAY suppress chunk events at consumer boundaries without changing the emission contract.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 #### CP-025 — Budget warning threshold fires at 80% by default
 
-When cumulative accrual crosses the `warning_threshold` fraction of `limit`, the runner MUST emit a `budget_warning` event per [event-model.md §3.2] and continue. The threshold check uses live in-handler counters (the handler tracks accrual against remaining budget in real time per its own tick cadence). The threshold value is governed by §4.5.CP-022 (default 0.8, operator-overridable per §4.7).
+When cumulative accrual crosses the `warning_threshold` fraction of `limit`, the runner MUST emit a `budget_warning` event per [event-model.md §8.4] and continue. The threshold check uses live in-handler counters (the handler tracks accrual against remaining budget in real time per its own tick cadence). The threshold value is governed by §4.5.CP-022 (default 0.8, operator-overridable per §4.7).
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### CP-026 — Budget counter state is internal; observable only via events
 
-The Budget counter state MUST be internal to the handler. It MUST NOT be written to any durable store other than through the typed `budget_accrual`, `budget_warning`, and `budget_exhausted` events. Cross-subsystem reads of the counter MUST go through the event bus per [event-model.md §3.2]; there is no `GetBudgetCounter()` surface.
+The Budget counter state MUST be internal to the handler. It MUST NOT be written to any durable store other than through the typed `budget_accrual`, `budget_warning`, and `budget_exhausted` events. Cross-subsystem reads of the counter MUST go through the event bus per [event-model.md §4.3]; there is no `GetBudgetCounter()` surface.
 
 Tags: mechanism
 
 #### CP-026a — Budget counters are rehydrated from JSONL `budget_accrual` event replay on daemon restart
 
-On daemon restart with one or more in-flight runs, Budget counters MUST be rehydrated by replaying `budget_accrual` events from the JSONL event log per [event-model.md §3.2] durability contract. Replay begins at the `run_started` event for each in-flight run and consumes every subsequent `budget_accrual` event for that run, summing per-Budget deltas to reconstruct the pre-crash counter state. JSONL event replay is the sole authoritative rehydration source; no other durable store (git checkpoint, snapshot file, operator-supplied counter) is a legal rehydration source. This follows from CP-026 (the event stream is the only durable store the counter reads from).
+On daemon restart with one or more in-flight runs, Budget counters MUST be rehydrated by replaying `budget_accrual` events from the JSONL event log per [event-model.md §4.4] durability contract. Replay begins at the `run_started` event for each in-flight run and consumes every subsequent `budget_accrual` event for that run, summing per-Budget deltas to reconstruct the pre-crash counter state. JSONL event replay is the sole authoritative rehydration source; no other durable store (git checkpoint, snapshot file, operator-supplied counter) is a legal rehydration source. This follows from CP-026 (the event stream is the only durable store the counter reads from).
 
 Implementations MUST NOT start an in-flight run's handler with a zero counter when prior `budget_accrual` events exist in the JSONL log for that run; doing so would double-spend the already-accrued allowance. Rehydration is complete before the handler accepts any dispatch per §4.5.CP-023.
 
@@ -325,7 +325,7 @@ Policy-expression evaluation MUST be performed with a harmonik-level cost ceilin
 1. **Primary bound — AST step count (deterministic).** A per-evaluation AST-visit count ceiling. This is the normative bound; it is deterministic across runtime versions and host-clock speed. Where `expr-lang/expr` does not ship a step-counter, implementations MUST wrap the evaluator to count AST visits and abort on ceiling cross. `expr.MaxNodes(...)` (a compile-time ceiling on the AST's SIZE) is a complementary static bound but does NOT substitute for the step counter.
 2. **Secondary bound — wall-clock soft-cap (best-effort).** `expr.Timeout(...)` MUST also be set as a safety net for evaluators that bypass or under-count the primary bound. Wall-clock is non-deterministic across runtime / host-clock speed; it is a backstop, not a peer.
 
-A pathological expression that would otherwise stall evaluation MUST abort with a typed `ErrDeterministic` per [handler-contract.md §4.5]. The abort and the accompanying event emission are a durability pair: the `policy_expression_exceeded_cost` event MUST be emitted to the event bus and reach JSONL durability per [event-model.md §3.2] BEFORE the evaluator wrapper returns control to its caller. On a crash between abort and event durability, the replayer MUST treat absence of the event as unresolved — the replay must re-run the evaluator, rely on the cost ceiling to re-abort, and emit the event on the replay.
+A pathological expression that would otherwise stall evaluation MUST abort with a typed `ErrDeterministic` per [handler-contract.md §4.5]. The abort and the accompanying event emission are a durability pair: the `policy_expression_exceeded_cost` event MUST be emitted to the event bus and reach JSONL durability per [event-model.md §4.4] BEFORE the evaluator wrapper returns control to its caller. On a crash between abort and event durability, the replayer MUST treat absence of the event as unresolved — the replay must re-run the evaluator, rely on the cost ceiling to re-abort, and emit the event on the replay.
 
 The event payload MUST carry a `bound_fired` discriminator valued in `{ast_steps, wall_clock}` identifying which bound triggered the abort. Operators diagnosing cost-ceiling crossings depend on this discriminator; re-adding it post-MVH is a breaking event-payload change.
 
@@ -369,7 +369,7 @@ Axes: llm-freedom=bounded; io-determinism=best-effort; replay-safety=safe; idemp
 
 #### CP-040 — Cognition-tagged evaluator verdict is persisted
 
-Every cognition-tagged evaluator's verdict MUST be persisted to the run's durable trace at invocation time as a `GateVerdictRecord` (Gate) or `HookVerdictRecord` (Hook) per §6.1.6. For Gates, the record is written into the Transition record's `evidence` field per [execution-model.md §4.1] (keyed by `gate_name`) BEFORE the transition advances. For Hooks, the record is written to the path `.harmonik/hooks/<run_id>/<hook_invocation_id>.json` on the run's task branch per [workspace-model.md §4.2] and emitted as a `hook_verdict_persisted` event per [event-model.md §3.2].
+Every cognition-tagged evaluator's verdict MUST be persisted to the run's durable trace at invocation time as a `GateVerdictRecord` (Gate) or `HookVerdictRecord` (Hook) per §6.1.6. For Gates, the record is written into the Transition record's `evidence` field per [execution-model.md §4.1] (keyed by `gate_name`) BEFORE the transition advances. For Hooks, the record is written to the path `.harmonik/hooks/<run_id>/<hook_invocation_id>.json` on the run's task branch per [workspace-model.md §4.2] and emitted as a `hook_verdict_persisted` event per [event-model.md §8.2].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -391,7 +391,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CP-041 — Replay consumes the persisted verdict only when the envelope hash matches
 
-On replay or reconciliation-driven resume (per [reconciliation.md §4.5]), a cognition-tagged evaluator MUST NOT be re-invoked when a persisted verdict exists for the same `{control_point_name, run_id, transition_id | event_id}` key AND the `input_envelope_hash` recomputed from the current envelope matches the stored hash. On envelope-hash match, the replayer MUST read the persisted verdict from git and proceed. On envelope-hash MISMATCH, the replayer MUST NOT silently re-invoke the model; the replayer MUST emit a `verdict_envelope_mismatch` event and escalate to a Cat 6 reconciliation verdict path per [reconciliation.md §4.2], which is the only authority that can authorize re-invocation.
+On replay or reconciliation-driven resume (per [reconciliation/spec.md §4.5]), a cognition-tagged evaluator MUST NOT be re-invoked when a persisted verdict exists for the same `{control_point_name, run_id, transition_id | event_id}` key AND the `input_envelope_hash` recomputed from the current envelope matches the stored hash. On envelope-hash match, the replayer MUST read the persisted verdict from git and proceed. On envelope-hash MISMATCH, the replayer MUST NOT silently re-invoke the model; the replayer MUST emit a `verdict_envelope_mismatch` event and escalate to a Cat 6 reconciliation verdict path per [reconciliation/spec.md §4.2], which is the only authority that can authorize re-invocation.
 
 The §7.2 pseudocode is the **sole** invocation path for cognition-tagged evaluators across **all Kinds** (Gates per §4.2 and Hooks per §4.3). When replaying a Hook dispatch chain across a crash, the S05 dispatcher MUST consult the persisted HookVerdictRecord (§4.8.CP-040, persisted at `.harmonik/hooks/<run_id>/<hook_invocation_id>.json`) via §7.2 BEFORE re-dispatching the Hook to the evaluator. CP-012 is refined by this requirement: a cognition-tagged Hook's evaluator is invoked directly ONLY on the original launch; every subsequent invocation (replay, reconciliation resume, daemon restart) routes through §7.2 and returns the persisted verdict on hash match, or escalates to Cat 6 on mismatch.
 
@@ -440,7 +440,7 @@ Tags: mechanism
 
 #### CP-048 — Control-point effects are observable only via events
 
-Every ControlPoint effect (Gate allow/deny/escalate, Hook side-effect, Guard reorder/error, Budget admit/warn/deny) MUST emit a typed event per [event-model.md §3.2]: `gate_allowed`, `gate_denied`, `gate_escalated`, `hook_fired`, `hook_failed`, `guard_reordered`, `guard_failed`, `budget_accrual`, `budget_warning`, `budget_exhausted`. No ControlPoint outcome may cross a subsystem boundary by any path other than a typed event.
+Every ControlPoint effect (Gate allow/deny/escalate, Hook side-effect, Guard reorder/error, Budget admit/warn/deny) MUST emit a typed event per [event-model.md §8]: `gate_allowed`, `gate_denied`, `gate_escalated`, `hook_fired`, `hook_failed`, `guard_reordered`, `guard_failed`, `budget_accrual`, `budget_warning`, `budget_exhausted`. No ControlPoint outcome may cross a subsystem boundary by any path other than a typed event.
 
 Tags: mechanism
 
@@ -494,7 +494,7 @@ Tags: mechanism
 
 #### CP-INV-003 — Cognition-tagged evaluators never silently re-invoke the model during replay
 
-For every cognition-tagged evaluator invocation that has a persisted verdict on the run's task branch with a matching `input_envelope_hash` per §4.8.CP-040a, replay MUST consume the persisted verdict. On envelope-hash mismatch, replay MUST escalate to Cat 6 rather than re-invoke silently. Re-invocation during replay is permitted ONLY under an explicit Cat 6 reconciliation verdict per [reconciliation.md §4.2]. Any replay path that silently re-invokes a model — whether because the verdict is missing, the envelope has drifted, or the replayer ignored the hash check — violates this invariant.
+For every cognition-tagged evaluator invocation that has a persisted verdict on the run's task branch with a matching `input_envelope_hash` per §4.8.CP-040a, replay MUST consume the persisted verdict. On envelope-hash mismatch, replay MUST escalate to Cat 6 rather than re-invoke silently. Re-invocation during replay is permitted ONLY under an explicit Cat 6 reconciliation verdict per [reconciliation/spec.md §4.2]. Any replay path that silently re-invokes a model — whether because the verdict is missing, the envelope has drifted, or the replayer ignored the hash check — violates this invariant.
 
 Tags: mechanism
 
@@ -834,7 +834,7 @@ run.workflow_version         : String        -- pinned version of the DOT workfl
 run.paused                   : Bool          -- true when daemon is in operator pause per [operator-nfr.md §4.3]
 run.next_node                : NodeHandle    -- candidate target (available at Gate attach_point = node-pre-entry only)
 run.next_node.id             : String
-run.next_node.handler_type   : String        -- per [handler-contract.md §4.1]; e.g., "claude-code", "ntm"
+run.next_node.agent_type     : String        -- per [handler-contract.md §6.1]; e.g., "claude-code", "ntm"
 run.context                  : Map<String, Any>  -- alias of top-level context binding
 
 -- Outcome (see [execution-model.md §6.1])
@@ -842,7 +842,7 @@ outcome.status               : String        -- one of {SUCCESS, FAILURE, ESCALA
 outcome.failure_class        : String | None -- one of [execution-model.md §8] classes; None on SUCCESS
 outcome.artifact_refs        : List<String>  -- artifact identifiers produced by the outcome
 
--- Event (see [event-model.md §3.2])
+-- Event (see [event-model.md §6.3])
 event.type                   : String        -- canonical event name
 event.payload                : Map<String, Any>  -- event-typed payload; fields per event-model
 event.payload.run_id         : String | None
@@ -899,7 +899,7 @@ One expression grammar, four return conventions. Authors MUST honor the conventi
 
 ### 6.5 Co-owned event payloads
 
-This spec's requirements drive emission of the following events whose payload schemas are declared in [event-model.md §3.2]:
+This spec's requirements drive emission of the following events whose payload schemas are declared in [event-model.md §6.3]:
 
 - `gate_allowed` — emitted when a Gate evaluator returns `allow`.
 - `gate_denied` — emitted when a Gate evaluator returns `deny`; payload includes `run_id`, `gate_name`, `reason`.
@@ -918,7 +918,7 @@ This spec's requirements drive emission of the following events whose payload sc
 - `control_points_registered` — emitted once per daemon init after the §7.1 registration pass completes; carries the same `batch_id`. Absence of this event paired with a prior `control_points_registration_started` of the same `batch_id` in JSONL signals a crashed-mid-registration batch.
 - `policy_expression_exceeded_cost` — emitted when a policy-expression evaluation exceeds the harmonik-level cost ceiling per §4.7.CP-034b; payload carries a `bound_fired ∈ {ast_steps, wall_clock}` discriminator and a per-abort `io_determinism` tag.
 
-This spec is normative for WHEN each event fires; [event-model.md §3.2] is normative for the payload shape.
+This spec is normative for WHEN each event fires; [event-model.md §6.3] is normative for the payload shape.
 
 ### 6.6 Schema evolution
 
@@ -1008,8 +1008,8 @@ Not applicable as a separate taxonomy; ControlPoint failures map onto the execut
 - **[execution-model.md §4.2]** — node attributes; DOT carries `gate_ref` / `policy_ref` / `freedom_profile_ref` / `budget_ref`.
 - **[execution-model.md §4.10]** — edge-selection cascade; Guard precedes, Gate follows.
 - **[execution-model.md §8]** — failure taxonomy; Budget exhaustion maps to `budget_exhausted`.
-- **[event-model.md §3.2]** — event taxonomy; §6.5 events have their payload schemas there.
-- **[event-model.md §3.7]** — consumer taxonomy; Hooks are parallel consumers per §4.3.CP-012.
+- **[event-model.md §8]** — event taxonomy; §6.5 events have their payload schemas there.
+- **[event-model.md §4.3]** — consumer taxonomy; Hooks are parallel consumers per §4.3.CP-012.
 - **[handler-contract.md §4.1]** — handler outcome shape; Hooks consume lifecycle events emitted by handlers.
 - **[handler-contract.md §4.2]** — chunk-emission cadence; Budget accrual inherits it (§4.5.CP-024).
 - **[handler-contract.md §4.5]** — error category wrapping; Hook failure mapping inherits it (§4.3.CP-015).
@@ -1021,8 +1021,8 @@ Not applicable as a separate taxonomy; ControlPoint failures map onto the execut
 
 ### 9.3 Co-references (read-only consumption)
 
-- **[reconciliation.md §4.4 Wall-clock budget]** — reconciliation workflows carry a mandatory wall-clock Budget; this spec owns the Budget primitive, reconciliation owns the outer-bound enforcement (§4.5.CP-027).
-- **[reconciliation.md §4.5 Verdict vocabulary]** — a Cat 6 verdict may flag a persisted cognition verdict as stale, permitting re-invocation per §4.8.CP-041.
+- **[reconciliation/spec.md §4.4 Wall-clock budget]** — reconciliation workflows carry a mandatory wall-clock Budget; this spec owns the Budget primitive, reconciliation owns the outer-bound enforcement (§4.5.CP-027).
+- **[reconciliation/spec.md §4.5 Verdict vocabulary]** — a Cat 6 verdict may flag a persisted cognition verdict as stale, permitting re-invocation per §4.8.CP-041.
 - **[workspace-model.md §4.2 Branching model]** — persisted Hook verdicts land on the run's task branch defined there; merge semantics under §4.5.
 - **[operator-nfr.md §4.3 Operator-control semantics]** — policy reloads are bound to the between-task invariant (§4.7.CP-037).
 - **[operator-nfr.md §4.5 Checkpoint-format stability]** — N-1 compatibility contract applies to policy schema (§4.7.CP-038).
@@ -1058,7 +1058,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §3.2]); role names and MVH-required vs. deferred classification (owned by [architecture.md §4.8]).
+- This spec does NOT grant conformance over: Hook dispatch loop internals (owned by the S05 subsystem spec); Gate and Guard invocation mechanics inside the edge cascade (owned by the S01 subsystem spec per [execution-model.md §4.10]); the reconciliation wall-clock budget's outer-bound enforcement (owned by reconciliation/spec.md §4.4); skill package storage and injection mechanism (owned by [handler-contract.md §4.11]); event payload shapes (owned by [event-model.md §6.3]); role names and MVH-required vs. deferred classification (owned by [architecture.md §4.8]).
 - This spec does NOT specify `expr-lang/expr` version pinning or specific numeric sandboxing limits; those are deferred per OQ-CP-003 and are bounded by the CP-034b requirement that the implementation set `expr.MaxNodes` and `expr.Timeout` to harmonik-level (non-policy-tunable) values.
 
 ## 11. Open questions
@@ -1104,6 +1104,8 @@ Default-if-unresolved: All policies load in a single startup phase per §4.7 pre
 |---|---|---|---|
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 integration: migrated self-citations (architecture/reconciliation/workspace-model/operator-nfr) to new §4.x numbering; added INTERFACE Registry (§6.1.7) and GateVerdictRecord / HookVerdictRecord / SideEffect / CognitionMeta (§6.1.6); added CP-040a (input-envelope hash) and rewrote CP-041 + CP-INV-003 for envelope-match replay-safety; added CP-034b (evaluation-cost ceiling); collapsed CP-050 to the union-computation only (handler-contract owns resolution/provisioning); split skill fail-points between ingest-time syntactic validity and launch-time package resolution in CP-049; extended §6.3 YAML with `skill_sets[]`; added `guard_failed`, `verdict_envelope_mismatch`, `policy_expression_exceeded_cost`, `control_points_registered` to §6.5; strengthened CP-027 with wall-clock composition rule; fixed CP-032/CP-033 tightest-wins wording and model_tier ordering; demoted CP-INV-004/CP-INV-005 per template §5 selection test; clarified CP-007 ordering as record-side declaration; Hook trigger namespace clarified in CP-013; §A.3 rationale added for cel-go comparison and for registration-layer Kind peerage; §7.1 registration sequence restructured to two passes for cross-document references. Downstream specs (execution-model, handler-contract, event-model, reconciliation, operator-nfr, beads-integration) carry ~30 citations to CP at legacy §6.x addresses; those specs MUST migrate their citations to the §4.x addresses used here. |
+| 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §6.3 policy-expression key path (`run.next_node.handler_type` → `run.next_node.agent_type`); corrected the accompanying cross-reference from `[handler-contract.md §4.1]` to `[handler-contract.md §6.1]` (the LaunchSpec RECORD declaring `agent_type` lives in §6.1, not §4.1). No requirement IDs, invariants, or schemas were touched. |
+| 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~15 citations fixed. EV: `§3.2→§6.3`/§8/§8.2/§8.4/§4.3/§4.4 per context (payload registry, taxonomy, specific lifecycle per cite), `§3.7→§4.3` (consumer taxonomy) at §9.1 cross-refs. Reconciliation path fix: `[reconciliation.md §4.N]→[reconciliation/spec.md §4.N]` at §4.8 CP-040a replay-safe rule, §5 CP-INV-003 invariant, and §9.3 cross-refs (both §4.4 wall-clock budget and §4.5 verdict vocabulary). No requirement IDs, invariants, or schemas touched. |
 
 ## A. Appendices
 

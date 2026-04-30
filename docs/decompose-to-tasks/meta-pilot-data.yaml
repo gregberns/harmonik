@@ -1,0 +1,500 @@
+# Meta-graph v0.1.0 — workflow tasks for completing Phase 0 (spec decomposition).
+#
+# This file is NOT a spec decomposition. It is the workflow task list (tasks-to-do-tasks)
+# that drives loading the remaining 5 pilots into Beads, finishing HC's review pass, and
+# closing out Phase 0 by identifying the bootstrap subset for code-phase entry.
+#
+# Segmented from impl beads via `tag:meta` and `phase:0` labels (per user instruction
+# 2026-04-30) so that ad-hoc queries on impl-domain labels (`spec:*`, `req:*`,
+# `kind:invariant`, etc.) do not surface meta-tasks.
+#
+# Loader: scripts/load-pilot.py (extended 2026-04-30 with `kind: workflow`).
+# Schema: docs/decompose-to-tasks/loader-tooling.md.
+
+spec:
+  prefix: meta
+  title: "Phase 0 completion — meta workflow"
+  spec_path: docs/decompose-to-tasks/meta-pilot-data.yaml
+  spec_version: "n/a"
+  pilot_version: "0.1.0"
+
+default_labels:
+  - "tag:meta"
+  - "phase:0"
+
+epic:
+  mnem: meta
+  title: "Phase 0 completion — load remaining pilots and exit to code phase"
+  description: |
+    Tracks the remaining workflow tasks for Phase 0 (spec decomposition). Five spec
+    pilots remain unloaded (CP, WM, PL, ON, RC); HC's review pass is in flight; cross-spec
+    citations from already-loaded pilots (BI, AR, EM, EV, HC) to these unloaded specs are
+    parked as forward-deferred edges and need backfill once each new pilot lands. After all
+    pilots are loaded and reviewed, a final union cycle check, forward-deferred zero-out,
+    mnem-map consolidation, and bootstrap-subset identification gate the transition to
+    Phase 1 (code).
+
+    Meta beads are segmented from impl beads via `tag:meta` and `phase:0` labels and a
+    distinct mnemonic prefix (`meta-`); they live in the same Beads workspace so a single
+    "what's left for Phase 0?" query covers both layers.
+  labels:
+    - "kind:meta-parent"
+
+# Conventions for child workflow beads:
+#   - mnem prefix `meta-<pilot>-<step>` for per-pilot work
+#   - mnem prefix `meta-p0-<exit-step>` for phase-exit work
+#   - All children: `kind: workflow`; no `req` field; titles + descriptions are imperative
+#   - Per-pilot internal chain: author-yaml -> dry-run -> load -> r1-review -> patch-r1
+#     - author-narrative parallels author-yaml (no internal blocker)
+#     - backfill blocks on patch-r1
+#   - HC has only r1-review + patch-r1 + backfill remaining (load already done)
+#   - Cross-pilot soft ordering only (forward-deferred edges absorb out-of-order loads)
+
+beads:
+  # =========================================================================
+  # HC remaining work (HC load is done; only review + backfill outstanding)
+  # =========================================================================
+
+  - mnem: meta-hc-r1-review
+    kind: workflow
+    title: "HC pilot — r1 review (3-reviewer pass)"
+    description: |
+      Run the 3-reviewer pass per `docs/decompose-to-tasks/pilot-review-protocol.md` §6
+      on the loaded HC bead set. Cover at minimum: (a) the 6 cycle-rejected edges logged
+      in `hc-load-findings.md` (4 likely direction inversions on the §8 error-taxonomy
+      bead, 2 likely bidirectional cites needing reclassification), (b) the EV-edge count
+      tension flagged in `hc-pilot.md` §5.3 (narrative says 22 EV cross-spec edges,
+      `hc-pilot-data.yaml` emits 26).
+
+      Output: 3 review reports under `docs/reviews/2026-04-XX-hc-pilot-r1/<reviewer>.md`
+      plus a synthesised findings list. Findings feed `meta-hc-patch-r1`.
+
+  - mnem: meta-hc-patch-r1
+    kind: workflow
+    title: "HC pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply the synthesised r1 findings to `hc-pilot-data.yaml` (and `hc-pilot.md` where
+      narrative consistency requires). Re-run
+      `python3 scripts/load-pilot.py docs/decompose-to-tasks/hc-pilot-data.yaml` (resume
+      mode auto-skips loaded beads; only previously-rejected edges retry). Verify the 6
+      cycle rejections drop to 0 (or are reclassified to supporting cites per discipline
+      §2.7 / F-pilot-AR-10). Update `hc-load-findings.md` with resolution notes.
+
+      If r1 surfaces a new rule class not yet in `discipline.md` v0.8, gate that as a
+      separate discipline-patch (per the convention: patch discipline.md FIRST, then
+      propagate to prior pilots before continuing). Don't fold rule-class discovery into
+      this bead.
+
+  # =========================================================================
+  # CP pilot — Control Points spec
+  # =========================================================================
+
+  - mnem: meta-cp-author-yaml
+    kind: workflow
+    title: "CP pilot — author cp-pilot-data.yaml"
+    description: |
+      Author `docs/decompose-to-tasks/cp-pilot-data.yaml` per the loader schema in
+      `loader-tooling.md`. Source: `specs/control-points.md`. Apply `discipline.md` v0.8
+      (or current at start time) for §4 reqs, §5 invariants, §6 schemas, §8 error
+      taxonomy, §10 test-infra beads. Cross-spec edges to already-loaded prefixes
+      ({hc, em, ev, bi, ar}) resolve via existing `/tmp/<prefix>-mnem-map.csv` files —
+      include the cross_specs map. Edges to remaining unloaded pilots ({wm, pl, on, rc})
+      use `forward:<prefix>:<mnem>` form.
+
+      Authored data-first; the loader never parses markdown, so the yaml is canonical.
+
+  - mnem: meta-cp-author-narrative
+    kind: workflow
+    title: "CP pilot — author cp-pilot.md narrative"
+    description: |
+      Author `docs/decompose-to-tasks/cp-pilot.md` — the human-readable narrative paired
+      with `cp-pilot-data.yaml`. Sections, modelled on existing pilots (ar/em/ev/hc):
+      §1 spec under decomposition, §2 decomposition decisions (coalesces, splits per
+      discipline §2.3 / §2.5), §5 cross-spec edge tally per source-prefix, §6 optional
+      infra, §7 tally (bead counts by kind matching the yaml), §8 rough edges (known
+      issues for r1 to chase), §9 revision history.
+
+      Parallel to `meta-cp-author-yaml` — no internal blocker.
+
+  - mnem: meta-cp-dry-run
+    kind: workflow
+    title: "CP pilot — dry-run loader"
+    description: |
+      Run `python3 scripts/load-pilot.py docs/decompose-to-tasks/cp-pilot-data.yaml
+      --dry-run`. Verify: schema validates, cross-spec lookups resolve (no "mnem not in
+      <pfx> map" errors except expected forward-deferred), edge counts match the
+      `cp-pilot.md` §7 tally. Iterate yaml until clean. Blocks on author-yaml.
+
+  - mnem: meta-cp-load
+    kind: workflow
+    title: "CP pilot — real load"
+    description: |
+      Run `python3 scripts/load-pilot.py docs/decompose-to-tasks/cp-pilot-data.yaml`.
+      Capture stdout. Any cycle rejections logged in
+      `docs/decompose-to-tasks/cp-load-findings.md` as F-load-CP-N (analogous to
+      `hc-load-findings.md`). DB must remain cycle-clean: confirm via `br dep cycles`.
+      The mnem-map at `/tmp/cp-mnem-map.csv` is the resume ledger and the cross-spec
+      lookup source for backfilling prior pilots.
+
+  - mnem: meta-cp-r1-review
+    kind: workflow
+    title: "CP pilot — r1 review (3-reviewer pass)"
+    description: |
+      Run the 3-reviewer pass per `pilot-review-protocol.md` §6 covering: (a) any cycle
+      rejections from `meta-cp-load`, (b) tally count tensions between narrative and yaml,
+      (c) discipline compliance check (granularity, coalesce justification, sensor↔impl
+      direction per F12, etc.), (d) cross-spec citation correctness against authoritative
+      maps. Output to `docs/reviews/<date>-cp-pilot-r1/<reviewer>.md`.
+
+  - mnem: meta-cp-patch-r1
+    kind: workflow
+    title: "CP pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply r1 findings to `cp-pilot-data.yaml` and `cp-pilot.md`. Re-run loader (resume
+      mode). Verify rejections drop to 0. Update `cp-load-findings.md` resolution notes.
+      If r1 surfaces a discipline rule-class shift, halt and patch `discipline.md`
+      separately before continuing.
+
+  - mnem: meta-cp-backfill
+    kind: workflow
+    title: "CP pilot — backfill cross-spec edges in prior pilots"
+    description: |
+      After CP is loaded and patched, resolve `forward:cp:*` edges that prior pilots
+      (BI, AR, EM, EV, HC) emitted as forward-deferred at their load time. For each prior
+      pilot's yaml that carries `forward:cp:*` edges:
+        1. Replace `forward:cp-NNN` with `cp-NNN` in `<prior>-pilot-data.yaml`.
+        2. Add `cross_specs.cp: /tmp/cp-mnem-map.csv` to that yaml if absent.
+        3. Re-run `python3 scripts/load-pilot.py <prior>-pilot-data.yaml` (resume mode
+           — beads already loaded; only the newly-resolvable edges attempt).
+        4. Append a backfill note to `<prior>-load-findings.md`.
+
+      Cycle rejections are surfaced same as fresh loads — log and triage.
+
+  # =========================================================================
+  # WM pilot — Workspace Model spec
+  # =========================================================================
+
+  - mnem: meta-wm-author-yaml
+    kind: workflow
+    title: "WM pilot — author wm-pilot-data.yaml"
+    description: |
+      Author `docs/decompose-to-tasks/wm-pilot-data.yaml` per the loader schema. Source:
+      `specs/workspace-model.md`. Cross-spec edges to {hc, em, ev, bi, ar, cp (if loaded)}
+      resolve via existing maps; remaining unloaded pilots ({pl, on, rc}) via `forward:`.
+
+  - mnem: meta-wm-author-narrative
+    kind: workflow
+    title: "WM pilot — author wm-pilot.md narrative"
+    description: |
+      Author `docs/decompose-to-tasks/wm-pilot.md`. Same section structure as other
+      pilots. Parallel to `meta-wm-author-yaml`.
+
+  - mnem: meta-wm-dry-run
+    kind: workflow
+    title: "WM pilot — dry-run loader"
+    description: |
+      `python3 scripts/load-pilot.py wm-pilot-data.yaml --dry-run`. Iterate until clean.
+
+  - mnem: meta-wm-load
+    kind: workflow
+    title: "WM pilot — real load"
+    description: |
+      Real load. Log any cycle rejections to `wm-load-findings.md` as F-load-WM-N.
+
+  - mnem: meta-wm-r1-review
+    kind: workflow
+    title: "WM pilot — r1 review (3-reviewer pass)"
+    description: |
+      3-reviewer pass per `pilot-review-protocol.md` §6. Output to
+      `docs/reviews/<date>-wm-pilot-r1/`.
+
+  - mnem: meta-wm-patch-r1
+    kind: workflow
+    title: "WM pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply r1 findings; re-run loader resume mode; verify clean.
+
+  - mnem: meta-wm-backfill
+    kind: workflow
+    title: "WM pilot — backfill cross-spec edges in prior pilots"
+    description: |
+      Resolve `forward:wm:*` edges in {bi, ar, em, ev, hc, cp (if loaded)} pilots' yamls.
+      Same backfill protocol as `meta-cp-backfill`.
+
+  # =========================================================================
+  # PL pilot — Process Lifecycle spec
+  # =========================================================================
+
+  - mnem: meta-pl-author-yaml
+    kind: workflow
+    title: "PL pilot — author pl-pilot-data.yaml"
+    description: |
+      Author `docs/decompose-to-tasks/pl-pilot-data.yaml`. Source: `specs/process-lifecycle.md`.
+      PL is heavily cited from HC (7 forward-deferred edges in HC alone). Many BI/EM/EV
+      forward edges to PL also exist and will resolve on PL load.
+
+  - mnem: meta-pl-author-narrative
+    kind: workflow
+    title: "PL pilot — author pl-pilot.md narrative"
+    description: |
+      Author `docs/decompose-to-tasks/pl-pilot.md`.
+
+  - mnem: meta-pl-dry-run
+    kind: workflow
+    title: "PL pilot — dry-run loader"
+    description: |
+      `python3 scripts/load-pilot.py pl-pilot-data.yaml --dry-run`.
+
+  - mnem: meta-pl-load
+    kind: workflow
+    title: "PL pilot — real load"
+    description: |
+      Real load. Log cycle rejections to `pl-load-findings.md`.
+
+  - mnem: meta-pl-r1-review
+    kind: workflow
+    title: "PL pilot — r1 review (3-reviewer pass)"
+    description: |
+      3-reviewer pass; output to `docs/reviews/<date>-pl-pilot-r1/`.
+
+  - mnem: meta-pl-patch-r1
+    kind: workflow
+    title: "PL pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply r1 findings; re-run resume; verify clean.
+
+  - mnem: meta-pl-backfill
+    kind: workflow
+    title: "PL pilot — backfill cross-spec edges in prior pilots"
+    description: |
+      Resolve `forward:pl:*` edges across all already-loaded pilots (HC's 7 deferred
+      edges are the largest cluster). Standard backfill protocol.
+
+  # =========================================================================
+  # ON pilot — Operator NFR spec
+  # =========================================================================
+
+  - mnem: meta-on-author-yaml
+    kind: workflow
+    title: "ON pilot — author on-pilot-data.yaml"
+    description: |
+      Author `docs/decompose-to-tasks/on-pilot-data.yaml`. Source: `specs/operator-nfr.md`.
+
+  - mnem: meta-on-author-narrative
+    kind: workflow
+    title: "ON pilot — author on-pilot.md narrative"
+    description: |
+      Author `docs/decompose-to-tasks/on-pilot.md`.
+
+  - mnem: meta-on-dry-run
+    kind: workflow
+    title: "ON pilot — dry-run loader"
+    description: |
+      `python3 scripts/load-pilot.py on-pilot-data.yaml --dry-run`.
+
+  - mnem: meta-on-load
+    kind: workflow
+    title: "ON pilot — real load"
+    description: |
+      Real load. Log cycle rejections to `on-load-findings.md`.
+
+  - mnem: meta-on-r1-review
+    kind: workflow
+    title: "ON pilot — r1 review (3-reviewer pass)"
+    description: |
+      3-reviewer pass; output to `docs/reviews/<date>-on-pilot-r1/`.
+
+  - mnem: meta-on-patch-r1
+    kind: workflow
+    title: "ON pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply r1 findings; re-run resume; verify clean.
+
+  - mnem: meta-on-backfill
+    kind: workflow
+    title: "ON pilot — backfill cross-spec edges in prior pilots"
+    description: |
+      Resolve `forward:on:*` edges across already-loaded pilots. Standard backfill protocol.
+
+  # =========================================================================
+  # RC pilot — Reconciliation spec
+  # =========================================================================
+
+  - mnem: meta-rc-author-yaml
+    kind: workflow
+    title: "RC pilot — author rc-pilot-data.yaml"
+    description: |
+      Author `docs/decompose-to-tasks/rc-pilot-data.yaml`. Source: `specs/reconciliation/spec.md`
+      and `specs/reconciliation/schemas.md`.
+
+  - mnem: meta-rc-author-narrative
+    kind: workflow
+    title: "RC pilot — author rc-pilot.md narrative"
+    description: |
+      Author `docs/decompose-to-tasks/rc-pilot.md`.
+
+  - mnem: meta-rc-dry-run
+    kind: workflow
+    title: "RC pilot — dry-run loader"
+    description: |
+      `python3 scripts/load-pilot.py rc-pilot-data.yaml --dry-run`.
+
+  - mnem: meta-rc-load
+    kind: workflow
+    title: "RC pilot — real load"
+    description: |
+      Real load. Log cycle rejections to `rc-load-findings.md`.
+
+  - mnem: meta-rc-r1-review
+    kind: workflow
+    title: "RC pilot — r1 review (3-reviewer pass)"
+    description: |
+      3-reviewer pass; output to `docs/reviews/<date>-rc-pilot-r1/`.
+
+  - mnem: meta-rc-patch-r1
+    kind: workflow
+    title: "RC pilot — apply r1 patches and re-run loader"
+    description: |
+      Apply r1 findings; re-run resume; verify clean.
+
+  - mnem: meta-rc-backfill
+    kind: workflow
+    title: "RC pilot — backfill cross-spec edges in prior pilots"
+    description: |
+      Resolve `forward:rc:*` edges across already-loaded pilots. After RC backfill,
+      ALL forward-deferred edges across the corpus should resolve to 0 (RC is the last
+      remaining pilot in this graph). This bead's completion is the trigger for
+      `meta-p0-forward-zeroout`.
+
+  # =========================================================================
+  # Phase-0 exit
+  # =========================================================================
+
+  - mnem: meta-p0-cycle-check
+    kind: workflow
+    title: "Phase 0 exit — full union cycle check"
+    description: |
+      Run `br dep cycles` across the full union of all 10 spec pilots' beads. Expect
+      clean. Any cycles surfaced after backfill represent real cross-spec
+      direction-inversion bugs that survived per-pilot review and must be triaged before
+      Phase 1.
+
+  - mnem: meta-p0-forward-zeroout
+    kind: workflow
+    title: "Phase 0 exit — verify zero forward-deferred edges remain"
+    description: |
+      After all 5 backfills run, no `forward:*` mnemonics should appear in any
+      `<spec>-pilot-data.yaml`. Verify by grep across all yamls. Any surviving
+      `forward:*` edges represent either (a) cites to specs explicitly out-of-scope for
+      Phase 0 (must be documented as such in spec text), or (b) bugs (must be backfilled).
+
+  - mnem: meta-p0-mnem-consolidation
+    kind: workflow
+    title: "Phase 0 exit — consolidate mnem-maps from /tmp to canonical location"
+    description: |
+      Per-pilot mnem-maps currently live at `/tmp/<prefix>-mnem-map.csv` — ephemeral by
+      design during the load-iterate cycle. For Phase 1 stability, consolidate into a
+      canonical checked-in location (proposed: `docs/decompose-to-tasks/mnem-maps/`).
+      Update each `<spec>-pilot-data.yaml`'s `cross_specs` block to point at the
+      canonical paths. Update `loader-tooling.md` "Resume protocol" section to reflect
+      the move.
+
+  - mnem: meta-p0-bootstrap
+    kind: workflow
+    title: "Phase 0 exit — identify bootstrap subset for Phase 1 entry"
+    description: |
+      Per `CLAUDE.md`: "Code begins after the bootstrap subset of tasks is identified."
+      Walk the impl-bead graph (433+ beads after all pilots load). Identify the minimum
+      viable startup chain: which §4 reqs + §5 invariants + §6 schemas form a
+      compile-and-run skeleton that can host the first real handler integration test.
+      Output: a bootstrap-subset doc referencing specific bead IDs, with rationale.
+
+  - mnem: meta-p0-milestone
+    kind: workflow
+    title: "Phase 0 exit — milestone (close meta epic)"
+    description: |
+      Sentinel bead. Closing this bead closes the Phase 0 meta epic and signals
+      readiness for Phase 1 (code). Blocks on cycle-check, forward-zeroout,
+      mnem-consolidation, bootstrap-subset all complete. Update `STATUS.md` to mark
+      Phase 0 done.
+
+# =========================================================================
+# Edges — per-pilot internal chains and phase-exit gating
+# =========================================================================
+# Convention: `from` blocks on `to` (from cannot start until to is done).
+
+edges:
+  # --- HC remaining ---
+  - {from: meta-hc-patch-r1, to: meta-hc-r1-review}
+
+  # --- CP chain ---
+  - {from: meta-cp-dry-run,    to: meta-cp-author-yaml}
+  - {from: meta-cp-load,       to: meta-cp-dry-run}
+  - {from: meta-cp-r1-review,  to: meta-cp-load}
+  - {from: meta-cp-patch-r1,   to: meta-cp-r1-review}
+  - {from: meta-cp-backfill,   to: meta-cp-patch-r1}
+
+  # --- WM chain ---
+  - {from: meta-wm-dry-run,    to: meta-wm-author-yaml}
+  - {from: meta-wm-load,       to: meta-wm-dry-run}
+  - {from: meta-wm-r1-review,  to: meta-wm-load}
+  - {from: meta-wm-patch-r1,   to: meta-wm-r1-review}
+  - {from: meta-wm-backfill,   to: meta-wm-patch-r1}
+
+  # --- PL chain ---
+  - {from: meta-pl-dry-run,    to: meta-pl-author-yaml}
+  - {from: meta-pl-load,       to: meta-pl-dry-run}
+  - {from: meta-pl-r1-review,  to: meta-pl-load}
+  - {from: meta-pl-patch-r1,   to: meta-pl-r1-review}
+  - {from: meta-pl-backfill,   to: meta-pl-patch-r1}
+
+  # --- ON chain ---
+  - {from: meta-on-dry-run,    to: meta-on-author-yaml}
+  - {from: meta-on-load,       to: meta-on-dry-run}
+  - {from: meta-on-r1-review,  to: meta-on-load}
+  - {from: meta-on-patch-r1,   to: meta-on-r1-review}
+  - {from: meta-on-backfill,   to: meta-on-patch-r1}
+
+  # --- RC chain ---
+  - {from: meta-rc-dry-run,    to: meta-rc-author-yaml}
+  - {from: meta-rc-load,       to: meta-rc-dry-run}
+  - {from: meta-rc-r1-review,  to: meta-rc-load}
+  - {from: meta-rc-patch-r1,   to: meta-rc-r1-review}
+  - {from: meta-rc-backfill,   to: meta-rc-patch-r1}
+
+  # --- Phase 0 exit gating ---
+  # Cycle-check blocks on every pilot's patch-r1 and every backfill (after data settled)
+  - {from: meta-p0-cycle-check, to: meta-hc-patch-r1}
+  - {from: meta-p0-cycle-check, to: meta-cp-backfill}
+  - {from: meta-p0-cycle-check, to: meta-wm-backfill}
+  - {from: meta-p0-cycle-check, to: meta-pl-backfill}
+  - {from: meta-p0-cycle-check, to: meta-on-backfill}
+  - {from: meta-p0-cycle-check, to: meta-rc-backfill}
+
+  # Forward-zeroout blocks on every backfill being done
+  - {from: meta-p0-forward-zeroout, to: meta-cp-backfill}
+  - {from: meta-p0-forward-zeroout, to: meta-wm-backfill}
+  - {from: meta-p0-forward-zeroout, to: meta-pl-backfill}
+  - {from: meta-p0-forward-zeroout, to: meta-on-backfill}
+  - {from: meta-p0-forward-zeroout, to: meta-rc-backfill}
+
+  # Mnem consolidation blocks on every pilot's load (the maps need to exist & be stable)
+  - {from: meta-p0-mnem-consolidation, to: meta-cp-load}
+  - {from: meta-p0-mnem-consolidation, to: meta-wm-load}
+  - {from: meta-p0-mnem-consolidation, to: meta-pl-load}
+  - {from: meta-p0-mnem-consolidation, to: meta-on-load}
+  - {from: meta-p0-mnem-consolidation, to: meta-rc-load}
+
+  # Bootstrap-subset blocks on cycle-check + forward-zeroout (the gate condition)
+  - {from: meta-p0-bootstrap, to: meta-p0-cycle-check}
+  - {from: meta-p0-bootstrap, to: meta-p0-forward-zeroout}
+
+  # Phase 0 milestone blocks on all four exit beads
+  - {from: meta-p0-milestone, to: meta-p0-cycle-check}
+  - {from: meta-p0-milestone, to: meta-p0-forward-zeroout}
+  - {from: meta-p0-milestone, to: meta-p0-mnem-consolidation}
+  - {from: meta-p0-milestone, to: meta-p0-bootstrap}
+
+# No cross_specs needed — this graph references no external mnem-maps.
+# Meta beads are self-contained workflow tasks; references to impl bead
+# mnemonics in descriptions are documentation, not edges.

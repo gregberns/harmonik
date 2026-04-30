@@ -20,7 +20,7 @@ Findings are intended to feed back into kerf (harmonik's planning CLI). Findings
 
 - **Phase 1:** CLOSED. Produced [`research-statement.md`](phases/phase-1/research-statement.md).
 - **Phase 2 main session:** CLOSED. Produced [`phase-2-findings.md`](phases/phase-2/findings.md), [`evaluation-framework.md`](phases/phase-2/evaluation-framework.md), and [`phase-2-kerf-integration-draft.md`](phases/phase-2/kerf-integration-draft.md).
-- **Skill trial:** ACTIVE. `/session-handoff` + `/session-resume` user-level skills embed 5 Layer-1/5/6 protocols. Adopt-and-notice testing across real working sessions. See [`protocol-trial-roadmap.md`](protocol-trial-roadmap.md).
+- **Skill trial:** ACTIVE. `/session-handoff` + `/session-resume` user-level skills. Adopt-and-notice testing across real working sessions. See [`protocol-trial-roadmap.md`](protocol-trial-roadmap.md). **Trial finding 1 recorded 2026-04-27** at [`trial-findings/2026-04-27-skills-too-verbose-and-procedural.md`](trial-findings/2026-04-27-skills-too-verbose-and-procedural.md) — schema-heavy skills produce verbose, procedural output and leak internal jargon into user-facing asks. **v2 deployed 2026-04-28** ([`skill-iterations/v2-2026-04-28/`](skill-iterations/v2-2026-04-28/)) — 16 + 14 lines vs v1's 103 + 101.
 - **Step 4.5 (corpus-signal filter):** DEFERRED pending user authorization. This is the main blocker on empirically weighting the Phase 2 rankings. Plan + reviews in [`plans/`](plans/).
 - **Layer 7 A/B experiments:** SPEC'd, not RUN. User authorization needed.
 - **Kerf integration:** DRAFT only. User review needed before turning into a kerf work.
@@ -187,6 +187,24 @@ All reviewers operate on the unified catalog. Each applies a distinct challenge 
 | [`plans/step-4.5-plan.md`](plans/step-4.5-plan.md) | Parked. Implementation plan for Step 4.5 corpus-signal filter (transcript-only harness across 195 sessions). Authorization-gated. |
 | [`plans/step-4.5-plan.review-1-coherence.md`](plans/step-4.5-plan.review-1-coherence.md) | Parked. Coherence review of Step 4.5 plan — flagged FP-inflation in correction-detection as primary concern. |
 | [`plans/step-4.5-plan.review-2-risk.md`](plans/step-4.5-plan.review-2-risk.md) | Parked. Risk review of Step 4.5 plan — flagged NE-6 phase confound as primary push-back. |
+
+### Trial findings
+
+Findings from real-session use of the active trial skills. Each finding separates observations (what occurred) from analysis (causes), and lists open followups. Findings accumulate over the trial; they are not specs.
+
+| File | Purpose |
+|---|---|
+| [`trial-findings/2026-04-27-skills-too-verbose-and-procedural.md`](trial-findings/2026-04-27-skills-too-verbose-and-procedural.md) | **Finding 1.** Schema-heavy skills induce verbose, procedural mid-session output. Internal jargon leaks into user-facing asks. Triggered by user pushback in basata `426257cc` (under `/session-resume`) and harmonik `a121e7f1` (NOT under `/session-resume`, deep in pilot-review work — same failure shape, different protocol). Triggered v2 skill iteration. |
+
+### Skill iterations
+
+Versioned rewrites of trial skills, one iteration per directory. Each iteration follows the convention in `skill-iterations/CONVENTIONS.md` (research / drafts / reviews / process documentation).
+
+| File | Purpose |
+|---|---|
+| [`skill-iterations/CONVENTIONS.md`](skill-iterations/CONVENTIONS.md) | Iteration directory layout convention. Read before starting a new iteration. |
+| [`skill-iterations/v1-baseline/`](skill-iterations/v1-baseline/) | **v1 snapshot** — the version retired on 2026-04-28. 103 + 101 lines. Kept for revert and retrospective comparison. |
+| [`skill-iterations/v2-2026-04-28/`](skill-iterations/v2-2026-04-28/) | **v2 iteration** — first rewrite triggered by trial finding 1. Research (I-PASS deep-dive, external-form comparison, anti-anchored fresh draft), drafts (initial + post-review), reviews (4 parallel angles), process documentation. **Deployed 2026-04-28.** Revised drafts at `drafts/session-{handoff,resume}-revised.md` are what's now live at `~/.claude/skills/`. |
 
 ### Session-starter prompts (paste-ins)
 

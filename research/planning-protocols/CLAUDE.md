@@ -45,6 +45,8 @@ Researching **planning protocols**: reusable shapes of human-agent interaction d
 - `scripts/` -- tooling reusable across phases (e.g., `extract_dialog.py`)
 - `plans/` -- forward-work plans + their reviews (parked work; e.g., `step-4.5-plan.md`)
 - `prompts/` -- paste-in session-starter prompts (NOT a place for `/session-handoff` skill output)
+- `trial-findings/` -- adopt-and-notice findings from active skill trials. One file per finding, dated. Separates observations from analysis.
+- `skill-iterations/` -- versioned iterations of trial skills. One subdirectory per version (`v<N>-<DATE>/`); see `skill-iterations/CONVENTIONS.md` for the iteration directory layout.
 
 ## Where new artifacts go
 
@@ -57,5 +59,7 @@ When producing a new artifact, place it by *purpose*, not chronology:
 - **Forward-work plan or its review** → `plans/`. If the plan executes, its output graduates to the relevant per-phase location.
 - **Paste-in prompt for a fresh session** → `prompts/`. The filename `HANDOFF.md` is reserved for the `/session-handoff` skill convention.
 - **External source material being imported** → `references/`.
+- **Trial finding from skill-trial sessions** → `trial-findings/<DATE>-<short-name>.md`. Separate observations from analysis within the file.
+- **New iteration of trial skills** → `skill-iterations/v<N>-<DATE>/`. See `skill-iterations/CONVENTIONS.md` for layout.
 
 Root must stay lean: governance + navigation + active forward-work only. New phases get their own `phases/phase-N/` directory; cross-phase work products go in the cross-phase subdirectories above.

@@ -6,3 +6,6 @@
 # kerf working state — tracked project identifier only
 .kerf/*
 !.kerf/project-identifier
+
+# Beads task ledger — local DB + JSONL; smoke-load artifact, not tracked at MVH
+.beads/

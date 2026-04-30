@@ -2,9 +2,9 @@
 
 > Snapshot of where the harmonik knowledge base stands. Updated when significant work lands.
 >
-> Last updated: 2026-04-24 (overnight) — **spec corpus complete**: 10 normative specs at `specs/`, 5 batch-1 reviewed (v0.3), 5 batch-2 draft (v0.1). Spec-template v1.1 + ~30 reviewer artifacts captured.
+> Last updated: 2026-04-27 — **BI smoke-loaded into `.beads/`; discipline patched to v0.4; pilot patched to v0.1.3; pilot review protocol drafted.** First end-to-end run of decompose-to-tasks against live `br` v0.1.45: 66 beads created under epic `hk-872` (corpus prefix `hk`, single DB), 110 intra-spec `blocks` edges, zero cycles. Smoke load surfaced 6 discipline-rule findings (F11–F16) and 5 pilot-row findings; both docs patched and re-loaded clean. Three-reviewer review protocol (Coverage / Decomposition-quality / Reference) now gates every remaining pilot. All 10 specs remain `reviewed`; all spec IDs FROZEN.
 >
-> Session handoff: see `SESSION_HANDOFF.md` for what the next session should pick up.
+> Session handoff: see `HANDOFF.md` (skill-formatted), `SESSION_HANDOFF.md` (prose), and `NEXT_AGENT.md` for continuation instructions.
 
 ## What Harmonik Is
 
@@ -12,116 +12,132 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 
 ## Current Phase
 
-**Spec corpus authored** (2026-04-24 overnight). Ten normative specs at `specs/` — five at status `reviewed` (architecture, execution-model, event-model, handler-contract, control-points), five at status `draft` (workspace-model, process-lifecycle, operator-nfr, reconciliation, beads-integration). No code has been written. Kerf use was paused per user direction ("disregard kerf for now"). Phase 0 (foundation alignment) complete; Phase 0b (spec corpus) in progress; Phase 1 (bootstrap implementation) blocked on batch-2 reviews + cross-cutting cleanup + user sign-off.
+**Decompose-to-tasks: BI loaded; 9 specs remaining; review protocol gates each.** End of 2026-04-27 session:
+- BI's 66 beads loaded into `<repo>/.beads/` under prefix `hk`, epic `hk-872`. All status `draft`. 110 intra-spec `blocks` edges. `br dep cycles` clean.
+- `docs/decompose-to-tasks/discipline.md` at **v0.4** (was v0.3). 6 deltas: F11 step→umbrella implicit (parent-child encodes the dep, not explicit `blocks`); F12 sensor↔impl one-way; F13 bidirectional inline cite disambiguation; F14 mnemonic vs Beads-assigned IDs (with zsh implementation pattern); F15 default priority `P2` accepted; F16 corpus single-DB at prefix `hk`.
+- `docs/decompose-to-tasks/bi-pilot.md` at **v0.1.3** (was v0.1.2). 5 deltas: §7 tally arithmetic fixed (40 first-class req beads, total 66 — not the prior 36/61); removed bidirectional `bi-004 ↔ bi-027`; removed wrong-direction `bi-011 → bi-inv-001` and `bi-022 → bi-inv-003`; removed redundant step→umbrella edges; added `bi-schema.harmonik-write-status` per BI v0.4.1 §6.1 split.
+- `docs/decompose-to-tasks/bi-smoke-load-findings.md` (new) — full report of the first smoke load against live `br` and the 11 findings that produced the v0.4 + v0.1.3 patches.
+- `docs/decompose-to-tasks/pilot-review-protocol.md` at **v0.1** (new) — the 3-reviewer parallel pass (Coverage / Decomposition-quality / Reference) that gates every pilot before it loads into Beads. Plus synthesis rules (BLOCKER / MAJOR / MINOR) and a load gate.
+- `.beads/` added to `.gitignore` at MVH (regenerable from JSONL).
 
-**Foundation expanded 7 → 10 components on 2026-04-23** to absorb 2026-04-20/21 decisions. Added: `process-lifecycle`, `reconciliation`, `beads-integration` as standalone foundation specs.
+**Spec corpus + v0.4.x coordination wave: COMPLETE.** All 10 normative specs `reviewed`. Six specs patched in the prior session (2026-04-25) with the cross-spec coordination items that the prior session's R2 integrations filed:
 
-**Round-2 amendments landed 2026-04-24.** 36 findings applied across Clusters 1–6 from the Phase 3 review. Component doc grew 924 → 1,163 lines (+239); problem-space grew 367 → 377 lines (+10). New subsections added: §1.4a (subsystem pin), §1.6a/§1.6b (agent-type + verification naming), §2.1b (transition-record sibling file), §2.1c (idempotency tag), §3.1a (Go repr), §3.2a (taxonomy acceptance), §3.6 (c) divergence-evidence bullet, §5.3a (session-log pipeline owner), §6.1b (ControlPoint registry owner), §9.1a (reconciliation cadence exception), §9.1b (workflow-library owner), §9.2a (action-mapping layer), §9.3a (JSONL divergence scope), §9.4a (wall-clock budget), §9.4b (snapshot token), §9.5a (verdict schema), §9.5b (verdict execution), §10.8a (br-adapter idempotency). New taxonomy: Cat 0, 3a, 3b, 3c, 6a, 6b. New event types: 7 added to §3.2.
+- architecture (v0.3.1), control-points (v0.3.2), reconciliation (v0.4.0) — unchanged this session.
+- execution-model (v0.3.2 → **v0.3.3**) — Outcome `kind` discriminator + 2 RC-owned trailers.
+- event-model (v0.3.2 → **v0.3.3**) — 7 new event types (§8.6.11–14, §8.7.16–17, §8.8.5), monotonic-companion fields, daemon_degraded enum exhaustive, `divergence_kind` post-MVH note.
+- handler-contract (v0.3.2 → **v0.3.3**) — HC-016a orphan-reconnect retry + HC-026b drain-forced silent-hang acceptance.
+- workspace-model (v0.4.1 → **v0.4.2**) — WM-036 `no-op-accept` row.
+- process-lifecycle (v0.4.0 → **v0.4.1**) — 9 items including `daemon_instance_id` UUIDv7, marker-read step 8a, monotonic fields, `get-agent-count` RPC, `br` + reconciliation-locks orphan sweep.
+- operator-nfr (v0.4.0 → **v0.4.1**) — OQ-RC-009 resolution acknowledgment (decline normative `quarantined` state at MVH).
 
-**Work location.** Kerf work artifacts live at `/Users/gb/.kerf/projects/gregberns-harmonik/harmonik-foundation/` (outside the repo until `kerf finalize`). The structure:
-- `01-problem-space.md` — 377 lines; locked decision #12 (No DTW) expanded with explicit applicability conditions on 2026-04-24.
-- `02-components.md` — 1,163 lines across 10 components (architecture, execution-model, event-model, handler-contract, workspace-model, control-points, operator-nfr, process-lifecycle, reconciliation, beads-integration). All round-2 structural amendments applied.
-- `round2-delta-plan.md` — the 1,180-line per-finding delta plan that drove the amendments (36 findings with proposed text, application order, final verification checklist).
-- `03-research/{component}/findings.md` — 7 per-component research outputs (pre-amendment).
-- `03-research/SYNTHESIS.md` — cross-component synthesis (~20 recommended positions, ~37 user-decision items, 6 tensions resolved).
-- `reviewers/PERSONAS.md` — reusable reviewer persona prompts.
-- `reviews/01-problem-space/` and `reviews/02-components/` — early reviewer outputs (pre-amendment).
+**~526 unique requirement IDs** counted across the 10 specs (NEXT_AGENT.md's "~250" estimate was 2× low).
 
-**Phase 3 review (6 personas, pre-round-2-amendments)** lives in `docs/reviews/2026-04-23-foundation-phase3/` in the repo (git-tracked):
-- `SYNTHESIS.md` — 6-cluster finding synthesis + proposed round-2 amendment plan.
-- `architect.md`, `critic.md`, `operator.md`, `skeptic.md`, `subsystem-implementer.md`, `crash-adversary.md` — per-persona reports.
+**Decompose-to-tasks: BI smoke-loaded; review protocol drafted.** Updated artifacts at `docs/decompose-to-tasks/`:
+- `discipline.md` v0.4 (~410 lines) — 11 decomposition rules + 16 cumulative findings (F1–F16) + tag-mapping + cross-spec edge convention + corpus prefix `hk` decision (§2.12).
+- `bi-pilot.md` v0.1.3 — 43 BI requirements → 66 beads (40 first-class req + 11 step + 4 sensor + 8 schema + 1 taxonomy + 1 test-infra + 1 spec-parent). Revised full-corpus estimate: **~795 beads** (range 700–950).
+- `bi-smoke-load-findings.md` v0.1 — full report of the 2026-04-27 smoke load.
+- `pilot-review-protocol.md` v0.1 — 3-reviewer parallel pass + load gate.
 
-**Recon findings** (inputs to the foundation work) live at `.kerf/recon/` inside the repo (gitignored):
-- `kilroy-findings.md`, `attractor-findings.md`, `subsystem-audit.md`, `nfr-inventory.md`, `beads-findings.md`.
+**`br` (Beads CLI v0.1.45) is INSTALLED** at `/Users/gb/.local/bin/br`. Verified by smoke load. Capabilities used so far: `br init --prefix <X>`, `br create --silent`, `br update --status draft`, `br dep add <citing> <prerequisite> -t blocks`, `br dep cycles`, `br ready`, `br list -l <label>`, `br epic status`, `br show`. Surprise discovery: IDs are auto-assigned in hierarchical-alphanumeric form (`hk-85z`, `hk-85z.37.4`) — discipline §2.10 + §2.12 documents the mnem→assigned-ID translation rule.
 
-## What's In the Knowledge Base
+**No kerf use in this session.** User paused kerf: "disregard kerf for now; come back when something's working."
 
-| Area | Status | Notes |
-|---|---|---|
-| Problems (P01-P07) | Stable | Catalogued; not revisited this session |
-| Goals (G01-G07) | Active | G06 Bootstrapping and G07 Testability added 2026-04-19 |
-| Concepts | Active | Digital Twins added 2026-04-19; others stable |
-| Components (internal/external) | Stable | Not revisited this session |
-| Subsystems (S01-S09) | **Active** | S01, S03, S04, S06, S07, S08 substantially updated 2026-04-19; S07 Verifier archived and replaced with Scenario Harness; S02, S05, S09 still hold pre-2026-04-19 framing and need a refresh pass |
-| Ideas (I01-I07) | Untouched this session | Worth revisiting once subsystem decisions firm up |
-| Log | Underused | No new log entries from this session yet |
+## What changed this session (2026-04-25)
 
-## Decisions Added 2026-04-20 and 2026-04-21
+**v0.4.x cross-spec coordination patch wave landed in 4 parallel patch agents.** Six specs patched per the request list accumulated in prior session's R2 integrations. Each patch was authored as a pre-baked plan (~150-line prompt per agent). Highlights:
 
-These are in addition to the 10 original locked-in decisions below. Treated as candidate positions in the design (not permanent commitments) but load-bearing for ongoing spec work.
+- **PL v0.4.1 (9 items)** — PL-INTERIM markers dropped on codes 22/23 (ON v0.4.0 absorbed both); `.harmonik/daemon.upgrading` promoted to normative; `daemon_instance_id` (UUIDv7) minted at step 0; pidfile gains line 3; PL-009/PL-011a payloads gain `_at_ns_since_boot`; new step 8a reads `daemon.upgrading` + `daemon.state` markers (gates step 9 transition target); `get-agent-count` RPC added to PL-003a inventory; PL-006 orphan sweep extended to `br` subprocesses + stale `.harmonik/reconciliation-locks/*.lock`. PL-008a adds code 14 (`upgrade-hash-mismatch`).
+- **EV v0.3.3 (5 items)** — 7 new event types (§8.6.11 dispatch_dedup, §8.6.12 detector_panic, §8.6.13 verdict_execution_retry, §8.6.14 bead_terminal_transition_recovered post-MVH, §8.7.16 operator_command_failed, §8.7.17 operator_escalation_cleared, §8.8.5 redaction_failed); `daemon_shutdown` durability F confirmed (resolves OQ-PL-012); `ready_at_ns_since_boot` + `shutdown_at_ns_since_boot` payload fields; `daemon_degraded` reason enum promoted exhaustive (6 values, including `cat0_post_ready`); `divergence_kind` post-MVH extension note.
+- **EM v0.3.3 (2 items)** — new EM-005a + Outcome `kind` discriminator + `OutcomeKind` enum (resolves OQ-RC-010); trailer registry gains `Harmonik-Workflow-Class` + `Harmonik-Target-Run-ID` (resolves OQ-RC-002).
+- **WM v0.4.2 (1 item)** — WM-036 verdict-disposition table seventh row for `no-op-accept` (resolves OQ-RC-011).
+- **HC v0.3.3 (2 items)** — HC-016a orphan-reconnect-window retry rule (companion to PL-003b/PL-009b); HC-026b drain-forced silent-hang ON-classification acceptance.
+- **ON v0.4.1 (1 item)** — OQ-RC-009 resolution acknowledgment: decline to add normative `quarantined` daemon-status at MVH (rationale: quarantine is the operator-escalation outcome per RC's `escalate-to-human` mechanical action).
 
-11. **Workflow definition format: DOT** (2026-04-20). Declarative graph, Graphviz-renderable, NL→DOT ingestor path available. Policies reference YAML policy documents by name; policies themselves remain YAML.
-12. **DTW is NOT adopted** (2026-04-20). Harmonik uses JSONL events + git checkpoints + SQLite queue + deterministic restart reconciliation. Git history is source of truth for completion; queue is a cache. Temporal / Restate / DBOS are conceptual references only.
-13. **Beads (`Dicklesworthstone/beads_rust`) is the task ledger** (2026-04-21). SQLite-backed; harmonik is the workflow engine layered on top. Beads holds bead data + typed dependency edges + coarse status; harmonik holds fine-grained workflow state in its event log. Interaction via `br` CLI only (NOT Beads's MCP server). Agents get a Beads-CLI skill via handler-contract skill injection.
-14. **Handler contract must support skill injection** (2026-04-21). Handlers are responsible for ensuring the agent process has access to skills/tools the assigned workflow node requires. Beads-CLI is the first instance; applies generally. Pending as a foundation amendment.
+Net new IDs added: PL (none — extensions only), EV (none — new event-type identifiers in §8 numbering), EM (EM-005a), WM (none), HC (HC-016a, HC-026b), ON (none).
 
-## Decisions Locked In (2026-04-19)
+**Decompose-to-tasks pilot.** First two artifacts at `docs/decompose-to-tasks/`:
+- `discipline.md` v0.1 — 10 decomposition rules covering: granularity (one req → one bead default), multi-step protocols (umbrella + step beads), coalescible clusters, test-vs-impl combine-by-default, sensor/invariant per `XX-INV-NNN`, schema/data-shape per `RECORD`/`ENUM`, cross-spec edge derivation (mechanical from cite list), `Tags:` and `Axes:` mapping, status/priority assignment (load `parked`, no priority), parent-child grouping (per-spec parent + req children).
+- `bi-pilot.md` — 43 BI requirements → 61 beads. Identifies 6 rough edges; surfaces 10 OQ-DTT-NNN open questions.
+- Multiplier observation: ~1.42× requirement→total bead ratio in BI; full-corpus estimate ~790 beads (with PL/RC/CP being likely heavier-multipliers).
 
-These are firm; reopening one needs strong new evidence.
+## What changed in prior session (2026-04-24 day-and-evening)
 
-1. **Implementation language: Go.** Rationale in [docs/01_architecture.md](docs/01_architecture.md).
-2. **Orchestrator (S01):** Go-native, using Kilroy and Attractor as design references.
-3. **Event bus (S03):** in-process pub/sub + JSONL on disk. JSONL is the source of truth; bus is notification.
-4. **Agent runner (S04):** NTM-wrapped Go. Inspectability via tmux is a requirement, not a preference.
-5. **Initial agent handlers:** Claude Code + Pi ([badlogic/pi-mono](https://github.com/badlogic/pi-mono)).
-6. **Digital twins are separate binaries**, not in-process mocks. Selection happens at workflow/policy config layer; runner has zero test-mode branches. See [docs/concepts/digital-twins.md](docs/concepts/digital-twins.md).
-7. **Workspace (S06):** worktree-per-workflow-branch + merges (Gas Town pattern). Multiple agents within a single workflow share its workspace sequentially. No agent-mail file reservations.
-8. **Memory (S08) MVH:** just CASS pointed at the canonical session-log directory. Three-layer cognition deferred until concrete demand exists.
-9. **No verifier subsystem.** Verification is a node type in the workflow graph (mechanical → non-agentic node, semantic → agentic node). Old S07 Verifier Layer archived; S07 slot now holds Scenario Harness.
-10. **Operator controls operate between tasks**, not within tasks. The orchestrator processes a stream of tasks; pause means "finish in-flight, stop pulling new." Three controls: stop on major issue, pause for improvement cycle, pause to upgrade harmonik version. These are general harmonik features, not bootstrap-specific.
+**Corpus citation cleanup — DONE.** Two coordinated passes migrated legacy cross-spec anchors:
+- Pass 1: 57 `architecture.md §1.N → §4.N` cites + 7 `handler_type → agent_type` renames.
+- Pass 2: ~145 cites across 7 specs (EV `§3.N`, WM `§5.N`, ON `§7.N`, PL `§8.N`, BI `§10.N`, CP misnumbered `§6.N`, reconciliation multi-file path form).
+- Each batch-2 R1 integration also cleaned its own outbound cites as part of B3 blocking findings.
+- Total ~350+ cites migrated corpus-wide. Known remaining: reviewer artifacts (informative docs), revision-history prose quoting legacy form (intentional).
 
-## Substantive Doc Awaiting Review
+**Workspace-model → reviewed v0.4.1.** Full 2-round cycle:
+- R1 reviewers (implementer / cross-spec-architect / critic) → R1 integration v0.3.0 (+391 lines, 9 new requirements, 1 retired, 7 OQs, §8 error taxonomy).
+- R2 reviewers (skeptic / crash-adversary / git-expert) → R2 integration v0.4.0 (+242 lines, 5 new requirements, 7 new OQs, new error classes).
+- Citation cleanup patch to v0.4.1.
+- WM IDs now FROZEN permanently.
 
-[docs/bootstrap.md](docs/bootstrap.md) is the thinking-through plan for G06. It has explicit "Decisions needed" sections at the end of each part. These are open and waiting for the user's call. The most important decisions:
+**R2 review findings were NOT polish.** Real bugs caught:
+- `git worktree add <path> <branch>` invocation would FAIL at runtime for new branches — corrected to `-b <branch> <path> <start-point>`.
+- WM-022 cited `Harmonik-Actor-Role` git trailer that doesn't exist in EM — replaced with sidecar walk.
+- Silent unreachable states after crash during worktree creation (`bare-worktree-no-lease`) — now classified as Cat 3.
+- Sidecar atomicity missing temp+rename+fsync — matched to lock file discipline.
+- `.harmonik/lease.lock` would get committed without gitignore hygiene — new WM-013e.
 
-- §2 MVH cut: is the proposed minimum viable harmonik the right scope?
-- §3 Workflow lifecycle: human gate placement, revision retry caps, cycle granularity
-- §4 Operator control specifics: stop default, queue compat contract, control interface, config scope
-- §5 Bootstrap build order: especially "orchestrator before policy" question
+**Process-lifecycle → R1-integrated v0.3.0.** +298 lines, 11 new requirements, 2 new invariants, 6 new OQs. Added: fd-lifetime advisory lock, JSON-RPC 2.0 wire format, project-hash provenance marker, startup step 0 (bus + registries + JSONL writer), exit-code catalog, runner entry-point. Dropped `operator-nfr` from depends-on (cycle break).
 
-## Open Architectural Questions (Parked Details)
+**PL R2 reviews** (skeptic, crash-adversary, daemon-author) completed after R1 integration. Surface substantial blockers: PL-008a exit-code conflict with ON §8 authoritative table, `PL-027(iii)` socket-rebind self-contradicts MUST-NOT-unlink, `PL-014a` concurrency ceiling unbounded (macOS EMFILE footgun), ready protocol missing for external callers, stop-advancing predicate unnamed mechanically. **Must-fix before `reviewed`.**
 
-These were noted during decisions but pushed to "later, before implementation begins":
+**Operator-nfr → R1-integrated v0.3.0.** +177 lines. Applied: `in_flight(run)` mechanical definition, pause-state FSM consistency, event-name collapse (`operator_pause_status`), exit-code taxonomy expansion, §A.4 reverse-drift migration map, resource budget tables, RTO target 30s/300s, `spec-category: foundation-cross-cutting`.
 
-- **Node types doc.** With verifier collapsed into the graph, non-agentic node types (test runs, lints, scripts) need a defined contract: how stdout/stderr/exit-codes are captured, how policy expressions consume that output to choose edges, how runner vs orchestrator divide responsibility for execution. Referenced from S01 and S04.
-- **Pi session-log format and location.** Needs concrete investigation before the Pi handler can support memory ingestion.
-- **JSONL rotation, retention, indexing.** Event log volume will be substantial; need a policy before storage costs surprise us.
-- **Scenario definition format.** YAML vs Go vs DSL. Decision needed before scenario harness implementation begins.
-- **Workspace conflict resolution role.** Which agent type resolves merge conflicts -- a dedicated "merge agent" or the original implementer or always-escalate?
-- **Twin conformance.** How do we keep twin behavior honest against real-agent drift?
-- **Queue state format compatibility window.** What's the contract harmonik versions must honor across upgrades?
-- **Configuration scope.** Runtime config vs workflow definition vs operator-policy file -- where do cadence/upgrade rules live?
+**Reconciliation → R1-integrated v0.3.0** (both `spec.md` 752→880 and `schemas.md` 178→221 lines). Applied: ~52 citation fixes, reclaimed `Harmonik-Verdict-Executed` trailer ownership to RC/schemas, priority-ordered category first-match rule, concurrent-reconciliation workflow lock, evidence-corroboration rule per EV-023a, 3 invariants retired, 2 rewritten as cross-subsystem.
 
-## What Hasn't Been Touched Yet (and Likely Should Be Soon)
+**Beads-integration — all 3 R1 reviews done; R1 integration PENDING.** Reviews surfaced: status-mapping hole (RunState → Beads doesn't cover `deferred`/`tombstone`), `br` CLI contract missing (exit codes, stderr format, JSON-vs-text), adapter idempotency rests on unstated Beads behavior, ~19 broken cross-references, all 4 invariants missing sensors.
 
-- **S02 Policy Engine** — Holds pre-2026-04-19 framing. Should be refreshed to reflect the no-verifier decision (transition guards now include "did the non-agentic node exit 0?" semantics) and the Go language decision.
-- **S05 Hook System** — Same situation. Needs to align with the post-verifier graph model and the twin-binary mechanism.
-- **S09 Improvement Loop** — Needs to align with the corrected operator-control model (it's the engine for §4.2 pause-for-improvement, runs between tasks at configured cadence).
-- **Ideas catalog (I01-I07)** — Worth revisiting; some may be subsumed by recent decisions, others may still be live.
-- **Log entries** — This session produced significant decisions but no log entry. Consider a `docs/log/2026-04-19-subsystem-feedback-pass.md` summarizing the change set.
-- **No code.** No `go.mod`, no source tree, no scenario stub. The bootstrap-build-order question (§5 of bootstrap.md) needs to resolve before code starts.
+**Review artifact inventory** — all 15 R1 files + 6 R2 files for batch-2 at `/Users/gb/github/harmonik/docs/reviews/2026-04-24-*-r{1,2}/`. Combined with batch-1 artifacts from the prior session, ~45 reviewer outputs now captured on disk.
 
-## Where to Start Next Session
+## Decisions in force
 
-1. Read [SESSION_HANDOFF.md](SESSION_HANDOFF.md) — rewritten 2026-04-24 (overnight) with full state of spec corpus.
-2. Skim 2-3 batch-1 specs at `specs/` to verify the format matches expectations.
-3. Decide: (a) sign off on batch-1 → proceed to batch-2 review cycles; (b) flag any spec for revision before proceeding; (c) cross-cutting cleanup pass (citation drift + handler_type rename) first.
-4. Consult [TASKS.md](TASKS.md) for the broader backlog.
+### 10 locked decisions (2026-04-19)
 
-## Spec corpus inventory
+(Unchanged — see prior STATUS.md versions in git history.)
 
-Five reviewed specs (v0.3, status `reviewed`, IDs frozen):
-- `specs/architecture.md` (AR, 643 lines, 52 reqs)
-- `specs/execution-model.md` (EM, 1091 lines, 65 reqs)
-- `specs/event-model.md` (EV, 1032 lines, 70 events + 42+ reqs)
-- `specs/handler-contract.md` (HC, 949 lines, 57+ reqs)
-- `specs/control-points.md` (CP, 1124 lines, 54+ reqs)
+### 4 candidate decisions (2026-04-20/21)
 
-Five draft specs (v0.1, status `draft`, IDs mutable):
-- `specs/workspace-model.md` (WM, 606 lines, 40 reqs)
-- `specs/process-lifecycle.md` (PL, 489 lines, 28 reqs)
-- `specs/operator-nfr.md` (ON, 696 lines, 46 reqs)
-- `specs/reconciliation/{spec.md, schemas.md}` (RC, split, 929 lines, 31 reqs)
-- `specs/beads-integration.md` (BI, 506 lines, 32 reqs)
+11. DOT workflow definition format. 12. No DTW. 13. Beads as task ledger (`br` CLI only). 14. Handler-contract skill injection.
 
-Total: ~8,065 lines of normative spec across 10 specs. Plus `specs/_registry.yaml` (prefix reservations) + `docs/foundation/spec-template.md` v1.1 (594 lines).
+### Decisions locked in this session's flow (from prior sessions)
+
+- Direct-to-main + agent-reviewer-every-commit + no-PRs-for-MVH.
+- AGENTS.md canonical with CLAUDE.md symlink.
+- CONSTITUTION.md as non-recursive trust anchor.
+- JSON-structured agent-reviewer verdict.
+- Aggressive coverage targets (95% core / 90% floor / <0.3% regression gate).
+- `depguard` v2 alone (no `go-arch-lint`).
+- Three-tier `make check-fast` / `check` / `check-full`.
+- Spec-template structure locked.
+
+## Spec corpus inventory — current state (2026-04-25)
+
+| Spec | File(s) | Version | Status | §4 req IDs |
+|---|---|---|---|---|
+| architecture | `architecture.md` | 0.3.1 | reviewed | 53 |
+| execution-model | `execution-model.md` | **0.3.3** | reviewed | 65 (+EM-005a) |
+| event-model | `event-model.md` | **0.3.3** | reviewed | 48 |
+| handler-contract | `handler-contract.md` | **0.3.3** | reviewed | 63 (+HC-016a, HC-026b) |
+| control-points | `control-points.md` | 0.3.2 | reviewed | 55 |
+| workspace-model | `workspace-model.md` | **0.4.2** | reviewed | 53 |
+| process-lifecycle | `process-lifecycle.md` | **0.4.1** | reviewed | 42 |
+| operator-nfr | `operator-nfr.md` | **0.4.1** | reviewed | 61 |
+| reconciliation | `reconciliation/{spec,schemas}.md` | 0.4.0 | reviewed/supplement | 43 |
+| beads-integration | `beads-integration.md` | **0.4.1** | reviewed | 43 |
+
+**~526 unique requirement IDs** across the corpus (sum of column 5 ≈ 526). EV's 7 new event-type identifiers (§8.x.NN) are not requirement IDs and don't count toward this number.
+
+**ALL spec IDs (AR, EM, EV, HC, CP, WM, PL, ON, RC, BI) ARE PERMANENTLY FROZEN.** No renumbering or ID reuse in any future revision. Today's net-new IDs (EM-005a, HC-016a, HC-026b) were minted in pre-existing gaps.
+
+## Where to start next session
+
+1. Read [HANDOFF.md](HANDOFF.md) — skill-formatted handoff produced by `/session-handoff` 2026-04-27.
+2. Read [SESSION_HANDOFF.md](SESSION_HANDOFF.md) — prose form of the same.
+3. Read [NEXT_AGENT.md](NEXT_AGENT.md) — ordered instructions for the next session.
+4. Read `docs/decompose-to-tasks/discipline.md` v0.4 (especially the new §2.10 mnem→ID rule and §2.12 corpus prefix `hk` decision).
+5. Read `docs/decompose-to-tasks/pilot-review-protocol.md` v0.1 — the 3-reviewer protocol that gates every pilot.
+6. Priority: **draft AR pilot** (`docs/decompose-to-tasks/ar-pilot.md`) against `specs/architecture.md`, then run the 3-reviewer protocol on it, then load. AR is small (52 reqs, mostly declarations) — good shakedown for the protocol before scaling.

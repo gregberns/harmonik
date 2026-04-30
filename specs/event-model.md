@@ -7,10 +7,10 @@ spec-id: event-model
 requirement-prefix: EV
 status: reviewed
 spec-shape: taxonomy-first
-version: 0.3.0
+version: 0.3.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-04-24
+last-updated: 2026-04-25
 depends-on:
   - architecture
   - execution-model
@@ -23,7 +23,7 @@ depends-on:
 
 This spec defines harmonik's event substrate: the typed event taxonomy, the common envelope, the on-disk JSONL format, the in-process pub/sub bus, the consumer taxonomy (synchronous / asynchronous / observer), the durability-class-driven fsync semantics, schema versioning, partial-ordering rules, the observational-vs-state-reconstruction replay split, and the non-blocking back-pressure policy. It is normative for every subsystem that emits or consumes events.
 
-Events are the **observational stream**. They are NOT the state-reconstruction source: git plus Beads is (see [execution-model.md §4.7] and §4.5 here). Events are **lifecycle-boundary signals**, not agent internals; agent-internal detail lives in session logs (see [workspace-model.md §5.3]). Logs are a separate diagnostic channel covered by `quality-checks.md` once that spec lands.
+Events are the **observational stream**. They are NOT the state-reconstruction source: git plus Beads is (see [execution-model.md §4.7] and §4.5 here). Events are **lifecycle-boundary signals**, not agent internals; agent-internal detail lives in session logs (see [workspace-model.md §4.7]). Logs are a separate diagnostic channel covered by `quality-checks.md` once that spec lands.
 
 ## 2. Scope
 
@@ -46,7 +46,7 @@ Events are the **observational stream**. They are NOT the state-reconstruction s
 - **State reconstruction.** Owned by [execution-model.md §4.7]. JSONL is observational per §4.5 here; state reconstruction walks git plus Beads.
 - **Per-subsystem event-authorship rules** (which subsystem owns the WHEN of a given emission). Each subsystem spec declares its emissions; this spec is normative for payload shape, envelope, and taxonomy membership only. See §6.5 for the co-ownership rule.
 - **Structured log format** (`log/slog` JSON records, diagnostic channel). Owned by `quality-checks.md` once that spec lands. Events are not logs per [docs/foundation/core-scope.md §2]; cross-reference tracked at OQ-EV-002.
-- **Reconciliation category classification, investigator-agent contract, verdict vocabulary.** Owned by [reconciliation.md §9.2, §9.4, §9.5]. This spec declares the shapes of reconciliation-related events only.
+- **Reconciliation category classification, investigator-agent contract, verdict vocabulary.** Owned by [reconciliation/spec.md §8, §4.4, §4.5]. This spec declares the shapes of reconciliation-related events only.
 - **JSONL rotation policy.** Unbounded append works for MVH per [docs/foundation/core-scope.md §2]; rotation is deferred, tracked at OQ-EV-001.
 
 ## 3. Glossary
@@ -106,12 +106,12 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
 |---|---|---|---|---|---|
 | 8.3.1 | `agent_ready` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `capabilities[]` |
-| 8.3.2 | `agent_started` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `node_id`, `handler_type`, `started_at` |
+| 8.3.2 | `agent_started` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `node_id`, `agent_type`, `started_at` |
 | 8.3.3 | `agent_output_chunk` | L | handler (via daemon watcher) | improvement-loop, observability | `run_id`, `session_id`, `chunk_index`, `bytes_emitted`, `chunk_digest?` |
 | 8.3.4 | `agent_completed` | O | handler (via daemon watcher) | orchestrator-core, audit, observability | `run_id`, `session_id`, `ended_at`, `exit_code` (observational), `outcome_ref` |
 | 8.3.5 | `agent_failed` | O | handler (via daemon watcher) | orchestrator-core, reconciliation, audit | `run_id`, `session_id`, `ended_at`, `error_category`, `reason` |
 | 8.3.6 | `agent_rate_limit_status` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `status` (`active` / `cleared`), `rate_limit_source?`, `retry_after_seconds?`, `changed_at` |
-| 8.3.7 | `session_log_location` | O | handler (via daemon watcher) | audit | `run_id`, `session_id`, `node_id`, `handler_type`, `log_path`, `log_format`, `bead_id?` |
+| 8.3.7 | `session_log_location` | O | handler (via daemon watcher) | audit | `run_id`, `session_id`, `node_id`, `agent_type`, `log_path`, `log_format`, `bead_id?` |
 | 8.3.8 | `skills_provisioned` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `skills[]` (each: `name`, `source_path`, `version?`) |
 | 8.3.9 | `handler_capabilities` | O | handler (via daemon watcher) | orchestrator-core | `run_id`, `session_id`, `protocol_versions_supported[]` |
 | 8.3.10 | `agent_warning_silent_hang` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `threshold_seconds`, `last_progress_event_at`, `fsm_state` |
@@ -135,7 +135,7 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.5.2 | `workspace_leased` | O | workspace-manager (S06) | orchestrator-core, audit | `workspace_id`, `run_id`, `leased_at` |
 | 8.5.3 | `workspace_merge_status` | F | workspace-manager (S06) | audit, observability, beads-integration | `workspace_id`, `run_id`, `status` (`pending` / `merged`), `source_branch`, `target_branch`, `merge_commit_hash?`, `changed_at` |
 | 8.5.4 | `workspace_discarded` | O | workspace-manager (S06) | audit, observability | `workspace_id`, `run_id`, `reason` |
-| 8.5.5 | `workspace_interrupted` | O | reconciliation detector (per [reconciliation.md §9.2]) | reconciliation, audit, operator-observability | `workspace_id`, `run_id`, `detected_at`, `category` (Cat 6) |
+| 8.5.5 | `workspace_interrupted` | O | reconciliation detector (per [reconciliation/spec.md §8]) | reconciliation, audit, operator-observability | `workspace_id`, `run_id`, `detected_at`, `category` (Cat 6) |
 | 8.5.6 | `merge_conflict_escalation` | O | workspace-manager (S06) | operator-observability, audit | `workspace_id`, `run_id`, `conflict_paths[]`, `escalated_at` |
 
 ### 8.6 Reconciliation lifecycle
@@ -144,7 +144,7 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 |---|---|---|---|---|---|
 | 8.6.1 | `reconciliation_started` | O | daemon-core | reconciliation-monitoring, audit | `reconciliation_run_id`, `trigger` (`startup` / `on-demand` / `divergence-detected`) |
 | 8.6.2 | `reconciliation_category_assigned` | O | daemon-core | reconciliation-monitoring, audit, improvement-loop | `reconciliation_run_id`, `target_run_id?`, `category` (Cat 0..6), `evidence_ref`, `post_crash_window?` |
-| 8.6.3 | `reconciliation_verdict_emitted` | O | daemon-core | reconciliation-monitoring, audit | `investigator_run_id`, `target_run_id`, `verdict` (per [reconciliation.md §9.5]), `rationale?` |
+| 8.6.3 | `reconciliation_verdict_emitted` | O | daemon-core | reconciliation-monitoring, audit | `investigator_run_id`, `target_run_id`, `verdict` (per [reconciliation/spec.md §4.5]), `rationale?` |
 | 8.6.4 | `reconciliation_verdict_executed` | O | daemon-core | reconciliation-monitoring, audit, improvement-loop | `investigator_run_id`, `target_run_id`, `verdict`, `executed_at_timestamp`, `action_summary` |
 | 8.6.5 | `reconciliation_verdict_malformed` | O | daemon-core | reconciliation-monitoring, audit | `investigator_run_id`, `target_run_id`, `malformation_reason`, `raw_verdict_excerpt` |
 | 8.6.6 | `reconciliation_budget_exhausted` | O | daemon-core | reconciliation-monitoring, audit, improvement-loop | `run_id`, `workflow_id`, `budget_seconds`, `elapsed_seconds` |
@@ -152,16 +152,22 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.6.8 | `store_divergence_detected` | O | daemon-core | reconciliation, audit | `run_id?`, `bead_id?`, `divergence_kind`, `evidence_ref`, `post_crash_window`, `corroboration` (`git-corroborated` / `beads-corroborated`) |
 | 8.6.9 | `operator_escalation_required` | O | daemon-core | operator-observability, audit | `target_run_id?`, `reason` (enum, widened per §6.3), `reference_commits[]?` |
 | 8.6.10 | `divergence_inconclusive` | O | daemon-core | reconciliation, audit | `run_id?`, `bead_id?`, `evidence_ref`, `post_crash_window`, `reason` (enum: `no_authority_reference` / `authority_unavailable`) |
+| 8.6.11 | `reconciliation_dispatch_deduplicated` | O | daemon-core | reconciliation-monitoring, audit | `target_run_id`, `existing_investigator_run_id?`, `dedup_at` |
+| 8.6.12 | `reconciliation_detector_panic` | O | daemon-core | reconciliation-monitoring, audit, operator-observability | `detector_class`, `error_class`, `panicked_at` |
+| 8.6.13 | `reconciliation_verdict_execution_retry` | O | daemon-core | reconciliation-monitoring, audit | `target_run_id`, `attempt`, `retried_at` |
+| 8.6.14 | `bead_terminal_transition_recovered` **(post-MVH)** | O | beads-adapter | observability, audit | `bead_id`, `op` (enum: `claim` / `close` / `reopen`), `idempotency_key`, `recovered_at` |
+
+> **(post-MVH)** §8.6.14 `bead_terminal_transition_recovered` is reserved for a future revision per OQ-BI-008. The MVH adapter emits a structured-log record per [operator-nfr.md §4.9 ON-035] for adapter-recovery observability rather than this event; the entry is reserved here so the type identifier is burned for future use by the BI adapter and not reused for any other purpose. No MVH conformance obligation attaches to §8.6.14.
 
 ### 8.7 Operator-control and daemon lifecycle
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
 |---|---|---|---|---|---|
 | 8.7.1 | `daemon_started` | F | daemon-core | observability, audit | `started_at`, `pid`, `binary_commit_hash` |
-| 8.7.2 | `daemon_ready` | F | daemon-core | observability, audit, operator-nfr | `ready_at`, `investigator_run_ids[]` |
-| 8.7.3 | `daemon_shutdown` | F | daemon-core | observability, audit | `shutdown_at`, `mode` (`graceful` / `immediate`) |
+| 8.7.2 | `daemon_ready` | F | daemon-core | observability, audit, operator-nfr | `ready_at`, `ready_at_ns_since_boot`, `investigator_run_ids[]` |
+| 8.7.3 | `daemon_shutdown` | F | daemon-core | observability, audit | `shutdown_at`, `shutdown_at_ns_since_boot`, `mode` (`graceful` / `immediate`) |
 | 8.7.4 | `daemon_startup_failed` | F | daemon-core | operator-observability, audit | `failed_at`, `exit_code`, `failure_mode` (per [operator-nfr.md §8]) |
-| 8.7.5 | `daemon_degraded` | O | daemon-core | operator-observability, audit | `detected_at`, `reason` (`rto_breach` / `reconstruction_notify` / other) |
+| 8.7.5 | `daemon_degraded` | O | daemon-core | operator-observability, audit | `detected_at`, `reason` (enum per §6.3, exhaustive: `rto_breach` / `reconstruction_notify` / `clock_regression` / `cat0_post_ready` / `infrastructure_unavailable` / `silent_hang_aggregate`) |
 | 8.7.6 | `operator_pause_status` | O | daemon-core | observability, audit | `status` (`pausing` / `paused`), `changed_at`, `operator_id?` |
 | 8.7.7 | `operator_resuming` | O | daemon-core | observability, audit | `resumed_at` |
 | 8.7.8 | `operator_stopped` | O | daemon-core | observability, audit | `stopped_at`, `mode` (`graceful` / `immediate`) |
@@ -172,6 +178,8 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.7.13 | `dispatch_deferred` | O | daemon-core | observability, audit | `run_id?`, `node_id?`, `reason` (`machine_ceiling_exhausted` / other), `deferred_at` |
 | 8.7.14 | `daemon_orphan_sweep_completed` | O | daemon-core | observability, audit | `tmux_sessions_killed`, `locks_cleared`, `subprocesses_killed`, `swept_at` |
 | 8.7.15 | `infrastructure_unavailable` | O | daemon-core | operator-observability, audit | `failed_prerequisite` (enum per §6.3), `detail_string`, `retry_count` |
+| 8.7.16 | `operator_command_failed` | O | daemon-core | operator-observability, audit | `command` (enum: `pause` / `stop` / `upgrade` / `attach` / `enqueue`), `failure_class` (enum per §6.3), `run_id?`, `failed_at` |
+| 8.7.17 | `operator_escalation_cleared` | O | daemon-core | operator-observability, audit | `target_run_id?`, `cleared_at`, `clearance_reason` (enum: `verdict_executed` / `manual_clear` / `superseded`) |
 
 ### 8.8 Observability and bus-internal
 
@@ -181,6 +189,7 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.8.2 | `consumer_failed` | O | bus-internal | observability, audit | `consumer_name`, `event_type`, `event_id`, `error_category` (incl. `overflow`), `failed_at` |
 | 8.8.3 | `dead_letter_enqueued` | O | bus-internal | observability, audit | `consumer_name`, `event_type`, `original_event_id`, `retries_attempted`, `enqueued_at` |
 | 8.8.4 | `bus_overflow` | O | bus-internal | observability, audit, operator-observability | `consumer_name`, `event_type`, `event_id`, `queue_depth`, `shed_at`, `shed_policy` (`fsync-spilled` / `ordinary-dropped` / `lossy-dropped`) |
+| 8.8.5 | `redaction_failed` | O | bus-internal | operator-observability, audit | `event_type`, `run_id?`, `error_class`, `failed_at` |
 
 ### 8.9 Acceptance criteria for candidate event types
 
@@ -203,7 +212,7 @@ The `agent_output_chunk` and `budget_accrual` types remain fine-grained in MVH b
 
 #### EV-001 — Every event MUST carry the common envelope fields
 
-Every event emitted to the bus or appended to JSONL MUST carry these envelope fields: `event_id` (UUIDv7), `schema_version` (integer), `type` (one of the types in §8), `timestamp_wall` (RFC 3339 wall-clock time at the emitter), `timestamp_mono_nsec` (optional monotonic nanoseconds from the emitter's process), `source_subsystem` (an opaque Go-package-identifier string per [architecture.md §1.4a]), `trace_context` (for cross-subsystem correlation), `run_id` (when scoped to a run), `state_id` (when scoped to a state), and `payload` (type-specific body, see §6.3). The emitter MUST perform exactly one wall-clock read per emission and reuse that reading for both `timestamp_wall` and UUIDv7 generation so the envelope is self-consistent.
+Every event emitted to the bus or appended to JSONL MUST carry these envelope fields: `event_id` (UUIDv7), `schema_version` (integer), `type` (one of the types in §8), `timestamp_wall` (RFC 3339 wall-clock time at the emitter), `timestamp_mono_nsec` (optional monotonic nanoseconds from the emitter's process), `source_subsystem` (an opaque Go-package-identifier string per [architecture.md §4.5]), `trace_context` (for cross-subsystem correlation), `run_id` (when scoped to a run), `state_id` (when scoped to a state), and `payload` (type-specific body, see §6.3). The emitter MUST perform exactly one wall-clock read per emission and reuse that reading for both `timestamp_wall` and UUIDv7 generation so the envelope is self-consistent.
 
 Tags: mechanism
 
@@ -239,13 +248,13 @@ Tags: mechanism
 
 #### EV-004 — `source_subsystem` is layout-open
 
-The `source_subsystem` field MUST be a Go-package-identifier string. The envelope schema MUST NOT enumerate a fixed set, keeping the layout open for post-MVH reorganization. Subsystem identifiers are declared in each subsystem's envelope per [architecture.md §1.4].
+The `source_subsystem` field MUST be a Go-package-identifier string. The envelope schema MUST NOT enumerate a fixed set, keeping the layout open for post-MVH reorganization. Subsystem identifiers are declared in each subsystem's envelope per [architecture.md §4.4].
 
 Tags: mechanism
 
 #### EV-005 — Events are lifecycle-boundary signals, not agent internals
 
-Events emitted to the bus and JSONL MUST be lifecycle-boundary signals. Agent-internal detail — tool calls, thinking traces, per-token output — MUST NOT be emitted as events; it lives in the agent's session log per [workspace-model.md §5.3]. The per-chunk types `agent_output_chunk` and `budget_accrual` are lifecycle-boundary signals routed to the bus per §8.9; they are NOT the mechanism by which the orchestrator reconstructs agent-internal state.
+Events emitted to the bus and JSONL MUST be lifecycle-boundary signals. Agent-internal detail — tool calls, thinking traces, per-token output — MUST NOT be emitted as events; it lives in the agent's session log per [workspace-model.md §4.7]. The per-chunk types `agent_output_chunk` and `budget_accrual` are lifecycle-boundary signals routed to the bus per §8.9; they are NOT the mechanism by which the orchestrator reconstructs agent-internal state.
 
 Tags: mechanism
 
@@ -418,7 +427,7 @@ Reconciliation detectors and investigator agents MAY read the JSONL tail for the
 - Set `post_crash_window: true` on any divergence event whose evidence falls inside that window.
 - Corroborate divergence against git and Beads before flagging: an event that references a `commit_hash` MUST be tested against git; a bead transition MUST be tested against Beads. Only if the on-disk authoritative stores also disagree is the divergence real.
 
-Cross-reference: [reconciliation.md §9.3a].
+Cross-reference: [reconciliation/spec.md §4.3].
 
 Tags: mechanism
 
@@ -450,7 +459,7 @@ Tags: mechanism
 
 #### EV-027 — Adding or removing a cross-bus event type requires a foundation amendment
 
-A subsystem that wants to emit a new cross-bus event type MUST add the type to §8 via the foundation amendment protocol ([architecture.md §1.5]). The addition amendment MUST provide: type name, emitter, typical consumers, payload fields, four-axis tags, durability class, and evidence satisfying every criterion in §8.9. The addition amendment MUST include (a) the §8 row, (b) the emitter-spec edit adding the emission requirement, (c) at least one consumer cited in another spec.
+A subsystem that wants to emit a new cross-bus event type MUST add the type to §8 via the foundation amendment protocol ([architecture.md §4.6]). The addition amendment MUST provide: type name, emitter, typical consumers, payload fields, four-axis tags, durability class, and evidence satisfying every criterion in §8.9. The addition amendment MUST include (a) the §8 row, (b) the emitter-spec edit adding the emission requirement, (c) at least one consumer cited in another spec.
 
 Symmetrically, a sibling spec that removes an emission requirement MUST also amend §8 via the same protocol — either by removing the event type (deletion amendment) OR by documenting the orphan status with evidence that the event remains load-bearing via a different emitter. A deletion amendment MUST provide: the retiring event-type name, the emitter-spec edit removing the emission, migration guidance for current consumers, and a statement that the retired `EventType` enum value is retired and MUST NOT be reused for any future event. Event-type identifiers, once retired, are burned; consumers pinned to N-1 schema versions must continue to accept the retired type as a known value that will never be emitted again.
 
@@ -466,7 +475,7 @@ Tags: mechanism
 
 #### EV-029 — N-1 readable compatibility window (per-type AND envelope)
 
-Readers of events MUST accept the immediately prior schema version (N-1) for every event type AND for the envelope. Per-type independence means harmonik maintains up to 71+ independent compatibility contracts (the §8 taxonomy today is 71 event types; per-type versions evolve independently). Breaking changes (per §6.4 table) require a migration release scheduled at an operator pause per [operator-nfr.md §7.3].
+Readers of events MUST accept the immediately prior schema version (N-1) for every event type AND for the envelope. Per-type independence means harmonik maintains up to 71+ independent compatibility contracts (the §8 taxonomy today is 71 event types; per-type versions evolve independently). Breaking changes (per §6.4 table) require a migration release scheduled at an operator pause per [operator-nfr.md §4.3].
 
 Tags: mechanism
 
@@ -643,7 +652,7 @@ The bus MUST invoke an optional consumer-supplied `on_tail_truncation(ctx, last_
 Read-recovery rules (extended):
 
 - **Torn tail.** A final line that lacks a terminating newline OR fails JSON parse OR parses as JSON but fails envelope schema validation (unknown `type`, missing required envelope field) is a torn tail. In post-crash startup-recovery context the reader MUST discard the torn tail silently (the expected lossy-tail shape). In all other read contexts (investigator walk, observational replay on a live daemon) the reader MUST emit `store_divergence_detected{divergence_kind=schema_mismatch, post_crash_window=false}` before discarding the line.
-- **Mid-file corruption.** A non-final line that fails JSON parse indicates corruption (block reordering, media error, or torn write followed by an appended line). The reader MUST emit `store_divergence_detected{divergence_kind=parse_failure}` carrying a `byte_offset` and halt the reader; the condition escalates to reconciliation Cat 6 per [reconciliation.md §9.2]. The reader MUST NOT skip the corrupt line and continue.
+- **Mid-file corruption.** A non-final line that fails JSON parse indicates corruption (block reordering, media error, or torn write followed by an appended line). The reader MUST emit `store_divergence_detected{divergence_kind=parse_failure}` carrying a `byte_offset` and halt the reader; the condition escalates to reconciliation Cat 6 per [reconciliation/spec.md §8]. The reader MUST NOT skip the corrupt line and continue.
 - **Empty log.** An empty or absent `events.jsonl` at daemon startup is a valid fresh-project state when git and Beads also carry no prior daemon cycle. When git or Beads DO carry prior-cycle evidence, the empty log MUST emit `store_divergence_detected{divergence_kind=log_missing, post_crash_window=true}` and enter reconciliation's degraded-start path.
 - **Concurrent tailing.** A reader tailing `events.jsonl` while the writer is actively appending MUST treat the currently-growing file's final line as non-authoritative until a terminating newline is observed. POSIX `O_APPEND` atomicity is bounded to `PIPE_BUF` (4096 bytes); JSONL lines may exceed this, so readers MUST NOT assume any single in-flight line is atomic. Concurrent readers MUST NOT take exclusive file locks; the writer's append-only invariant (EV-020) plus the newline-sentinel is the reader's sole synchronization primitive.
 - **Post-fsync tail.** Events past the last durable fsync on a post-crash log MAY be absent; readers operate per EV-017.
@@ -751,6 +760,8 @@ post_crash_window: <Boolean>         # true when evidence falls in the post-cras
 corroboration: <enum: git-corroborated | beads-corroborated>   # per EV-023a; inconclusive cases emit divergence_inconclusive instead
 ```
 
+> **(post-MVH)** The `divergence_kind` enum is closed at the MVH set above. Adapter-specific values (e.g., for the `br` Beads adapter per [beads-integration.md §4.10] and OQ-BI-008) MAY be added in a future revision via the §4.6 amendment protocol; until then, adapters emit `divergence_inconclusive` (§8.6.10) per EV-023a's single-authority semantics. No adapter-specific values are added in this revision.
+
 #### `divergence_inconclusive`
 
 ```yaml
@@ -790,6 +801,35 @@ shed_policy: <enum: fsync-spilled | ordinary-dropped | lossy-dropped>   # fsync-
 
 `shed_policy` lets a consumer of `bus_overflow` attribute the shed without cross-referencing §8 for the event's durability class. Overflow handlers seeing `fsync-spilled` should check the spill file for reconciliation; `ordinary-dropped` and `lossy-dropped` are acceptable losses under EV-017 / EV-INV-002.
 
+#### `daemon_ready`
+
+```yaml
+ready_at: <Timestamp>                           # RFC 3339 wall-clock at the daemon's ready transition
+ready_at_ns_since_boot: <Integer>               # uint64 monotonic clock reading at ready, in ns since the host's boot; complements ready_at for RTO measurement under wall-clock skew per [operator-nfr.md §4.8 ON-033]
+investigator_run_ids: <UUID[]>
+```
+
+`ready_at_ns_since_boot` is REQUIRED. ON-033 mandates that the RTO measurement boundary use a monotonic-corrected source so SIGTERM-receipt and `ready` emission timestamps are comparable across NTP adjustments and VM pause/resume. On boot-transition cycles (where the monotonic clock resets), the operator-nfr-side RTO computation marks the cycle `rto_undefined` per ON-033; `ready_at_ns_since_boot` is still emitted (it is well-defined within a single boot epoch).
+
+#### `daemon_shutdown`
+
+```yaml
+shutdown_at: <Timestamp>                        # RFC 3339 wall-clock at the daemon's shutdown emission
+shutdown_at_ns_since_boot: <Integer>            # uint64 monotonic clock reading at shutdown, in ns since the host's boot; complements shutdown_at for RTO measurement per ON-033
+mode: <enum: graceful | immediate>
+```
+
+Durability class is `F` per §8.7.3 (resolves OQ-PL-012 — `daemon_shutdown` is fsync-boundary so RTO reconstruction can identify the SIGTERM-receipt landmark on the prior daemon cycle). `shutdown_at_ns_since_boot` is REQUIRED for graceful shutdowns. SIGKILL terminations have no `daemon_shutdown` emission at all (no defer-recover gets to run); ON-033 marks those RTO cycles `rto_undefined`.
+
+#### `daemon_degraded`
+
+```yaml
+detected_at: <Timestamp>
+reason: <enum: rto_breach | reconstruction_notify | clock_regression | cat0_post_ready | infrastructure_unavailable | silent_hang_aggregate>
+```
+
+`reason` is exhaustive. New variants require an EV-027 amendment. The `cat0_post_ready` variant is RC-012a's carve-out: a Cat 0 prerequisite failure observed AFTER the daemon has reached `ready` MUST emit `daemon_degraded{reason=cat0_post_ready}` but MUST NOT transition the §6.1 daemon-status enum from `ready` to `degraded` (per [reconciliation/spec.md §4.2 RC-012a]). The `clock_regression` variant is EV-002c's HWM regression carve-out. The `silent_hang_aggregate` variant is the [operator-nfr.md §4.9 ON-040] silent-hang-fan-out aggregator.
+
 Remaining per-type payloads follow the same pattern: field names listed in §8 columns, Go types resolved against the registry per EV-032. Outstanding: full YAML for the remaining ~47 types lands within one revision cycle per OQ-EV-005.
 
 ### 6.4 Schema evolution — breaking-change table
@@ -808,7 +848,7 @@ The envelope carries a `schema_version` integer; each payload type carries a per
 | Remove enum variant | Yes | Migration release. |
 | Tighten validation (e.g., required length bound) | Yes | Migration release. |
 
-Migration releases are scheduled at operator pauses per [operator-nfr.md §7.3]. Between-run pause semantics means migration may require drain-to-quiescent; operators are advised to schedule migrations during low-activity windows. Imports [operator-nfr.md §7.5].
+Migration releases are scheduled at operator pauses per [operator-nfr.md §4.3]. Between-run pause semantics means migration may require drain-to-quiescent; operators are advised to schedule migrations during low-activity windows. Imports [operator-nfr.md §4.5].
 
 ### 6.5 Co-owned event payloads
 
@@ -817,11 +857,11 @@ This spec owns the payload SHAPE for every type in §8. The WHEN of each emissio
 - Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5].
 - Control-point events (§8.2): emission rules in [control-points.md §6.5].
 - Agent / handler events (§8.3), including silent-hang FSM: emission rules in [handler-contract.md §4.1, §4.9, §4.11, §7.1].
-- Budget events (§8.4): emission rules in [control-points.md §6.9].
-- Workspace events (§8.5): emission rules in [workspace-model.md §5.2, §5.4].
-- Reconciliation events (§8.6): emission rules in [reconciliation.md §9.1, §9.3, §9.3a, §9.5].
-- Operator / daemon events (§8.7): emission rules in [operator-nfr.md §6.5, §7.3] and [process-lifecycle.md §6.2, §8.6].
-- Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`) and free-call (`metric`).
+- Budget events (§8.4): emission rules in [control-points.md §4.5].
+- Workspace events (§8.5): emission rules in [workspace-model.md §4.4, §4.5].
+- Reconciliation events (§8.6): emission rules in [reconciliation/spec.md §4.1, §4.3, §4.5]. The new entries §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a), §8.6.12 `reconciliation_detector_panic` (RC-020b), and §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a) are RC-emission-owned. §8.6.14 `bead_terminal_transition_recovered` is **(post-MVH)** per OQ-BI-008 and reserved for future BI-adapter emission; no MVH emitter exists.
+- Operator / daemon events (§8.7): emission rules in [operator-nfr.md §6.5, §7.3] and [process-lifecycle.md §6.2, §8.6]. The new entries §8.7.16 `operator_command_failed` (ON-013a) and §8.7.17 `operator_escalation_cleared` (ON; companion to RC-emitted `operator_escalation_required`) are ON-emission-owned.
+- Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`, `redaction_failed`) and free-call (`metric`). The new entry §8.8.5 `redaction_failed` (ON-022 fail-closed redactor) is bus-internal; the redactor MUST emit it before aborting the redaction-violating emission.
 
 ## 7. Protocols and state machines
 
@@ -892,9 +932,9 @@ Branch points above correspond to normative requirements: fsync cadence (EV-016)
 
 ### 9.1 Depends on
 
-- **[architecture.md §1.1]** — four-axis classification; every event type's tags use the axes defined there.
-- **[architecture.md §1.4, §1.4a]** — subsystem envelope; `source_subsystem` is a registered Go package identifier.
-- **[architecture.md §1.5]** — amendment protocol (EV-027).
+- **[architecture.md §4.1]** — four-axis classification; every event type's tags use the axes defined there.
+- **[architecture.md §4.4, §4.5]** — subsystem envelope; `source_subsystem` is a registered Go package identifier.
+- **[architecture.md §4.6]** — amendment protocol (EV-027).
 - **[execution-model.md §4.1]** — `Run`, `State`, `Transition` types referenced by event scoping fields.
 - **[execution-model.md §4.4]** — checkpoint contract; `checkpoint_written` references commit hash and trailers.
 - **[execution-model.md §4.7]** — state-reconstruction source; §4.5 defers to it.
@@ -903,7 +943,7 @@ Branch points above correspond to normative requirements: fsync cadence (EV-016)
 - **[handler-contract.md §4.5]** — `ErrorCategory` sentinel-error set.
 - **[handler-contract.md §4.7]** — redaction registry (EV-035 depends normatively).
 - **[handler-contract.md §4.1, §4.9, §4.11, §7.1]** — handler-event emission rules (agent lifecycle + silent-hang FSM + skill injection).
-- **[workspace-model.md §5.3]** — session-log pipeline; `session_log_location` emission rule.
+- **[workspace-model.md §4.7]** — session-log pipeline; `session_log_location` emission rule.
 
 ### 9.2 Reverse dependencies
 
@@ -912,9 +952,15 @@ Branch points above correspond to normative requirements: fsync cadence (EV-016)
 ### 9.3 Co-references (read-only consumption)
 
 - **[control-points.md §6.5]** — control-point event emission rules (gates, hooks, guards, budgets).
-- **[reconciliation.md §9.2 Category taxonomy]**; **[§9.3a Post-crash-window guardrail]**; **[§9.5 Verdict vocabulary]**.
+- **[reconciliation/spec.md §8 Category taxonomy]**; **[§4.3 Post-crash-window guardrail]**; **[§4.5 Verdict vocabulary]**.
 - **[operator-nfr.md §6.5, §7.3, §7.5]** — operator-control emission timing + N-1 compatibility contract + migration-release pause semantics.
-- **[beads-integration.md §10.6]** — optional `bead_id` field propagation across run-lifecycle events. `bead_claimed` / `bead_closed` / `bead_reopened` are NOT declared as dedicated events; bead terminal transitions ride on `run_started` / `run_completed` / `run_failed` with `bead_id` per BI-010/BI-011.
+- **[operator-nfr.md §4.7 ON-022]** — fail-closed redactor; emitter of `redaction_failed` (§8.8.5).
+- **[operator-nfr.md §4.4 ON-013a]** — operator-command panic supervision; emitter of `operator_command_failed` (§8.7.16).
+- **[operator-nfr.md §4.8 ON-033]** — RTO measurement boundary; consumer of the `_at_ns_since_boot` companion fields on `daemon_ready` / `daemon_shutdown`.
+- **[reconciliation/spec.md §4.1 RC-002a, §4.3 RC-020b, §4.5 RC-026a]** — emission rules for `reconciliation_dispatch_deduplicated` (§8.6.11), `reconciliation_detector_panic` (§8.6.12), `reconciliation_verdict_execution_retry` (§8.6.13).
+- **[reconciliation/spec.md §4.2 RC-012a]** — emitter of `daemon_degraded{reason=cat0_post_ready}` (§8.7.5).
+- **[beads-integration.md §4.6]** — optional `bead_id` field propagation across run-lifecycle events. `bead_claimed` / `bead_closed` / `bead_reopened` are NOT declared as dedicated events; bead terminal transitions ride on `run_started` / `run_completed` / `run_failed` with `bead_id` per BI-010/BI-011.
+- **[beads-integration.md §4.10, OQ-BI-008]** — post-MVH reservation slot for `bead_terminal_transition_recovered` (§8.6.14) and post-MVH `divergence_kind` adapter-specific values.
 - **[process-lifecycle.md §6.2, §8.2]** — `daemon_ready` / `daemon_started` emission timing; RTO measurement endpoint.
 
 ## 10. Conformance
@@ -949,7 +995,7 @@ Migration to `[testing.md §<layer>]` cross-references tracked at OQ-EV-003.
 
 ### 10.3 Excluded conformance claims
 
-This spec does NOT grant conformance over: structured-log format (owned by `quality-checks.md`), JSONL rotation (OQ-EV-001), per-subsystem event-authorship rules, reconciliation category classifier, checkpoint trailer format, handler wire protocol. Bus latency / throughput bounds are operator-observable in [operator-nfr.md §7.8].
+This spec does NOT grant conformance over: structured-log format (owned by `quality-checks.md`), JSONL rotation (OQ-EV-001), per-subsystem event-authorship rules, reconciliation category classifier, checkpoint trailer format, handler wire protocol. Bus latency / throughput bounds are operator-observable in [operator-nfr.md §4.8].
 
 ## 11. Open questions
 
@@ -1002,6 +1048,9 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. 54 events; fsync on 4 hardcoded types; paired-phase events split; `gate_evaluated` single-event; envelope-plus-registry Go shape. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 reviewer integration. Event count 54 → 70 (net +16): added 22 missing cross-subsystem emissions (daemon lifecycle, upgrade contract, split gate verdicts, silent-hang FSM family, hook/guard events, `node_dispatch_requested`, `control_points_registered`, `bus_overflow`); merged 3 paired-phase pairs into status-carrying singles; retired 3 orphans (`gate_evaluated` replaced by split, `guard_denied` replaced by `guard_reordered`+`guard_failed`, `policy_violation` and `health_check` removed). Added EV-002a (monotonic UUIDv7), EV-011a (non-blocking back-pressure), EV-014a (dispatch semantics), EV-014b (consumer idempotency), EV-019a (panic bus flush as SHOULD), EV-034a (`source_subsystem` registration). Refactored EV-016 to derive fsync from durability class declared in §8. Added §6.4 breaking-change classification table. Added EV-023 post-crash-window guardrail. Added `TransitionKind`, `FailureClass`, `ErrorCategory`, `session_id` typing to §3. Added §8.9(g) orphan-lint criterion and §8.9(h) paired-event prohibition. Added EV-010 acyclicity clause and `depguard` rule for observers (EV-012). MUST/SHOULD split on EV-019/EV-019a; EV-017 rationale moved to §A.3; EV-011 quota bounded. Status remains `draft`. |
 | 2026-04-24 | 0.3.0 | foundation-author | Round-2 reviewer integration. Blocking fixes: taxonomy count reconciled (54 → 70, not 69); added EV-002b (handler subprocesses route event_id generation through daemon); added EV-002c (UUIDv7 high-water-mark file for restart monotonicity); added `Subscription` RECORD to §6.1 with `consumer_id`, `consumer_class`, `event_pattern`, `since`, `on_panic`, `offset_checkpoint_event_id`; added `replay_from(since)` and `on_tail_truncation` consumer-recovery hooks to bus interface (closes EV-INV-002 consumer side); clarified FANOUT_OBSERVERS concurrency (per-observer goroutine + bounded queue); added `shed_policy` field to `bus_overflow` payload. Crash findings: added EV-023a (evidence-inconclusive clause for non-corroborable events); new `divergence_inconclusive` event (§8.6.10); extended §6.2 read-recovery with torn-tail / mid-file / empty-log / concurrent-tail rules; added `bus_overflow` reserved-slot requirement to EV-011a; added EV-016a multi-event atomicity disclaimer. Should-apply: §8.9(h) amended with emit-on-transition-only clause; EV-027 amended with add/remove symmetry. Deferred: OQ-EV-006 operator-state consolidation; OQ-EV-007 consumer panic policy. Status: draft → reviewed. |
+| 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE: §1.1→§4.1 (×2 in §9 cross-refs and §3.2), §1.4→§4.4 (×1 in §3.8), §1.4a→§4.5 (×2 in §3.2 envelope and §9 cross-refs), §1.5→§4.6 (×2 in §6.5 amendment clause and §9 cross-refs). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §8.3.2 (`agent_started` payload) and §8.3.7 (`session_log_location` payload). No requirement IDs, invariants, or schemas were touched. |
+| 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 12 citations fixed. WM: `§5.3→§4.7` (session-log pipeline) at §3 scope, §4.1 EV-005, §9.3 cross-refs; `§5.2→§4.4`, `§5.4→§4.5` at §9.3 emission-rule references. Reconciliation path fix: `[reconciliation.md §9.N]` → `[reconciliation/spec.md §N]` (multi-file spec) at §2.2 scope, §8.5.5 `workspace_interrupted` emitter reference, §8.6.3 verdict payload reference, §4.5 EV-023a cross-ref, §6.2 mid-file corruption Cat 6, §9.3 reconciliation emission rules. ON: `§7.3→§4.3` (operator pause), `§7.5→§4.5` (N-1 compat window), `§7.8→§4.8` (bus latency) at §4.7, §6.4, §10.3. BI: `§10.6→§4.6` (bead_id propagation) at §9.3, §A.3. No requirement IDs, invariants, or schemas touched. |
+| 2026-04-25 | 0.3.3 | foundation-author | Coordination patch wave landing R2 cross-spec items filed against EV by ON, RC, BI overnight 2026-04-24. **Taxonomy additions (7 new event-type IDs in gaps; no renumbering of pre-existing entries):** §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a `flock(LOCK_EX|LOCK_NB)` second-dispatch dedup); §8.6.12 `reconciliation_detector_panic` (RC-020b per-detector `recover()` barrier); §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a Cat 3b retry cap N=5); §8.6.14 `bead_terminal_transition_recovered` **(post-MVH)** reserved per OQ-BI-008 with explicit "no MVH emitter; structured-log via ON-035 at MVH" annotation block; §8.7.16 `operator_command_failed` (ON-013a panic-barrier emission carrying `command` + `failure_class` + optional `run_id`); §8.7.17 `operator_escalation_cleared` (ON companion to RC-emitted `operator_escalation_required`, carrying `clearance_reason` enum); §8.8.5 `redaction_failed` (ON-022 fail-closed redactor, bus-internal). **Daemon-shutdown durability confirmed F (resolves OQ-PL-012 — recorded here; OQ lives in PL).** §8.7.3 `daemon_shutdown` row already carried `F`; the durability-class statement is now load-bearing as the prior-cycle SIGTERM-receipt landmark for ON-033 RTO reconstruction. **Monotonic companion fields on §8.7.2/§8.7.3:** added `ready_at_ns_since_boot` (uint64) and `shutdown_at_ns_since_boot` (uint64) per ON-033, with concrete §6.3 payload schemas declaring both fields REQUIRED and explicitly noting boot-transition / SIGKILL `rto_undefined` carve-outs. **`daemon_degraded` reason enum promoted from informative (`/ other`) to exhaustive** with 6 values: `rto_breach`, `reconstruction_notify`, `clock_regression` (EV-002c), `cat0_post_ready` (RC-012a carve-out), `infrastructure_unavailable`, `silent_hang_aggregate` (ON-040 aggregator); concrete §6.3 payload added; §8.7.5 row updated; future variants require an EV-027 amendment. **`divergence_kind` post-MVH extension note** added under the §6.3 `store_divergence_detected` block: the MVH enum stays closed; adapter-specific values are reserved for a future revision per OQ-BI-008; no concrete adapter-specific values added in this revision. **§6.5 co-ownership map** updated to enumerate the 6 new MVH-active emitters (RC: §8.6.11–13; ON: §8.7.16–17 + bus-internal §8.8.5) and to mark §8.6.14 explicitly post-MVH. **§9.3 cross-references** added: ON-022 (`redaction_failed`), ON-013a (`operator_command_failed`), ON-033 (RTO consumer of monotonic fields), RC-002a / RC-020b / RC-026a / RC-012a, BI §4.10 + OQ-BI-008. No EV requirement IDs added/renamed/retired; no §8 entries renumbered; status remains `reviewed`. |
 
 ## A. Appendices
 
@@ -1021,7 +1070,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 
 **Why per-chunk `agent_output_chunk` and `budget_accrual` are retained.** The future improvement-loop subsystem needs per-chunk cost attribution; collapsing loses information. Their `lossy-tail-ok` class matches their statistical-aggregate consumption.
 
-**Why no `bead_claimed` / `bead_closed` / `bead_reopened`.** Beads terminal transitions ride on `run_started` / `run_completed` / `run_failed` with `bead_id` per [beads-integration.md §10.6 BI-010/BI-011]. A separate bead-lifecycle family would duplicate the signal.
+**Why no `bead_claimed` / `bead_closed` / `bead_reopened`.** Beads terminal transitions ride on `run_started` / `run_completed` / `run_failed` with `bead_id` per [beads-integration.md §4.6 BI-010/BI-011]. A separate bead-lifecycle family would duplicate the signal.
 
 **Why `metric` has `any subsystem` as emitter.** Metric observability is open-ended by design; constraining it would force an amendment per metric. §8.9(g)'s single escape-hatch exception is justified on that ground.
 

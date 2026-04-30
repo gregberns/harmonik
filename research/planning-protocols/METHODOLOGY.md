@@ -160,6 +160,12 @@ planning-protocols/
   plans/                               -- forward-work plans + their reviews
   prompts/                             -- paste-in session-starter prompts
                                           (NOT a place for /session-handoff outputs)
+  trial-findings/                      -- adopt-and-notice findings from
+                                          active skill trials; observations
+                                          separated from analysis per finding
+  skill-iterations/                    -- versioned iterations of trial skills
+                                          (research → draft → review → revise);
+                                          see CONVENTIONS.md for layout
 ```
 
 ### Placement rules
@@ -174,6 +180,8 @@ When producing a new artifact, route it by *purpose*:
 - **Paste-in prompt for a fresh session** → `prompts/`. The filename `HANDOFF.md` is reserved for the `/session-handoff` skill convention.
 - **External source material being brought in** → `references/`.
 - **Tooling reusable across phases** → `scripts/`.
+- **Trial finding** (from skill-trial sessions; adopt-and-notice signal) → `trial-findings/<DATE>-<short-name>.md`. Observations separated from analysis.
+- **Skill iteration** (a numbered rewrite of a trial skill, with research / draft / review / revise) → `skill-iterations/v<N>-<DATE>/`. Layout standardized at `skill-iterations/CONVENTIONS.md`.
 
 Root must stay lean: governance + navigation + active forward-work only. If a returning agent shouldn't see a file on day one, it belongs in a subdirectory.
 

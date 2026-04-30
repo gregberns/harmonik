@@ -7,10 +7,10 @@ spec-id: handler-contract
 requirement-prefix: HC
 status: reviewed
 spec-shape: requirements-first
-version: 0.3.0
+version: 0.3.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-04-24
+last-updated: 2026-04-25
 depends-on:
   - architecture
   - execution-model
@@ -47,10 +47,10 @@ It is normative for every subsystem that launches, monitors, or interprets the o
 
 ### 2.2 Out of scope
 
-- Event payload schemas for handler-lifecycle events and `skills_provisioned` — owned by [event-model.md §3.2]. This spec declares WHEN each event fires and what fields it MUST carry at a name level; event-model is normative for the on-the-wire payload.
-- Workspace path construction, session-log directory creation, post-merge session-log archival — owned by [workspace-model.md §5.3a]. This spec declares S04's emission obligation; workspace-model owns the three-subsystem pipeline (S04 → S06 → S08).
+- Event payload schemas for handler-lifecycle events and `skills_provisioned` — owned by [event-model.md §6.3]. This spec declares WHEN each event fires and what fields it MUST carry at a name level; event-model is normative for the on-the-wire payload.
+- Workspace path construction, session-log directory creation, post-merge session-log archival — owned by [workspace-model.md §4.7]. This spec declares S04's emission obligation; workspace-model owns the three-subsystem pipeline (S04 → S06 → S08).
 - Per-handler implementations (Claude Code, Pi, `claude-twin`, `pi-twin`) — each is its own per-handler spec, post-MVH.
-- Skill storage location, skill-package registry, per-handler skill-installation shape — owned by [control-points.md §6.11] (declaration surface) and future `agent-configuration` spec (storage layout).
+- Skill storage location, skill-package registry, per-handler skill-installation shape — owned by [control-points.md §4.11] (declaration surface) and future `agent-configuration` spec (storage layout).
 - Scenario harness and twin-conformance drift detection — owned by the `scenario-harness` (S07) spec, post-MVH.
 - Binary signing (cosign, full supply-chain verification) — deferred post-MVH per locked decision; commit-hash check is the MVH gate.
 - Secret rotation mid-session — out of scope for MVH; a new launch is required. Note: this is **provider-secret rotation** (new API key value for the same provider); **account rotation** (different pool member) is in scope and is governed by §4.3.HC-013 + §4.6.HC-013a at clean turn boundaries.
@@ -68,7 +68,7 @@ It is normative for every subsystem that launches, monitors, or interprets the o
 - **twin** — a handler whose `Launch` spawns a subprocess that emits scripted output instead of invoking an LLM; same interface, same wire protocol, same event schema as the real handler. (see §4.8)
 - **skill** — a capability bundle (a file-drop directory, a CLI binary, an MCP registration, a reference-doc bundle) provisioned into an agent subprocess before it begins work. (see §4.11)
 - **redaction registry** — the mechanism-tagged component that scans event payloads and log lines for secret-shaped fields and strips them before emission. (see §4.7)
-- **snapshot token** — an opaque token carried in LaunchSpec for investigator-agent handlers, binding the agent's reads to a captured `(git_head_hash, beads_audit_entry_id)` per [reconciliation.md §9.4b].
+- **snapshot token** — an opaque token carried in LaunchSpec for investigator-agent handlers, binding the agent's reads to a captured `(git_head_hash, beads_audit_entry_id)` per [reconciliation/spec.md §4.4].
 
 ## 4. Normative requirements
 
@@ -116,9 +116,9 @@ Tags: mechanism
 
 #### HC-007 — Handler subprocess emits progress-stream messages over a Unix domain socket
 
-The handler subprocess MUST connect back to the daemon on the local Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §8.1] and §4.10.HC-044) and emit a stream of typed progress-stream messages over that connection. No other transport (named pipe, generic TCP, file tail) is permitted at MVH. The progress stream is the sole bidirectional channel between the daemon and the handler subprocess; the daemon-side watcher (§4.3.HC-011) consumes these messages and is the authoritative publisher of handler-lifecycle events to the in-process event bus.
+The handler subprocess MUST connect back to the daemon on the local Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1] and §4.10.HC-044) and emit a stream of typed progress-stream messages over that connection. No other transport (named pipe, generic TCP, file tail) is permitted at MVH. The progress stream is the sole bidirectional channel between the daemon and the handler subprocess; the daemon-side watcher (§4.3.HC-011) consumes these messages and is the authoritative publisher of handler-lifecycle events to the in-process event bus.
 
-Progress-stream messages MUST include (at minimum) the message types: `handler_capabilities`, `agent_ready`, `agent_started`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `agent_heartbeat`, `session_log_location`, `skills_provisioned`, `outcome_emitted`. Each message corresponds to a bus event of the same name per §6.4; the watcher translates on-stream messages into bus events, applying the envelope of [event-model.md §3.1] on publication.
+Progress-stream messages MUST include (at minimum) the message types: `handler_capabilities`, `agent_ready`, `agent_started`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `agent_heartbeat`, `session_log_location`, `skills_provisioned`, `outcome_emitted`. Each message corresponds to a bus event of the same name per §6.4; the watcher translates on-stream messages into bus events, applying the envelope of [event-model.md §4.1] on publication.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
@@ -160,7 +160,7 @@ Tags: mechanism
 
 #### HC-010 — Session log path emission
 
-The handler subprocess MUST emit a `session_log_location` progress-stream message early in the session (after `handler_capabilities` and before `skills_provisioned` / `agent_ready`) carrying `{session_id, run_id, node_id, handler_type, log_path, log_format, bead_id?}`. The daemon-side watcher (S04's watcher callback per §4.3) translates that message into the bus event `session_log_location` per [workspace-model.md §5.3a]; the on-the-wire payload schema is owned by [event-model.md §3.2]. By the time this message is emitted, the session-log directory and sidecar already exist per [workspace-model.md §4.7]; this message announces the path, it does not create the directory.
+The handler subprocess MUST emit a `session_log_location` progress-stream message early in the session (after `handler_capabilities` and before `skills_provisioned` / `agent_ready`) carrying `{session_id, run_id, node_id, agent_type, log_path, log_format, bead_id?}`. The daemon-side watcher (S04's watcher callback per §4.3) translates that message into the bus event `session_log_location` per [workspace-model.md §4.7]; the on-the-wire payload schema is owned by [event-model.md §6.3]. By the time this message is emitted, the session-log directory and sidecar already exist per [workspace-model.md §4.7]; this message announces the path, it does not create the directory.
 
 Tags: mechanism
 
@@ -168,7 +168,7 @@ Tags: mechanism
 
 #### HC-011 — Daemon owns exactly one watcher goroutine per active session
 
-The daemon (S01 Orchestrator Core) MUST spawn exactly ONE watcher goroutine per active handler session. The watcher owns (a) the read-loop on the handler's progress stream, (b) publication of handler-emitted events to the in-process event bus per [event-model.md §3.7], and (c) cleanup at session end. N active sessions produce N watcher goroutines. Watchers MUST NOT share state across sessions.
+The daemon (S01 Orchestrator Core) MUST spawn exactly ONE watcher goroutine per active handler session. The watcher owns (a) the read-loop on the handler's progress stream, (b) publication of handler-emitted events to the in-process event bus per [event-model.md §4.3], and (c) cleanup at session end. N active sessions produce N watcher goroutines. Watchers MUST NOT share state across sessions.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -213,9 +213,16 @@ Tags: mechanism
 
 #### HC-016 — Work queue per agent role
 
-The orchestrator MUST maintain one work queue per agent role (per [architecture.md §1.6]). Workers MUST drain their own queue; cross-queue handoff MUST go through explicit transitions per [execution-model.md §4.6], never shared memory.
+The orchestrator MUST maintain one work queue per agent role (per [architecture.md §4.8]). Workers MUST drain their own queue; cross-queue handoff MUST go through explicit transitions per [execution-model.md §4.6], never shared memory.
 
 Tags: mechanism
+
+#### HC-016a — Orphan-reconnect window retry against `daemon_not_ready{reason="unknown_run_id"}`
+
+A handler subprocess (orphan or otherwise) whose `emit-outcome` / `claim-next` / other agent-originated JSON-RPC request lands on the daemon's listener between the daemon's socket bind and the daemon's completion of its in-memory model build is rejected with the typed error `daemon_not_ready{reason="unknown_run_id"}` per [process-lifecycle.md §4.2 PL-003b]. Clients (the handler subprocess and any in-process Go-side caller wrapping the JSON-RPC) that observe this typed error MUST treat it as a bounded-retry condition and MUST retry per the ready-protocol exponential backoff of [process-lifecycle.md §4.2 PL-009b]: initial 100 ms, doubling per attempt, max 2 s per attempt, capped at `T_ready_wait = 60 s` total wall-clock (default per OQ-PL-002). The watcher MUST NOT classify a `daemon_not_ready{reason="unknown_run_id"}` response as a session-failure event during the retry window; in particular it MUST NOT emit `agent_failed` and MUST NOT escalate to silent-hang detection (§4.6.HC-026) on the basis of a still-pending startup-window retry. After cap exhaustion, the request MUST fail with the appropriate handler-side error class — `ErrTransient` if the typed error continued to fire across the entire window (the daemon never reached `ready` for our run_id, indicating either a true orphan whose run_id will never re-appear in the new daemon generation OR a daemon-side classification gap), with watcher-emitted `agent_failed` carrying class `ErrTransient` and sub-reason `daemon_startup_window_exceeded`. This rule is the handler-side companion to PL-003b and closes the orphan-agent-reconnect-during-startup-window race named there: the daemon is responsible for typed rejection, the handler is responsible for bounded retry rather than misclassifying a transient startup-window window as a permanent failure.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.4 Context propagation
 
@@ -307,9 +314,15 @@ Every handler subprocess MUST emit an `agent_heartbeat` progress-stream message 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### HC-026b — Drain-forced silent-hang synthesis is ON-classified, not HC-classified
+
+When a handler subprocess is silent-hanging during an operator-initiated drain — specifically, a drain-timeout escalation per [operator-nfr.md §4.7 ON-029] produces a SIGKILL to a still-running agent subprocess — the synthesis of the resulting `agent_warning_silent_hang{reason=drain_forced, run_id, node_id}` event is governed by [operator-nfr.md §4.9 ON-040], NOT by HC's own silent-hang taxonomy of §4.6.HC-026 / §7.1. This spec accepts ON-040's classification: the synthesized event is the operator-control subsystem's normalization of an unclean agent exit during drain step 4's wait window per ON-027, even when no prior silent-hang detection (the §7.1 state machine) had fired. The watcher MUST cooperate by NOT also emitting an HC-classified silent-hang event for the same run/node when the operator-control subsystem has signalled a drain-forced synthesis path; the synthesis is single-emitter (ON-side) by construction so as to keep HC-INV-004 ("watcher publishes exactly ONE terminal event per session") satisfied — the subsequent SIGKILL-induced subprocess exit lands as the session's `agent_failed` with the synthesis carrying the `reason=drain_forced` discriminator. This clause is an acceptance / cross-spec deferral, not an HC obligation: the enforcement mechanism lives in operator-nfr.
+
+Tags: mechanism
+
 #### HC-027 — Dead-letter behavior for undeliverable events
 
-Events that cannot be delivered by the watcher to the in-process bus (bus full, subscriber panic) MUST be routed to the dead-letter destination declared by [event-model.md §3.7]. The watcher MUST NOT drop events silently.
+Events that cannot be delivered by the watcher to the in-process bus (bus full, subscriber panic) MUST be routed to the dead-letter destination declared by [event-model.md §4.3]. The watcher MUST NOT drop events silently.
 
 Tags: mechanism
 
@@ -393,7 +406,7 @@ Tags: mechanism
 
 #### HC-039 — Ready-state is signaled by agent_ready event
 
-Every handler subprocess MUST emit a single `agent_ready` event on process startup to signal it can accept work. The event payload MUST include `session_id` and `capabilities[]` at minimum; the full payload schema is declared in [event-model.md §3.2]. The daemon MUST NOT dispatch work to a session before observing `agent_ready` for that session.
+Every handler subprocess MUST emit a single `agent_ready` event on process startup to signal it can accept work. The event payload MUST include `session_id` and `capabilities[]` at minimum; the full payload schema is declared in [event-model.md §6.3]. The daemon MUST NOT dispatch work to a session before observing `agent_ready` for that session.
 
 Tags: mechanism
 
@@ -426,13 +439,13 @@ Tags: mechanism
 
 #### HC-044 — Subprocess is a child of the daemon
 
-The daemon MUST spawn every handler subprocess as a direct child process (per [process-lifecycle.md §8.5]). The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §8.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel" at MVH. Socket authenticity is filesystem-permission-based for MVH (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred post-MVH. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
+The daemon MUST spawn every handler subprocess as a direct child process (per [process-lifecycle.md §4.5]). The handler subprocess MUST communicate back to the daemon on the Unix domain socket at `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]); this is the same socket that carries the progress stream per §4.2.HC-007 and §4.2.HC-007a. There is one bidirectional socket-backed channel per session; there is no separate "control channel" at MVH. Socket authenticity is filesystem-permission-based for MVH (daemon socket MUST be mode `0600` owned by the daemon user); per-connection challenges are deferred post-MVH. On Linux, handler subprocesses SHOULD install `PR_SET_PDEATHSIG(SIGTERM)` at spawn time; macOS has no equivalent and subprocess survival across daemon death is a platform reality addressed by §4.10.HC-044a.
 
 Tags: mechanism
 
 #### HC-044a — Launch MUST fail-fast on orphan-held workspace
 
-Before `Launch` returns a `Session`, the daemon MUST verify that the target `workspace_path` is NOT held by a prior-generation handler subprocess. Detection mechanism: the daemon MUST maintain a pidfile at `.harmonik/worktrees/<run_id>/.lock` written atomically at subprocess spawn and removed on clean session termination. On `Launch`, if the pidfile exists AND the recorded PID is live (liveness probe via `kill(pid, 0)` or platform equivalent) AND the live process is NOT owned by the current daemon generation, `Launch` MUST return `ErrStructural` with sub-reason `workspace_held_by_orphan` and emit `agent_failed` carrying the offending PID for operator attention. The daemon MUST NOT silently reclaim the workspace: two concurrent subprocesses writing to the same worktree is the one scenario in this spec that can silently corrupt committed artifacts, so fail-fast is mandatory. Stale pidfiles (PID not live, or PID recycled to a non-handler process identifiable by argv check) MAY be reclaimed by the new generation. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation.md §9]) will subsume post-MVH; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §8.1].
+Before `Launch` returns a `Session`, the daemon MUST verify that the target `workspace_path` is NOT held by a prior-generation handler subprocess. Detection mechanism: the daemon MUST maintain a pidfile at `.harmonik/worktrees/<run_id>/.lock` written atomically at subprocess spawn and removed on clean session termination. On `Launch`, if the pidfile exists AND the recorded PID is live (liveness probe via `kill(pid, 0)` or platform equivalent) AND the live process is NOT owned by the current daemon generation, `Launch` MUST return `ErrStructural` with sub-reason `workspace_held_by_orphan` and emit `agent_failed` carrying the offending PID for operator attention. The daemon MUST NOT silently reclaim the workspace: two concurrent subprocesses writing to the same worktree is the one scenario in this spec that can silently corrupt committed artifacts, so fail-fast is mandatory. Stale pidfiles (PID not live, or PID recycled to a non-handler process identifiable by argv check) MAY be reclaimed by the new generation. This requirement is a minimum-surface stub that the reconciliation subsystem's startup sweep (per [reconciliation/spec.md §4]) will subsume post-MVH; until then, OQ-HC-006's cross-generation GC default is "reconciliation owns it, handler-contract owns fail-fast." The socket file at `.harmonik/daemon.sock` from a prior generation MUST be unlinked before `bind` by the new daemon generation per [process-lifecycle.md §4.1].
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -475,7 +488,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### HC-049 — Emit skills_provisioned before agent_ready
 
-After successful provisioning and before `agent_ready`, the handler MUST emit a `skills_provisioned` event (payload schema in [event-model.md §3.2]) carrying the set of installed skills, the source path resolved for each skill, and the skill package version where available.
+After successful provisioning and before `agent_ready`, the handler MUST emit a `skills_provisioned` event (payload schema in [event-model.md §6.3]) carrying the set of installed skills, the source path resolved for each skill, and the skill package version where available.
 
 Tags: mechanism
 
@@ -487,7 +500,7 @@ Tags: mechanism
 
 #### HC-050 — Skill declarations are read from LaunchSpec
 
-The handler MUST consult `LaunchSpec.required_skills[]` and `LaunchSpec.skill_search_paths[]` only; it MUST NOT read DOT node attributes or YAML policy documents directly. The workflow-load-time resolution per [execution-model.md §4.9] and [control-points.md §6.11] is what populates LaunchSpec; the handler consumes the resolved set.
+The handler MUST consult `LaunchSpec.required_skills[]` and `LaunchSpec.skill_search_paths[]` only; it MUST NOT read DOT node attributes or YAML policy documents directly. The workflow-load-time resolution per [execution-model.md §4.9] and [control-points.md §4.11] is what populates LaunchSpec; the handler consumes the resolved set.
 
 Tags: mechanism
 
@@ -495,7 +508,7 @@ Tags: mechanism
 
 #### HC-051 — Handler contract is the deterministic-daemon / execution-shape seam
 
-The handler contract (this spec, in its entirety) is the architectural seam between the deterministic daemon (workflow state, routing, dispatch per [process-lifecycle.md §8.6]) and the execution shape (ntm + tmux + subprocess today). A proposal that would couple the daemon to a specific execution shape (e.g., importing ntm-specific types into the daemon's routing logic) MUST fail this boundary check.
+The handler contract (this spec, in its entirety) is the architectural seam between the deterministic daemon (workflow state, routing, dispatch per [process-lifecycle.md §4.6]) and the execution shape (ntm + tmux + subprocess today). A proposal that would couple the daemon to a specific execution shape (e.g., importing ntm-specific types into the daemon's routing logic) MUST fail this boundary check.
 
 Tags: mechanism
 
@@ -515,7 +528,7 @@ Tags: mechanism
 
 #### HC-INV-001 — Exactly one watcher goroutine per active session
 
-For every active handler session tracked by the daemon, there MUST exist exactly one live watcher goroutine owned by S01. Zero watchers with an active session is a daemon defect; more than one watcher per session is a daemon defect. This invariant is observable via the daemon's health-check surface per [operator-nfr.md §7.1].
+For every active handler session tracked by the daemon, there MUST exist exactly one live watcher goroutine owned by S01. Zero watchers with an active session is a daemon defect; more than one watcher per session is a daemon defect. This invariant is observable via the daemon's health-check surface per [operator-nfr.md §4.9].
 
 Tags: mechanism
 
@@ -539,7 +552,7 @@ Tags: mechanism
 
 #### HC-INV-005 — No handler subprocess is launched without a verified binary path
 
-For every successful `Launch`, the binary that was exec'd MUST have passed the launch-path and commit-hash rules of §4.10.HC-042 and §4.10.HC-043 (or, for system handlers declared via `system_handler=true`, the `$PATH`-resolved absolute path and `--version` log). A `Launch` return value of `(Session, nil)` where the verification did not occur is a daemon defect. This invariant is observable via launch-path audit logging per [operator-nfr.md §7.1].
+For every successful `Launch`, the binary that was exec'd MUST have passed the launch-path and commit-hash rules of §4.10.HC-042 and §4.10.HC-043 (or, for system handlers declared via `system_handler=true`, the `$PATH`-resolved absolute path and `--version` log). A `Launch` return value of `(Session, nil)` where the verification did not occur is a daemon defect. This invariant is observable via launch-path audit logging per [operator-nfr.md §4.9].
 
 Tags: mechanism
 
@@ -562,7 +575,7 @@ Tags: mechanism
 ```
 INTERFACE Handler:
     Launch(ctx, spec) -> (Session, error)     -- starts an agent subprocess; idempotent on (spec.run_id, spec.node_id); returns ErrProtocolMismatch, ErrSkillProvisioningFailed, or other sentinel on failure
-    AgentType() -> String                      -- returns the lowercase-hyphenated agent_type identifier per [architecture.md §1.6a]
+    AgentType() -> String                      -- returns the lowercase-hyphenated agent_type identifier per [architecture.md §6.1]
 ```
 
 ```
@@ -588,17 +601,17 @@ RECORD LaunchSpec:
     run_id                : UUID                    -- [execution-model.md §4.3 Run]
     workflow_id           : UUID                    -- [execution-model.md §4.1 Workflow]
     node_id               : String                  -- node_id within workflow
-    agent_type            : String                  -- [architecture.md §1.6a Agent type identifier]
-    workspace_path        : String                  -- absolute path to the run's worktree per [workspace-model.md §5.1]
-    required_skills       : List<String>            -- resolved skill names per [control-points.md §6.11]
+    agent_type            : String                  -- [architecture.md §6.1 Agent type identifier]
+    workspace_path        : String                  -- absolute path to the run's worktree per [workspace-model.md §4.1]
+    required_skills       : List<String>            -- resolved skill names per [control-points.md §4.11]
     skill_search_paths    : List<String>            -- ordered list of absolute paths to search for skill packages
     timeout               : Integer                 -- wall-clock seconds for the run's work; positive; zero forbidden
     provisioning_timeout  : Integer                 -- seconds for skill provisioning only; distinct from timeout; default 60
-    budget                : BudgetRef               -- [control-points.md §6.9]
+    budget                : BudgetRef               -- [control-points.md §4.5]
     freedom_profile_ref   : String                  -- [control-points.md §6.7]
     bead_id               : String | None           -- present when bead-tied per [execution-model.md §4.3]
     snapshot_token        : String | None           -- present for reconciliation-investigator handlers per [docs/foundation/reconciliation.md §9.4b] (bootstrap)
-    schema_version        : Integer                 -- N-1 readable per [operator-nfr.md §7.5]
+    schema_version        : Integer                 -- N-1 readable per [operator-nfr.md §4.5]
 ```
 
 ```
@@ -628,17 +641,17 @@ VAR ErrProtocolMismatch             error   -- wraps ErrStructural; detection pe
 
 ### 6.2 Wire-protocol message envelope
 
-Progress-stream events use the envelope in [event-model.md §3.1]; this spec adds no additional envelope fields. Event payloads referenced by this spec (`handler_capabilities`, `agent_ready`, `agent_started`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `session_log_location`, `skills_provisioned`, `outcome_emitted`) have their payload schemas declared in [event-model.md §3.2]; see §6.4 below for the index.
+Progress-stream events use the envelope in [event-model.md §4.1]; this spec adds no additional envelope fields. Event payloads referenced by this spec (`handler_capabilities`, `agent_ready`, `agent_started`, `agent_output_chunk`, `agent_completed`, `agent_failed`, `agent_rate_limited`, `agent_rate_limit_cleared`, `session_log_location`, `skills_provisioned`, `outcome_emitted`) have their payload schemas declared in [event-model.md §6.3]; see §6.4 below for the index.
 
 ### 6.3 Schema evolution
 
-`LaunchSpec.schema_version` is an integer incremented on every normative schema change. The compatibility contract is N-1 readable per [operator-nfr.md §7.5]. Adding an optional field is non-breaking (version bump, N-1 readers accept). Removing or renaming a field is breaking (version bump + migration release at operator pause).
+`LaunchSpec.schema_version` is an integer incremented on every normative schema change. The compatibility contract is N-1 readable per [operator-nfr.md §4.5]. Adding an optional field is non-breaking (version bump, N-1 readers accept). Removing or renaming a field is breaking (version bump + migration release at operator pause).
 
 The error-sentinel taxonomy is versioned at the spec level (this spec's `version` in front matter), not as a `schema_version` field on individual errors. A breaking change to the sentinel set (renaming a sentinel, adding a mandatory new class) is a foundation amendment.
 
 ### 6.4 Co-owned event payloads
 
-Each item below is a progress-stream message emitted by the handler subprocess; the daemon-side watcher translates it into a bus event of the same name per §4.2.HC-007. This spec is normative for WHEN each fires and at a name level what fields it MUST carry; [event-model.md §3.2] is normative for the on-the-wire bus-event payload.
+Each item below is a progress-stream message emitted by the handler subprocess; the daemon-side watcher translates it into a bus event of the same name per §4.2.HC-007. This spec is normative for WHEN each fires and at a name level what fields it MUST carry; [event-model.md §6.3] is normative for the on-the-wire bus-event payload.
 
 - `handler_capabilities` — emitted first on the progress stream per §4.2.HC-009.
 - `agent_ready` — emitted when the handler subprocess is ready to begin work per §4.9.
@@ -649,11 +662,11 @@ Each item below is a progress-stream message emitted by the handler subprocess; 
 - `agent_failed` — emitted on crash or fatal typed error per §4.6; payload carries the mapped sentinel class.
 - `agent_rate_limited` — emitted when the adapter detects rate-limit per §4.6.HC-025.
 - `agent_rate_limit_cleared` — emitted when the adapter detects rate-limit clearance per §4.6.HC-025.
-- `session_log_location` — emitted early in the session per §4.2.HC-010 and [workspace-model.md §5.3a].
+- `session_log_location` — emitted early in the session per §4.2.HC-010 and [workspace-model.md §4.7].
 - `skills_provisioned` — emitted after skill provisioning and before `agent_ready` per §4.11.HC-049.
 - `outcome_emitted` — emitted as the final message carrying the session's `Outcome` per §4.2.HC-008.
 
-**Watcher-synthesized events (not handler-emitted).** The following are emitted by the watcher in response to state-machine transitions rather than handler messages; their payload schemas also live in [event-model.md §3.2]:
+**Watcher-synthesized events (not handler-emitted).** The following are emitted by the watcher in response to state-machine transitions rather than handler messages; their payload schemas also live in [event-model.md §6.3]:
 
 - `agent_warning_silent_hang`, `agent_resumed_after_warning`, `agent_soft_terminating`, `agent_hard_terminating` — from the §7.1 state machine.
 
@@ -754,7 +767,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 
 ### 8.5 ErrBudget
 
-- **Detection rule.** Budget counter at dispatch would exceed the remaining budget per [control-points.md §6.9]. Detection fires before `Launch` is called; no subprocess is spawned.
+- **Detection rule.** Budget counter at dispatch would exceed the remaining budget per [control-points.md §4.5]. Detection fires before `Launch` is called; no subprocess is spawned.
 - **Emission rule.** Watcher publishes `budget_exhausted` with the budget identity; `agent_failed` is NOT emitted because no agent ran. Terminal-run emission (`run_failed`) is orchestrator-level per [execution-model.md §8.5].
 
 ### 8.6 ErrSkillProvisioningFailed (sub-sentinel, wraps ErrStructural)
@@ -772,22 +785,22 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 
 ### 9.1 Depends on
 
-- **[architecture.md §1.1]** — four-axis classification; every requirement in this spec uses the axes defined there.
-- **[architecture.md §1.2]** — ZFC test; error classification (§4.5.HC-023) and skill resolution (§4.11.HC-047) are mechanism-tagged, and the spec prohibits cognition-tagged error classification.
-- **[architecture.md §1.4]** — subsystem envelope; handlers declare redaction patterns (§4.7.HC-032) and silent-hang thresholds (§7.1) in their subsystem envelope.
-- **[architecture.md §1.6a]** — `agent_type` identifier shape; LaunchSpec carries the identifier.
-- **[architecture.md §1.8]** — centralized-controller principle; the watcher/adapter split (§4.3) and cross-queue handoff rule (§4.3.HC-016) pin this principle at the concurrency layer.
+- **[architecture.md §4.1]** — four-axis classification; every requirement in this spec uses the axes defined there.
+- **[architecture.md §4.2]** — ZFC test; error classification (§4.5.HC-023) and skill resolution (§4.11.HC-047) are mechanism-tagged, and the spec prohibits cognition-tagged error classification.
+- **[architecture.md §4.4]** — subsystem envelope; handlers declare redaction patterns (§4.7.HC-032) and silent-hang thresholds (§7.1) in their subsystem envelope.
+- **[architecture.md §6.1]** — `agent_type` identifier shape; LaunchSpec carries the identifier.
+- **[architecture.md §4.9]** — centralized-controller principle; the watcher/adapter split (§4.3) and cross-queue handoff rule (§4.3.HC-016) pin this principle at the concurrency layer.
 - **[execution-model.md §4.1]** — `Outcome` type used as the payload of `outcome_emitted` (§4.2.HC-008).
 - **[execution-model.md §4.3]** — `Run` and `bead_id` fields; LaunchSpec carries `run_id` and optional `bead_id`.
 - **[execution-model.md §4.9]** — workflow validator resolves `handler_ref` and `required_skills` before launch.
 - **[execution-model.md §8]** — failure taxonomy and routing; the five primary sentinel classes of §4.5 map to the failure classes there, and routing of `agent_failed` / `budget_exhausted` / `run_failed` to retry / re-plan / terminal paths is owned there.
 - **[control-points.md §6 Registry]** — CP registry interface that declares `required_skills`, `default_skills`, `freedom_profile`, `budget`; LaunchSpec fields `required_skills[]`, `skill_search_paths[]`, `freedom_profile_ref`, `budget` are populated from that registry at workflow-load time.
-- **[event-model.md §3.1]** — event envelope; handler-emitted events use this envelope.
-- **[event-model.md §3.2]** — event taxonomy; this spec's co-owned events have their payload schemas there.
-- **[event-model.md §3.7]** — consumer taxonomy and dead-letter destination referenced by §4.6.HC-027.
-- **[process-lifecycle.md §8.1]** — daemon socket path for subprocess-to-daemon communication (§4.10.HC-044).
-- **[process-lifecycle.md §8.5]** — agent subprocess as a child of the daemon (§4.10.HC-044).
-- **[process-lifecycle.md §8.6]** — deterministic daemon vs. orchestrator-agent distinction; the seam in §4.12 pins this boundary.
+- **[event-model.md §4.1]** — event envelope; handler-emitted events use this envelope.
+- **[event-model.md §8]** — event taxonomy; this spec's co-owned events have their payload schemas there.
+- **[event-model.md §4.3]** — consumer taxonomy and dead-letter destination referenced by §4.6.HC-027.
+- **[process-lifecycle.md §4.1]** — daemon socket path for subprocess-to-daemon communication (§4.10.HC-044).
+- **[process-lifecycle.md §4.5]** — agent subprocess as a child of the daemon (§4.10.HC-044).
+- **[process-lifecycle.md §4.6]** — deterministic daemon vs. orchestrator-agent distinction; the seam in §4.12 pins this boundary.
 
 ### 9.2 Reverse dependencies
 
@@ -795,13 +808,13 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 
 ### 9.3 Co-references (read-only consumption)
 
-- **[control-points.md §6.11 Skill-declaration surface]** — this spec consumes the skill-declaration surface defined there; does not depend on control-points' internal types. The directional resolution rule in [docs/foundation/components.md §Co-dependency resolution rules] applies.
+- **[control-points.md §4.11 Skill-declaration surface]** — this spec consumes the skill-declaration surface defined there; does not depend on control-points' internal types. The directional resolution rule in [docs/foundation/components.md §Co-dependency resolution rules] applies.
 - **[control-points.md §6.7 Freedom profile]** — LaunchSpec's `freedom_profile_ref` points at a profile declared there; the field shape is the only coupling.
-- **[control-points.md §6.9 Budget enforcement point]** — LaunchSpec's `budget` field points at a budget declared there; enforcement semantics are in control-points.
-- **[workspace-model.md §5.3a Session-log pipeline]** — S04's `session_log_location` emission (§4.2.HC-010) is one of three stages in the workspace-model pipeline; workspace-model owns the end-to-end ownership split.
-- **[reconciliation.md §9.4b Snapshot-token binding]** — LaunchSpec's `snapshot_token` is read by investigator-agent handlers; the token semantics live in reconciliation.
-- **[operator-nfr.md §7.1 Observability protocol]** — the redaction registry (§4.7) is one of the enforcement points for operator-nfr's "no secrets in event log / audit record" invariant.
-- **[operator-nfr.md §7.2 Security posture]** — skill-injection policy enforcement (network egress, sandbox) consumes this spec's provisioning hook.
+- **[control-points.md §4.5 Budget enforcement point]** — LaunchSpec's `budget` field points at a budget declared there; enforcement semantics are in control-points.
+- **[workspace-model.md §4.7 Session-log pipeline]** — S04's `session_log_location` emission (§4.2.HC-010) is one of three stages in the workspace-model pipeline; workspace-model owns the end-to-end ownership split.
+- **[reconciliation/spec.md §4.4 Snapshot-token binding]** — LaunchSpec's `snapshot_token` is read by investigator-agent handlers; the token semantics live in reconciliation.
+- **[operator-nfr.md §4.9 Observability protocol]** — the redaction registry (§4.7) is one of the enforcement points for operator-nfr's "no secrets in event log / audit record" invariant.
+- **[operator-nfr.md §4.7 Security posture]** — skill-injection policy enforcement (network egress, sandbox) consumes this spec's provisioning hook.
 
 ## 10. Conformance
 
@@ -840,7 +853,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 ### 10.3 Excluded conformance claims
 
 - This spec does NOT grant conformance over: per-handler wire-format specifics (each per-handler spec owns); session-log format (handler-specific; no unified schema across agent types per core-scope §4); skill storage layout (owned by `agent-configuration`); scenario-harness twin-drift detection (owned by S07, post-MVH).
-- This spec does NOT guarantee performance bounds on launch latency or session throughput; those are operator-observable in [operator-nfr.md §7.8] (restart RTO) and are not requirements of this spec.
+- This spec does NOT guarantee performance bounds on launch latency or session throughput; those are operator-observable in [operator-nfr.md §4.8] (restart RTO) and are not requirements of this spec.
 
 ## 11. Open questions
 
@@ -927,6 +940,9 @@ Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing po
 |---|---|---|---|
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. Handler + Session + Adapter interfaces; wire protocol with stdin/file-path LaunchSpec delivery and `handler_capabilities` version negotiation; six sentinel classes plus `ErrProtocolMismatch`; silent-hang state machine with T = 120s default; secrets redaction registry with compile-time payload check; twin parity invariant; skill-injection obligation; handler-as-modularity-boundary. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 review integration. Pinned Unix-domain-socket transport and NDJSON framing (HC-007, HC-007a, HC-044 consolidated). Added post-outcome shutdown window HC-008a (T_shutdown=10s). Reworded session_log_location / outcome_emitted emitter identity: handler emits on progress stream; watcher translates to bus event (HC-007, HC-008, HC-010, §6.4). Restructured error taxonomy as 5 primary + 2 structural sub-sentinels (HC-020, HC-021, HC-022); §8 rewritten as detection-only, routing owned by execution-model §8. Split skill-injection fail-launch into structural (HC-048 unresolvable) and transient (HC-048a resolved-but-provisioning-failed, retry with backoff); added `provisioning_timeout` LaunchSpec field. Added handler heartbeat obligation HC-026a (≤T/2 cadence); raised silent-hang default T to 600s; silent-hang triggers on absent heartbeats. Carved out in-process unit-test fakes from HC-035/HC-036 twin-binary rule. Added HC-INV-005 (no launch without verified binary). Tightened HC-INV-004 watcher-emission ordering. Fixed HC-042 `system_handler=true` declaration subject. Added control-points Registry cross-ref to §9.1. Added OQ-HC-006 (cross-generation GC), OQ-HC-007 (skill-on-disk shape). |
+| 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N / §6.1 map per the v0.2 NOTE: §1.1→§4.1 (×1 in §9 cross-refs), §1.2→§4.2 (×1 in §9 cross-refs), §1.4→§4.4 (×1 in §9 cross-refs), §1.6→§4.8 (×1 in §4.3.HC-016 work-queue clause), §1.6a→§6.1 (×3 in §6.1 Handler.AgentType() comment, §6.1 LaunchSpec.agent_type comment, and §9 cross-refs — chose §6.1 since each site cites the identifier shape, not the normative requirement), §1.8→§4.9 (×2 in §9 cross-refs and §A.3 rationale footer). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §4.2.HC-010 (session_log_location progress-stream payload; note: task doc listed HC-008, but the bare identifier actually lives in HC-010 which owns `session_log_location` emission per the v0.2 HC-010 split). No requirement IDs, invariants, or schemas were touched. |
+| 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~25 citations fixed. EV: `§3.1→§4.1` (envelope) ×3, `§3.2→§6.3` (payload schemas) ×5, `§3.7→§4.3` (bus consumer/dead-letter) ×2, `§3.2→§8` (event taxonomy) ×1 at §9.1 cross-refs. WM: `§5.3a→§4.7` (session-log pipeline) ×3, `§5.1→§4.1` (workspace path) ×1 at §6.1 LaunchSpec comment. ON: `§7.1→§4.9` (observability) ×2, `§7.2→§4.7` (secrets/sandbox) ×1, `§7.5→§4.5` (N-1 compat) ×2, `§7.8→§4.8` (restart RTO) ×1. PL: `§8.1→§4.1` (socket path) ×3, `§8.5→§4.5` (agent subprocess) ×1, `§8.6→§4.6` (daemon vs orchestrator-agent) ×1. Reconciliation path fix: `[reconciliation.md §9.4b]→[reconciliation/spec.md §4.4]` (snapshot-token binding) ×2 at §3 glossary and §9.3 cross-refs; `[reconciliation.md §9]→[reconciliation/spec.md §4]` at §4.10 startup-sweep reference. CP: `§6.11→§4.11` (skill declaration) ×4, `§6.9→§4.5` (budget) ×3. No requirement IDs, invariants, or schemas touched. |
+| 2026-04-25 | 0.3.3 | foundation-author | Two cross-spec coordination patches landing as gap-filler IDs (no renumbering; HC ID FREEZE preserved). **Edit 1 (§4.3 concurrency model):** new HC-016a — orphan-reconnect-window retry rule, the handler-side companion to [process-lifecycle.md §4.2 PL-003b]. Clients receiving the typed `daemon_not_ready{reason="unknown_run_id"}` rejection (issued by the daemon between socket bind at PL-005 step 3a and in-memory model build at PL-005 step 7) MUST retry per the [process-lifecycle.md §4.2 PL-009b] exponential backoff schedule (initial 100 ms, doubling, max 2 s per attempt, capped at `T_ready_wait = 60 s` per OQ-PL-002); the watcher MUST NOT classify the typed-error response as a session failure during the retry window (no `agent_failed`, no silent-hang escalation per §4.6.HC-026); after cap exhaustion the request fails with `ErrTransient` and the watcher emits `agent_failed` carrying sub-reason `daemon_startup_window_exceeded`. Closes the orphan-agent-reconnect-during-startup-window race named in PL-003b's R2 amendment. **Edit 2 (§4.6 error propagation):** new HC-026b — acceptance clause for [operator-nfr.md §4.9 ON-040]'s drain-forced silent-hang synthesis. When operator-initiated drain step 4 SIGKILLs a still-running agent subprocess per [operator-nfr.md §4.7 ON-029], ON-040 synthesizes `agent_warning_silent_hang{reason=drain_forced}` even when no §4.6.HC-026 / §7.1 silent-hang detection had fired; HC accepts ON-040's classification and obligates the watcher NOT to also emit an HC-classified silent-hang event for the same run/node, preserving HC-INV-004 (single terminal event per session) by routing the synthesis as ON-side-only. Acceptance clause; enforcement remains in operator-nfr. **New IDs (net):** HC-016a, HC-026b (2 new). No invariants, no schema changes, no §6 / §8 / §10 touches. Status remains `reviewed`. |
 
 ## A. Appendices
 
@@ -936,7 +952,7 @@ Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing po
 
 **Why skill provisioning is split between structural and transient failure.** The v0.1 spec conflated two failure modes under `ErrSkillProvisioningFailed`: (a) name does not resolve against search paths — genuinely structural, no plan that names the same skill will succeed; (b) name resolves but provisioning fails at runtime (network fetch timeout, 5xx, disk-full) — often transient, the same provisioning would succeed on retry. v0.2 splits these: HC-048 (structural, fail-launch immediately) vs. HC-048a (adapter-classified; transient cases retry with bounded backoff before reclassifying to structural). The split also introduces `provisioning_timeout` distinct from `timeout` so installs don't consume the work budget.
 
-**Why adapter-not-goroutine.** Putting per-session state in the watcher goroutine's closure means the daemon (S01) owns the concurrency boundary, and S04's adapter is a pure callback object. Adding a new agent type — the common case for extending harmonik — is then just writing an adapter; the concurrency boundary never moves. This is the concrete realization of the centralized-controller principle ([architecture.md §1.8]) at the concurrency layer.
+**Why adapter-not-goroutine.** Putting per-session state in the watcher goroutine's closure means the daemon (S01) owns the concurrency boundary, and S04's adapter is a pure callback object. Adding a new agent type — the common case for extending harmonik — is then just writing an adapter; the concurrency boundary never moves. This is the concrete realization of the centralized-controller principle ([architecture.md §4.9]) at the concurrency layer.
 
 **Why twin parity is an architectural invariant, not a test discipline.** If twins were "almost like real handlers but different in minor ways," every test using a twin would need a caveat. The invariant (same interface, same wire protocol, same event schema, same tagging) means the daemon has zero test-mode branches — the real-vs-twin choice is purely config-level. Twin conformance drift detection (keeping twins honest against real-agent evolution) is a separate concern, owned by S07 post-MVH.
 

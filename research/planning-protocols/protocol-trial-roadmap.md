@@ -13,11 +13,30 @@
 - `load-bearing-token-readback` (verbatim mirror, in resume)
 - `closing-summary-ritual` + `out-of-scope-section` (in handoff)
 
-Trial flag: `<!-- PP-TRIAL:v1 -->` at top of every produced `HANDOFF.md`. Greppable.
+Trial flag: `<!-- PP-TRIAL:v1 -->` at top of every v1-produced `HANDOFF.md`. Greppable.
+
+**Update 2026-04-28:** v1 produced trial finding 1 ([`trial-findings/2026-04-27-skills-too-verbose-and-procedural.md`](trial-findings/2026-04-27-skills-too-verbose-and-procedural.md)) — schema-heavy skills induce verbose procedural output and leak internal jargon into user-facing asks. v2 iteration ran ([`skill-iterations/v2-2026-04-28/`](skill-iterations/v2-2026-04-28/)) following research → draft → review → revise. **v2 deployed 2026-04-28** to `~/.claude/skills/`; v1 archived at `skill-iterations/v1-baseline/`. v2 trial flag is `<!-- PP-TRIAL:v2 YYYY-MM-DD <branch-name> -->`. The catalog's protocol *ideas* (commanders-intent, back-brief, load-bearing-token-readback) survive into v2; the schema-template *implementation* of them does not. This signal pattern — protocols-as-template-form distorting protocols-as-idea — is a candidate addition to `evaluation-framework.md` as a new dimension (implementation-form risk).
 
 Path convention: skills accept an optional path argument (default `./HANDOFF.md`). For multi-track repos, pair handoff and resume on the same explicit path — e.g., `/session-handoff research/planning-protocols/HANDOFF.md` paired with `/session-resume research/planning-protocols/HANDOFF.md`. The root `./HANDOFF.md` is reserved for the harmonik-main session; this track uses an explicit path.
 
 User-stated trial goals: time-to-alignment, assumption-surfacing. Adopt-and-notice testing model — no quantitative harness; look for signal across a few real working sessions.
+
+**Trial of `/orchestrator` skill.** Added 2026-04-27. User-level skill at `~/.claude/skills/orchestrator/SKILL.md`. Single-prompt mode-flip: agent operates as orchestrator, delegates substantive work to sub-agents via the Agent tool, keeps only summaries in the main thread.
+
+The skill leans on three compounding benefits:
+- **Parallelism** — independent sub-agents run concurrently in a single message; multi-file research, multi-target search, and "do several reviews" collapse from sequential to concurrent.
+- **Context economy** — sub-agent transcripts stay in their own context; main thread runs longer before context pressure forces wrap-up.
+- **Role separation** — sub-agents take on distinct roles (devil's-advocate, maintainer, simplifier, pre-mortem; or domain-specialist views) and produce orthogonal output rather than redundant critique. The "do several reviews" pattern is the canonical case.
+
+Origin: user-observed pattern from real practice ("Act as the orchestrator. Delegate your work to sub agents"). Formalized as a fast-signal skill so the directive is one slash command instead of a paragraph.
+
+**Catalog-gap finding (Phase 2 follow-up signal).** The unified protocol catalog has each ingredient as a separate primitive — `controller-orchestration` (parallelism, observed), `parallel-reviewer-mob` and `role-split-reviewer-library` (role separation), `scribe-sub-agent` (functional separation) — but no single primitive covers the *combined* default-mode-flip the user actually uses, and *context-window economy* as a framing is not a primary motivator in any catalog entry. The novelty is the synthesis: one mode-switch unlocks all three benefits at once, with context economy being the agent-specific addition that human pair-programming / incident-command sources couldn't surface.
+
+Reconciliation with earlier "role-split-reviewer-library doesn't seem useful as a separate skill" verdict: that pattern is now subsumed by orchestrator-mode + "do several reviews" rather than needing a dedicated `/plan-review` skill. The role-split practice still happens; it just doesn't need its own skill machinery.
+
+Worth noting if/when Phase 2 findings get a follow-up addendum; do not modify Phase 2 artifacts directly.
+
+Trial signal to watch: which of the three benefits actually fires in real use vs. which felt assumed-but-absent? Did the agent under-delegate (bloating main context with trivial work) or over-delegate (round-trip cost exceeded benefit)? Did sub-agent summaries lose load-bearing detail the main thread needed? On reviews specifically: did parallel role-prompted sub-agents produce orthogonal critique, or did the role prompts collapse into redundant output?
 
 ---
 
@@ -148,6 +167,8 @@ These are research follow-ups, not adoption decisions. Defer until evidence accu
 | Item | Status | When to revisit |
 |---|---|---|
 | `/session-handoff` + `/session-resume` skills | **Active trial** | After 3-5 real sessions of use |
+| `/orchestrator` skill | **Active trial** (added 2026-04-27) | After 3-5 sessions where it was invoked |
+| Catalog-gap: sub-agent-delegation-as-context-budget framing | Recorded; Phase 2 follow-up signal | If Phase 2 gets an addendum or new round |
 | Complete Layer 1 stack (3 remaining protocols) | Parked | If trial signal positive |
 | Mid-session disciplines (CLAUDE.md) | Parked | After Layer 1 completion shows compose-value |
 | Step 4.5 corpus harness | Parked with plan + reviews on disk | If quantitative signal is needed |

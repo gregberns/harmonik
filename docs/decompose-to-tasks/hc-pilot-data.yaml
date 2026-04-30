@@ -1,0 +1,867 @@
+# HC pilot v0.1.0 — bead and edge data
+# Mechanically translated from /tmp/load-hc.py (933-line Python loader).
+# Descriptions preserved verbatim. Includes 7 forward-deferred PL edges from
+# docs/decompose-to-tasks/hc-pilot.md §5.4 (logged-only at load time, not loaded into beads).
+
+spec:
+  prefix: hc
+  title: "Handler Contract spec — implementation"
+  spec_path: specs/handler-contract.md
+  spec_version: "0.3.3"
+  pilot_version: "0.1.0"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:handler-contract"
+  - "tag:mechanism"
+
+epic:
+  mnem: hc
+  title: "Handler Contract spec — implementation"
+  description: |
+    Implements specs/handler-contract.md v0.3.3 (62 first-class §4 req beads from 65 active §4 reqs after 2 §2.3 coalesces (HC-007/007a/007b cluster, HC-046/047 cluster), 7 invariants, 5 §6.1 schemas, 1 §8 error-taxonomy bead, 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, process-lifecycle]; PL not yet drafted at draft time → cross-spec edges to PL forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:pl-NNN). Non-depends-on cross-spec inline cites (WM, CP, RC, ON, BI) surfaced as forward-cite findings per F-pilot-EV-3.
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # §4 requirement beads (62)
+  - mnem: hc-001
+    kind: req
+    req: HC-001
+    title: "Handler is the Go interface defined in §6.1"
+    description: |
+      Per HC-001: every handler MUST implement the `Handler` interface defined in §6.1 (single contract for launching agent subprocesses; real handlers, twins, and future execution-shape handlers all implement the same interface). Adding an agent type adds an adapter per §4.3, not a new Handler interface.
+
+  - mnem: hc-002
+    kind: req
+    req: HC-002
+    title: "Session is the Go interface defined in §6.1"
+    description: |
+      Per HC-002: every `Handler.Launch` success MUST return a `Session` satisfying the §6.1 interface; lifetime begins with `Launch` return, ends when `Wait` returns; methods MUST be safe to call from any goroutine.
+
+  - mnem: hc-003
+    kind: req
+    req: HC-003
+    title: "Handler selection is config-level"
+    description: |
+      Per HC-003: handler-binary choice MUST be derived from DOT node attributes (`handler_ref`, `agent_type`) and YAML policy resolved at workflow-load time per [execution-model.md §4.9]. Daemon MUST NOT carry test-mode branches between real/twin handlers at runtime.
+
+  - mnem: hc-004
+    kind: req
+    req: HC-004
+    title: "Launch is idempotent on (run_id, node_id)"
+    description: |
+      Per HC-004: `Handler.Launch` MUST be idempotent on `(spec.run_id, spec.node_id)` within one daemon generation — second `Launch` returns existing `Session` (or `ErrTransient` if prior session is terminating), MUST NOT spawn duplicate. Concurrent-launch second call MUST block on first's handshake outcome. Reconciliation-driven re-launches after daemon restart are new daemon generation = new launch.
+    extra_labels:
+      - "axis:replay-safety-unsafe"
+
+  - mnem: hc-005
+    kind: req
+    req: HC-005
+    title: "LaunchSpec delivery is JSON-on-stdin or file argument"
+    description: |
+      Per HC-005: daemon MUST deliver LaunchSpec via JSON-on-stdin (default, payloads <=1 MiB) or `--launch-spec <path>` file argument (>1 MiB). Handler MUST accept both; selection is payload-size-driven, NOT handler-type-driven.
+
+  - mnem: hc-006
+    kind: req
+    req: HC-006
+    title: "LaunchSpec is the record defined in §6.1"
+    description: |
+      Per HC-006: delivered LaunchSpec MUST conform to §6.1 record shape. Required fields enumerated; optional `bead_id` (per [execution-model.md §4.3]), optional `snapshot_token` (per [reconciliation/spec.md §4.4] — bootstrap form).
+
+  - mnem: hc-007
+    kind: req
+    req: [HC-007, HC-007a, HC-007b]   # coalesce: HC-007 + HC-007a + HC-007b
+    title: "Wire protocol: progress-stream messages over Unix domain socket (coalesce)"
+    description: |
+      Per HC-007 + HC-007a + HC-007b (coalesced per discipline §2.3): handler subprocess connects back on `.harmonik/daemon.sock` (per [process-lifecycle.md §4.1]), emits typed NDJSON-framed progress-stream messages (1 JSON object + newline; max-line-cap 1 MiB enforced; embedded newlines forbidden). Watcher consumes messages, publishes corresponding bus events using EV envelope per [event-model.md §4.1]. Partial-message at EOF MUST be discarded; malformed JSON closes session with ErrStructural partial-message / malformed_progress_message sub-reason. Best-effort stream — durable record is the session-log file. The 12 message types: handler_capabilities, agent_ready, agent_started, agent_output_chunk, agent_completed, agent_failed, agent_rate_limited, agent_rate_limit_cleared, agent_heartbeat, session_log_location, skills_provisioned, outcome_emitted.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-008
+    kind: req
+    req: HC-008
+    title: "Outcome delivery is event-based, not exit-code-based"
+    description: |
+      Per HC-008: handler subprocess MUST deliver run's `Outcome` (per [execution-model.md §4.1]) as `outcome_emitted` final progress-stream message; watcher translates to bus event per §6.4. Subprocess exit status is liveness-only (0 = clean shutdown after outcome_emitted; non-zero = crash). Non-zero exit WITHOUT prior outcome_emitted MUST be classified as agent failure per §4.6.
+
+  - mnem: hc-008a
+    kind: req
+    req: HC-008a
+    title: "Post-outcome shutdown window (T_shutdown=10s)"
+    description: |
+      Per HC-008a: handler MUST exit cleanly within T_shutdown=10s after emitting outcome_emitted; silent-hang detection SUSPENDED during this window. On expiry without exit, watcher SIGKILLs + emits agent_failed{ErrStructural, post_outcome_shutdown_timeout}. Dirty exit (non-zero) inside window AFTER outcome_emitted published: outcome durable; watcher emits agent_completed (NOT agent_failed) with shutdown_exit_code payload. Single-terminal-event invariant (HC-INV-006) preserved by total-ordering watcher's terminal-message publication BEFORE observing Wait() exit-status.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-009
+    kind: req
+    req: HC-009
+    title: "Version negotiation via handler_capabilities first-message"
+    description: |
+      Per HC-009: handler subprocess MUST emit handler_capabilities as FIRST progress-stream message carrying supported wire-protocol versions. Daemon selects highest mutually supported. No mutual support → daemon terminates session, returns ErrProtocolMismatch from Launch.
+
+  - mnem: hc-010
+    kind: req
+    req: HC-010
+    title: "Session log path emission via session_log_location"
+    description: |
+      Per HC-010: handler MUST emit session_log_location early (after handler_capabilities, before skills_provisioned/agent_ready) carrying {session_id, run_id, node_id, agent_type, log_path, log_format, bead_id?}. Watcher translates to bus event per [workspace-model.md §4.7]; on-the-wire payload schema in [event-model.md §6.3]. Directory + sidecar pre-exist per WM §4.7; this message announces the path.
+
+  - mnem: hc-011
+    kind: req
+    req: HC-011
+    title: "Daemon owns exactly one watcher goroutine per active session"
+    description: |
+      Per HC-011: daemon (S01) MUST spawn exactly ONE watcher goroutine per active handler session. Watcher owns: read-loop on progress stream, publication of handler-emitted events to in-process bus per [event-model.md §4.3], session-end cleanup. N sessions = N watchers; watchers MUST NOT share state.
+
+  - mnem: hc-011a
+    kind: req
+    req: HC-011a
+    title: "Watcher liveness + panic recovery"
+    description: |
+      Per HC-011a: watcher body MUST install recover() barrier (panic → agent_failed{ErrStructural, watcher_panic}); subscriber-panic isolated per-subscriber + dead-lettered (HC-027). Per-watcher last_read_event_at updated on every successful socket read. Daemon supervisor checks at <=T/4 cadence that every active watcher advanced last_read_event_at within T/2; non-advance → agent_failed{ErrStructural, watcher_wedged} daemon-defect classification. Watcher-to-bus publish channel MUST have small bounded buffer (default 8); buffer-full → dead-letter route per HC-027 (NOT block).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-012
+    kind: req
+    req: HC-012
+    title: "S04 owns the per-agent-type adapter"
+    description: |
+      Per HC-012: Agent Runner (S04) MUST expose one Adapter per registered agent_type and MUST NOT hold per-session state or spawn per-session goroutines. Per-session state MUST live in watcher's stack/closure. Adapter methods are synchronous callbacks invoked by watcher on lifecycle events.
+
+  - mnem: hc-013
+    kind: req
+    req: HC-013
+    title: "Adapter surface is fixed"
+    description: |
+      Per HC-013: every Adapter MUST provide DetectReady(event), DetectRateLimit(event), CleanExitSequence(ctx, session), RotateAccount(ctx) (returning ErrDeterministic if not supported). Adding callback requires foundation amendment per AR-020.
+
+  - mnem: hc-013a
+    kind: req
+    req: HC-013a
+    title: "RotateAccount fires only at clean turn boundaries"
+    description: |
+      Per HC-013a: Adapter.RotateAccount(ctx) MUST NOT be invoked while subprocess has in-flight LLM turn. Watcher MUST schedule rotation at next clean boundary (after agent_completed, before next dispatch). Mid-turn rotation forbidden — would interrupt provider HTTPS, leave worktree mid-transaction, and per HC-028 cannot mutate spawn-time HARMONIK_SECRET_* env. If no quiescent boundary within configurable window (default LaunchSpec.timeout), RotateAccount returns ErrTransient. Provider-secret rotation out of scope; account rotation in scope.
+
+  - mnem: hc-014
+    kind: req
+    req: HC-014
+    title: "Channel closure rule"
+    description: |
+      Per HC-014: emitter of cross-subsystem channel MUST close on end-of-stream; consumers MUST treat closed channel as end-of-stream, NOT as error. Applies to watcher-to-bus channel + any future cross-subsystem channel.
+
+  - mnem: hc-015
+    kind: req
+    req: HC-015
+    title: "Mutex discipline (per-run write lock; no mutex held across S04 adapter call)"
+    description: |
+      Per HC-015: state transitions MUST acquire per-run write lock; event publication MUST NOT block state lock; consumers read from per-subscriber channel; no mutex MAY be held across call into S04 adapter.
+
+  - mnem: hc-016
+    kind: req
+    req: HC-016
+    title: "Work queue per agent role"
+    description: |
+      Per HC-016: orchestrator MUST maintain one work queue per agent role per [architecture.md §4.8]. Workers drain own queue; cross-queue handoff MUST go through explicit transitions per [execution-model.md §4.6], never shared memory.
+
+  - mnem: hc-016a
+    kind: req
+    req: HC-016a
+    title: "Orphan-reconnect window retry against daemon_not_ready"
+    description: |
+      Per HC-016a: handler subprocess receiving typed daemon_not_ready{reason=unknown_run_id} from daemon (between socket bind and in-memory model build per [process-lifecycle.md §4.2 PL-003b]) MUST retry per PL-009b backoff schedule (initial 100ms, doubling, max 2s/attempt, capped at T_ready_wait=60s wall-clock). Watcher MUST NOT classify as session-failure during retry window. After cap exhaustion: ErrTransient + agent_failed{daemon_startup_window_exceeded}.
+
+  - mnem: hc-017
+    kind: req
+    req: HC-017
+    title: "Every public method takes ctx as first parameter"
+    description: |
+      Per HC-017: every public method on Handler and Session MUST take ctx context.Context as first parameter. Implementations MUST propagate ctx to subprocess via wire protocol (timeout/deadline in LaunchSpec; cancellation via explicit Kill).
+
+  - mnem: hc-018
+    kind: req
+    req: HC-018
+    title: "Cancellation terminates in-flight ops within bounded intervals"
+    description: |
+      Per HC-018: ctx cancellation MUST cause in-flight Go-side ops to return context.Canceled (wrapped as ErrCanceled per §4.5) within 500ms; subprocess cleanup within 5s. Exceeding subprocess cleanup bound triggers escalation to hard termination per §4.6.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+
+  - mnem: hc-019
+    kind: req
+    req: HC-019
+    title: "Context values restricted to observability metadata"
+    description: |
+      Per HC-019: ctx values MUST NOT carry business data (run fields, outcomes, bead IDs); MAY carry only observability metadata (trace IDs, correlation IDs, operator-identity tokens). Business data flows via explicit parameters / LaunchSpec / event payloads. Restriction applies to every cross-subsystem call.
+
+  - mnem: hc-020
+    kind: req
+    req: HC-020
+    title: "Five primary sentinel classes plus two structural sub-sentinels"
+    description: |
+      Per HC-020: HC defines 5 primary sentinel error classes (ErrTransient, ErrStructural, ErrDeterministic, ErrCanceled, ErrBudget) + 2 structural sub-sentinels (ErrProtocolMismatch, ErrSkillProvisioningFailed — both wrap ErrStructural). Every error returned across subsystem boundary MUST wrap exactly one primary class via fmt.Errorf '...: %w'. Consumers use errors.Is / errors.As (NOT string matching); dispatch narrowest-first.
+
+  - mnem: hc-021
+    kind: req
+    req: HC-021
+    title: "ErrProtocolMismatch is a structural sub-sentinel"
+    description: |
+      Per HC-021: ErrProtocolMismatch (version-negotiation failure / handler_capabilities absence within 5s / NDJSON line-cap exceeded) MUST wrap ErrStructural. Re-plan space: swap handler_ref, change pinned commit, upgrade daemon. Orchestrator retry policy per [execution-model.md §8.2] MUST distinguish protocol-mismatch re-plans from transient re-plans to avoid retry-spin.
+
+  - mnem: hc-022
+    kind: req
+    req: HC-022
+    title: "ErrSkillProvisioningFailed is a structural sub-sentinel"
+    description: |
+      Per HC-022: ErrSkillProvisioningFailed (skill-injection structural failure per §4.11.HC-048) MUST wrap ErrStructural. Outer sub-sentinel for skill-specific failure reporting; ErrStructural is routing fallback. Transient provisioning failures (HC-048a) wrap ErrTransient directly, NOT this sub-sentinel.
+
+  - mnem: hc-023
+    kind: req
+    req: HC-023
+    title: "Error classification is mechanism-tagged"
+    description: |
+      Per HC-023: mapping subprocess exit state / adapter-detected condition to sentinel class MUST be deterministic from structured fields (exit code, payload flags, typed adapter return). No cognition in classification; semantic interpretation belongs in reconciliation-investigator nodes.
+
+  - mnem: hc-024
+    kind: req
+    req: HC-024
+    title: "Subprocess crash emits agent_failed with typed class"
+    description: |
+      Per HC-024: subprocess crash (exits non-zero without prior outcome_emitted) → watcher MUST emit agent_failed whose payload includes mapped sentinel class per §4.5. Routing of agent_failed to retry/re-plan/terminal owned by [execution-model.md §8].
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-024a
+    kind: req
+    req: HC-024a
+    title: "Socket-level I/O error distinct from subprocess crash"
+    description: |
+      Per HC-024a: socket I/O errors (EPIPE, ECONNRESET, socket unlinked, decoder error per HC-007b) distinguished from subprocess termination. First occurrence without prior agent_completed/agent_failed: watcher emits agent_failed{ErrTransient, socket_io_error} + ONE reconnect attempt within 500ms. Reconnect succeeds + subprocess alive → resume; else reclassify to ErrStructural{progress_stream_broken} + SIGKILL + session terminated. Sessions are single-socket-lifetime at MVH. Distinguishes socket-broken-subprocess-alive from silent-hang (HC-026).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-025
+    kind: req
+    req: HC-025
+    title: "Rate-limit events distinct from failure events"
+    description: |
+      Per HC-025: when adapter's DetectRateLimit returns limited=true, watcher MUST emit agent_rate_limited (NOT agent_failed) carrying retry_after. On clearance: agent_rate_limit_cleared. Rate-limited sessions are NOT failures. Daemon's rate-limit policy is exponential backoff within wall-clock budget.
+
+  - mnem: hc-026
+    kind: req
+    req: HC-026
+    title: "Silent-hang detection state machine"
+    description: |
+      Per HC-026: watcher MUST detect silent-hang (subprocess alive — socket connected, Wait not returned — but no progress-stream message INCLUDING heartbeats per HC-026a — for threshold T). Detection + escalation per §7.1 state machine (active → warning → soft-terminating → hard-terminating). Terminating error class MUST be ErrStructural.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: hc-026a
+    kind: req
+    req: HC-026a
+    title: "Handler heartbeat obligation (<=T/2 cadence)"
+    description: |
+      Per HC-026a: every handler MUST emit agent_heartbeat at <=T/2 cadence while subprocess alive and no outcome_emitted. Payload: {session_id, phase} where phase in {starting, reasoning, tool_call, waiting_input, rotating, shutting_down} (extensible enum, additive-only). LLM wrappers without output channel during reasoning MUST synthesize on internal timer. Heartbeat resets silent-hang timer per §7.1; rate-limit windows continue heartbeats (waiting_input); shutdown window suppresses heartbeat (silent-hang suspended). Scenario-mode (twin scripted) carve-out: heartbeat_mode: scripted declared on script for byte-reproducible tests.
+
+  - mnem: hc-026b
+    kind: req
+    req: HC-026b
+    title: "Drain-forced silent-hang synthesis is ON-classified"
+    description: |
+      Per HC-026b: when operator-initiated drain SIGKILLs still-running agent (per [operator-nfr.md §4.7 ON-029]), the resulting agent_warning_silent_hang{reason=drain_forced} synthesis is governed by [operator-nfr.md §4.9 ON-040], NOT HC's silent-hang taxonomy. Watcher MUST cooperate by NOT also emitting an HC-classified silent-hang for the same run/node. Single-emitter (ON-side) preserves HC-INV-006. Acceptance clause; enforcement in operator-nfr.
+
+  - mnem: hc-027
+    kind: req
+    req: HC-027
+    title: "Dead-letter behavior for undeliverable events"
+    description: |
+      Per HC-027: events that cannot be delivered by watcher to in-process bus (bus full, subscriber panic) MUST be routed to dead-letter destination declared by [event-model.md §4.3]. Watcher MUST NOT drop events silently.
+
+  - mnem: hc-028
+    kind: req
+    req: HC-028
+    title: "Secrets injected via environment variable (HARMONIK_SECRET_* prefix)"
+    description: |
+      Per HC-028: secrets MUST be delivered as env vars with stable prefix HARMONIK_SECRET_*. LaunchSpec MUST NOT carry secret values; the requirement-of-secret MAY be encoded indirectly (via freedom_profile_ref resolution) but value travels only via process environment.
+    extra_labels:
+      - "axis:replay-safety-unsafe"
+
+  - mnem: hc-029
+    kind: req
+    req: HC-029
+    title: "agent_started event MUST NOT include environment variables"
+    description: |
+      Per HC-029: agent_started event payload MUST NOT include handler subprocess's environment. Launch provenance fields (binary path, commit hash) permitted; env-var maps not.
+
+  - mnem: hc-030
+    kind: req
+    req: HC-030
+    title: "Redaction registry middleware"
+    description: |
+      Per HC-030: daemon MUST install redaction-middleware function in event-bus producer path applying HC-031 + HC-032 rules to every event payload + every structured log line before emission. Mechanism-tagged; no cognition.
+
+  - mnem: hc-031
+    kind: req
+    req: HC-031
+    title: "Common prefix redaction rule"
+    description: |
+      Per HC-031: any field whose NAME matches case-insensitive regex (secret|token|password|api[_-]?key|auth) MUST be replaced with literal '<redacted>' before emission. Match is on field name, not value; intentional serialization of matching field is producer bug, not redaction bypass.
+
+  - mnem: hc-032
+    kind: req
+    req: HC-032
+    title: "Per-handler redaction patterns"
+    description: |
+      Per HC-032: each handler spec MAY contribute additional value-shaped regex patterns for handler-specific secret formats (e.g., Anthropic API keys matching sk-ant-*). Patterns MUST be declared in handler's subsystem envelope as redaction entries + registered at daemon init. Values matching ANY registered pattern MUST be '<redacted>'. Review MUST reject handler spec that ships secret provider without declared pattern when shape-detectable.
+
+  - mnem: hc-033
+    kind: req
+    req: HC-033
+    title: "Compile-time event-schema payload check"
+    description: |
+      Per HC-033: event-schema registry MUST verify at startup that no registered event type's payload schema declares a field whose name matches HC-031 regex. Any such field MUST be startup-time error, NOT runtime warning. Prevents schema drift that would silently ship unredacted secrets.
+
+  - mnem: hc-034
+    kind: req
+    req: HC-034
+    title: "Secrets never appear in event log or unredacted session log"
+    description: |
+      Per HC-034: no secret value MAY appear in any persisted event record, audit record, or session log as stored to disk. Operator debugging uses redacted forms; full-secret access requires filesystem-level privileges outside harmonik's control surface.
+
+  - mnem: hc-035
+    kind: req
+    req: HC-035
+    title: "Twins implement the same Handler interface"
+    description: |
+      Per HC-035: twin handler (canonical real-handler substitute for scenario-test harness + CI) MUST implement Handler interface of §6.1 with SAME method signatures + SAME error-class discipline + MUST be launched as separate subprocess (per HC-045). Selection real-vs-twin is config-level per HC-003. Carve-out: hand-written in-process fakes used in Go unit tests for per-adapter / per-watcher / per-error-classifier targeted testing are NOT twins — not subprocesses, not subject to wire-protocol parity.
+
+  - mnem: hc-036
+    kind: req
+    req: HC-036
+    title: "Twin subprocesses honor the same wire protocol"
+    description: |
+      Per HC-036: twin handler subprocess (per HC-035) MUST emit same progress-stream message types (HC-007/007a) + same outcome-delivery rule (HC-008) as real handler. Permitted differences: (a) script drives output instead of LLM, (b) no model-budget charging, (c) binary name <real>-twin or declared alias. Applies to subprocess; in-process fakes per HC-035 carve-out unaffected.
+
+  - mnem: hc-037
+    kind: req
+    req: HC-037
+    title: "Twins carry identical boundary-classification tags"
+    description: |
+      Per HC-037: twin handler's mechanism/cognition tagging MUST match real counterpart. Twin doesn't make decisions its real counterpart would delegate; it scripts them. Tagging deviation is a twin defect.
+
+  - mnem: hc-038
+    kind: req
+    req: HC-038
+    title: "Twin conformance drift detection scoped to S07"
+    description: |
+      Per HC-038: ongoing obligation to keep twins honest against real-agent drift is scoped to scenario-harness (S07) spec, post-MVH. This spec establishes parity contract; S07 owns drift-detection workflow.
+
+  - mnem: hc-039
+    kind: req
+    req: HC-039
+    title: "Ready-state signaled by agent_ready event"
+    description: |
+      Per HC-039: every handler subprocess MUST emit single agent_ready event on startup to signal it can accept work. Payload MUST include session_id + capabilities[] at minimum; full payload schema in [event-model.md §6.3]. Daemon MUST NOT dispatch work to session before observing agent_ready for that session.
+
+  - mnem: hc-040
+    kind: req
+    req: HC-040
+    title: "Twins MUST emit agent_ready identically"
+    description: |
+      Per HC-040: twin handlers MUST emit agent_ready with same shape and timing as real counterparts. Skipping in twins is twin-parity violation per §4.8.
+
+  - mnem: hc-041
+    kind: req
+    req: HC-041
+    title: "Adapter-level ready detection"
+    description: |
+      Per HC-041: Adapter.DetectReady callback (per HC-013) MUST return true exactly when adapter has observed agent_ready event for session in question. Adapters MUST NOT synthesize ready-state from other signals (e.g., first output chunk).
+
+  - mnem: hc-042
+    kind: req
+    req: HC-042
+    title: "Handler subprocess launched from repo-relative path"
+    description: |
+      Per HC-042: every handler subprocess MUST be launched via absolute path resolved from repo-relative prefix configured at daemon startup. PATH lookup forbidden for in-repo binaries. Handler with system_handler=true (e.g., Claude Code CLI installed by operator) MAY resolve via PATH; all others MUST NOT use PATH and MUST fail launch if configured absolute path is absent.
+
+  - mnem: hc-043
+    kind: req
+    req: HC-043
+    title: "Commit-hash check for in-repo binaries"
+    description: |
+      Per HC-043: before launch, orchestrator MUST verify in-repo handler binary's embedded commit hash matches expected hash configured for agent type. Mismatch MUST fail launch with ErrStructural + emit agent_failed. System handlers MAY log --version at startup in lieu of hash check; no signature verification at MVH.
+
+  - mnem: hc-044
+    kind: req
+    req: HC-044
+    title: "Subprocess is a child of the daemon"
+    description: |
+      Per HC-044: daemon MUST spawn every handler subprocess as direct child process (per [process-lifecycle.md §4.5]). Subprocess MUST communicate back on Unix domain socket at .harmonik/daemon.sock (per [process-lifecycle.md §4.1]); same socket as progress stream per HC-007/007a. One bidirectional socket-backed channel per session; no separate control channel at MVH. Socket authenticity: filesystem-permission-based at MVH (0600 owned by daemon user); per-connection challenges deferred post-MVH. Linux subprocesses SHOULD install PR_SET_PDEATHSIG(SIGTERM); macOS no equivalent (subprocess-survival-across-daemon-death addressed by HC-044a).
+
+  - mnem: hc-044a
+    kind: req
+    req: HC-044a
+    title: "Launch MUST fail-fast on orphan-held workspace"
+    description: |
+      Per HC-044a: before Launch returns Session, daemon MUST verify target workspace_path not held by prior-generation handler. Detection: pidfile at .harmonik/worktrees/<run_id>/.lock written atomically at spawn, removed on clean termination. On Launch: pidfile exists + recorded PID live + live process NOT owned by current daemon generation → ErrStructural{workspace_held_by_orphan} + agent_failed carrying offending PID. Daemon MUST NOT silently reclaim — two concurrent subprocesses writing same worktree silently corrupts artifacts; fail-fast mandatory. Stale pidfiles MAY be reclaimed. Reconciliation startup sweep (per [reconciliation/spec.md §4]) subsumes post-MVH. Socket file from prior generation MUST be unlinked before bind per [process-lifecycle.md §4.1].
+
+  - mnem: hc-045
+    kind: req
+    req: HC-045
+    title: "Twin binaries obey same launch rules"
+    description: |
+      Per HC-045: twin binaries MUST be launched from known repo-relative path with expected-commit-hash check. Twin's expected commit hash MUST be pinned at workflow/policy configuration time.
+
+  - mnem: hc-046
+    kind: req
+    req: [HC-046, HC-047]   # coalesce: HC-046 + HC-047
+    title: "Skill provisioning + resolution surface (coalesce)"
+    description: |
+      Per HC-046 + HC-047 (coalesced per discipline §2.3): handler MUST ensure agent subprocess has every skill named in LaunchSpec.required_skills[] available in agent-type-specific shape (file drops / CLI binaries on PATH / MCP-server registrations / reference-doc bundles; future shapes per per-handler specs) BEFORE subprocess emits agent_ready (per HC-049). Resolution MUST be deterministic: resolve name against LaunchSpec.skill_search_paths[] in order, take first match. No cognition participates. Until agent-configuration spec lands, skill packages resolve against [docs/foundation/components.md §10] directory layout (bootstrap; migrates when finalized).
+
+  - mnem: hc-048
+    kind: req
+    req: HC-048
+    title: "Fail-launch on unresolvable required skill (structural)"
+    description: |
+      Per HC-048: if any name in required_skills[] cannot be resolved against skill_search_paths[] at launch time, handler MUST fail-launch with ErrSkillProvisioningFailed (wrapping ErrStructural per HC-022). Handler MUST emit (via progress stream) agent_failed carrying unresolved skill name; watcher publishes corresponding bus event. Run MUST NOT proceed.
+
+  - mnem: hc-048a
+    kind: req
+    req: HC-048a
+    title: "Retry with backoff on transient provisioning failure"
+    description: |
+      Per HC-048a: name resolves but provisioning of resolved package into agent-process shape fails at runtime (network timeout, registry 5xx, disk-full, MCP handshake network error) → handler MUST classify per per-agent-type adapter heuristic: transient (network errors, 5xx, timeout) wrap ErrTransient; structural (package-integrity check failure, unsupported manifest, permission denied) wrap ErrSkillProvisioningFailed. Transient retries in-handler with exponential backoff (base 1s, cap 16s, max 4 attempts) bounded by LaunchSpec.provisioning_timeout (default 60s). On timeout/cap exhaustion: reclassify ErrStructural per §8.2 + fail-launch. provisioning_timeout distinct from LaunchSpec.timeout.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+
+  - mnem: hc-049
+    kind: req
+    req: HC-049
+    title: "Emit skills_provisioned before agent_ready"
+    description: |
+      Per HC-049: after successful provisioning and before agent_ready, handler MUST emit skills_provisioned event (payload schema in [event-model.md §6.3]) carrying installed skills, source path resolved per skill, package version where available.
+
+  - mnem: hc-049a
+    kind: req
+    req: HC-049a
+    title: "Twin-parity for skill provisioning is wire-only"
+    description: |
+      Per HC-049a: twin-parity invariant (§4.8) applies to wire signal of skill provisioning (the skills_provisioned event), NOT to filesystem side effects. Twin MAY skip filesystem + process-state side effects of real provisioning BUT MUST emit skills_provisioned with same claimed skill set as if provisioning had occurred. Downstream nodes inspecting worktree artifacts to verify skill installation are NOT part of handler-contract parity surface; SHOULD use event payload as authoritative record. Twin failing to emit violates HC-INV-002 even if filesystem untouched.
+
+  - mnem: hc-050
+    kind: req
+    req: HC-050
+    title: "Skill declarations are read from LaunchSpec"
+    description: |
+      Per HC-050: handler MUST consult LaunchSpec.required_skills[] and LaunchSpec.skill_search_paths[] only; MUST NOT read DOT node attributes or YAML policy documents directly. Workflow-load-time resolution per [execution-model.md §4.9] and [control-points.md §4.11] populates LaunchSpec; handler consumes resolved set.
+
+  - mnem: hc-051
+    kind: req
+    req: HC-051
+    title: "Handler contract is the deterministic-daemon / execution-shape seam"
+    description: |
+      Per HC-051: handler contract (this spec, in entirety) is architectural seam between deterministic daemon (workflow state, routing, dispatch per [process-lifecycle.md §4.6]) and execution shape (ntm + tmux + subprocess today). Proposal that would couple daemon to specific execution shape (e.g., importing ntm-specific types into daemon's routing) MUST fail this boundary check.
+
+  - mnem: hc-052
+    kind: req
+    req: HC-052
+    title: "Execution-shape evolution re-implements the adapter, not the watcher"
+    description: |
+      Per HC-052: future replacement of execution shape (custom tmux + agent-profile library, cloud-execution shape, remote-container shape) MUST re-implement per-agent-type adapter of HC-012 without altering watcher of HC-011. Concurrency pin is load-bearing: new shapes provide new adapters; they do NOT move concurrency boundary.
+
+  - mnem: hc-053
+    kind: req
+    req: HC-053
+    title: "Cross-subsystem surface MUST remain stable across shape evolution"
+    description: |
+      Per HC-053: cross-subsystem surface defined by this spec — Handler interface (§6.1), LaunchSpec record (§6.1), error taxonomy (§8), emitted event set (§4.2.HC-007) — MUST remain stable across execution-shape evolution. Execution-shape change altering any of these surfaces is breaking change requiring foundation amendment per AR-020.
+
+  # §5 invariant beads (7)
+  - mnem: hc-inv-001
+    kind: invariant
+    req: HC-INV-001
+    title: "Sensor: exactly one watcher goroutine per active session"
+    description: |
+      Per HC-INV-001: for every active handler session tracked by daemon, exactly one live watcher goroutine owned by S01 MUST exist. Zero watchers = daemon defect; >1 watcher per session = daemon defect. Observable via daemon health-check surface per [operator-nfr.md §4.9]. Sensor (invariant test): §10.2 HC-011..HC-016 group — invariant test asserts exactly-one-watcher-per-session via daemon introspection.
+
+  - mnem: hc-inv-002
+    kind: invariant
+    req: HC-INV-002
+    title: "Sensor: twin handlers indistinguishable from real handlers"
+    description: |
+      Per HC-INV-002: from daemon's perspective (interface, wire protocol, event schema, error-class discipline, tagging), twin handler MUST be indistinguishable from real counterpart. Daemon MUST carry zero conditional logic varying on handler-is-twin. Verification: reviewing daemon codebase yields zero `if isTwin` / `if agent_type == "*-twin"` branches (corpus-wide static-analysis lint).
+
+  - mnem: hc-inv-003
+    kind: invariant
+    req: HC-INV-003
+    title: "Sensor: no secret value crosses event-bus or log-emission boundary"
+    description: |
+      Per HC-INV-003: no secret value MAY be observable in any event payload delivered to any consumer, in any persisted event record, or in any structured log line written to disk. Redaction registry (§4.7) enforces at producer time; compile-time schema check (HC-033) closes schema-drift path. Sensor (corpus-wide static analysis + end-to-end test): redaction-middleware unit tests; per-handler-pattern registration tests; compile-time schema-check test verifying registered event type with secret-shaped field name is rejected at startup; end-to-end test asserting no secret appears in event log or session log.
+
+  - mnem: hc-inv-004
+    kind: invariant
+    req: HC-INV-004
+    title: "Sensor: agent_ready precedes work dispatch"
+    description: |
+      Per HC-INV-004: for every session, sequence handler_capabilities → session_log_location → skills_provisioned → agent_ready → Launch returns → (first work dispatch) MUST hold. Watcher MUST NOT publish agent_ready before delivering handler_capabilities, session_log_location, skills_provisioned to subscribers in that order; daemon MUST NOT dispatch work before session's agent_ready bus event published. Sensor (scenario-harness test): assert work-dispatch-before-agent_ready is rejected; assert pre-agent_ready message order.
+
+  - mnem: hc-inv-005
+    kind: invariant
+    req: HC-INV-005
+    title: "Sensor: no handler subprocess launched without verified binary path"
+    description: |
+      Per HC-INV-005: for every successful Launch, binary that was exec'd MUST have passed launch-path + commit-hash rules of HC-042 + HC-043 (or, for system handlers per system_handler=true, the PATH-resolved absolute path + --version log). Launch returning (Session, nil) without verification is daemon defect. Observable via launch-path audit logging per [operator-nfr.md §4.9]. Sensor (audit-log test + negative scenario): launch-path negative test; system-handler path exercised via Claude Code fixture.
+
+  - mnem: hc-inv-006
+    kind: invariant
+    req: HC-INV-006
+    title: "Sensor: exactly one terminal event per session"
+    description: |
+      Per HC-INV-006: for every session crossing agent_ready threshold (successfully launched), watcher MUST publish exactly ONE terminal event from {agent_completed, agent_failed}. agent_completed on clean exit after outcome_emitted OR on dirty exit inside post-outcome shutdown window per HC-008a. agent_failed on any other terminal (crash without outcome, silent-hang, socket break, watcher wedge, protocol mismatch, skill-provisioning structural failure). Double terminal emission = daemon defect. budget_exhausted is pre-launch denial, NOT terminal event for this invariant. Dirty exit without prior terminal MUST emit agent_failed. Sensor (state-machine test): scenario coverage of every termination path enumerated; assert exactly-one terminal event published per session.
+
+  - mnem: hc-inv-007
+    kind: invariant
+    req: HC-INV-007
+    title: "Sensor: watcher is sole authoritative publisher of handler-lifecycle events"
+    description: |
+      Per HC-INV-007: for every handler-lifecycle event type enumerated in §6.4 and §4.2.HC-007, session watcher (per HC-011) MUST be SOLE publisher to in-process event bus. No other component — including in-process Handler fakes per §4.8.HC-035 carve-out — MAY publish handler-lifecycle event directly. In-process fakes per HC-035 MUST route emissions through same watcher and redaction middleware (§4.7) that real-subprocess-backed session uses; fake bypassing watcher bypasses HC-INV-003 (redaction) and HC-INV-004 (ordering) by construction. Makes watcher's redaction + ordering enforcement point normative rather than descriptive.
+
+  # §6 schema beads (5)
+  - mnem: hc-schema.handler
+    kind: schema
+    schema_kind: interface
+    title: "Define `Handler` interface (§6.1)"
+    description: |
+      Implement the 2-method INTERFACE: Launch(ctx, spec) -> (Session, error) (idempotent on (spec.run_id, spec.node_id) per HC-004; returns ErrProtocolMismatch / ErrSkillProvisioningFailed / other sentinel on failure); AgentType() -> String (returns lowercase-hyphenated agent_type identifier per [architecture.md §6.1]).
+
+  - mnem: hc-schema.session
+    kind: schema
+    schema_kind: interface
+    title: "Define `Session` interface (§6.1)"
+    description: |
+      Implement the 6-method INTERFACE: ID() -> SessionID (stable identifier; assigned at Launch return); SendInput(ctx, input) -> error (typed sentinel on failure); Attach(ctx) -> (io.Reader, error) (reader over tmux/log tail for operator observability); Kill(ctx) -> error (signals subprocess exit; safe to call multiple times); Wait(ctx) -> (Outcome, error) (blocks until subprocess terminates; returns Outcome from final outcome_emitted event or typed sentinel on crash); LogLocation() -> String (absolute session-log path emitted in session_log_location).
+
+  - mnem: hc-schema.adapter
+    kind: schema
+    schema_kind: interface
+    title: "Define `Adapter` interface (§6.1)"
+    description: |
+      Implement the 4-method INTERFACE: DetectReady(event) -> Bool (true iff event is this session's agent_ready); DetectRateLimit(event) -> (Bool, Duration) (limited + retry_after; non-zero retry_after implies limited=true); CleanExitSequence(ctx, session) -> error (orderly termination on normal cancellation); RotateAccount(ctx) -> error (ErrDeterministic if unsupported for agent type).
+
+  - mnem: hc-schema.launch-spec
+    kind: schema
+    schema_kind: schema
+    title: "Define `LaunchSpec` record (§6.1)"
+    description: |
+      Implement the 13-field RECORD: run_id (UUID); workflow_id (UUID); node_id (String); agent_type (String); workspace_path (String absolute); required_skills (List<String>); skill_search_paths (List<String>); timeout (Integer wall-clock seconds positive); provisioning_timeout (Integer default 60); budget (BudgetRef); freedom_profile_ref (String); optional bead_id (String); optional snapshot_token (String); schema_version (Integer N-1 readable). Schema evolution per §6.3: add-optional non-breaking; remove/rename breaking. Sentinel taxonomy versioned at spec level.
+
+  - mnem: hc-schema.session-id
+    kind: schema
+    schema_kind: schema
+    title: "Define `SessionID` record (§6.1)"
+    description: |
+      Implement the 1-field RECORD: value: String (daemon-assigned; unique within daemon generation). Trivial typed wrapper.
+
+  # §8 error-taxonomy bead (1)
+  - mnem: hc-error.taxonomy
+    kind: error-taxonomy
+    title: "HC error sentinel set + 5-class detection-and-emission table"
+    description: |
+      Implement the 5-primary + 2-sub-sentinel error-class taxonomy. Sentinels (Go var): ErrTransient, ErrStructural, ErrDeterministic, ErrCanceled, ErrBudget (primary); ErrSkillProvisioningFailed, ErrProtocolMismatch (sub-sentinels — each wraps ErrStructural). Detection-and-emission rules (§8.1-§8.7): per-class detection rule + emission rule. 8.1 Transient: network-transient, rate-limit-transient, sub-silent-hang timeout, first-occurrence socket I/O. 8.2 Structural: wrong plan, silent-hang, post-outcome shutdown timeout, partial/malformed message, watcher wedge/panic, sustained socket break, workspace held by orphan. 8.3 Deterministic: confirmed-bug from structured fields. 8.4 Canceled: operator/policy cancel on ctx. 8.5 Budget: pre-launch budget-exhausted (emits budget_exhausted, NOT agent_failed). 8.6 SkillProvisioningFailed: unresolvable per HC-048 OR resolved-but-structural-cause-failure per HC-048a. 8.7 ProtocolMismatch: no mutual version, handler_capabilities absent within 5s, NDJSON line cap exceeded. Routing of these classes to retry/re-plan/terminal owned by [execution-model.md §8].
+
+  # test-infra beads (5)
+  - mnem: hc-test.twin-binary
+    kind: test-infra
+    title: "Canonical twin handler binary for scenario-harness tests"
+    description: |
+      Per HC-035..HC-038 + every §10.2 obligation that says 'with the twin handler': twin binary that subprocess-launched, honors same wire protocol (NDJSON over Unix socket), emits scripted output instead of LLM output, supports heartbeat_mode: scripted carve-out per HC-026a, mechanism/cognition tagging matching real handler. Foundation scenario-harness infrastructure for HC + downstream subsystem tests.
+
+  - mnem: hc-test.wire-protocol-fixture
+    kind: test-infra
+    title: "NDJSON wire-protocol fixture (well-formed + 5 negative-case scenarios)"
+    description: |
+      Per §10.2 (HC-005..HC-010 wire protocol + HC-007a NDJSON conformance + HC-007b durability): canonical streams covering well-formed message sequence; embedded-newline-rejection; 1-MiB line-cap rejection; partial-message-on-EOF discard; malformed-JSON close-with-ErrStructural; LaunchSpec round-trip under both stdin and file-path delivery modes.
+
+  - mnem: hc-test.silent-hang-harness
+    kind: test-infra
+    title: "Silent-hang FSM + heartbeat scenario harness"
+    description: |
+      Per §10.2 (HC-026 + HC-026a + §7.1 state machine + HC-INV-004 + HC-INV-006): twin-forced-silence asserting warning → soft-terminate → hard-terminate; twin-emitting-heartbeats during long reasoning MUST NOT trigger silent-hang; twin-emitting-no-messages MUST trigger silent-hang within T + tick-jitter; rate-limit-clearance heartbeat continuation; post-outcome-shutdown-window heartbeat suspension.
+
+  - mnem: hc-test.crash-recovery-harness
+    kind: test-infra
+    title: "Crash-recovery + dirty-exit + socket-I/O + orphan-workspace harness"
+    description: |
+      Per §10.2 (HC-008a + HC-024 + HC-024a + HC-044a + HC-INV-005 + HC-INV-006): kill subprocess at specific points (after outcome_emitted; before outcome_emitted; mid-message; mid-handshake); inject ECONNRESET / EPIPE / socket-unlinked at progress-stream read; inject orphan-pidfile + live process owned by prior daemon generation; assert post-crash invariants (one-terminal-event, structured sub_reason classification, durable outcome via session-log, fail-fast on orphan-held workspace).
+
+  - mnem: hc-test.redaction-fixture
+    kind: test-infra
+    title: "Redaction-middleware + compile-time-check fixture"
+    description: |
+      Per §10.2 (HC-028..HC-034 secrets + HC-INV-003): fixture providing payloads with secret-named fields (regex-matching field names); fixture providing payloads with secret-shaped values (e.g., sk-ant-*); registered handler subsystems with declared per-handler redaction patterns; registered event types with secret-shaped payload field names (negative case for compile-time check). Asserts middleware-redacts, compile-time-check-rejects-startup, end-to-end-no-secret-on-disk.
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples in load-hc.py.
+#
+# Mnemonic prefix selects resolution map:
+#   hc-* → intra-spec (this spec's mnem-map)
+#   ar-* / em-* / ev-* → cross-spec (resolved against cross_specs[<prefix>])
+#   forward:* → forward-deferred (logged only, NOT loaded into beads)
+edges:
+  # Intra-HC edges (180)
+  - {from: hc-001, to: hc-schema.handler}
+  - {from: hc-002, to: hc-schema.session}
+  - {from: hc-004, to: hc-schema.launch-spec}
+  - {from: hc-005, to: hc-schema.launch-spec}
+  - {from: hc-006, to: hc-schema.launch-spec}
+  - {from: hc-007, to: hc-044}
+  - {from: hc-008a, to: hc-008}
+  - {from: hc-008a, to: hc-026}
+  - {from: hc-009, to: hc-007}
+  - {from: hc-010, to: hc-007}
+  - {from: hc-011a, to: hc-011}
+  - {from: hc-011a, to: hc-027}
+  - {from: hc-011a, to: hc-026a}
+  - {from: hc-012, to: hc-011}
+  - {from: hc-012, to: hc-schema.adapter}
+  - {from: hc-013, to: hc-schema.adapter}
+  - {from: hc-013a, to: hc-013}
+  - {from: hc-013a, to: hc-028}
+  - {from: hc-015, to: hc-012}
+  - {from: hc-016a, to: hc-007}
+  - {from: hc-016a, to: hc-026}
+  - {from: hc-017, to: hc-schema.handler}
+  - {from: hc-017, to: hc-schema.session}
+  - {from: hc-017, to: hc-schema.launch-spec}
+  - {from: hc-021, to: hc-020}
+  - {from: hc-021, to: hc-009}
+  - {from: hc-021, to: hc-007}
+  - {from: hc-022, to: hc-020}
+  - {from: hc-024, to: hc-008}
+  - {from: hc-024a, to: hc-024}
+  - {from: hc-024a, to: hc-007}
+  - {from: hc-024a, to: hc-026}
+  - {from: hc-025, to: hc-013}
+  - {from: hc-026, to: hc-007}
+  - {from: hc-026, to: hc-026a}
+  - {from: hc-026a, to: hc-007}
+  - {from: hc-026a, to: hc-008a}
+  - {from: hc-026a, to: hc-025}
+  - {from: hc-026a, to: hc-035}
+  - {from: hc-026b, to: hc-026}
+  - {from: hc-028, to: hc-schema.launch-spec}
+  - {from: hc-030, to: hc-031}
+  - {from: hc-030, to: hc-032}
+  - {from: hc-033, to: hc-031}
+  - {from: hc-034, to: hc-030}
+  - {from: hc-034, to: hc-033}
+  - {from: hc-035, to: hc-001}
+  - {from: hc-035, to: hc-003}
+  - {from: hc-035, to: hc-045}
+  - {from: hc-036, to: hc-035}
+  - {from: hc-036, to: hc-007}
+  - {from: hc-036, to: hc-008}
+  - {from: hc-037, to: hc-035}
+  - {from: hc-038, to: hc-035}
+  - {from: hc-039, to: hc-007}
+  - {from: hc-040, to: hc-039}
+  - {from: hc-040, to: hc-035}
+  - {from: hc-041, to: hc-013}
+  - {from: hc-041, to: hc-039}
+  - {from: hc-043, to: hc-042}
+  - {from: hc-044, to: hc-007}
+  - {from: hc-044a, to: hc-044}
+  - {from: hc-045, to: hc-042}
+  - {from: hc-045, to: hc-043}
+  - {from: hc-046, to: hc-schema.launch-spec}
+  - {from: hc-048, to: hc-046}
+  - {from: hc-048, to: hc-022}
+  - {from: hc-048a, to: hc-046}
+  - {from: hc-048a, to: hc-013}
+  - {from: hc-048a, to: hc-schema.launch-spec}
+  - {from: hc-049, to: hc-046}
+  - {from: hc-049, to: hc-039}
+  - {from: hc-049a, to: hc-049}
+  - {from: hc-049a, to: hc-035}
+  - {from: hc-050, to: hc-schema.launch-spec}
+  - {from: hc-052, to: hc-011}
+  - {from: hc-052, to: hc-012}
+  - {from: hc-053, to: hc-001}
+  - {from: hc-053, to: hc-schema.launch-spec}
+  - {from: hc-053, to: hc-007}
+  - {from: hc-schema.session, to: hc-schema.session-id}
+  - {from: hc-schema.adapter, to: hc-schema.session}
+  - {from: hc-schema.handler, to: hc-schema.session}
+  - {from: hc-schema.handler, to: hc-schema.launch-spec}
+  - {from: hc-schema.handler, to: hc-error.taxonomy}
+  - {from: hc-schema.session, to: hc-error.taxonomy}
+  - {from: hc-schema.adapter, to: hc-error.taxonomy}
+  - {from: hc-error.taxonomy, to: hc-007}
+  - {from: hc-error.taxonomy, to: hc-008}
+  - {from: hc-error.taxonomy, to: hc-008a}
+  - {from: hc-error.taxonomy, to: hc-009}
+  - {from: hc-error.taxonomy, to: hc-024}
+  - {from: hc-error.taxonomy, to: hc-024a}
+  - {from: hc-error.taxonomy, to: hc-026}
+  - {from: hc-error.taxonomy, to: hc-044a}
+  - {from: hc-error.taxonomy, to: hc-048}
+  - {from: hc-error.taxonomy, to: hc-048a}
+  - {from: hc-inv-001, to: hc-011}
+  - {from: hc-inv-001, to: hc-011a}
+  - {from: hc-inv-001, to: hc-012}
+  - {from: hc-inv-001, to: hc-013}
+  - {from: hc-inv-001, to: hc-013a}
+  - {from: hc-inv-001, to: hc-014}
+  - {from: hc-inv-001, to: hc-015}
+  - {from: hc-inv-001, to: hc-016}
+  - {from: hc-inv-001, to: hc-016a}
+  - {from: hc-inv-002, to: hc-035}
+  - {from: hc-inv-002, to: hc-036}
+  - {from: hc-inv-002, to: hc-037}
+  - {from: hc-inv-002, to: hc-038}
+  - {from: hc-inv-002, to: hc-040}
+  - {from: hc-inv-002, to: hc-049a}
+  - {from: hc-inv-003, to: hc-028}
+  - {from: hc-inv-003, to: hc-029}
+  - {from: hc-inv-003, to: hc-030}
+  - {from: hc-inv-003, to: hc-031}
+  - {from: hc-inv-003, to: hc-032}
+  - {from: hc-inv-003, to: hc-033}
+  - {from: hc-inv-003, to: hc-034}
+  - {from: hc-inv-004, to: hc-007}
+  - {from: hc-inv-004, to: hc-009}
+  - {from: hc-inv-004, to: hc-010}
+  - {from: hc-inv-004, to: hc-039}
+  - {from: hc-inv-004, to: hc-040}
+  - {from: hc-inv-004, to: hc-041}
+  - {from: hc-inv-004, to: hc-049}
+  - {from: hc-inv-005, to: hc-042}
+  - {from: hc-inv-005, to: hc-043}
+  - {from: hc-inv-005, to: hc-044}
+  - {from: hc-inv-005, to: hc-044a}
+  - {from: hc-inv-005, to: hc-045}
+  - {from: hc-inv-006, to: hc-007}
+  - {from: hc-inv-006, to: hc-008}
+  - {from: hc-inv-006, to: hc-008a}
+  - {from: hc-inv-006, to: hc-024}
+  - {from: hc-inv-006, to: hc-024a}
+  - {from: hc-inv-006, to: hc-026}
+  - {from: hc-inv-006, to: hc-026a}
+  - {from: hc-inv-006, to: hc-026b}
+  - {from: hc-inv-006, to: hc-039}
+  - {from: hc-inv-006, to: hc-044a}
+  - {from: hc-inv-006, to: hc-048}
+  - {from: hc-inv-006, to: hc-011a}
+  - {from: hc-inv-007, to: hc-007}
+  - {from: hc-inv-007, to: hc-011}
+  - {from: hc-inv-007, to: hc-030}
+  - {from: hc-inv-007, to: hc-035}
+  - {from: hc-inv-007, to: hc-inv-003}
+  - {from: hc-inv-007, to: hc-inv-004}
+  - {from: hc-test.wire-protocol-fixture, to: hc-test.twin-binary}
+  - {from: hc-test.silent-hang-harness, to: hc-test.twin-binary}
+  - {from: hc-test.crash-recovery-harness, to: hc-test.twin-binary}
+  - {from: hc-035, to: hc-test.twin-binary}
+  - {from: hc-036, to: hc-test.twin-binary}
+  - {from: hc-037, to: hc-test.twin-binary}
+  - {from: hc-040, to: hc-test.twin-binary}
+  - {from: hc-049a, to: hc-test.twin-binary}
+  - {from: hc-inv-002, to: hc-test.twin-binary}
+  - {from: hc-005, to: hc-test.wire-protocol-fixture}
+  - {from: hc-006, to: hc-test.wire-protocol-fixture}
+  - {from: hc-007, to: hc-test.wire-protocol-fixture}
+  - {from: hc-009, to: hc-test.wire-protocol-fixture}
+  - {from: hc-010, to: hc-test.wire-protocol-fixture}
+  - {from: hc-026, to: hc-test.silent-hang-harness}
+  - {from: hc-026a, to: hc-test.silent-hang-harness}
+  - {from: hc-026b, to: hc-test.silent-hang-harness}
+  - {from: hc-inv-004, to: hc-test.silent-hang-harness}
+  - {from: hc-inv-006, to: hc-test.silent-hang-harness}
+  - {from: hc-008a, to: hc-test.crash-recovery-harness}
+  - {from: hc-024, to: hc-test.crash-recovery-harness}
+  - {from: hc-024a, to: hc-test.crash-recovery-harness}
+  - {from: hc-044a, to: hc-test.crash-recovery-harness}
+  - {from: hc-inv-005, to: hc-test.crash-recovery-harness}
+  - {from: hc-inv-006, to: hc-test.crash-recovery-harness}
+  - {from: hc-030, to: hc-test.redaction-fixture}
+  - {from: hc-031, to: hc-test.redaction-fixture}
+  - {from: hc-032, to: hc-test.redaction-fixture}
+  - {from: hc-033, to: hc-test.redaction-fixture}
+  - {from: hc-034, to: hc-test.redaction-fixture}
+  - {from: hc-inv-003, to: hc-test.redaction-fixture}
+
+  # Cross-spec AR edges (11)
+  - {from: hc-013, to: ar-020}
+  - {from: hc-016, to: ar-032}
+  - {from: hc-023, to: ar-005}
+  - {from: hc-023, to: ar-006}
+  - {from: hc-030, to: ar-006}
+  - {from: hc-032, to: ar-013}
+  - {from: hc-037, to: ar-005}
+  - {from: hc-053, to: ar-020}
+  - {from: hc-schema.handler, to: ar-027}
+  - {from: hc-schema.launch-spec, to: ar-schema.agent-type-identifier}
+  - {from: hc-schema.launch-spec, to: ar-027}
+
+  # Cross-spec EM edges (12)
+  - {from: hc-003, to: em-040}
+  - {from: hc-006, to: em-014}
+  - {from: hc-008, to: em-005}
+  - {from: hc-008, to: em-schema.outcome}
+  - {from: hc-021, to: em-error.taxonomy}
+  - {from: hc-024, to: em-error.taxonomy}
+  - {from: hc-050, to: em-040}
+  - {from: hc-schema.session, to: em-schema.outcome}
+  - {from: hc-schema.launch-spec, to: em-014}
+  - {from: hc-schema.launch-spec, to: em-schema.run-id}
+  - {from: hc-schema.launch-spec, to: em-schema.workflow}
+  - {from: hc-error.taxonomy, to: em-error.taxonomy}
+
+  # Cross-spec EV edges (26)
+  - {from: hc-007, to: ev-001}
+  - {from: hc-008, to: ev-events.outcome-emitted}
+  - {from: hc-009, to: ev-events.handler-capabilities}
+  - {from: hc-010, to: ev-events.session-log-location}
+  - {from: hc-011, to: ev-009}
+  - {from: hc-024, to: ev-events.agent-failed}
+  - {from: hc-024a, to: ev-events.agent-failed}
+  - {from: hc-025, to: ev-events.agent-rate-limit-status}
+  - {from: hc-026, to: ev-events.agent-warning-silent-hang}
+  - {from: hc-026, to: ev-events.agent-soft-terminating}
+  - {from: hc-026, to: ev-events.agent-hard-terminating}
+  - {from: hc-026, to: ev-events.agent-resumed-after-warning}
+  - {from: hc-027, to: ev-009}
+  - {from: hc-027, to: ev-011}
+  - {from: hc-029, to: ev-events.agent-started}
+  - {from: hc-033, to: ev-034}
+  - {from: hc-033, to: ev-036}
+  - {from: hc-039, to: ev-events.agent-ready}
+  - {from: hc-043, to: ev-events.agent-failed}
+  - {from: hc-044a, to: ev-events.agent-failed}
+  - {from: hc-048, to: ev-events.agent-failed}
+  - {from: hc-049, to: ev-events.skills-provisioned}
+  - {from: hc-049a, to: ev-events.skills-provisioned}
+  - {from: hc-error.taxonomy, to: ev-events.agent-failed}
+  - {from: hc-error.taxonomy, to: ev-events.budget-exhausted}
+  - {from: hc-013a, to: ev-events.agent-completed}
+
+  # Forward-deferred PL edges (7; logged only, not loaded)
+  - {from: hc-007, to: "forward:pl-001"}
+  - {from: hc-016a, to: "forward:pl-003b"}
+  - {from: hc-016a, to: "forward:pl-009b"}
+  - {from: hc-044, to: "forward:pl-001"}
+  - {from: hc-044, to: "forward:pl-005"}
+  - {from: hc-044a, to: "forward:pl-001"}
+  - {from: hc-051, to: "forward:pl-006"}
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+cross_specs:
+  ar: /tmp/ar-mnem-map.csv
+  em: /tmp/em-mnem-map.csv
+  ev: /tmp/ev-mnem-map.csv

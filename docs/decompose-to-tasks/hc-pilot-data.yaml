@@ -1,14 +1,21 @@
-# HC pilot v0.1.0 — bead and edge data
+# HC pilot v0.1.1 — bead and edge data
 # Mechanically translated from /tmp/load-hc.py (933-line Python loader).
 # Descriptions preserved verbatim. Includes 7 forward-deferred PL edges from
 # docs/decompose-to-tasks/hc-pilot.md §5.4 (logged-only at load time, not loaded into beads).
+# v0.1.1 (2026-04-30) applies the HC r1 review patches (synthesis at
+# docs/reviews/2026-04-30-hc-pilot-r1/synthesis.md): inverted 10 wrong-direction
+# `hc-error.taxonomy → <req>` edges (now 18 `<req> → hc-error.taxonomy` consumer
+# edges per discipline §2.11(c.2) v0.9 anti-example); dropped cycle-closing
+# `hc-026a → hc-008a` (F-load-HC-2; reclassified supporting per F-pilot-AR-10);
+# dropped cycle-closing `hc-044 → hc-007` (F-load-HC-3; F13 slot-rule keeps
+# `hc-007 → hc-044`); added missing `hc-inv-006 → hc-021` predecessor (F-dq-HC-8).
 
 spec:
   prefix: hc
   title: "Handler Contract spec — implementation"
   spec_path: specs/handler-contract.md
   spec_version: "0.3.3"
-  pilot_version: "0.1.0"
+  pilot_version: "0.1.1"
 
 # Auto-applied to every non-epic bead in this file.
 default_labels:
@@ -651,7 +658,6 @@ edges:
   - {from: hc-026, to: hc-007}
   - {from: hc-026, to: hc-026a}
   - {from: hc-026a, to: hc-007}
-  - {from: hc-026a, to: hc-008a}
   - {from: hc-026a, to: hc-025}
   - {from: hc-026a, to: hc-035}
   - {from: hc-026b, to: hc-026}
@@ -675,7 +681,6 @@ edges:
   - {from: hc-041, to: hc-013}
   - {from: hc-041, to: hc-039}
   - {from: hc-043, to: hc-042}
-  - {from: hc-044, to: hc-007}
   - {from: hc-044a, to: hc-044}
   - {from: hc-045, to: hc-042}
   - {from: hc-045, to: hc-043}
@@ -702,16 +707,26 @@ edges:
   - {from: hc-schema.handler, to: hc-error.taxonomy}
   - {from: hc-schema.session, to: hc-error.taxonomy}
   - {from: hc-schema.adapter, to: hc-error.taxonomy}
-  - {from: hc-error.taxonomy, to: hc-007}
-  - {from: hc-error.taxonomy, to: hc-008}
-  - {from: hc-error.taxonomy, to: hc-008a}
-  - {from: hc-error.taxonomy, to: hc-009}
-  - {from: hc-error.taxonomy, to: hc-024}
-  - {from: hc-error.taxonomy, to: hc-024a}
-  - {from: hc-error.taxonomy, to: hc-026}
-  - {from: hc-error.taxonomy, to: hc-044a}
-  - {from: hc-error.taxonomy, to: hc-048}
-  - {from: hc-error.taxonomy, to: hc-048a}
+  # §4 reqs that cite a sentinel name in normative prose block-on the taxonomy
+  # (consumer→owner per discipline §2.6 / §2.11(c.2) / §3.1 step 5; v0.9 anti-example).
+  - {from: hc-004, to: hc-error.taxonomy}        # ErrTransient (idempotency-pending)
+  - {from: hc-007, to: hc-error.taxonomy}        # ErrProtocolMismatch + ErrStructural via 007a/007b
+  - {from: hc-008a, to: hc-error.taxonomy}       # ErrStructural (post_outcome_shutdown_timeout)
+  - {from: hc-009, to: hc-error.taxonomy}        # ErrProtocolMismatch (no-version-mutual)
+  - {from: hc-011a, to: hc-error.taxonomy}       # ErrStructural (watcher_panic / watcher_wedged)
+  - {from: hc-013, to: hc-error.taxonomy}        # ErrDeterministic (RotateAccount unsupported)
+  - {from: hc-013a, to: hc-error.taxonomy}       # ErrTransient (RotateAccount mid-turn)
+  - {from: hc-016a, to: hc-error.taxonomy}       # ErrTransient (daemon_startup_window_exceeded)
+  - {from: hc-018, to: hc-error.taxonomy}        # ErrCanceled (ctx cancellation)
+  - {from: hc-021, to: hc-error.taxonomy}        # ErrProtocolMismatch wraps ErrStructural
+  - {from: hc-022, to: hc-error.taxonomy}        # ErrSkillProvisioningFailed wraps ErrStructural
+  - {from: hc-024, to: hc-error.taxonomy}        # crash-emission cites ErrStructural
+  - {from: hc-024a, to: hc-error.taxonomy}       # ErrTransient/ErrStructural (socket-IO)
+  - {from: hc-026, to: hc-error.taxonomy}        # ErrStructural (silent-hang)
+  - {from: hc-043, to: hc-error.taxonomy}        # ErrStructural (commit-hash mismatch)
+  - {from: hc-044a, to: hc-error.taxonomy}       # ErrStructural (workspace_held_by_orphan)
+  - {from: hc-048, to: hc-error.taxonomy}        # ErrSkillProvisioningFailed
+  - {from: hc-048a, to: hc-error.taxonomy}       # ErrTransient / sub-sentinel chain
   - {from: hc-inv-001, to: hc-011}
   - {from: hc-inv-001, to: hc-011a}
   - {from: hc-inv-001, to: hc-012}
@@ -758,6 +773,7 @@ edges:
   - {from: hc-inv-006, to: hc-044a}
   - {from: hc-inv-006, to: hc-048}
   - {from: hc-inv-006, to: hc-011a}
+  - {from: hc-inv-006, to: hc-021}    # ErrProtocolMismatch sub-sentinel — covers "protocol mismatch" terminal in HC-INV-006 body
   - {from: hc-inv-007, to: hc-007}
   - {from: hc-inv-007, to: hc-011}
   - {from: hc-inv-007, to: hc-030}

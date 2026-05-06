@@ -1,10 +1,16 @@
-# SH pilot v0.1.1 — bead and edge data
+# SH pilot v0.1.2 — bead and edge data
 # Drafted 2026-05-05 against specs/scenario-harness.md v0.2.0 (status: reviewed).
 # Discipline version applied: v0.9 (HC r1 lockstep release; includes
 # §2.11(c.2) taxonomy-edge-direction anti-pattern note and §2.11(d.2)
 # co-owned event payload edge direction). The post-r1 review wave
 # patched 2 missed type-cite edges (F-ref-SH-2, F-ref-SH-4) and
 # corrected the cross-spec tally arithmetic (38 → 42).
+#
+# v0.1.2 (2026-05-06): F13 cycle-fix follow-up to F-load-SH-1
+# (sh-load-findings.md). 4 bidirectional-cite slips dropped per F13 §2.7
+# + F-pilot-AR-8 slot/content heuristic; 4 kept-direction edges annotated
+# inline. Total edges 133 → 129 (= Beads-loaded edge count). See
+# sh-pilot.md §10 v0.1.2 row for full keep-vs-drop rationale.
 #
 # SH is the scenario-harness spec — the end-to-end test rig that loads
 # declarative scenario files, drives the production daemon stack against
@@ -628,21 +634,37 @@ edges:
   - {from: sh-009, to: sh-error.taxonomy}             # cites twin-binary-not-found
   - {from: sh-010, to: sh-009}                        # SH-010 = SH-009 negative path
   - {from: sh-010, to: sh-error.taxonomy}
-  - {from: sh-012, to: sh-015}                        # cites SH-015 partial-rollback teardown
+  # F13 disambiguation v0.1.2: sh-012 → sh-015 dropped (cycle vs. sh-015a → sh-012
+  # via sh-015 → sh-015a). sh-012 body's "harness executes fixture teardown
+  # best-effort" is a forward reference to the teardown procedure (sh-015), not a
+  # structural prerequisite. Snapshot mechanism (sh-015a) points at fixture-up
+  # path (sh-012); that direction is normative.
   - {from: sh-012, to: sh-error.taxonomy}             # cites fixture-setup-failed, cleanup-failed
   - {from: sh-013, to: sh-005}                        # path-disjointness depends on name uniqueness
   - {from: sh-013, to: sh-016}                        # cites SH-016 per-suite ephemeral root
   - {from: sh-013, to: sh-030}                        # matrix-expanded synthetic names
-  - {from: sh-014, to: sh-016a}                       # cites SH-016a synthetic project root
+  # F13 disambiguation v0.1.2: sh-014 → sh-016a dropped (cycle vs. sh-016a → sh-014).
+  # Per F13 slot/content heuristic: sh-016a (synthetic project root) is the slot;
+  # sh-014 (event-log dir) is content placed inside it. sh-016a → sh-014 is normative
+  # ("the synthetic root mounts the per-scenario event log path"); reverse is
+  # informational ("event log lives in the slot reserved by sh-016a").
   - {from: sh-015, to: sh-015a}                       # sub-step (e) records workspace_snapshot_path per SH-015a
   - {from: sh-015, to: sh-error.taxonomy}             # cites cleanup-failed
-  - {from: sh-015a, to: sh-012}                       # snapshot points at SH-012 fixture-up path
+  - {from: sh-015a, to: sh-012}                       # F13 v0.1.2: snapshot mechanism (slot) → fixture-up path (content); kept direction per F-pilot-AR-8 heuristic
   - {from: sh-015a, to: sh-016}                       # SH-016 fixture-root-not-auto-deleted preserves worktree
-  - {from: sh-015a, to: sh-022}                       # workspace_state predicates per SH-022
+  # F13 disambiguation v0.1.2: sh-015a → sh-022 dropped (cycle vs. sh-022 → sh-015a).
+  # Per F13: sh-022 (assertion eval) consumes sh-015a (snapshot mechanism); the
+  # consumer→producer direction is normative. sh-022 body explicitly cites SH-015a
+  # ("evaluated against the per-scenario worktree tree in-place per SH-015a");
+  # reverse is informational plumbing.
   - {from: sh-016a, to: sh-016}                       # synthetic root inside per-suite fixture root
-  - {from: sh-016a, to: sh-014}                       # per-scenario event log per SH-014
-  - {from: sh-016a, to: sh-017}                       # daemon entry-point per SH-017
-  - {from: sh-017, to: sh-016a}                       # working-directory assignment to synthetic project root
+  - {from: sh-016a, to: sh-014}                       # F13 v0.1.2: synthetic root (slot) → event-log dir (content); kept direction per F-pilot-AR-8 heuristic
+  # F13 disambiguation v0.1.2: sh-016a → sh-017 dropped (cycle vs. sh-017 → sh-016a).
+  # Per F13: sh-017 (orchestrator entry-point) consumes sh-016a (synthetic project
+  # root) as its working directory; sh-017's body explicitly cites SH-016a
+  # ("invoked with different working directory ... per SH-016a"). The orchestrator
+  # depends on the synthetic root being up first; reverse is informational.
+  - {from: sh-017, to: sh-016a}                       # F13 v0.1.2: orchestrator working-dir assignment to synthetic project root; kept direction (consumer → producer)
   - {from: sh-017, to: sh-008}                        # handler-config overrides per SH-008
   - {from: sh-017, to: sh-error.taxonomy}             # cites orchestration-internal-error
   - {from: sh-018, to: sh-008}                        # surface mutation 1: handler-config override
@@ -654,7 +676,7 @@ edges:
   - {from: sh-021, to: sh-schema.outcome-expectation}
   - {from: sh-021, to: sh-023}                        # MUST NOT short-circuit per SH-023
   - {from: sh-021, to: sh-026}                        # event_absent window references SH-026 timeout
-  - {from: sh-022, to: sh-015a}                       # snapshot mechanism per SH-015a
+  - {from: sh-022, to: sh-015a}                       # F13 v0.1.2: assertion eval (consumer) → snapshot mechanism (producer); kept direction per F-pilot-AR-8 heuristic
   - {from: sh-022, to: sh-error.taxonomy}             # cites assertion-failed
   - {from: sh-023, to: sh-026}                        # cites SH-026 verdict=timeout interaction
   - {from: sh-023, to: sh-error.taxonomy}             # cites assertion-failed

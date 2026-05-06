@@ -7,10 +7,10 @@ spec-id: event-model
 requirement-prefix: EV
 status: reviewed
 spec-shape: taxonomy-first
-version: 0.3.3
+version: 0.3.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-04-25
+last-updated: 2026-05-06
 depends-on:
   - architecture
   - execution-model
@@ -100,6 +100,9 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.2.7 | `guard_reordered` | O | orchestrator-core | audit, observability | `run_id`, `guard_name`, `edge_set_before`, `edge_set_after` |
 | 8.2.8 | `guard_failed` | O | orchestrator-core | audit, observability, reconciliation | `run_id`, `guard_name`, `error_category`, `reason` |
 | 8.2.9 | `control_points_registered` | O | control-points (S02) | audit, observability | `count`, `started_at` |
+| 8.2.10 | `control_points_registration_started` | O | control-points (S02) | audit, observability | `batch_id`, `started_at` |
+| 8.2.11 | `verdict_envelope_mismatch` | O | control-points (S02) | reconciliation, audit, observability | `run_id`, `control_point_name`, `transition_id?`, `event_id_ref?`, `stored_envelope_hash`, `current_envelope_hash`, `detected_at` |
+| 8.2.12 | `policy_expression_exceeded_cost` | F | control-points (S02) | reconciliation, audit, observability | `run_id?`, `control_point_name`, `bound_fired` (enum: `ast_steps` / `wall_clock`), `io_determinism` (enum: `deterministic` / `best-effort`), `aborted_at` |
 
 ### 8.3 Agent / handler lifecycle
 
@@ -801,6 +804,18 @@ shed_policy: <enum: fsync-spilled | ordinary-dropped | lossy-dropped>   # fsync-
 
 `shed_policy` lets a consumer of `bus_overflow` attribute the shed without cross-referencing §8 for the event's durability class. Overflow handlers seeing `fsync-spilled` should check the spill file for reconciliation; `ordinary-dropped` and `lossy-dropped` are acceptable losses under EV-017 / EV-INV-002.
 
+#### `policy_expression_exceeded_cost`
+
+```yaml
+run_id: <UUID> | null
+control_point_name: <String>
+bound_fired: <enum: ast_steps | wall_clock>     # which CP-034b bound triggered the abort
+io_determinism: <enum: deterministic | best-effort>   # per-abort tag per CP-034b NOTE; deterministic only when bound_fired=ast_steps
+aborted_at: <Timestamp>
+```
+
+`bound_fired` and `io_determinism` are load-bearing per [control-points.md §4.7 CP-034b]: operators diagnosing cost-ceiling crossings depend on the discriminator, and the io-determinism tag MUST track the bound that fired (`ast_steps` ⇒ `deterministic`; `wall_clock` ⇒ `best-effort`). The event reaches JSONL durability before the evaluator wrapper returns control to its caller per the CP-034b durability-pair rule; durability class is `F` per §8.2.12. Re-adding either field post-MVH would be a breaking event-payload change.
+
 #### `daemon_ready`
 
 ```yaml
@@ -855,7 +870,7 @@ Migration releases are scheduled at operator pauses per [operator-nfr.md §4.3].
 This spec owns the payload SHAPE for every type in §8. The WHEN of each emission is owned by the emitting subsystem:
 
 - Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5].
-- Control-point events (§8.2): emission rules in [control-points.md §6.5].
+- Control-point events (§8.2): emission rules in [control-points.md §6.5]. The new entries §8.2.10 `control_points_registration_started` (CP §7.1; companion to §8.2.9 `control_points_registered` — the pair brackets the registration batch per CP §7.1's crashed-mid-registration rule), §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041; envelope-hash mismatch on persisted-verdict replay), and §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b; cost-ceiling abort, durability pair) are CP-emission-owned.
 - Agent / handler events (§8.3), including silent-hang FSM: emission rules in [handler-contract.md §4.1, §4.9, §4.11, §7.1].
 - Budget events (§8.4): emission rules in [control-points.md §4.5].
 - Workspace events (§8.5): emission rules in [workspace-model.md §4.4, §4.5].
@@ -1050,6 +1065,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 | 2026-04-24 | 0.3.0 | foundation-author | Round-2 reviewer integration. Blocking fixes: taxonomy count reconciled (54 → 70, not 69); added EV-002b (handler subprocesses route event_id generation through daemon); added EV-002c (UUIDv7 high-water-mark file for restart monotonicity); added `Subscription` RECORD to §6.1 with `consumer_id`, `consumer_class`, `event_pattern`, `since`, `on_panic`, `offset_checkpoint_event_id`; added `replay_from(since)` and `on_tail_truncation` consumer-recovery hooks to bus interface (closes EV-INV-002 consumer side); clarified FANOUT_OBSERVERS concurrency (per-observer goroutine + bounded queue); added `shed_policy` field to `bus_overflow` payload. Crash findings: added EV-023a (evidence-inconclusive clause for non-corroborable events); new `divergence_inconclusive` event (§8.6.10); extended §6.2 read-recovery with torn-tail / mid-file / empty-log / concurrent-tail rules; added `bus_overflow` reserved-slot requirement to EV-011a; added EV-016a multi-event atomicity disclaimer. Should-apply: §8.9(h) amended with emit-on-transition-only clause; EV-027 amended with add/remove symmetry. Deferred: OQ-EV-006 operator-state consolidation; OQ-EV-007 consumer panic policy. Status: draft → reviewed. |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE: §1.1→§4.1 (×2 in §9 cross-refs and §3.2), §1.4→§4.4 (×1 in §3.8), §1.4a→§4.5 (×2 in §3.2 envelope and §9 cross-refs), §1.5→§4.6 (×2 in §6.5 amendment clause and §9 cross-refs). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §8.3.2 (`agent_started` payload) and §8.3.7 (`session_log_location` payload). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 12 citations fixed. WM: `§5.3→§4.7` (session-log pipeline) at §3 scope, §4.1 EV-005, §9.3 cross-refs; `§5.2→§4.4`, `§5.4→§4.5` at §9.3 emission-rule references. Reconciliation path fix: `[reconciliation.md §9.N]` → `[reconciliation/spec.md §N]` (multi-file spec) at §2.2 scope, §8.5.5 `workspace_interrupted` emitter reference, §8.6.3 verdict payload reference, §4.5 EV-023a cross-ref, §6.2 mid-file corruption Cat 6, §9.3 reconciliation emission rules. ON: `§7.3→§4.3` (operator pause), `§7.5→§4.5` (N-1 compat window), `§7.8→§4.8` (bus latency) at §4.7, §6.4, §10.3. BI: `§10.6→§4.6` (bead_id propagation) at §9.3, §A.3. No requirement IDs, invariants, or schemas touched. |
+| 2026-05-06 | 0.3.4 | foundation-author | Coordination patch landing 3 CP-emitted events that CP §6.5 / §7.1 / §4.7.CP-034b / §4.8.CP-041 declare but EV §8 was missing. **Taxonomy additions (3 new §8.2 control-point-lifecycle rows, no renumbering of pre-existing entries):** §8.2.10 `control_points_registration_started` (companion to existing §8.2.9 `control_points_registered`; the pair brackets the CP §7.1 registration batch — absence of the trailing event paired with a prior registration_started of the same `batch_id` signals a crashed-mid-registration batch); §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041 envelope-hash mismatch on persisted-verdict replay; reconciliation Cat 6 input); §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b cost-ceiling abort; durability class `F` because the abort and the event are a durability pair — the event MUST reach JSONL durability before the evaluator wrapper returns control). **§6.3 payload schema added** for `policy_expression_exceeded_cost` declaring `bound_fired ∈ {ast_steps, wall_clock}` discriminator and per-abort `io_determinism ∈ {deterministic, best-effort}` tag (load-bearing per CP-034b; re-adding post-MVH would be breaking). **§6.5 co-ownership map** updated to enumerate the 3 new CP-emission-owned entries. Mirrors the CP v0.2.0 changelog's "added to §6.5" note that never landed in EV. No EV requirement IDs added/renamed/retired; no pre-existing §8 entries renumbered; status remains `reviewed`. |
 | 2026-04-25 | 0.3.3 | foundation-author | Coordination patch wave landing R2 cross-spec items filed against EV by ON, RC, BI overnight 2026-04-24. **Taxonomy additions (7 new event-type IDs in gaps; no renumbering of pre-existing entries):** §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a `flock(LOCK_EX|LOCK_NB)` second-dispatch dedup); §8.6.12 `reconciliation_detector_panic` (RC-020b per-detector `recover()` barrier); §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a Cat 3b retry cap N=5); §8.6.14 `bead_terminal_transition_recovered` **(post-MVH)** reserved per OQ-BI-008 with explicit "no MVH emitter; structured-log via ON-035 at MVH" annotation block; §8.7.16 `operator_command_failed` (ON-013a panic-barrier emission carrying `command` + `failure_class` + optional `run_id`); §8.7.17 `operator_escalation_cleared` (ON companion to RC-emitted `operator_escalation_required`, carrying `clearance_reason` enum); §8.8.5 `redaction_failed` (ON-022 fail-closed redactor, bus-internal). **Daemon-shutdown durability confirmed F (resolves OQ-PL-012 — recorded here; OQ lives in PL).** §8.7.3 `daemon_shutdown` row already carried `F`; the durability-class statement is now load-bearing as the prior-cycle SIGTERM-receipt landmark for ON-033 RTO reconstruction. **Monotonic companion fields on §8.7.2/§8.7.3:** added `ready_at_ns_since_boot` (uint64) and `shutdown_at_ns_since_boot` (uint64) per ON-033, with concrete §6.3 payload schemas declaring both fields REQUIRED and explicitly noting boot-transition / SIGKILL `rto_undefined` carve-outs. **`daemon_degraded` reason enum promoted from informative (`/ other`) to exhaustive** with 6 values: `rto_breach`, `reconstruction_notify`, `clock_regression` (EV-002c), `cat0_post_ready` (RC-012a carve-out), `infrastructure_unavailable`, `silent_hang_aggregate` (ON-040 aggregator); concrete §6.3 payload added; §8.7.5 row updated; future variants require an EV-027 amendment. **`divergence_kind` post-MVH extension note** added under the §6.3 `store_divergence_detected` block: the MVH enum stays closed; adapter-specific values are reserved for a future revision per OQ-BI-008; no concrete adapter-specific values added in this revision. **§6.5 co-ownership map** updated to enumerate the 6 new MVH-active emitters (RC: §8.6.11–13; ON: §8.7.16–17 + bus-internal §8.8.5) and to mark §8.6.14 explicitly post-MVH. **§9.3 cross-references** added: ON-022 (`redaction_failed`), ON-013a (`operator_command_failed`), ON-033 (RTO consumer of monotonic fields), RC-002a / RC-020b / RC-026a / RC-012a, BI §4.10 + OQ-BI-008. No EV requirement IDs added/renamed/retired; no §8 entries renumbered; status remains `reviewed`. |
 
 ## A. Appendices

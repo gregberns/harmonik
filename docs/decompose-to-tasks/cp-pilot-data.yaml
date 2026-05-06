@@ -1,6 +1,23 @@
-# CP pilot v0.1.1 — bead and edge data
+# CP pilot v0.1.2 — bead and edge data
 # Drafted 2026-04-30 against specs/control-points.md v0.3.2 (status: reviewed).
-# Discipline version applied: v0.9 (HC r1 lockstep release).
+# Discipline version applied: v0.10 (post-PL-r1 lockstep + cycle-break carve-out).
+#
+# v0.1.2 (2026-05-06) — applies hk-ahvq.46 closeout patch:
+#   §3.2 forward-deferred cleanup. The 10 forward-deferred entries to non-
+#   depends-on targets (1 wm + 4 on + 4 rc + 1 bi) DELETED from the edges:
+#   block per F-pilot-EV-3 informational-finding precedent + discipline §3.2.
+#   The F-pilot-PL-4 v0.10 cycle-break carve-out recognises ONLY PL↔ON;
+#   CP has no §9.3 cycle-break NOTE, so the carve-out does not legitimise
+#   these edges — they get deleted, not retagged. The cites remain logged
+#   in pilot.md §3.2 narrative as informational F-pilot-EV-3 findings (the
+#   reciprocal-pilot materialisation pathway is unchanged: when WM / ON /
+#   RC / BI pilots draft, those pilots emit edges in the correct depends-on
+#   direction).
+#   The 3 ev-missing-row entries (cp-034b, cp-041, cp-043 → forward:ev-events.*)
+#   are RETAINED — F-pilot-CP-3 is EV completeness gap (EV IS in CP depends-on);
+#   resolved by hk-ahvq.45 (EV r2 spec patch mints the 3 missing rows).
+#   Net: edges declared 290 → 280; loader output: ok=277, forward-deferred=3
+#   (was 13), rejected=0.
 #
 # v0.1.1 (2026-04-30) — applies r1 review patches per
 # docs/reviews/2026-04-30-cp-pilot-r1/synthesis.md:
@@ -22,8 +39,11 @@
 # Hook, Guard, Budget), the policy YAML grammar, the registry, the cognition
 # replay-safety contract, and the skill-declaration surface. depends-on:
 # [architecture, execution-model, event-model, handler-contract]. WM, ON, RC,
-# and BI cites are forward-deferred per F-pilot-EM-2 / Option B precedent
-# (logged as forward:wm-NNN, forward:on-NNN, forward:rc-NNN, forward:bi-NNN).
+# and BI inline cites are F-pilot-EV-3 informational findings in pilot.md §3.2
+# (post-v0.1.2 / `.46`); v0.1.0/v0.1.1 carried these as forward:wm-NNN /
+# forward:on-NNN / forward:rc-NNN / forward:bi-NNN yaml entries per the older
+# F-pilot-EM-2 Option B convention; deleted by `.46` since CP has no §9.3
+# cycle-break NOTE so F-pilot-PL-4 v0.10 carve-out does not apply.
 #
 # Sanity tally (matches §3 of the future cp-pilot.md narrative bead):
 #   §4 reqs in spec:                                 55
@@ -50,15 +70,15 @@
 #                                                    type-hierarchy density —
 #                                                    24 schemas vs HC's 5)
 #
-# Forward-deferred edge counts (per target spec):
-#   wm:  1  (cp-040 hook-verdict path)
-#   on:  4  (cp-013 checkpoint hooks; cp-037 operator-pause; cp-038 N-1 read;
-#            cp-039 — none, see notes)
-#   rc:  4  (cp-027 wall-clock budget; cp-040a Cat-6 escalation; cp-041 stale
-#            verdict re-invocation; cp-inv-003 Cat-6 escalation)
-#   bi:  2  (cp-031 Beads-CLI bootstrap cite; cp-052 motivating default cite —
-#            collapsed onto cp-031 per §2.1a, so 1 effective forward edge after
-#            collapse)
+# Forward-deferred edge counts (per target spec) — v0.1.2:
+#   wm:  0  (was 1; deleted by .46 — F-pilot-EV-3 informational finding;
+#            cp-040 hook-verdict path now narrative-only in pilot.md §3.2)
+#   on:  0  (was 4; deleted by .46; cp-013/037/038/047 now narrative-only)
+#   rc:  0  (was 4; deleted by .46; cp-027/040a/041/inv-003 now narrative-only)
+#   bi:  0  (was 1; deleted by .46; cp-031 now narrative-only)
+#   ev-missing: 3  (cp-034b, cp-041, cp-043 → forward:ev-events.*; resolved by
+#            .45's EV r2 patch which mints the 3 missing rows)
+#   Total forward-deferred edges: 3 (was 13).
 #
 # F-pilot-CP findings (judgment calls / discipline stress points):
 #
@@ -161,15 +181,17 @@
 #   bootstrap, on CP-031 + CP-052). Per F-pilot-AR-AO3 / discipline §3.1
 #   no-edge list, doc cites under `docs/foundation/` are not specs and emit no
 #   edge. The bootstrap targets MIGRATE to reconciliation.md / beads-integration.md
-#   when those finalize; recorded as forward:rc-NNN and forward:bi-NNN
-#   respectively.
+#   when those finalize. v0.1.0/v0.1.1 recorded these as forward:rc-NNN (CP-027)
+#   and forward:bi-NNN (CP-031); v0.1.2 (`.46`) deleted both yaml entries — the
+#   migration targets are now logged in pilot.md §3.2 as F-pilot-EV-3
+#   informational findings only.
 
 spec:
   prefix: cp
   title: "Control Points spec — implementation"
   spec_path: specs/control-points.md
   spec_version: "0.3.2"
-  pilot_version: "0.1.0"
+  pilot_version: "0.1.2"
 
 # Auto-applied to every non-epic bead in this file.
 default_labels:
@@ -180,7 +202,7 @@ epic:
   mnem: cp
   title: "Control Points spec — implementation"
   description: |
-    Implements specs/control-points.md v0.3.2 (53 first-class §4 req beads from 55 active §4 reqs after 1 §2.3 coalesce (CP-004/005 cluster) and 1 §2.1a collapse (CP-052 → cp-031), 3 invariants, 24 §6.1 schemas, 0 error-taxonomy beads (CP §8 routes to EM's taxonomy), 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, handler-contract]; WM, ON, RC, BI cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:<prefix>-NNN). Three EV §6.5 events (verdict_envelope_mismatch, policy_expression_exceeded_cost, control_points_registration_started) are missing from EV's bead set; recorded as forward:ev-events.<name> deferrals per F-pilot-CP-3.
+    Implements specs/control-points.md v0.3.2 (53 first-class §4 req beads from 55 active §4 reqs after 1 §2.3 coalesce (CP-004/005 cluster) and 1 §2.1a collapse (CP-052 → cp-031), 3 invariants, 24 §6.1 schemas, 0 error-taxonomy beads (CP §8 routes to EM's taxonomy), 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, handler-contract]; WM, ON, RC, BI inline cites are F-pilot-EV-3 informational findings recorded in pilot.md §3.2 (NOT loaded as yaml edges per discipline §3.2; CP has no §9.3 cycle-break NOTE so F-pilot-PL-4 v0.10 carve-out does not apply). Three EV §6.5 events (verdict_envelope_mismatch, policy_expression_exceeded_cost, control_points_registration_started) are missing from EV's bead set; recorded as forward:ev-events.<name> deferrals per F-pilot-CP-3 (resolved by hk-ahvq.45 EV r2 patch).
   labels:
     - "kind:spec-parent"
 
@@ -1207,24 +1229,17 @@ edges:
   - {from: cp-050, to: hc-050}
 
   # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
-  # WM (workspace-model) — not in depends-on
-  - {from: cp-040, to: "forward:wm-NNN"}                       # .harmonik/hooks/<run_id>/<id>.json on task branch (WM §4.2)
-
-  # ON (operator-nfr) — not in depends-on
-  - {from: cp-013, to: "forward:on-NNN"}                       # checkpoint_written event home (ON §4.5 bootstrap)
-  - {from: cp-037, to: "forward:on-NNN"}                       # operator-pause invariant (ON §4.3)
-  - {from: cp-038, to: "forward:on-NNN"}                       # N-1 readability (ON §4.5)
-  - {from: cp-047, to: "forward:on-NNN"}                       # operator surface for control-point effects (ON §4.9 — reverse-cited)
-
-  # RC (reconciliation) — not in depends-on
-  - {from: cp-027, to: "forward:rc-NNN"}                       # reconciliation wall-clock outer bound (RC §4.4)
-  - {from: cp-040a, to: "forward:rc-NNN"}                      # Cat-6 escalation per RC §4.2
-  - {from: cp-041, to: "forward:rc-NNN"}                       # replay / Cat-6 verdict path (RC §4.2 + §4.5)
-  - {from: cp-inv-003, to: "forward:rc-NNN"}                   # Cat-6 reconciliation verdict authority (RC §4.2)
-
-  # BI (beads-integration) — not in depends-on
-  - {from: cp-031, to: "forward:bi-NNN"}                       # Beads-CLI skill bootstrap cite (BI §4.9 when finalized; now docs/foundation/components.md §10.9)
-
+  # v0.1.2 (2026-05-06) — `.46` patch: 10 §3.2-violating forward-deferred entries
+  # (1 wm + 4 on + 4 rc + 1 bi) DELETED per F-pilot-EV-3 / discipline §3.2.
+  # Per F-pilot-EV-3 precedent, non-depends-on cites are informational findings
+  # in the pilot narrative (cp-pilot.md §3.2) — NOT loaded as forward-deferred
+  # edges in yaml. CP has no §9.3 cycle-break NOTE for WM/ON/RC/BI, so the
+  # F-pilot-PL-4 v0.10 carve-out does NOT apply (per HANDOFF clarification —
+  # PL↔ON is the ONLY recognised pattern at v0.10). The 3 ev-missing-row
+  # entries below are RETAINED — F-pilot-CP-3 is an EV-side completeness gap
+  # (resolved by `.45`'s EV r2 patch which mints the 3 missing rows), NOT a
+  # §3.2 violation (EV is in CP's depends-on).
+  #
   # EV missing-row forward deferrals (F-pilot-CP-3 — these events appear in CP §6.5 but are absent from EV's bead set)
   - {from: cp-034b, to: "forward:ev-events.policy-expression-exceeded-cost"}
   - {from: cp-041, to: "forward:ev-events.verdict-envelope-mismatch"}

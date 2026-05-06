@@ -17,7 +17,7 @@ This document captures load-time findings from the SH pilot integration into the
 | `br dep cycles` (post-load) | clean |
 | `scope:bootstrap` labels applied | 54 |
 
-## F-load-SH-1 — 4 cycle-rejected intra-spec edges
+## F-load-SH-1 — 4 cycle-rejected intra-spec edges [RESOLVED 2026-05-06 in sh-pilot v0.1.2]
 
 The Beads cycle-detector rejected 4 intra-spec edges at `dep add` time. Each pairs with an opposite-direction edge already in the yaml (i.e., the yaml authored both `A→B` and `B→A` between the same two beads, or via a 1-hop transitive path). The loader logged each rejection and continued (per `loader-tooling.md` "edge rejections are recorded as findings, not load-blockers").
 
@@ -57,4 +57,6 @@ During this load, two `load-pilot.py` invocations ran concurrently against the s
 
 ## Status
 
-Both findings are documented. F-load-SH-1 is queued for the v0.2.x SH pilot patch (4-line yaml change). F-load-SH-2 is operator-only and requires no patch.
+F-load-SH-1: **RESOLVED 2026-05-06 in sh-pilot v0.1.2.** All 4 cycle-rejected edges now load. The fix dropped 4 informational-direction yaml entries (former v0.1.1 lines 631 / 636 / 641 / 644) per F13 §2.7 + F-pilot-AR-8 slot/content heuristic and added the 4 normative-direction edges to Beads (`hk-i0tw.16→.12`, `hk-i0tw.18→.14`, `hk-i0tw.19→.18`, `hk-i0tw.24→.16`). `br dep cycles` clean post-fix. Pilot tally updated: declared edges 133 → 129; Beads-loaded edges now equal declared (100% load-rate). The disposition row in §F-load-SH-1 above describes the keep-direction rationale per pair; the implementation follows that disposition exactly. See `sh-pilot.md` §10 v0.1.2 row for the full patch summary.
+
+F-load-SH-2 is operator-only and requires no patch.

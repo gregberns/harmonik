@@ -7,10 +7,11 @@ spec-id: scenario-harness
 requirement-prefix: SH
 status: reviewed
 spec-shape: requirements-first
-version: 0.2.0
+spec-category: runtime-subsystem
+version: 0.2.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-05
+last-updated: 2026-05-06
 depends-on:
   - architecture
   - handler-contract
@@ -76,6 +77,75 @@ The harness is a separate spec from the foundation 10 because its substance is a
 - **harness verdict** — the terminal `ScenarioResult.verdict` value: one of `pass | fail | timeout | error`. `fail` means an assertion failed; `timeout` means the scenario exceeded its wall-clock budget; `error` means the harness itself or its orchestration drive failed before a verdict could be reached on the scenario's own terms. (see §6.1, §8)
 
 ## 4. Normative requirements
+
+### 4.a Subsystem envelope
+
+#### SH-ENV-001 — Envelope declaration
+
+Envelope for the scenario-harness subsystem (S07) per [architecture.md §4.0 AR-053]. The harness is a test-time orchestration subsystem that drives the production daemon stack against twin-handler binaries; it is a bus consumer (observational replay reader per [event-model.md §4.5 EV-021]) and emits no cross-bus events, so the envelope's event-production element is `none` and the event-consumption element spans the full [event-model.md §8] taxonomy via the captured JSONL surface.
+
+(a) Events produced: none. The harness emits no events on the cross-subsystem bus per §6.2; it produces only its own `ScenarioResult` / `SuiteResult` records on the harness CLI surface (per §6.1, SH-034).
+
+(b) Events consumed:
+  - All event types declared in [event-model.md §8] are consumed observationally via the captured JSONL event log per SH-020 (`event_present` / `event_absent` assertion evaluation). The harness reads the envelope of [event-model.md §6.1 Event] without redefining it; payload-shape interpretation for `payload_match` predicates is delegated to the owning event's §8 schema.
+  - `run_completed` / `run_failed` payload field `outcome_status` per [event-model.md §8.1.8] — consumed by `OutcomeExpectation` per §6.1.
+  - `workspace_merge_status` per [event-model.md §8.5.3] — consumed by the `scenarios/smoke/checkpoint-and-merge.yaml` conformance assertion per §10.1.
+  - `agent_ready`, `agent_completed`, `agent_failed`, `outcome_emitted` per [event-model.md §8.3] — consumed by the §10.1 conformance scenario set.
+  - `checkpoint_written` per [event-model.md §8.4] — consumed by the §10.1 checkpoint-and-merge scenario.
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `ScenarioFile` (§6.1) | mechanism | baseline |
+  | `AgentOverride` (§6.1) | mechanism | baseline |
+  | `FixtureSetup` (§6.1) | mechanism | baseline |
+  | `GitSeedOp` (§6.1) | mechanism | baseline |
+  | `FileSeed` (§6.1) | mechanism | `io-determinism=deterministic; idempotency=non-idempotent` (on-disk artifact) |
+  | `EventExpectation` (§6.1) | mechanism | baseline |
+  | `WorkspacePredicate` (§6.1) | mechanism | baseline |
+  | `OutcomeExpectation` (§6.1) | mechanism | baseline |
+  | `ScenarioResult` (§6.1) | mechanism | `io-determinism=deterministic; idempotency=non-idempotent` (on-disk artifact per SH-034) |
+  | `AssertionResult` (§6.1) | mechanism | baseline |
+  | `SuiteResult` (§6.1) | mechanism | `io-determinism=deterministic; idempotency=non-idempotent` (on-disk artifact per SH-034) |
+  | `FailureClass` (§8 ENUM) | mechanism | baseline |
+
+  These types are introduced by SH and observed at the harness CLI surface only; they are NOT bus-event payloads. Scenario-file consumption is internal to SH's loader (§4.1, §4.2); result-record emission is internal to SH's CLI driver (§4.13).
+
+(d) Handlers implemented: none. The harness drives handlers via the twin-config-override mechanism of SH-008 against the production handler-resolution path of [handler-contract.md §4.1 HC-003]; it does not implement or host any handler class itself. Twin binaries are out of scope per §2.2 and owned by [handler-contract.md §4.8].
+
+(e) State owned:
+  - Per-suite ephemeral fixture root (`<fixture-root>/`) per SH-016 — operator-inspectable, not auto-deleted on suite completion.
+  - Per-scenario synthetic project root (`<fixture-root>/<scenario-name>/`) per SH-016a — contains the scenario's `.harmonik/` tree, daemon socket / pidfile / events log, and worktree.
+  - Per-scenario worktree (`<fixture-root>/<scenario-name>/workspace/`) per SH-013 — created via [workspace-model.md §4.1 WM-001]; lease-by-run rules of [workspace-model.md §4.3 WM-010] continue to apply.
+  - Captured JSONL event log per SH-014 — written by the per-scenario daemon to the synthetic root's `.harmonik/events/events.jsonl` and read by the harness as the assertion surface.
+  - Per-scenario captured stdout / stderr files per SH-020 (role-keyed `stdout_log_paths` / `stderr_log_paths` on `ScenarioResult`).
+  - `workspace_snapshot_path` pointer per SH-015a — points at the in-place worktree directory; the harness does NOT copy or archive worktrees at teardown.
+  - `ScenarioResult` and `SuiteResult` records per SH-034 — durably written to `<fixture-root>/<scenario-name>/result.json` and `<fixture-root>/suite.json`.
+
+(f) Control points provided: none. The harness is a mechanism-tagged subsystem; its operations are not gates, hooks, guards, or budgets per [control-points.md §4.1]. Operator-policy surfaces consumed by the harness (`--cadence`, `--fixture-root`, `--twin-search-path`) are CLI flags, not control points.
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-018` N-1 schema compatibility (cited in §6.3 schema-evolution prose for the future `ScenarioFile.schema_version` field per OQ-SH-007).
+  - Inherited: `ON-029` drain-timeout escalation to SIGKILL (cited at SH-026 for the cancel-and-teardown wall-clock bound).
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `suite_load` (§4.2 SH-006) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `parse_scenario_file` (§4.1 SH-003) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `resolve_twin_binary` (§4.3 SH-009) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `fixture_setup` (§4.4 SH-012) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `synthesize_project_root` (§4.4 SH-016a) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `drive_orchestration` (§4.5 SH-017) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `capture_event_log` (§4.6 SH-020) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `evaluate_assertions` (§4.6 SH-021, SH-022) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `enforce_scenario_timeout` (§4.7 SH-026) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `fixture_teardown` (§4.4 SH-015) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent` |
+  | `emit_scenario_result` (§4.13 SH-034) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `emit_suite_result` (§4.13 SH-034) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+
+Tags: mechanism
 
 ### 4.1 Scenario file format
 
@@ -889,3 +959,4 @@ Default-if-unresolved: `pf`-based sandbox on macOS at v0.2; revisit if `pf` prov
 |---|---|---|---|
 | 2026-05-05 | 0.1.0 | foundation-author | Initial draft per `docs/subsystems/scenario-harness.md` seed + `docs/bootstrap.md` §5 step 8 framing. Authored as peer to the 10 existing reviewed specs. SH prefix reserved in `specs/_registry.yaml`. v0.1 declares YAML-only scenario format, four-kind assertion vocabulary, three-tag cadence (smoke / regression / nightly), eight-class failure taxonomy, sequential execution, and a three-scenario conformance floor. |
 | 2026-05-05 | 0.2.0 | foundation-author | R1 review integration. Inputs: `docs/reviews/2026-05-05-scenario-harness-r1/{implementer,cross-spec-architect,critic}-r1.md`. Three convergent themes resolved: (1) per-scenario synthetic project root (new SH-016a) reconciles SH-014's no-mutation rule with SH-017's production-daemon-entry-point requirement and PL-001's one-daemon-per-project; (2) twin-binary identity (SH-009 + SH-INV-003) now defers to HC-043 commit-hash check unchanged with a path-prefix predicate that excludes name-only heuristics; (3) per-run cancellation surface uses `daemon stop` per-scenario at v0.2 with OQ-SH-012 tracking suite-mode efficiency post-MVH. New normative requirements: SH-015a (workspace-snapshot mechanism), SH-016a (synthetic project root), SH-032 (CLI surface), SH-033 (signal handling), SH-034 (result emission/durability). New §8.0 failure-class precedence table. Cite repairs: WM-007→WM-019/WM-021 in §10.1, HC-043/HC-045 in SH-009, EV §8.1.8 + EM-005 alignment for `OutcomeExpectation`, AR-INV-007 for centralized-controller, ON-029 for drain-timeout, PL-006/PL-006a for SH-INV-002 sensor. `operator-nfr` added to depends-on. Schema fixes: split `workflow_ref` into `workflow_path`/`workflow_id`; new `GitSeedOp` and `FileSeed` records; `JSONValue` defined; per-kind `WorkspacePredicate.expected` table at §6.3; `ScenarioResult.source_path` + relative `event_log_path` / `workspace_snapshot_path` + role-keyed stdout/stderr capture maps. Three new OQs (OQ-SH-011/-012/-013); OQ-SH-005's default-if-unresolved promoted into SH-027 normatively. Status: draft → reviewed. |
+| 2026-05-06 | 0.2.1 | foundation-author | Backfill patch closing F-pilot-SH-4 (sh-pilot.md §7) per the discipline v0.10 §3.2 §4.a envelope grandfather carve-out FROZEN decision (SH is the 11th spec, drafted post-AR-053-2026-04-24, and is NOT in the grandfathered set `{EM, HC, CP, WM, PL, RC, EV}`). **Front matter:** added `spec-category: runtime-subsystem` per [architecture.md §4.0 AR-052]; `last-updated` advanced to 2026-05-06. **New §4.a Subsystem envelope with SH-ENV-001** declaring the eight envelope elements of [architecture.md §4.4 AR-013] per [architecture.md §4.0 AR-053] using the reserved `SH-ENV-NNN` requirement-ID range. (a) events produced = none (SH §6.2 framing); (b) events consumed = the [event-model.md §8] taxonomy via observational replay reader per SH-020 with explicit calls-out for `outcome_status` (EV-§8.1.8), `workspace_merge_status` (EV-§8.5.3), agent-state events (EV-§8.3), and `checkpoint_written` (EV-§8.4); (c) types introduced = `ScenarioFile`, `AgentOverride`, `FixtureSetup`, `GitSeedOp`, `FileSeed`, `EventExpectation`, `WorkspacePredicate`, `OutcomeExpectation`, `ScenarioResult`, `AssertionResult`, `SuiteResult`, `FailureClass` (CLI-surface types, not bus payloads); (d) handlers implemented = none (twin substitution drives via HC-003); (e) state owned = per-suite ephemeral fixture root + per-scenario synthetic project root + worktree + captured JSONL + stdout/stderr capture + workspace-snapshot in-place pointer + `ScenarioResult`/`SuiteResult` durable records; (f) control points = none; (g) NFRs inherited = ON-018 (schema compat) + ON-029 (drain timeout); none overridden; (h) boundary classification = 12 operations spanning `suite_load`, `parse_scenario_file`, `resolve_twin_binary`, `fixture_setup`, `synthesize_project_root`, `drive_orchestration`, `capture_event_log`, `evaluate_assertions`, `enforce_scenario_timeout`, `fixture_teardown` (best-effort axis), and the `emit_scenario_result` / `emit_suite_result` durability operations. No other content changed; no requirement IDs renumbered; no IDs retired; no OQs added or closed. Status remains `reviewed`. F-pilot-SH-4 self-flag transitions from "class lane" to "resolved by spec patch." |

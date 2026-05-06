@@ -9,3 +9,15 @@
 
 # Beads task ledger — local DB + JSONL; smoke-load artifact, not tracked at MVH
 .beads/
+
+# Go build outputs and test artifacts (build-practices.md §Git hygiene)
+/bin/
+/dist/
+/coverage.out
+*.test
+
+# Harmonik runtime state
+/.harmonik/
+
+# Dev tools installed locally (subsystem-organization.md §Decisions #10)
+/.tools/

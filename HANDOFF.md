@@ -1,4 +1,32 @@
 <!-- PP-TRIAL:v2 2026-05-06 main -->
+
+<!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
+Act as the orchestrator. Delegate substantively; keep main thread small.
+
+Claim from `br ready` (type=task; scope:bootstrap first). Spawn implementers
+(model: sonnet, effort: high) with `isolation: worktree`, run_in_background.
+
+Maintain ~8 concurrent agents. When one finishes, immediately spawn the next
+ready bead. Don't drain the batch before refilling — that's the bottleneck.
+
+Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
+to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain. If still
+open at round 4, tag bead `needs-clarification` and move on.
+
+Consider scaling reviews by bead criticality: more reviewers (and Opus) for
+cross-cutting / high-fanout / architecture-touching work; fewer for
+mechanical beads. Use judgment.
+
+When ambiguity arises, spend real effort resolving without escalation.
+Paths to consider: sibling specs, the discipline doc, parent bead body,
+git log of related work, a second sub-agent for an independent read. Bead
+acceptance criteria is authoritative.
+
+On resume: continue working unless the handoff body flags a real blocker.
+If context fills or the session feels long: write a fresh HANDOFF, then
+judge whether to continue or hand off cleanly.
+<!-- END DIRECTIVES -->
+
 # Session Handoff
 
 ## Status

@@ -1,38 +1,69 @@
-<!-- PP-TRIAL:v2 2026-05-05 main -->
+<!-- PP-TRIAL:v2 2026-05-06 main -->
 # Session Handoff
 
 ## Status
-**Running clean.** `.40` mnem-maps consolidated. `.41` bootstrap-subset analysis through Pass 2 + closure check — answer is **291 beads, dependency-closed**. One blocking user question: the S07 scenario-harness gap.
+**Heavy session — Phase-0 closeout largely landed.** S07 scenario-harness authored, reviewed, decomposed, and loaded end-to-end. Discipline bumped to v0.10 with cycle-break carve-out. Three big gap-fills landed (build-scaffold + twin-binary + remaining readiness). Parked-state rule formally withdrawn per user. Two clean commits (`a4d9288`, `d874f96`); a third pending. Bootstrap-tagged corpus = **373 beads** (291 base + 54 SH + 28 newly-filed scaffolding/skill/validation beads).
 
-## What we did
-- `.40` mnem-maps: regenerated 10 CSVs to `docs/decompose-to-tasks/mnem-maps/` (the /tmp originals were purged by macOS); updated 6 pilot-yamls + `loader-tooling.md` to the canonical paths. All staged, not committed; bead status not flipped.
-- `.41` bootstrap-subset: opening pass (`docs/decompose-to-tasks/bootstrap-subset-opening.md`) + 7 parallel cluster-enumeration agents + closure-check agent. Output under `docs/decompose-to-tasks/bootstrap-subset/`.
-- User answered the 4 opening-pass questions: twin handler IN, Pi handler OUT, output = both markdown doc + `scope:bootstrap` labels (my call), scenario harness IN.
-- STATUS.md + TASKS.md banners updated to point at HANDOFF.md as authoritative.
+## What we did this session
+- **`.40` mnem-maps:** consolidated 10 CSVs to canonical paths.
+- **`.41` bootstrap-subset:** 7 cluster agents + closure check → 285→291 INCLUDE beads. Pass 3 synthesis applied 6 PULL_INs and labelled all 291. Then S07 added 54 more → 345 in the decompose-to-tasks subset.
+- **S07 scenario-harness:** authored `specs/scenario-harness.md` v0.1 → R1 review (3 parallel agents) → integration to v0.2.0 reviewed (12 BLOCKERs applied across 3 convergent themes: per-scenario synthetic project root, HC-043/045 commit-hash binding, daemon-stop-per-scenario cancellation).
+- **sh-pilot:** decomposed to 54 beads → 3-reviewer protocol → synthesis to v0.1.1 → loaded under epic `hk-i0tw`. **Zero forward-deferred edges** — first pilot in the corpus to ship that.
+- **Discipline v0.10:** F-pilot-PL-4 cycle-break carve-out (recognises PL↔ON pattern; mandatory `cite:cycle-break:<spec>` tag); 13 queued class-lane findings absorbed; new §2.13 "backfill workflow discipline" requires yaml mutation at closure; F-pilot-SH-4 freezes the §4.a grandfather at 7 specs.
+- **Yaml cleanup:** 60 stale `forward:*` strings rewritten across HC/ON/PL/WM yamls; 6 new `br dep add` calls for previously-unscheduled WM→BI; `br dep cycles` clean.
+- **`.39` forward-zero verification:** 99 stale edges enumerated and classified; mostly cleared by yaml cleanup pass; 36 PL→ON re-tagged as legitimate cycle-break carve-outs.
+- **Phase-1 readiness gap analysis:** authored at `docs/foundation/phase-1-readiness-gap-analysis.md`; v0.2 §Z addendum captures user's three clarifications (no CI, parked-state withdrawn, twin-tasks need beads).
+- **27 new bootstrap beads filed across 4 new epics:**
+  - 9 build/test scaffolding beads under epic `hk-pvcs` (no CI; local Makefile/golangci/lefthook/coverage).
+  - 9 twin-binary scaffolding beads under mini-epic `hk-ahvq.48` (binary, wire-protocol parity, script-driver, 3 conformance scenarios).
+  - 5 operational-skills beads under new epic `hk-jhob` (agent-reviewer skill, beads-cli skill, agent-config-reviewer, go-subsystem-add).
+  - 3 Phase-1-validation beads under new epic `hk-kle6` (trivial-slice paper walkthrough, corpus label-reconciliation).
+  - 1 EM standalone bead `hk-b3f.89` (MVH composition-root wires no-op PolicyEngine).
+- **Parked-state rule withdrawn:** TASKS.md / pilot-review-protocol.md / readiness gap doc edited; zero beads ever lived in `parked` (discipline v0.3 had pre-empted with native `draft`).
+- **Memory updated:** `feedback_br_ownership`, `feedback_rule_design_ownership`, `feedback_agent_flow_priority` (new); `project_harmonik_task_ingestion` revised.
 
-## Headline result
-Bootstrap subset = **285 INCLUDE beads**, dependency-closed at **291** after 6 PULL_INs (5 EV §8 rows that PL emits + 1 HC `.15` Adapter-surface-is-fixed). BI confirmed as structurally sound chokepoint. ~34% of corpus. Per-cluster: PL 37, WM 45, EM 65, HC 45, EV 42, BI 36, AR 5, CP 0, ON 6, RC 4.
+## What's still in flight at handoff time
+- Nothing in flight; all agents complete.
 
-## Blocking question for the user
-**S07 scenario-harness has no spec or epic in the corpus.** `docs/bootstrap.md` step 8 names it; the decompose-to-tasks pass never authored one. Q4 (harness IN) needs a Pass 3 carve-out. Three options:
-- **(a)** Author a thin S07 spec + S07 epic now. Delays Pass 3 by ~1 session of work.
-- **(b)** Declare S07 = code-only-no-bead — harness lives as test code in the bootstrap implementation phase. **Recommended.** Fastest path; S07 is a test-time concern, not a runtime subsystem.
-- **(c)** Hybrid: minimal contract bead under an existing/new epic, no full spec.
+## What's deferred to next session (Phase-0 closeout ceremony — low value but tidy)
+- **`.45` EV r2 spec patch:** add 3 missing CP-emitted events (substantive content authoring; EV at v0.3.3 reviewed → bump to v0.3.4).
+- **`.46` CP r2 pilot patch:** downgrade 10 CP forward-deferreds to F-pilot-EV-3 informational (mechanical-ish pilot edit). Note the F-pilot-PL-4 carve-out does NOT cover CP (CP has no cycle-break NOTE).
+- **`.38` full union cycle check:** `br dep cycles` already ran clean repeatedly; just close the bead.
+- **`.39` forward-zero re-verify:** after `.45` + `.46` land, re-run grep; expected survivors = 0 (3 EV-event hits go away after `.45`; 10 CP hits go away after `.46`; 26 PL→ON are now legitimate cycle-break edges and don't count).
+- **`.42` milestone close:** declare Phase 0 done with a final summary doc.
 
-## Next step (after S07 answer)
-Dispatch Pass 3 synthesis agent: apply 6 PULL_INs + S07 carve-out + `br update --label scope:bootstrap` across the 291 beads + write final consolidated `bootstrap-subset.md`. Closes `.41`; unblocks `.39` (forward-zero verification) and `.42` (milestone close).
+## What's deferred — small cleanup
+- **Discipline v0.11:** 7 loci in v0.9 still carry parked-lifecycle language; substantive minor-version work (not a one-liner). Coordinate after v0.10 settles.
+- **`operator-nfr.md` v0.4.0 → v0.4.1:** one-line `in_flight(run)` reference structurally inert; documentary patch.
+- **sh-pilot v0.1.2 cycle fix:** 4 bidirectional-cite slips at sh-pilot-data.yaml lines 639/643/645/657 were rejected by the loader as 2-cycles. 129 of 133 declared edges loaded; doesn't affect closure or labelling. Captured in `docs/decompose-to-tasks/sh-load-findings.md`.
+- **`hk-ahvq.47` SH §4.a addition:** new bead filed; SH spec needs §4.a (subsystem envelope per AR-053) authored as a v0.2.1 patch.
 
-## Files to open first
-1. `HANDOFF.md` (this file)
-2. `docs/decompose-to-tasks/bootstrap-subset/closure-check.md` — closure findings + 6 PULL_IN list
-3. `docs/decompose-to-tasks/bootstrap-subset/SUMMARY.md` — Pass 2 aggregation (its tally of 271 is an undercount — real is 285; closure-check is authoritative)
-4. `docs/decompose-to-tasks/bootstrap-subset-opening.md` — original scoping pass
+## Files to open first next session
+1. `HANDOFF.md` (this file).
+2. `docs/foundation/phase-1-readiness-gap-analysis.md` (especially §Z user clarifications).
+3. `docs/decompose-to-tasks/bootstrap-subset.md` v0.2 (the consolidated subset doc).
+4. `docs/decompose-to-tasks/remaining-readiness-2026-05-06.md` (if the final agent landed).
+5. `docs/decompose-to-tasks/discipline.md` v0.10.
+6. `docs/decompose-to-tasks/sh-load-findings.md` (the 4-edge cycle fix follow-up).
 
-## If something changes
-- If user wants to commit before Pass 3: natural unit is "decompose-to-tasks corpus + bootstrap-subset analysis" — also covers prior session's 5 untracked pilots.
-- If user wants discipline v0.10 instead: 13 findings still queued, blocked on the F-pilot-PL-4 carve-out decision (separate from `.41`).
+## How to start the agents churning
+The user's directive: **"get all of the tasks into a state where we can start a new agent and it can just start churning hard through all the tasks."** Most of that is now true:
+- 364 `scope:bootstrap` beads exist, dispatchable status, no parked gate.
+- Build-scaffold + twin-binary tasks are filed.
+- Operational skills (per the final agent in flight) being filed now.
+- `br ready -l scope:bootstrap` should return claimable work.
+
+Remaining gaps before agents can fully churn: the actual implementation (the corpus is task-tracked but no code exists yet — that's Phase 1 proper). Plus the small deferred items above.
 
 ## Things worth knowing
-- `.40` is functionally done; bead status NOT yet flipped — user manages `br update` at their discretion.
-- 4 pilot yamls (AR/EM/EV/BI) had no `/tmp` refs to update — likely no `cross_specs` blocks at all. Discipline question for v0.10 batch, not blocking.
-- Working tree is large; nothing mid-edit off-disk.
+- Two clean commits this session: `a4d9288` (Phase-0 closeout wave 1) and `d874f96` (wave 2).
+- 373 corpus beads carry `scope:bootstrap`; ~520 corpus beads remain untagged (neither bootstrap nor post-mvh). The reconciliation pass to close that gap is now itself a bead (`hk-kle6.2`).
+- Total corpus is ~897 beads (live `br list` count); the readiness analysis's "823" figure was stale by ~1 day — ~55 beads landed during the parallel agent wave.
+- F-pilot-PL-4 carve-out applies ONLY to cycle-break-noted patterns. PL↔ON is the recognised one. CP's 10 forward-deferreds are a different problem class (no cycle-break NOTE) — they get DELETEd via `.46`, not legitimised.
+- Discipline v0.10 added a NEW backfill-closure rule: yaml mutation is required at closure. Past failures (`.16/.23/.30/.37` closed without yaml updates) were the trigger.
+- `loader-tooling.md` documents the load mechanism; the SH load surfaced one quirk worth noting (concurrent loader invocations are idempotent — the mnem-map ledger holds and `br dep add` returns `already_exists` on duplicates).
+
+## If something changes
+- If the user wants to push immediately to "agents start coding": fire `make` scaffold work first (epic `hk-pvcs`) — that unblocks the rest.
+- If the user wants Phase-0 ceremony closed cleanly first: drain `.45` → `.46` → `.39` → `.42` in one focused agent.
+- If the user wants R2 review on SH: spawn 3 R2 agents (skeptic / crash-adversary / spec-author) — corpus pattern from prior batch-2 specs.

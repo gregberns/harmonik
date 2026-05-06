@@ -1,0 +1,61 @@
+mnemonic,assigned_id,title
+pl,hk-8mup,Process Lifecycle spec — implementation
+pl-env-001,hk-8mup.1,Subsystem envelope declaration (daemon-core / `internal/daemon`)
+pl-001,hk-8mup.2,One daemon per project
+pl-002,hk-8mup.3,Pidfile at `.harmonik/daemon.pid`
+pl-002a,hk-8mup.4,Pidfile lock is fd-lifetime advisory (`flock` / `F_OFD_SETLK`)
+pl-002b,hk-8mup.5,Atomic pidfile write via truncate-rewrite-keep-fd
+pl-003,hk-8mup.6,Socket at `.harmonik/daemon.sock` (mode 0600)
+pl-003a,hk-8mup.7,Socket wire format: JSON-RPC 2.0 over NDJSON
+pl-003b,hk-8mup.8,Pre-ready request rejection on unknown run_id
+pl-004,hk-8mup.9,Daemon-owned per-project file surface under `.harmonik/`
+pl-005,hk-8mup.10,Startup order is deterministic (steps 0–9 + 3a + 8a)
+pl-006,hk-8mup.11,Orphan sweep precedes reconciliation (6-bullet enumeration)
+pl-006a,hk-8mup.12,Project hash + provenance marker (env var + PGID)
+pl-007,hk-8mup.13,Orphan sweep is deterministic and complete before classification
+pl-008,hk-8mup.14,Startup failure-mode catalog obligation (consumed from ON-003)
+pl-008a,hk-8mup.15,Exit-code consumption from ON §8
+pl-009,hk-8mup.16,Ready criteria + `daemon_ready` emission with monotonic companion
+pl-009a,hk-8mup.17,Auto-resolver failure during startup dispatch routes to Cat 3
+pl-009b,hk-8mup.18,Ready-protocol surface for external callers (3 mechanisms)
+pl-010,hk-8mup.19,Degraded state on Cat 0 infrastructure failure (pre-ready only)
+pl-011,hk-8mup.20,Graceful shutdown drains in-flight runs (9-step sequence)
+pl-011a,hk-8mup.21,Shutdown event emission with monotonic companion
+pl-012,hk-8mup.22,Immediate shutdown aborts in-flight runs
+pl-013,hk-8mup.23,Daemon does not exit on queue-empty
+pl-014,hk-8mup.24,Agent subprocesses are children of the daemon (single cmd.Wait reaper)
+pl-014a,hk-8mup.25,Per-daemon concurrency ceiling (rlimit-derived default)
+pl-015,hk-8mup.26,Agent ↔ daemon communication routes through the socket
+pl-016,hk-8mup.27,Agent-subprocess failure is observed by the daemon
+pl-017,hk-8mup.28,"Silent-hang detection obligation (named, owned by HC §4.6)"
+pl-018,hk-8mup.29,Daemon is a deterministic Go binary with no LLM logic
+pl-018a,hk-8mup.30,Panic recovery barrier in the daemon main goroutine
+pl-019,hk-8mup.31,Orchestrator-agent is a separate Claude Code session (post-MVH)
+pl-020,hk-8mup.32,Composition root is `internal/daemon`
+pl-020a,hk-8mup.33,Cross-subsystem registries reside in the composition root
+pl-021,hk-8mup.34,ntm adapter consumes process/tmux surface only
+pl-021a,hk-8mup.35,ntm version pin and absence-detection (Cat 0 failure)
+pl-022,hk-8mup.36,ntm adapter MUST NOT consume workflow-semantic features
+pl-023,hk-8mup.37,Handler contract is the ntm boundary
+pl-024,hk-8mup.38,Daemon crash leaves a stale pidfile
+pl-025,hk-8mup.39,Crash during startup reconciliation re-runs from step 0
+pl-025a,hk-8mup.40,Lifecycle-event pairing tolerance
+pl-026,hk-8mup.41,Agent-subprocess crash routes through handler contract
+pl-027,hk-8mup.42,Upgrade contract obligation (daemon-internal mechanics; 5 sub-rules)
+pl-028,hk-8mup.43,Daemon command surface (8 entry points)
+pl-inv-001,hk-8mup.44,Sensor: one daemon per project (pidfile lock + content match)
+pl-inv-002,hk-8mup.45,Sensor: daemon is deterministic (`go-arch-lint` + binary import-graph)
+pl-inv-003,hk-8mup.46,Sensor: orphan sweep completes before reconciliation classification
+pl-inv-004,hk-8mup.47,Sensor: socket-path exclusivity
+pl-inv-005,hk-8mup.48,Sensor: agent subprocess parentage is daemon-originated
+pl-schema.daemon-status,hk-8mup.49,Define `DaemonStatus` ENUM (§6.1)
+pl-test.pidfile-and-socket-fixture,hk-8mup.50,Pidfile + socket twin-driven fixture (PL-001..PL-003b + PL-INV-001 + PL-INV-004)
+pl-test.startup-orphan-sweep-harness,hk-8mup.51,"Startup + orphan sweep scenario harness (PL-005, PL-006, PL-006a, PL-007, PL-008a, PL-INV-003, PL-INV-005)"
+pl-test.ready-state-fixture,hk-8mup.52,"Ready-state + degraded scenario fixture (PL-009, PL-009a, PL-009b, PL-010)"
+pl-test.shutdown-drain-fixture,hk-8mup.53,"Shutdown + drain scenario fixture (PL-011, PL-011a, PL-012, PL-013)"
+pl-test.agent-supervision-fixture,hk-8mup.54,"Agent supervision + spawn discipline fixture (PL-014, PL-014a, PL-015, PL-016, PL-017)"
+pl-test.composition-root-lint,hk-8mup.55,"Composition-root + panic-barrier lint (PL-018, PL-018a, PL-020, PL-020a, PL-INV-002)"
+pl-test.ntm-adapter-fixture,hk-8mup.56,"ntm adapter + version-pin fixture (PL-021, PL-021a, PL-022, PL-023)"
+pl-test.crash-recovery-harness,hk-8mup.57,"Crash recovery + reconciliation re-run harness (PL-024, PL-025, PL-025a, PL-026)"
+pl-test.upgrade-scenario-harness,hk-8mup.58,Upgrade exec-replacement scenario harness (PL-027)
+pl-test.cli-surface-fixture,hk-8mup.59,CLI command surface fixture (PL-028)

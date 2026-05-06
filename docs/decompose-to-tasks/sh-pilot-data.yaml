@@ -1,0 +1,804 @@
+# SH pilot v0.1.0 — bead and edge data
+# Drafted 2026-05-05 against specs/scenario-harness.md v0.2.0 (status: reviewed).
+# Discipline version applied: v0.9 (HC r1 lockstep release; includes
+# §2.11(c.2) taxonomy-edge-direction anti-pattern note and §2.11(d.2)
+# co-owned event payload edge direction).
+#
+# SH is the scenario-harness spec — the end-to-end test rig that loads
+# declarative scenario files, drives the production daemon stack against
+# twin-handler binaries, captures event-log JSONL plus workspace state,
+# evaluates declared assertions, and emits a typed scenario verdict. It
+# is the regression net for self-build cycles per [docs/bootstrap.md §5
+# step 8].
+#
+# depends-on: [architecture, handler-contract, event-model, workspace-model,
+# execution-model, operator-nfr, process-lifecycle]. All seven targets are
+# LOADED at draft time (AR/EM/EV/HC/CP/WM/PL/ON/RC/BI all loaded; SH is
+# the 11th spec, downstream of every prior pilot).
+#
+# Sanity tally:
+#   §4 reqs in spec (active):                              36
+#     §4.1 scenario file format:                            5  (SH-001..SH-005)
+#     §4.2 suite loading + ordering:                        2  (SH-006, SH-007)
+#     §4.3 twin substitution:                               4  (SH-008..SH-011)
+#     §4.4 workspace fixture lifecycle:                     6  (SH-012, SH-013,
+#                                                              SH-014, SH-015,
+#                                                              SH-015a, SH-016,
+#                                                              SH-016a) = 7
+#     §4.5 orchestration drive:                             3  (SH-017..SH-019)
+#     §4.6 event-log capture + assertion eval:              5  (SH-020..SH-024)
+#     §4.7 scenario timeout:                                2  (SH-025, SH-026)
+#     §4.8 repeatability + offline:                         2  (SH-027, SH-028)
+#     §4.9 cadence support:                                 1  (SH-029)
+#     §4.10 scenario composition:                           1  (SH-030)
+#     §4.11 concurrency policy:                             1  (SH-031)
+#     §4.12 harness CLI:                                    2  (SH-032, SH-033)
+#     §4.13 result emission:                                1  (SH-034)
+#   §2.3 coalesces applied:                                 0
+#     (SH-015 + SH-015a evaluated: distinct mechanisms — teardown ordering
+#     vs. snapshot-path recording; kept separate per §2.3 conservatism.
+#     SH-016 + SH-016a evaluated: distinct mechanisms — fixture-root
+#     ephemeral container vs. per-scenario synthetic project root; kept
+#     separate. SH-025 + SH-026 evaluated: different code paths — declaration
+#     vs. exceedance handling; kept separate. SH-008 + SH-009 + SH-010 +
+#     SH-011 evaluated: orthogonal concerns — config-override mechanism vs.
+#     binary discovery vs. missing-binary error vs. parity surface; each
+#     independently testable and buggy.)
+#   §2.1a pure cross-reference collapses:                   0
+#   §2.2 multi-step splits:                                 0
+#     (SH-015 has 5 sub-steps (a)–(e) with ordering, but per §2.2 F8b they
+#     share a single run-to-completion best-effort teardown function body;
+#     sub-bullets in description rather than step beads. The §7.1 lifecycle
+#     pseudocode is §7-prose owned by the §4 reqs it summarises (per §3.1
+#     §7-prose no-edge rule); the §4 reqs each emit edges directly.)
+#   First-class §4 req beads:                              36
+#   §5 invariants (active):                                 5  (SH-INV-001..
+#                                                              SH-INV-005;
+#                                                              zero retired)
+#   §6 schemas (RECORDs):                                   9  (ScenarioFile,
+#                                                              AgentOverride,
+#                                                              FixtureSetup,
+#                                                              GitSeedOp,
+#                                                              FileSeed,
+#                                                              EventExpectation,
+#                                                              WorkspacePredicate,
+#                                                              OutcomeExpectation,
+#                                                              ScenarioResult,
+#                                                              AssertionResult,
+#                                                              SuiteResult)
+#   Note: spec §6.1 declares 11 RECORDs (the brief said 9 — recount captured
+#   GitSeedOp + FileSeed which are nested under FixtureSetup but are
+#   independently named RECORDs per §2.6 schema rule). All 11 mint beads.
+#   §8 error classes:                                       8  (§8.1..§8.7 +
+#                                                              §8.8) — single
+#                                                              umbrella bead
+#                                                              `sh-error.taxonomy`
+#                                                              per §2.6
+#                                                              single-table
+#                                                              form (8 < 11
+#                                                              threshold per
+#                                                              §2.11(c)).
+#                                                              §8.0 precedence
+#                                                              table folded
+#                                                              into the
+#                                                              taxonomy bead's
+#                                                              description.
+#   §11 OQs:                                               13  (NOT bead-loaded
+#                                                              per §2.8;
+#                                                              tracked in spec
+#                                                              §11)
+#   Spec parent bead:                                       1  (sh)
+#   Test-infra beads:                                       0  (the §10.1
+#                                                              conformance
+#                                                              scenario set —
+#                                                              `smoke/twin-launch-and-ready.yaml`,
+#                                                              `smoke/checkpoint-and-merge.yaml`,
+#                                                              `regression/twin-failure-classification.yaml`
+#                                                              — IS the test
+#                                                              surface for
+#                                                              this spec; no
+#                                                              shared
+#                                                              cross-cutting
+#                                                              test
+#                                                              infrastructure
+#                                                              that a single
+#                                                              bead would
+#                                                              obviate
+#                                                              duplication.
+#                                                              SH's §10.2
+#                                                              obligations
+#                                                              are
+#                                                              per-req-grouped
+#                                                              and absorbed
+#                                                              into req beads
+#                                                              per §2.4.)
+#   Total beads:  1 + 36 + 5 + 11 + 1 = 54
+
+spec:
+  prefix: sh
+  title: "Scenario Harness spec — implementation"
+  spec_path: specs/scenario-harness.md
+  spec_version: "0.2.0"
+  pilot_version: "0.1.0"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:scenario-harness"
+  - "tag:mechanism"
+
+epic:
+  mnem: sh
+  title: "Scenario Harness spec — implementation"
+  description: |
+    Implements specs/scenario-harness.md v0.2.0 (36 §4 reqs SH-001..SH-034 + SH-015a + SH-016a; 5 invariants SH-INV-001..SH-INV-005; 11 §6.1 RECORDs (ScenarioFile, AgentOverride, FixtureSetup, GitSeedOp, FileSeed, EventExpectation, WorkspacePredicate, OutcomeExpectation, ScenarioResult, AssertionResult, SuiteResult); 8 §8 error classes folded into single sh-error.taxonomy umbrella per §2.6 single-table form. 0 §2.3 coalesces, 0 §2.2 multi-step splits. depends-on: [architecture, handler-contract, event-model, workspace-model, execution-model, operator-nfr, process-lifecycle]; all 7 targets loaded.
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ===========================================================================
+  # §4.1 Scenario file format (5 reqs)
+  # ===========================================================================
+
+  - mnem: sh-001
+    kind: req
+    req: SH-001
+    title: "Scenario format is YAML at v0.1"
+    description: |
+      Per SH-001: every scenario MUST be declared as a single YAML file conforming to the `ScenarioFile` schema in §6.1. Other formats (Go-as-code scenarios, DSLs, hybrid YAML+Go) are forbidden at v0.1; tracked at OQ-SH-001 for a post-MVH revision.
+
+  - mnem: sh-002
+    kind: req
+    req: SH-002
+    title: "Scenario files live under `scenarios/` at the repo root"
+    description: |
+      Per SH-002: scenario files MUST be discovered under the repo-root directory `scenarios/` (recursive descent permitted). Repo root is the directory returned by `git rev-parse --show-toplevel` at startup. Absolute or workspace-relative scenario paths forbidden at MVH. File extension MUST be byte-exact `.yaml` (lower-case); `.yml` / `.YAML` rejected at suite-load discovery as `scenario-load-failure` per §8.1.
+
+  - mnem: sh-003
+    kind: req
+    req: SH-003
+    title: "Scenario file is declarative-loadable without code execution"
+    description: |
+      Per SH-003: scenario file MUST be parseable by a generic YAML loader plus the §6.1 schema validator without invoking any scenario-defined code, plugin, or external process. `!eval`-style YAML extensions, `!!python/object` constructors, or any tag executing code during parse are forbidden. Encoding MUST be UTF-8 without BOM. Per-file size ceiling default 1 MiB, parsed-node count ceiling 100 000; either overrun → `scenario-load-failure`.
+
+  - mnem: sh-004
+    kind: req
+    req: SH-004
+    title: "Malformed scenarios fail with `scenario-load-failure`"
+    description: |
+      Per SH-004: a scenario file that fails YAML parse, fails the §6.1 schema check, references an unknown workflow, or carries an unknown cadence-tag value MUST be classified as `scenario-load-failure` per §8. Scenario MUST NOT be partially executed; harness emits `ScenarioResult` with `verdict=error` and `failure_class=scenario-load-failure`, then moves on to the next scenario.
+
+  - mnem: sh-005
+    kind: req
+    req: SH-005
+    title: "Scenario name uniqueness is repository-wide"
+    description: |
+      Per SH-005: every scenario file MUST declare a `name` field unique across the entire `scenarios/` tree. Names MUST match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (no slashes, no whitespace, no path-traversal sequences); non-matching → `scenario-load-failure`. Name collision after matrix expansion (per SH-030) is also `scenario-load-failure`. Duplicate detection at suite-load → entire suite fails (not merely the duplicate scenarios).
+
+  # ===========================================================================
+  # §4.2 Suite loading + ordering (2 reqs)
+  # ===========================================================================
+
+  - mnem: sh-006
+    kind: req
+    req: SH-006
+    title: "Suite-load is a discrete discovery + parse + validate phase"
+    description: |
+      Per SH-006: harness MUST execute scenario discovery, file parse, schema validation, and uniqueness check in a discrete `suite-load` phase BEFORE launching any orchestration. Suite-load failure (any duplicates per SH-005, parse errors, schema errors) MUST abort the entire suite with a single suite-level error and MUST NOT execute any scenarios. Per-scenario load failures discovered during suite-load are still recorded as individual `ScenarioResult` entries with `verdict=error`.
+
+  - mnem: sh-007
+    kind: req
+    req: SH-007
+    title: "Scenario execution order is deterministic byte-lex of `name`"
+    description: |
+      Per SH-007: within a single suite invocation, harness MUST execute scenarios in byte-lexicographic order of their `name` field (locale-independent UTF-8 byte comparison; not Unicode-collation order). Matrix-expanded synthetic names (per SH-030) participate in the same ordering. Determinism on order is required for flaky-test bisection, log-diff comparison across runs, and crash-report localization.
+
+  # ===========================================================================
+  # §4.3 Twin substitution (4 reqs)
+  # ===========================================================================
+
+  - mnem: sh-008
+    kind: req
+    req: SH-008
+    title: "Twin substitution is a handler-config override, not a runtime branch"
+    description: |
+      Per SH-008: twin-binary substitution MUST be expressed as a scenario-file `agent_overrides` map applied to the workflow's resolved handler configuration at workflow-load time per [handler-contract.md §4.1.HC-003]. Harness MUST NOT introduce any runtime branch in production-imported daemon, orchestrator, watcher, or adapter code that selects between real and twin handlers. This requirement enforces [handler-contract.md §5.HC-INV-002] (twins indistinguishable from real handlers) at the harness boundary.
+
+  - mnem: sh-009
+    kind: req
+    req: SH-009
+    title: "Twin-binary discovery uses scenario path or PATH prefix"
+    description: |
+      Per SH-009: a scenario's `agent_overrides[role]` value MUST resolve to a twin binary by (a) absolute path declared in the scenario, or (b) a name resolved against a configured twin-binary search-path prefix. Harness MUST NOT perform unrestricted `$PATH` lookup; mirrors [handler-contract.md §4.10.HC-042]. Twin-search-path source precedence: CLI `--twin-search-path <dir>`, env `HARMONIK_TWIN_SEARCH_PATH`, default `<repo-root>/twins/`. Resolved twin paths remain subject to [handler-contract.md §4.10.HC-043] commit-hash verification and HC-045 launch-rule conformance.
+
+  - mnem: sh-010
+    kind: req
+    req: SH-010
+    title: "Missing twin binary fails the scenario with `twin-binary-not-found`"
+    description: |
+      Per SH-010: if a scenario's `agent_overrides` references a twin binary that does not exist (absolute path missing on disk, or name not resolvable against the search-path prefix), harness MUST emit `ScenarioResult` with `verdict=error` and `failure_class=twin-binary-not-found` BEFORE attempting to launch the orchestration drive. Error MUST carry the unresolved name and the search paths consulted.
+
+  - mnem: sh-011
+    kind: req
+    req: SH-011
+    title: "Twin parity is the parity surface declared in HC §4.8"
+    description: |
+      Per SH-011: harness consumes the parity surface declared at [handler-contract.md §4.8] (HC-035 through HC-040). Harness MUST NOT inspect twin's internal state, log file shape, or process tree as a means of evaluating scenario assertions; observability of twin behavior for assertion purposes MUST go through the same handler-contract progress-stream / event-bus surface as real handlers. Process-tree inspection at fixture teardown for the SH-INV-002 sanity check is a hygiene operation, distinct from behavioral observation.
+
+  # ===========================================================================
+  # §4.4 Workspace fixture lifecycle (7 reqs: SH-012..SH-016 + SH-015a + SH-016a)
+  # ===========================================================================
+
+  - mnem: sh-012
+    kind: req
+    req: SH-012
+    title: "Fixture setup precedes orchestration"
+    description: |
+      Per SH-012: for every scenario, harness MUST execute a fixture-setup phase BEFORE invoking orchestration drive of §4.5. Fixture setup MUST: (a) create a fresh workspace conforming to [workspace-model.md §4.1.WM-001] and [workspace-model.md §4.2 branching model], seeded from `fixture_setup`; (b) create an isolated event-log directory; (c) prepare the twin-binary search path. Fixture-setup failure → `fixture-setup-failed` per §8 and MUST NOT proceed to orchestration. On partial-success failure, harness executes fixture teardown best-effort against the partially-constructed fixture; teardown errors append to `error_detail` but do NOT change the failure class.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-013
+    kind: req
+    req: SH-013
+    title: "Each scenario uses an isolated workspace"
+    description: |
+      Per SH-013: each scenario's workspace MUST be disjoint from every other scenario's workspace and from the operator's working tree. Disjoint = no two scenarios' canonical workspace paths share a prefix; no symlink under one workspace resolves to a path under another. Harness places each workspace at `<fixture-root>/<scenario-name>/workspace/`; per-suite ephemeral root (see SH-016) and MUST NOT reuse any path from a prior suite invocation. Lease-by-run rules of [workspace-model.md §4.3.WM-010] apply unchanged.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-014
+    kind: req
+    req: SH-014
+    title: "Each scenario uses an isolated event-log directory"
+    description: |
+      Per SH-014: each scenario MUST capture events into a dedicated JSONL file under the scenario's synthetic project root (per SH-016a), NOT into the operator's `.harmonik/events/events.jsonl`. Because each scenario runs against a per-scenario synthetic project root, the daemon's normal `.harmonik/events/events.jsonl` write target lands inside the synthetic root by construction — no path-override surface mutated in production code. Harness MUST NOT read from, write to, or otherwise mutate the operator's `.harmonik/` tree.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-015
+    kind: req
+    req: SH-015
+    title: "Fixture teardown runs on every terminal path (5-step ordered, idempotent)"
+    description: |
+      Per SH-015: harness MUST execute fixture teardown on every terminal scenario path (pass, fail, timeout, error). Teardown is run-to-completion best-effort: failure in any sub-step MUST NOT halt remaining sub-steps; all errors accumulated. Sub-steps in order: (a) terminate any still-live handler subprocesses honoring [handler-contract.md §4.4.HC-018] cancellation bounds (per-handler T_cancel ceiling; total bounded by `N × HC-018-ceiling`); (b) release worktree leases per [workspace-model.md §4.3.WM-013b]; (c) close event-log file (fsync then close); (d) stop per-scenario daemon via `daemon stop` RPC of [process-lifecycle.md §4.2.PL-003a] (graceful drain bounded by [operator-nfr.md §4.7] ON-029 drain-timeout); (e) record `workspace_snapshot_path` (recording obligation, NOT termination — see SH-015a). Idempotent. On any sub-step failure → `cleanup-failed` per §8.8; verdict-downgrade follows §8.0 precedence.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-015a
+    kind: req
+    req: SH-015a
+    title: "Workspace snapshot mechanism (in-place worktree)"
+    description: |
+      Per SH-015a: `workspace_snapshot_path` recorded in `ScenarioResult` MUST point at the per-scenario worktree directory in-place (same path created at SH-012). Harness MUST NOT copy, archive, or otherwise relocate the worktree at teardown; SH-016's "fixture root not auto-deleted" rule preserves the worktree for post-hoc inspection. `workspace_state` predicates (SH-022) resolving `git_ref_at`/`commit_trailer_present` MUST inspect `.git/` directly via `git` plumbing; predicates resolving `file_exists`/`file_contents_equal`/`file_contents_match` inspect working files directly. Snapshot is captured AFTER (a)-(d) of SH-015; merge-back to integration occurred during orchestration per [workspace-model.md §4.5.WM-019] BEFORE teardown.
+
+  - mnem: sh-016
+    kind: req
+    req: SH-016
+    title: "Per-suite ephemeral fixture root (operator inspects; not auto-deleted)"
+    description: |
+      Per SH-016: harness MUST create a per-suite ephemeral fixture root (under OS-temp directory by default, or under `--fixture-root <path>` override) and place all scenario fixture state inside it. Harness MUST NOT delete fixture root automatically on suite completion — operators inspect it for debugging; deletion is operator-driven (`harmonik harness clean` subcommand or `rm -rf`). Subsequent suite invocations create their own fresh fixture roots; prior fixture roots accumulate. Path MUST be reported in `SuiteResult.fixture_root`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-016a
+    kind: req
+    req: SH-016a
+    title: "Per-scenario synthetic project root (one ephemeral project per scenario)"
+    description: |
+      Per SH-016a: each scenario invocation MUST run against an ephemeral per-scenario synthetic project root at `<fixture-root>/<scenario-name>/project/`. Synthetic root is the working directory the harness uses when invoking the daemon entry-point of SH-017. Daemon's startup per [process-lifecycle.md §4.2.PL-005] writes `.harmonik/daemon.pid`, `.harmonik/daemon.sock`, `.harmonik/daemon.instance-id`, reads `.harmonik/daemon.state` relative to its working directory → those writes land inside synthetic root by construction. Each synthetic root contains: (i) fresh git repository (`git init` + `fixture_setup.git_seed`); (ii) empty `.harmonik/` minted by daemon at PL-005 step 0; (iii) per-scenario Beads SQLite at `.harmonik/beads.sqlite`; (iv) per-scenario event log. One-daemon-per-project per [process-lifecycle.md §4.1.PL-001] satisfied because each scenario IS a different project. PL-005 step 8 reconciliation runs against freshly-seeded fixture state and is a no-op by construction; harness MUST NOT skip the step. OQ-SH-011 tracks daemon-side `--project-root` flag for future flexibility.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ===========================================================================
+  # §4.5 Orchestration drive (3 reqs)
+  # ===========================================================================
+
+  - mnem: sh-017
+    kind: req
+    req: SH-017
+    title: "Harness uses the production orchestrator entry-point"
+    description: |
+      Per SH-017: harness MUST drive scenarios by invoking the same daemon entry-point and same orchestrator startup sequence as production `daemon` mode per [process-lifecycle.md §4.2.PL-005]. "Same entry-point" = same composition-root function in same Go package, invoked with different working directory (per-scenario synthetic project root per SH-016a) and different external configuration (handler-config overrides per SH-008). Harness MUST NOT bypass daemon, MUST NOT instantiate orchestrator outside production composition root, and MUST NOT skip startup-sequence steps (PL-005 steps 0–9 all run; reconciliation in step 8 is no-op against fresh fixture state). Harness MUST detect daemon process death and classify a daemon crash as `orchestration-internal-error`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-018
+    kind: req
+    req: SH-018
+    title: "No test-mode branches in production-imported packages"
+    description: |
+      Per SH-018: production-imported packages (daemon, orchestrator, agent-runner, workspace manager, hook system, policy engine, event bus, any handler implementation) MUST NOT contain conditional branches keyed off "is this a test?" / "is this scenario mode?" / "is this a twin?" / "is this a harness invocation?". Harness applies production stack with two and only two surface mutations: handler-config overrides (§4.3) and working-directory assignment to per-scenario synthetic project root (§4.4 SH-016a). Forbidden token set canonical (also enforced by §5 SH-INV-001 grep): `scenarioMode`, `isTest`, `isTwin`, `harnessMode`, `isFakeRunner`, `useStub`, `if agent_type == "*-twin"`, `HasSuffix("-twin")`, `cfg.TestMode`, any env var matching `HARMONIK_*_MODE`. Reviewer obligation to reject violating PRs is a §10.2 conformance test obligation.
+
+  - mnem: sh-019
+    kind: req
+    req: SH-019
+    title: "Orchestration internal error fails with `orchestration-internal-error`"
+    description: |
+      Per SH-019: if orchestration drive returns an error from daemon's startup, dispatch, or shutdown that is NOT a scenario-attributable failure, harness MUST classify scenario as `verdict=error` with `failure_class=orchestration-internal-error`. Scenario-attributable failure is the closed set: (i) handler error surfaced as `agent_failed` per [handler-contract.md §4.6.HC-024]; (ii) twin-scripted failure surfaced as same; (iii) gate denial surfaced as node-level outcome; (iv) any condition the orchestrator's edge-cascade resolves into a terminal `run_failed` event. Anything else (daemon crash via process-exit, RPC error from daemon socket, panic in orchestrator goroutine, daemon entered `degraded` state per [process-lifecycle.md §4.4 PL-010] mid-scenario, store-divergence detected by reconciliation mid-scenario) is `orchestration-internal-error`. Original error captured verbatim in `ScenarioResult.error_detail`. Review escalation automatic.
+
+  # ===========================================================================
+  # §4.6 Event-log capture + assertion eval (5 reqs)
+  # ===========================================================================
+
+  - mnem: sh-020
+    kind: req
+    req: SH-020
+    title: "Harness reads captured JSONL event log as the assertion surface"
+    description: |
+      Per SH-020: after orchestration completes (normal terminal-state emission or timeout cancellation), harness MUST read the captured JSONL event log and evaluate each declared assertion against it. Read MUST conform to [event-model.md §4.5.EV-021] observational-replay rules: harness is performing observational replay; output is advisory for state but authoritative for "what events were observed." Harness MUST NOT reconstruct state from JSONL; declared `expected_workspace` predicates inspect the workspace tree directly per SH-022. Harness MUST also capture each handler subprocess's stdout/stderr to per-scenario files at `<fixture-root>/<scenario-name>/logs/<role>-{stdout,stderr}.log`; not part of assertion surface but paths reported in `ScenarioResult`.
+
+  - mnem: sh-021
+    kind: req
+    req: SH-021
+    title: "Assertion vocabulary at v0.1 is four kinds"
+    description: |
+      Per SH-021: harness MUST support exactly four assertion kinds at v0.1 — (a) `event_present` (event of declared type and optional payload-field-equals predicates emitted); (b) `event_absent` (no event of declared type matching predicates was emitted during scenario's wall-clock window); (c) `workspace_state` (declared filesystem or git-ref predicate over post-orchestration workspace tree); (d) `exit_code` (run-level terminal-emission event payload `run_completed{status=...}` / `run_failed{status=...}` per [event-model.md §8.1.8] carries declared `outcome_status` matching [execution-model.md §4.1 EM-005] `Outcome.status` enum). `payload_match` keys use dotted-path grammar; bracket form for array indices. Equality: numeric value, NFC-normalized strings, identity for booleans/null. Shallow-merge: declared keys MUST appear; actual MAY contain unmatched keys. `event_absent` window: `[fixture-setup-completion, terminal-event-emission OR timeout-cancellation-completion]`. `assertion_results` ordered: `expected_events` declaration order, then `expected_workspace`, then `expected_outcome`. No short-circuit (per SH-023). Composite + ordering predicates → OQ-SH-006.
+
+  - mnem: sh-022
+    kind: req
+    req: SH-022
+    title: "Workspace-state predicates inspect the captured snapshot in-place"
+    description: |
+      Per SH-022: `workspace_state` assertion kind MUST be evaluated against the per-scenario worktree tree in-place (per SH-015a) — NOT against a copy or archive. Harness MUST NOT mutate workspace during evaluation. Predicates MUST address files by repo-relative path; absolute-path predicates forbidden so the same scenario is portable across operator machines. Symlinks under the worktree resolving outside the worktree (path traversal) MUST be rejected at predicate-evaluation time as `assertion-failed`. Per-kind interpretation of `expected` field declared at §6.3.
+
+  - mnem: sh-023
+    kind: req
+    req: SH-023
+    title: "Assertion failure produces verdict `fail` with `assertion-failed`"
+    description: |
+      Per SH-023: when any declared assertion fails to hold, harness MUST set `ScenarioResult.verdict=fail` and `failure_class=assertion-failed`. Result MUST carry one `AssertionResult` record per declared expectation. Harness MUST NOT short-circuit on first failure — every assertion evaluated so operator sees full failure picture. Even on `verdict=timeout` (per SH-026) harness MUST evaluate all declared assertions best-effort against the partial event log (impossible-to-evaluate assertions recorded with `passed=false` and explanatory note); verdict remains `timeout`. Full evaluation is deliberate cost-vs-debuggability tradeoff per spec §4.6 RATIONALE.
+
+  - mnem: sh-024
+    kind: req
+    req: SH-024
+    title: "Event-log capture failure escalates to `harness-internal-error`"
+    description: |
+      Per SH-024: harness's read of captured JSONL is governed by [event-model.md §6.2] post-fsync torn-tail rule — torn tail at end of file (well-formed lines followed by partial trailing record after last fsync) MUST be skipped silently per EV §6.2 (normal post-fsync behavior, not corruption). Harness MUST classify scenario as `verdict=error` / `failure_class=harness-internal-error` (NOT `assertion-failed`) when, and only when, log read fails for: (i) event-log directory or file does not exist; (ii) permissions error; (iii) JSON-parse error at position other than post-fsync tail (mid-file corruption); (iv) disk-full or other I/O error; (v) `EV-011a bus_overflow` event observed in captured log (events shed during scenario, defeating assertion completeness). Harness MUST NOT silently treat absent events as "not emitted" when log is corrupt or incomplete.
+
+  # ===========================================================================
+  # §4.7 Scenario timeout (2 reqs)
+  # ===========================================================================
+
+  - mnem: sh-025
+    kind: req
+    req: SH-025
+    title: "Every scenario declares a wall-clock budget (`timeout_secs` 1..7200)"
+    description: |
+      Per SH-025: every `ScenarioFile` MUST declare a positive `timeout_secs` field (integer seconds, range `[1, 7200]`); out-of-range values MUST fail at scenario-load time per SH-004. Deadline measured against monotonic clock (e.g., Go's `time.Now()` monotonic component) so wall-clock regressions during NTP corrections do not cause spurious timeouts. Wall-clock timestamps recorded in `ScenarioResult.started_at`/`completed_at` (RFC 3339 millisecond UTC) for operator-facing display only. No harness-default budget; explicit declaration prevents accidental long-runners.
+
+  - mnem: sh-026
+    kind: req
+    req: SH-026
+    title: "Timeout exceedance produces verdict `timeout` with `scenario-timeout`"
+    description: |
+      Per SH-026: when scenario's orchestration drive does not reach a terminal state within `timeout_secs` (measured per SH-025 from fixture-setup completion to orchestrator emitting terminal `run_completed`/`run_failed`), harness MUST cancel orchestration by invoking per-scenario daemon's `stop` RPC of [process-lifecycle.md §4.2.PL-003a] (graceful drain, escalating to SIGKILL on drain-timeout per [operator-nfr.md §4.7 ON-029]). Each scenario runs against own per-scenario daemon (per SH-016a) → `daemon stop` halts cleanly without affecting other scenarios. Harness then executes fixture teardown per SH-015 and emits `ScenarioResult` with `verdict=timeout` and `failure_class=scenario-timeout`. Per-handler cancellation honors [handler-contract.md §4.4.HC-018] bounded-cancellation; overall cancel-and-teardown bound is `(N × HC-018-ceiling) + ON-029-drain-timeout`. Suite-mode efficiency (per-scenario cancel without daemon termination) is post-MVH per OQ-SH-012.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  # ===========================================================================
+  # §4.8 Repeatability + offline (2 reqs)
+  # ===========================================================================
+
+  - mnem: sh-027
+    kind: req
+    req: SH-027
+    title: "Identical inputs MUST produce identical observable verdicts"
+    description: |
+      Per SH-027: given identical inputs (same harmonik build, same twin binaries, same scenario file, same `fixture_setup` seed), harness MUST produce identical values for the determinism contract field set on every run. Contract field set: `ScenarioResult.verdict`, `ScenarioResult.failure_class`, ordered list of `(AssertionResult.passed, AssertionResult.assertion_kind)` tuples, multiset of distinct event types in captured JSONL. Byte-identity of captured JSONL NOT required (UUIDv7 event IDs, wall-clock timestamps, PIDs, `daemon_instance_id` per PL-005 step 0 drift); semantic identity is. Carve-out: twins exercising wall-clock heartbeat mode of [handler-contract.md §4.6.HC-026a] are exempt; such scenarios MUST be tagged `cadence_tag=nightly` and excluded from SH-INV-004 sensor's rerun-diff check.
+
+  - mnem: sh-028
+    kind: req
+    req: SH-028
+    title: "Harness MUST NOT depend on external network access"
+    description: |
+      Per SH-028: every scenario MUST execute without any non-loopback outbound network call from harness, per-scenario daemon, orchestrator, watchers, agent-runner, or twin binaries. Permitted: `127.0.0.0/8`/`::1` (loopback, including daemon's own UNIX-domain or local-TCP RPC socket), AF_UNIX sockets within synthetic project root, filesystem-only ops. Forbidden: any non-loopback IPv4/IPv6 connection; outbound DNS to non-loopback resolver. Verification mechanism floor — Linux: `unshare(CLONE_NEWNET)` with only loopback up; macOS: `pf` packet-filter ruleset dropping non-loopback egress (declared `darwin-only`, OQ-SH-013 if mechanism choice changes). Scenario producing detectable non-loopback connection MUST fail with `verdict=error`/`failure_class=harness-internal-error`. §10.2 conformance lane MUST run with sandbox enabled.
+
+  # ===========================================================================
+  # §4.9 Cadence support (1 req)
+  # ===========================================================================
+
+  - mnem: sh-029
+    kind: req
+    req: SH-029
+    title: "Every scenario declares a cadence tag"
+    description: |
+      Per SH-029: every `ScenarioFile` MUST declare `cadence_tag ∈ {smoke, regression, nightly}`. Harness MUST support `--cadence <tag>` CLI flag whose accepted values are `smoke`, `regression`, `nightly`, and `all`. Cadence-superset relation: `smoke` → smoke; `regression` → smoke+regression; `nightly` → smoke+regression+nightly; `all` (or omitted) → all three. Filter resolving to empty scenario set MUST emit `SuiteResult` with `suite_verdict=pass` and empty `results` (vacuously true), exit 0. No harness-default cadence assignment for scenario authoring.
+
+  # ===========================================================================
+  # §4.10 Scenario composition (1 req)
+  # ===========================================================================
+
+  - mnem: sh-030
+    kind: req
+    req: SH-030
+    title: "Scenarios MAY declare a parameter matrix (cap 1024 cells)"
+    description: |
+      Per SH-030: a `ScenarioFile` MAY declare a `matrix` field — map of parameter-name to list-of-values. Harness MUST expand scenario into one execution per cell of the cartesian product, capped at 1024 cells per scenario; over-cap → `scenario-load-failure`. Synthetic per-cell `name`s render as `<scenario-name>[<k1>=<v1>,<k2>=<v2>,...]` with parameter keys in byte-lex order; values formatted using YAML scalar form. Parameter substitution uses Go `text/template` syntax (delimiters `{{` `}}`); only field-substitution supported (no conditionals, loops, function calls beyond identity). Unknown parameters, unresolvable templates, or matrix-cell name collisions (per SH-005) MUST fail at scenario-load time per SH-004.
+
+  # ===========================================================================
+  # §4.11 Concurrency policy (1 req)
+  # ===========================================================================
+
+  - mnem: sh-031
+    kind: req
+    req: SH-031
+    title: "Scenarios run sequentially at MVH"
+    description: |
+      Per SH-031: harness MUST execute scenarios sequentially at MVH — at most one scenario's full lifecycle (per SH-016a synthetic-project-root creation through SH-015 fixture teardown completion) may be active at any time. "Active" = between fixture-up start and teardown sub-step (e) completion, no other scenario MAY have any sub-step running. Pre-fetching scenario N+1's fixture state in parallel with scenario N's teardown forbidden at v0.1. Reconciliation workflows internal to a single scenario (per PL-005 step 8 dispatching against fixture state) are NOT "concurrent scenarios". Concurrent multi-scenario execution → OQ-SH-002.
+
+  # ===========================================================================
+  # §4.12 Harness CLI (2 reqs)
+  # ===========================================================================
+
+  - mnem: sh-032
+    kind: req
+    req: SH-032
+    title: "Harness CLI grammar at MVH (`harmonik harness`)"
+    description: |
+      Per SH-032: harness binary is `harmonik harness` (a `harmonik` subcommand). MVH CLI surface: `--cadence <tag>` (per SH-029); `--scenario <path>` (repeatable; subset run); `--fixture-root <path>` (SH-016 override; default OS-temp); `--twin-search-path <path>` (SH-009 override; default `<repo-root>/twins/`); `--list` (print discovered scenarios + cadence; no execution); `--dry-run` (suite-load + matrix expansion only; no orchestration); `--output <human|json>` (default `human`); `--verbose` (operator progress to stderr). `SuiteResult` to stdout in chosen format at suite end; harness-internal logs to stderr. Exit codes: 0=pass, 1=fail (≥1 scenario failed), 2=suite-load aborted (per SH-006), 3=harness-internal error, 130=SIGINT. Two concurrent invocations against same operator project permitted (each creates own per-suite ephemeral fixture root); MUST NOT contend for shared resources since both run against synthetic project roots per SH-016a.
+
+  - mnem: sh-033
+    kind: req
+    req: SH-033
+    title: "Signal handling and graceful shutdown"
+    description: |
+      Per SH-033: harness MUST handle SIGINT and SIGTERM by attempting graceful shutdown — cancel currently-running scenario per SH-026 (treating as timeout-equivalent: `verdict=error`, `failure_class=harness-internal-error`, `error_detail` indicating operator interrupt), execute SH-015 teardown, write partial `SuiteResult` to stdout containing completed scenarios + interrupted scenario's error verdict, exit with code 130 (SIGINT) or 143 (SIGTERM). Second SIGINT during graceful shutdown → exit immediately (code 130) without further teardown — operator-driven escalation overrides cleanup invariant.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  # ===========================================================================
+  # §4.13 Result emission (1 req)
+  # ===========================================================================
+
+  - mnem: sh-034
+    kind: req
+    req: SH-034
+    title: "ScenarioResult durability and emission"
+    description: |
+      Per SH-034: every scenario's `ScenarioResult` MUST be written to disk at `<fixture-root>/<scenario-name>/result.json` immediately after the scenario completes (before the next scenario begins). Aggregate `SuiteResult` MUST be written to `<fixture-root>/suite-result.json` AND emitted to stdout per SH-032 at suite completion. `SuiteResult.suite_verdict` is `pass` iff every `result.verdict==pass`; any non-pass result implies `suite_verdict=fail`. Harness crash after per-scenario `result.json` write but before suite-level emission allows operator reconstruction; harness MAY (post-MVH) provide `harmonik harness reconstruct <fixture-root>` subcommand. `ScenarioResult.error_detail`, when present, MUST be a non-empty operator-readable string with at minimum the underlying `err.Error()` and (where applicable) captured panic stack.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ===========================================================================
+  # §5 Invariant beads (5)
+  # ===========================================================================
+
+  - mnem: sh-inv-001
+    kind: invariant
+    req: SH-INV-001
+    title: "Sensor: no test-mode branches in production code (4-layer corpus grep)"
+    description: |
+      Per SH-INV-001: for every package imported by harness from production tree (daemon, orchestrator, agent-runner, workspace manager, hook system, policy engine, event bus, handler implementations), there MUST be ZERO conditional branches keyed off "is this a test/scenario/twin/harness?". Harness configures production stack via two explicit surface mutations: handler-config override (SH-008) + working-directory assignment to per-scenario synthetic project root (SH-016a). All other behavior identical to production by construction. Sensor: corpus-grep at harness conformance test layer (§10.2) over production-imported package set, with 4 layered checks — (1) token-set grep case-insensitive (`scenarioMode`, `isTest`, `isTwin`, `harnessMode`, `isFakeRunner`, `useStub`, `cfg.TestMode`); (2) regex `if\s+.*[Tt]est|[Tt]win|[Ss]cenario|[Hh]arness.*Mode`; (3) suffix-test pattern `HasSuffix\([^,]+,\s*"-twin"\)` and `agent_type\s*==\s*"\*?-twin"`; (4) env-var pattern `HARMONIK_*_MODE` reads in production code. Excluded: unit-test packages (per HC-035 in-process fakes carve-out) and harness's own packages. Periodic review of token-set per §10.2.
+
+  - mnem: sh-inv-002
+    kind: invariant
+    req: SH-INV-002
+    title: "Sensor: workspace state fully reset on teardown (descendant-tree, leases, fds)"
+    description: |
+      Per SH-INV-002: after SH-015 teardown completes, no live process spawned by the scenario (handler subprocesses, `br` CLI subprocesses spawned by daemon per [process-lifecycle.md §4.1.PL-006], any twin-spawned grandchild orphaned by twin exit) remains; no worktree lease still held by scenario's `run_id`; no event-log file descriptor still open. "No live process" evaluated by enumerating daemon process's full descendant tree at teardown completion (`getppid()`-walk on Linux/Darwin, marker env var `HARMONIK_RUN_ID` per PL-006a for cross-confirmation); zombies (reaped but not yet wait-ed) tolerated. Harness MUST guarantee these on every terminal path including `fail`, `timeout`, `error`. Sensor: post-suite assertion at harness conformance test layer (§10.2) AFTER last scenario's teardown completes AND BEFORE `SuiteResult` written, inspects (i) descendant process tree (no PID with `HARMONIK_RUN_ID` env matching any executed scenario's run_id), (ii) worktree-lease registry (per-fixture-root scan: no `<workspace>/.harmonik/lease.lock` files held by executed run_id), (iii) open fds (`lsof`-equivalent: no event-log file under fixture root remains open). Residuals fail the suite.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: sh-inv-003
+    kind: invariant
+    req: SH-INV-003
+    title: "Sensor: harness operates only on twin binaries (path-prefix + HC-043 hash)"
+    description: |
+      Per SH-INV-003: every handler binary launched during scenario execution MUST be a twin per [handler-contract.md §4.8.HC-035]; harness MUST refuse to launch a real-model handler. The "is a twin" predicate: a binary is a twin iff its absolute resolved path is under the configured twin-binary search-path prefix per SH-009 (item (b)) OR scenario's `agent_overrides` declared the binary AND daemon's HC-043 commit-hash check passes against a registered twin entry. Name-only heuristics (`HasSuffix("-twin")`) NOT sufficient and MUST NOT be used by sensor; predicate is purely path-prefix-based + HC-043 hash verification. Sensor: pre-launch check at handler-config resolution (§4.3) verifies predicate; scenario whose resolved configuration would launch a non-twin MUST fail with `verdict=error`/`failure_class=harness-internal-error`. Conformance test: scenario whose `agent_overrides` references `/usr/bin/claude` (or any binary outside search-path prefix) MUST fail at pre-launch check, NOT at orchestration time.
+
+  - mnem: sh-inv-004
+    kind: invariant
+    req: SH-INV-004
+    title: "Sensor: scenarios produce identical observable verdicts on rerun (N≥10 nightly)"
+    description: |
+      Per SH-INV-004: given identical inputs, harness MUST produce identical values for the SH-027 determinism contract field set on every run. This invariant is the enforcement surface of SH-027; it spans harness, daemon, orchestrator, and twin binary set, because non-determinism in any of them defeats it. Sensor: nightly cadence task reruns the `regression`-cadence subset (excluding `nightly`-cadence wall-clock-mode scenarios per SH-027 carve-out) N times where N≥10, diffs the determinism contract field set across runs. Cadence pinned at sensor execution time MUST be `regression` (sensor MUST NOT silently fall through to a smaller smoke set). Any divergence across the N runs fails the nightly task.
+
+  - mnem: sh-inv-005
+    kind: invariant
+    req: SH-INV-005
+    title: "Sensor: scenario files are declarative-loadable (suite-load lint with strict YAML)"
+    description: |
+      Per SH-INV-005: every scenario file MUST be loadable by a generic YAML parser plus the §6.1 schema validator, with no plugin, no eval, no code-execution YAML tags. Sensor: a corpus lint at suite-load time runs every scenario file through `gopkg.in/yaml.v3` in strict mode with `KnownFields(true)` and a forbidden-tag deny-list (rejecting `!!python/object`, `!eval`, `!!binary` constructors carrying executable, custom-loader directives, anchors that reference unbound aliases); any rejected file is a suite-load failure. Parser pinned to this implementation at v0.1; future parser change is a foundation amendment per [architecture.md §4.6].
+
+  # ===========================================================================
+  # §6.1 Schema beads (11)
+  # ===========================================================================
+
+  - mnem: sh-schema.scenario-file
+    kind: schema
+    schema_kind: record
+    title: "Define `ScenarioFile` record (§6.1)"
+    description: |
+      Implement the 11-field RECORD: `name` (String, repo-wide unique per SH-005, byte-lex order drives execution per SH-007); `description` (String, one-line operator-facing); `workflow_path` (String|None, DOT path repo-relative within synthetic project root, MUTUALLY EXCLUSIVE with workflow_id); `workflow_id` (String|None, per [execution-model.md §4.1], MUTUALLY EXCLUSIVE with workflow_path); `agent_overrides` (Map<String, AgentOverride>); `fixture_setup` (FixtureSetup); `expected_events` (List<EventExpectation>); `expected_workspace` (List<WorkspacePredicate>); `expected_outcome` (OutcomeExpectation|None); `timeout_secs` (Integer, [1, 7200] per SH-025); `cadence_tag` (Enum smoke|regression|nightly per SH-029); `matrix` (Map<String, List<String>>|None, max 1024 cells per SH-030). Resolution rules + load-failure modes per SH-002/SH-003/SH-004/SH-005.
+
+  - mnem: sh-schema.agent-override
+    kind: schema
+    schema_kind: record
+    title: "Define `AgentOverride` record (§6.1)"
+    description: |
+      Implement the 2-field RECORD: `binary` (String — absolute path or twin-search-path-relative name; subject to SH-009 + HC-043 hash check); `args` (List<String>|None — additional CLI args; MERGE SEMANTICS: appended to production composition root's default args, no replacement).
+
+  - mnem: sh-schema.fixture-setup
+    kind: schema
+    schema_kind: record
+    title: "Define `FixtureSetup` record (§6.1)"
+    description: |
+      Implement the 3-field RECORD: `git_seed` (List<GitSeedOp>|None — optional list of git ops to seed workspace tree); `files` (Map<String, FileSeed>|None — optional path → file-seed map applied to synthetic project root before orchestration); `skill_search_paths` (List<String>|None — additional skill search paths injected into LaunchSpec per [handler-contract.md §6.1 LaunchSpec]).
+
+  - mnem: sh-schema.git-seed-op
+    kind: schema
+    schema_kind: record
+    title: "Define `GitSeedOp` record (§6.1)"
+    description: |
+      Implement the 2-field RECORD: `op` (Enum commit|branch|tag|checkout); `args` (Map<String, String> per-op fields). Per-op required-keys interpretation table at §6.3: commit{message, optional parent, optional ref (default HEAD)}; branch{name, optional from (default HEAD)}; tag{name, optional target (default HEAD)}; checkout{ref}.
+
+  - mnem: sh-schema.file-seed
+    kind: schema
+    schema_kind: record
+    title: "Define `FileSeed` record (§6.1)"
+    description: |
+      Implement the 3-field RECORD: `encoding` (Enum utf8|base64; default utf8); `contents` (String — file contents as utf8 string OR base64-encoded bytes per encoding); `mode` (String|None — octal POSIX file mode e.g., "0755"; default "0644").
+
+  - mnem: sh-schema.event-expectation
+    kind: schema
+    schema_kind: record
+    title: "Define `EventExpectation` record (§6.1)"
+    description: |
+      Implement the 4-field RECORD: `kind` (Enum event_present|event_absent); `type` (EventType — one of §8 types per [event-model.md §8]); `payload_match` (Map<String, JSONValue>|None — optional dotted-path-keyed field-equals predicates per SH-021; shallow-merge against actual payload); `description` (String — operator-facing label).
+
+  - mnem: sh-schema.workspace-predicate
+    kind: schema
+    schema_kind: record
+    title: "Define `WorkspacePredicate` record (§6.1) + per-kind interpretation"
+    description: |
+      Implement the 4-field RECORD: `kind` (Enum file_exists|file_contents_equal|file_contents_match|git_ref_at|commit_trailer_present); `path` (String — repo-relative path within worktree; absolute and traversal forbidden per SH-022); `expected` (String|None — per-kind interpretation declared at §6.3); `description` (String — operator-facing label). Per-kind `expected` semantics per §6.3 table: file_exists (None — presence is the predicate); file_contents_equal (literal byte-equal UTF-8 string); file_contents_match (Go RE2 pattern, multi-line off by default); git_ref_at (40-char SHA-1 OR ref name resolved transitively, short-SHA forbidden); commit_trailer_present (trailer key e.g., `Harmonik-Run-ID`; key-only match at v0.1).
+
+  - mnem: sh-schema.outcome-expectation
+    kind: schema
+    schema_kind: record
+    title: "Define `OutcomeExpectation` record (§6.1)"
+    description: |
+      Implement the 2-field RECORD: `outcome_status` (Enum SUCCESS|FAIL|RETRY|PARTIAL_SUCCESS — matches run-level terminal-emission event payload `outcome_status` per [event-model.md §8.1.8]; semantic value matches [execution-model.md §4.1 EM-005] `Outcome.status`); `description` (String).
+
+  - mnem: sh-schema.scenario-result
+    kind: schema
+    schema_kind: record
+    title: "Define `ScenarioResult` record (§6.1)"
+    description: |
+      Implement the 11-field RECORD: `scenario_name` (String — `ScenarioFile.name` or expanded matrix name per SH-030); `source_path` (String — repo-relative path to originating scenario file); `started_at`/`completed_at` (Timestamp RFC 3339 UTC millisecond); `verdict` (Enum pass|fail|timeout|error); `failure_class` (FailureClass|None — §8 enum; absent iff verdict=pass); `assertion_results` (List<AssertionResult> — one per declared assertion; empty only if scenario terminated before §7.1 step 4 entered); `event_log_path` (String — fixture-root-relative path to captured JSONL); `workspace_snapshot_path` (String — fixture-root-relative path to post-teardown worktree per SH-015a); `stdout_log_paths`/`stderr_log_paths` (Map<String, String> — role → fixture-root-relative path per SH-020); `error_detail` (String|None — non-empty operator-readable string when verdict=error or cleanup-failed appended; format `<class>: <err.Error()>` plus optional stack on panic).
+
+  - mnem: sh-schema.assertion-result
+    kind: schema
+    schema_kind: record
+    title: "Define `AssertionResult` record (§6.1)"
+    description: |
+      Implement the 5-field RECORD: `assertion_kind` (Enum event_present|event_absent|workspace_state|exit_code); `description` (String — copied from declared assertion); `actual_value` (JSONValue — captured observable); `expected_value` (JSONValue — declared expectation); `passed` (Bool).
+
+  - mnem: sh-schema.suite-result
+    kind: schema
+    schema_kind: record
+    title: "Define `SuiteResult` record (§6.1)"
+    description: |
+      Implement the 7-field RECORD: `suite_id` (UUID — UUIDv7 generated at suite invocation); `started_at`/`completed_at` (Timestamp RFC 3339 UTC millisecond); `fixture_root` (String — absolute path to per-suite ephemeral fixture root per SH-016, operator-facing); `cadence_filter` (Enum smoke|regression|nightly|all); `results` (List<ScenarioResult>); `suite_verdict` (Enum pass|fail — pass iff every result.verdict==pass; any non-pass result implies fail).
+
+  # ===========================================================================
+  # §8 error-taxonomy bead (single umbrella per §2.6 single-table form,
+  # 8 < 11 §2.11(c) threshold)
+  # ===========================================================================
+
+  - mnem: sh-error.taxonomy
+    kind: error-taxonomy
+    title: "SH §8 failure-class taxonomy (8 classes + §8.0 precedence table)"
+    description: |
+      Implement the 8-class failure taxonomy + §8.0 precedence ordering. Classes (§8.1..§8.8): `scenario-load-failure` (YAML parse / schema check / unknown workflow / unknown cadence / parameter-expansion / duplicate name); `twin-binary-not-found` (`agent_overrides` references binary not on disk or unresolvable); `fixture-setup-failed` (workspace creation per [workspace-model.md §4.1.WM-003], git seed, file writes, fixture-root unreachable); `orchestration-internal-error` (daemon startup/dispatch/shutdown error not classifiable as scenario-attributable); `assertion-failed` (≥1 declared assertion `passed=false` per SH-023); `scenario-timeout` (orchestration drive does not reach terminal within `timeout_secs` per SH-026); `harness-internal-error` (closed list: event-log unreadable per SH-024 / real-model handler attempted launch per SH-INV-003 / outbound non-loopback network call per SH-028 / harness panic / operator interrupt per SH-033 / per-scenario daemon start failure per SH-017); `cleanup-failed` (fixture teardown sub-step failure per SH-015). EM analogs noted per §8: `twin-binary-not-found` adjacent to EM §8.2 `structural`; `orchestration-internal-error` adjacent to EM §8.2 `structural` when underlying error is `ErrStructural`; `scenario-timeout` adjacent to EM §8.4 `canceled`. §8.0 precedence (highest first): harness-internal-error → orchestration-internal-error → scenario-load-failure → twin-binary-not-found → fixture-setup-failed → scenario-timeout → assertion-failed → cleanup-failed (NEVER overwrites prior verdict; appended to error_detail only) → no failure (verdict=pass). §7.1 lifecycle pseudocode applies precedence consistently. Adding a new class requires foundation amendment per [architecture.md §4.6]; orphan errors recorded under harness-internal-error until pattern justifies a new class. OQ-SH-010 tracks extension protocol.
+
+# ============================================================================
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A).
+#
+# Mnemonic prefix selects resolution map:
+#   sh-* → intra-spec (this spec's mnem-map)
+#   ar-* / em-* / ev-* / hc-* / wm-* / pl-* / on-* → cross-spec
+#   forward:* → forward-deferred (logged only, NOT loaded into beads)
+# ============================================================================
+edges:
+  # ===========================================================================
+  # Intra-SH edges
+  # ===========================================================================
+
+  # Schema-cite intra-spec (§4 reqs term-using §6.1 records per §3.1 step 4)
+  - {from: sh-001, to: sh-schema.scenario-file}
+  - {from: sh-002, to: sh-error.taxonomy}             # cites scenario-load-failure
+  - {from: sh-003, to: sh-error.taxonomy}             # cites scenario-load-failure
+  - {from: sh-004, to: sh-error.taxonomy}             # cites scenario-load-failure
+  - {from: sh-005, to: sh-error.taxonomy}             # cites scenario-load-failure
+  - {from: sh-006, to: sh-005}                        # SH-006 cites duplicates per SH-005
+  - {from: sh-006, to: sh-error.taxonomy}             # cites scenario-load-failure
+  - {from: sh-007, to: sh-005}                        # byte-lex on `name` field per SH-005
+  - {from: sh-007, to: sh-030}                        # matrix-expanded names per SH-030
+  - {from: sh-009, to: sh-error.taxonomy}             # cites twin-binary-not-found
+  - {from: sh-010, to: sh-009}                        # SH-010 = SH-009 negative path
+  - {from: sh-010, to: sh-error.taxonomy}
+  - {from: sh-012, to: sh-015}                        # cites SH-015 partial-rollback teardown
+  - {from: sh-012, to: sh-error.taxonomy}             # cites fixture-setup-failed, cleanup-failed
+  - {from: sh-013, to: sh-005}                        # path-disjointness depends on name uniqueness
+  - {from: sh-013, to: sh-016}                        # cites SH-016 per-suite ephemeral root
+  - {from: sh-013, to: sh-030}                        # matrix-expanded synthetic names
+  - {from: sh-014, to: sh-016a}                       # cites SH-016a synthetic project root
+  - {from: sh-015, to: sh-015a}                       # sub-step (e) records workspace_snapshot_path per SH-015a
+  - {from: sh-015, to: sh-error.taxonomy}             # cites cleanup-failed
+  - {from: sh-015a, to: sh-012}                       # snapshot points at SH-012 fixture-up path
+  - {from: sh-015a, to: sh-016}                       # SH-016 fixture-root-not-auto-deleted preserves worktree
+  - {from: sh-015a, to: sh-022}                       # workspace_state predicates per SH-022
+  - {from: sh-016a, to: sh-016}                       # synthetic root inside per-suite fixture root
+  - {from: sh-016a, to: sh-014}                       # per-scenario event log per SH-014
+  - {from: sh-016a, to: sh-017}                       # daemon entry-point per SH-017
+  - {from: sh-017, to: sh-016a}                       # working-directory assignment to synthetic project root
+  - {from: sh-017, to: sh-008}                        # handler-config overrides per SH-008
+  - {from: sh-017, to: sh-error.taxonomy}             # cites orchestration-internal-error
+  - {from: sh-018, to: sh-008}                        # surface mutation 1: handler-config override
+  - {from: sh-018, to: sh-016a}                       # surface mutation 2: working-dir assignment
+  - {from: sh-019, to: sh-error.taxonomy}             # cites orchestration-internal-error
+  - {from: sh-020, to: sh-022}                        # workspace_state predicates inspect tree directly
+  - {from: sh-021, to: sh-schema.event-expectation}
+  - {from: sh-021, to: sh-schema.workspace-predicate}
+  - {from: sh-021, to: sh-schema.outcome-expectation}
+  - {from: sh-021, to: sh-023}                        # MUST NOT short-circuit per SH-023
+  - {from: sh-021, to: sh-026}                        # event_absent window references SH-026 timeout
+  - {from: sh-022, to: sh-015a}                       # snapshot mechanism per SH-015a
+  - {from: sh-022, to: sh-error.taxonomy}             # cites assertion-failed
+  - {from: sh-023, to: sh-026}                        # cites SH-026 verdict=timeout interaction
+  - {from: sh-023, to: sh-error.taxonomy}             # cites assertion-failed
+  - {from: sh-024, to: sh-error.taxonomy}             # cites harness-internal-error
+  - {from: sh-025, to: sh-004}                        # out-of-range fails per SH-004
+  - {from: sh-026, to: sh-025}                        # measured per SH-025
+  - {from: sh-026, to: sh-015}                        # executes fixture teardown per SH-015
+  - {from: sh-026, to: sh-016a}                       # per-scenario daemon per SH-016a
+  - {from: sh-026, to: sh-error.taxonomy}             # cites scenario-timeout
+  # NOTE: SH-027 body cites SH-INV-004 ("scope carve-out: SH-INV-004 sensor's rerun-diff check");
+  # F-pilot-AR-r2-2 invariant-as-target exemption fires (impl→invariant would
+  # reverse §2.5 F12 sensor↔impl one-way). Edge sh-027 → sh-inv-004 NOT emitted.
+  # Reverse edge sh-inv-004 → sh-027 IS emitted below (sensor blocks-on impl).
+  - {from: sh-028, to: sh-error.taxonomy}             # cites harness-internal-error
+  - {from: sh-030, to: sh-005}                        # cell-name collision per SH-005
+  - {from: sh-030, to: sh-004}                        # over-cap fails per SH-004
+  - {from: sh-031, to: sh-016a}                       # full-lifecycle bound per SH-016a
+  - {from: sh-031, to: sh-015}                        # teardown sub-step (e) per SH-015
+  - {from: sh-032, to: sh-029}                        # --cadence per SH-029
+  - {from: sh-032, to: sh-016}                        # --fixture-root per SH-016
+  - {from: sh-032, to: sh-009}                        # --twin-search-path per SH-009
+  - {from: sh-032, to: sh-006}                        # exit code 2 per SH-006
+  - {from: sh-032, to: sh-016a}                       # concurrent invocations satisfied by synthetic project roots
+  - {from: sh-032, to: sh-schema.suite-result}
+  - {from: sh-033, to: sh-026}                        # cancel via SH-026 timeout-equivalent
+  - {from: sh-033, to: sh-015}                        # execute teardown per SH-015
+  - {from: sh-033, to: sh-error.taxonomy}             # cites harness-internal-error
+  - {from: sh-034, to: sh-032}                        # SuiteResult emission per SH-032
+  - {from: sh-034, to: sh-schema.scenario-result}
+  - {from: sh-034, to: sh-schema.suite-result}
+
+  # Schema dependencies (composition)
+  - {from: sh-schema.scenario-file, to: sh-schema.agent-override}
+  - {from: sh-schema.scenario-file, to: sh-schema.fixture-setup}
+  - {from: sh-schema.scenario-file, to: sh-schema.event-expectation}
+  - {from: sh-schema.scenario-file, to: sh-schema.workspace-predicate}
+  - {from: sh-schema.scenario-file, to: sh-schema.outcome-expectation}
+  - {from: sh-schema.fixture-setup, to: sh-schema.git-seed-op}
+  - {from: sh-schema.fixture-setup, to: sh-schema.file-seed}
+  - {from: sh-schema.scenario-result, to: sh-schema.assertion-result}
+  - {from: sh-schema.suite-result, to: sh-schema.scenario-result}
+
+  # Sensor (invariant) edges — sensor blocks-on impl §4 reqs (§2.5 four-source rule)
+  # SH-INV-001: production-imported package set + SH-008 + SH-016a (the two surface mutations)
+  - {from: sh-inv-001, to: sh-008}
+  - {from: sh-inv-001, to: sh-016a}
+  - {from: sh-inv-001, to: sh-018}                    # SH-018 forbidden-token list shared with SH-INV-001 sensor
+  # SH-INV-002: SH-015 teardown completion is the precondition; PL-006a marker
+  - {from: sh-inv-002, to: sh-015}
+  - {from: sh-inv-002, to: sh-013}                    # worktree-lease registry per-fixture-root scan
+  - {from: sh-inv-002, to: sh-014}                    # event-log fd inspection per SH-014
+  - {from: sh-inv-002, to: sh-016}                    # per-suite-fixture-root-scope of sensor
+  # SH-INV-003: predicate is path-prefix + HC-043; SH-009 + agent_overrides surface
+  - {from: sh-inv-003, to: sh-009}
+  - {from: sh-inv-003, to: sh-008}
+  # SH-INV-004: enforcement surface for SH-027; pinned at regression cadence per SH-029
+  - {from: sh-inv-004, to: sh-027}
+  - {from: sh-inv-004, to: sh-029}
+  # SH-INV-005: corpus lint at suite-load (SH-006); §6.1 schema (SH-001/SH-003)
+  - {from: sh-inv-005, to: sh-001}
+  - {from: sh-inv-005, to: sh-003}
+  - {from: sh-inv-005, to: sh-006}
+  - {from: sh-inv-005, to: sh-schema.scenario-file}
+
+  # Schema-citing reqs and per §3.1 step 4 type-cite rule
+  - {from: sh-021, to: sh-schema.scenario-file}
+  - {from: sh-006, to: sh-schema.scenario-file}
+
+  # ===========================================================================
+  # Cross-spec AR edges (1)
+  # ===========================================================================
+  # SH-INV-005 cites [architecture.md §4.6] for foundation amendment protocol;
+  # term-use single-owner pin → ar-020 (amendment-proposal procedure).
+  - {from: sh-inv-005, to: ar-020}
+  # sh-error.taxonomy cites [architecture.md §4.6] (foundation amendment for new
+  # class); term-use → ar-020.
+  - {from: sh-error.taxonomy, to: ar-020}
+
+  # ===========================================================================
+  # Cross-spec HC edges (12)
+  # ===========================================================================
+  - {from: sh-008, to: hc-003}                        # [handler-contract.md §4.1.HC-003]
+  - {from: sh-008, to: hc-inv-002}                    # [handler-contract.md §5.HC-INV-002]
+  - {from: sh-009, to: hc-042}                        # [handler-contract.md §4.10.HC-042]
+  - {from: sh-009, to: hc-043}                        # [handler-contract.md §4.10.HC-043]
+  - {from: sh-009, to: hc-045}                        # [handler-contract.md §4.10.HC-045]
+  - {from: sh-011, to: hc-035}                        # [handler-contract.md §4.8] (HC-035..HC-040)
+  - {from: sh-011, to: hc-036}
+  - {from: sh-015, to: hc-018}                        # [handler-contract.md §4.4.HC-018]
+  - {from: sh-019, to: hc-024}                        # [handler-contract.md §4.6.HC-024]
+  - {from: sh-026, to: hc-018}                        # [handler-contract.md §4.4.HC-018]
+  - {from: sh-027, to: hc-026a}                       # [handler-contract.md §4.6.HC-026a] heartbeat carve-out
+  - {from: sh-inv-003, to: hc-035}                    # [handler-contract.md §4.8.HC-035]
+  - {from: sh-inv-003, to: hc-043}                    # HC-043 hash check
+
+  # ===========================================================================
+  # Cross-spec EM edges (3)
+  # ===========================================================================
+  - {from: sh-021, to: em-005}                        # [execution-model.md §4.1 EM-005] Outcome.status enum
+  - {from: sh-021, to: em-schema.outcome-status}      # term-use of OutcomeStatus enum
+  - {from: sh-schema.outcome-expectation, to: em-005}
+  - {from: sh-schema.outcome-expectation, to: em-schema.outcome-status}
+
+  # ===========================================================================
+  # Cross-spec EV edges (consumer-blocks-on-producer per §3.1 step 5)
+  # ===========================================================================
+  - {from: sh-020, to: ev-021}                        # [event-model.md §4.5.EV-021] observational replay
+  - {from: sh-021, to: ev-events.run-completed}       # [event-model.md §8.1.8] terminal-emission events
+  - {from: sh-021, to: ev-events.run-failed}
+  - {from: sh-024, to: ev-events.bus-overflow}        # [event-model.md] EV-011a bus_overflow
+  - {from: sh-024, to: ev-011a}                       # EV-011a sheding rule
+  - {from: sh-schema.event-expectation, to: ev-001}   # cites [event-model.md §8] event taxonomy / ev-001 envelope
+
+  # ===========================================================================
+  # Cross-spec WM edges (5)
+  # ===========================================================================
+  - {from: sh-012, to: wm-001}                        # [workspace-model.md §4.1.WM-001]
+  - {from: sh-013, to: wm-010}                        # [workspace-model.md §4.3.WM-010]
+  - {from: sh-015, to: wm-013b}                       # [workspace-model.md §4.3.WM-013b]
+  - {from: sh-015a, to: wm-019}                       # [workspace-model.md §4.5.WM-019] squash-merge
+
+  # ===========================================================================
+  # Cross-spec PL edges (7)
+  # ===========================================================================
+  - {from: sh-015, to: pl-003a}                       # [process-lifecycle.md §4.2.PL-003a] daemon stop RPC
+  - {from: sh-016a, to: pl-001}                       # [process-lifecycle.md §4.1.PL-001] one-daemon-per-project
+  - {from: sh-016a, to: pl-005}                       # [process-lifecycle.md §4.2.PL-005] startup sequence
+  - {from: sh-017, to: pl-005}                        # [process-lifecycle.md §4.2.PL-005] same entry-point
+  - {from: sh-019, to: pl-010}                        # [process-lifecycle.md §4.4 PL-010] degraded state
+  - {from: sh-026, to: pl-003a}                       # daemon stop RPC for cancel
+  - {from: sh-031, to: pl-005}                        # PL-005 step 8 reconciliation (intra-scenario, not concurrent)
+  - {from: sh-inv-002, to: pl-006}                    # [process-lifecycle.md §4.1.PL-006] orphan sweep / br subprocesses
+  - {from: sh-inv-002, to: pl-006a}                   # [process-lifecycle.md §4.1.PL-006a] HARMONIK_RUN_ID marker
+
+  # ===========================================================================
+  # Cross-spec ON edges (2)
+  # ===========================================================================
+  - {from: sh-015, to: on-029}                        # [operator-nfr.md §4.7] drain-timeout
+  - {from: sh-026, to: on-029}                        # ON-029 drain-timeout escalation to SIGKILL
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
+  wm: docs/decompose-to-tasks/mnem-maps/wm-mnem-map.csv
+  pl: docs/decompose-to-tasks/mnem-maps/pl-mnem-map.csv
+  "on": docs/decompose-to-tasks/mnem-maps/on-mnem-map.csv

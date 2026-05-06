@@ -1,0 +1,87 @@
+mnemonic,assigned_id,title
+cp,hk-a8bg,Control Points spec — implementation
+cp-001,hk-a8bg.1,ControlPoint is a single typed primitive
+cp-002,hk-a8bg.2,ControlPoint name is unique within the registry
+cp-003,hk-a8bg.3,Evaluator is boundary-classified
+cp-004,hk-a8bg.4,Per-Kind semantics fixed by the §4.1 table (coalesce)
+cp-006,hk-a8bg.5,Gate fires on transition attempt
+cp-007,hk-a8bg.6,Gate attach points + declared-order short-circuit
+cp-008,hk-a8bg.7,Gate subtypes declare intent
+cp-009,hk-a8bg.8,Gate denial leaves the run in the source state
+cp-010,hk-a8bg.9,Gate invocation is owned by S01
+cp-011,hk-a8bg.10,Gate evaluator MAY be cognition-tagged
+cp-012,hk-a8bg.11,Hook fires on event match
+cp-013,hk-a8bg.12,Hook lifecycle event types (MVH-baseline trigger set)
+cp-014,hk-a8bg.13,Hook ordering is deterministic
+cp-015,hk-a8bg.14,Hook failures are typed and do not halt the chain
+cp-016,hk-a8bg.15,Hook dispatch is owned by S05; delivery is at-least-once
+cp-017,hk-a8bg.16,Hook evaluator MAY be cognition-tagged
+cp-018,hk-a8bg.17,Guard reorders edges only
+cp-019,hk-a8bg.18,Guard precedes the cascade
+cp-020,hk-a8bg.19,Guard MUST be mechanism-tagged
+cp-021,hk-a8bg.20,Guard invocation is owned by S01
+cp-022,hk-a8bg.21,"Budget declares a typed, scoped allowance"
+cp-023,hk-a8bg.22,Budget is enforced at dispatch
+cp-024,hk-a8bg.23,Budget accrual is per-chunk
+cp-025,hk-a8bg.24,Budget warning threshold fires at 80% by default
+cp-026,hk-a8bg.25,Budget counter state is internal; observable only via events
+cp-026a,hk-a8bg.26,Budget counters rehydrate from JSONL `budget_accrual` replay
+cp-027,hk-a8bg.27,Reconciliation wall-clock budget is an outer bound
+cp-028,hk-a8bg.28,Role permission schema
+cp-029,hk-a8bg.29,MVH-required roles carry concrete default permission sets
+cp-030,hk-a8bg.30,Declared-but-deferred roles carry empty shells
+cp-031,hk-a8bg.31,Default skills include the Beads-CLI skill (notes: CP-052)
+cp-032,hk-a8bg.32,Freedom profile is a per-state constraint bundle
+cp-033,hk-a8bg.33,Freedom-profile tightest-wins semantics
+cp-034,hk-a8bg.34,Policy expressions use the `expr-lang/expr` grammar
+cp-034b,hk-a8bg.35,Policy expression evaluation cost ceiling (AST-step + wall-clock)
+cp-035,hk-a8bg.36,Policy YAML document required sections
+cp-036,hk-a8bg.37,DOT attributes reference policy YAML by name
+cp-037,hk-a8bg.38,Config-loading precedence
+cp-038,hk-a8bg.39,Policy schema version is per-document and N-1 readable
+cp-039,hk-a8bg.40,Cognition-tagged evaluators name the delegation path
+cp-040,hk-a8bg.41,Cognition-tagged evaluator verdict is persisted
+cp-040a,hk-a8bg.42,Persisted verdict carries an input-envelope hash
+cp-041,hk-a8bg.43,Replay consumes persisted verdict only when envelope hash matches
+cp-042,hk-a8bg.44,Verdict persistence is the boundary between mechanism and cognition
+cp-043,hk-a8bg.45,Registry is a single in-process table owned by S02
+cp-044,hk-a8bg.46,Registration surface (re-registration-safe on identical body)
+cp-045,hk-a8bg.47,Registry scope is daemon-local
+cp-046,hk-a8bg.48,Registry lookups are deterministic
+cp-047,hk-a8bg.49,S02 owns the registry; S05 owns Hook dispatch; S01 owns Gate + Guard invocation
+cp-048,hk-a8bg.50,Control-point effects are observable only via events
+cp-049,hk-a8bg.51,Nodes MAY declare `required_skills` (ingest-time syntactic validity)
+cp-050,hk-a8bg.52,Effective skill set is the union of node-level and role-default skills
+cp-051,hk-a8bg.53,Skill declaration is mechanism-tagged
+cp-inv-001,hk-a8bg.54,Sensor: registry is the single source of truth
+cp-inv-002,hk-a8bg.55,Sensor: control-point effects are observable only through events
+cp-inv-003,hk-a8bg.56,Sensor: cognition-tagged evaluators never silently re-invoke during replay
+cp-schema.control-point,hk-a8bg.57,Define `ControlPoint` record (§6.1)
+cp-schema.kind,hk-a8bg.58,Define `Kind` enum (§6.1)
+cp-schema.evaluator,hk-a8bg.59,Define `Evaluator` record (§6.1)
+cp-schema.gate-payload,hk-a8bg.60,Define `GatePayload` record (§6.1.1)
+cp-schema.gate-subtype,hk-a8bg.61,Define `GateSubtype` enum (§6.1.1)
+cp-schema.attach-point,hk-a8bg.62,Define `AttachPoint` enum (§6.1.1)
+cp-schema.hook-payload,hk-a8bg.63,Define `HookPayload` record (§6.1.2)
+cp-schema.side-effect-kind,hk-a8bg.64,Define `SideEffectKind` enum (§6.1.2)
+cp-schema.guard-payload,hk-a8bg.65,Define `GuardPayload` record (§6.1.3)
+cp-schema.budget-payload,hk-a8bg.66,Define `BudgetPayload` record (§6.1.4)
+cp-schema.scope-target,hk-a8bg.67,Define `ScopeTarget` syntactic shape (§6.1.4)
+cp-schema.budget-resource,hk-a8bg.68,Define `BudgetResource` enum (§6.1.4)
+cp-schema.budget-scope,hk-a8bg.69,Define `BudgetScope` enum (§6.1.4)
+cp-schema.delegation-path,hk-a8bg.70,Define `DelegationPath` record (§6.1.5)
+cp-schema.gate-verdict-record,hk-a8bg.71,Define `GateVerdictRecord` (§6.1.6)
+cp-schema.hook-verdict-record,hk-a8bg.72,Define `HookVerdictRecord` (§6.1.6)
+cp-schema.cognition-meta,hk-a8bg.73,Define `CognitionMeta` record (§6.1.6)
+cp-schema.side-effect,hk-a8bg.74,Define `SideEffect` record (§6.1.6)
+cp-schema.idempotency-class,hk-a8bg.75,Define `IdempotencyClass` enum (§6.1.6)
+cp-schema.gate-action,hk-a8bg.76,Define `GateAction` enum (§6.1.6)
+cp-schema.registry,hk-a8bg.77,Define `Registry` interface (§6.1.7)
+cp-schema.role,hk-a8bg.78,Define `Role` record (§6.2)
+cp-schema.permission-schema,hk-a8bg.79,Define `PermissionSchema` record (§6.2)
+cp-schema.freedom-profile,hk-a8bg.80,Define `FreedomProfile` record (§6.2)
+cp-test.policy-yaml-fixture,hk-a8bg.81,Policy-YAML required-section + config-precedence + N-1-readability fixture
+cp-test.cost-ceiling-harness,hk-a8bg.82,Policy-expression cost-ceiling harness (AST-step + wall-clock)
+cp-test.replay-safety-harness,hk-a8bg.83,Cognition-tagged replay-safety harness (envelope hash + Cat-6 escalation)
+cp-test.budget-replay-fixture,hk-a8bg.84,Budget JSONL-replay rehydration fixture
+cp-test.registration-fixture,hk-a8bg.85,"Two-pass registration fixture (idempotency, divergent-body, batch-id pairing)"

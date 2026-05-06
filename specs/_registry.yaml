@@ -23,3 +23,4 @@ prefixes:
   PL: {spec-id: process-lifecycle,  reserved: 2026-04-24, status: draft}
   RC: {spec-id: reconciliation,     reserved: 2026-04-24, status: draft}
   BI: {spec-id: beads-integration,  reserved: 2026-04-24, status: draft}
+  SH: {spec-id: scenario-harness,   reserved: 2026-05-05, status: draft}

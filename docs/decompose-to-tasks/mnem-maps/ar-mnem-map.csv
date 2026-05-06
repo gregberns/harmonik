@@ -1,0 +1,56 @@
+mnemonic,assigned_id,title
+ar,hk-zs0,Architecture spec — implementation
+ar-052,hk-zs0.1,Spec-category front-matter (runtime-subsystem vs foundation-cross-cutting)
+ar-053,hk-zs0.2,Envelope declaration section slot (§4.a) with reserved <PREFIX>-ENV-NNN ID range
+ar-001,hk-zs0.3,Four-axis classification applies to every cross-subsystem surface
+ar-002,hk-zs0.4,Baseline axis values are the default
+ar-003,hk-zs0.5,Profile for skeleton vs organ operations (daemon vs handler)
+ar-004,hk-zs0.6,Classification applies to every subsystem-exported type
+ar-005,hk-zs0.7,Every evaluation point is tagged mechanism or cognition
+ar-006,hk-zs0.8,Mechanism-tagged surface definition (deterministic-only)
+ar-007,hk-zs0.9,Cognition-tagged delegation path obligation
+ar-009,hk-zs0.10,All three required mechanisms exist in every deployment
+ar-010,hk-zs0.11,Search mechanism at the foundation level
+ar-011,hk-zs0.12,"Verifier is a role-function on a workflow node, not a subsystem"
+ar-012,hk-zs0.13,Traces are durable AlphaGo decision records distinct from events
+ar-013,hk-zs0.14,Subsystem envelope declaration (8 elements)
+ar-014,hk-zs0.15,Subsystem obligations (forbidden actions)
+ar-015,hk-zs0.16,Add-a-subsystem procedure (no foundation revision required)
+ar-016,hk-zs0.17,Subsystem is a Go package inside the daemon for MVH
+ar-017,hk-zs0.18,Enumerated out-of-process actors (closed list)
+ar-018,hk-zs0.19,Reconciliation is not a subsystem (workflow-library entry)
+ar-019,hk-zs0.20,Post-MVH process geometry is out of foundation scope
+ar-020,hk-zs0.21,Amendment-proposal procedure (paragraph + 2 reviewer personas)
+ar-021,hk-zs0.22,Amendment authority — material-change cognition delegation
+ar-022,hk-zs0.23,Foundation versioning and conformance citation
+ar-023,hk-zs0.24,Parallel-amendment serialization with touches: overlap detection
+ar-024,hk-zs0.25,Agent-type is a handler-contract conformance class
+ar-025,hk-zs0.26,Agent-type identifier shape (regex + reserved IDs + registration)
+ar-026,hk-zs0.27,Agent-type orthogonal to role
+ar-027,hk-zs0.28,"Cross-subsystem agent-type reference points (4 surfaces, byte-equal)"
+ar-028,hk-zs0.29,Adding a new agent type does not require foundation revision
+ar-029,hk-zs0.30,"Verification is a role-function, not a node-type enum value"
+ar-030,hk-zs0.31,Verification-result shape (no RETRY admissible)
+ar-031,hk-zs0.32,Quality-gate is a gate that reads a verification-result
+ar-032,hk-zs0.33,Seven roles named (canonical role vocabulary)
+ar-033,hk-zs0.34,MVH-required vs declared-but-deferred role split
+ar-034,hk-zs0.35,Per-role definition scope (purpose + typical actions + exclusions)
+ar-036,hk-zs0.36,Merge responsibility is not a top-level role
+ar-038,hk-zs0.37,Centralized-controller is the explicit inverse of Gas Town decentralization
+ar-039,hk-zs0.38,Merge agent operates in the run's worktree
+ar-040,hk-zs0.39,Acknowledged centralized-controller tradeoff (no graceful degradation)
+ar-041,hk-zs0.40,Repository as single source of truth
+ar-042,hk-zs0.41,Invariants MUST name their sensor
+ar-043,hk-zs0.42,"Constrain to empower (no exemption ""to move faster"")"
+ar-044,hk-zs0.43,Filesystem-backed coordination (no agent-conversation-as-state)
+ar-045,hk-zs0.44,Quality-left ordering (fast deterministic before expensive inferential)
+ar-047,hk-zs0.45,Spec artifact definition
+ar-048,hk-zs0.46,Workflow-graph artifact definition
+ar-049,hk-zs0.47,Bead artifact definition
+ar-050,hk-zs0.48,Many-to-many relationships without projection
+ar-051,hk-zs0.49,"""Feature"" is not a product primitive"
+ar-inv-001,hk-zs0.50,Sensor: mechanism/cognition split is strict at the process boundary
+ar-inv-003,hk-zs0.51,"Sensor: search + verifier + traces are required, not optional"
+ar-inv-007,hk-zs0.52,Sensor: centralized-controller invariant
+ar-inv-008,hk-zs0.53,Sensor: three-artifact separation
+ar-schema.agent-type-identifier,hk-zs0.54,Define agent_type identifier regex (§6.1)

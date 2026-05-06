@@ -1,0 +1,86 @@
+mnemonic,assigned_id,title
+on,hk-sx9r,Operator NFR spec — implementation
+on-env-001,hk-sx9r.1,Foundation-cross-cutting envelope declaration
+on-001,hk-sx9r.2,Operator-observable exit codes are structured
+on-002,hk-sx9r.3,Exit-code taxonomy obligation
+on-003,hk-sx9r.4,Startup failure-mode catalog obligation
+on-004,hk-sx9r.5,Config inventory obligation
+on-005,hk-sx9r.6,Commit-hash integrity gate is the MVH binary-install check
+on-005a,hk-sx9r.7,Commit-hash source via build-time ldflags stamp
+on-006,hk-sx9r.8,Full binary signing is deferred post-MVH
+on-007,hk-sx9r.9,Operator `task` equals execution-model `run`
+on-008,hk-sx9r.10,Pause and upgrade respect the between-task invariant
+on-009,hk-sx9r.11,`stop --immediate` is the only control that aborts in-flight runs
+on-010,hk-sx9r.12,Reconciliation carve-out: pause queues during `reconciling`
+on-011,hk-sx9r.13,Operator-control state machine + serializable transitions
+on-012,hk-sx9r.14,Improvement-pause is a subtype of pause
+on-013,hk-sx9r.15,Operator-control events emitted per state transition
+on-013a,hk-sx9r.16,Per-command supervision (defer recover() barrier)
+on-013c,hk-sx9r.17,Operator-command idempotency on no-op transitions
+on-014,hk-sx9r.18,Reconciliation operator override (pre-execution verdict pause)
+on-015,hk-sx9r.19,Beads is the queue; overlay schema is harmonik's half
+on-016,hk-sx9r.20,Queue schema version check on daemon startup
+on-017,hk-sx9r.21,"Beads pre-1.0 breakage absorbed via `br` adapter, not forked"
+on-018,hk-sx9r.22,N-1 compatibility is the MVH compat window
+on-019,hk-sx9r.23,Migration releases are operator-paused boundaries
+on-020,hk-sx9r.24,`harmonik upgrade` contract obligation (7 sub-rules including rollback)
+on-020a,hk-sx9r.25,Upgrade-intent durable marker (`.harmonik/daemon.upgrading`)
+on-021,hk-sx9r.26,Upgrade preserves in-flight run recoverability (iff drain-completed)
+on-022,hk-sx9r.27,Secrets injected at handler launch; never logged; redactor fail-closed
+on-023,hk-sx9r.28,Secrets-redaction compile-time payload-schema check
+on-024,hk-sx9r.29,Command-execution sandbox invariant
+on-025,hk-sx9r.30,Network egress and skill-injection policy enforcement
+on-026,hk-sx9r.31,Prompt-injection defense is handler-owned
+on-027,hk-sx9r.32,Graceful-shutdown ordering (8-step drain umbrella)
+on-027.s1,hk-sx9r.33,Step 1 — Orchestrator stops pulling new tasks from the queue
+on-027.s2,hk-sx9r.34,"Step 2 — In-flight runs reach next checkpoint, then suspend"
+on-027.s3,hk-sx9r.35,Step 3 — Agent runners wait for handler subprocesses to complete
+on-027.s3a,hk-sx9r.36,Step 3a — `br`-CLI adapter intent-log drain
+on-027.s4,hk-sx9r.37,Step 4 — Event bus flushes pending events (fsync)
+on-027.s5,hk-sx9r.38,Step 5 — Memory layer flushes indexing
+on-027.s6,hk-sx9r.39,Step 6 — Workspace manager unlocks leased workspaces
+on-027.s7,hk-sx9r.40,Step 7 — Orchestrator exits (or enters `paused`)
+on-027a,hk-sx9r.41,Drain step atomicity and crash-recovery (F8c constraint)
+on-028,hk-sx9r.42,`stop --immediate` skips drain steps 2–3
+on-029,hk-sx9r.43,Drain timeout per-step + optional sum-bound (F8c constraint)
+on-030,hk-sx9r.44,"Restart reconstruction path (git + Beads, no JSONL replay)"
+on-030a,hk-sx9r.45,Pause-state durable marker (`.harmonik/daemon.state`)
+on-031,hk-sx9r.46,Restart RTO target (30s p95 nominal / 300s hard ceiling)
+on-032,hk-sx9r.47,RTO criteria and hard ceiling (3 criteria)
+on-033,hk-sx9r.48,RTO measurement boundary (monotonic-corrected clock)
+on-053,hk-sx9r.49,Post-panic forensic file (`.harmonik/panic-<timestamp>.log`)
+on-034,hk-sx9r.50,Every subsystem emits typed events
+on-035,hk-sx9r.51,Every subsystem emits structured logs (NDJSON wire format)
+on-036,hk-sx9r.52,Every subsystem exposes a health-check interface
+on-037,hk-sx9r.53,Every subsystem emits liveness heartbeats
+on-038,hk-sx9r.54,Audit records are a subset of traces
+on-039,hk-sx9r.55,All observability operations are mechanism-tagged
+on-040,hk-sx9r.56,Silent-hang detection obligation + drain-forced synthesis
+on-041,hk-sx9r.57,Multi-daemon commands obligation + per/cross-daemon ceiling distinction
+on-042,hk-sx9r.58,Multi-tenancy is explicitly deferred post-MVH
+on-043,hk-sx9r.59,Metrics exposition format is deferred post-MVH
+on-044,hk-sx9r.60,Distributed tracing across daemons is deferred post-MVH
+on-050,hk-sx9r.61,`harmonik attach` minimum surface (5 sub-rules)
+on-051,hk-sx9r.62,Multi-attach arbitration
+on-054,hk-sx9r.63,`harmonik status` reports pause-reason discriminator
+on-045,hk-sx9r.64,"Budgets declared, enforced, attributed cross-subsystem"
+on-046,hk-sx9r.65,Budget events are operator-observable
+on-047,hk-sx9r.66,Category defaults for resource budgets (5-row table)
+on-048,hk-sx9r.67,Exhaustion protocol (4-step sequence)
+on-049,hk-sx9r.68,Attribution shape (who-consumed-what 5-tuple + delegation_path)
+on-inv-001,hk-sx9r.69,Sensor: N-1 compat window holds across every versioned artifact
+on-inv-003,hk-sx9r.70,Sensor: secrets never appear in durable sinks unredacted
+on-inv-005,hk-sx9r.71,Sensor: every subsystem reports its reconstruction contribution
+on-inv-006,hk-sx9r.72,Sensor: no subsystem introduces a control surface bypassing between-task invariant
+on-error.taxonomy,hk-sx9r.73,ON exit-code taxonomy (§8) — 23-code authoritative table
+on-test.exit-code-taxonomy-fixture,hk-sx9r.74,Exit-code taxonomy + obligations fixture (ON-001..ON-004)
+on-test.integrity-gate-harness,hk-sx9r.75,"Commit-hash integrity gate harness (ON-005, ON-005a, ON-006)"
+on-test.operator-control-fsm-harness,hk-sx9r.76,"Operator-control state-machine scenario harness (ON-007..ON-014, ON-013a, ON-013c)"
+on-test.queue-compat-harness,hk-sx9r.77,Queue-format compat harness (ON-015..ON-017)
+on-test.schema-compat-harness,hk-sx9r.78,"Schema compat window harness (ON-018, ON-019, ON-INV-001)"
+on-test.upgrade-contract-harness,hk-sx9r.79,"Upgrade contract scenario harness (ON-020, ON-020a, ON-021)"
+on-test.security-and-shutdown-harness,hk-sx9r.80,"Security + shutdown 8-step drain harness (ON-022..ON-029, ON-027a, ON-INV-003)"
+on-test.restart-rto-harness,hk-sx9r.81,"Restart RTO benchmark + monotonic-clock harness (ON-030..ON-033, ON-053, ON-INV-005)"
+on-test.observability-envelope-harness,hk-sx9r.82,Observability envelope + silent-hang harness (ON-034..ON-040)
+on-test.multi-daemon-and-attach-harness,hk-sx9r.83,"Multi-daemon + attach surface harness (ON-041..ON-046, ON-050, ON-051, ON-054)"
+on-test.budget-defaults-and-attribution-harness,hk-sx9r.84,Budget defaults + exhaustion + attribution harness (ON-047..ON-049)

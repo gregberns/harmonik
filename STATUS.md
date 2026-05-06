@@ -1,10 +1,8 @@
 # Harmonik Project Status
 
-> Snapshot of where the harmonik knowledge base stands. Updated when significant work lands.
+> **[HANDOFF.md](HANDOFF.md) is the authoritative source of current state and next steps.** This file is a higher-level structural summary; it may lag the handoff. Sections below labelled "*(historical)*" are preserved for reference.
 >
-> Last updated: 2026-04-27 — **BI smoke-loaded into `.beads/`; discipline patched to v0.4; pilot patched to v0.1.3; pilot review protocol drafted.** First end-to-end run of decompose-to-tasks against live `br` v0.1.45: 66 beads created under epic `hk-872` (corpus prefix `hk`, single DB), 110 intra-spec `blocks` edges, zero cycles. Smoke load surfaced 6 discipline-rule findings (F11–F16) and 5 pilot-row findings; both docs patched and re-loaded clean. Three-reviewer review protocol (Coverage / Decomposition-quality / Reference) now gates every remaining pilot. All 10 specs remain `reviewed`; all spec IDs FROZEN.
->
-> Session handoff: see `HANDOFF.md` (skill-formatted), `SESSION_HANDOFF.md` (prose), and `NEXT_AGENT.md` for continuation instructions.
+> Last updated: 2026-05-05 — **Decompose-to-tasks COMPLETE for all 10 specs.** ~639 child beads + ~1700 edges across 10 spec epics in Beads workspace `<repo>/.beads/`; zero cycles corpus-wide. **Bootstrap-subset analysis (`hk-ahvq.41`) synthesis complete: 291 beads labelled `scope:bootstrap`, dependency-closed (S07 pending — beads will join on load).** Parent `.41` stays open until S07 spec lands as parallel work stream. See `docs/decompose-to-tasks/bootstrap-subset.md` for the consolidated doc. Phase-0 exit remaining: forward-deferred verification (`.39`, S07-caveated), milestone close (`.42`, gated on S07), discipline v0.10 patch batch (15 findings; 2 already RESOLVED via canonical examples). Detail in HANDOFF.md.
 
 ## What Harmonik Is
 

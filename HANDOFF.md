@@ -1,31 +1,38 @@
-<!-- PP-TRIAL:v2 2026-04-30 main -->
+<!-- PP-TRIAL:v2 2026-05-05 main -->
 # Session Handoff
 
 ## Status
-**Clean.** Phase-0 meta-graph loaded into Beads (1 epic + 42 workflow tasks under `tag:meta` / `phase:0`). HC r1 review still pending — that is the next hands-on task.
+**Running clean.** `.40` mnem-maps consolidated. `.41` bootstrap-subset analysis through Pass 2 + closure check — answer is **291 beads, dependency-closed**. One blocking user question: the S07 scenario-harness gap.
 
-## What we did and why
-User asked: "Why not decompose everything that needs to be done and put it in Beads, so what's left and what's done is unambiguous?" Right call. We added a workflow-task layer alongside the impl-task layer in the same Beads workspace, segmented by label so they don't mix. The loader was extended with `kind: workflow` (no `req` field needed), `meta-pilot-data.yaml` was authored, and the load ran clean (48 edges, 0 rejections, no cycles).
+## What we did
+- `.40` mnem-maps: regenerated 10 CSVs to `docs/decompose-to-tasks/mnem-maps/` (the /tmp originals were purged by macOS); updated 6 pilot-yamls + `loader-tooling.md` to the canonical paths. All staged, not committed; bead status not flipped.
+- `.41` bootstrap-subset: opening pass (`docs/decompose-to-tasks/bootstrap-subset-opening.md`) + 7 parallel cluster-enumeration agents + closure-check agent. Output under `docs/decompose-to-tasks/bootstrap-subset/`.
+- User answered the 4 opening-pass questions: twin handler IN, Pi handler OUT, output = both markdown doc + `scope:bootstrap` labels (my call), scenario harness IN.
+- STATUS.md + TASKS.md banners updated to point at HANDOFF.md as authoritative.
 
-## Where things stand
-- Meta epic: `hk-ahvq` ("Phase 0 completion — load remaining pilots and exit to code phase").
-- 42 children in `draft` (same convention as impl beads — they need promotion to `open` before `br ready` surfaces them).
-- Coverage: HC remaining (review + patch), 5 spec pilots × 7 tasks each (data file → narrative → dry-run → load → r1 review → patch → backfill of earlier pilots' parked citations), 5 phase-exit tasks (cycle check, citation zero-out, mnem-map consolidation, bootstrap-subset identification, milestone).
-- Working tree very dirty: meta yaml, loader edit, loader-tooling.md edit, 2 new memory files, plus everything that was already uncommitted at session start. **User asked but did not answer**: should anything be committed before HC r1 starts? Worth asking up front.
+## Headline result
+Bootstrap subset = **285 INCLUDE beads**, dependency-closed at **291** after 6 PULL_INs (5 EV §8 rows that PL emits + 1 HC `.15` Adapter-surface-is-fixed). BI confirmed as structurally sound chokepoint. ~34% of corpus. Per-cluster: PL 37, WM 45, EM 65, HC 45, EV 42, BI 36, AR 5, CP 0, ON 6, RC 4.
 
-## Next step
-**HC r1 review** = bead `hk-ahvq.1`. Mechanics unchanged from the prior handoff: 3-reviewer pass per `docs/decompose-to-tasks/pilot-review-protocol.md` §6 covering the 6 cycle-rejected edges in `hc-load-findings.md` plus the EV-edge count tension (`hc-pilot.md` §5.3 says 22, the data file has 26). Apply patches to `hc-pilot-data.yaml`, re-run the loader (resume mode auto-skips loaded beads).
+## Blocking question for the user
+**S07 scenario-harness has no spec or epic in the corpus.** `docs/bootstrap.md` step 8 names it; the decompose-to-tasks pass never authored one. Q4 (harness IN) needs a Pass 3 carve-out. Three options:
+- **(a)** Author a thin S07 spec + S07 epic now. Delays Pass 3 by ~1 session of work.
+- **(b)** Declare S07 = code-only-no-bead — harness lives as test code in the bootstrap implementation phase. **Recommended.** Fastest path; S07 is a test-time concern, not a runtime subsystem.
+- **(c)** Hybrid: minimal contract bead under an existing/new epic, no full spec.
 
-## If something changes
-- If HC r1 surfaces a brand-new rule class not covered by `discipline.md` v0.8: patch discipline.md FIRST, propagate to prior pilots, then continue. Do not fold rule-class discovery into the patch bead.
-- After HC r1+patch lands, the natural next task is `hk-ahvq.3` (CP — Control Points — author yaml). The user has agreed CP authoring is autonomous.
+## Next step (after S07 answer)
+Dispatch Pass 3 synthesis agent: apply 6 PULL_INs + S07 carve-out + `br update --label scope:bootstrap` across the 291 beads + write final consolidated `bootstrap-subset.md`. Closes `.41`; unblocks `.39` (forward-zero verification) and `.42` (milestone close).
 
 ## Files to open first
-1. `HANDOFF.md` (this file).
-2. `docs/decompose-to-tasks/meta-pilot-data.yaml` — the new workflow task graph.
-3. `docs/decompose-to-tasks/hc-load-findings.md` — what HC r1 must chase.
-4. `docs/decompose-to-tasks/pilot-review-protocol.md` §6 — review mechanics.
-5. `scripts/load-pilot.py` — loader (extended with `kind: workflow` this session).
+1. `HANDOFF.md` (this file)
+2. `docs/decompose-to-tasks/bootstrap-subset/closure-check.md` — closure findings + 6 PULL_IN list
+3. `docs/decompose-to-tasks/bootstrap-subset/SUMMARY.md` — Pass 2 aggregation (its tally of 271 is an undercount — real is 285; closure-check is authoritative)
+4. `docs/decompose-to-tasks/bootstrap-subset-opening.md` — original scoping pass
 
-## Blocking question
-Does the user want any of the working-tree changes committed before HC r1? They asked at end of session and the session ended before they answered.
+## If something changes
+- If user wants to commit before Pass 3: natural unit is "decompose-to-tasks corpus + bootstrap-subset analysis" — also covers prior session's 5 untracked pilots.
+- If user wants discipline v0.10 instead: 13 findings still queued, blocked on the F-pilot-PL-4 carve-out decision (separate from `.41`).
+
+## Things worth knowing
+- `.40` is functionally done; bead status NOT yet flipped — user manages `br update` at their discretion.
+- 4 pilot yamls (AR/EM/EV/BI) had no `/tmp` refs to update — likely no `cross_specs` blocks at all. Discipline question for v0.10 batch, not blocking.
+- Working tree is large; nothing mid-edit off-disk.

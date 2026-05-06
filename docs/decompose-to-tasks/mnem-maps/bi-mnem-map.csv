@@ -1,0 +1,67 @@
+mnemonic,assigned_id,title
+bi,hk-872,Beads Integration spec — implementation
+bi-001,hk-872.1,Adopt Beads SQLite fork; reject Dolt variant
+bi-002,hk-872.2,Route all Beads I/O through the br CLI
+bi-003,hk-872.3,Forbid br serve (Beads MCP server)
+bi-004,hk-872.4,Daemon to br direct; agents to br via Beads-CLI skill
+bi-005,hk-872.5,Beads is authoritative for bead content
+bi-006,hk-872.6,Beads owns typed dependency edges
+bi-007,hk-872.7,Coarse status: HarmonikWriteStatus 5-value subset; reads tolerate Beads enum
+bi-008,hk-872.8,Bead IDs stable for bead lifetime; project-scoped opaque
+bi-009,hk-872.9,Beads provides atomic-claim semantics
+bi-010,hk-872.10,Implement terminal-transition write surface (claim/close/reopen)
+bi-011,hk-872.11,Forbid intra-run Beads writes
+bi-012,hk-872.12,Route every terminal-transition write through the adapter
+bi-013,hk-872.13,Implement br ready query (ready-work)
+bi-014,hk-872.14,Implement dependency-graph query
+bi-015,hk-872.15,Implement bead-detail query
+bi-016,hk-872.16,Implement reconciliation queries (audit log + status)
+bi-014a,hk-872.17,Orphan br subprocess sweep on daemon startup
+bi-017,hk-872.18,Run metadata records bead_id
+bi-018,hk-872.19,Checkpoint trailer Harmonik-Bead-ID for bead-bound runs
+bi-019,hk-872.20,Bead-scoped event payloads carry bead_id
+bi-020,hk-872.21,Session logs for bead-bound runs carry bead_id metadata
+bi-021,hk-872.22,Beads is authoritative for content + coarse status
+bi-022,hk-872.23,Git is authoritative for completion
+bi-023,hk-872.24,JSONL is observational only
+bi-024,hk-872.25,Pin Beads version per harmonik release; exact-match window at MVH
+bi-024a,hk-872.26,br --version handshake at startup
+bi-025,hk-872.27,Implement single br-CLI adapter (sole translation layer)
+bi-025a,hk-872.28,br exit-code to BrError classification
+bi-025b,hk-872.29,Mandatory --format json invocation; no text parsing
+bi-025c,hk-872.30,br subprocess timeout discipline (5s read / 10s write)
+bi-025d,hk-872.31,Capture br stderr with 1 MiB cap and 5 explicit scenarios
+bi-025e,hk-872.32,Allow concurrent br invocations; no adapter-side mutex
+bi-026,hk-872.33,Absorb Beads breakage in adapter; no forking Beads
+bi-027,hk-872.34,Beads-CLI skill is the agent-facing access path
+bi-028,hk-872.35,Beads-CLI skill present in every agent's launch context
+bi-029,hk-872.36,Derive deterministic idempotency key <run_id>:<transition_id>:<op>
+bi-030,hk-872.37,Pre-write intent log: atomic write + parent-dir fsync on create AND delete
+bi-030.s1,hk-872.37.1,Step 1 — Write IntentLogEntry to <key>.json.tmp-<rand>
+bi-030.s2,hk-872.37.2,Step 2 — fsync(temp_fd) before rename
+bi-030.s3,hk-872.37.3,Step 3 — rename(2) to canonical <key>.json
+bi-030.s4,hk-872.37.4,Step 4 — fsync(parent_dir_fd) after rename (create durability)
+bi-030.s5,hk-872.37.5,Step 5 — Invoke br only AFTER step 4
+bi-030.s6,hk-872.37.6,Step 6 — On success: unlink + fsync(parent_dir_fd) (delete durability)
+bi-031,hk-872.38,Idempotent crash-recovery via status-check-before-reissue
+bi-031.s1,hk-872.38.1,Step 1 — Read intent file fields
+bi-031.s2,hk-872.38.2,Step 2 — br show <bead_id> to read current coarse_status
+bi-031.s3,hk-872.38.3,Step 3 — Status-equals-intended branch with audit-log disambiguation (3i/3ii)
+bi-031.s4,hk-872.38.4,Step 4 — Status-equals-prestate reissue + 6 BrError branches (4a-4f)
+bi-031.s5,hk-872.38.5,Step 5 — Status-neither-pre-nor-post: Cat 3a divergence emission
+bi-031b,hk-872.39,br show JSON-consistency dependency
+bi-032,hk-872.40,Intent log is the Cat 3a detector's evidence source
+bi-inv-001,hk-872.41,Sensor: no intra-run Beads writes (corpus + os/exec lint + scenario)
+bi-inv-002,hk-872.42,Sensor: bead ID byte-equal across run/trailer/event/session-log
+bi-inv-003,hk-872.43,Sensor: git wins on completion disagreement
+bi-inv-004,hk-872.44,Sensor: Beads status changes auditable through adapter or flagged
+bi-schema.bead-record,hk-872.45,Define BeadRecord (§6.1)
+bi-schema.coarse-status,hk-872.46,Define CoarseStatus enum (§6.1)
+bi-schema.harmonik-write-status,hk-872.47,"Define HarmonikWriteStatus enum (§6.1, BI v0.4.1 split)"
+bi-schema.dependency-edge,hk-872.48,Define DependencyEdge (§6.1)
+bi-schema.edge-kind,hk-872.49,Define EdgeKind enum (§6.1)
+bi-schema.br-error,hk-872.50,Define BrError enum (§6.1a)
+bi-schema.intent-log-entry,hk-872.51,Define IntentLogEntry (§6.1)
+bi-schema.terminal-op,hk-872.52,Define TerminalOp enum (§6.1)
+bi-error.taxonomy,hk-872.53,BrError to reconciliation-category routing table (§8)
+bi-test.crash-harness,hk-872.54,Crash-injection test harness for adapter idempotency

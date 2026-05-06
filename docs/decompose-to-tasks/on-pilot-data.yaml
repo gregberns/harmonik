@@ -1,0 +1,1697 @@
+# ON pilot v0.1.1 — bead and edge data
+# Drafted 2026-04-30 against specs/operator-nfr.md v0.4.1 (status: reviewed).
+#
+# v0.1.1 (2026-04-30) — applies r1 review patches per
+# docs/reviews/2026-04-30-on-pilot-r1/synthesis.md:
+#   F-refs-ON-1 (MAJOR): added on-025 → ev-events.skills-provisioned
+#   F-refs-ON-2 (MAJOR): added on-028 → forward:rc-NNN (resolved to RC-007 —
+#     load-bearing single-owner of action-mapping dispatch contract per
+#     [reconciliation/spec.md §4.2]; verified ON-028 spec body cite)
+#   F-refs-ON-3 (MINOR): removed 2 invented forward edges (on-040 →
+#     forward:rc-014, on-045 → forward:rc-018) — verified no spec cite
+#     backing in ON-040 (HC §4.6 / EV §8.3 / HC §7.1 / ON-037 / ON-029
+#     only) and ON-045 (CP §4.5 / ON-042 only)
+#   F-refs-ON-4 (MINOR): wide-fanout enumeration count 4→6 in narrative
+#     (yaml top-comment unchanged — count was 4 in v0.1.0 narrative; on-020
+#     and on-041 were tagged in yaml beads but not enumerated in narrative)
+#   F-refs-ON-5 (MINOR): F-pilot-ON-6 enumeration corrected (6→7 WM cites;
+#     ON-022 → ON-INV-003 mis-routing fix; ON-ENV-001 + ON-015 added).
+#     6 of 7 cites are load-bearing — strengthens class-lane signal that
+#     WM should join ON's depends-on next revision.
+#   F-cov-ON-1 (cosmetic): on-error.taxonomy 23-code → 24-code (codes 0..23
+#     incl. code 0 success = 24 entries)
+#   F-cov-ON-2 (cosmetic): ON-013b placeholder note in on-pilot.md §10
+#   F-pilot-ON-5 (MINOR/class) RESOLVED to documentation-only discipline
+#     patch via reviewer verdict (a) — no pilot rewrite needed.
+# Re-run posture: edges-only mode (--skip-beads); 2 ADD + 2 REMOVE; ~270
+# already_exists; cycles MUST stay 0.
+# Discipline version applied: v0.9 (HC r1 lockstep release; includes
+# §2.11(c.2) taxonomy-edge-direction anti-pattern note and §2.11(d.2)
+# co-owned event payload edge direction).
+#
+# ON is the operator-NFR / cross-cutting non-functional requirements spec.
+# It owns: operator-control state machine (§4.3 + §7.1), pause/upgrade
+# between-task invariant, commit-hash integrity gate (§4.2), N-1 schema
+# compatibility window (§4.5), `harmonik upgrade` contract (§4.6), secrets
+# redaction (§4.7), graceful-shutdown 8-step drain ordering (§4.7.ON-027),
+# restart RTO targets (§4.8), observability envelope (§4.9), silent-hang
+# obligation (§4.9.ON-040), multi-daemon coordination + multi-tenancy
+# deferral (§4.10), resource budgets (§4.11), AND the AUTHORITATIVE
+# §8 exit-code taxonomy (24 codes; codes 0..23 incl. code 0 success; PL §8.x and other specs cite ON §8 by
+# reference). depends-on: [architecture, event-model, execution-model,
+# handler-contract, control-points, process-lifecycle, reconciliation,
+# beads-integration]. Of these: AR/EM/EV/HC/CP/PL/BI are LOADED; RC is
+# forward-deferred.
+#
+# WM is NOT in ON's depends-on. WM cites from ON normative prose surface
+# as F-pilot-EV-3 informational findings (NOT forward-deferred edges).
+#
+# PL ↔ ON cycle-break (per PL §9.3 NOTE): PL excludes ON from depends-on
+# (PL is a downstream consumer of ON's exit-code taxonomy, drain ordering,
+# RTO measurement, etc.). ON INCLUDES PL in depends-on (ON cites PL for
+# pidfile-locked exit code consumption surface, PL-005 startup hook for
+# ON-020a/ON-030a marker reads, PL-018a panic barrier, PL-027(iii)
+# fd-passing socket continuity). ON cites PL → loadable cross-spec edges
+# (PL is loaded). PL cites ON → forward:on-* in PL pilot — F-pilot-PL-4
+# §3.2 violation tracked under hk-ahvq.46. Not this pilot's concern.
+#
+# Sanity tally:
+#   §4 reqs in spec (active, including §4.a envelope):  60
+#     §4.a envelope:                                     1  (ON-ENV-001)
+#     §4.1 exit codes + obligations:                     4  (ON-001..ON-004)
+#     §4.2 integrity gate:                               3  (ON-005, ON-005a,
+#                                                            ON-006)
+#     §4.3 operator-control between tasks:              10  (ON-007..ON-014;
+#                                                            ON-013a, ON-013c
+#                                                            slot in)
+#     §4.4 queue-format compat:                          3  (ON-015, ON-016,
+#                                                            ON-017)
+#     §4.5 schema compat window:                         2  (ON-018, ON-019)
+#     §4.6 harmonik upgrade contract:                    3  (ON-020, ON-020a,
+#                                                            ON-021)
+#     §4.7 secrets redaction + graceful shutdown:        9  (ON-022..ON-029;
+#                                                            ON-027a slot in)
+#     §4.8 restart RTO:                                  6  (ON-030, ON-030a,
+#                                                            ON-031, ON-032,
+#                                                            ON-033, ON-053)
+#     §4.9 observability envelope:                       7  (ON-034..ON-040)
+#     §4.10 multi-daemon + multi-tenancy deferral:       7  (ON-041..ON-044,
+#                                                            ON-050, ON-051,
+#                                                            ON-054)
+#     §4.11 resource budgets:                            5  (ON-045..ON-049)
+#   Note: STATUS.md baseline cites "61 active §4 reqs (v0.4.1 added 1
+#   OQ-RC-009 acknowledgment row)". The OQ-RC-009 acknowledgment is a
+#   cross-ref note PARAGRAPH at end of §11 (not a numbered ON-NNN heading);
+#   it does not mint a bead. See F-pilot-ON-1.
+#   §2.3 coalesces applied:                              0  (every cluster
+#                                                            evaluated has
+#                                                            an independently
+#                                                            testable
+#                                                            clarification;
+#                                                            see F-pilot-ON-2)
+#   §2.1a pure cross-reference collapses:                0  (no req is a
+#                                                            verbatim
+#                                                            pointer-only
+#                                                            restatement)
+#   First-class §4 req beads:                           60
+#   §5 invariants (active):                              4  (ON-INV-001,
+#                                                            ON-INV-003,
+#                                                            ON-INV-005,
+#                                                            ON-INV-006;
+#                                                            ON-INV-002 and
+#                                                            ON-INV-004
+#                                                            retired in v0.3
+#                                                            — never reusable)
+#   §6 schema beads:                                     0  (ON declares
+#                                                            no new types;
+#                                                            §6.1/§6.2/§6.3
+#                                                            explicitly
+#                                                            omitted per
+#                                                            §6 omission
+#                                                            declaration; ON
+#                                                            references types
+#                                                            owned by EV / EM
+#                                                            / CP / WM via
+#                                                            cross-spec
+#                                                            edges; co-owned
+#                                                            events per §6.5
+#                                                            land on EV-row
+#                                                            beads per
+#                                                            §2.11(d.2) — see
+#                                                            F-pilot-ON-3)
+#   §8 error-taxonomy beads:                             1  (single-bead
+#                                                            `on-error.taxonomy`
+#                                                            covering the 24
+#                                                            exit codes;
+#                                                            single-bead form
+#                                                            per §2.11(c) /
+#                                                            BI + WM
+#                                                            precedent —
+#                                                            SHAPE-not-COUNT
+#                                                            tiebreaker per
+#                                                            F-pilot-WM-2;
+#                                                            see F-pilot-ON-4)
+#   Multi-step §2.2 splits:                              1  (ON-027 8-step
+#                                                            graceful-shutdown
+#                                                            drain SPLITS
+#                                                            into umbrella +
+#                                                            8 step beads —
+#                                                            DEVIATES from
+#                                                            PL precedent;
+#                                                            see F-pilot-ON-5
+#                                                            for F8b
+#                                                            independent-
+#                                                            -code-path
+#                                                            tiebreaker
+#                                                            rationale)
+#   ON-027 step beads:                                   8  (s1..s7 + s3a;
+#                                                            parented to
+#                                                            on-027 umbrella)
+#   Test-infra beads:                                   11  (consolidated
+#                                                            from §10.2's 11
+#                                                            test-obligation
+#                                                            groups)
+#   Total beads minted:                          60 + 8 + 4 + 1 + 11 = 84
+#   Bead-to-§4-req multiplier:                         84 / 60 = 1.40×
+#                                                      (BI 1.42×; HC 0.95×;
+#                                                       CP 1.55×; WM 1.31×;
+#                                                       PL 1.37×; ON between
+#                                                       PL and BI — split
+#                                                       ON-027 + larger
+#                                                       test-infra count
+#                                                       offsets the absent
+#                                                       schema beads).
+#
+# §2.11(c.2) anti-pattern applications: ON has a single `on-error.taxonomy`
+#   bead (single-bead form per §2.11(c) — 24 sentinel exit codes are the
+#   "vocabulary"). Per discipline v0.9 §2.11(c.2), edges run
+#   <req> → on-error.taxonomy (consumer → vocabulary owner), NEVER the
+#   inverse. Intra-ON consumer→on-error.taxonomy edges:
+#     ON-001 (exit-code structure rule)            → on-error.taxonomy
+#     ON-002 (taxonomy obligation)                 → on-error.taxonomy
+#     ON-003 (startup failure-mode catalog)        → on-error.taxonomy
+#     ON-013 (operator_command_rejected → code 16) → on-error.taxonomy
+#     ON-016 (queue-schema-unsupported → code 2)   → on-error.taxonomy
+#     ON-018 (schema-incompatible → codes 3, 4, 15)→ on-error.taxonomy
+#     ON-020 (upgrade contract codes 13, 14, 15)   → on-error.taxonomy
+#     ON-020a (upgrade marker → code 14 mismatch)  → on-error.taxonomy
+#     ON-027 (drain-timeout-escalated → code 11)   → on-error.taxonomy
+#     ON-027a (step error → code 21)               → on-error.taxonomy
+#     ON-029 (drain-timeout config → code 11)      → on-error.taxonomy
+#     ON-031 (RTO ceiling → code 12)               → on-error.taxonomy
+#     ON-032 (RTO ceiling)                         → on-error.taxonomy
+#     ON-041 (multi-daemon-target-missing → 17;
+#             machine-ceiling-exhausted → 18)      → on-error.taxonomy
+#     ON-048 (dispatch_deferred → 18)              → on-error.taxonomy
+#     ON-053 (runtime-panic → code 19)             → on-error.taxonomy
+#   = 16 intra-ON consumer→on-error.taxonomy edges. Per §2.11(c.2) and
+#   F-pilot-HC-direction, the taxonomy bead does NOT block on §4 reqs.
+#   Cross-spec consumer→on-error.taxonomy edges from PL/RC/etc. are
+#   EDGES IN OTHER PILOTS (PL's §3.2 violation — forward:on-NNN — is
+#   tracked under hk-ahvq.46; not this pilot's concern). ON's OWN
+#   internal consumer→on-error.taxonomy edges stay intra-ON.
+#
+# §2.11(d.2) co-owned event payloads (ON emits, EV owns shape): ON's
+#   §6.5 enumerates 8 events emitted by the operator-control path:
+#     operator_pause_status (paired-phase)
+#     operator_resuming
+#     operator_stopped
+#     operator_upgrading
+#     operator_upgrade_completed
+#     operator_upgrade_rejected
+#     operator_command_rejected
+#     dispatch_deferred
+#   Per §2.11(d.2), edges run <on-WHEN-rule> → <ev-events.<event-name>>.
+#   ON's WHEN-rule beads (ON-013, ON-005, ON-013a, ON-027, etc.) cite
+#   the EV row's payload-shape declaration; consumer-blocks-on-producer
+#   direction emits ON-NNN → ev-events.<name>. Counted: 11 ON→EV-row
+#   edges (8 enumerated co-owned events plus daemon_ready, daemon_shutdown,
+#   agent_warning_silent_hang, infrastructure_unavailable, daemon_degraded,
+#   redaction_failed, budget_warning, budget_exhausted, budget_accrual
+#   informational consumer / synthesizer cites; counted in edges block
+#   below). EV's reciprocal direction is owned by EV's pilot (forward:on-*
+#   resolved at backfill).
+#
+# Forward-deferred edge counts (per target spec; logged only, not loaded):
+#   rc:  ~12 (ON-003 startup-failure Cat 0 RC-012 link;
+#             ON-009 RC-014 in-flight-run reconciliation;
+#             ON-010 RC-002 reconciliation carve-out;
+#             ON-014 RC-018 + RC-025 verdict-execution operator override;
+#             ON-027 step 2 RC-002 ordering;
+#             ON-030 RC-008 in-flight-run dispatch on restart;
+#             ON-032 RC-018 wall-clock-budget bound;
+#             ON-040 RC-014 silent-hang routing;
+#             ON-045 RC-018 reconciliation budget;
+#             ON-047 RC-018 wall-clock budget category default;
+#             ON-048 RC-018 fallback-verdict path;
+#             ON-INV-005 reconciliation-bounded-restart predicate)
+#   Note: RC is in ON's depends-on but NOT yet pilot-loaded → forward-defer
+#   per F-pilot-EM-2 / Option B precedent. ON's PL edges resolve directly
+#   via /tmp/pl-mnem-map.csv. ON's WM edges (workspace-model is NOT in
+#   depends-on, but ON-024 cites WM §4.3 sandbox + ON-022 secrets redaction
+#   touches WM-026 atomic discipline) surface as F-pilot-EV-3 informational
+#   findings. WM-026 / WM-013 / WM-013a (worktree leasing, atomic write,
+#   metadata sidecar) ARE inline-cited from ON-022/ON-024/ON-027/ON-030a,
+#   but WM not in depends-on → those cites stay informational; see
+#   F-pilot-ON-6.
+#
+# F-pilot-EV-3 informational findings (cross-spec inline cites to specs
+# NOT in depends-on; documented but do NOT emit forward-deferred edges):
+#   wm:  7 cites in body normative prose (corrected per F-refs-ON-5 patch):
+#        ON-ENV-001 §4.a (c) cites [workspace-model.md §6.1] (Workspace
+#          declarative type — envelope declares cross-subsystem types
+#          referenced; load-bearing for envelope completeness; ADDED in
+#          v0.1.1 patch — was missed in v0.1.0)
+#        ON-015 §4.4 cites [workspace-model.md §4.7] (session-log bead-ID
+#          metadata — overlay schema half; load-bearing; ADDED in v0.1.1
+#          patch — was missed in v0.1.0)
+#        ON-024 §4.7 cites [workspace-model.md §4.3] (sandbox invariant
+#          owned by S04 + S06 — substantive cite)
+#        ON-027 step 6 cites [workspace-model.md §4.3] (workspace
+#          unlock/cleanup as drain step 6 work)
+#        ON-030a cites [workspace-model.md §4.7 WM-026] (atomic write
+#          discipline for daemon.state marker)
+#        ON-053 cites [workspace-model.md §4.7 WM-026] (atomic write for
+#          panic forensic file)
+#        ON-INV-003 sensor (a) cites [workspace-model.md §4.7] for
+#          session-log path (WM-owned redaction sink — replaces v0.1.0's
+#          mis-attributed ON-022 entry; ON-022 spec body itself does NOT
+#          inline-cite WM)
+#   6 of 7 cites are load-bearing (only ON-ENV-001 is envelope-completeness
+#   declarative); strengthens the class-lane signal that WM should join
+#   ON's depends-on in next ON revision.
+#   Per F-pilot-EV-3 baseline, WM cites are informational — WM is NOT in
+#   ON's depends-on (see ON v0.4.1 front matter). No forward:wm-* edges
+#   emitted. If a future revision adds WM to ON's depends-on, those
+#   edges would materialize via ON's reciprocal pilot pass.
+#
+# F-pilot-ON findings (judgment calls / discipline stress points):
+#
+# F-pilot-ON-1 [local — STATUS.md baseline reconciliation] — STATUS.md cites
+#   "61 active §4 reqs (v0.4.1 added 1 OQ-RC-009 acknowledgment row)". Direct
+#   line-by-line count of v0.4.1 yields 60 numbered §4 entries (1 envelope +
+#   59 topical, distributed across §4.1..§4.11 as enumerated above). The
+#   v0.4.1 OQ-RC-009 resolution is a paragraph-shaped cross-ref note appended
+#   to §11 AFTER OQ-ON-011 (not a numbered ON-NNN heading and not in §4).
+#   No bead minted for the cross-ref note; no §4 ID assigned. Discrepancy
+#   recorded for STATUS.md correction (off by 1) — not a discipline patch
+#   candidate; routine bookkeeping drift.
+#
+# F-pilot-ON-2 [local — applies §2.3 mechanically] — Coalesce candidates
+#   considered and rejected:
+#   (a) ON-005 + ON-005a + ON-006 (commit-hash gate + binary-stamp source +
+#       full-signing deferred). Test 1: borderline — ON-005 is the gate,
+#       ON-005a names the stamp source, ON-006 is the post-MVH deferral.
+#       Test 2: ON-005 anchor, ON-005a clarification, ON-006 deferral
+#       acknowledgment. Test 3 FAILS — ON-005a's build-time ldflags stamp
+#       is testable independently (binary missing stamp → exit 14 with
+#       distinct failure_mode), ON-006's post-MVH deferral is a conformance
+#       carve-out testable as "MVH conformance does not require signing".
+#       → no coalesce.
+#   (b) ON-013 + ON-013a + ON-013c (event emission per transition + panic
+#       barrier + idempotency on no-op). Test 1 FAILS — distinct shapes
+#       (per-transition emission rule vs goroutine recover() barrier vs
+#       no-op idempotency rule). Distinct codepaths. → no coalesce.
+#   (c) ON-018 + ON-019 (N-1 readability + migration release boundary).
+#       Test 1 FAILS — ON-018 is a per-artifact compat predicate;
+#       ON-019 is a release-process gate. Distinct codepaths. → no coalesce.
+#   (d) ON-020 + ON-020a + ON-021 (upgrade contract + intent marker +
+#       recoverability invariant). Test 1 borderline; test 2 fires (ON-020
+#       anchor); test 3 FAILS — ON-020a's atomic marker write + PL-005
+#       step 0 read is testable independently of the contract enumeration;
+#       ON-021's iff-recoverability invariant is testable independently.
+#       → no coalesce.
+#   (e) ON-027 + ON-027a + ON-028 + ON-029 (drain ordering + atomicity +
+#       skip-immediate + per-step timeouts). Per §2.2 F8c, constraint
+#       requirements adjacent to umbrellas get their own bead with
+#       `blocks` edge from the umbrella. ON-027a (atomicity) and ON-029
+#       (timeouts) are both F8c constraint reqs; ON-028 is a skip-mode
+#       variant (independent codepath). → no coalesce; F8c application.
+#   (f) ON-030 + ON-030a (reconstruction path + durable pause-state marker).
+#       Test 1 FAILS — git-Beads walk vs atomic marker write/read.
+#       Distinct codepaths. → no coalesce.
+#   (g) ON-031 + ON-032 + ON-033 (RTO target + criteria/fixture + monotonic
+#       measurement). Test 1 borderline; test 2 fires (ON-031 anchor); test
+#       3 FAILS — ON-032's fixture-bound enumeration (≤500 open beads, ≤50
+#       in-flight runs, etc.) is testable independently of the 30s/300s
+#       targets; ON-033's monotonic-companion field discipline is testable
+#       independently. → no coalesce.
+#   (h) ON-041 + ON-042 (multi-daemon coordination + multi-tenancy deferral).
+#       Test 1 FAILS — ON-041 declares concrete CLI/discovery/output
+#       columns; ON-042 is a deferral acknowledgment. → no coalesce.
+#   (i) ON-043 + ON-044 (Prom/OTel deferral + distributed-tracing deferral).
+#       Test 1 FAILS — distinct deferral surfaces. Both are normative
+#       deferrals (post-MVH). → no coalesce; both stay as their own beads.
+#   (j) ON-045 + ON-046 + ON-047 + ON-048 + ON-049 (budget family).
+#       Test 1 FAILS — ON-045 declared/enforced/attributed pipeline; ON-046
+#       observability surface; ON-047 default values table; ON-048 exhaustion
+#       protocol; ON-049 attribution shape. Distinct codepaths. → no coalesce.
+#   (k) ON-050 + ON-051 (attach surface + multi-attach arbitration).
+#       Test 1 FAILS — single-attach session contract vs concurrent-attach
+#       arbitration via mutex. → no coalesce.
+#   (l) ON-008 + ON-009 (between-task invariant + stop-immediate carve-out).
+#       Test 1 borderline; test 2 fires (ON-008 anchor); test 3 FAILS —
+#       ON-008's drain-gate predicate is testable independently of ON-009's
+#       canceled-class invariant on aborted runs. → no coalesce.
+#   No coalesces applied.
+#
+# F-pilot-ON-3 [class — confirms F-pilot-PL-1 + §6 ownership pattern] —
+#   ON §6 is the second instance (after PL) where §6.1/§6.2/§6.3 are
+#   EXPLICITLY OMITTED. ON's §6 prose: "This spec does not introduce new
+#   persistent data types. Schemas referenced: [list of cross-spec cites]"
+#   followed by "§6.1, §6.2, §6.3 are intentionally omitted — this spec
+#   introduces no persistent data types, no YAML/JSON snippets, no tabular
+#   schemas of its own." Decision: NO ON schema beads minted. The
+#   structured-log shape (named inline in ON-035), health-check interface
+#   (named inline in ON-036 as `health_status ∈ {OK, degraded, failed}`),
+#   and DaemonStatus enum (referenced in §3 glossary, sourced from PL §6.1
+#   per the operator-control state-machine documentation) all resolve via
+#   cross-spec cites or inline-prose normative content; none qualify as
+#   §6 RECORD/INTERFACE/ENUM/primitive-shape declarations. The §6.5 co-owned
+#   events are owned by EV per §2.11(d.2) and edge as ON-NNN → ev-events.<n>.
+#   Recorded for parity with F-pilot-PL-1 (PL §8 declared no taxonomy
+#   ownership; ON §6 declares no schema ownership). NOT a discipline
+#   patch — the spec authoring decision is correct, mechanical mapping
+#   is unambiguous.
+#
+# F-pilot-ON-4 [local — applies §2.11(c) mechanically + SHAPE-not-COUNT
+#   tiebreaker per F-pilot-WM-2] — ON §8 has 24 exit-code rows (codes
+#   0..23 incl. code 0 success — 24 entries). Raw COUNT exceeds the ~11 threshold cited in
+#   §2.11(c) for "large §8 taxonomy → one bead per category". HOWEVER per
+#   F-pilot-WM-2 SHAPE-not-COUNT context: the test is whether each row
+#   represents independent IMPLEMENTATION work (e.g., RC's 11 reconciliation
+#   categories each have distinct detection rules + dispatch paths) OR
+#   whether the rows are sentinel VALUES of a single vocabulary (BI's
+#   `BrError` 5 values; WM's 12 typed-error sentinel set; ON's 23 exit
+#   codes). ON's §8 is shape-equivalent to WM's: it is a vocabulary owner
+#   — each row names a `(code, category, detection rule, emitted event,
+#   remediation pointer)` tuple, but the implementation work for each row
+#   lives in the consumer §4 req that emits the code (e.g., ON-002 implements
+#   the obligation; ON-016 detects queue-schema-unsupported and emits code
+#   2; ON-027 detects drain-timeout-escalated and emits code 11). The §8
+#   table is the routing dictionary the consumers reference, not 23
+#   independent codepaths. Decision: SINGLE bead `on-error.taxonomy`
+#   (kind:taxonomy), identical posture to BI and WM. Per discipline v0.9
+#   §2.11(c.2), edges run <consumer-req> → on-error.taxonomy (16 intra-ON
+#   edges enumerated above). The taxonomy bead's own predecessors are
+#   limited to schema-shaped cross-spec beads it consumes (none in this
+#   pilot — the taxonomy is leaf-shaped on the producer side). Not a
+#   discipline patch candidate; SHAPE-not-COUNT precedent already captured
+#   at v0.9 via F-pilot-WM-2.
+#
+# F-pilot-ON-5 [class — F8b deviation / discipline patch candidate, MEDIUM
+#   priority] — ON-027 is the second multi-step protocol in this pilot
+#   that fires all three §2.2 split signals. PL precedent (F-pilot-PL-3)
+#   collapsed PL-005's 11-step startup, PL-006's 6-bullet sweep, PL-011's
+#   9-step shutdown, and PL-027's 5-sub-rule upgrade contract via F8b's
+#   shared-function-body tiebreaker. Considering ON-027 (8 drain steps:
+#   1, 2, 3, 3a, 4, 5, 6, 7):
+#     Signal 1 (≥3 steps):                 ✓ (8 steps)
+#     Signal 2 (independent testability):  ✓ (each step's bound exhaust →
+#                                              code 11 escalation, each
+#                                              step's error → code 21
+#                                              with `drain_error.step`
+#                                              discriminator; per-step
+#                                              `timeout.step_N` knobs)
+#     Signal 3 (umbrella loses meaning when stripped): ✓ (the drain order
+#                                              is the umbrella's normative
+#                                              content — without the
+#                                              steps the rule reduces
+#                                              to "drain in some order")
+#   F8b shared-function-body tiebreaker analysis: in any plausible Go
+#   implementation, the 8 drain steps DO NOT share a function body. Each
+#   step DELEGATES to a distinct subsystem (step 1: orchestrator dispatch
+#   loop; step 2: run-checkpoint suspension via EM; step 3: agent runner
+#   subprocess wait via HC; step 3a: br-CLI intent-log via BI; step 4:
+#   event bus flush via EV; step 5: memory layer flush — separate
+#   subsystem; step 6: workspace manager unlock via WM; step 7: orchestrator
+#   exit). The drain orchestration glue is a 30-line `for step := range
+#   steps { execute(step) }` loop; the BODIES of each step live in the
+#   subsystem each delegates to. This is the F8b "diverse code paths
+#   (not shared function body)" condition cited in §2.2 — the decision
+#   for this case is "prefer multi-step split per §2.2".
+#   Contrast with PL-005 11-step startup (collapsed to single bead): PL's
+#   bootstrap function body is one cohesive sequence inside `internal/daemon`
+#   — composition root, lock acquire, sweep, socket bind, cat-0 check, git
+#   walk, beads query, model build, dispatch — every step touches the same
+#   Go package and shares accumulated state (error variables, in-memory
+#   model under construction, daemon-instance-id, etc.). Drain steps are
+#   the inverse: each subsystem is the OWNER of its own drain step's body.
+#   Decision applied: SPLIT ON-027 into umbrella + 8 step beads. This
+#   DEVIATES from PL-005/PL-006/PL-011/PL-027 collapse precedent. The
+#   class-lane signal: §2.2 F8b's "shared function body" criterion needs
+#   a clearer disambiguation between "one cohesive function body" (PL
+#   posture) and "delegating orchestrator with per-step subsystem
+#   bodies" (ON-027 posture). RECORDED as discipline-patch candidate;
+#   no patch authored in this pilot. ON-027a (atomicity per §2.2 F8c,
+#   atomicity is the constraint over the umbrella) and ON-029 (per-step
+#   timeouts — the second F8c constraint over the umbrella) are emitted
+#   as their own beads with `blocks` edges from the umbrella per §2.2
+#   F8c. ON-028 (`stop --immediate` skips steps 2-3) is a separate code
+#   path / behavior variant — own bead, NOT a step bead.
+#
+# F-pilot-ON-6 [class — confirms F-pilot-PL-4 named-obligation pattern in
+#   reverse direction; informational] — ON v0.4.1 depends-on lists 8 specs:
+#   architecture, event-model, execution-model, handler-contract,
+#   control-points, process-lifecycle, reconciliation, beads-integration.
+#   Workspace-model (WM) is NOT in depends-on. Seven ON requirements
+#   inline-cite WM normative content (corrected enumeration per F-refs-ON-5
+#   in v0.1.1 patch — v0.1.0 listed 6 cites and mis-routed ON-022; spec
+#   grep yields 7):
+#     • ON-ENV-001 §4.a (c) cites [workspace-model.md §6.1] for the
+#       Workspace declarative type (envelope-completeness cite; declarative).
+#     • ON-015 §4.4 cites [workspace-model.md §4.7] for session-log bead-ID
+#       metadata (substantive: queue-overlay schema half).
+#     • ON-024 sandbox invariant cites [workspace-model.md §4.3] (substantive:
+#       enforcement owned by S04 + S06 = HC + WM).
+#     • ON-027 step 6 cites [workspace-model.md §4.3] (drain step 6 work
+#       lives in WM).
+#     • ON-030a marker write cites [workspace-model.md §4.7 WM-026] for
+#       atomic write discipline (substantive: `temp+rename+fsync+parent_dir`
+#       discipline is WM-owned).
+#     • ON-053 forensic file cites [workspace-model.md §4.7 WM-026] (same
+#       atomic-write discipline).
+#     • ON-INV-003 sensor (a) cites [workspace-model.md §4.7] for
+#       session-log path (WM-owned via WM-026 metadata sidecar). NOTE: the
+#       v0.1.0 enumeration mis-attributed this cite to ON-022 — ON-022's
+#       spec body itself does not inline-cite WM; the cite lives in the
+#       ON-INV-003 sensor description.
+#   6 of 7 cites are load-bearing (only ON-ENV-001 is envelope-completeness
+#   declarative); strengthens the case that WM should join ON's depends-on.
+#   Per F-pilot-EV-3 / discipline §3.2 baseline (every cross-spec edge
+#   MUST cite a spec in depends-on; non-depends-on cites are informational),
+#   these 6 cites are F-pilot-EV-3 informational findings — NOT
+#   forward-deferred edges (forward-deferral applies to in-depends-on
+#   targets not yet pilot-loaded; WM is OUT of depends-on). The class-lane
+#   signal is the inverse of F-pilot-PL-4: PL has named-obligation pattern
+#   to ON-without-depends-on (forward:on-* hard-dep edges); ON has
+#   named-obligation pattern to WM-without-depends-on (informational only).
+#   The asymmetry stems from PL-side cycle-break (PL excludes ON to break
+#   the cycle, but PL still cites ON normatively; the discipline §3.2
+#   violation is acknowledged and tracked under hk-ahvq.46). ON's situation
+#   is different: WM is genuinely outside ON's substantive depends chain
+#   (WM is a runtime subsystem; ON is foundation-cross-cutting). WM cites
+#   should arguably be added to ON's depends-on in the next ON revision;
+#   noted as F-pilot-ON-6 informational finding for ON spec author. Not
+#   a discipline patch candidate. WM mnem-map deliberately OMITTED from
+#   cross_specs below to prevent accidental edge emission to a
+#   non-depends-on target.
+#
+# F-pilot-ON-7 [local — applies §3.1 step 5 term-use rule mechanically] —
+#   ON body has dense intra-spec term-use chains:
+#   • "in_flight(run)" — defined in §3 glossary; used by ON-008, ON-009,
+#     ON-021, ON-027 step 2, ON-030. All emit term-use edges to the
+#     glossary-bearing rule (closest §4 anchor for the predicate is
+#     ON-008 — first req that operationally consumes the predicate).
+#   • "between-task invariant" — defined in §3 glossary + ON-008; consumed
+#     by ON-009, ON-021, ON-INV-006.
+#   • "drain" / "drain step" — defined in §3 glossary + ON-027; consumed
+#     by ON-008 (drain-gate), ON-021 (recoverability iff drain-completed),
+#     ON-027a (atomicity over drain), ON-028 (skip-drain immediate),
+#     ON-029 (drain timeout).
+#   • "improvement-pause" — defined in §3 glossary + ON-012; consumed by
+#     ON-011 (state-machine reuses pausing/paused), ON-054 (status
+#     reports pause-reason).
+#   • "reconciliation carve-out" — defined in §3 glossary + ON-010;
+#     consumed by ON-008 (between-task applies after ready), ON-014
+#     (operator-override applies to investigator workflows).
+#   • "RTO" — defined in §3 glossary + ON-031; consumed by ON-032
+#     (criteria), ON-033 (measurement boundary).
+#   • "N-1 compatibility" — defined in §3 glossary + ON-018; consumed by
+#     ON-001 (taxonomy stability), ON-015 (queue compat), ON-019 (migration
+#     release), ON-020 (cross-version state contract).
+#   • "commit-hash integrity gate" — defined in §3 glossary + ON-005;
+#     consumed by ON-005a (stamp source), ON-006 (signing-deferred), ON-019
+#     (migration release refusal), ON-020 (upgrade gate), ON-020a (marker
+#     hash check on restart), ON-021 (recoverability iff hash matches).
+#   • "DaemonStatus" enum / `degraded` value — sourced from PL §6.1 and
+#     glossary §3; cross-spec edges to pl-schema.daemon-status from ON-031
+#     (RTO ceiling → degraded), ON-036 (subsystem-level vs daemon-level
+#     degraded distinction), ON-037 (heartbeat → degraded escalation).
+#   All emitted as intra-spec or cross-spec edges below.
+#
+# F-pilot-ON-8 [class — invariant-as-target one-way preserved] — ON has 4
+#   active invariants (ON-INV-001, ON-INV-003, ON-INV-005, ON-INV-006).
+#   Per F-pilot-AR-r2-2 invariant-as-target exemption, term-uses of an
+#   invariant by an impl req do NOT emit edges. Body cites checked:
+#   • ON-018 / ON-019 do NOT cite ON-INV-001 by ID — ON-INV-001 is
+#     downstream sensor over them; correct direction is on-inv-001 → ON-018
+#     and on-inv-001 → ON-019.
+#   • ON-022 / ON-023 / ON-024 do NOT cite ON-INV-003 by ID — ON-INV-003
+#     is the downstream sensor; correct direction on-inv-003 → ON-022 etc.
+#   • ON-INV-005 sensor cites every subsystem reconstruction path —
+#     subsystem-by-subsystem cross-spec edges to em-046, ev-018, etc.
+#   • ON-INV-006 sensor cites ON-009 and ON-008 as drain-gate /
+#     stop-immediate carve-outs — correct direction on-inv-006 → ON-008 +
+#     on-inv-006 → ON-009.
+#   No invariant→invariant ID-cites in ON body (per inspection); the
+#   F-refs-EV-6 / D-WM-3 precedent does not fire for ON pilot.
+#
+# F-pilot-ON-9 [local — applies §3.1.3 wide-fanout tag mechanically] —
+#   Section-anchor cites from ON body that fan out to multiple §4 reqs in
+#   a target spec acquire `cite:wide-fanout` tag per §3.1.3:
+#   • ON-013 cites [event-model.md §8.7] (operator-control event row
+#     family — 8 rows) → cite:wide-fanout on on-013.
+#   • ON-008 cites [execution-model.md §4.5] (durable checkpoint cadence
+#     — multiple reqs em-017/em-017a/em-018) → cite:wide-fanout.
+#   • ON-027 cites [event-model.md §4.4] (fsync policy on event bus flush
+#     — multiple ev reqs) → cite:wide-fanout.
+#   • ON-027 cites [execution-model.md §4.5] (run checkpoint suspension)
+#     → cite:wide-fanout.
+#   • ON-027 step 6 cites [workspace-model.md §4.3] (workspace unlock —
+#     informational since WM not in depends-on; tag NOT applied here).
+#   • ON-035 cites [event-model.md §4.9] (source_subsystem registration);
+#     resolves to single ev-004 row → no fanout.
+#   • ON-038 cites [execution-model.md §4.4] (transition record —
+#     em-017/em-017a) → cite:wide-fanout.
+#   • ON-041 cites [process-lifecycle.md §4.10] (multi-daemon command
+#     surface — pl-028) → resolves to single anchor; no fanout.
+#   Total: 4 cite:wide-fanout tags applied (on-008, on-013, on-027,
+#   on-038).
+#
+# Re-run posture for re-loads: full mode (--load-beads + --load-edges)
+# for initial; subsequent passes use edges-only mode (--skip-beads).
+# br dep cycles MUST remain clean.
+
+spec:
+  prefix: "on"
+  title: "Operator NFR spec — implementation"
+  spec_path: specs/operator-nfr.md
+  spec_version: "0.4.1"
+  pilot_version: "0.1.1"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:operator-nfr"
+  - "tag:mechanism"
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+# rc entry deliberately omitted — RC spec is not yet pilot-loaded.
+# wm entry deliberately omitted — WM is NOT in ON's depends-on (per
+# v0.4.1 front matter); WM cites surface as F-pilot-EV-3 informational
+# findings, NOT forward-deferred edges (see F-pilot-ON-6).
+# Forward-deferred edges to RC use "forward:rc-NNN" placeholders below
+# per F-pilot-EM-2 / Option B precedent.
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
+  cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
+  pl: docs/decompose-to-tasks/mnem-maps/pl-mnem-map.csv
+  bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv
+
+epic:
+  mnem: "on"
+  title: "Operator NFR spec — implementation"
+  description: |
+    Implements specs/operator-nfr.md v0.4.1 (60 first-class §4 req beads from 60 active §4 entries — 1 envelope + 59 topical — after 0 §2.3 coalesces and 0 §2.1a collapses, 4 invariants — ON-INV-001/003/005/006; ON-INV-002 + ON-INV-004 retired in v0.3 never reusable, 0 §6 schemas — §6.1/§6.2/§6.3 explicitly omitted per §6 declaration, see F-pilot-ON-3, 1 §8 single-bead error-taxonomy on-error.taxonomy covering 24 exit codes (codes 0..23 incl. code 0 success) — single-bead form per §2.11(c) + SHAPE-not-COUNT tiebreaker per F-pilot-WM-2, see F-pilot-ON-4, 1 multi-step split — ON-027 8-step graceful-shutdown drain SPLIT into umbrella + 8 step beads, DEVIATES from PL precedent per F8b independent-code-path tiebreaker, see F-pilot-ON-5, 11 test-infra beads from §10.2 obligations). depends-on: [architecture, event-model, execution-model, handler-contract, control-points, process-lifecycle, reconciliation, beads-integration]. Workspace-model NOT in depends-on; WM cites surface as F-pilot-EV-3 informational findings (see F-pilot-ON-6). PL ↔ ON cycle-break per PL §9.3 NOTE (PL excludes ON; ON includes PL). RC cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:rc-NNN).
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ───────────────────────── §4.a Subsystem envelope ─────────────────────────
+
+  - mnem: on-env-001
+    kind: req
+    req: ON-ENV-001
+    title: "Foundation-cross-cutting envelope declaration"
+    description: |
+      Per ON-ENV-001: declare the foundation-cross-cutting envelope (voluntary publication; AR-052 exempts foundation-cross-cutting specs from AR-053). (a) Events produced (operator_pause_status paired-phase, operator_resuming, operator_stopped, operator_upgrading, operator_upgrade_completed, operator_upgrade_rejected, operator_command_rejected, dispatch_deferred — emitted from §4.3/§4.6 operator-control path, registered in EV §8.7); (b) events consumed (daemon_ready, reconciliation_category_assigned, budget_warning/exhausted/accrual, agent_warning_silent_hang); (c) types introduced — none (this spec references existing types owned by EV/CP/WM); (d) handlers implemented — none; (e) state owned — none persistently (operator-control state-machine is daemon-in-memory; reconstruction per ON-030 via git+Beads); (f) control points provided — none; (g) NFRs inherited — ON IS the NFR home; (h) boundary classification per operation table.
+
+  # ───────────────────────── §4.1 Exit codes + obligations ─────────────────────────
+
+  - mnem: on-001
+    kind: req
+    req: ON-001
+    title: "Operator-observable exit codes are structured"
+    description: |
+      Per ON-001: every operator-invoked harmonik command (`daemon`, `attach`, `enqueue`, `status`, `pause`, `stop`, `upgrade`, all multi-daemon commands per §4.10) MUST return a structured exit code. Zero MUST mean success. Non-zero codes MUST map one-to-one to a failure category declared in the §8 exit-code taxonomy. The mapping MUST be stable across releases within the N-1 compat window.
+
+  - mnem: on-002
+    kind: req
+    req: ON-002
+    title: "Exit-code taxonomy obligation"
+    description: |
+      Per ON-002: spec-draft pass MUST produce a normative exit-code taxonomy naming every non-zero exit code emitted by any operator command. Per code: failure category, operator-observable symptom, emitted event type (if any), operator remediation pointer. The taxonomy lives in §8 of this spec; cross-references from other specs (e.g., [process-lifecycle.md §4.10 harmonik status]) MUST resolve to §8 entries. Obligation is satisfied when the §8 table exists per §10.1 conformance bootstrap.
+
+  - mnem: on-003
+    kind: req
+    req: ON-003
+    title: "Startup failure-mode catalog obligation"
+    description: |
+      Per ON-003: spec-draft pass MUST produce a normative startup failure-mode catalog co-owned with [process-lifecycle.md §4.2]. For every daemon-startup prerequisite failure (git bad state, Beads SQLite unavailable, schema-version unsupported, stale-pidfile race, filesystem unwritable, disk-full during checkpoint commit, socket bind failure), catalog MUST specify: detection rule, exit code per ON-001, operator remediation procedure, emitted event type per [event-model.md §6.3], reconciliation Cat 0 classification per [reconciliation/spec.md §4.3]. Catalog is the authoritative input to `harmonik status`'s infrastructure-prereq reporting per [process-lifecycle.md §4.10].
+
+  - mnem: on-004
+    kind: req
+    req: ON-004
+    title: "Config inventory obligation"
+    description: |
+      Per ON-004: spec-draft pass MUST produce a normative config inventory enumerating every operator-configurable knob across foundation specs. Per knob: precedence layer (runtime override / operator-policy file / workflow definition / default per CP-037), default value, allowed range, change-takes-effect semantics. Coverage at minimum: timer-flush cadence (EV §4.4), budget warning threshold (CP §4.5), drain timeout (§4.7), RTO thresholds (§4.8), queue-empty re-query cadence (PL §4.4), Cat 0 pre-check retry cadence (RC §4.3), per-Cat reconciliation budgets (RC §4.4). Inventory home is OQ-ON-001; default-if-unresolved is sibling file under specs/operator-nfr/config-inventory.md.
+
+  # ───────────────────────── §4.2 Integrity gate ─────────────────────────
+
+  - mnem: on-005
+    kind: req
+    req: ON-005
+    title: "Commit-hash integrity gate is the MVH binary-install check"
+    description: |
+      Per ON-005: pause-to-upgrade path MUST verify the to-be-installed binary's source-commit hash against operator-supplied expected hash before exec-replacement. Check MUST fail-closed: on mismatch or missing hash, daemon MUST NOT exec-replace and MUST remain `paused` with `operator_upgrade_rejected` emitted per [event-model.md §8.7]. Handler binaries installed via [handler-contract.md §4.10] MUST also carry the commit-hash check; this requirement names the daemon-level invariant.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-005a
+    kind: req
+    req: ON-005a
+    title: "Commit-hash source via build-time ldflags stamp"
+    description: |
+      Per ON-005a: daemon's `actual_hash` for ON-005's gate MUST be computed from a build-time embedded ldflags stamp (`-ldflags="-X main.commitHash=<sha>"` at compile). Binaries lacking the embedded stamp MUST fail the integrity gate immediately on `harmonik upgrade` invocation with §8 code 14 (`upgrade-hash-mismatch`); failure mode `failure_mode=binary-stamp-missing` distinguishes this from operator-supplied-hash-mismatch. Operator's `expected_commit_hash` source is operator-discretion (Slack, release-page, `git rev-parse`); ON-005's gate is a version-identity check, not cryptographic-integrity (signing is post-MVH per ON-006).
+
+  - mnem: on-006
+    kind: req
+    req: ON-006
+    title: "Full binary signing is deferred post-MVH"
+    description: |
+      Per ON-006: full cryptographic signing of binaries (code-signing certs, reproducible build attestations, signature-chain verification) is deferred post-MVH. Conforming MVH implementations MUST NOT be required to verify signatures beyond the commit-hash match of ON-005. Post-MVH introduction of signing is additive and does NOT invalidate MVH conformance.
+    extra_labels:
+      - "post-mvh"
+
+  # ───────────────────────── §4.3 Operator-control between tasks ─────────────────────────
+
+  - mnem: on-007
+    kind: req
+    req: ON-007
+    title: "Operator `task` equals execution-model `run`"
+    description: |
+      Per ON-007: for operator-facing documentation, CLI output, and event payload human-readable fields, "task" MUST denote one complete run of a workflow from `run_started` to `run_completed`/`run_failed` per [execution-model.md §4.3]. Normative spec text, event payload field names, and internal logs MUST use `run` / `run_id`. Surfaces that render human-facing copy MAY translate `run` to "task"; wire formats MUST NOT.
+
+  - mnem: on-008
+    kind: req
+    req: ON-008
+    title: "Pause and upgrade respect the between-task invariant"
+    description: |
+      Per ON-008: an operator `pause` or `upgrade` issued while daemon status is `ready` MUST NOT interrupt any in-flight run (per §3 `in_flight(run)`). Daemon MUST transition `running → pausing`, allow every in-flight run to proceed to its next durable checkpoint per [execution-model.md §4.5], AND complete the full drain sequence of ON-027 (all eight steps) before transitioning to `paused`. The `pausing → paused` transition is gated on drain-completion: entry into `paused` is forbidden until (a) no run satisfies `in_flight(run)` AND (b) every drain step of ON-027 has completed (or drain-timeout escalation per ON-029 fired). `upgrade` further transitions `paused → upgrading → (exec-replace) → running` under §4.6.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: on-009
+    kind: req
+    req: ON-009
+    title: "`stop --immediate` is the only control that aborts in-flight runs"
+    description: |
+      Per ON-009: `stop --immediate` and SIGKILL (treated equivalently) MUST abort in-flight runs (per §3 `in_flight(run)`). Aborted runs MUST emit `run_failed` with class `canceled` per [execution-model.md §8.4] once daemon restarts and reconciliation classifies them per [reconciliation/spec.md §4.3]. No other operator control is permitted to abort in-flight runs; proposals to add `pause --immediate` or `upgrade --immediate` MUST be rejected as ON-008 violations.
+
+  - mnem: on-010
+    kind: req
+    req: ON-010
+    title: "Reconciliation carve-out: pause queues during `reconciling`"
+    description: |
+      Per ON-010: pause MUST NOT interrupt reconciliation workflows per [reconciliation/spec.md §4.1]. Daemon's status progression is `starting → (optional degraded) → reconciling → ready` per [process-lifecycle.md §4.2]; the between-task invariant of ON-008 applies only after daemon reaches `ready`. An operator pause issued during `reconciling` MUST be queued and applied at the boundary event "all reconciliation runs have either resumed into normal flow or produced a verdict."
+
+  - mnem: on-011
+    kind: req
+    req: ON-011
+    title: "Operator-control state machine + serializable transitions"
+    description: |
+      Per ON-011: daemon MUST implement the operator-control state machine of §7.1. States: `running`, `pausing`, `paused`, `resuming`, `stopped` (terminal-recoverable via `start`), `upgrading`. Improvement-pause is NOT a distinct state — reuses `pausing/paused` with `pause_reason=improvement` discriminator per ON-012. Operator-control transitions MUST be serializable: daemon MUST hold a single mutex (or equivalent CAS primitive) guarding the transition function. Concurrent operator commands (per OQ-ON-004) are arbitrated by mutex acquisition order; the loser observes the post-winner state. The mutex MUST be acquired before evaluating a transition guard and held until the transition's emission and durable-marker write per ON-030a complete.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-012
+    kind: req
+    req: ON-012
+    title: "Improvement-pause is a subtype of pause"
+    description: |
+      Per ON-012: S09 improvement cycle MUST NOT introduce a new operator-control state. An improvement-pause MUST transition `running → pausing → paused` via the same path as operator pause, sharing identical state table with `pause_reason` discriminator distinguishing operator-initiated (`pause_reason=operator`) from improvement-initiated (`pause_reason=improvement`). Additional invariant: `paused → resuming` is triggered automatically when improvement loop completes (no operator action required). Discriminator carried on `operator_pause_status` per [event-model.md §6.3] structured-fields mechanism; NOT a separate pair of state-machine states. Earlier framing of separate `improvement-pausing/improvement-paused` states is retired.
+
+  - mnem: on-013
+    kind: req
+    req: ON-013
+    title: "Operator-control events emitted per state transition"
+    description: |
+      Per ON-013: daemon MUST emit one typed event per operator-control state transition. Per paired-phase rule [event-model.md §8.9(h)], pause `pausing` and `paused` are lifecycle phases of a single pause emitted as `operator_pause_status` with `status ∈ {pausing, paused}` (forbidden as keepalive re-emission). Emission timing: `operator_pause_status{status=pausing}` on `running → pausing` (incl. improvement-pause path); `operator_pause_status{status=paused}` on `pausing → paused` (only after all ON-027 drain steps complete) — with `drain_summary` field naming each ON-027 step's completion timestamp + drain-timeout escalations (cross-spec coordination request to EV: extend §8.7.6 payload with `drain_summary?`); `operator_resuming` on `paused → resuming`; `operator_stopped` on entry to `stopped` with `mode ∈ {graceful, immediate}` per [event-model.md §8.7.8]; `operator_upgrading` on `paused → upgrading` with `upgrade_version` field per [event-model.md §8.7.9]; `operator_upgrade_completed` on `upgrading → running` after exec-replace; `operator_upgrade_rejected` when ON-005 commit-hash check fails or cross-version schema check refuses; `operator_command_rejected` (§8 code 16) when invalid for current state; `dispatch_deferred` (§8 code 18) when blocked by ON-041 machine-ceiling. ON owns *when*; EV owns *shape*.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: on-013a
+    kind: req
+    req: ON-013a
+    title: "Per-command supervision (defer recover() barrier)"
+    description: |
+      Per ON-013a: every operator-command-dispatch goroutine (handling `pause`, `stop`, `upgrade`, `attach`, `enqueue`) MUST install a `defer recover()` barrier. On panic the barrier MUST: (a) emit `operator_command_failed{command, panic_class, run_id?}` (cross-spec coordination request to EV); (b) revert any partial state-machine transition by clearing the `.harmonik/daemon.state` marker's pending-transition field; (c) escalate to `degraded` if panic occurred during a drain step. The top-level PL-018a panic barrier remains the daemon's outer-defense; ON-013a is the operator-command inner-defense.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-013c
+    kind: req
+    req: ON-013c
+    title: "Operator-command idempotency on no-op transitions"
+    description: |
+      Per ON-013c: operator commands MUST be idempotent on no-op transitions. `pause` issued while already `paused` MUST return success (exit 0) with `operator_pause_status{status=paused}` re-emitted at most once per command (deduplicated via session_id). `stop` while `stopped` MUST return success with no event emission. `resume` while `running` MUST return success with no transition. The operator's CLI MUST NOT see a different exit code for "already in target state" vs "transitioned successfully."
+
+  - mnem: on-014
+    kind: req
+    req: ON-014
+    title: "Reconciliation operator override (pre-execution verdict pause)"
+    description: |
+      Per ON-014: spec-draft pass MUST produce a normative per-reconciliation-workflow policy option to pause daemon's verdict-execution step (per [reconciliation/spec.md §4.5]) until an operator confirms or vetoes. Naming convention: `harmonik confirm-verdict <run_id>` / `harmonik veto-verdict <run_id> [--promote-to escalate-to-human]`. Default: execution proceeds without operator confirmation; operators opt in by policy. Applies to all investigator-dispatched reconciliation categories (Cat 2, 3, 6a per RC §4.2 and RC §8.12). Foundation owns naming convention; [reconciliation/spec.md §4.5] owns execution-step specifics.
+
+  # ───────────────────────── §4.4 Queue-format compatibility ─────────────────────────
+
+  - mnem: on-015
+    kind: req
+    req: ON-015
+    title: "Beads is the queue; overlay schema is harmonik's half"
+    description: |
+      Per ON-015: operator's pending-tasks list and harmonik's dispatchable queue are the same store: Beads (SQLite, `Dicklesworthstone/beads_rust`) per [beads-integration.md §4.1]–[beads-integration.md §4.3]. Queue-format compatibility MUST be union of (a) Beads schema compat (managed upstream) AND (b) harmonik's overlay schema compat: `Harmonik-Bead-ID` trailers in checkpoint commits per [execution-model.md §4.4], bead-ID references in events per [event-model.md §6.3], session-log bead-ID metadata per [workspace-model.md §4.7]. Both halves MUST be N-1 readable.
+
+  - mnem: on-016
+    kind: req
+    req: ON-016
+    title: "Queue schema version check on daemon startup"
+    description: |
+      Per ON-016: on daemon startup, daemon MUST check both Beads SQLite schema version and harmonik's overlay schema version against the running binary's supported set (current N + prior N-1). Unsupported version MUST cause startup failure with the exit code assigned to category "queue-format-unsupported" per §8 (code 2), naming required migration release in failure event payload. Check is part of the startup failure-mode catalog of ON-003.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-017
+    kind: req
+    req: ON-017
+    title: "Beads pre-1.0 breakage absorbed via `br` adapter, not forked"
+    description: |
+      Per ON-017: harmonik MUST version-pin Beads per the external-inputs protocol (problem-space §External inputs) and MUST route all Beads interactions through the `br`-CLI adapter of [beads-integration.md §4.2]. A Beads breaking change MUST produce one localized adapter update; harmonik MUST NOT fork Beads. This is a structural obligation on the adapter boundary, not on every caller.
+
+  # ───────────────────────── §4.5 Schema compat window ─────────────────────────
+
+  - mnem: on-018
+    kind: req
+    req: ON-018
+    title: "N-1 compatibility is the MVH compat window"
+    description: |
+      Per ON-018: every versioned on-disk or wire artifact declared by foundation specs — event-envelope schema ([event-model.md §6.1]), event payload schemas ([event-model.md §6.3]), checkpoint trailers and sibling files ([execution-model.md §4.4]), queue overlay (ON-015), policy schema ([control-points.md §6.3]) — MUST maintain N-1 readability. A reader pinned to N-1 MUST successfully parse and interpret artifacts written by N, with additive fields treated as unknown but non-fatal. Breaking changes MUST be accompanied by a migration release and MUST NOT be introduced mid-run; they MUST land at an operator pause per §4.3.
+
+  - mnem: on-019
+    kind: req
+    req: ON-019
+    title: "Migration releases are operator-paused boundaries"
+    description: |
+      Per ON-019: a migration release (any release that bumps an N-1-covered schema version to break the compat window — i.e., a change no longer readable by readers at current N) MUST require an operator pause before installation. The `harmonik upgrade` contract of §4.6 MUST refuse to exec-replace into a migration release unless daemon is in `paused` state AND on-disk state's schema version is within the new binary's supported set. Installing a migration release MUST NOT auto-migrate on-disk state; a dedicated migration workflow (post-MVH) is the path.
+
+  # ───────────────────────── §4.6 `harmonik upgrade` contract ─────────────────────────
+
+  - mnem: on-020
+    kind: req
+    req: ON-020
+    title: "`harmonik upgrade` contract obligation (7 sub-rules including rollback)"
+    description: |
+      Per ON-020: spec-draft pass MUST produce a normative `harmonik upgrade` contract specifying: (a) binary-source mechanism (repo-relative path and/or explicit hash-supply flag); (b) operator-supplied expected commit-hash check per ON-005; (c) drain-vs-reconciliation interaction (MUST queue if reconciliation in-flight per ON-010; MUST NOT interrupt); (d) cross-version state contract (MUST succeed for same and N-1; MUST refuse for broader mismatches per ON-019); (e) socket continuity — daemon MUST preserve bound listener fd across exec-replace via fd-passing per [process-lifecycle.md §4.9 PL-027(iii)]: outgoing daemon clears `FD_CLOEXEC` and passes fd via `HARMONIK_LISTENER_FD`; new binary adopts via `net.FileListener` and re-sets `FD_CLOEXEC`. Adoption is gap-free; clients observe no `ECONNREFUSED` window; (f) rollback as first-class — on `harmonik upgrade --rollback` while `paused` after successful upgrade, daemon MUST exec-replace back to prior binary at `.harmonik/daemon.binary.prev`; expected_commit_hash for rollback is prior binary's stamp; live-window rollback unsupported; (g) post-exec-replace failure — operator recovers by `harmonik upgrade --rollback` (removes stale pidfile/socket, restores prior binary, consumes `.harmonik/daemon.upgrading` marker for hash determination).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: on-020a
+    kind: req
+    req: ON-020a
+    title: "Upgrade-intent durable marker (`.harmonik/daemon.upgrading`)"
+    description: |
+      Per ON-020a: when `harmonik upgrade` enters drain phase, daemon MUST atomically write `.harmonik/daemon.upgrading` containing: (a) operator-supplied `expected_commit_hash` per ON-005; (b) upgrade-initiation timestamp; (c) operator's session_id (per ON-013b daemon-instance handshake). Write MUST follow temp+rename+fsync atomicity. On daemon startup, [process-lifecycle.md §4.2 PL-005] step 0 MUST read this marker; if present and on-disk binary's commit hash matches the marker's `expected_commit_hash`, startup proceeds normally and marker is removed; if hash does not match, daemon MUST refuse startup with §8 code 14 (`upgrade-hash-mismatch`) and emit `daemon_startup_failed{failure_mode=upgrade-hash-mismatch-on-restart}`. The PL-027(iv) marker, currently informative, is hereby promoted to normative per this requirement (cross-spec coordination request to PL).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-021
+    kind: req
+    req: ON-021
+    title: "Upgrade preserves in-flight run recoverability (iff drain-completed)"
+    description: |
+      Per ON-021: an `upgrade` operation MUST NOT make any in-flight run unrecoverable. The recoverability invariant holds iff entry into `paused` implies drain-completion (per ON-008 and ON-027): because the `pausing → paused` transition is gated on all eight drain steps completing AND no run satisfying `in_flight(run)` remaining, the state the new binary inherits MUST be reconstructible from git + Beads per [execution-model.md §4.7] and the restart RTO of §4.8. Cross-version state contract of ON-020 MUST reject upgrades that would violate this invariant.
+
+  # ───────────────────────── §4.7 Secrets redaction + graceful shutdown ─────────────────────────
+
+  - mnem: on-022
+    kind: req
+    req: ON-022
+    title: "Secrets injected at handler launch; never logged; redactor fail-closed"
+    description: |
+      Per ON-022: secrets (API keys, tokens, credentials) MUST be injected at handler launch per [handler-contract.md §4.7]. Secrets MUST NOT appear in event log. Secrets MUST NOT appear in session logs without redaction. Redaction is mechanism-tagged and MUST be enforced pre-emission: handler implementations MUST apply prefix-regex matching and per-handler redaction patterns before any write to a durable sink (event bus, session log, audit record). The redactor MUST fail-closed: if redactor itself panics or returns an error during emission of any event/log/audit-record carrying typed `Secret` fields, daemon MUST abort the emission, MUST emit `redaction_failed{event_type, run_id?, error_class}` (cross-spec coordination request to EV: add `redaction_failed` to §8 taxonomy), and MUST NOT fall through to a non-redacted emission. Repeated redactor panics within T_redact_fail (default 60s, operator-tunable) MUST escalate daemon to `degraded` per ON-037.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-023
+    kind: req
+    req: ON-023
+    title: "Secrets-redaction compile-time payload-schema check"
+    description: |
+      Per ON-023: event payload schemas declared per [event-model.md §6.3] MUST NOT declare any field typed as `Secret` or equivalent. A compile-time check (lint pass or generated-code assertion) MUST reject any payload schema that would carry a secret through the event bus. This closes the redaction-obligation loop: redaction cannot be forgotten at an emission site because no emission site is permitted to carry secret-typed fields.
+
+  - mnem: on-024
+    kind: req
+    req: ON-024
+    title: "Command-execution sandbox invariant"
+    description: |
+      Per ON-024: agents MUST execute within a leased workspace directory per [workspace-model.md §4.3]. Escape attempts (symlinks resolving outside workspace, path-traversal patterns, git hooks sourced from untrusted paths) MUST be prevented. Specific enforcement is owned by subsystem specs for S04 (handler runner) and S06 (workspace manager); this spec states the cross-cutting invariant. Note: WM cite is informational per F-pilot-ON-6 (WM not in ON depends-on).
+
+  - mnem: on-025
+    kind: req
+    req: ON-025
+    title: "Network egress and skill-injection policy enforcement"
+    description: |
+      Per ON-025: network egress MUST be governed by policy per [control-points.md §6.3]; a policy MAY whitelist domains for agent access. Skills provisioned per [handler-contract.md §4.11] MUST honor egress policy: a provisioned skill that would require egress to a non-whitelisted domain MUST fail provisioning, and handler MUST emit `skills_provisioned` event (per [event-model.md §8.3]) listing only the skills actually installed. Skills requiring filesystem access outside the workspace MUST fail provisioning per ON-024.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-026
+    kind: req
+    req: ON-026
+    title: "Prompt-injection defense is handler-owned"
+    description: |
+      Per ON-026: input sanitization for user-provided content in the input workspace MUST be the handler's responsibility per [handler-contract.md §4.1]. Handlers MUST NOT let user-provided content in the input workspace alter the agent's system-prompt instructions. This spec states the obligation; the enforcement mechanism lives in handler-contract.
+
+  - mnem: on-027
+    kind: req
+    req: ON-027
+    title: "Graceful-shutdown ordering (8-step drain umbrella)"
+    description: |
+      Per ON-027: on `stop --graceful` or SIGTERM — AND on `pause` / `upgrade` per the ON-008 drain-gate — daemon MUST execute the shutdown/drain sequence in the following order, each step completing before the next begins: (1) orchestrator stops pulling new tasks; (2) every in-flight run proceeds to its next checkpoint then suspends per [execution-model.md §4.5]; (3) agent runners wait for handler subprocesses to complete or reach drain timeout; (3a) `br`-CLI adapter intent-log per [beads-integration.md §4.10 BI-029/BI-030] MUST be drained to completion; (4) event bus flushes pending events (fsync per [event-model.md §4.4]); (5) memory layer flushes indexing; (6) workspace manager unlocks leased workspaces and cleans up incomplete adze setups per [workspace-model.md §4.3] [WM cite informational]; (7) orchestrator exits with code 0 if clean, or §8 code 11 "drain-timeout-escalated" if any step exceeded its bound. In pause/upgrade path the exit of step 7 is replaced by "enter `paused`" (no process exit); step sequence is identical. Completion of ALL eight steps is the precondition for `pausing → paused` transition of ON-008. Per §2.2 + F8b "diverse code paths" tiebreaker (F-pilot-ON-5), this requirement SPLITS into umbrella + 8 step beads (s1, s2, s3, s3a, s4, s5, s6, s7).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "protocol:multi-step"
+      - "cite:wide-fanout"
+
+  - mnem: on-027.s1
+    kind: req
+    req: ON-027
+    title: "Step 1 — Orchestrator stops pulling new tasks from the queue"
+    description: |
+      Per ON-027 step 1: at drain entry, orchestrator's dispatch loop MUST stop pulling new beads from Beads (`br ready` query loop terminated). No new run dispatch is permitted from this point until daemon exits or transitions back to `running`. Step 1 completion is a single boolean toggle on the dispatcher; no subsystem coordination required. Per ON-027a, completion MUST be marked durably in `.harmonik/daemon.state` before step 2 begins. On crash mid-step, restart resumes from step 1 (idempotent — re-toggling the dispatcher off is a no-op).
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-027.s2
+    kind: req
+    req: ON-027
+    title: "Step 2 — In-flight runs reach next checkpoint, then suspend"
+    description: |
+      Per ON-027 step 2: every run for which `in_flight(run)` holds (per §3) proceeds to its next durable checkpoint per [execution-model.md §4.5], then suspends. Bounded by `timeout.step_2` per ON-029. On step-2 timeout per ON-029, escalation path fires (SIGKILL surviving subprocesses at step 4 wait window per ON-040 silent-hang synthesis). Step 2 completion signal: `in_flight(run)` evaluates to false for every run via dispatch-status JSON-RPC per [process-lifecycle.md §4.1 PL-003a]. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027.s3
+    kind: req
+    req: ON-027
+    title: "Step 3 — Agent runners wait for handler subprocesses to complete"
+    description: |
+      Per ON-027 step 3: agent runners (HC watcher goroutines per [handler-contract.md §4.3 HC-011]) wait for handler subprocesses to complete or reach the drain timeout `timeout.step_3` per ON-029. Step 3 is bounded by HC-018 SIGTERM→SIGKILL escalation interval. On step-3 timeout, surviving agent subprocesses are SIGKILLed AT step 4's wait window with synthesized `agent_warning_silent_hang{reason=drain_forced}` per ON-040. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027.s3a
+    kind: req
+    req: ON-027
+    title: "Step 3a — `br`-CLI adapter intent-log drain"
+    description: |
+      Per ON-027 step 3a: the `br`-CLI adapter intent-log per [beads-integration.md §4.10 BI-029/BI-030] MUST be drained to completion: every pending intent-log entry's terminal-transition write MUST resolve (success or BI-031 status-check classification) before step 4 proceeds. Drain failures (e.g., `BrUnavailable` per [beads-integration.md §6.1a]) escalate to step 4 with the failed entries marked for next-restart Cat 3a routing per RC. Bounded by `timeout.step_3a` per ON-029. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-recoverable-non-idempotent"
+
+  - mnem: on-027.s4
+    kind: req
+    req: ON-027
+    title: "Step 4 — Event bus flushes pending events (fsync)"
+    description: |
+      Per ON-027 step 4: event bus flushes all pending events to JSONL with `fsync(file_fd)` + `fsync(parent_dir_fd)` per [event-model.md §4.4]. Bounded by `timeout.step_4` per ON-029. fsync failure produces §8 code 21 `drain-step-errored` (not code 11 — code 11 is timeout-escalation; code 21 is non-recoverable error). Step 4 also synthesizes `agent_warning_silent_hang{reason=drain_forced}` per ON-040 BEFORE SIGKILL emission to any still-running agent subprocess from step 3 timeout. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027.s5
+    kind: req
+    req: ON-027
+    title: "Step 5 — Memory layer flushes indexing"
+    description: |
+      Per ON-027 step 5: memory layer (S07 memory subsystem) flushes its indexing state to disk. Bounded by `timeout.step_5` per ON-029. fsync failure produces §8 code 21. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027.s6
+    kind: req
+    req: ON-027
+    title: "Step 6 — Workspace manager unlocks leased workspaces"
+    description: |
+      Per ON-027 step 6: workspace manager unlocks leased workspaces and cleans up incomplete adze setups per [workspace-model.md §4.3] [WM cite informational per F-pilot-ON-6]. Bounded by `timeout.step_6` per ON-029. Lock-release failure produces §8 code 21 with `drain_error.step=6` discriminator. Per ON-027a, durably marked.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027.s7
+    kind: req
+    req: ON-027
+    title: "Step 7 — Orchestrator exits (or enters `paused`)"
+    description: |
+      Per ON-027 step 7: orchestrator exits with code 0 if clean, or §8 code 11 (`drain-timeout-escalated`) if any prior step exceeded its bound. In the pause/upgrade path, the exit of step 7 is replaced by "enter `paused`" (no process exit) — the step sequence is identical. Completion of step 7 is the precondition for the `pausing → paused` transition per ON-008.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-027a
+    kind: req
+    req: ON-027a
+    title: "Drain step atomicity and crash-recovery (F8c constraint)"
+    description: |
+      Per ON-027a: the eight steps of ON-027 MUST execute strictly sequentially on a single goroutine; no parallel execution between steps is permitted. Each step's completion MUST be marked durably (in `.harmonik/daemon.state` marker per ON-030a, augmented with `drain_step_completed` field) before the next step begins. On crash mid-drain, next daemon startup MUST resume drain from next-uncompleted step rather than restart from step 1; resumption MUST be idempotent on completed steps (each step's effect is replay-safe). Per §2.2 F8c, this is a constraint requirement adjacent to the ON-027 umbrella; it gets its own bead with `blocks` edge from the umbrella (the umbrella cannot close until atomicity discipline is met).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-028
+    kind: req
+    req: ON-028
+    title: "`stop --immediate` skips drain steps 2–3"
+    description: |
+      Per ON-028: on `stop --immediate` or SIGKILL, daemon MUST skip steps 2 and 3 of ON-027. In-flight agent subprocesses MUST be killed (SIGTERM with a short bounded window, then SIGKILL). In-flight run state is recoverable on next startup via checkpoint + reconciliation per [reconciliation/spec.md §4.2], but in-flight agent subprocesses are not gracefully stopped.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-029
+    kind: req
+    req: ON-029
+    title: "Drain timeout per-step + optional sum-bound (F8c constraint)"
+    description: |
+      Per ON-029: the drain timeout of ON-027 is configurable per-step (`timeout.step_2`, `timeout.step_3`, etc.); the §7.2 pseudocode is normative for the per-step apportionment. A single `drain_timeout_total` MAY be declared as the sum-bound; if declared, individual `timeout.step_N` MUST sum to ≤ `drain_timeout_total`. Drain timeout knobs MUST be operator-configurable per the config inventory of ON-004. Default values are specified in the config inventory; change-takes-effect semantics is "next daemon start" (drain timeouts are read once at startup). Per §2.2 F8c, this is a constraint requirement adjacent to the ON-027 umbrella; own bead with `blocks` from umbrella.
+
+  # ───────────────────────── §4.8 Restart RTO ─────────────────────────
+
+  - mnem: on-030
+    kind: req
+    req: ON-030
+    title: "Restart reconstruction path (git + Beads, no JSONL replay)"
+    description: |
+      Per ON-030: daemon restart MUST reconstruct the in-memory model by walking the git checkpoint trail per [execution-model.md §4.7] and querying Beads via `br` per [beads-integration.md §4.2]. The JSONL event log MUST NOT be replayed for state reconstruction (per [event-model.md §4.4] and [event-model.md §4.5], and locked decision #12 — no DTW). Reconciliation workflows MUST spawn for in-flight runs (per §3 `in_flight(run)`) per [reconciliation/spec.md §4.2].
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-030a
+    kind: req
+    req: ON-030a
+    title: "Pause-state durable marker (`.harmonik/daemon.state`)"
+    description: |
+      Per ON-030a: the operator-control state machine of §7.1 MUST persist its current state via an atomic-written marker file `.harmonik/daemon.state` containing current `DaemonStatus` plus pause-reason discriminator (when applicable; one of `operator`, `improvement`, `upgrade-prepare`). Write MUST use temp+rename+fsync+parent-fsync per [workspace-model.md §4.7 WM-026] [WM cite informational per F-pilot-ON-6] and MUST happen synchronously on every state transition that produces `paused`, `pausing`, `upgrade-prepare`, or `stopped` state. On daemon startup, [process-lifecycle.md §4.2 PL-005] step 0 MUST read `.harmonik/daemon.state`; if marker indicates paused/upgrade-prepare state, daemon MUST initialize into that state rather than `running`, preserving operator intent across crashes. Marker MUST be removed on clean transition to `running` or process exit via the normal-startup path.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-031
+    kind: req
+    req: ON-031
+    title: "Restart RTO target (30s p95 nominal / 300s hard ceiling)"
+    description: |
+      Per ON-031: restart MUST reach pre-restart state within RTO target, measured from SIGTERM (or crash) to daemon emitting `ready` status event per [process-lifecycle.md §4.2]. MVH RTO target: **30 seconds nominal fixture target** (p95 under standard fixture defined in ON-032 criterion 1) with a **300-second hard ceiling** (ON-032 criterion 3). Sensor: restart-RTO test harness backed by the standard fixture (`≤ 500 open beads`, `≤ 50 in-flight runs`, git-log depth `≤ 10,000` commits, `≤ 100` Cat-3-pending runs, `≤ 10` active investigator workflows). See OQ-ON-005 for residual ambiguity on auto-escalate vs notify-only on ceiling breach.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-032
+    kind: req
+    req: ON-032
+    title: "RTO criteria and hard ceiling (3 criteria)"
+    description: |
+      Per ON-032: RTO target MUST be set against three criteria. **Criterion 1 — operator expectation (nominal fixture).** MVH assumes single-operator, single-instance deployment. Target: **≤ 30 seconds at 95th percentile** under the standard fixture (`≤ 500 open beads, ≤ 50 in-flight runs, git-log depth ≤ 10,000 commits since the oldest open bead's first checkpoint, ≤ 100 reconciliation-Cat-3-pending runs, ≤ 10 active investigator workflows`). These bounds are the harness's reference state. **Criterion 2 — reconstruction complexity.** Restart time is proportional to (a) git-log walk depth since oldest open bead's first checkpoint, and (b) Beads query latency for ready + in-flight bead sets. JSONL event count is NOT a restart-time factor. **Criterion 3 — hard ceiling: 300 seconds.** Beyond this the operator MUST be notified (daemon MUST enter `degraded` reporting `reconciling` with progress markers). Criterion 3 is non-negotiable. Reconciliation-workflow dispatch time is part of the RTO; reconciliation-workflow execution time (investigator-agent LLM calls per RC §4.4) is NOT.
+
+  - mnem: on-033
+    kind: req
+    req: ON-033
+    title: "RTO measurement boundary (monotonic-corrected clock)"
+    description: |
+      Per ON-033: RTO of ON-031 MUST be measured using a monotonic-corrected clock source: SIGTERM receipt and `daemon_ready` emission timestamps MUST both carry an `_at_ns_since_boot` companion field (cross-spec coordination request to EV: add `shutdown_at_ns_since_boot` and `ready_at_ns_since_boot` to `daemon_shutdown` and `daemon_ready` payloads in §8.7.2 / §8.7.3). On boot-transition (post-reboot), monotonic-clock comparison is undefined; RTO MUST be marked `rto_undefined` for the boot-transition cycle and excluded from the p95 measurement. SIGKILL terminations have no `daemon_shutdown` emission; RTO is `rto_undefined` for those cycles. Measurement MUST NOT start from `harmonik daemon` invocation time; the boundary is SIGTERM (or daemon crash timestamp recorded by the OS) to daemon's `ready` status event emission per [process-lifecycle.md §4.2].
+
+  - mnem: on-053
+    kind: req
+    req: ON-053
+    title: "Post-panic forensic file (`.harmonik/panic-<timestamp>.log`)"
+    description: |
+      Per ON-053: when daemon's top-level panic barrier ([process-lifecycle.md §4.6 PL-018a]) intercepts a panic and exits with §8 code 19 (`runtime-panic`), daemon MUST atomically write a forensic file to `.harmonik/panic-<timestamp>.log` containing: (a) the Go runtime panic message and stack trace; (b) daemon's PID, PGID, project_hash, and binary commit hash; (c) timestamp of the panic in both wall-clock (RFC 3339) and `time.Since(boot)` monotonic forms; (d) last-emitted run_id / node_id / event_id (best-effort from in-memory cursor). Write MUST follow temp+rename+fsync+parent-fsync atomicity discipline of [workspace-model.md §4.7 WM-026] [WM cite informational per F-pilot-ON-6]. File is NOT consumed by reconciliation; it exists for operator post-mortem inspection. Multiple panic files MAY accumulate; ON does NOT mandate cleanup at this revision (tracked under OQ-ON-010).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.9 Observability envelope ─────────────────────────
+
+  - mnem: on-034
+    kind: req
+    req: ON-034
+    title: "Every subsystem emits typed events"
+    description: |
+      Per ON-034: every subsystem MUST emit events per [event-model.md §6.3]. Event taxonomy additions introduced by a subsystem MUST be declared via the subsystem envelope (per [architecture.md §4.4] AR-013) and registered per [event-model.md §4.6]. Every event MUST carry the four-axis and mechanism/cognition tags per [architecture.md §4.1].
+
+  - mnem: on-035
+    kind: req
+    req: ON-035
+    title: "Every subsystem emits structured logs (NDJSON wire format)"
+    description: |
+      Per ON-035: every subsystem MUST emit structured logs. Unstructured log lines (free-form text only) are forbidden at spec-declared emission points. Structured logs are MVH substrate for observability; Prom/OTel formats are post-MVH per ON-043. Wire format owned by this spec (promoted from unreferenced `[event-model.md §3.8]` cite). Minimum NDJSON record carries: `ts` (RFC 3339 with ms), `log_schema_version` (current `"1.0"`), `level ∈ {debug, info, warn, error}`, `subsystem`, `source_subsystem` (per [event-model.md §4.9 EV-034a]), `run_id?`, `node_id?`, `event_id?` (UUIDv7 correlation per [event-model.md §4.1] when log corresponds to event emission), `msg`, `fields`. Secrets-redaction per ON-022 MUST apply pre-emission; producer-side; consumers MUST NOT re-redact. Log files MUST rotate at 100 MiB or 24 hours; prior files moved to `.harmonik/logs/<subsystem>-<rotated_at>.jsonl`. `log_schema_version` is under N-1 compat per ON-INV-001 (cross-spec coordination request: add structured logs to ON-018 enumeration; tracked OQ-ON-011). Detailed schema deferred to OQ-ON-007 (`quality-checks.md`).
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-036
+    kind: req
+    req: ON-036
+    title: "Every subsystem exposes a health-check interface"
+    description: |
+      Per ON-036: every subsystem MUST expose a health-check interface returning `health_status ∈ {OK, degraded, failed}` with optional reason string. Orchestrator MUST aggregate subsystem health into a harmonik-wide health status exposed via `harmonik status` per [process-lifecycle.md §4.10].
+
+  - mnem: on-037
+    kind: req
+    req: ON-037
+    title: "Every subsystem emits liveness heartbeats"
+    description: |
+      Per ON-037: every subsystem MUST emit a liveness heartbeat event on a defined cadence. Missing heartbeats beyond tolerance MUST trigger `degraded` classification for that subsystem and raise the aggregated harmonik-wide health accordingly. Cadence and tolerance are operator-configurable per ON-004.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-038
+    kind: req
+    req: ON-038
+    title: "Audit records are a subset of traces"
+    description: |
+      Per ON-038: audit records MUST be produced as a subset of transition records per [execution-model.md §4.4]: the subset where `actor_role` is in a privileged role (per [architecture.md §4.8]) AND `chosen_action` affected policy, role permissions, or budget. No separate audit-log store is introduced; audit is a query over transition-record sibling files and their projections.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: on-039
+    kind: req
+    req: ON-039
+    title: "All observability operations are mechanism-tagged"
+    description: |
+      Per ON-039: every observability operation (health-check evaluation, heartbeat emission, metric emission, log emission, audit-record derivation) MUST be mechanism-tagged per [architecture.md §4.1, §4.2]. Any operation that requires cognition to produce the observability signal MUST be represented as a separate verification node per [architecture.md §4.3], NOT folded into the observability protocol.
+
+  - mnem: on-040
+    kind: req
+    req: ON-040
+    title: "Silent-hang detection obligation + drain-forced synthesis"
+    description: |
+      Per ON-040: detection of silent hangs (handler subprocesses producing no output and no heartbeat within bounded window) is obligated under [handler-contract.md §4.6]. This spec names the obligation to ensure operator-observable consequence (`agent_warning_silent_hang` event per [event-model.md §8.3] + subsystem `degraded` classification per ON-037) is not silently deferred. Enforcement mechanism lives in handler-contract. If a drain timeout escalation per ON-029 produces a SIGKILL to a still-running agent subprocess, daemon MUST synthesize an `agent_warning_silent_hang{reason=drain_forced, run_id, node_id}` event prior to the SIGKILL emission, even if no prior silent-hang detection had fired. The synthesis MUST occur within drain step 4's wait window per ON-027.
+
+  # ───────────────────────── §4.10 Multi-daemon + multi-tenancy deferral ─────────────────────────
+
+  - mnem: on-041
+    kind: req
+    req: ON-041
+    title: "Multi-daemon commands obligation + per/cross-daemon ceiling distinction"
+    description: |
+      Per ON-041: spec-draft pass MUST produce normative definitions for machine-level operator commands: (a) `harmonik list` enumerate running daemons machine-wide with project path, pid, socket path, current status; (b) daemon-identification flags on all daemon-communicating commands (stop, pause, attach, status, upgrade) — at minimum `--socket <path>`, `--cwd <path>`, `--daemon-id <id>`; (c) machine-level agent-subprocess ceiling — cross-daemon bound on concurrently running agent subprocesses enforced by shared lock or machine-level coordinator. **Scope clarification:** per-daemon concurrency ceiling per [process-lifecycle.md §4.5 PL-014a] applies WITHIN one daemon; the machine-level ceiling above is a SEPARATE cross-daemon bound. Multi-tenancy deferral of ON-042 applies to multi-daemon coordination concerns (shared LLM budgets, shared identities, shared skill registries) only; per-daemon and machine-level ceilings are both in-scope for MVH. **Daemon-discovery:** `harmonik list` scans operator's home dir for `**/.harmonik/daemon.pid` (default scope: `$HOME` and any path in `$HARMONIK_PROJECT_ROOTS`). Pidfiles whose socket is unreachable or whose PID does not respond to `kill(pid, 0)` are reported `stale`. **Output columns:** `daemon_id` (project_hash from PL-006a), `project_root`, `pid`, `status`, `socket_path`, `started_at`, `last_exit_code`, `budget_summary` (rolled up to per-daemon totals per ON-049 attribution). Operators MUST be able to filter by status and project-root substring.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: on-042
+    kind: req
+    req: ON-042
+    title: "Multi-tenancy is explicitly deferred post-MVH"
+    description: |
+      Per ON-042: per-project daemon isolation (one daemon per project per [process-lifecycle.md §4.1]) is the MVH answer to multi-tenancy. Per-tenant cost attribution is out of scope for MVH; running N daemons does not auto-partition costs. Acknowledged-and-deferred concerns: shared operator LLM budgets (Anthropic quota is per-account; running N daemons does not create N quotas — machine-level budget coordinator required post-MVH); shared operator identity and auth (`harmonik attach` across N daemons is the same human with same skills and same `br` binary; global install conflicts and access controls are shared concerns); shared skill registries (skills installed machine-wide e.g. `~/.claude/skills/` — provisioning failure in one project is global failure surface). "Deferred" means "not solved by per-project-daemon isolation"; NOT "dismissed."
+    extra_labels:
+      - "post-mvh"
+
+  - mnem: on-043
+    kind: req
+    req: ON-043
+    title: "Metrics exposition format is deferred post-MVH"
+    description: |
+      Per ON-043: Prom and OTel wire formats for metric exposition are deferred post-MVH. MVH observability is structured logs (ON-035) plus typed events (ON-034). An implementation MAY additionally expose Prom/OTel endpoints but MUST NOT require them for MVH conformance.
+    extra_labels:
+      - "post-mvh"
+
+  - mnem: on-044
+    kind: req
+    req: ON-044
+    title: "Distributed tracing across daemons is deferred post-MVH"
+    description: |
+      Per ON-044: distributed tracing across multiple harmonik instances is deferred post-MVH. Per-project daemon isolation means multi-instance tracing is an OS-process-isolation concern, not a harmonik-code concern — each daemon is a separate process with its own event log and own state. Cross-daemon correlation (if ever needed) is an external-tooling layer, not a foundation spec.
+    extra_labels:
+      - "post-mvh"
+
+  - mnem: on-050
+    kind: req
+    req: ON-050
+    title: "`harmonik attach` minimum surface (5 sub-rules)"
+    description: |
+      Per ON-050: `harmonik attach` MUST: (a) connect to `.harmonik/daemon.sock` and verify daemon-instance handshake per ON-013b (when ON-013b lands; for MVH, accept any daemon); (b) stream a live event tap (subset of `daemon_*`, `run_*`, `node_*`, `operator_*`, `error` events per [event-model.md §8]) to operator's terminal; (c) present a periodic status snapshot (output of `harmonik status`) every T_attach_status (default 10s, operator-tunable); (d) accept operator commands inline (subset of `pause`, `resume`, `stop`, `enqueue`); (e) detach cleanly on operator SIGINT or `:detach` command without affecting daemon's state. Attach session_id MUST be carried in any operator-command emission for audit-trail correlation per ON-039.
+
+  - mnem: on-051
+    kind: req
+    req: ON-051
+    title: "Multi-attach arbitration"
+    description: |
+      Per ON-051: multiple operators MAY attach simultaneously to the same daemon. Each attach session has a unique session_id; each operator-command emission carries the originating session_id. Concurrent commands are serialized per ON-011's mutex discipline; losers observe the post-winner state per ON-013c idempotency. Detach by one operator MUST NOT affect other attached operators or daemon's state.
+
+  - mnem: on-054
+    kind: req
+    req: ON-054
+    title: "`harmonik status` reports pause-reason discriminator"
+    description: |
+      Per ON-054: when daemon is in `paused` (or `pausing`) status per §7.1, `harmonik status` MUST report the pause-reason discriminator: `operator-pause` (issued via `harmonik pause`), `improvement-pause` (per ON-012), `upgrade-prepare` (when `harmonik upgrade` is in progress per ON-019). Discriminator MUST match `operator_pause_status` payload's pause-reason tag (per [event-model.md §6.3]) and is sourced from durable pause-state marker of ON-030a. Operator inspecting `harmonik status` during pause MUST be able to distinguish these three reasons without consulting the event log.
+
+  # ───────────────────────── §4.11 Resource budgets ─────────────────────────
+
+  - mnem: on-045
+    kind: req
+    req: ON-045
+    title: "Budgets declared, enforced, attributed cross-subsystem"
+    description: |
+      Per ON-045: resource budgets (token, wall-clock, iterations) MUST be declared in policy per [control-points.md §4.5], enforced at dispatch by agent runner per [control-points.md §4.5], and attributed in observability per run, per role, aggregated to per-workflow and per-harmonik-instance. Cost attribution per tenant is out of scope for MVH per ON-042.
+
+  - mnem: on-046
+    kind: req
+    req: ON-046
+    title: "Budget events are operator-observable"
+    description: |
+      Per ON-046: budget-threshold events (`budget_warning`, `budget_exhausted`, `budget_accrual` per [event-model.md §8.4] and [control-points.md §4.5]) MUST be operator-observable via `harmonik status` and the attach UI per [process-lifecycle.md §4.10]. Operator-observable MUST NOT require parsing raw JSONL; a summarized view is adequate.
+
+  - mnem: on-047
+    kind: req
+    req: ON-047
+    title: "Category defaults for resource budgets (5-row table)"
+    description: |
+      Per ON-047: every policy MUST have a declared default value for each budget category when a node/role/workflow does not declare one explicitly. Foundation-level category defaults: Token budget (per-run) = 200_000 tokens, applies to any agentic node, override at node/role policy. Wall-clock budget (per-run) = 30 minutes, override at node/role. Iterations budget (per-run) = 50 iterations (tool-use cycles), override at node/role. Wall-clock budget (per-reconciliation-workflow) = 10 minutes, override at RC §4.4 policy. Warning threshold = 80% of budget across all categories (per CP-025). Defaults are operator-configurable via policy schema [control-points.md §6.3] and registered in config inventory per ON-004. Make "no policy declared" a safe state.
+
+  - mnem: on-048
+    kind: req
+    req: ON-048
+    title: "Exhaustion protocol (4-step sequence)"
+    description: |
+      Per ON-048: on budget exhaustion (any category reaches 100%), enforcing subsystem (agent runner per CP §4.5; reconciliation policy for reconciliation-workflow budgets) MUST: (1) emit `budget_exhausted` per [event-model.md §8.4.3]; emitter MUST tag `category` and `scope` via EV's structured-fields mechanism (payload shape — `run_id`, `session_id?`, `budget_ref`, `attempted_dispatch_cost` — is EV-owned). (2) Terminate in-flight LLM call or tool invocation at next safe boundary (post-chunk for token budgets; post-iteration for iterations budgets; post-step for wall-clock). (3) Route through exhaustion-routing policy: default `pause-and-escalate` — run transitions to failed state with fallback verdict per [reconciliation/spec.md §4.4 RC-018]; daemon MAY enter paused if policy declares `pause-on-exhaustion=true` (default false). (4) Emit `dispatch_deferred` per §8 code 18 if exhaustion cascades to multi-run ceiling breach. Exhaustion protocol is deterministic; pause-vs-escalate decision is per-policy.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: on-049
+    kind: req
+    req: ON-049
+    title: "Attribution shape (who-consumed-what 5-tuple + delegation_path)"
+    description: |
+      Per ON-049: budget attribution MUST be surfaced at conceptual shape `(run_id, role, node_id, category, amount)` plus `delegation_path` identifier per [control-points.md §4.8 CP-039] for cost incurred by a cognition-tagged step, so cost can be traced to the specific model-class invoked. Concrete payload-field placement on `budget_warning`, `budget_consumed`, `budget_exhausted` is owned by [event-model.md §8.4]; ON is normative for the attribution surface (5 fields + `delegation_path` for cognition-tagged steps), EV is normative for on-wire field names and envelope placement. Aggregation levels: per-run (`run_id`), per-role (`role`), per-workflow (`workflow_id`), per-harmonik-instance (total over daemon's lifetime). Aggregation is read-side projection; emission side MUST surface attribution on every budget-affecting operation.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §5 invariants (4 active; 2 retired) ─────────────────────────
+
+  - mnem: on-inv-001
+    kind: invariant
+    req: ON-INV-001
+    title: "Sensor: N-1 compat window holds across every versioned artifact"
+    description: |
+      Per ON-INV-001: every versioned on-disk or wire artifact declared by foundation specs MUST hold the N-1 readability property of ON-018 simultaneously. A release that breaks N-1 for any single artifact is a migration release per ON-019 and MUST require operator pause for install. Constrains event-model, execution-model, control-points, beads-integration together.
+      Sensor: corpus-wide compat-matrix test harness — for every artifact declared by foundation specs (event envelope, event payload schemas per [event-model.md §4.7], checkpoint trailer per [execution-model.md §4.4], queue overlay, policy schema per [control-points.md §6.3]), produce writer output at version N and parse at a reader pinned to N-1; failure of ANY pair flips the invariant. Sensor runs corpus-level per [architecture.md §4.1] AR-004.
+
+  - mnem: on-inv-003
+    kind: invariant
+    req: ON-INV-003
+    title: "Sensor: secrets never appear in durable sinks unredacted"
+    description: |
+      Per ON-INV-003: for every event-model-declared sink (event log per [event-model.md §4.4], dead-letter log per [event-model.md §4.3], session log per [workspace-model.md §4.7]), secrets MUST NOT appear unredacted. The invariant holds jointly across ON-022, ON-023, and the handler-contract secrets-injection rule — losing any one breaks the invariant.
+      Sensor: two-part — (a) compile-time schema linter (per ON-023) that rejects any payload field typed as `Secret`; (b) regression test harness that writes each durable sink under a fixture whose secrets-injection set is known, then scans sink's output for any fixture-secret substring. Sensor failure on either part flips the invariant. WM session-log cite is informational per F-pilot-ON-6.
+
+  - mnem: on-inv-005
+    kind: invariant
+    req: ON-INV-005
+    title: "Sensor: every subsystem reports its reconstruction contribution"
+    description: |
+      Per ON-INV-005: every subsystem MUST expose a reconstruction-contribution interface such that restart-recovery per ON-030 can enumerate and verify its part of the reconstructed state. Specific interface (Go method or startup-probe event) is per subsystem, but invariant requires: (a) NO subsystem reconstructs silently, (b) every subsystem's reconstruction terminates (bounded) before daemon emits `ready`, (c) any subsystem that cannot reconstruct MUST cause daemon to fail startup with a categorized exit code (per §8) rather than enter silently-partial `ready` state.
+      Sensor: fixture-backed restart-recovery test harness — inject a known pre-restart state across every subsystem, restart daemon, assert each subsystem emits a reconstruction-completed signal before `ready`. Missing or silent reconstruction flips the invariant.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: on-inv-006
+    kind: invariant
+    req: ON-INV-006
+    title: "Sensor: no subsystem introduces a control surface bypassing between-task invariant"
+    description: |
+      Per ON-INV-006: no subsystem MAY introduce a new control surface (CLI command, API endpoint, signal handler, socket protocol action) that aborts an in-flight run without routing through `stop --immediate` per ON-009 OR the drain-gated pause/upgrade path of ON-008. Subsystems MUST NOT add local escape-hatches (e.g., `kill-run`, `abandon-run`, `skip-reconciliation`) that bypass drain gate or reconciliation carve-out.
+      Sensor: corpus-wide grep-plus-reviewer audit — every subsystem spec's §4.a Subsystem envelope (per [architecture.md §4.4] AR-013) is inspected for operator-control-affecting operations; any such operation not routing through state machine of §7.1 flips the invariant. Reviewer-enforced pending mechanical lint for control-surface declarations.
+
+  # ───────────────────────── §8 single-bead error taxonomy ─────────────────────────
+  # Per F-pilot-ON-4 + §2.11(c) SHAPE-not-COUNT (F-pilot-WM-2 precedent):
+  # 24 exit codes (codes 0..23 incl. code 0 success) are sentinel VALUES of a
+  # single vocabulary, not 24 independent codepaths. Single-bead form per
+  # BI/WM precedent.
+
+  - mnem: on-error.taxonomy
+    kind: error-taxonomy
+    title: "ON exit-code taxonomy (§8) — 24-code authoritative table"
+    description: |
+      Implement the §8 exit-code taxonomy: 24 codes (codes 0..23 incl. code 0 success — 0=success, 1=generic-failure, 2=queue-format-unsupported, 3=checkpoint-schema-unsupported, 4=event-schema-unsupported, 5=pidfile-locked, 6=socket-bind-failed, 7=git-bad-state, 8=beads-unavailable, 9=filesystem-unwritable, 10=disk-full, 11=drain-timeout-escalated, 12=rto-hard-ceiling-exceeded, 13=upgrade-requires-paused, 14=upgrade-hash-mismatch, 15=upgrade-schema-incompatible, 16=operator-control-invalid-state, 17=multi-daemon-target-missing, 18=machine-ceiling-exhausted, 19=runtime-panic, 20=signal-terminated, 21=drain-step-errored, 22=ntm-unavailable, 23=orchestrator-agent-unavailable). For each: failure category, detection rule, emitted event (if any), remediation pointer. Taxonomy is AUTHORITATIVE for the corpus — PL §8.x and other-spec consumers cite ON §8 by reference (per ON-002 obligation; cross-references resolve here per §10.1 conformance bootstrap). Code-to-category mapping MUST be stable across releases within the N-1 window per ON-001. Additions MAY land within the N-1 window as long as existing mappings remain stable. Per discipline v0.9 §2.11(c.2), edges run `<consumer-req> → on-error.taxonomy`; the taxonomy bead's own predecessors are limited to schema-shaped beads it consumes (none in this pilot — the taxonomy is leaf-shaped on the producer side). Cross-spec consumer→on-error.taxonomy edges from PL/RC/etc. live in those pilots, not here.
+    extra_labels:
+      - "kind:taxonomy"
+
+  # ───────────────────────── Test-infra beads (11) ─────────────────────────
+
+  - mnem: on-test.exit-code-taxonomy-fixture
+    kind: test-infra
+    title: "Exit-code taxonomy + obligations fixture (ON-001..ON-004)"
+    description: |
+      Per §10.2 (ON-001..ON-004): negative-path tests covering every exit code listed in §8; static-check test verifying that every requirement with cross-reference to §4.1 resolves to a §8 entry. Verify config-inventory artifact existence; verify startup failure-mode catalog co-owned with PL §4.2 covers all enumerated prerequisite failures; verify `harmonik status` resolves §8 entries on every non-zero exit observed.
+
+  - mnem: on-test.integrity-gate-harness
+    kind: test-infra
+    title: "Commit-hash integrity gate harness (ON-005, ON-005a, ON-006)"
+    description: |
+      Per §10.2 (ON-005, ON-006): upgrade scenario tests with matching and mismatched commit hashes; verify `operator_upgrade_rejected` on mismatch with §8 code 14; verify post-MVH signing extension does not break MVH conformance. ON-005a: binary-without-stamp test asserts `failure_mode=binary-stamp-missing` at upgrade invocation. Cross-spec coordination: handler binary commit-hash check at HC §4.10 follows same discipline.
+
+  - mnem: on-test.operator-control-fsm-harness
+    kind: test-infra
+    title: "Operator-control state-machine scenario harness (ON-007..ON-014, ON-013a, ON-013c)"
+    description: |
+      Per §10.2 (ON-007..ON-014): state-machine scenario tests enumerating every transition in §7.1; verify reconciliation-carve-out queueing of pause during `reconciling`; verify improvement-pause auto-resumes; verify `stop --immediate` aborts in-flight runs and emits `run_failed` with class `canceled` on next restart. ON-011 mutex serializability: race test asserts concurrent commands are arbitrated by mutex acquisition order. ON-013a: panic-injection test asserts `defer recover()` barrier emits `operator_command_failed` and reverts partial state-machine transition. ON-013c: idempotent no-op test asserts `pause` while paused returns 0 with `operator_pause_status{paused}` deduplicated via session_id.
+
+  - mnem: on-test.queue-compat-harness
+    kind: test-infra
+    title: "Queue-format compat harness (ON-015..ON-017)"
+    description: |
+      Per §10.2 (ON-015..ON-017): upgrade scenario tests with N-1, N, N+1 Beads schemas; verify startup failure on unsupported with §8 code 2; verify `br` adapter localizes a simulated Beads breaking change (single adapter update, no caller-side fork). Beads version-pin manifest entry verified against release pinning protocol.
+
+  - mnem: on-test.schema-compat-harness
+    kind: test-infra
+    title: "Schema compat window harness (ON-018, ON-019, ON-INV-001)"
+    description: |
+      Per §10.2 (ON-018, ON-019) + ON-INV-001 sensor: cross-artifact compat tests — write at N, read at N-1, for every listed artifact (event envelope, event payload schemas, checkpoint trailers, queue overlay, policy schema). Verify migration release refusal to install without a pause. Sensor: corpus-wide compat-matrix test harness flips the invariant on any pair failure.
+
+  - mnem: on-test.upgrade-contract-harness
+    kind: test-infra
+    title: "Upgrade contract scenario harness (ON-020, ON-020a, ON-021)"
+    description: |
+      Per §10.2 (ON-020, ON-021): full upgrade scenario tests covering all sub-obligations of ON-020 — binary-source mechanism, hash check, drain-vs-reconciliation interaction, cross-version state contract, fd-passing socket continuity (gap-free; no `ECONNREFUSED` window observable), rollback first-class (`harmonik upgrade --rollback` while paused after successful upgrade), post-exec-replace failure recovery (rollback removes stale pidfile/socket, restores prior binary). ON-020a: marker write test asserts `.harmonik/daemon.upgrading` is durable on disk before `execve`; on next-startup mismatch, exit code 14 with `failure_mode=upgrade-hash-mismatch-on-restart`. ON-021: cross-version state preservation across same-version and N-1 upgrades; iff drain-completed.
+
+  - mnem: on-test.security-and-shutdown-harness
+    kind: test-infra
+    title: "Security + shutdown 8-step drain harness (ON-022..ON-029, ON-027a, ON-INV-003)"
+    description: |
+      Per §10.2 (ON-022..ON-029): secret-redaction tests covering every sink (event log, dead-letter log, session log [WM cite informational]); schema-level tests asserting no field is typed as `Secret` in any payload; sandbox escape-attempt tests; graceful-shutdown scenario tests for all 8 drain steps (1, 2, 3, 3a, 4, 5, 6, 7) with per-step bound exhaustion → §8 code 11 escalation and per-step error → §8 code 21; `stop --immediate` tests verifying steps 2–3 are skipped. ON-027a atomicity: crash-mid-drain test asserts next-startup resumes from next-uncompleted step (not step 1); each completed step is replay-safe. ON-040 silent-hang synthesis: drain-timeout SIGKILL test asserts `agent_warning_silent_hang{reason=drain_forced}` synthesized prior to SIGKILL emission within step 4 wait window. ON-INV-003 secrets sensor: compile-time linter + regression scan.
+
+  - mnem: on-test.restart-rto-harness
+    kind: test-infra
+    title: "Restart RTO benchmark + monotonic-clock harness (ON-030..ON-033, ON-053, ON-INV-005)"
+    description: |
+      Per §10.2 (ON-030..ON-033): restart scenario benchmarks measuring SIGTERM-to-`ready` across representative hardware at MVH scale; verify 30s p95 nominal under standard fixture (`≤ 500 open beads, ≤ 50 in-flight runs, git-log depth ≤ 10,000 commits, ≤ 100 Cat-3-pending runs, ≤ 10 active investigators`) and 300s hard ceiling. ON-033: monotonic-clock companion field verification (`shutdown_at_ns_since_boot`, `ready_at_ns_since_boot`); boot-transition cycles marked `rto_undefined`; SIGKILL terminations marked `rto_undefined`. ON-030a marker: pause-state durable across crash; on startup, daemon initializes into persisted suffix-state. ON-053 forensic file: post-panic atomic write verified for content (PID, PGID, project_hash, binary commit hash, dual-form timestamp, last-emitted run/node/event ids). ON-INV-005 reconstruction: per-subsystem reconstruction-completed signal asserted before `ready`.
+
+  - mnem: on-test.observability-envelope-harness
+    kind: test-infra
+    title: "Observability envelope + silent-hang harness (ON-034..ON-040)"
+    description: |
+      Per §10.2 (ON-034..ON-040): per-subsystem-conformance tests verifying typed event emission (every subsystem MUST register taxonomy additions per AR-013), structured log emission (NDJSON wire format with `log_schema_version`, `source_subsystem`, `event_id?` correlation when log emits a tracked event), health-check interface presence (`health_status ∈ {OK, degraded, failed}`), liveness heartbeat cadence (operator-configurable per ON-004), audit-record derivation (subset of transition records where actor_role is privileged AND chosen_action affected policy/permissions/budget), mechanism-tagging of every observability operation. ON-040 silent-hang obligation test per HC §4.6.
+
+  - mnem: on-test.multi-daemon-and-attach-harness
+    kind: test-infra
+    title: "Multi-daemon + attach surface harness (ON-041..ON-046, ON-050, ON-051, ON-054)"
+    description: |
+      Per §10.2 (ON-041..ON-046): multi-daemon scenario tests verifying `harmonik list` (scans `**/.harmonik/daemon.pid` under `$HOME` + `$HARMONIK_PROJECT_ROOTS`; queries socket via JSON-RPC `status`; reports stale on unreachable socket / unreachable PID; output columns `daemon_id` / `project_root` / `pid` / `status` / `socket_path` / `started_at` / `last_exit_code` / `budget_summary`); flag-based targeting (`--socket`/`--cwd`/`--daemon-id`); machine-ceiling enforcement (separate from per-daemon PL-014a ceiling). Budget tests verify declared-enforced-attributed pipeline. ON-050 attach surface: handshake / live event tap / periodic status snapshot every T_attach_status / inline operator commands / clean detach without affecting daemon state; attach session_id carried in operator-command emissions. ON-051 multi-attach: concurrent attaches serialized per ON-011 mutex, idempotent per ON-013c; one operator's detach does not affect others. ON-054 status pause-reason: discriminator `operator-pause` / `improvement-pause` / `upgrade-prepare` distinguishable without consulting event log.
+
+  - mnem: on-test.budget-defaults-and-attribution-harness
+    kind: test-infra
+    title: "Budget defaults + exhaustion + attribution harness (ON-047..ON-049)"
+    description: |
+      Per §10.2 (ON-047..ON-049): policy-default application tests (run without explicit budgets consumes the ON-047 5-row defaults: 200K tokens/run, 30 min wall-clock/run, 50 iterations/run, 10 min per-reconciliation-workflow, 80% warning threshold). ON-048 exhaustion-protocol tests: emit `budget_exhausted` per [event-model.md §8.4.3], terminate at safe boundary (post-chunk for tokens, post-iteration for iterations, post-step for wall-clock), route through pause-or-escalate policy (default `pause-and-escalate`; `pause-on-exhaustion=true` opt-in), cascade to `dispatch_deferred` on machine-ceiling breach. ON-049 attribution-shape tests: every budget-affecting event carries the 5-tuple `(run_id, role, node_id, category, amount)` plus `delegation_path` for cognition-tagged steps; aggregation indexed per-run / per-role / per-workflow / per-instance.
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples.
+#
+# Mnemonic prefix selects resolution map:
+#   on-* → intra-spec (this spec's mnem-map, generated at load)
+#   ar-* / em-* / ev-* / hc-* / cp-* / pl-* / bi-* → cross-spec
+#   forward:* → forward-deferred (logged only, NOT loaded into beads); used
+#     for rc targets per F-pilot-EM-2 / Option B precedent.
+edges:
+  # ───────────────────────── §4.a envelope edges ─────────────────────────
+  - {from: on-env-001, to: ar-052}                                    # spec-category front-matter (foundation-cross-cutting)
+  - {from: on-env-001, to: ar-053}                                    # subsystem envelope shape (voluntary publication)
+
+  # ───────────────────────── §4.1 exit-codes + obligations ─────────────────────────
+  - {from: on-001, to: on-error.taxonomy}                             # exit-code → §8 category mapping (consumer → vocabulary owner per §2.11(c.2))
+  - {from: on-002, to: on-error.taxonomy}                             # taxonomy obligation IS the §8 table
+  - {from: on-003, to: on-001}                                        # catalog cites exit codes per ON-001
+  - {from: on-003, to: on-error.taxonomy}                             # catalog entries cite §8 codes
+  - {from: on-004, to: on-001}                                        # config inventory enumerates exit-code-related knobs
+
+  # ───────────────────────── §4.2 integrity gate ─────────────────────────
+  - {from: on-005a, to: on-005}                                       # binary-stamp source for the gate
+  - {from: on-006, to: on-005}                                        # signing-deferred carves out beyond-MVH from ON-005's gate
+
+  # ───────────────────────── §4.3 operator-control between tasks ─────────────────────────
+  - {from: on-008, to: on-027}                                        # drain-gate completion is the precondition for paused
+  - {from: on-009, to: on-008}                                        # stop-immediate carves out the only non-drain abort path
+  - {from: on-010, to: on-008}                                        # carve-out applies AFTER ready (between-task scope)
+  # NOTE: on-011 → on-030a reverse removed for cycle avoidance. ON-011's
+  # "mutex held until durable-marker write per ON-030a" is supporting per
+  # F-pilot-AR-10 — removing ON-030a leaves ON-011 testable as serializable
+  # transition mutex + arbitration. ON-030a → ON-011 (kept below) is hard:
+  # the marker's content is the persisted ON-011 state; without ON-011 the
+  # marker has no semantics.
+  - {from: on-011, to: on-013}                                        # state machine emits per-transition events
+  - {from: on-012, to: on-011}                                        # improvement-pause reuses pausing/paused states
+  - {from: on-013, to: on-error.taxonomy}                             # operator_command_rejected → code 16; dispatch_deferred → code 18
+  - {from: on-013a, to: on-011}                                       # panic barrier reverts partial state-machine transition
+  - {from: on-013a, to: on-037}                                       # escalates daemon to degraded on mid-drain panic
+  - {from: on-013c, to: on-011}                                       # idempotency on no-op transitions of the state machine
+  - {from: on-013c, to: on-013}                                       # operator_pause_status dedup via session_id
+
+  # ───────────────────────── §4.4 queue-format compat ─────────────────────────
+  - {from: on-016, to: on-error.taxonomy}                             # queue-format-unsupported → code 2
+  - {from: on-016, to: on-018}                                        # check is part of N-1 window
+  - {from: on-016, to: on-003}                                        # check is part of startup failure-mode catalog
+  # NOTE: on-017 → on-015 NOT emitted. ON-017 body cites BI §4.2 (adapter)
+  # and external-inputs protocol but does NOT inline-cite ON-015 by ID.
+  # Topical adjacency does not warrant an invented edge per §3.1.
+
+  # ───────────────────────── §4.5 schema compat window ─────────────────────────
+  - {from: on-019, to: on-018}                                        # migration release is N-1-window-breaking release
+  - {from: on-019, to: on-error.taxonomy}                             # codes 13, 15 (upgrade-requires-paused, upgrade-schema-incompatible)
+
+  # ───────────────────────── §4.6 harmonik upgrade contract ─────────────────────────
+  - {from: on-020, to: on-005}                                        # commit-hash check sub-rule (b)
+  - {from: on-020, to: on-010}                                        # drain-vs-reconciliation interaction sub-rule (c)
+  - {from: on-020, to: on-019}                                        # cross-version state contract per N-1 window
+  - {from: on-020, to: on-error.taxonomy}                             # codes 13, 14, 15 emit on the upgrade-rejected paths
+  - {from: on-020a, to: on-005}                                       # marker carries expected_commit_hash for ON-005 gate
+  - {from: on-020a, to: on-error.taxonomy}                            # code 14 on startup-time hash mismatch
+  - {from: on-021, to: on-008}                                        # iff drain-completed implication
+  - {from: on-021, to: on-027}                                        # 8-step drain completion is the precondition
+  - {from: on-021, to: on-020}                                        # cross-version state contract refuses violations
+  - {from: on-021, to: on-030}                                        # reconstructible from git + Beads on restart
+
+  # ───────────────────────── §4.7 secrets redaction + drain ─────────────────────────
+  - {from: on-022, to: on-037}                                        # repeated redactor panics escalate to degraded
+  # ON-027 step beads — parented to umbrella; sequenced by explicit blocks edges
+  # between consecutive steps. Per §2.2 F11, step→umbrella edge is implicit
+  # via parent-child; do NOT add explicit blocks to the umbrella.
+  - {from: on-027.s2, to: on-027.s1}                                  # step 2 follows step 1
+  - {from: on-027.s3, to: on-027.s2}                                  # step 3 follows step 2
+  - {from: on-027.s3a, to: on-027.s3}                                 # step 3a follows step 3
+  - {from: on-027.s4, to: on-027.s3a}                                 # step 4 follows step 3a
+  - {from: on-027.s5, to: on-027.s4}                                  # step 5 follows step 4
+  - {from: on-027.s6, to: on-027.s5}                                  # step 6 follows step 5
+  - {from: on-027.s7, to: on-027.s6}                                  # step 7 follows step 6
+  - {from: on-027.s4, to: on-error.taxonomy}                          # code 21 on fsync failure; code 11 timeout-escalation
+  - {from: on-027.s5, to: on-error.taxonomy}                          # code 21 on memory flush failure
+  - {from: on-027.s6, to: on-error.taxonomy}                          # code 21 on workspace lock-release failure
+  - {from: on-027.s7, to: on-error.taxonomy}                          # code 11 on drain-timeout-escalated exit
+  # NOTE: on-027 → on-008 reverse removed for cycle avoidance. ON-008 body
+  # cites ON-027's 8 steps as the drain-gate body (hard dep — removing
+  # ON-027 breaks ON-008's predicate); on-008 → on-027 is the kept edge
+  # above. ON-027 umbrella body cites "per the ON-008 drain-gate" as
+  # supporting context per F-pilot-AR-10 — removing ON-008 leaves ON-027's
+  # 8-step drain ordering independently testable.
+  - {from: on-027, to: on-error.taxonomy}                             # code 11 on any step bound exhaustion
+  - {from: on-027a, to: on-027}                                       # F8c constraint adjacent to umbrella (atomicity over steps)
+  - {from: on-027a, to: on-030a}                                      # durable marker is the per-step completion store
+  - {from: on-028, to: on-027}                                        # skip-steps variant of the drain umbrella
+  - {from: on-029, to: on-027}                                        # F8c constraint adjacent to umbrella (per-step timeouts)
+  - {from: on-029, to: on-004}                                        # drain timeout knobs are operator-configurable per config inventory
+  - {from: on-029, to: on-error.taxonomy}                             # code 11 on per-step bound exhaustion
+
+  # ───────────────────────── §4.8 restart RTO ─────────────────────────
+  - {from: on-030, to: on-008}                                        # in_flight(run) predicate sourced from §3 / ON-008
+  - {from: on-030a, to: on-011}                                       # marker persists state-machine state
+  - {from: on-030a, to: on-030}                                       # marker contributes to reconstruction path
+  - {from: on-031, to: on-032}                                        # ON-031 (target slot) → ON-032 (criteria content); F13 slot-rule heuristic
+  - {from: on-031, to: on-error.taxonomy}                             # code 12 on hard-ceiling breach
+  # NOTE: on-032 → on-031 reverse removed for cycle avoidance. ON-031 is
+  # the slot declaring "the RTO target"; ON-032 is the content (fixture +
+  # criteria) that fills it. Per F13, slot→content is the kept direction
+  # (on-031 → on-032 above); content→slot is informational plumbing.
+  - {from: on-033, to: on-031}                                        # measurement boundary for the target (ON-033 → ON-031 — ON-033 is the consumer)
+  - {from: on-053, to: on-error.taxonomy}                             # code 19 on runtime-panic exit
+
+  # ───────────────────────── §4.9 observability envelope ─────────────────────────
+  - {from: on-035, to: on-022}                                        # producer-side redaction applies to structured logs
+  # NOTE: on-035 → on-018 NOT emitted. ON-035 cites ON-INV-001 ("under N-1
+  # compatibility per ON-INV-001") which is invariant-as-target per
+  # F-pilot-AR-r2-2 (no edge). The "if the addition is too invasive for
+  # this revision" parenthetical is a future-coordination request to amend
+  # ON-018, not a hard dep. Tracked under OQ-ON-011.
+  - {from: on-036, to: on-037}                                        # daemon-wide health aggregation includes heartbeats
+  - {from: on-040, to: on-037}                                        # subsystem-level degraded classification on silent-hang
+  - {from: on-040, to: on-027}                                        # drain-forced synthesis occurs in step 4 wait window
+  - {from: on-040, to: on-029}                                        # drain timeout escalation is the synthesis trigger
+
+  # ───────────────────────── §4.10 multi-daemon + attach ─────────────────────────
+  - {from: on-041, to: on-error.taxonomy}                             # codes 17 (target-missing), 18 (machine-ceiling-exhausted)
+  - {from: on-041, to: on-049}                                        # budget_summary in `harmonik list` rolls up ON-049 attribution
+  # NOTE: on-042 → on-041 NOT emitted. ON-042 body does NOT inline-cite
+  # ON-041 by ID; cite is to PL §4.1 only. ON-041's "deferral of ON-042
+  # applies to coordination concerns only" is supporting per F-pilot-AR-10.
+  # Topical adjacency is not edge-bearing per §3.1.
+  - {from: on-050, to: on-039}                                        # attach session_id carried for audit-trail per ON-039
+  - {from: on-051, to: on-011}                                        # concurrent commands serialized per ON-011 mutex
+  - {from: on-051, to: on-013c}                                       # losers observe post-winner state per idempotency
+  - {from: on-054, to: on-030a}                                       # pause-reason sourced from durable pause-state marker
+  - {from: on-054, to: on-012}                                        # improvement-pause discriminator distinguished from operator-pause
+
+  # ───────────────────────── §4.11 resource budgets ─────────────────────────
+  - {from: on-046, to: on-045}                                        # operator-observable surface for the declared/enforced/attributed pipeline
+  - {from: on-047, to: on-045}                                        # category defaults are part of the policy declaration
+  - {from: on-048, to: on-046}                                        # emit budget_exhausted per ON-046 observability surface
+  - {from: on-048, to: on-error.taxonomy}                             # code 18 (dispatch_deferred) on machine-ceiling breach cascade
+  - {from: on-049, to: on-045}                                        # attribution shape is what gets attributed in the pipeline
+
+  # ───────────────────────── §5 invariant sensor edges ─────────────────────────
+  # Per discipline §2.5 four-source enumeration; invariant-as-target one-way
+  # per F-pilot-AR-r2-2 (impl reqs do NOT block-on invariants).
+  # ON-INV-001 — N-1 compat
+  - {from: on-inv-001, to: on-018}                                    # §10.2 ON-018..ON-019 group cite
+  - {from: on-inv-001, to: on-019}                                    # group cite
+  - {from: on-inv-001, to: on-015}                                    # queue overlay artifact
+  # NOTE: on-inv-001 → on-035 NOT emitted. ON-INV-001 sensor body explicitly
+  # enumerates {event envelope, event payload schemas, checkpoint trailer,
+  # queue overlay, policy schema} — structured-logs is NOT in that list
+  # (tracked under OQ-ON-011). Per §2.5 four-source enumeration, structured
+  # logs do not currently fall under any of the four predecessor sources for
+  # ON-INV-001's sensor.
+  # ON-INV-003 — secrets never appear unredacted
+  - {from: on-inv-003, to: on-022}                                    # §10.2 ON-022..ON-029 group cite
+  - {from: on-inv-003, to: on-023}                                    # compile-time schema linter sub-sensor
+  # ON-INV-005 — every subsystem reports reconstruction contribution
+  - {from: on-inv-005, to: on-030}                                    # §10.2 ON-030..ON-033 group cite (restart reconstruction path)
+  - {from: on-inv-005, to: on-031}                                    # bounded-before-ready criterion
+  - {from: on-inv-005, to: on-error.taxonomy}                         # categorized exit code on subsystem reconstruction failure
+  # ON-INV-006 — no control surface bypasses between-task invariant
+  - {from: on-inv-006, to: on-008}                                    # §10.2 ON-007..ON-014 group cite (drain-gated path)
+  - {from: on-inv-006, to: on-009}                                    # stop-immediate carve-out
+  - {from: on-inv-006, to: on-027}                                    # 8-step drain envelope
+  - {from: on-inv-006, to: ar-053}                                    # §4.a envelope inspection sensor (corpus-wide grep+reviewer)
+
+  # Test-infra wiring (citing reqs / sensors → test-infra fixture)
+  - {from: on-001, to: on-test.exit-code-taxonomy-fixture}
+  - {from: on-002, to: on-test.exit-code-taxonomy-fixture}
+  - {from: on-003, to: on-test.exit-code-taxonomy-fixture}
+  - {from: on-004, to: on-test.exit-code-taxonomy-fixture}
+  - {from: on-error.taxonomy, to: on-test.exit-code-taxonomy-fixture}
+  - {from: on-005, to: on-test.integrity-gate-harness}
+  - {from: on-005a, to: on-test.integrity-gate-harness}
+  - {from: on-006, to: on-test.integrity-gate-harness}
+  - {from: on-007, to: on-test.operator-control-fsm-harness}
+  - {from: on-008, to: on-test.operator-control-fsm-harness}
+  - {from: on-009, to: on-test.operator-control-fsm-harness}
+  - {from: on-010, to: on-test.operator-control-fsm-harness}
+  - {from: on-011, to: on-test.operator-control-fsm-harness}
+  - {from: on-012, to: on-test.operator-control-fsm-harness}
+  - {from: on-013, to: on-test.operator-control-fsm-harness}
+  - {from: on-013a, to: on-test.operator-control-fsm-harness}
+  - {from: on-013c, to: on-test.operator-control-fsm-harness}
+  - {from: on-014, to: on-test.operator-control-fsm-harness}
+  - {from: on-015, to: on-test.queue-compat-harness}
+  - {from: on-016, to: on-test.queue-compat-harness}
+  - {from: on-017, to: on-test.queue-compat-harness}
+  - {from: on-018, to: on-test.schema-compat-harness}
+  - {from: on-019, to: on-test.schema-compat-harness}
+  - {from: on-inv-001, to: on-test.schema-compat-harness}
+  - {from: on-020, to: on-test.upgrade-contract-harness}
+  - {from: on-020a, to: on-test.upgrade-contract-harness}
+  - {from: on-021, to: on-test.upgrade-contract-harness}
+  - {from: on-022, to: on-test.security-and-shutdown-harness}
+  - {from: on-023, to: on-test.security-and-shutdown-harness}
+  - {from: on-024, to: on-test.security-and-shutdown-harness}
+  - {from: on-025, to: on-test.security-and-shutdown-harness}
+  - {from: on-026, to: on-test.security-and-shutdown-harness}
+  - {from: on-027, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s1, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s2, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s3, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s3a, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s4, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s5, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s6, to: on-test.security-and-shutdown-harness}
+  - {from: on-027.s7, to: on-test.security-and-shutdown-harness}
+  - {from: on-027a, to: on-test.security-and-shutdown-harness}
+  - {from: on-028, to: on-test.security-and-shutdown-harness}
+  - {from: on-029, to: on-test.security-and-shutdown-harness}
+  - {from: on-inv-003, to: on-test.security-and-shutdown-harness}
+  - {from: on-030, to: on-test.restart-rto-harness}
+  - {from: on-030a, to: on-test.restart-rto-harness}
+  - {from: on-031, to: on-test.restart-rto-harness}
+  - {from: on-032, to: on-test.restart-rto-harness}
+  - {from: on-033, to: on-test.restart-rto-harness}
+  - {from: on-053, to: on-test.restart-rto-harness}
+  - {from: on-inv-005, to: on-test.restart-rto-harness}
+  - {from: on-034, to: on-test.observability-envelope-harness}
+  - {from: on-035, to: on-test.observability-envelope-harness}
+  - {from: on-036, to: on-test.observability-envelope-harness}
+  - {from: on-037, to: on-test.observability-envelope-harness}
+  - {from: on-038, to: on-test.observability-envelope-harness}
+  - {from: on-039, to: on-test.observability-envelope-harness}
+  - {from: on-040, to: on-test.observability-envelope-harness}
+  - {from: on-041, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-042, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-043, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-044, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-045, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-046, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-050, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-051, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-054, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-inv-006, to: on-test.multi-daemon-and-attach-harness}
+  - {from: on-047, to: on-test.budget-defaults-and-attribution-harness}
+  - {from: on-048, to: on-test.budget-defaults-and-attribution-harness}
+  - {from: on-049, to: on-test.budget-defaults-and-attribution-harness}
+
+  # ───────────────────────── Cross-spec AR edges ─────────────────────────
+  # AR is in ON's depends-on (architecture).
+  - {from: on-env-001, to: ar-001}                                    # four-axis classification basis
+  - {from: on-env-001, to: ar-005}                                    # mechanism/cognition tagging
+  - {from: on-env-001, to: ar-016}                                    # subsystem runtime realization framing
+  - {from: on-001, to: ar-001}                                        # axis tagging on operator commands
+  - {from: on-034, to: ar-001}                                        # event tags carry four-axis + mechanism/cognition
+  - {from: on-034, to: ar-005}                                        # mechanism/cognition tagging discipline
+  - {from: on-038, to: ar-026}                                        # privileged-role taxonomy is the audit subset filter
+  - {from: on-039, to: ar-005}                                        # ZFC test on observability ops
+
+  # ───────────────────────── Cross-spec EM edges ─────────────────────────
+  # EM is in ON's depends-on (execution-model).
+  - {from: on-007, to: em-schema.run-id}                              # operator "task" maps to EM Run
+  - {from: on-008, to: em-017}                                        # checkpoint cadence is the durable boundary for in-flight runs
+  - {from: on-009, to: em-046b}                                       # canceled-class on aborted runs (RETRY/dispatch routing)
+  - {from: on-027.s2, to: em-017}                                     # step 2 reaches checkpoint commits
+  - {from: on-030, to: em-017}                                        # restart walks checkpoint-commit trail
+  - {from: on-030, to: em-schema.checkpoint-trailers}                 # Harmonik-Run-ID trailer registry
+  - {from: on-018, to: em-022}                                        # checkpoint schema is N-1 readable
+
+  # ───────────────────────── Cross-spec EV edges ─────────────────────────
+  # EV is in ON's depends-on (event-model). Per §2.11(d.2), edges run
+  # `on-NNN → ev-events.<name>` where ON's WHEN-rule cites EV's payload-shape.
+  - {from: on-env-001, to: ev-025}                                    # one owning spec per event type per EV-025
+  - {from: on-env-001, to: ev-events.operator-pause-status}           # produced by §4.3 path
+  - {from: on-env-001, to: ev-events.operator-resuming}               # produced
+  - {from: on-env-001, to: ev-events.operator-stopped}                # produced
+  - {from: on-env-001, to: ev-events.operator-upgrading}              # produced
+  - {from: on-env-001, to: ev-events.operator-upgrade-completed}      # produced
+  - {from: on-env-001, to: ev-events.operator-upgrade-rejected}       # produced
+  - {from: on-env-001, to: ev-events.operator-command-rejected}       # produced
+  - {from: on-env-001, to: ev-events.dispatch-deferred}               # produced
+  - {from: on-env-001, to: ev-events.daemon-ready}                    # consumed (entry-gate)
+  - {from: on-env-001, to: ev-events.reconciliation-category-assigned} # consumed (carve-out)
+  - {from: on-env-001, to: ev-events.budget-warning}                  # consumed (attribution)
+  - {from: on-env-001, to: ev-events.budget-exhausted}                # consumed
+  - {from: on-env-001, to: ev-events.budget-accrual}                  # consumed
+  - {from: on-env-001, to: ev-events.agent-warning-silent-hang}       # consumed (operator-observable)
+  - {from: on-005, to: ev-events.operator-upgrade-rejected}           # emit on hash mismatch
+  - {from: on-013, to: ev-events.operator-pause-status}               # paired-phase emission
+  - {from: on-013, to: ev-events.operator-resuming}                   # emission
+  - {from: on-013, to: ev-events.operator-stopped}                    # emission
+  - {from: on-013, to: ev-events.operator-upgrading}                  # emission
+  - {from: on-013, to: ev-events.operator-upgrade-completed}          # emission
+  - {from: on-013, to: ev-events.operator-upgrade-rejected}           # emission
+  - {from: on-013, to: ev-events.operator-command-rejected}           # emission
+  - {from: on-013, to: ev-events.dispatch-deferred}                   # emission
+  - {from: on-025, to: ev-events.skills-provisioned}                  # F-refs-ON-1: ON-025 emits skills_provisioned per [event-model.md §8.3]
+  - {from: on-018, to: ev-001}                                        # event envelope schema is an N-1 artifact
+  - {from: on-022, to: ev-035}                                        # secrets-redaction registry is applied pre-emission
+  - {from: on-023, to: ev-036}                                        # compile-time schema linter rejects Secret-typed payload fields
+  - {from: on-027.s4, to: ev-015}                                     # step 4 fsync per JSONL durable form
+  - {from: on-030, to: ev-015}                                        # JSONL is NOT replayed for state reconstruction (negative dep — citing rule)
+  - {from: on-033, to: ev-events.daemon-ready}                        # monotonic-companion field on payload
+  - {from: on-033, to: ev-events.daemon-shutdown}                     # monotonic-companion field on payload
+  - {from: on-035, to: ev-004}                                        # source_subsystem field per EV-004 / EV-034a
+  - {from: on-035, to: ev-002}                                        # event_id UUIDv7 correlation
+  - {from: on-040, to: ev-events.agent-warning-silent-hang}           # operator-observable consequence + drain-forced synthesis
+  - {from: on-046, to: ev-events.budget-warning}                      # operator-observable surface
+  - {from: on-046, to: ev-events.budget-exhausted}
+  - {from: on-046, to: ev-events.budget-accrual}
+  - {from: on-048, to: ev-events.budget-exhausted}                    # exhaustion emits per EV §8.4.3
+  - {from: on-048, to: ev-events.dispatch-deferred}                   # cascade emission
+  - {from: on-049, to: ev-events.budget-warning}                      # attribution surface
+  - {from: on-049, to: ev-events.budget-accrual}
+  - {from: on-049, to: ev-events.budget-exhausted}
+  - {from: on-010, to: ev-events.reconciliation-category-assigned}    # carve-out boundary signal
+  - {from: on-003, to: ev-events.daemon-startup-failed}               # catalog emits typed events on prereq failures (resolves to closest EV anchor)
+  - {from: on-022, to: ev-events.redaction-failed}                    # redactor fail-closed emission
+
+  # ───────────────────────── Cross-spec HC edges ─────────────────────────
+  # HC is in ON's depends-on (handler-contract).
+  - {from: on-005, to: hc-001}                                        # handler binary commit-hash check parallels daemon discipline (HC-001 launch)
+  - {from: on-022, to: hc-046}                                        # secrets injection at handler launch
+  - {from: on-024, to: hc-001}                                        # sandbox enforcement on handler runner
+  - {from: on-025, to: hc-046}                                        # skill-injection policy enforcement at provisioning
+  - {from: on-026, to: hc-001}                                        # prompt-injection defense is handler-owned (closest HC anchor for §4.1 input sanitization)
+  - {from: on-027.s3, to: hc-011}                                     # agent runner watcher waits for subprocess exit
+  - {from: on-027.s3, to: hc-018}                                     # SIGTERM→SIGKILL bound shared with HC-018
+  - {from: on-040, to: hc-007}                                        # silent-hang detection rule lives in HC §4.6 (closest mapped anchor is hc-007 for §4.2..§4.10 coalesce)
+  # NOTE: on-error.taxonomy → hc-error.taxonomy NOT emitted. Reviewed ON §8;
+  # no row inline-cites HC sentinel names (ErrTransient, ErrStructural, etc.).
+  # Per §3.1's "no edge for not-cited" rule, an inferred cross-taxonomy edge
+  # would be invented data. The two taxonomies remain disjoint at the bead
+  # level; cross-spec routing of HC sentinels to ON exit codes lives in
+  # consumer §4 reqs (e.g., PL-008a consumes ON exit codes including
+  # handler-failure-derived codes by reference).
+
+  # ───────────────────────── Cross-spec CP edges ─────────────────────────
+  # CP is in ON's depends-on (control-points).
+  - {from: on-004, to: cp-037}                                        # config-loading precedence per CP-037
+  - {from: on-018, to: cp-038}                                        # policy schema is N-1 readable
+  - {from: on-025, to: cp-035}                                        # policy declares network-egress whitelist (closest anchor; CP-035 is policy YAML required-sections)
+  - {from: on-025, to: cp-051}                                        # skill declaration mechanism-tagging
+  - {from: on-045, to: cp-022}                                        # budget control point typed-scoped allowance
+  - {from: on-045, to: cp-023}                                        # budget enforced at dispatch
+  - {from: on-045, to: cp-024}                                        # budget accrual per chunk
+  - {from: on-046, to: cp-025}                                        # budget warning threshold default
+  - {from: on-047, to: cp-022}                                        # category defaults compose with CP-022 budget shape
+  - {from: on-047, to: cp-025}                                        # 80% warning threshold default
+  - {from: on-049, to: cp-039}                                        # cognition-tagged delegation_path attribution
+  - {from: on-048, to: cp-023}                                        # exhaustion enforcement at dispatch
+
+  # ───────────────────────── Cross-spec PL edges ─────────────────────────
+  # PL is in ON's depends-on (process-lifecycle). Note: PL excludes ON
+  # from its depends-on per cycle-break (PL §9.3 NOTE). ON cites PL → loadable
+  # edges. The reverse (PL → ON via forward:on-*) is owned by PL pilot, NOT
+  # this pilot.
+  - {from: on-008, to: pl-009}                                        # ready-state precondition for between-task invariant
+  - {from: on-010, to: pl-009}                                        # ready-state transition predicate
+  - {from: on-013a, to: pl-018a}                                      # top-level panic barrier as outer-defense
+  - {from: on-020, to: pl-027}                                        # daemon-internal exec-replacement mechanics (PL-027(iii) fd-passing cited)
+  - {from: on-020a, to: pl-005}                                       # PL-005 step 0 reads the marker on startup
+  - {from: on-027.s1, to: pl-013}                                     # dispatch loop suspension parallels PL-013 queue-empty behavior
+  - {from: on-027.s7, to: pl-011}                                     # PL-011 daemon-level shutdown sequence (subsystem ordering owned by PL)
+  - {from: on-031, to: pl-009}                                        # daemon_ready emission boundary
+  - {from: on-031, to: pl-schema.daemon-status}                       # ready/degraded statuses
+  - {from: on-032, to: pl-schema.daemon-status}                       # degraded enum on ceiling breach
+  - {from: on-033, to: pl-009}                                        # ready emission timestamp boundary
+  - {from: on-036, to: pl-schema.daemon-status}                       # daemon-level health aggregation enum
+  - {from: on-037, to: pl-schema.daemon-status}                       # degraded on heartbeat miss
+  - {from: on-053, to: pl-018a}                                       # forensic file written when panic barrier intercepts
+  - {from: on-054, to: pl-schema.daemon-status}                       # `harmonik status` reports the enum + pause-reason discriminator
+  - {from: on-041, to: pl-014a}                                       # per-daemon vs machine-level ceiling distinction
+  - {from: on-041, to: pl-028}                                        # daemon-communicating commands surface
+  - {from: on-042, to: pl-001}                                        # per-project daemon scope is the MVH multi-tenancy answer
+  - {from: on-044, to: pl-001}                                        # per-project isolation makes multi-instance tracing OS-level
+  - {from: on-005a, to: pl-027}                                       # ldflags stamp consumed by upgrade exec-replacement
+
+  # ───────────────────────── Cross-spec BI edges ─────────────────────────
+  # BI is in ON's depends-on (beads-integration).
+  - {from: on-015, to: bi-007}                                        # Beads coarse-status enum is the queue overlay
+  - {from: on-015, to: bi-010}                                        # write-surface on the overlay
+  - {from: on-015, to: bi-024}                                        # version-pin protocol
+  - {from: on-016, to: bi-024}                                        # schema version check matches version-pin
+  - {from: on-016, to: bi-024a}                                       # br --version handshake at startup
+  - {from: on-017, to: bi-024}                                        # adapter localizes Beads breaking changes
+  - {from: on-027.s3a, to: bi-029}                                    # `br`-CLI adapter intent-log idempotency-key
+  - {from: on-027.s3a, to: bi-030}                                    # intent-log atomic write + drain
+  - {from: on-030, to: bi-013}                                        # restart queries `br ready`
+  - {from: on-030, to: bi-016}                                        # restart audit-log + in-progress reads
+
+  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
+  # RC (reconciliation) — in ON's depends-on but not yet pilot-loaded.
+  - {from: on-003, to: "forward:rc-012"}                              # Cat 0 detector for startup prereq failures
+  - {from: on-009, to: "forward:rc-014"}                              # canceled-class reconciliation classification on aborted runs
+  - {from: on-010, to: "forward:rc-002"}                              # reconciliation carve-out per RC §4.1
+  - {from: on-014, to: "forward:rc-018"}                              # fallback-verdict / investigator-bound budget
+  - {from: on-014, to: "forward:rc-025"}                              # operator-override attaches to verdict execution
+  - {from: on-027.s2, to: "forward:rc-002"}                           # checkpoint reach is reconciliation idempotency boundary
+  - {from: on-028, to: "forward:rc-007"}                              # F-refs-ON-2: ON-028 cites [reconciliation/spec.md §4.2] for restart-recovery; load-bearing single-owner is RC-007 (action-mapping dispatch contract)
+  - {from: on-030, to: "forward:rc-008"}                              # reconciliation dispatch on restart
+  - {from: on-032, to: "forward:rc-018"}                              # wall-clock budget bound on investigator runs
+  # F-refs-ON-3 REMOVED: on-040 → forward:rc-014 (verified ON-040 spec body cites HC §4.6 / EV §8.3 / HC §7.1 / ON-037 / ON-029 only — no RC cite)
+  # F-refs-ON-3 REMOVED: on-045 → forward:rc-018 (verified ON-045 spec body cites CP §4.5 / ON-042 only — no RC cite)
+  - {from: on-047, to: "forward:rc-018"}                              # 10 min wall-clock per-reconciliation-workflow default
+  - {from: on-048, to: "forward:rc-018"}                              # fallback-verdict path
+  - {from: on-inv-005, to: "forward:rc-008"}                          # reconciliation-bounded reconstruction predicate
+
+# End of edges.
+
+
+
+
+
+

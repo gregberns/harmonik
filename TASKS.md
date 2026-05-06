@@ -1,8 +1,8 @@
 # Harmonik Tasks
 
-> Actionable work items. Grouped by phase. Check off as resolved or move to a log entry.
+> Actionable work items. **[HANDOFF.md](HANDOFF.md) is authoritative for current session state and the next concrete steps.** This file tracks higher-level phase boundaries; it may lag.
 >
-> Last updated: 2026-04-27 — **BI smoke-loaded into `.beads/` (66 beads, prefix `hk`, epic `hk-872`, zero cycles). Discipline at v0.4 (6 deltas F11–F16 applied). Pilot at v0.1.3. Pilot review protocol drafted at v0.1.** All 10 specs `reviewed`. AR pilot is the next concrete task.
+> Last updated: 2026-05-05 — **Decompose-to-tasks COMPLETE for all 10 specs.** All 10 pilots loaded into Beads (~639 child beads, ~1700 edges, zero cycles corpus-wide). **Bootstrap-subset (`hk-ahvq.41`) synthesis complete: 291 beads labelled `scope:bootstrap`; consolidated doc at `docs/decompose-to-tasks/bootstrap-subset.md`. Parent `.41` stays open pending S07 scenario-harness spec (parallel work stream); S07 beads will join `scope:bootstrap` on load.** Phase-0 exit remaining: forward-deferred verification (`.39`, S07-caveated), milestone close (`.42`, gated on S07), discipline v0.10 patch batch. See HANDOFF.md.
 
 ## Spec corpus — Phase 0b (in progress)
 

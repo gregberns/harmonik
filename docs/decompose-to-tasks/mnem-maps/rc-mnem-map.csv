@@ -1,0 +1,81 @@
+mnemonic,assigned_id,title
+rc,hk-63oh,Reconciliation spec — implementation
+rc-001,hk-63oh.1,Reconciliation runs as a harmonik workflow
+rc-002,hk-63oh.2,Reconciliation workflows emit exactly one checkpoint commit
+rc-003,hk-63oh.3,Bounded recursion follows from the verdict-only commit rule
+rc-002a,hk-63oh.4,At most one reconciliation workflow per target run (flock)
+rc-002b,hk-63oh.5,Lock acquisition and verdict-executed-commit are NOT atomic
+rc-003a,hk-63oh.6,Category orthogonality via priority-ordered first-match
+rc-003b,hk-63oh.7,Crashed reconciliation-workflow branch classification (Cat 5)
+rc-004,hk-63oh.8,Reconciliation workflow library is S01-owned
+rc-005,hk-63oh.9,Detectors and verdict-execution are NOT in the workflow library
+rc-006,hk-63oh.10,Upgrade discipline — daemon code and library ship together
+rc-007,hk-63oh.11,Action-mapping is the dispatch contract; taxonomy is detection
+rc-008,hk-63oh.12,Auto-resolver categories MUST have a deterministic resolver
+rc-009,hk-63oh.13,Taxonomy shape is settled (11-category lock)
+rc-010,hk-63oh.14,"Detectors operate on runs, not beads"
+rc-011,hk-63oh.15,"Ordering uses git DAG parentage and UUID v7, not wall clock"
+rc-012,hk-63oh.16,Cat 0 pre-check runs before any other detector
+rc-012a,hk-63oh.17,Post-`ready` Cat 0 does not transition daemon state
+rc-013,hk-63oh.18,Detector emits `reconciliation_category_assigned`
+rc-014,hk-63oh.19,JSONL divergence-evidence scope is bounded
+rc-019a,hk-63oh.20,Evidence-corroboration contract for store-divergence events
+rc-020a,hk-63oh.21,Detector cadence (startup / on-demand / hourly scheduled)
+rc-020b,hk-63oh.22,Detector panic recovery (per-detector recover() barrier)
+rc-015,hk-63oh.23,Investigator inputs are bound by snapshot token (logical view)
+rc-015a,hk-63oh.24,Investigator is an HC handler (canonical agent_type/role pair)
+rc-016,hk-63oh.25,Investigator playbook per category (S01 YAML obligation)
+rc-017,hk-63oh.26,Every reconciliation workflow declares a wall-clock budget
+rc-018,hk-63oh.27,Budget exhaustion terminates with fallback verdict (5-step sequence kept as one bead per F8b)
+rc-019,hk-63oh.28,Investigator captures WIP before emitting `reopen-bead`
+rc-020,hk-63oh.29,Verdict vocabulary is the seven-value enum
+rc-021,hk-63oh.30,Exactly one verdict event per reconciliation workflow
+rc-022,hk-63oh.31,Verdict commit lands on investigator's task branch
+rc-022a,hk-63oh.32,Verdict emission via outcome envelope (HC-008 outcome_emitted)
+rc-023,hk-63oh.33,Malformed-verdict handling produces a fallback escalation
+rc-024,hk-63oh.34,Verdict staleness check precedes execution
+rc-025,hk-63oh.35,Verdict execution is durable and idempotent
+rc-025a,hk-63oh.36,Daemon-side verdict-executor commits the verdict pair (7-step sequence kept as one bead per F8b)
+rc-026,hk-63oh.37,Verdict-execution discovery on restart (Cat 3b classification)
+rc-026a,hk-63oh.38,Cat 3b re-execution retry cap (default N=5; cap → Cat 6b)
+rc-027,hk-63oh.39,Operator verdict-override surface (confirm-verdict / veto-verdict)
+rc-028,hk-63oh.40,`reopen-bead` verdict triggers a new run on subsequent claim
+rc-029,hk-63oh.41,Intra-run rollbacks keep the worktree and run_id
+rc-030,hk-63oh.42,Reconciliation does NOT drive intra-run loops
+rc-031,hk-63oh.43,Crash-recovery-tested (every detector + verdict-execution path)
+rc-inv-001,hk-63oh.44,Sensor: reconciliation-as-workflow uniqueness across daemon lifecycle
+rc-inv-004,hk-63oh.45,Sensor: evidence-corroboration guarantee across detector runs
+rc-schema.snapshot-token,hk-63oh.46,Define `SnapshotToken` record (schemas.md §6.1)
+rc-schema.investigator-input,hk-63oh.47,Define `InvestigatorInput` record (schemas.md §6.1) — LOGICAL VIEW
+rc-schema.workspace-state,hk-63oh.48,Define `WorkspaceState` record (schemas.md §6.1)
+rc-schema.git-in-progress-op,hk-63oh.49,Define `GitInProgressOp` ENUM (schemas.md §6.1)
+rc-schema.verdict-event,hk-63oh.50,Define `VerdictEvent` record (schemas.md §6.1)
+rc-schema.verdict,hk-63oh.51,Define `Verdict` ENUM (schemas.md §6.1) — 7-value vocabulary
+rc-schema.reconciliation-category,hk-63oh.52,Define `ReconciliationCategory` ENUM (schemas.md §6.1) — 11-value taxonomy
+rc-schema.malformation-reason,hk-63oh.53,Define `MalformationReason` ENUM (schemas.md §6.1)
+rc-schema.budget-exhausted-payload,hk-63oh.54,Define `BudgetExhaustedPayload` record (schemas.md §6.1)
+rc-schema.stale-verdict-payload,hk-63oh.55,Define `StaleVerdictPayload` record (schemas.md §6.1)
+rc-schema.stale-divergence-reason,hk-63oh.56,Define `StaleDivergenceReason` ENUM (schemas.md §6.1)
+rc-schema.malformed-verdict-payload,hk-63oh.57,Define `MalformedVerdictPayload` record (schemas.md §6.1)
+rc-schema.verdict-executed-payload,hk-63oh.58,Define `VerdictExecutedPayload` record (schemas.md §6.1)
+rc-schema.verdict-executed-trailer,hk-63oh.59,Define `Harmonik-Verdict-Executed` git trailer (schemas.md §6.4) — RC-owned
+rc-schema.workflow-class-extension,hk-63oh.60,Define `WorkflowClass` Workflow-record extension (schemas.md §6.5) — RC-owned
+rc-error.taxonomy,hk-63oh.61,Reconciliation-category taxonomy umbrella (§8.1–§8.11a + §8.12 dispatch)
+rc-error.cat-0,hk-63oh.62,Cat 0 — Infrastructure unavailable (§8.1)
+rc-error.cat-1,hk-63oh.63,Cat 1 — Idempotent rerun (§8.2)
+rc-error.cat-2,hk-63oh.64,Cat 2 — Non-idempotent in-flight (§8.3)
+rc-error.cat-3,hk-63oh.65,"Cat 3 — Store disagreement, generic (§8.4)"
+rc-error.cat-3a,hk-63oh.66,Cat 3a — Torn Beads write (§8.4a)
+rc-error.cat-3b,hk-63oh.67,Cat 3b — Verdict-unexecuted (§8.5)
+rc-error.cat-3c,hk-63oh.68,Cat 3c — Inverse premature-close (§8.6)
+rc-error.cat-4,hk-63oh.69,Cat 4 — Recoverable known state (§8.7)
+rc-error.cat-5,hk-63oh.70,Cat 5 — Clean restart (§8.8)
+rc-error.cat-6a,hk-63oh.71,"Cat 6a — Integrity violation, LLM-triageable (§8.11)"
+rc-error.cat-6b,hk-63oh.72,"Cat 6b — Integrity violation, mechanically unrecoverable (§8.11a)"
+rc-test.workflow-classification-fixture,hk-63oh.73,"Reconciliation-as-workflow + uniqueness fixture (RC-001..RC-006, RC-002a/002b/003a/003b, RC-INV-001)"
+rc-test.detector-harness,hk-63oh.74,"Detector harness + cadence + corroboration (RC-010..RC-014, RC-019a, RC-020a, RC-020b)"
+rc-test.investigator-harness,hk-63oh.75,"Investigator-agent contract harness (RC-015..RC-019, RC-015a)"
+rc-test.verdict-execution-harness,hk-63oh.76,"Verdict + execution harness (RC-020..RC-027, RC-022a, RC-025a, RC-026a)"
+rc-test.re-run-vs-intra-run-harness,hk-63oh.77,Re-run vs intra-run scenario harness (RC-028..RC-030)
+rc-test.crash-recovery-suite,hk-63oh.78,Crash-recovery suite (RC-031 — every detector + verdict-execution path)
+rc-test.taxonomy-conformance,hk-63oh.79,Taxonomy + action-mapping conformance (RC-007..RC-009 + §8.12 ↔ schemas.md §6.3 sync)

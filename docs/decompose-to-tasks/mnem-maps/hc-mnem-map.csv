@@ -1,0 +1,82 @@
+mnemonic,assigned_id,title
+hc,hk-8i31,Handler Contract spec — implementation
+hc-001,hk-8i31.1,Handler is the Go interface defined in §6.1
+hc-002,hk-8i31.2,Session is the Go interface defined in §6.1
+hc-003,hk-8i31.3,Handler selection is config-level
+hc-004,hk-8i31.4,"Launch is idempotent on (run_id, node_id)"
+hc-005,hk-8i31.5,LaunchSpec delivery is JSON-on-stdin or file argument
+hc-006,hk-8i31.6,LaunchSpec is the record defined in §6.1
+hc-007,hk-8i31.7,Wire protocol: progress-stream messages over Unix domain socket (coalesce)
+hc-008,hk-8i31.8,"Outcome delivery is event-based, not exit-code-based"
+hc-008a,hk-8i31.9,Post-outcome shutdown window (T_shutdown=10s)
+hc-009,hk-8i31.10,Version negotiation via handler_capabilities first-message
+hc-010,hk-8i31.11,Session log path emission via session_log_location
+hc-011,hk-8i31.12,Daemon owns exactly one watcher goroutine per active session
+hc-011a,hk-8i31.13,Watcher liveness + panic recovery
+hc-012,hk-8i31.14,S04 owns the per-agent-type adapter
+hc-013,hk-8i31.15,Adapter surface is fixed
+hc-013a,hk-8i31.16,RotateAccount fires only at clean turn boundaries
+hc-014,hk-8i31.17,Channel closure rule
+hc-015,hk-8i31.18,Mutex discipline (per-run write lock; no mutex held across S04 adapter call)
+hc-016,hk-8i31.19,Work queue per agent role
+hc-016a,hk-8i31.20,Orphan-reconnect window retry against daemon_not_ready
+hc-017,hk-8i31.21,Every public method takes ctx as first parameter
+hc-018,hk-8i31.22,Cancellation terminates in-flight ops within bounded intervals
+hc-019,hk-8i31.23,Context values restricted to observability metadata
+hc-020,hk-8i31.24,Five primary sentinel classes plus two structural sub-sentinels
+hc-021,hk-8i31.25,ErrProtocolMismatch is a structural sub-sentinel
+hc-022,hk-8i31.26,ErrSkillProvisioningFailed is a structural sub-sentinel
+hc-023,hk-8i31.27,Error classification is mechanism-tagged
+hc-024,hk-8i31.28,Subprocess crash emits agent_failed with typed class
+hc-024a,hk-8i31.29,Socket-level I/O error distinct from subprocess crash
+hc-025,hk-8i31.30,Rate-limit events distinct from failure events
+hc-026,hk-8i31.31,Silent-hang detection state machine
+hc-026a,hk-8i31.32,Handler heartbeat obligation (<=T/2 cadence)
+hc-026b,hk-8i31.33,Drain-forced silent-hang synthesis is ON-classified
+hc-027,hk-8i31.34,Dead-letter behavior for undeliverable events
+hc-028,hk-8i31.35,Secrets injected via environment variable (HARMONIK_SECRET_* prefix)
+hc-029,hk-8i31.36,agent_started event MUST NOT include environment variables
+hc-030,hk-8i31.37,Redaction registry middleware
+hc-031,hk-8i31.38,Common prefix redaction rule
+hc-032,hk-8i31.39,Per-handler redaction patterns
+hc-033,hk-8i31.40,Compile-time event-schema payload check
+hc-034,hk-8i31.41,Secrets never appear in event log or unredacted session log
+hc-035,hk-8i31.42,Twins implement the same Handler interface
+hc-036,hk-8i31.43,Twin subprocesses honor the same wire protocol
+hc-037,hk-8i31.44,Twins carry identical boundary-classification tags
+hc-038,hk-8i31.45,Twin conformance drift detection scoped to S07
+hc-039,hk-8i31.46,Ready-state signaled by agent_ready event
+hc-040,hk-8i31.47,Twins MUST emit agent_ready identically
+hc-041,hk-8i31.48,Adapter-level ready detection
+hc-042,hk-8i31.49,Handler subprocess launched from repo-relative path
+hc-043,hk-8i31.50,Commit-hash check for in-repo binaries
+hc-044,hk-8i31.51,Subprocess is a child of the daemon
+hc-044a,hk-8i31.52,Launch MUST fail-fast on orphan-held workspace
+hc-045,hk-8i31.53,Twin binaries obey same launch rules
+hc-046,hk-8i31.55,Skill provisioning + resolution surface (coalesce)
+hc-048,hk-8i31.56,Fail-launch on unresolvable required skill (structural)
+hc-048a,hk-8i31.57,Retry with backoff on transient provisioning failure
+hc-049,hk-8i31.58,Emit skills_provisioned before agent_ready
+hc-049a,hk-8i31.59,Twin-parity for skill provisioning is wire-only
+hc-050,hk-8i31.60,Skill declarations are read from LaunchSpec
+hc-051,hk-8i31.61,Handler contract is the deterministic-daemon / execution-shape seam
+hc-052,hk-8i31.62,"Execution-shape evolution re-implements the adapter, not the watcher"
+hc-053,hk-8i31.63,Cross-subsystem surface MUST remain stable across shape evolution
+hc-inv-001,hk-8i31.64,Sensor: exactly one watcher goroutine per active session
+hc-inv-002,hk-8i31.65,Sensor: twin handlers indistinguishable from real handlers
+hc-inv-003,hk-8i31.66,Sensor: no secret value crosses event-bus or log-emission boundary
+hc-inv-004,hk-8i31.67,Sensor: agent_ready precedes work dispatch
+hc-inv-005,hk-8i31.68,Sensor: no handler subprocess launched without verified binary path
+hc-inv-006,hk-8i31.69,Sensor: exactly one terminal event per session
+hc-inv-007,hk-8i31.70,Sensor: watcher is sole authoritative publisher of handler-lifecycle events
+hc-schema.handler,hk-8i31.71,Define `Handler` interface (§6.1)
+hc-schema.session,hk-8i31.72,Define `Session` interface (§6.1)
+hc-schema.adapter,hk-8i31.73,Define `Adapter` interface (§6.1)
+hc-schema.launch-spec,hk-8i31.74,Define `LaunchSpec` record (§6.1)
+hc-schema.session-id,hk-8i31.75,Define `SessionID` record (§6.1)
+hc-error.taxonomy,hk-8i31.76,HC error sentinel set + 5-class detection-and-emission table
+hc-test.twin-binary,hk-8i31.77,Canonical twin handler binary for scenario-harness tests
+hc-test.wire-protocol-fixture,hk-8i31.78,NDJSON wire-protocol fixture (well-formed + 5 negative-case scenarios)
+hc-test.silent-hang-harness,hk-8i31.79,Silent-hang FSM + heartbeat scenario harness
+hc-test.crash-recovery-harness,hk-8i31.80,Crash-recovery + dirty-exit + socket-I/O + orphan-workspace harness
+hc-test.redaction-fixture,hk-8i31.81,Redaction-middleware + compile-time-check fixture

@@ -1,0 +1,1708 @@
+# RC pilot v0.1.1 — bead and edge data
+# Drafted 2026-04-30 against specs/reconciliation/spec.md v0.4.0
+# (status: reviewed) + specs/reconciliation/schemas.md v0.4.0
+# (status: supplement, sibling file).
+#
+# v0.1.1 patch summary (2026-04-30, applied from
+# docs/reviews/2026-04-30-rc-pilot-r1/synthesis.md):
+#   R-1 (MAJOR): ADD edge {rc-012a → on-037} — RC-012a body cites
+#                [operator-nfr.md §4.9 ON-037] for the post-`ready` Cat 0
+#                health-probe surface.
+#   R-2 (MAJOR): ADD edge {rc-015 → bi-028} — RC-015 body cites
+#                BOTH [beads-integration.md §4.9 BI-027/BI-028]; the
+#                bi-027 edge was already emitted, the bi-028 edge was
+#                missed.
+#   R-3 (MAJOR): ADD edge {rc-018 → ev-events.budget-exhausted} —
+#                RC-018 body emits BOTH `reconciliation_budget_exhausted`
+#                (top-level event; edge to ev-events.reconciliation-
+#                budget-exhausted already present) AND `budget_exhausted`
+#                (step-3 class-F event per [event-model.md §8.4.3]).
+#   R-4 (MAJOR): ADD edge {rc-025 → em-005} — schemas.md §6.2 verdict-
+#                execution table cites [execution-model.md §4.1 EM-005]
+#                for `resume-with-context` (context injection into run's
+#                shared context map). RC-025's bead defers to schemas.md
+#                §6.2 for the mechanical-action contract; cite migrates
+#                to RC-025's edge set.
+#   C-RC-1 (cosmetic): narrative §1 §4 sub-section count typos
+#                (§4.1 = 10 not 9; §4.3 = 9 not 8; total reconciles to
+#                43; sanity-tally and sub-section header text updated).
+#                NOTE on re-count: §4.1 has 9 reqs (RC-001..006 = 6,
+#                plus 002a, 002b, 003a, 003b = 4, total 10); §4.3 has
+#                8 reqs (RC-010..014 = 5, plus 012a, 019a, 020a, 020b
+#                = 4, total 9). Reviewer's call confirmed; updated in
+#                yaml top-comment + narrative §1 + sanity tally + §4
+#                sub-section header.
+#   C-RC-2 (cosmetic): schema-kind label drift fixed —
+#                actual count (after D-RC-1 fix) is 8 RECORDs + 7 ENUMs
+#                = 15 (NOT prior "10R + 5E" claim). Recount details
+#                inline below at §6 Schema-bead block.
+#   D-RC-1 (cosmetic): rc-schema.workflow-class-extension —
+#                schemas.md §6.5 declares `ENUM WorkflowClass:`. Yaml's
+#                schema_kind: record was wrong; corrected to
+#                schema_kind: enum. extra_label `kind:enum` was already
+#                consistent with truth — only schema_kind needed fixing.
+#   D-RC-2 + D-RC-3 + R-6 (narrative drift): tightened narrative §3 +
+#                §6 prose to match yaml's actual edge sets (yaml is
+#                canonical). Specifically: removed claims that yaml
+#                emits umbrella edges where it actually emits per-
+#                category edges; removed claims of direct edges that
+#                yaml emits transitively.
+#
+# Net edge changes for v0.1.1: +4 edges (R-1..R-4); 0 removals.
+# br dep cycles MUST remain clean.
+# Discipline version applied: v0.9 (HC r1 lockstep release; includes
+# §2.11(c.2) taxonomy-edge-direction anti-pattern note and §2.11(d.2)
+# co-owned event payload edge direction).
+#
+# Re-run posture: full mode (--load-beads + --load-edges) for initial;
+# subsequent re-runs use edges-only mode (--skip-beads).
+# br dep cycles MUST remain clean. RC is the LAST pilot in the corpus —
+# all 9 other specs (AR/EM/EV/HC/CP/BI/WM/PL/ON) are LOADED and their
+# mnem-maps are available. NO forward-deferred placeholders are emitted
+# in this pilot — every cross-spec target resolves to a loaded mnemonic.
+#
+# RC is the reconciliation / restart-time recovery spec — the cross-cutting
+# detection-and-resolution model that owns: 11-category reconciliation
+# taxonomy (§8.1–§8.11a, dispatch in §8.12), action-mapping dispatch
+# contract (§4.2 RC-007/008), seven-value Verdict enum (§4.5 RC-020) +
+# verdict-execution table ([schemas.md §6.2]), investigator-agent contract
+# (§4.4 RC-015..RC-019 — snapshot-token bounding, wall-clock budget,
+# WIP-capture obligation), evidence-corroboration projection of EV-023a
+# (§4.3 RC-019a + §5 RC-INV-004), concurrent-reconciliation `flock` lock
+# (§4.1 RC-002a per PL-002a fd-lifetime advisory primitive),
+# priority-ordered first-match category resolution (§4.1 RC-003a),
+# crashed-investigator-branch Cat 5 carve-out (§4.1 RC-003b), Cat 3b
+# verdict-unexecuted re-execution + retry cap (§4.5 RC-026 + RC-026a),
+# operator verdict-override surface (§4.5 RC-027), and the schemas.md §6
+# RC-owned shapes (Harmonik-Verdict-Executed trailer per §6.4,
+# WorkflowClass extension per §6.5, plus VerdictEvent / SnapshotToken /
+# InvestigatorInput / WorkspaceState / GitInProgressOp / Verdict /
+# ReconciliationCategory / MalformationReason / BudgetExhaustedPayload /
+# StaleVerdictPayload / StaleDivergenceReason / MalformedVerdictPayload /
+# VerdictExecutedPayload).
+#
+# `spec-shape: taxonomy-first` — §8 (the 11 categories) is the spec's
+# center of gravity per RC's front-matter declaration. Reading order is
+# `1, 2, 3, 8, 4, 5, 6, 7, 9, 10, 11, 12, A` per the §3 INFORMATIVE note.
+# This pilot mints one bead per §8.x category (12 taxonomy beads:
+# 1 umbrella + 11 per-category) per §2.11(c) "Large §8 taxonomies"
+# precedent — RC is the canonical example cited in the discipline.
+#
+# depends-on: [execution-model, event-model, handler-contract,
+# control-points, beads-integration, workspace-model, process-lifecycle,
+# operator-nfr, architecture]. ALL 9 are pilot-loaded — RC has the
+# highest cross-spec edge density in the corpus by design (every other
+# foundation spec is upstream of reconciliation).
+#
+# Sanity tally:
+#   §4 reqs in spec (active):                          43
+#     §4.1 reconciliation-as-workflow:                 10  (RC-001..006 = 6,
+#                                                            plus RC-002a,
+#                                                            002b, 003a, 003b
+#                                                            = 4 ⇒ 10. C-RC-1
+#                                                            v0.1.1 typo fix:
+#                                                            prior "9" was
+#                                                            stale.)
+#     §4.2 action-mapping dispatch:                     3  (RC-007, RC-008,
+#                                                            RC-009)
+#     §4.3 detectors:                                   9  (RC-010..014 = 5,
+#                                                            plus 012a, 019a,
+#                                                            020a, 020b = 4
+#                                                            ⇒ 9. C-RC-1
+#                                                            v0.1.1 typo fix:
+#                                                            prior "8" was
+#                                                            stale.)
+#     §4.4 investigator-agent contract:                 6  (RC-015, 015a,
+#                                                            016, 017, 018,
+#                                                            019)
+#     §4.5 verdict vocabulary and execution:           11  (RC-020, 021,
+#                                                            022, 022a, 023,
+#                                                            024, 025, 025a,
+#                                                            026, 026a, 027)
+#     §4.6 re-run vs intra-run:                         3  (RC-028, 029,
+#                                                            030)
+#     §4.7 testing obligation:                          1  (RC-031)
+#     Recount: 10 + 3 + 9 + 6 + 11 + 3 + 1 = 43 ✓
+#   Direct count of #### RC- headings in body: 48; minus 5 RC-INV (3
+#   retired + 2 active) = 43 §4 reqs. Confirmed against STATUS.md "~43".
+#   §2.3 coalesces applied:                             0  (every cluster
+#                                                            evaluated has
+#                                                            an independently
+#                                                            testable
+#                                                            clarification;
+#                                                            see F-pilot-RC-2)
+#   §2.1a pure cross-reference collapses:               0  (no req is a
+#                                                            verbatim
+#                                                            pointer-only
+#                                                            restatement;
+#                                                            see F-pilot-RC-3)
+#   First-class §4 req beads:                          43
+#   §5 invariants (active):                             2  (RC-INV-001,
+#                                                            RC-INV-004;
+#                                                            RC-INV-002,
+#                                                            RC-INV-003,
+#                                                            RC-INV-005
+#                                                            retired in v0.3
+#                                                            — never reusable)
+#   §6 schema beads (across spec.md + schemas.md):     15
+#     RECORDs (8):   SnapshotToken, InvestigatorInput,
+#                    WorkspaceState, VerdictEvent,
+#                    BudgetExhaustedPayload, StaleVerdictPayload,
+#                    MalformedVerdictPayload, VerdictExecutedPayload,
+#                    Harmonik-Verdict-Executed trailer (§6.4)
+#                    [trailer carries kind:schema; schema_kind: record
+#                    since trailers are structurally records.]
+#     ENUMs (7):     GitInProgressOp, Verdict (7-value),
+#                    ReconciliationCategory (11-value),
+#                    MalformationReason (6-value), StaleDivergenceReason
+#                    (2-value), VerdictExecutedTrailer-marker (none —
+#                    trailer is record), WorkflowClass workflow-record
+#                    extension per schemas.md §6.5 [D-RC-1 v0.1.1 fix:
+#                    schema_kind corrected from `record` to `enum`;
+#                    schemas.md §6.5 declares `ENUM WorkflowClass:`].
+#   C-RC-2 v0.1.1 recount: 8 RECORDs + 7 ENUMs = 15 §6 schema beads.
+#   Trailer (verdict-executed-trailer) counts as RECORD on schema_kind
+#   axis; WorkflowClass-extension (`rc-schema.workflow-class-extension`)
+#   counts as ENUM on schema_kind axis (D-RC-1 fix lands here).
+#   Prior v0.1.0 narrative claim "10 RECORDs + 5 ENUMs" was incorrect:
+#     — Verdict-executed-trailer was double-counted as both records
+#       (correct) and enums (mis-listed elsewhere);
+#     — WorkflowClass-extension carried `kind:enum` extra_label but
+#       `schema_kind: record` (D-RC-1 inconsistency).
+#   Final tally: 8 records + 7 enums = 15 schema beads.
+#   §8 reconciliation-category-taxonomy beads:         12 (1 umbrella
+#                                                          rc-error.taxonomy
+#                                                          + 11 per-category
+#                                                          beads cat-0/1/2/
+#                                                          3/3a/3b/3c/4/5/
+#                                                          6a/6b — per
+#                                                          §2.11(c)
+#                                                          large-§8-taxonomy
+#                                                          rule, RC's 11
+#                                                          categories ARE
+#                                                          the canonical
+#                                                          discipline example;
+#                                                          see F-pilot-RC-4)
+#   Multi-step §2.2 splits:                             0  (RC-018
+#                                                           budget-exhaustion
+#                                                           5-step sequence
+#                                                           and RC-025a
+#                                                           7-step verdict-
+#                                                           executor sequence
+#                                                           BOTH stay as
+#                                                           single beads;
+#                                                           see F-pilot-RC-5
+#                                                           for F8b decisions)
+#   Test-infra beads:                                   7  (consolidated
+#                                                            from §10.2's 7
+#                                                            test-obligation
+#                                                            groups: detectors,
+#                                                            investigator,
+#                                                            verdict+execution,
+#                                                            re-run-vs-intra,
+#                                                            crash-recovery,
+#                                                            INV-001 / INV-004,
+#                                                            +RC-002a/002b/
+#                                                            003a/019a/020a)
+#   Total beads minted:               43 + 2 + 15 + 12 + 7 = 79
+#   Bead-to-§4-req multiplier:        79 / 43 = 1.84×
+#                                     (BI 1.42×; HC 0.95×; CP 1.55×;
+#                                     WM 1.31×; PL 1.37×; ON 1.40×; RC
+#                                     highest in corpus, driven by
+#                                     §6 schemas (15) + §8 taxonomy
+#                                     splits (12) — both expected from
+#                                     a taxonomy-first cross-cutting
+#                                     foundation spec).
+#
+# §2.11(c) §8 taxonomy decision (canonical large-§8-taxonomy case):
+#   RC's §8 contains 11 detection-category subsections (§8.1 Cat 0; §8.2
+#   Cat 1; §8.3 Cat 2; §8.4 Cat 3; §8.4a Cat 3a; §8.5 Cat 3b; §8.6 Cat 3c;
+#   §8.7 Cat 4; §8.8 Cat 5; §8.11 Cat 6a; §8.11a Cat 6b — note the §8.9/
+#   §8.10 holes are intentional from earlier numbering). Each category
+#   has independent (a) detection rule (deterministic Go function in the
+#   daemon), (b) default response (auto-resolver vs investigator-dispatch
+#   vs auto-escalate), (c) escalation path, (d) emitted event, (e)
+#   investigator/auto-resolver columns. SHAPE-not-COUNT test per
+#   F-pilot-WM-2: each category IS independent code/work, NOT sentinel
+#   values of a single vocabulary (contrast BI's 5 BrError values; ON's
+#   24 exit codes — those are sentinel sets, single-bead form). RC's
+#   categories are the canonical case for the "one bead per category"
+#   discipline rule (§2.11(c)). Decision: 1 umbrella `rc-error.taxonomy`
+#   + 11 per-category beads (`rc-error.cat-0`, `rc-error.cat-1`,
+#   `rc-error.cat-2`, `rc-error.cat-3`, `rc-error.cat-3a`,
+#   `rc-error.cat-3b`, `rc-error.cat-3c`, `rc-error.cat-4`,
+#   `rc-error.cat-5`, `rc-error.cat-6a`, `rc-error.cat-6b`). The
+#   per-category beads are children of the umbrella per §2.10 second-level
+#   grouping permission. Per discipline v0.9 §2.11(c.2), the umbrella
+#   bead is the vocabulary OWNER for the ReconciliationCategory enum;
+#   consumer §4 reqs that cite a category by ID (e.g., "Cat 0", "Cat 3a")
+#   `block-on rc-error.taxonomy` — same posture as BI/WM/ON
+#   error-taxonomy beads.
+#
+# §2.11(c.2) intra-RC consumer→rc-error.taxonomy edges (~consumer→umbrella;
+#   per-category-bead edges from cited category go to the SPECIFIC
+#   per-category bead, not the umbrella):
+#     RC-007 (taxonomy is detection contract; action-mapping dispatch)
+#       → rc-error.taxonomy (umbrella)
+#     RC-008 (auto-resolver categories MUST have deterministic resolver;
+#       enumerates Cat 0/1/3a/3b/3c/4/5/6b)
+#       → rc-error.taxonomy + rc-error.cat-0/1/3a/3b/3c/4/5/6b
+#     RC-009 (taxonomy shape is settled; cites 11-category framing)
+#       → rc-error.taxonomy
+#     RC-012 (Cat 0 pre-check) → rc-error.cat-0
+#     RC-013 (detector emits reconciliation_category_assigned) → rc-error.taxonomy
+#     RC-014 (Cat 6a/6b classification on JSONL forbidden uses) → rc-error.cat-6a + rc-error.cat-6b
+#     RC-018 (budget exhausted defaults escalate-to-human; Cat 3b retry cap routing) → rc-error.cat-3b
+#     RC-022a + RC-025 + RC-025a (verdict execution table covers all categories)
+#       → rc-error.taxonomy
+#     RC-026 (Cat 3b discovery on restart) → rc-error.cat-3b
+#     RC-026a (Cat 3b retry cap; cap exceeded → Cat 6b) → rc-error.cat-3b + rc-error.cat-6b
+#     RC-003a (priority-ordered first-match across all categories)
+#       → rc-error.taxonomy
+#     RC-003b (crashed reconciliation branches → Cat 5, NOT Cat 6a)
+#       → rc-error.cat-5 + rc-error.cat-6a
+#     RC-INV-001 (workflow_class uniqueness; sensor across all categories)
+#       → rc-error.taxonomy
+#     RC-INV-004 (corroboration on store_divergence_detected; Cat 6b
+#       exempt) → rc-error.cat-6b
+#   = 16 unique consumer→taxonomy edges (some consumers edge to multiple
+#   per-category beads). Edge direction strictly consumer→umbrella or
+#   consumer→per-category bead per §2.11(c.2); the umbrella's own
+#   predecessors are limited to schema-shaped beads (rc-schema.reconciliation-
+#   category enum) and the umbrella does NOT block-on §4 reqs.
+#
+# §2.11(d.2) co-owned event payloads — RC emits, EV owns shape (per §6.5):
+#   The §6.5 list enumerates 9 events whose WHEN is owned by RC + WHAT is
+#   owned by EV:
+#     reconciliation_category_assigned (RC-013)
+#       → ev-events.reconciliation-category-assigned
+#     reconciliation_verdict_emitted (RC-021, RC-022)
+#       → ev-events.reconciliation-verdict-emitted
+#     reconciliation_verdict_executed (RC-025, RC-025a)
+#       → ev-events.reconciliation-verdict-executed
+#     reconciliation_verdict_stale (RC-024)
+#       → ev-events.reconciliation-verdict-stale
+#     reconciliation_verdict_malformed (RC-023)
+#       → ev-events.reconciliation-verdict-malformed
+#     reconciliation_budget_exhausted (RC-018)
+#       → ev-events.reconciliation-budget-exhausted
+#     store_divergence_detected (RC-014, RC-019a, RC-INV-004)
+#       → ev-events.store-divergence-detected
+#     infrastructure_unavailable (RC-012, co-owned with PL-010)
+#       → ev-events.infrastructure-unavailable
+#     operator_escalation_required (RC-025; ON-002 consumes)
+#       → ev-events.operator-escalation-required
+#   Plus 3 cross-spec coordination events emitted by RC (per v0.4.0 R2):
+#     reconciliation_dispatch_deduplicated (RC-002a)
+#       → ev-events.reconciliation-dispatch-deduplicated
+#     reconciliation_detector_panic (RC-020b)
+#       → ev-events.reconciliation-detector-panic
+#     reconciliation_verdict_execution_retry (RC-026a)
+#       → ev-events.reconciliation-verdict-execution-retry
+#   = 12 RC-NNN → ev-events.<name> edges (§2.11(d.2) pattern;
+#   consumer-blocks-on-producer direction; EV's reciprocal direction is
+#   owned by EV's pilot per §2.11(d.2) — those edges are forward:rc-NNN
+#   in EV's pilot, resolved at backfill).
+#
+# Cross-spec edge density (RC-side edges into other specs by target):
+#   ar:  ~2-3   (AR-018 no-verifier-subsystem framing, AR-053 envelope is
+#                informational since RC is foundation-cross-cutting; AR-042
+#                invariant-as-target exemption applies)
+#   em:  ~25    (RC depends-on EM most heavily — §4.1 EM-009 idempotency-class,
+#                §4.3 EM-014 one-bead-many-runs, §4.4 EM-016/017/018
+#                checkpoint contract, §4.5 EM-023/026 cadence, §4.7 state
+#                reconstruction, §5 EM-INV-005 git-wins, §4.10 EM-044
+#                rollback, §6.1 Outcome record + Harmonik-* trailers, §7.1
+#                orchestrator state-machine, §6.5 Workflow record
+#                extension)
+#   ev:  ~25    (event envelope, UUIDv7 ordering, observational-vs-state-
+#                reconstruction split, payload registry, §8 per-event rows,
+#                §8.6.8/§8.6.10 EV-023a corroboration; ev-events.<*> co-
+#                ownership edges per §2.11(d.2); 12 co-owned events
+#                enumerated above)
+#   hc:  ~10    (HC-006 LaunchSpec, HC-008 outcome_emitted, HC-011 watcher,
+#                HC-018 SIGTERM/SIGKILL interval, HC-046 skill provisioning,
+#                HC-001 handler interface, hc-schema.launch-spec)
+#   cp:  ~5     (CP-022 budget; CP-023 enforcement at dispatch; CP-035
+#                policy YAML; CP-039 cognition-tagged delegation; CP-051
+#                skill declaration)
+#   bi:  ~10    (BI-010 write-surface; BI-010a status-mapping;
+#                BI-024 version-pin; BI-024a handshake; BI-027 Beads-CLI
+#                skill; BI-028 git-inspection skill; BI-029 idempotency-key;
+#                BI-031/031b status-check-before-reissue; BI-032 intent-log
+#                Cat 3a evidence)
+#   wm:  ~5     (WM-026 atomic write; WM-034 fresh-worktree-on-reopen;
+#                WM-013 lease; WM §4.4 worktree-reset; WM §4.6 merge)
+#   pl:  ~10    (PL-002a fd-lifetime advisory lock; PL-005 startup;
+#                PL-006 orphan sweep; PL-009 ready criteria; PL-010
+#                degraded state; PL-018a panic recovery; pl-schema.daemon-
+#                status; PL-027 upgrade)
+#   on:  ~5     (ON-002 operator-event consumption surface;
+#                ON-031 restart RTO context; ON §4.1/§4.3 operator
+#                control surfaces; ON §4.10 operator-CLI grammar
+#                surface — informative)
+#   = ~100 cross-spec edges total. Highest density in the corpus by
+#   design — RC's depends-on covers all 9 other specs.
+#
+# Forward-deferred edges: ZERO. All 9 cross-spec targets are pilot-loaded
+# at this point in the corpus. No forward:* placeholders emitted.
+#
+# F-pilot-RC findings (judgment calls / discipline stress points):
+#
+# F-pilot-RC-1 [local — STATUS.md baseline reconciliation] — STATUS.md
+#   notes "~43" §4 reqs; direct count yields 43 (48 total #### RC-
+#   headings minus 5 RC-INV — 3 retired + 2 active). Confirmed.
+#   Retired invariants RC-INV-002, RC-INV-003, RC-INV-005 are NOT minted
+#   as beads (§2.11(b) retired-ID rule); the spec-parent description
+#   enumerates them for traceability. Not a discipline-patch candidate.
+#
+# F-pilot-RC-2 [local — applies §2.3 mechanically] — Coalesce candidates
+#   considered and rejected:
+#   (a) RC-001 + RC-004 + RC-005 + RC-006 (workflow-class identity +
+#       library ownership + daemon/library separation + upgrade
+#       discipline). Test 1 borderline (all describe the workflow-class
+#       boundary); test 2 RC-001 is anchor; test 3 FAILS — RC-004's S01
+#       packaging contract, RC-005's daemon-vs-library separation, and
+#       RC-006's release co-shipping are independently testable. → no
+#       coalesce.
+#   (b) RC-002 + RC-002a + RC-002b (verdict-only commit + concurrent
+#       lock + lock-vs-executed-commit non-atomicity). Test 1 FAILS —
+#       distinct shapes (commit cadence vs flock primitive vs stale-lock
+#       cleanup). → no coalesce. (RC-002b is its own bead per F8c
+#       constraint-adjacent pattern — RC-002b is a recovery rule
+#       constraining RC-002a's lock plus RC-025's verdict-executed
+#       commit; the constraint gets its own bead.)
+#   (c) RC-003 + RC-003a + RC-003b (bounded-recursion + priority-order +
+#       crashed-branch carve-out). Test 1 borderline (all govern
+#       category-classification scope); test 2 RC-003 anchor; test 3
+#       FAILS — RC-003a's first-match priority order and RC-003b's
+#       Workflow-Class trailer carve-out are independently testable
+#       against distinct evidence shapes. → no coalesce.
+#   (d) RC-007 + RC-008 + RC-009 (action-mapping is dispatch contract +
+#       auto-resolver mandate + taxonomy shape lock). Test 1 borderline;
+#       test 2 RC-007 anchor; test 3 FAILS — RC-008's per-category
+#       resolver enumeration is testable distinct from the dispatch-
+#       contract framing; RC-009's amendment-protocol gate is a separate
+#       constraint. → no coalesce.
+#   (e) RC-010 + RC-011 (run-not-bead detection + git-DAG-not-wallclock
+#       ordering). Test 1 FAILS — distinct codepaths (run-id trailer
+#       filter vs DAG-parentage walk). → no coalesce.
+#   (f) RC-012 + RC-012a (Cat 0 pre-check + post-ready Cat 0 carve-out).
+#       Test 1 borderline; test 3 FAILS — pre-ready halt-classification
+#       semantic vs post-ready emit-degraded-but-stay-ready semantic
+#       are distinct branches. → no coalesce.
+#   (g) RC-014 + RC-019a (JSONL-scope + corroboration-rule). Test 1
+#       borderline (both govern divergence-evidence reads); test 3 FAILS
+#       — RC-014's permitted/forbidden enumeration and RC-019a's
+#       corroboration-enum classification are testable against distinct
+#       evidence shapes. → no coalesce.
+#   (h) RC-015 + RC-015a + RC-016 (investigator-input contract + HC
+#       handler classification + per-category playbook). Test 1 borderline;
+#       test 2 RC-015 anchor; test 3 FAILS — RC-015a's HC handler-
+#       contract framing is distinct from RC-015's snapshot-token bound
+#       (HC-handler typing IS the launch-protocol contract); RC-016's
+#       playbook-per-category schema is a separate S01 packaging
+#       artifact. → no coalesce.
+#   (i) RC-017 + RC-018 (budget declaration + budget-exhaustion protocol).
+#       Test 1 FAILS — declared default values + per-category enumeration
+#       (RC-017) vs SIGTERM/SIGKILL/emit/fallback 5-step sequence
+#       (RC-018) are distinct codepaths. → no coalesce.
+#   (j) RC-020 + RC-021 + RC-022 + RC-022a (verdict enum + at-most-one
+#       emission + verdict commit on branch + outcome envelope). Test 1
+#       borderline (all govern verdict emission); test 2 RC-020 anchor;
+#       test 3 FAILS — RC-021's at-most-one emission rule is testable
+#       distinct from the enum-validation; RC-022's commit-atomicity
+#       distinct from RC-022a's outcome-envelope routing. → no coalesce.
+#   (k) RC-023 + RC-024 + RC-025 + RC-025a + RC-026 + RC-026a (malformed
+#       handling + staleness + execution + executor + restart-discovery
+#       + retry cap). Test 1 FAILS — six distinct codepaths
+#       (schema-validate, snapshot-recapture, action-dispatch, executor-
+#       sequence, restart-classification, retry-counter). → no coalesce.
+#   (l) RC-028 + RC-029 + RC-030 (reopen-bead → new run + intra-run
+#       rollback preserves run + reconciliation does not drive intra-run
+#       loops). Test 1 borderline (all distinguish re-run vs intra-run);
+#       test 3 FAILS — RC-028's fresh-worktree path, RC-029's
+#       worktree+run_id preservation, and RC-030's loop-routing carve-out
+#       are testable against distinct verdict-execution evidence. → no
+#       coalesce.
+#   No coalesces applied.
+#
+# F-pilot-RC-3 [local — applies §2.1a mechanically] — No RC-NNN body is
+#   a verbatim "see §N.OTHER-NNN" pointer-only restatement. RC-009's
+#   "11-category framing settled" body is one sentence + amendment
+#   protocol pointer, but contains substantive normative content
+#   ("authoring agents MUST NOT re-open"); §2.1a triggers fail (>1
+#   sentence; substantive lock-in content). → no §2.1a collapses.
+#
+# F-pilot-RC-4 [local — applies §2.11(c) mechanically; canonical case] —
+#   RC §8 has 11 detection-category subsections. Per discipline §2.11(c),
+#   "specs whose §8 contains MULTIPLE classification entries (e.g., RC's
+#   11 reconciliation categories at §8.1–§8.12) mint ONE bead per §8.x
+#   entry, NOT a single <prefix>-error.taxonomy bead. The umbrella
+#   <prefix>-error.taxonomy bead becomes the spec-parent's child;
+#   per-category beads are children of the taxonomy umbrella". RC IS the
+#   discipline's canonical example. SHAPE-not-COUNT test (per
+#   F-pilot-WM-2): each category has independent detection rule (Go
+#   function), default response, escalation path, emitted event, and
+#   investigator/auto-resolver column. Distinct from BI's 5 BrError
+#   sentinel values, WM's 12 typed-error sentinels, ON's 24 exit codes
+#   (single-bead form for all three — those are sentinel values of a
+#   single vocabulary). Decision: 1 umbrella `rc-error.taxonomy` + 11
+#   per-category beads (`rc-error.cat-0`, `cat-1`, `cat-2`, `cat-3`,
+#   `cat-3a`, `cat-3b`, `cat-3c`, `cat-4`, `cat-5`, `cat-6a`, `cat-6b`).
+#   Per-category beads parented to the umbrella per §2.10 second-level
+#   grouping permission. Per discipline v0.9 §2.11(c.2), edges run
+#   `<consumer> → rc-error.taxonomy` (or `<consumer> → rc-error.cat-N`
+#   when a specific category is named); the umbrella does NOT block-on
+#   §4 reqs. The umbrella's own predecessors include rc-schema.reconciliation-
+#   category (the ENUM bead). Not a discipline-patch candidate; canonical
+#   precedent already captured in v0.7 §2.11(c).
+#
+# F-pilot-RC-5 [class — applies F8b on two protocol candidates;
+#   COHESIVE-FUNCTION-BODY tiebreaker fires for both, NO splits emitted] —
+#   RC has two multi-step normative protocol bodies that fire all three
+#   §2.2 split signals on syntactic count:
+#   (a) RC-018 budget-exhaustion 5-step sequence: (1) terminate
+#       investigator subprocess SIGTERM/SIGKILL per HC-018; (2) wait for
+#       watcher-observe per HC-011; (3) emit budget_exhausted; (4) emit
+#       fallback escalate-to-human verdict; (5) verdict-executor consumes
+#       fallback. Signal 1 ✓ (5 steps); signal 2 ✓ (each step
+#       independently testable in principle); signal 3 ✓ (umbrella loses
+#       meaning when stripped). F8b cohesive-function-body tiebreaker:
+#       all 5 steps live in the daemon's BUDGET-EXHAUSTION HANDLER
+#       function body — single goroutine, accumulated state (the
+#       budget-watch ticker, the outcome-envelope construction, the
+#       verdict-executor invocation). Steps share local variables
+#       (investigator pid for kill+watch; verdict envelope for emit+
+#       executor handoff). This matches EM-016's git atomic-sequence
+#       pattern (writeTree → commitTree → updateRef in one cohesive
+#       function body). Decision: keep RC-018 as ONE bead with
+#       sub-bullets (per F8b precedent — EM-016 / EM-038); do NOT mint
+#       step beads. Contrast ON-027's 8 drain steps that delegate to 8
+#       distinct subsystems (orchestrator / EM / HC / BI / EV / memory /
+#       WM / orchestrator-exit) — that pattern justified the SPLIT per
+#       F-pilot-ON-5.
+#   (b) RC-025a daemon-side verdict-executor 7-step sequence: (1)
+#       validate verdict per RC-020/023; (2) re-capture snapshot per
+#       RC-024; (3) commit verdict-emitted; (4) mechanically apply
+#       action; (5) commit verdict-executed; (6) emit events; (7)
+#       release lock per RC-002a. Signal 1 ✓ (7 steps); signal 2
+#       borderline (steps share goroutine state — investigator-run
+#       handle, verdict envelope, snapshot token); signal 3 ✓ (umbrella
+#       loses meaning when stripped). F8b tiebreaker: the 7 steps live
+#       in the daemon-side verdict-executor function body — a single
+#       deterministic Go subroutine ("a deterministic Go subroutine, NOT
+#       a workflow node" per RC-025a body). Each step is a method-call
+#       within the executor; each consumes shared state (snapshot, verdict
+#       envelope, target-run-id) accumulated through the prior steps.
+#       Same shared-function-body shape as EM-016 / RC-018. The mechanical-
+#       action step (4) DOES delegate to per-verdict subroutines (BI
+#       adapter for reopen-bead; WM worktree-reset for reset-to-checkpoint;
+#       EM dispatch for resume-here/resume-with-context), but that
+#       delegation lives WITHIN the executor's single function body.
+#       Compare to ON-027's eight drain steps which each invoke a
+#       distinct subsystem's drain handler — RC-025a's executor remains
+#       cohesive. Decision: keep RC-025a as ONE bead with sub-bullets;
+#       do NOT mint step beads. The verdict-executor's panic-safety
+#       rule (RC-025a's last paragraph — "panic-safe per PL-018a; on
+#       panic mid-step, next daemon startup re-classifies via Cat 3b")
+#       is also testable as one bead — the mid-step crash routes through
+#       Cat 3b (RC-026 + RC-026a), not via per-step recovery.
+#   Both decisions are documented as F-pilot-RC-5 to flag the
+#   verdict-by-tiebreaker per the user's "PL collapses cohesive function
+#   bodies; ON splits delegating-orchestrator" framing — RC matches PL's
+#   shape on both candidates. Not a discipline-patch candidate;
+#   F8b/F-pilot-ON-5 disambiguation already captured the criterion. The
+#   precedent strengthens F-pilot-EM-1 / F-pilot-PL-3's collapse posture.
+#
+# F-pilot-RC-6 [local — schemas split across two files, normal pattern] —
+#   Per §2.11(a), reconciliation has spec.md + schemas.md sibling files;
+#   schema beads from BOTH files use the same `rc-schema.<type-kebab>`
+#   naming. The schemas.md §6.1 declares 13 records/enums (SnapshotToken,
+#   InvestigatorInput, WorkspaceState, GitInProgressOp, VerdictEvent,
+#   Verdict, ReconciliationCategory, MalformationReason,
+#   BudgetExhaustedPayload, StaleVerdictPayload, StaleDivergenceReason,
+#   MalformedVerdictPayload, VerdictExecutedPayload). schemas.md §6.4
+#   adds the Harmonik-Verdict-Executed trailer (RC-owned since EM v0.2.0
+#   rolled the trailer back to RC). schemas.md §6.5 declares the
+#   WorkflowClass extension to EM's Workflow record. spec.md §6 itself
+#   is an INDEX (not normative content; defers to schemas.md). Total: 15
+#   §6 schema beads minted. The trailer bead carries `kind:schema` (no
+#   separate `kind:trailer` per discipline §4 tag-mapping; trailers are
+#   structurally schemas). The WorkflowClass extension bead carries
+#   `kind:enum` (it IS an ENUM declaration in §6.5). Not a discipline-
+#   patch candidate; the multi-file pattern is already captured by
+#   §2.11(a).
+#
+# F-pilot-RC-7 [local — applies §3.1.3 wide-fanout tag mechanically] —
+#   Section-anchor cites from RC body that fan out to multiple §4 reqs
+#   in a target spec acquire `cite:wide-fanout` tag per §3.1.3:
+#   • RC-001 cites [event-model.md §4.1] + [event-model.md §8] (fan out
+#     to many ev-events.* rows for the per-event subsections — wide-
+#     fanout fires on §8 anchor)
+#   • RC-002 cites [execution-model.md §4.5] (resolves to em-023, not
+#     wide-fanout)
+#   • RC-014 cites [event-model.md §4.5] (single anchor)
+#   • RC-018 cites [event-model.md §8] (wide-fanout — full per-event
+#     section)
+#   • RC-022 cites [execution-model.md §7.1] (single anchor) +
+#     [workspace-model.md §4.4] + [workspace-model.md §4.6] (multiple
+#     per-section reqs — wide-fanout)
+#   • RC-025 cites [event-model.md §8] for verdict events (wide-fanout)
+#   • RC-INV-001 cites [execution-model.md §5 EM-INV-005] (single
+#     invariant-as-target — sensor→sensor edge per F-refs-EV-6)
+#   • RC-INV-004 cites [event-model.md §8.6.8] (single row, no fanout)
+#   • RC-006 cites [architecture.md §4.6] (single anchor)
+#   Total: ~6 cite:wide-fanout tags applied (rc-001, rc-018, rc-022,
+#   rc-025, rc-014's [§8] anchor for divergence-detected, plus the
+#   spec.md §6.5 dual-table reference RC-007 cites which expands to
+#   action-mapping rows).
+#
+# F-pilot-RC-8 [class — invariant-as-target one-way preserved per
+#   F-pilot-AR-r2-2] — RC has 2 active invariants (RC-INV-001,
+#   RC-INV-004). Per F-pilot-AR-r2-2 invariant-as-target exemption,
+#   term-uses of an invariant by an impl req do NOT emit edges. Body
+#   cites checked:
+#   • RC-014 / RC-019a do NOT cite RC-INV-004 by ID; RC-INV-004 is the
+#     downstream sensor over them; correct direction is rc-inv-004 →
+#     RC-014 + RC-019a (sensor blocks-on impl).
+#   • RC-001 / RC-002 / RC-002a / RC-021 / RC-025 do NOT cite
+#     RC-INV-001 by ID; RC-INV-001 is the downstream sensor; correct
+#     direction is rc-inv-001 → those impl reqs.
+#   • RC-008 body cites "RC-INV-001" within the auto-resolver-categorical
+#     enumeration as a routing-context note (Cat 3 generic carries
+#     git-wins orientation per RC-INV-001) — by F-pilot-AR-10 supporting-
+#     cite test, removing RC-INV-001 leaves RC-008's auto-resolver
+#     enumeration testable; this is supporting cite, no edge.
+#   • Sensor→sensor edges (per F-refs-EV-6 v0.8 sensor→sensor explicit-ID-
+#     cite extension): RC-INV-001's body explicitly cites
+#     [execution-model.md §5 EM-INV-005] ("git wins on completion"); this
+#     fires `rc-inv-001 → em-inv-005` per the symmetric F10 sensor→sensor
+#     rule. RC-INV-004 body cites EV §8.6.8 (a §8 row, not an invariant);
+#     no sensor→sensor edge.
+#
+# F-pilot-RC-10 [local — F13 slot-rule/content-rule + F-pilot-AR-10
+#   supporting-cite test resolved 3 intra-RC bidirectional cite cycles
+#   detected by post-author cycle check] — Three 2-cycles surfaced on
+#   first cycle pass:
+#   (a) rc-014 ↔ rc-019a — RC-014 declares JSONL-scope SLOT (permitted/
+#       forbidden uses + emit `store_divergence_detected`); RC-019a is
+#       the corroboration-CONTENT classification rule that fills
+#       RC-014's emission output. F13 slot-rule/content-rule heuristic:
+#       slot→content (rc-014 → rc-019a) is normative; reverse is
+#       informational plumbing. F-pilot-AR-10 confirms: removing rc-014
+#       leaves rc-019a's corroboration-enum-classification testable.
+#       Decision: keep rc-014 → rc-019a; drop rc-019a → rc-014.
+#   (b) rc-017 ↔ rc-004 — RC-017 declares budget-contract; RC-004 says
+#       S01 ships YAML policies naming the wall-clock budget (RC-017).
+#       F-pilot-AR-10 supporting-cite test: removing RC-004 leaves
+#       RC-017's "budget MUST be declared" testable (S01 supplier detail
+#       supplemental); RC-004's S01-packaging contract genuinely needs
+#       RC-017's enumeration of what its YAML must name. Decision:
+#       keep rc-004 → rc-017; drop rc-017 → rc-004.
+#   (c) rc-022a ↔ rc-025a — RC-022a declares verdict emission via
+#       outcome envelope; RC-025a declares the daemon-side executor
+#       that consumes the envelope. Directional handoff: RC-025a
+#       explicitly consumes RC-022a's outcome envelope (load-bearing);
+#       RC-022a's "the daemon's reconciliation-verdict-executor (RC-025)"
+#       is supporting cite per F-pilot-AR-10. Decision: keep
+#       rc-025a → rc-022a; drop rc-022a → rc-025a.
+#   All three resolutions follow F13/F-pilot-AR-10 / F-pilot-AR-8 cycle
+#   precedent. NOT a discipline-patch candidate; mechanical application
+#   of existing rules. Documented inline at the edge sites.
+#
+# F-pilot-RC-9 [local — applies §3.1 step 5 term-use rule mechanically;
+#   RC has dense intra-spec term-use chains] —
+#   • "verdict commit" (§3 glossary + RC-002 + RC-022) — used by RC-021,
+#     RC-024, RC-025, RC-025a, RC-026 → term-use edges to RC-002 anchor.
+#   • "verdict-executed commit" (§3 glossary + RC-025) — used by
+#     RC-025a, RC-026, RC-026a → term-use edges to RC-025.
+#   • "snapshot token" (§3 glossary + RC-015) — used by RC-013, RC-022a,
+#     RC-024 → term-use edges to RC-015.
+#   • "detector" (§3 glossary + RC-010) — used by RC-011, RC-012, RC-013,
+#     RC-014, RC-020a, RC-020b → term-use edges to RC-010.
+#   • "in-flight run" (§3 glossary, sourced from ON §3) — used by RC-010,
+#     RC-014, RC-INV-004 → cross-spec term-use edge to ON's anchor (ON
+#     §3 plus the in_flight predicate def at on-008 which is the closest
+#     §4 anchor).
+#   • "investigator-agent" (§3 glossary + RC-015) — used by RC-016,
+#     RC-017, RC-018, RC-019, RC-022a → term-use edges to RC-015.
+#   • "reconciliation workflow" (§3 glossary + RC-001) — used by RC-002,
+#     RC-003, RC-004, RC-016, RC-017, RC-018, RC-INV-001 → term-use
+#     edges to RC-001.
+#   • "ReconciliationCategory" enum — defined in schemas.md §6.1; used
+#     by every detector req → term-use edges to rc-schema.reconciliation-
+#     category.
+#   • "VerdictEvent" — defined in schemas.md §6.1; used by RC-022, RC-022a,
+#     RC-025 → term-use edges to rc-schema.verdict-event.
+#   • "SnapshotToken" — defined in schemas.md §6.1; used by RC-015,
+#     RC-022a, RC-024 → term-use edges to rc-schema.snapshot-token.
+#   All emitted as intra-spec or cross-spec edges below.
+spec:
+  prefix: "rc"
+  title: "Reconciliation spec — implementation"
+  spec_path: specs/reconciliation/spec.md
+  spec_version: "0.4.0"
+  pilot_version: "0.1.0"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:reconciliation"
+  - "tag:mechanism"
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+# All 9 specs in RC's depends-on are LOADED — no forward-deferred
+# placeholders needed. RC is the LAST pilot in the corpus.
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
+  cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
+  bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv
+  wm: docs/decompose-to-tasks/mnem-maps/wm-mnem-map.csv
+  pl: docs/decompose-to-tasks/mnem-maps/pl-mnem-map.csv
+  "on": docs/decompose-to-tasks/mnem-maps/on-mnem-map.csv
+
+epic:
+  mnem: "rc"
+  title: "Reconciliation spec — implementation"
+  description: |
+    Implements specs/reconciliation/spec.md v0.4.0 + specs/reconciliation/schemas.md v0.4.0 (43 first-class §4 req beads from 43 active §4 entries after 0 §2.3 coalesces and 0 §2.1a collapses, 2 invariants — RC-INV-001 reconciliation-as-workflow uniqueness + RC-INV-004 evidence-corroboration guarantee; RC-INV-002 + RC-INV-003 + RC-INV-005 retired in v0.3 never reusable, 15 §6 schemas split across spec.md + schemas.md per §2.11(a) multi-file rule — 10 RECORDs + 5 ENUMs incl. Harmonik-Verdict-Executed trailer per schemas.md §6.4 RC-owned and WorkflowClass extension per schemas.md §6.5, 12-bead §8 reconciliation-category-taxonomy per §2.11(c) canonical large-§8-taxonomy rule — 1 umbrella rc-error.taxonomy + 11 per-category beads cat-0/1/2/3/3a/3b/3c/4/5/6a/6b SHAPE-not-COUNT distinct from BI/WM/ON sentinel single-bead form per F-pilot-RC-4, 0 multi-step splits — RC-018 budget-exhaustion 5-step sequence and RC-025a verdict-executor 7-step sequence both stay as single beads via F8b cohesive-function-body tiebreaker per F-pilot-RC-5 matching PL/EM-016 precedent, 7 test-infra beads from §10.2 obligations). depends-on: [execution-model, event-model, handler-contract, control-points, beads-integration, workspace-model, process-lifecycle, operator-nfr, architecture]. ALL 9 cross-spec targets pilot-loaded — RC is the LAST pilot in the corpus and emits ZERO forward-deferred placeholders. Highest cross-spec edge density in the corpus by design.
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ───────────────────────── §4.1 Reconciliation-as-workflow ─────────────────────────
+
+  - mnem: rc-001
+    kind: req
+    req: RC-001
+    title: "Reconciliation runs as a harmonik workflow"
+    description: |
+      Per RC-001: reconciliation MUST run as a normal harmonik workflow — DOT-defined per [execution-model.md §4.1], dispatched deterministically by the daemon, and event-logged per [event-model.md §4.1] and the per-event subsections under [event-model.md §8]. There MUST NOT be a separate reconciliation subsystem. Each investigator-required category (Cat 2, Cat 3 generic, Cat 6a per §8) has its own reconciliation workflow in the S01-shipped library per RC-004. Sets the foundational claim that the spec is consumed throughout — reconciliation runs alongside ordinary workflows under the same orchestrator, event bus, and execution-model semantics.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: rc-002
+    kind: req
+    req: RC-002
+    title: "Reconciliation workflows emit exactly one checkpoint commit"
+    description: |
+      Per RC-002: a reconciliation workflow MUST emit exactly one checkpoint commit — the **verdict commit** — on the investigator-run's task branch. The verdict commit MUST carry the `reconciliation_verdict_emitted` event's payload (per [schemas.md §6.1]) plus any evidence the investigator produced under `.harmonik/reconciliation/<investigator_run_id>/`. Intermediate state transitions within the reconciliation workflow MUST NOT be checkpointed. Explicit exception to [execution-model.md §4.5 EM-023]; keyed on workflow-library metadata tag `workflow_class = reconciliation` (declared in [schemas.md §6.5] as RC's extension to the Workflow record owned by [execution-model.md §4.1]; OQ-RC-002 tracks EM acceptance).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-003
+    kind: req
+    req: RC-003
+    title: "Bounded recursion follows from the verdict-only commit rule"
+    description: |
+      Per RC-003: a daemon crash during reconciliation MUST leave no mid-investigation durable state. On restart, the outer run whose reconciliation was interrupted MUST be re-classified from its original category against unchanged git + Beads state, and a fresh reconciliation workflow MUST be dispatched. Reconciliation-workflow nodes MUST NOT be classified under §8 Cat 1 or Cat 2; the recursion-bounding rule of RC-002 ensures no in-flight investigator state exists for a detector to classify.
+
+  - mnem: rc-002a
+    kind: req
+    req: RC-002a
+    title: "At most one reconciliation workflow per target run (flock)"
+    description: |
+      Per RC-002a: for any given `target_run_id`, at most ONE reconciliation workflow MUST be in-flight at a time. Daemon MUST hold a per-run reconciliation lock at `.harmonik/reconciliation-locks/<target_run_id>.lock`, acquired via `flock(LOCK_EX|LOCK_NB)` per the fd-lifetime advisory-lock primitive of [process-lifecycle.md §4.1 PL-002a]. Lock acquired before the reconciliation workflow's first emission (RC-013 category-assigned); released ONLY after one of: verdict-executed commit lands (RC-025); budget exhaustion (RC-018); malformed verdict (RC-023); investigator-process crash (HC-011 watcher); operator pause (ON-027 entry). On daemon startup, orphan-sweep ([process-lifecycle.md §4.2 PL-006]) enumerates locks and removes stale (PID gone). Two concurrent investigators producing verdicts is structural violation routed through RC-023 with reason `multiple-verdicts`. Second dispatch on `EWOULDBLOCK` emits `reconciliation_dispatch_deduplicated` (cross-spec coordination request to EV §8.6) and skips without re-classification.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-002b
+    kind: req
+    req: RC-002b
+    title: "Lock acquisition and verdict-executed-commit are NOT atomic"
+    description: |
+      Per RC-002b: lock acquisition (RC-002a) and verdict-executed-commit emission (RC-025 + [schemas.md §6.4]) are two physically distinct write operations and CANNOT be made atomic. On daemon startup, a stale lock file at `.harmonik/reconciliation-locks/<target_run_id>.lock` whose target run's investigator task branch carries a `Harmonik-Verdict-Executed: true` commit MUST be deleted (lock outlived its useful purpose). Stale lock without verdict-executed commit MUST route the target run through Cat 3b per §8.5. Per §2.2 F8c constraint-adjacent pattern, this is a constraint requirement adjacent to RC-002a + RC-025.
+
+  - mnem: rc-003a
+    kind: req
+    req: RC-003a
+    title: "Category orthogonality via priority-ordered first-match"
+    description: |
+      Per RC-003a: detection categories are NOT mutually exclusive on evidence; a single in-flight run may satisfy multiple §8 categories. Detectors MUST apply priority order and emit the FIRST category whose rule fires: `Cat 0 → Cat 6b → Cat 6a → Cat 5 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat 4 → Cat 1`. Rationale: infrastructure/integrity evidence (Cat 0/6b/6a) dominates; clean-restart (Cat 5) dominates orphans; specific Cat 3 sub-cases dominate generic; Cat 2 dominates Cat 4 (investigator subsumes auto-resume for non-idempotent); Cat 1 is terminal (cheapest). Resolves Cat 3 vs Cat 6a workspace-missing tension, Cat 3c vs Cat 3b verdict-unexecuted-on-merged-run tension.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: rc-003b
+    kind: req
+    req: RC-003b
+    title: "Crashed reconciliation-workflow branch classification (Cat 5)"
+    description: |
+      Per RC-003b: a reconciliation workflow whose task branch exists but whose investigator subprocess died mid-run (no verdict commit yet emitted) MUST be classified as Cat 5 (clean re-dispatch) on subsequent reconciliation cadence ticks, NOT Cat 6a (multiple task branches). Discriminator is the `Harmonik-Workflow-Class: reconciliation` trailer per RC-002 (cross-spec coordination request to EM trailer registry; tracked OQ-RC-002). RC-003a priority order applies; this rule scopes the Cat 5 vs Cat 6a tiebreak for the reconciliation-workflow case.
+
+  - mnem: rc-004
+    kind: req
+    req: RC-004
+    title: "Reconciliation workflow library is S01-owned"
+    description: |
+      Per RC-004: the reconciliation workflow library — concrete DOT workflows + YAML policies for investigator-required categories (Cat 2, Cat 3 generic, Cat 6a per §8) — MUST be owned by S01 (Orchestrator Core) and ship as part of S01. S01 MUST ship: (a) DOT workflow per investigator-required category; (b) YAML policies naming the wall-clock budget (RC-017) + skill-injection set (Beads-CLI + git-inspection skills minimum per [control-points.md §4.11], [handler-contract.md §4.11]); (c) investigator-agent prompt templates.
+
+  - mnem: rc-005
+    kind: req
+    req: RC-005
+    title: "Detectors and verdict-execution are NOT in the workflow library"
+    description: |
+      Per RC-005: §4.3 detectors MUST live in the daemon's Go code (mechanism-tagged functions), NOT in the S01 workflow library. §4.5 verdict-execution mechanics (action dispatch, verdict-executed commit emission, idempotency-key adapter calls) MUST also live in the daemon's Go code. The S01 library owns investigator REASONING only.
+
+  - mnem: rc-006
+    kind: req
+    req: RC-006
+    title: "Upgrade discipline — daemon code and library ship together"
+    description: |
+      Per RC-006: a new reconciliation category (added via amendment protocol per [architecture.md §4.6]) MUST ship a daemon-code change (detector + action-map entry per §8 taxonomy) AND a workflow-library addition in S01 (for investigator-required categories) in the same harmonik release. Split releases are forbidden.
+
+  # ───────────────────────── §4.2 Action-mapping dispatch ─────────────────────────
+
+  - mnem: rc-007
+    kind: req
+    req: RC-007
+    title: "Action-mapping is the dispatch contract; taxonomy is detection"
+    description: |
+      Per RC-007: §8 category taxonomy classifies *what went wrong*; action-mapping table in §8.12 (semantics) + [schemas.md §6.3] (mechanical dispatch) specifies *what the daemon does by default*. Default action is normative; deviation (e.g., policy override routing Cat 1 through investigator) MUST be declared in the reconciliation workflow's YAML with rationale. Dual-table ownership: §8.12 prose authoritative on semantics; [schemas.md §6.3] authoritative on mechanical dispatch; divergence is a lint failure.
+
+  - mnem: rc-008
+    kind: req
+    req: RC-008
+    title: "Auto-resolver categories MUST have a deterministic resolver"
+    description: |
+      Per RC-008: every category whose default action in §8.12 is an auto-resolver (Cat 0 wait-and-retry, Cat 1 re-spawn, Cat 3a adapter re-issue, Cat 3b verdict re-execution, Cat 3c direct close-write, Cat 4 retry/gate re-arm, Cat 5 no-op, Cat 6b operator escalation) MUST have a deterministic implementation in the daemon's Go code. Investigator-required categories (Cat 2, Cat 3 generic, Cat 6a) MUST have a playbook per RC-015/RC-016. Note: RC-INV-001 cite in body is supporting per F-pilot-AR-10 — removing the invariant leaves the auto-resolver enumeration testable.
+
+  - mnem: rc-009
+    kind: req
+    req: RC-009
+    title: "Taxonomy shape is settled (11-category lock)"
+    description: |
+      Per RC-009: the 11-category detection taxonomy plus §8.12 action-mapping is the shape, resolved 2026-04-24 per user decision. Authoring agents MUST NOT re-open the 3-action-vs-11-category framing. Any future amendment MUST follow the protocol of [architecture.md §4.6].
+
+  # ───────────────────────── §4.3 Detectors ─────────────────────────
+
+  - mnem: rc-010
+    kind: req
+    req: RC-010
+    title: "Detectors operate on runs, not beads"
+    description: |
+      Per RC-010: detectors MUST classify each in-flight run independently. A bead with multiple runs over its lifetime (per [execution-model.md §4.3 EM-014]) MUST have each run classified separately. Detectors MUST filter checkpoints by `Harmonik-Run-ID` trailer, NOT by matching on `Harmonik-Bead-ID`. An orphaned task branch from a prior run whose bead has since been re-claimed MUST classify as Cat 5 for the old run.
+
+  - mnem: rc-011
+    kind: req
+    req: RC-011
+    title: "Ordering uses git DAG parentage and UUID v7, not wall clock"
+    description: |
+      Per RC-011: detectors MUST order checkpoints within a run's task branch by **git DAG parentage** (parent-pointer chain) and events by **UUID v7 `event_id`** per [event-model.md §4.1]. Wall-clock timestamps (`timestamp_wall`, git commit `author_date`/`committer_date`) MUST NOT drive classification. Most-recent checkpoint identified as the tip of the run's task branch (commit with no child in run's branch-subgraph), NOT the commit with the latest wall-clock timestamp.
+
+  - mnem: rc-012
+    kind: req
+    req: RC-012
+    title: "Cat 0 pre-check runs before any other detector"
+    description: |
+      Per RC-012: before any §8 category detector executes, daemon MUST verify infrastructure prerequisites per §8.1: `br --version` returns within timeout T (default 5s) AND reports a version compatible with the pin per [beads-integration.md §4.8]; a trial `br list --limit 1` or equivalent returns without error; `git rev-parse HEAD` succeeds; `.harmonik/` is writable. Any prerequisite failure MUST halt classification, emit `infrastructure_unavailable` per [event-model.md §8] naming the specific prerequisite, transition to `degraded` status per [process-lifecycle.md §4.2], and retry at configurable cadence. No in-flight run is classified until Cat 0 clears.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: rc-012a
+    kind: req
+    req: RC-012a
+    title: "Post-`ready` Cat 0 does not transition daemon state"
+    description: |
+      Per RC-012a: a Cat 0 prerequisite failure observed AFTER daemon has reached `ready` (per [process-lifecycle.md §4.3 PL-009]) MUST emit `daemon_degraded{reason=infrastructure_unavailable}` per [event-model.md §8.7.5] and surface the failing prerequisite via [operator-nfr.md §4.9 ON-037] health probe, but MUST NOT transition the §6.1 daemon-status enum from `ready` to `degraded`. Daemon-level `degraded` enum entry is reserved for pre-`ready` Cat 0 failures per PL-010. Reentrant `degraded` would tangle operator-control with reconciliation per the PL-010 NOTE.
+
+  - mnem: rc-013
+    kind: req
+    req: RC-013
+    title: "Detector emits `reconciliation_category_assigned`"
+    description: |
+      Per RC-013: after classifying an in-flight run into a §8 category, detector MUST emit `reconciliation_category_assigned` per [event-model.md §8] carrying run_id, assigned category, detection-rule name. Emission MUST precede dispatch of any reconciliation workflow or auto-resolver. Consumers MUST tolerate duplicate emissions (e.g., from crash-restart re-dispatch); dedup key is `(target_run_id, category, snapshot_token.git_head_hash)`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-014
+    kind: req
+    req: RC-014
+    title: "JSONL divergence-evidence scope is bounded"
+    description: |
+      Per RC-014: detectors and investigators MAY read JSONL only for: detecting checkpoint commit referenced in `checkpoint_written` event missing from git (Cat 6b); detecting JSONL corrupt past byte offset (Cat 6b); detecting `transition_event` exists but transition-record sibling file absent (Cat 3 per [execution-model.md §4.4 EM-018]); Cat 2 liveness probe via controlled indexed query (NOT live-follow tail); supplying observational context to investigator. FORBIDDEN: using JSONL as source of `run_id`/`state_id`/`transition_id` for in-flight runs (those derive from git per [execution-model.md §4.7]); using JSONL to decide which bead is in-flight (Beads via `br` is authoritative per [beads-integration.md §4.7]); reconstructing `state` or `transition` from JSONL payloads. On detected divergence, detector emits `store_divergence_detected` with `corroboration ∈ {git-corroborated, beads-corroborated}` per EV-023a; un-corroborable observations route to `divergence_inconclusive` per [event-model.md §8.6.10] (Cat 6a/6b per RC-003a).
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: rc-019a
+    kind: req
+    req: RC-019a
+    title: "Evidence-corroboration contract for store-divergence events"
+    description: |
+      Per RC-019a: every `store_divergence_detected` emission MUST adhere to EV-023a per [event-model.md §4.5]: detector MUST classify the candidate divergence into the `corroboration` enum value (`git-corroborated | beads-corroborated`) per [event-model.md §8.6.8] payload. Single-source observations whose corroboration cannot be established MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] instead, NOT `store_divergence_detected`. Cat 6b (post-emission corroboration impossible) is reachable when neither git nor Beads is readable; Cat 6b emissions are exempt from corroboration via the dedicated escalation path of §8.11.
+
+  - mnem: rc-020a
+    kind: req
+    req: RC-020a
+    title: "Detector cadence (startup / on-demand / hourly scheduled)"
+    description: |
+      Per RC-020a: detectors MUST run at three dispatch points: (a) **Daemon startup** — full scan of in-flight runs after orphan sweep ([process-lifecycle.md §4.2 PL-005]) and before transitioning to `ready`; (b) **On-demand operator command** — `harmonik reconcile [--run <run_id>]` triggers scoped detector run (grammar OQ-RC-005); (c) **Scheduled cadence** — background scan at configurable interval; MVH default **hourly**, configurable via operator YAML per [operator-nfr.md §4.3] (post-MVH tuning OQ-RC-004). Detectors MUST be idempotent across dispatch points: re-running on same `(target_run_id, snapshot)` MUST produce same category assignment. Concurrent detector runs for same `target_run_id` serialized by RC-002a registry lock.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: rc-020b
+    kind: req
+    req: RC-020b
+    title: "Detector panic recovery (per-detector recover() barrier)"
+    description: |
+      Per RC-020b: a detector that panics during evaluation per RC-003a's first-match priority order MUST be caught by a per-detector `recover()` barrier (per [process-lifecycle.md §4.6 PL-018a]'s per-goroutine recover obligation extended to detector functions). On panic, detector is suspended for the daemon's lifetime and priority-order evaluation falls through to the next detector. A diagnostic event `reconciliation_detector_panic{detector_class, error_class}` (cross-spec coordination request to EV) MUST emit before fall-through.
+
+  # ───────────────────────── §4.4 Investigator-agent contract ─────────────────────────
+
+  - mnem: rc-015
+    kind: req
+    req: RC-015
+    title: "Investigator inputs are bound by snapshot token (logical view)"
+    description: |
+      Per RC-015: investigator subprocess receives a standard LaunchSpec per [handler-contract.md §6.1] (`agent_type=claude-code, role=investigator`). `LaunchSpec.snapshot_token` field (declared `String|None` in HC-006) MUST carry the JSON-serialized SnapshotToken record per [schemas.md §6.1] (`{git_head_hash, beads_audit_entry_id, captured_at_timestamp}`). Investigator does NOT receive a pre-assembled `InvestigatorInput` payload; the InvestigatorInput shape per [schemas.md §6.1] is a documented LOGICAL VIEW the investigator constructs at runtime by querying its Beads-CLI skill (BI-027/BI-028 for BeadRecord), git-inspection skill (per RC-016 playbook for checkpoint commit + transition-record sibling), workspace-inspection skill, bounded JSONL divergence-evidence reader (RC-014). The snapshot token IS the bounding discipline. Reads beyond `git_head_hash` or `beads_audit_entry_id` MUST be classified out-of-scope per RC-014 forbidden-uses.
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-delegated"
+      - "axis:io-determinism-non-deterministic"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-015a
+    kind: req
+    req: RC-015a
+    title: "Investigator is an HC handler (canonical agent_type/role pair)"
+    description: |
+      Per RC-015a: investigator subprocess is a handler-contract handler per [handler-contract.md §4.1]. Launch follows standard handler-launch sequence — dispatcher constructs LaunchSpec per HC-006, calls launch primitive, watches via HC-011 for outcome emission. `agent_type=claude-code` and `role=investigator` are canonical pair (see also CP-039). Reconciliation-specific behavior beyond standard launch is captured in investigator playbook (RC-016).
+
+  - mnem: rc-016
+    kind: req
+    req: RC-016
+    title: "Investigator playbook per category (S01 YAML obligation)"
+    description: |
+      Per RC-016: for each category with an investigator (§8.3 Cat 2, §8.4 Cat 3 generic, §8.11 Cat 6a), the S01-shipped YAML policy MUST define a **playbook** — a specific ordered sequence of checks producing evidence for the verdict. Playbooks MUST name the investigator's expected evidence outputs (captured in the reconciliation commit) and the verdict-selection rubric.
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+      - "axis:replay-safety-unsafe"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-017
+    kind: req
+    req: RC-017
+    title: "Every reconciliation workflow declares a wall-clock budget"
+    description: |
+      Per RC-017: every reconciliation workflow per RC-001 MUST declare a wall-clock budget — hard ceiling, measured from `run_started` to terminal event, beyond which daemon forcibly terminates. Declared as YAML policy field `wall_clock_seconds` (positive integer, required) attached to reconciliation workflow's DOT via `budget_ref` per [control-points.md §4.5]. In absence of explicit budget, S01 packaging (RC-004) MUST supply per-category default: Cat 2 default 600s; Cat 3 generic default 300s; Cat 6a default 900s.
+
+  - mnem: rc-018
+    kind: req
+    req: RC-018
+    title: "Budget exhaustion terminates with fallback verdict (5-step sequence kept as one bead per F8b)"
+    description: |
+      Per RC-018: on wall-clock budget exhaustion, daemon MUST: emit `reconciliation_budget_exhausted` (payload `BudgetExhaustedPayload` per [schemas.md §6.1]; WHEN/WHY here, WHAT in [event-model.md §8]); issue **default verdict of `escalate-to-human`** on outer (target) run, indistinguishable from investigator-emitted `escalate-to-human` in operator-facing surface; kill investigator subprocess per [handler-contract.md §4.6] cleanup rules; NOT write a reconciliation commit. Step ordering: (1) terminate investigator subprocess (SIGTERM, then SIGKILL after [handler-contract.md §4.3 HC-018] interval); (2) wait for watcher-observation per HC-011; (3) emit `budget_exhausted` (class F per [event-model.md §8.4.3]); (4) emit fallback `escalate-to-human` verdict (class F per RC-021); (5) verdict-executor (RC-025a) consumes fallback as if investigator-emitted. Steps (3) and (4) are NOT atomic but each is fsync-boundary; on crash between them, next daemon startup detects budget-exhausted event with no subsequent verdict commit and routes through Cat 3b retry cap (RC-026a). Per F8b cohesive-function-body tiebreaker (F-pilot-RC-5), keep as ONE bead — all 5 steps share goroutine state in the budget-exhaustion handler; do NOT mint step beads. Because reconciliation workflows are not checkpointed mid-investigation (RC-002), budget exhaustion MUST NOT leave an in-flight reconciliation state for re-classification.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: rc-019
+    kind: req
+    req: RC-019
+    title: "Investigator captures WIP before emitting `reopen-bead`"
+    description: |
+      Per RC-019: before emitting a `reopen-bead` verdict, investigator MUST capture any recoverable WIP from outer run's worktree into the reconciliation commit. Concretely: (a) `git status --porcelain` and enumerate untracked files; (b) capture diff plus file listing; (c) include the capture in reconciliation commit's body and/or as annotated files under `.harmonik/reconciliation/<investigator_run_id>/wip-capture/`. Mandatory for `reopen-bead` verdicts; OPTIONAL for other verdicts (which keep the worktree and retain WIP by default).
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+      - "axis:replay-safety-unsafe"
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.5 Verdict vocabulary and execution ─────────────────────────
+
+  - mnem: rc-020
+    kind: req
+    req: RC-020
+    title: "Verdict vocabulary is the seven-value enum"
+    description: |
+      Per RC-020: a verdict event's `verdict` field MUST be exactly one of the seven enum values listed in [schemas.md §6.1 Verdict]: `resume-here`, `resume-with-context`, `reset-to-checkpoint`, `reopen-bead`, `accept-close-with-note`, `no-op-accept`, `escalate-to-human`. Every verdict MUST have defined mechanical semantics (see [schemas.md §6.2] verdict-execution table; [spec.md §8.12] is authoritative on prose semantics; [schemas.md §6.3] is authoritative on mechanical dispatch). Any other value is a malformed verdict and MUST be handled per RC-023. `no-op-accept` is the verdict for "investigator confirms current state is legitimate; no action required" — differs from `accept-close-with-note` in that the bead is NOT closed.
+
+  - mnem: rc-021
+    kind: req
+    req: RC-021
+    title: "Exactly one verdict event per reconciliation workflow"
+    description: |
+      Per RC-021: a reconciliation workflow MUST emit exactly one `reconciliation_verdict_emitted` event over its lifetime. Emission of the first verdict event MUST mark the workflow terminal; any subsequent verdict event from the same workflow is a structural violation and MUST be handled per RC-023 with malformation reason `multiple-verdicts`.
+
+  - mnem: rc-022
+    kind: req
+    req: RC-022
+    title: "Verdict commit lands on investigator's task branch"
+    description: |
+      Per RC-022: verdict event's emission MUST be atomic with the investigator's verdict commit — a single `git commit` on the investigator's task branch carrying the verdict event's payload (per [schemas.md §6.1]) and any evidence files under `.harmonik/reconciliation/<investigator_run_id>/`. No intermediate checkpoints are written per RC-002. Resolution of `resume-here` / `resume-with-context` dispatch targets (which node to re-spawn on the outer run) MUST cite the orchestrator's current-node resolution contract in [execution-model.md §7.1] and, for worktree interactions on `reset-to-checkpoint`, [workspace-model.md §4.4] (worktree reset) and [workspace-model.md §4.6] (merge).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: rc-022a
+    kind: req
+    req: RC-022a
+    title: "Verdict emission via outcome envelope (HC-008 outcome_emitted)"
+    description: |
+      Per RC-022a: investigator subprocess emits its verdict by writing a structured outcome via standard handler-contract outcome path (HC-008 `outcome_emitted`). Outcome's `outcome_kind` MUST be `reconciliation_verdict`; outcome payload MUST be the `VerdictEvent` record per [schemas.md §6.1]. Handler-contract watcher (HC-011) consumes the outcome event and surfaces VerdictEvent to daemon's reconciliation-verdict-executor (RC-025). Investigator subprocess does NOT directly write the verdict commit; daemon's verdict-executor MUST construct and commit the verdict-and-verdict-executed commit pair on investigator's task branch. Cross-spec coordination request to EM (OQ-RC-010): extend `Outcome` record in [execution-model.md §6.1] (or add new variant) to carry the verdict envelope.
+
+  - mnem: rc-023
+    kind: req
+    req: RC-023
+    title: "Malformed-verdict handling produces a fallback escalation"
+    description: |
+      Per RC-023: on any malformation condition (`unknown-verdict-value`, `missing-required-field`, `extra-fields`, `wrong-type`, `multiple-verdicts`, `verdict-after-terminal` per MalformationReason enum [schemas.md §6.1]), daemon MUST: emit `reconciliation_verdict_malformed` (payload `MalformedVerdictPayload` per [schemas.md §6.1]); issue **fallback verdict of `escalate-to-human`** on the target (outer) run; terminate the reconciliation workflow (kill investigator subprocess); NOT attempt to interpret the malformed payload. Trusting LLM-generated text to conform to a schema is a ZFC violation per [architecture.md §4.2]; this path converts cognitive failure into deterministic escalation.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: rc-024
+    kind: req
+    req: RC-024
+    title: "Verdict staleness check precedes execution"
+    description: |
+      Per RC-024: before executing a verdict per RC-025, daemon MUST re-capture current `(git_head_hash', beads_audit_entry_id')` and compare against snapshot token captured at investigator-dispatch time (RC-015). Verdict is **stale** if either: target run's checkpoint trail has gained a new commit since the snapshot, OR target run's bead has changed status in the Beads audit log since the snapshot. On staleness: emit `reconciliation_verdict_stale` (WHEN/WHY here; payload schema `StaleVerdictPayload` in [schemas.md §6.1]; WHAT contract owned by [event-model.md §8]); NOT execute the verdict; re-dispatch a fresh reconciliation workflow against the new state. Changes to sibling beads or daemon's JSONL event log MUST NOT trigger staleness.
+
+  - mnem: rc-025
+    kind: req
+    req: RC-025
+    title: "Verdict execution is durable and idempotent"
+    description: |
+      Per RC-025: when reconciliation workflow emits a verdict event (per RC-020) and staleness check (RC-024) passes, daemon MUST: perform the verdict's mechanical action per the verdict-execution table ([schemas.md §6.2]); emit `reconciliation_verdict_executed` (payload `VerdictExecutedPayload` per [schemas.md §6.1]); append a second commit to investigator's task branch carrying the trailer `Harmonik-Verdict-Executed: true` (payload-free presence-only marker; trailer shape declared in [schemas.md §6.4] as RC-owned since the EM v0.2.0 trailer rollback). Each verdict's mechanical action MUST be idempotent: `reopen-bead` invokes BI adapter's reopen path per [beads-integration.md §4.4 BI-010] (BI-010a status-mapping table for verdict→op binding) with adapter's BI-031 status-check-before-reissue handling idempotency; `resume-here`/`resume-with-context`/`reset-to-checkpoint` idempotent at dispatch layer; `accept-close-with-note` idempotent on re-run; `no-op-accept` no mechanical action; `escalate-to-human` deduplicated by `target_run_id`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: rc-025a
+    kind: req
+    req: RC-025a
+    title: "Daemon-side verdict-executor commits the verdict pair (7-step sequence kept as one bead per F8b)"
+    description: |
+      Per RC-025a: the daemon-side verdict-executor (a deterministic Go subroutine, NOT a workflow node) consumes the VerdictEvent from RC-022a's outcome envelope and: (1) validates the verdict per RC-020/RC-023; on validation failure, routes through fallback per RC-023; (2) re-captures snapshot per RC-024 staleness check; on stale, routes through Cat 3b re-execution per §8.5; (3) constructs and commits `reconciliation_verdict_emitted` commit (verdict body + Harmonik-Verdict-ID trailer) on investigator's task branch; (4) mechanically applies the verdict's action per the table in [schemas.md §6.2]; (5) constructs and commits `reconciliation_verdict_executed` commit with `Harmonik-Verdict-Executed: true` trailer per [schemas.md §6.4] as a descendant of the verdict-emitted commit; (6) emits `reconciliation_verdict_emitted` and `reconciliation_verdict_executed` events; (7) releases the RC-002a lock per RC-002b. Verdict-executor MUST be panic-safe (per [process-lifecycle.md §4.6 PL-018a]); on panic mid-step, next daemon startup re-classifies via Cat 3b (verdict-emitted-but-unexecuted) per §8.5 and verdict-executor re-runs idempotently. Per F8b cohesive-function-body tiebreaker (F-pilot-RC-5), keep as ONE bead — all 7 steps live in the verdict-executor's single function body sharing goroutine state (snapshot, verdict envelope, target-run-id) accumulated through prior steps. Do NOT mint step beads — contrast ON-027's 8 drain steps that delegate to 8 distinct subsystems.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: rc-026
+    kind: req
+    req: RC-026
+    title: "Verdict-execution discovery on restart (Cat 3b classification)"
+    description: |
+      Per RC-026: startup detector of [process-lifecycle.md §4.2 PL-005] MUST treat a reconciliation workflow as resolved ONLY if both the verdict commit AND the verdict-executed commit (per RC-025) are present on the investigator's branch. A reconciliation workflow with a verdict commit but no verdict-executed commit MUST be classified as §8.5 Cat 3b with the dedicated auto-resolver re-attempting the verdict's mechanical action under a fresh staleness check (RC-024). Daemon startup sequence MUST dispatch reconciliation-workflow classification pass BEFORE any ordinary workflow dispatches — reconciliation detectors run before daemon transitions to `ready`; ordinary dispatch is gated behind detection completion. Fail-open reconciliation escalation tracked OQ-RC-003.
+
+  - mnem: rc-026a
+    kind: req
+    req: RC-026a
+    title: "Cat 3b re-execution retry cap (default N=5; cap → Cat 6b)"
+    description: |
+      Per RC-026a: a reconciliation Cat 3b verdict-execution that fails on a fresh staleness check (RC-024) MUST be retried with a durable attempt counter, recorded in `.harmonik/reconciliation-attempts/<target_run_id>.json` (atomic temp+rename+fsync per [workspace-model.md §4.7 WM-026]). Retry cap defaults to N=5; on cap exceeded, the run escalates to Cat 6b (operator escalation) per §8.11. Each retry MUST emit `reconciliation_verdict_execution_retry{target_run_id, attempt}` (cross-spec coordination request to EV).
+
+  - mnem: rc-027
+    kind: req
+    req: RC-027
+    title: "Operator verdict-override surface (confirm-verdict / veto-verdict)"
+    description: |
+      Per RC-027: a per-reconciliation-workflow policy option MUST allow operators to pause the daemon's verdict-execution step until operator confirmation or veto via `harmonik confirm-verdict <run_id>` / `harmonik veto-verdict <run_id> [--promote-to escalate-to-human]`. Default: execution proceeds without operator confirmation. Operators opt in by policy. Applies to all investigator-dispatched categories (Cat 2, Cat 3 generic, Cat 6a per §8.12). Final grammar / authorization model owned by operator-CLI spec per [operator-nfr.md §4.10] (OQ-RC-005).
+
+  # ───────────────────────── §4.6 Re-run vs intra-run ─────────────────────────
+
+  - mnem: rc-028
+    kind: req
+    req: RC-028
+    title: "`reopen-bead` verdict triggers a new run on subsequent claim"
+    description: |
+      Per RC-028: a `reopen-bead` verdict MUST clear the in-flight tracking for the target bead. A subsequent claim of the bead MUST produce a new run with a fresh worktree and a fresh branch per [workspace-model.md §4.9 WM-034]. The new run MUST receive a fresh `run_id`; continuation of the prior `run_id` after a `reopen-bead` verdict is forbidden.
+
+  - mnem: rc-029
+    kind: req
+    req: RC-029
+    title: "Intra-run rollbacks keep the worktree and run_id"
+    description: |
+      Per RC-029: a `reset-to-checkpoint` verdict is an intra-run rollback. The worktree and `run_id` MUST be preserved; the run reverts to the named checkpoint and re-runs from there per [execution-model.md §4.10 EM-044] (transition_kind + rollback_to_state_id representation).
+
+  - mnem: rc-030
+    kind: req
+    req: RC-030
+    title: "Reconciliation does NOT drive intra-run loops"
+    description: |
+      Per RC-030: intra-run loops (workflow edges routing back to an earlier node) are NOT produced by reconciliation. Those loops are ordinary workflow-graph traversal handled by edge conditions and Guard/Gate control-points per [control-points.md §4.2, §4.4]. Reconciliation handles only restart and store-divergence cases.
+
+  # ───────────────────────── §4.7 Testing obligation ─────────────────────────
+
+  - mnem: rc-031
+    kind: req
+    req: RC-031
+    title: "Crash-recovery-tested (every detector + verdict-execution path)"
+    description: |
+      Per RC-031: every detector under §4.3 / §8, every verdict-execution path under §4.5, and every staleness-check path under RC-024 MUST be exercised by at least one crash-recovery scenario test before landing. Crash-recovery test layer described in `docs/methodology/TESTING.md`; this obligation migrates to a `[testing.md §<layer>]` cross-reference within one revision cycle after `testing.md` is finalized (OQ-RC-006).
+
+  # ───────────────────────── §5 invariants (2 active; 3 retired) ─────────────────────────
+
+  - mnem: rc-inv-001
+    kind: invariant
+    req: RC-INV-001
+    title: "Sensor: reconciliation-as-workflow uniqueness across daemon lifecycle"
+    description: |
+      Per RC-INV-001: across every daemon lifetime, every reconciliation dispatch — including budget-exhausted fallbacks, malformed-verdict fallbacks, Cat 3b re-executions, Cat 3c auto-verdicts — MUST run as a DOT-tagged workflow with `workflow_class = reconciliation` AND MUST emit at most one `reconciliation_verdict_emitted` event per dispatch (RC-021). At no point during daemon's lifetime may reconciliation "ride on top of" ordinary workflow state (i.e., a non-reconciliation workflow node MUST NOT invoke verdict-execution mechanics of RC-025). Cuts across RC-001, RC-002, RC-002a, RC-021, RC-025; closes the "could an agent in a normal workflow issue a verdict" ambiguity.
+      Sensor: (a) Daemon MUST tag the Workflow record in its registry with `workflow_class`; startup audit log samples emitted workflows and asserts every `reconciliation_verdict_*` event traces back to a Workflow whose `workflow_class = reconciliation`. (b) JSONL query at audit time filters `reconciliation_verdict_emitted` events and joins against Workflow registry; any event whose source workflow's class is NOT `reconciliation` fails the audit. (c) Per-daemon-lifecycle audit log sample: one tag check per N verdicts (default N=10) at runtime, full scan at shutdown. Body explicit ID cite: `[execution-model.md §5 EM-INV-005]` ("git wins on completion") fires sensor→sensor edge `rc-inv-001 → em-inv-005` per F-refs-EV-6 v0.8 sensor→sensor explicit-ID-cite extension.
+
+  - mnem: rc-inv-004
+    kind: invariant
+    req: RC-INV-004
+    title: "Sensor: evidence-corroboration guarantee across detector runs"
+    description: |
+      Per RC-INV-004: every `store_divergence_detected` emission traced through any detector dispatch (startup, on-demand, scheduled per RC-020a) MUST carry a non-`inconclusive` `corroboration` value per EV-023a. Cuts across detector dispatch points and the upstream EV contract: a single-source observation whose corroboration cannot be established MUST emit `divergence_inconclusive` instead. Bounds false-positive investigator dispatches; reconciliation-side projection of [event-model.md §8.6.8] EV-023a.
+      Sensor: detector emission layer MUST validate `corroboration ∈ {git-corroborated, beads-corroborated}` before allowing the event to be written to JSONL; an `inconclusive` corroboration MUST route to `divergence_inconclusive` instead. Audit-log sample at daemon startup checks every `store_divergence_detected` in the last N events carries a non-`inconclusive` corroboration.
+
+  # ───────────────────────── §6 Schemas (15 beads across spec.md + schemas.md) ─────────────────────────
+  # Per §2.11(a), schema beads from the sibling schemas.md use the same
+  # `rc-schema.<type-kebab>` naming. spec.md §6 itself is an INDEX
+  # (defers to schemas.md); schemas.md §6.1 declares 13 records/enums;
+  # §6.4 declares the Harmonik-Verdict-Executed trailer; §6.5 declares
+  # the WorkflowClass extension. Total: 15 schema beads.
+
+  - mnem: rc-schema.snapshot-token
+    kind: schema
+    schema_kind: record
+    title: "Define `SnapshotToken` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 SnapshotToken]: 3-field record bounding the investigator's view of state — `git_head_hash` (SHA of project HEAD or reference investigator reads from), `beads_audit_entry_id` (ID of most recent Beads audit-log entry at capture time), `captured_at_timestamp` (RFC 3339 wall-clock; advisory display only per [event-model.md §4.3]). Captured at investigator-dispatch time per RC-015; consumed by RC-024 staleness check (re-capture and compare); JSON-serialized form carried by `LaunchSpec.snapshot_token` per RC-015.
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.investigator-input
+    kind: schema
+    schema_kind: record
+    title: "Define `InvestigatorInput` record (schemas.md §6.1) — LOGICAL VIEW"
+    description: |
+      Per [schemas.md §6.1 InvestigatorInput]: documented LOGICAL VIEW the investigator self-assembles at runtime by querying its skills bounded by `snapshot_token` per RC-015. Fields: snapshot_token, target_run_id, target_workflow_id, target_workflow_version, target_bead_id, bead_record (BeadRecord as-of beads_audit_entry_id), last_checkpoint, last_transition (per [execution-model.md §6.1]), jsonl_tail (events since last checkpoint; observational only per RC-014), workspace_state, session_log_ref (CASS handle per [workspace-model.md §4.7]), category, playbook_ref (RC-016), budget_wall_clock_seconds (RC-017). NOT a daemon-assembled record — investigator queries Beads-CLI, git-inspection, workspace-inspection, bounded JSONL reader; the daemon does NOT pre-assemble an InvestigatorInput.json file.
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.workspace-state
+    kind: schema
+    schema_kind: record
+    title: "Define `WorkspaceState` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 WorkspaceState]: 5-field record describing investigator-observable workspace state — `path` (absolute path to run's worktree), `path_exists` (filesystem probe result), `branch_tip_hash` (current task-branch tip; null if worktree missing), `wip_present` (true if `git status --porcelain` is non-empty or untracked files exist), `git_in_progress_op` (none|rebase|merge|cherry-pick|bisect; Cat 6a trigger when not none).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.git-in-progress-op
+    kind: schema
+    schema_kind: enum
+    title: "Define `GitInProgressOp` ENUM (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 GitInProgressOp]: 5-value enum — `none`, `rebase`, `merge`, `cherry-pick`, `bisect`. Used in WorkspaceState; non-`none` values are Cat 6a triggers per §8.11 detector rule.
+    extra_labels:
+      - "kind:enum"
+
+  - mnem: rc-schema.verdict-event
+    kind: schema
+    schema_kind: record
+    title: "Define `VerdictEvent` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 VerdictEvent]: payload of `reconciliation_verdict_emitted` event. 8 fields — `verdict` (one of seven Verdict enum values), `investigator_run_id` (run_id of reconciliation workflow), `target_run_id` (run_id of outer run being reconciled), `evidence_ref` (git commit hash of reconciliation commit carrying evidence), `context` (required iff verdict=resume-with-context; MUST be empty otherwise), `checkpoint_ref` (transition_id; required iff verdict=reset-to-checkpoint; null otherwise), `snapshot_token` (bound investigator view; consumed by staleness check RC-024), `schema_version` (N-1 readable per [spec.md §6.4]).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.verdict
+    kind: schema
+    schema_kind: enum
+    title: "Define `Verdict` ENUM (schemas.md §6.1) — 7-value vocabulary"
+    description: |
+      Per [schemas.md §6.1 Verdict]: 7-value enum — `resume-here` (re-dispatch current node, no context change), `resume-with-context` (re-dispatch with investigator-supplied context injected), `reset-to-checkpoint` (intra-run rollback to named checkpoint; keeps worktree + run_id), `reopen-bead` (mark bead `open`; subsequent claim produces new run with fresh worktree), `accept-close-with-note` (close legitimate; annotate audit gap), `no-op-accept` (current state legitimate; no mechanical action; run continues), `escalate-to-human` (investigator cannot resolve; pause affected run, emit operator-observable event). Consumed by RC-020 (vocabulary lock), RC-025 (mechanical execution table per [schemas.md §6.2]).
+    extra_labels:
+      - "kind:enum"
+
+  - mnem: rc-schema.reconciliation-category
+    kind: schema
+    schema_kind: enum
+    title: "Define `ReconciliationCategory` ENUM (schemas.md §6.1) — 11-value taxonomy"
+    description: |
+      Per [schemas.md §6.1 ReconciliationCategory]: 11-value enum — `cat-0` (infrastructure unavailable), `cat-1` (idempotent rerun), `cat-2` (non-idempotent in-flight), `cat-3` (store disagreement generic), `cat-3a` (torn Beads write), `cat-3b` (verdict-unexecuted), `cat-3c` (inverse premature-close), `cat-4` (recoverable known state), `cat-5` (clean restart), `cat-6a` (integrity violation, LLM-triageable), `cat-6b` (integrity violation, mechanically unrecoverable). The vocabulary backing the 11 §8 taxonomy beads (rc-error.cat-N); consumed by every detector and dispatch contract.
+    extra_labels:
+      - "kind:enum"
+
+  - mnem: rc-schema.malformation-reason
+    kind: schema
+    schema_kind: enum
+    title: "Define `MalformationReason` ENUM (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 MalformationReason]: 6-value enum classifying RC-023 malformed-verdict triggers — `unknown-verdict-value`, `missing-required-field` (e.g., context when verdict=resume-with-context), `extra-fields`, `wrong-type`, `multiple-verdicts` (workflow emitted >1 verdict event), `verdict-after-terminal` (verdict event emitted after workflow's terminal event). Consumed by RC-023 fallback path; carried in MalformedVerdictPayload.
+    extra_labels:
+      - "kind:enum"
+
+  - mnem: rc-schema.budget-exhausted-payload
+    kind: schema
+    schema_kind: record
+    title: "Define `BudgetExhaustedPayload` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 BudgetExhaustedPayload]: payload of `reconciliation_budget_exhausted` event (RC-018). 4 fields — `run_id` (reconciliation workflow's run_id), `workflow_id`, `budget_seconds` (declared wall-clock budget), `elapsed_seconds` (actual elapsed when terminated).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.stale-verdict-payload
+    kind: schema
+    schema_kind: record
+    title: "Define `StaleVerdictPayload` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 StaleVerdictPayload]: payload of `reconciliation_verdict_stale` event (RC-024). 4 fields — `snapshot_token` (captured at dispatch time), `current_git_head_hash` (re-captured HEAD at execution time), `current_beads_audit_id` (re-captured Beads audit entry id), `divergence_reason` (StaleDivergenceReason enum).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.stale-divergence-reason
+    kind: schema
+    schema_kind: enum
+    title: "Define `StaleDivergenceReason` ENUM (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 StaleDivergenceReason]: 2-value enum — `git-branch-advanced` (target run's task branch has new commit since snapshot), `beads-audit-advanced` (target bead's Beads audit entries have advanced since snapshot). Consumed by StaleVerdictPayload (RC-024).
+    extra_labels:
+      - "kind:enum"
+
+  - mnem: rc-schema.malformed-verdict-payload
+    kind: schema
+    schema_kind: record
+    title: "Define `MalformedVerdictPayload` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 MalformedVerdictPayload]: payload of `reconciliation_verdict_malformed` event (RC-023). 4 fields — `investigator_run_id`, `target_run_id`, `malformation_reason` (MalformationReason enum), `raw_verdict_excerpt` (string, truncated raw payload for diagnosis).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.verdict-executed-payload
+    kind: schema
+    schema_kind: record
+    title: "Define `VerdictExecutedPayload` record (schemas.md §6.1)"
+    description: |
+      Per [schemas.md §6.1 VerdictExecutedPayload]: payload of `reconciliation_verdict_executed` event (RC-025). 5 fields — `investigator_run_id`, `target_run_id`, `verdict` (Verdict enum), `executed_at_timestamp` (RFC 3339 wall-clock; advisory display only), `action_summary` (short prose describing mechanical action taken).
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.verdict-executed-trailer
+    kind: schema
+    schema_kind: record
+    title: "Define `Harmonik-Verdict-Executed` git trailer (schemas.md §6.4) — RC-owned"
+    description: |
+      Per [schemas.md §6.4]: RC owns the shape of the `Harmonik-Verdict-Executed` commit trailer as of spec v0.3.0 (reclaimed from execution-model.md after EM v0.2.0 removed the trailer from its §6 trailer registry). Trailer shape — key `Harmonik-Verdict-Executed` (exact key string, case-sensitive per git trailer grammar); value `true` (fixed literal; any other value is malformed per RC-023); presence_semantics `marker-only` (presence marks execution; no payload). Placement: trailer MUST appear on a commit that is descendant of the verdict commit on the same investigator task branch; MUST NOT appear on the verdict commit itself. Emission contract: emitted exactly once per reconciliation workflow whose verdict is executed; if verdict re-executed under Cat 3b auto-resolution (RC-026), a new verdict-executed commit is appended (prior NOT rewritten). Cross-spec coordination: EM §6 trailer registry MUST note via revision history that this trailer is owned here; any EM trailer-lint tool MUST treat it as RC-owned extension.
+    extra_labels:
+      - "kind:schema"
+
+  - mnem: rc-schema.workflow-class-extension
+    kind: schema
+    schema_kind: enum
+    title: "Define `WorkflowClass` Workflow-record extension (schemas.md §6.5) — RC-owned"
+    description: |
+      Per [schemas.md §6.5]: RC extends the Workflow record owned by [execution-model.md §4.1] with a subsystem-local tag — `workflow_class : WorkflowClass` (optional tag, absent means "ordinary"). WorkflowClass enum: `reconciliation` (the workflow implements an RC-category investigator or auto-resolver dispatch; scoped to S01-shipped DOT per RC-004). Semantics: a Workflow whose `workflow_class = reconciliation` is subject to RC-002 (exactly-one-checkpoint commit per workflow), RC-002a (at most one per target_run_id), RC-INV-001 (uniqueness audit sensor). Workflows without `workflow_class` set are ordinary; reconciliation requirements do not apply. Ownership: extension is RC-owned; acceptance into EM's canonical Workflow record tracked in OQ-RC-002. If EM accepts, RC-002 and RC-INV-001 will re-point at [execution-model.md §4.1]; until then, schemas.md §6.5 is the canonical declaration. Future workflow classes (improvement-loop, operator-cli-handler) reserved for future use.
+    extra_labels:
+      - "kind:enum"
+
+  # ───────────────────────── §8 reconciliation-category taxonomy (12 beads: 1 umbrella + 11 categories) ─────────────────────────
+  # Per F-pilot-RC-4 + §2.11(c) canonical large-§8-taxonomy rule:
+  # RC's 11 categories ARE the discipline's worked example for "one bead
+  # per §8.x entry" (SHAPE-not-COUNT distinct from BI/WM/ON sentinel
+  # single-bead form). Per-category beads parented to the umbrella
+  # `rc-error.taxonomy` per §2.10 second-level grouping permission. Per
+  # discipline v0.9 §2.11(c.2), edges run `<consumer> → rc-error.taxonomy`
+  # OR `<consumer> → rc-error.cat-N` (when a specific category named).
+  # The umbrella does NOT block-on §4 reqs.
+
+  - mnem: rc-error.taxonomy
+    kind: error-taxonomy
+    title: "Reconciliation-category taxonomy umbrella (§8.1–§8.11a + §8.12 dispatch)"
+    description: |
+      Implement the §8 reconciliation-category taxonomy umbrella + §8.12 action-mapping dispatch table. The taxonomy contains 11 detection categories (Cat 0/1/2/3/3a/3b/3c/4/5/6a/6b — see per-category beads `rc-error.cat-N`) with priority-ordered first-match resolution per RC-003a (Cat 0 → 6b → 6a → 5 → 3c → 3b → 3a → 3 → 2 → 4 → 1). Action-mapping dispatch: §8.12 prose authoritative on semantics; [schemas.md §6.3] tabular schema authoritative on mechanical dispatch; divergence is a lint failure. The umbrella owns the cross-category invariants (priority order, dual-table sync, amendment-protocol gate per RC-009). Per discipline v0.9 §2.11(c.2), this bead is a vocabulary OWNER for the ReconciliationCategory enum; consumer §4 reqs that cite a category by ID block-on this umbrella OR the specific per-category bead. The taxonomy bead's own predecessors are limited to schema-shaped beads it consumes (rc-schema.reconciliation-category enum bead) — taxonomy does NOT block-on §4 reqs. 11 per-category beads parented per §2.10.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-0
+    kind: error-taxonomy
+    title: "Cat 0 — Infrastructure unavailable (§8.1)"
+    description: |
+      Per §8.1: detection rule — `br --version` fails within T=5s; or Beads SQLite locked by non-harmonik; or git index locked; or `.harmonik/` unwritable; or filesystem full. Pre-check is mandatory per RC-012. Default response: halt classification at detector layer; daemon transitions to `degraded` status (pre-`ready` state) and waits for infrastructure resolution. Escalation: operator clears prerequisite (restart `br`, unlock git, free disk, fix permissions); daemon retries at configurable cadence. Emitted event: `infrastructure_unavailable` naming the specific prerequisite. Investigator: No. Auto-resolver: Yes (wait-and-retry). Co-owned with [process-lifecycle.md §4.2 PL-010] (degraded-state transition).
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-1
+    kind: error-taxonomy
+    title: "Cat 1 — Idempotent rerun (§8.2)"
+    description: |
+      Per §8.2: detection rule — last checkpoint's node has `idempotency_class = idempotent` per [execution-model.md §4.2 EM-009]. Default response: auto-resume by re-spawning interrupted node. Escalation: none at this layer; subsequent failure classified under [execution-model.md §8] failure taxonomy. Emitted event: `reconciliation_category_assigned` (category=1); dispatch produces `node_dispatch_requested` per handler contract. Investigator: No. Auto-resolver: Yes (re-spawn). Examples: reviewer agent mid-run, researcher agent, mechanism-tagged non-agentic nodes (lint, test, typecheck). Reconciliation-workflow nodes never classified here per RC-002 (not checkpointed mid-investigation).
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-2
+    kind: error-taxonomy
+    title: "Cat 2 — Non-idempotent in-flight (§8.3)"
+    description: |
+      Per §8.3: detection rule — DOT node with `idempotency_class ∈ {non-idempotent, recoverable-non-idempotent}` per [execution-model.md §4.2 EM-009]; AND bead `in_progress`; AND no `run_completed` or `run_failed` event since the checkpoint (per [event-model.md §8] per-event subsections). Cat 2 detection MUST use a controlled, indexed query against the bounded JSONL divergence-evidence reader (RC-014), NOT a live-follow tail. Default response: dispatch a Cat 2 investigator workflow with the per-category playbook (RC-016). Escalation: investigator verdict — typically `resume-with-context`/`reset-to-checkpoint`/`reopen-bead` (RC-020); budget-exhausted dispatches default-escalate (RC-018). Emitted event: `reconciliation_category_assigned` (category=2); investigator emits `reconciliation_verdict_emitted`. Investigator: Yes. Auto-resolver: No.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-3
+    kind: error-taxonomy
+    title: "Cat 3 — Store disagreement, generic (§8.4)"
+    description: |
+      Per §8.4: detection rule — git/Beads/JSONL tell inconsistent stories about the same run, and no Cat 3 sub-category (3a/3b/3c) matches. Examples: duplicate `transition_id` across commits in same run; bead `in_progress` but worktree missing without run-terminal marker. Default response: dispatch Cat 3 generic investigator workflow with git-wins orientation per RC-INV-001. Escalation: investigator verdict — typically `accept-close-with-note`/`reopen-bead`/`no-op-accept`. Emitted event: `store_divergence_detected` + `reconciliation_category_assigned` (category=3). Investigator: Yes. Auto-resolver: No (escalates through investigator).
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-3a
+    kind: error-taxonomy
+    title: "Cat 3a — Torn Beads write (§8.4a)"
+    description: |
+      Per §8.4a: detection rule — adapter intent file present at `.harmonik/beads-intents/<idempotency_key>.json` per [beads-integration.md §4.10 BI-029] AND corresponding bead's current Beads coarse-status (read via `br show` per BI-031) is neither pre-state nor post-state of intended transition. Adapter's status-check-before-reissue (BI-031b) classifies as divergence; Cat 3a auto-resolver routes through same adapter. Default response: auto-resolve via adapter's BI-031 protocol — status-check classifies (status_match → no-op, pre-state → reissue, schema_mismatch → BrSchemaMismatch); status neither pre nor post → route to investigator dispatch. Escalation: if audit log ambiguous or adapter raises BrSchemaMismatch, escalate to Cat 3 generic. Emitted event: `store_divergence_detected{class=torn-beads-write}` + `reconciliation_category_assigned` (category=3a). Investigator: No (common case). Auto-resolver: Yes.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-3b
+    kind: error-taxonomy
+    title: "Cat 3b — Verdict-unexecuted (§8.5)"
+    description: |
+      Per §8.5: detection rule — investigator-run's task branch contains a `reconciliation_verdict_emitted` commit AND no subsequent `Harmonik-Verdict-Executed: true` commit on the same branch (per RC-025, [schemas.md §6.4]). Default response: auto-resolve via RC-026 re-execution — daemon performs staleness check (RC-024); if stale, re-dispatches fresh reconciliation; if not stale, executes verdict per RC-025 and writes verdict-executed commit. No new investigator spawned. Escalation: if re-execution itself fails (e.g., `br` errors), route to Cat 3 generic. Retry cap N=5 per RC-026a; cap exceeded → Cat 6b. Emitted event: `reconciliation_category_assigned` (category=3b). Investigator: No. Auto-resolver: Yes.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-3c
+    kind: error-taxonomy
+    title: "Cat 3c — Inverse premature-close (§8.6)"
+    description: |
+      Per §8.6: detection rule — merge commit on target branch (main or integration per [workspace-model.md §4.7]) tagged with `Harmonik-Run-ID R` for run R whose workflow reached success terminal state; bead for R still `in_progress` in Beads; no subsequent in-flight checkpoints for R. Default response: auto-verdict `accept-close-with-note` with mechanical close-write (routed through idempotency-keyed adapter per [beads-integration.md §4.10]). No investigator spawned. Escalation: if mechanical close-write fails persistently, escalate to Cat 3 generic. Emitted event: `reconciliation_category_assigned` (category=3c); downstream `reconciliation_verdict_executed`. Investigator: No. Auto-resolver: Yes. Rationale: git is authoritative for completion (RC-INV-001); divergence is deterministically resolvable in Beads's direction without LLM reasoning.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-4
+    kind: error-taxonomy
+    title: "Cat 4 — Recoverable known state (§8.7)"
+    description: |
+      Per §8.7: detection rule — agent was in well-defined retry/backoff state at crash time (e.g., rate-limited pending retry timer, waiting for human gate). Default response: auto-resume with pending action — re-spawn with prior retry/backoff timer, or re-present gate to relevant actor. Escalation: if retry attempt cap reached, reclassify per [execution-model.md §8] failure taxonomy. Emitted event: `reconciliation_category_assigned` (category=4). Investigator: No. Auto-resolver: Yes.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-5
+    kind: error-taxonomy
+    title: "Cat 5 — Clean restart (§8.8)"
+    description: |
+      Per §8.8: detection rule — nothing in-flight for this run. Includes orphaned branches from prior runs of beads that have since been re-claimed (per RC-010), AND crashed reconciliation-workflow branches (no verdict commit yet emitted) discriminated by `Harmonik-Workflow-Class: reconciliation` trailer per RC-003b. Default response: normal startup; proceed to `ready` per [process-lifecycle.md §4.2]. No-op. Escalation: none. Emitted event: `reconciliation_category_assigned` (category=5). Investigator: No. Auto-resolver: Yes (no-op).
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-6a
+    kind: error-taxonomy
+    title: "Cat 6a — Integrity violation, LLM-triageable (§8.11)"
+    description: |
+      Per §8.11: detection rule — structurally wrong data whose cause an investigator can reason about and whose resolution might be operator-actionable. Detectors: workspace path referenced by in-flight bead does not exist on disk AND sibling's transition-record file is absent (RC-003a priority places this here for workspace-missing + sibling-absent); trailer-vs-sibling-file mismatch on checkpoint commit (e.g., `Harmonik-Transition-ID` trailer present but sibling file missing per [execution-model.md §4.4 EM-018]); worktree has in-progress git operation (rebase, merge, cherry-pick, bisect) that is not the work product being tracked (`.git/rebase-merge`, `.git/rebase-apply`, `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/BISECT_LOG` checks); bead `in_progress` with two+ task branches each advertising `Harmonik-Run-ID` without `Harmonik-Verdict-Executed` (reopen-bead landed, Beads audit entry missing). Default response: dispatch Cat 6a investigator workflow. Default verdict: `escalate-to-human` (RC-020); investigator MAY downgrade to repair path. Escalation: operator intervention via escalation event. Emitted event: `store_divergence_detected` + `reconciliation_category_assigned` (category=6a); downstream `reconciliation_verdict_emitted` (typically escalate-to-human). Investigator: Yes. Auto-resolver: No.
+    extra_labels:
+      - "kind:taxonomy"
+
+  - mnem: rc-error.cat-6b
+    kind: error-taxonomy
+    title: "Cat 6b — Integrity violation, mechanically unrecoverable (§8.11a)"
+    description: |
+      Per §8.11a: detection rule — structurally wrong data with no recovery path an LLM could meaningfully affect. Detectors: JSONL is corrupt/unparseable past byte offset (divergence-evidence reader RC-014 cannot make determination); checkpoint commit hash referenced in JSONL missing from git's object database; git object database itself corrupted (`git fsck` fails). Default response: auto-escalate to operator without investigator spawn. Emit `operator_escalation_required` with Cat 6b reason and target-run context. No reconciliation workflow dispatched. Escalation: operator intervention — restore from backup, rebuild worktree, repair git object database. Emitted event: `reconciliation_category_assigned` (category=6b) + `operator_escalation_required`. Investigator: No (spawning to "explain why git is corrupt" burns tokens on operator-only problem). Auto-resolver: N/A (operator intervention). Cat 6b emissions are exempt from corroboration via dedicated escalation path per RC-019a.
+    extra_labels:
+      - "kind:taxonomy"
+
+  # ───────────────────────── Test-infra beads (7) ─────────────────────────
+
+  - mnem: rc-test.workflow-classification-fixture
+    kind: test-infra
+    title: "Reconciliation-as-workflow + uniqueness fixture (RC-001..RC-006, RC-002a/002b/003a/003b, RC-INV-001)"
+    description: |
+      Per §10.2 (RC-001..RC-006): structural tests verifying reconciliation workflows carry the `workflow_class = reconciliation` tag; integration tests verifying S01 packaging ships required DOT + YAML per RC-004. RC-002a concurrent-reconciliation: dispatch two reconciliation workflows against same `target_run_id`; verify `flock(LOCK_EX|LOCK_NB)` on `.harmonik/reconciliation-locks/<target_run_id>.lock` causes second dispatch to emit `reconciliation_dispatch_deduplicated` and skip. Stale-lock recovery test: kill daemon mid-investigation, restart, verify orphan-sweep cleans lock via PL-006 and next reconciliation cadence proceeds. RC-002b non-atomic recovery: stale-lock-with-verdict-executed test (lock file at path while investigator branch carries `Harmonik-Verdict-Executed: true`; verify lock deleted on next startup, run NOT reclassified). RC-003a priority ordering: unit tests exercising each pair of overlapping detection rules (workspace-missing crossover Cat 3 vs Cat 6a; merged-run crossover Cat 3c vs Cat 3b; rate-limited-non-idempotent crossover Cat 2 vs Cat 4) verifying declared first-match priority. RC-INV-001 sensor: integration test spawning reconciliation workflows + ordinary workflows concurrently; audit-log scan verifying every `reconciliation_verdict_*` event traces to `workflow_class = reconciliation` Workflow.
+
+  - mnem: rc-test.detector-harness
+    kind: test-infra
+    title: "Detector harness + cadence + corroboration (RC-010..RC-014, RC-019a, RC-020a, RC-020b)"
+    description: |
+      Per §10.2 (RC-010..RC-014): crash-recovery scenario tests (RC-031) exercising each detector in §8; negative tests verifying detectors do not misclassify across run_ids (RC-010); tests verifying JSONL forbidden-uses (RC-014). RC-019a evidence corroboration: negative tests asserting detector emits `divergence_inconclusive` (NOT `store_divergence_detected`) when neither git nor Beads can corroborate; positive tests verify `corroboration` enum value matches the corroborating store. RC-020a detector cadence: timer-mocked tests verifying scheduled-cadence dispatch at hourly default; idempotency tests on re-running detectors over same snapshot. RC-020b detector panic recovery: per-detector `recover()` barrier injection test asserts panicking detector is suspended for daemon's lifetime, priority-order falls through to next, `reconciliation_detector_panic` emitted before fall-through. RC-INV-004 sensor: audit test on corpus of seeded divergence events verifying `corroboration ∈ {git-corroborated, beads-corroborated}` on every `store_divergence_detected`; single-source observations route to `divergence_inconclusive`.
+
+  - mnem: rc-test.investigator-harness
+    kind: test-infra
+    title: "Investigator-agent contract harness (RC-015..RC-019, RC-015a)"
+    description: |
+      Per §10.2 (RC-015..RC-019): end-to-end tests with twin handler — verify snapshot-token plumbing through LaunchSpec.snapshot_token; investigator self-assembles InvestigatorInput via Beads-CLI / git-inspection / workspace-inspection / bounded JSONL skills (RC-015 logical-view contract); HC-handler launch sequence per RC-015a verified via twin handler. Wall-clock budget enforcement (RC-018): SIGTERM/SIGKILL ordering verified; budget-exhausted event emitted before fallback verdict; crash between events routes through Cat 3b retry cap. WIP-capture on `reopen-bead` (RC-019): verify `git status --porcelain` enumeration + diff capture written under `.harmonik/reconciliation/<investigator_run_id>/wip-capture/`.
+
+  - mnem: rc-test.verdict-execution-harness
+    kind: test-infra
+    title: "Verdict + execution harness (RC-020..RC-027, RC-022a, RC-025a, RC-026a)"
+    description: |
+      Per §10.2 (RC-020..RC-027): schema-validation tests for every verdict enum value and every malformation reason (RC-023); staleness-detection tests (RC-024) — re-capture and compare snapshot; verdict-execution idempotency tests (RC-025) — every verdict's mechanical action testable on re-run with no observable difference; restart-discovery tests for Cat 3b (RC-026) — verdict commit without verdict-executed commit re-classifies as Cat 3b. RC-022a outcome-envelope routing: verify investigator emits via HC-008 `outcome_emitted` with `outcome_kind=reconciliation_verdict`; daemon-side verdict-executor authors verdict-and-verdict-executed commit pair on investigator's task branch (investigator does NOT directly write commit). RC-025a 7-step verdict-executor: panic-injection at each step verifies next-startup re-classifies via Cat 3b and re-runs idempotently. RC-026a retry cap: verify durable counter at `.harmonik/reconciliation-attempts/<target_run_id>.json` increments on each retry; cap N=5 exceeded → escalates to Cat 6b; each retry emits `reconciliation_verdict_execution_retry`.
+
+  - mnem: rc-test.re-run-vs-intra-run-harness
+    kind: test-infra
+    title: "Re-run vs intra-run scenario harness (RC-028..RC-030)"
+    description: |
+      Per §10.2 (RC-028..RC-030): scenario tests verifying `reopen-bead` produces a new `run_id` with fresh worktree + fresh task branch per [workspace-model.md §4.9 WM-034]; `reset-to-checkpoint` preserves `run_id` and worktree per [execution-model.md §4.10 EM-044]; reconciliation does not produce intra-run loops (those are ordinary workflow-graph traversal handled by Guard/Gate per CP §4.2/§4.4).
+
+  - mnem: rc-test.crash-recovery-suite
+    kind: test-infra
+    title: "Crash-recovery suite (RC-031 — every detector + verdict-execution path)"
+    description: |
+      Per §10.2 (RC-031): every detector under §4.3 / §8 and every verdict-execution path under §4.5 + every staleness-check path under RC-024 MUST be exercised by at least one crash-recovery scenario test before landing. Crash-injection points: (a) between RC-013 emission and downstream dispatch; (b) between RC-018 budget-exhausted-event and fallback-verdict emissions; (c) between RC-022 verdict-emitted commit and RC-025 verdict-executed commit (Cat 3b territory); (d) between RC-024 staleness re-capture and RC-025 mechanical action; (e) inside RC-025a's 7-step verdict-executor; (f) inside RC-018's 5-step budget-exhaustion handler. Each crash point's recovery routes through the documented restart-classification (Cat 5 for clean re-dispatch, Cat 3b for verdict-unexecuted, Cat 6a/6b for integrity violations). Crash-recovery test layer per `docs/methodology/TESTING.md`; migrates to `[testing.md §<layer>]` cross-reference within one revision cycle after testing.md finalized (OQ-RC-006).
+
+  - mnem: rc-test.taxonomy-conformance
+    kind: test-infra
+    title: "Taxonomy + action-mapping conformance (RC-007..RC-009 + §8.12 ↔ schemas.md §6.3 sync)"
+    description: |
+      Per §10.2 (RC-007..RC-009): unit tests covering the §8.12 action table for each of the 11 categories — verify default action, investigator-spawned column, typical-verdict column, auto-resolver column match across the 11 §8 entries. Lint test verifying §8.12 (semantics) and [schemas.md §6.3] (mechanical dispatch) match — divergence is a lint failure per dual-table ownership rule. Per-category fixture for Cat 0/1/2/3/3a/3b/3c/4/5/6a/6b: detection-rule input → expected category assignment + expected event emission + expected dispatch action. Amendment-protocol gate (RC-009): test asserts authoring-time check rejects re-opening of 11-category framing without invoking [architecture.md §4.6] amendment protocol.
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples.
+#
+# Mnemonic prefix selects resolution map:
+#   rc-* → intra-spec (this spec's mnem-map, generated at load)
+#   ar-* / em-* / ev-* / hc-* / cp-* / bi-* / wm-* / pl-* / on-* → cross-spec
+#   NO forward:* placeholders — RC is the LAST pilot in the corpus; all
+#   9 cross-spec targets are loaded.
+edges:
+  # ───────────────────────── §4.1 reconciliation-as-workflow ─────────────────────────
+  - {from: rc-002, to: rc-001}                                        # workflow_class identity is reconciliation-workflow framing
+  - {from: rc-002, to: rc-schema.workflow-class-extension}            # schemas.md §6.5 workflow_class extension cite
+  - {from: rc-003, to: rc-002}                                        # bounded recursion follows from verdict-only commit rule
+  - {from: rc-002a, to: rc-002}                                       # at-most-one-per-target-run constrains workflow scope
+  - {from: rc-002a, to: rc-013}                                       # lock acquired before RC-013 first emission
+  - {from: rc-002a, to: rc-018}                                       # lock release on budget-exhaustion
+  - {from: rc-002a, to: rc-023}                                       # multiple-verdicts violation routes through RC-023
+  - {from: rc-002a, to: rc-025}                                       # lock release on verdict-executed commit
+  - {from: rc-002b, to: rc-002a}                                      # F8c constraint adjacent (lock vs verdict-executed atomicity)
+  - {from: rc-002b, to: rc-025}                                       # verdict-executed commit landing semantics
+  - {from: rc-003a, to: rc-error.taxonomy}                            # priority order across 11 categories
+  - {from: rc-003b, to: rc-error.cat-5}                               # crashed reconciliation branch → Cat 5
+  - {from: rc-003b, to: rc-error.cat-6a}                              # NOT Cat 6a (carve-out)
+  - {from: rc-003b, to: rc-002}                                       # Workflow-Class trailer is RC-002's discriminator
+  - {from: rc-004, to: rc-001}                                        # S01 library packages reconciliation workflows
+  - {from: rc-004, to: rc-016}                                        # YAML policy declares playbook
+  - {from: rc-004, to: rc-017}                                        # YAML policy declares wall-clock budget
+  - {from: rc-005, to: rc-004}                                        # daemon-vs-library separation refines S01 scope
+  - {from: rc-006, to: rc-009}                                        # amendment protocol applies to taxonomy + library
+
+  # ───────────────────────── §4.2 action-mapping dispatch ─────────────────────────
+  - {from: rc-007, to: rc-error.taxonomy}                             # action-mapping IS the dispatch contract over taxonomy
+  - {from: rc-008, to: rc-error.taxonomy}                             # auto-resolver mandate per category
+  - {from: rc-008, to: rc-error.cat-0}                                # cat-0 wait-and-retry
+  - {from: rc-008, to: rc-error.cat-1}                                # cat-1 re-spawn
+  - {from: rc-008, to: rc-error.cat-3a}                               # cat-3a adapter re-issue
+  - {from: rc-008, to: rc-error.cat-3b}                               # cat-3b verdict re-execution
+  - {from: rc-008, to: rc-error.cat-3c}                               # cat-3c direct close-write
+  - {from: rc-008, to: rc-error.cat-4}                                # cat-4 retry/gate re-arm
+  - {from: rc-008, to: rc-error.cat-5}                                # cat-5 no-op
+  - {from: rc-008, to: rc-error.cat-6b}                               # cat-6b operator escalation
+  - {from: rc-008, to: rc-016}                                        # investigator-required categories MUST have playbook
+  - {from: rc-009, to: rc-error.taxonomy}                             # 11-category framing is locked
+
+  # ───────────────────────── §4.3 detectors ─────────────────────────
+  - {from: rc-010, to: rc-error.cat-5}                                # orphaned-task-branch → Cat 5 for old run
+  - {from: rc-011, to: rc-010}                                        # ordering rule complements run-not-bead detection
+  - {from: rc-012, to: rc-error.cat-0}                                # Cat 0 pre-check rule
+  - {from: rc-012a, to: rc-012}                                       # post-ready carve-out refines Cat 0 transition semantics
+  - {from: rc-013, to: rc-schema.reconciliation-category}             # event payload carries category enum
+  - {from: rc-014, to: rc-error.cat-3}                                # JSONL forbidden-uses → Cat 3 for transition-record absent
+  - {from: rc-014, to: rc-error.cat-6a}                               # divergence_inconclusive routes to Cat 6a
+  - {from: rc-014, to: rc-error.cat-6b}                               # JSONL corrupt → Cat 6b
+  - {from: rc-014, to: rc-019a}                                       # F13 slot-rule (rc-014 owns JSONL-scope SLOT) → content-rule (rc-019a corroboration CONTENT); slot→content kept; reverse cite (rc-019a → rc-014) reclassified to no-edge per F13 slot-rule/content-rule heuristic + F-pilot-AR-10 supporting-cite test (rc-019a's body cites rc-014 only to anchor "divergence-evidence read scope" — supporting; removing rc-014 leaves rc-019a's corroboration-enum-classification testable)
+  - {from: rc-020a, to: rc-002a}                                      # concurrent detector runs serialized by registry lock
+  - {from: rc-020a, to: rc-010}                                       # detector idempotency over (target_run_id, snapshot)
+  - {from: rc-020b, to: rc-020a}                                      # panic recovery is per-detector dispatch barrier
+
+  # ───────────────────────── §4.4 investigator-agent contract ─────────────────────────
+  - {from: rc-015, to: rc-schema.snapshot-token}                      # LaunchSpec.snapshot_token carries SnapshotToken JSON
+  - {from: rc-015, to: rc-schema.investigator-input}                  # documented LOGICAL VIEW investigator self-assembles
+  - {from: rc-015, to: rc-014}                                        # JSONL forbidden-uses bound investigator reads
+  - {from: rc-015, to: rc-016}                                        # playbook declares which inputs investigator reads
+  - {from: rc-015a, to: rc-015}                                       # HC-handler typing of investigator subprocess
+  - {from: rc-016, to: rc-001}                                        # playbook lives in S01-shipped reconciliation workflow
+  - {from: rc-016, to: rc-error.cat-2}                                # Cat 2 playbook required
+  - {from: rc-016, to: rc-error.cat-3}                                # Cat 3 generic playbook required
+  - {from: rc-016, to: rc-error.cat-6a}                               # Cat 6a playbook required
+  - {from: rc-017, to: rc-001}                                        # every reconciliation workflow declares budget
+  # NOTE: rc-017 → rc-004 NOT emitted. RC-017 cites "S01-shipped packaging
+  # (RC-004) MUST supply a per-category default" — supporting cite per
+  # F-pilot-AR-10: removing RC-004 leaves RC-017's "budget MUST be declared"
+  # contract testable (the S01 supplier detail is supplemental). Reverse
+  # rc-004 → rc-017 IS load-bearing (S01 needs to know what RC-017's contract
+  # requires its YAML to name) and stays. F-pilot-RC-10.
+  - {from: rc-018, to: rc-017}                                        # budget exhaustion is wall-clock-budget exceeded
+  - {from: rc-018, to: rc-002}                                        # NO reconciliation commit on exhaustion (RC-002 commit cadence)
+  - {from: rc-018, to: rc-023}                                        # fallback verdict path mirrors RC-023 fallback
+  - {from: rc-018, to: rc-026a}                                       # crash between budget-exhausted and fallback routes through retry cap
+  - {from: rc-018, to: rc-schema.budget-exhausted-payload}            # event payload shape
+  - {from: rc-019, to: rc-015}                                        # WIP-capture is investigator-side obligation
+
+  # ───────────────────────── §4.5 verdict vocabulary and execution ─────────────────────────
+  - {from: rc-020, to: rc-schema.verdict}                             # 7-value enum vocabulary
+  - {from: rc-020, to: rc-023}                                        # any other value is malformed
+  - {from: rc-021, to: rc-001}                                        # exactly one verdict per workflow lifetime
+  - {from: rc-021, to: rc-023}                                        # multiple verdicts violation → RC-023
+  - {from: rc-022, to: rc-002}                                        # verdict commit IS the single checkpoint commit
+  - {from: rc-022, to: rc-schema.verdict-event}                       # commit body is VerdictEvent payload
+  - {from: rc-022a, to: rc-022}                                       # outcome envelope routes verdict to commit
+  # NOTE: rc-022a → rc-025a NOT emitted. RC-022a body cites "daemon's
+  # reconciliation-verdict-executor (RC-025)" only to identify the consumer
+  # of the outcome envelope — supporting cite per F-pilot-AR-10. RC-025a
+  # → RC-022a IS the load-bearing handoff (executor explicitly consumes
+  # VerdictEvent from RC-022a's outcome envelope; removing RC-022a leaves
+  # RC-025a's executor with no input source). F-pilot-RC-10.
+  - {from: rc-022a, to: rc-schema.verdict-event}                      # outcome payload is VerdictEvent
+  - {from: rc-023, to: rc-schema.malformation-reason}                 # malformation reason enum
+  - {from: rc-023, to: rc-schema.malformed-verdict-payload}           # event payload shape
+  - {from: rc-024, to: rc-015}                                        # snapshot token captured at investigator-dispatch time
+  - {from: rc-024, to: rc-schema.snapshot-token}                      # re-capture comparison shape
+  - {from: rc-024, to: rc-schema.stale-verdict-payload}               # event payload shape
+  - {from: rc-024, to: rc-schema.stale-divergence-reason}             # divergence_reason enum
+  - {from: rc-025, to: rc-024}                                        # staleness check precedes execution
+  - {from: rc-025, to: rc-020}                                        # mechanical-action table covers all 7 verdicts
+  - {from: rc-025, to: rc-schema.verdict-executed-payload}            # event payload shape
+  - {from: rc-025, to: rc-schema.verdict-executed-trailer}            # second commit carries the trailer
+  - {from: rc-025a, to: rc-025}                                       # executor implements RC-025 contract
+  - {from: rc-025a, to: rc-022a}                                      # consumes verdict from outcome envelope
+  - {from: rc-025a, to: rc-024}                                       # staleness re-capture step (2)
+  - {from: rc-025a, to: rc-023}                                       # validation-failure fallback step (1)
+  - {from: rc-025a, to: rc-026}                                       # panic mid-step routes through Cat 3b
+  - {from: rc-025a, to: rc-002a}                                      # lock release step (7)
+  - {from: rc-026, to: rc-error.cat-3b}                               # verdict-emitted-no-executed → Cat 3b
+  - {from: rc-026, to: rc-025}                                        # verdict-executed commit presence is resolved condition
+  - {from: rc-026a, to: rc-026}                                       # retry cap is over Cat 3b re-execution
+  - {from: rc-026a, to: rc-error.cat-3b}                              # cap exceeded escalation pathway
+  - {from: rc-026a, to: rc-error.cat-6b}                              # cap exceeded → Cat 6b
+  - {from: rc-027, to: rc-025}                                        # operator override pauses verdict-execution
+
+  # ───────────────────────── §4.6 re-run vs intra-run ─────────────────────────
+  - {from: rc-028, to: rc-020}                                        # reopen-bead is one of the seven verdicts
+  - {from: rc-029, to: rc-020}                                        # reset-to-checkpoint is one of the seven verdicts
+
+  # ───────────────────────── §4.7 testing obligation ─────────────────────────
+  # RC-031 has no intra-spec dependents; cross-spec testing.md cite is a
+  # forward-coordination request (post-MVH; see OQ-RC-006).
+
+  # ───────────────────────── §6 schema beads (intra-cluster) ─────────────────────────
+  - {from: rc-schema.investigator-input, to: rc-schema.snapshot-token}      # InvestigatorInput.snapshot_token field type
+  - {from: rc-schema.investigator-input, to: rc-schema.workspace-state}     # InvestigatorInput.workspace_state field type
+  - {from: rc-schema.investigator-input, to: rc-schema.reconciliation-category} # InvestigatorInput.category field type
+  - {from: rc-schema.workspace-state, to: rc-schema.git-in-progress-op}     # WorkspaceState.git_in_progress_op field type
+  - {from: rc-schema.verdict-event, to: rc-schema.verdict}                  # VerdictEvent.verdict field type
+  - {from: rc-schema.verdict-event, to: rc-schema.snapshot-token}           # VerdictEvent.snapshot_token field type
+  - {from: rc-schema.stale-verdict-payload, to: rc-schema.snapshot-token}   # StaleVerdictPayload.snapshot_token field type
+  - {from: rc-schema.stale-verdict-payload, to: rc-schema.stale-divergence-reason} # StaleVerdictPayload.divergence_reason field type
+  - {from: rc-schema.malformed-verdict-payload, to: rc-schema.malformation-reason} # MalformedVerdictPayload.malformation_reason field type
+  - {from: rc-schema.verdict-executed-payload, to: rc-schema.verdict}       # VerdictExecutedPayload.verdict field type
+  - {from: rc-error.taxonomy, to: rc-schema.reconciliation-category}        # taxonomy umbrella owns the enum vocabulary
+
+  # ───────────────────────── §5 invariant sensor edges (per §2.5 four-source enumeration) ─────────────────────────
+  # RC-INV-001 — reconciliation-as-workflow uniqueness (§10.2 RC-001..006 + RC-INV-001 group cite)
+  - {from: rc-inv-001, to: rc-001}                                    # §10.2 RC-001..RC-006 group
+  - {from: rc-inv-001, to: rc-002}                                    # body cuts across RC-002
+  - {from: rc-inv-001, to: rc-002a}                                   # body cuts across RC-002a
+  - {from: rc-inv-001, to: rc-021}                                    # body cuts across RC-021 (one verdict per workflow)
+  - {from: rc-inv-001, to: rc-025}                                    # body cuts across RC-025 (verdict-execution mechanics)
+  - {from: rc-inv-001, to: rc-schema.workflow-class-extension}        # body uses workflow_class term
+  # RC-INV-004 — evidence-corroboration (§10.2 RC-014, RC-019a, RC-INV-004 group cite + body terms)
+  - {from: rc-inv-004, to: rc-014}                                    # §10.2 RC-010..RC-014 group + body cite
+  - {from: rc-inv-004, to: rc-019a}                                   # body cuts across RC-019a
+  - {from: rc-inv-004, to: rc-020a}                                   # body explicitly cites RC-020a (across detector dispatch points)
+  - {from: rc-inv-004, to: rc-error.cat-6b}                           # Cat 6b corroboration carve-out
+  # Test-infra wiring (citing reqs / sensors → test-infra fixture)
+  - {from: rc-001, to: rc-test.workflow-classification-fixture}
+  - {from: rc-002, to: rc-test.workflow-classification-fixture}
+  - {from: rc-002a, to: rc-test.workflow-classification-fixture}
+  - {from: rc-002b, to: rc-test.workflow-classification-fixture}
+  - {from: rc-003, to: rc-test.workflow-classification-fixture}
+  - {from: rc-003a, to: rc-test.workflow-classification-fixture}
+  - {from: rc-003b, to: rc-test.workflow-classification-fixture}
+  - {from: rc-004, to: rc-test.workflow-classification-fixture}
+  - {from: rc-005, to: rc-test.workflow-classification-fixture}
+  - {from: rc-006, to: rc-test.workflow-classification-fixture}
+  - {from: rc-inv-001, to: rc-test.workflow-classification-fixture}
+  - {from: rc-007, to: rc-test.taxonomy-conformance}
+  - {from: rc-008, to: rc-test.taxonomy-conformance}
+  - {from: rc-009, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.taxonomy, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-0, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-1, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-2, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-3, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-3a, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-3b, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-3c, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-4, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-5, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-6a, to: rc-test.taxonomy-conformance}
+  - {from: rc-error.cat-6b, to: rc-test.taxonomy-conformance}
+  - {from: rc-010, to: rc-test.detector-harness}
+  - {from: rc-011, to: rc-test.detector-harness}
+  - {from: rc-012, to: rc-test.detector-harness}
+  - {from: rc-012a, to: rc-test.detector-harness}
+  - {from: rc-013, to: rc-test.detector-harness}
+  - {from: rc-014, to: rc-test.detector-harness}
+  - {from: rc-019a, to: rc-test.detector-harness}
+  - {from: rc-020a, to: rc-test.detector-harness}
+  - {from: rc-020b, to: rc-test.detector-harness}
+  - {from: rc-inv-004, to: rc-test.detector-harness}
+  - {from: rc-015, to: rc-test.investigator-harness}
+  - {from: rc-015a, to: rc-test.investigator-harness}
+  - {from: rc-016, to: rc-test.investigator-harness}
+  - {from: rc-017, to: rc-test.investigator-harness}
+  - {from: rc-018, to: rc-test.investigator-harness}
+  - {from: rc-019, to: rc-test.investigator-harness}
+  - {from: rc-020, to: rc-test.verdict-execution-harness}
+  - {from: rc-021, to: rc-test.verdict-execution-harness}
+  - {from: rc-022, to: rc-test.verdict-execution-harness}
+  - {from: rc-022a, to: rc-test.verdict-execution-harness}
+  - {from: rc-023, to: rc-test.verdict-execution-harness}
+  - {from: rc-024, to: rc-test.verdict-execution-harness}
+  - {from: rc-025, to: rc-test.verdict-execution-harness}
+  - {from: rc-025a, to: rc-test.verdict-execution-harness}
+  - {from: rc-026, to: rc-test.verdict-execution-harness}
+  - {from: rc-026a, to: rc-test.verdict-execution-harness}
+  - {from: rc-027, to: rc-test.verdict-execution-harness}
+  - {from: rc-028, to: rc-test.re-run-vs-intra-run-harness}
+  - {from: rc-029, to: rc-test.re-run-vs-intra-run-harness}
+  - {from: rc-030, to: rc-test.re-run-vs-intra-run-harness}
+  - {from: rc-031, to: rc-test.crash-recovery-suite}
+
+  # ───────────────────────── Cross-spec AR edges ─────────────────────────
+  # AR is in RC's depends-on (architecture).
+  - {from: rc-006, to: ar-002}                                        # amendment protocol per [architecture.md §4.6] (closest mapped anchor — ar-002 amendment-related; spec body cites §4.6)
+  - {from: rc-009, to: ar-002}                                        # taxonomy lock-in via amendment protocol
+  - {from: rc-023, to: ar-005}                                        # ZFC test (mechanism/cognition tagging discipline) per [architecture.md §4.2]
+  - {from: rc-inv-001, to: ar-042}                                    # AR-042 invariant selection test underlies §5 invariants
+  - {from: rc-inv-004, to: ar-042}                                    # AR-042 invariant selection test underlies §5 invariants
+
+  # ───────────────────────── Cross-spec EM edges ─────────────────────────
+  # EM is in RC's depends-on (execution-model). RC's heaviest cross-spec
+  # dependency — almost every detector / investigator / verdict-execution
+  # rule cites EM.
+  - {from: rc-001, to: em-001}                                        # Workflow record per [execution-model.md §4.1]
+  - {from: rc-002, to: em-023}                                        # EM-023 checkpoint cadence; RC-002 is the explicit exception
+  - {from: rc-002, to: em-026}                                        # EM-026 checkpoint commits cite
+  - {from: rc-008, to: em-009}                                        # idempotency_class tag per EM-009 drives Cat 1 vs Cat 2
+  - {from: rc-010, to: em-014}                                        # one-bead-many-runs rule per EM-014
+  - {from: rc-011, to: em-016}                                        # checkpoint contract (git DAG parentage)
+  - {from: rc-011, to: em-017}                                        # checkpoint trailer schema
+  - {from: rc-014, to: em-018}                                        # transition record sibling per EM-018
+  - {from: rc-014, to: em-046}                                        # state reconstruction per EM §4.7 (closest mapped anchor — em-046 context-restore)
+  - {from: rc-016, to: em-009}                                        # playbook reads idempotency_class to dispatch
+  - {from: rc-022, to: em-001}                                        # orchestrator current-node resolution per [execution-model.md §7.1] (mapped to em-001 Workflow)
+  - {from: rc-022a, to: em-schema.outcome}                            # extend Outcome record (OQ-RC-010); current outcome envelope shape
+  - {from: rc-025, to: em-005}                                        # resume-with-context injection per [execution-model.md §4.1 EM-005] (cite in schemas.md §6.2 verdict-execution table; RC-025 defers to that table for mechanical action) — R-4 v0.1.1
+  - {from: rc-025, to: em-044}                                        # reset-to-checkpoint uses transition_kind=architectural-rollback per EM-044
+  - {from: rc-025, to: em-046b}                                       # RETRY outcome re-dispatch contract
+  - {from: rc-028, to: em-014}                                        # reopen-bead → new run_id under one-bead-many-runs
+  - {from: rc-029, to: em-044}                                        # intra-run rollback per EM-044 (rollback_to_state_id)
+  - {from: rc-schema.workflow-class-extension, to: em-schema.workflow} # extends EM's Workflow record
+  - {from: rc-schema.verdict-event, to: em-schema.transition-id}      # checkpoint_ref is transition_id (UUID)
+  - {from: rc-schema.investigator-input, to: em-schema.checkpoint}    # InvestigatorInput.last_checkpoint field type
+  - {from: rc-schema.investigator-input, to: em-schema.transition}    # InvestigatorInput.last_transition field type
+  - {from: rc-schema.investigator-input, to: em-schema.run-id}        # target_run_id, investigator_run_id types
+  - {from: rc-inv-001, to: em-inv-005}                                # body explicit ID cite EM-INV-005 (sensor→sensor per F-refs-EV-6)
+
+  # ───────────────────────── Cross-spec EV edges ─────────────────────────
+  # EV is in RC's depends-on (event-model). RC emits 9 events (per §6.5)
+  # plus 3 cross-spec coordination events; per §2.11(d.2), edges run
+  # `<rc-NNN> → ev-events.<name>` (consumer-blocks-on-producer direction).
+  - {from: rc-001, to: ev-001}                                        # event envelope shape
+  - {from: rc-001, to: ev-025}                                        # one owning spec per event type
+  - {from: rc-011, to: ev-002}                                        # event_id UUIDv7 ordering
+  - {from: rc-014, to: ev-015}                                        # JSONL durable form per [event-model.md §4.4]
+  - {from: rc-014, to: ev-023}                                        # divergence-evidence read per EV §4.5 (mapped to coalesced ev-023)
+  - {from: rc-014, to: ev-events.store-divergence-detected}           # §8.6.8 row
+  - {from: rc-019a, to: ev-023}                                       # EV-023a evidence-corroboration contract
+  - {from: rc-013, to: ev-events.reconciliation-category-assigned}    # RC-013 emission rule
+  - {from: rc-018, to: ev-events.reconciliation-budget-exhausted}     # RC-018 emission rule
+  - {from: rc-018, to: ev-events.budget-exhausted}                    # RC-018 step (3) emits `budget_exhausted` (class F per [event-model.md §8.4.3]); both events fired (top-level reconciliation_budget_exhausted + step-3 generic budget_exhausted) — R-3 v0.1.1
+  - {from: rc-021, to: ev-events.reconciliation-verdict-emitted}      # RC-021 emission rule
+  - {from: rc-022, to: ev-events.reconciliation-verdict-emitted}      # commit + event atomic
+  - {from: rc-023, to: ev-events.reconciliation-verdict-malformed}    # RC-023 emission rule
+  - {from: rc-024, to: ev-events.reconciliation-verdict-stale}        # RC-024 emission rule
+  - {from: rc-025, to: ev-events.reconciliation-verdict-executed}     # RC-025 emission rule
+  - {from: rc-025, to: ev-events.operator-escalation-required}        # escalate-to-human verdict emits operator event
+  - {from: rc-025a, to: ev-events.reconciliation-verdict-emitted}     # daemon-side executor emits both events
+  - {from: rc-025a, to: ev-events.reconciliation-verdict-executed}    # second event
+  - {from: rc-012, to: ev-events.infrastructure-unavailable}          # Cat 0 event emission
+  - {from: rc-012a, to: ev-events.daemon-degraded}                    # post-ready Cat 0 emits daemon_degraded per §8.7.5
+  - {from: rc-002a, to: ev-events.reconciliation-dispatch-deduplicated} # second-dispatch on EWOULDBLOCK (cross-spec coord req)
+  - {from: rc-020b, to: ev-events.reconciliation-detector-panic}      # detector panic diagnostic (cross-spec coord req)
+  - {from: rc-026a, to: ev-events.reconciliation-verdict-execution-retry} # retry-counter emission (cross-spec coord req)
+  - {from: rc-error.cat-0, to: ev-events.infrastructure-unavailable}  # Cat 0 event
+  - {from: rc-error.cat-1, to: ev-events.reconciliation-category-assigned}  # category=1 emission
+  - {from: rc-error.cat-2, to: ev-events.reconciliation-category-assigned}  # category=2 emission
+  - {from: rc-error.cat-3, to: ev-events.store-divergence-detected}   # Cat 3 generic + store_divergence
+  - {from: rc-error.cat-3a, to: ev-events.store-divergence-detected}  # Cat 3a torn write + store_divergence
+  - {from: rc-error.cat-3b, to: ev-events.reconciliation-category-assigned} # Cat 3b emission
+  - {from: rc-error.cat-3c, to: ev-events.reconciliation-verdict-executed}  # Cat 3c auto-verdict + executed
+  - {from: rc-error.cat-4, to: ev-events.reconciliation-category-assigned}  # Cat 4 emission
+  - {from: rc-error.cat-5, to: ev-events.reconciliation-category-assigned}  # Cat 5 emission
+  - {from: rc-error.cat-6a, to: ev-events.store-divergence-detected}  # Cat 6a + store_divergence
+  - {from: rc-error.cat-6b, to: ev-events.operator-escalation-required} # Cat 6b auto-escalate
+  - {from: rc-inv-004, to: ev-events.store-divergence-detected}       # body cites §8.6.8
+
+  # ───────────────────────── Cross-spec HC edges ─────────────────────────
+  # HC is in RC's depends-on (handler-contract).
+  - {from: rc-015, to: hc-006}                                        # LaunchSpec record per HC-006
+  - {from: rc-015, to: hc-schema.launch-spec}                         # LaunchSpec.snapshot_token field
+  - {from: rc-015a, to: hc-001}                                       # investigator is HC handler per HC §4.1
+  - {from: rc-018, to: hc-018}                                        # SIGTERM→SIGKILL interval
+  - {from: rc-018, to: hc-011}                                        # watcher-observe per HC-011
+  - {from: rc-022a, to: hc-008}                                       # outcome_emitted is HC-008
+  - {from: rc-022a, to: hc-011}                                       # watcher consumes outcome
+  - {from: rc-002a, to: hc-011}                                       # investigator-crash detection via watcher
+  - {from: rc-004, to: hc-046}                                        # skill injection (Beads-CLI + git-inspection skills)
+
+  # ───────────────────────── Cross-spec CP edges ─────────────────────────
+  # CP is in RC's depends-on (control-points).
+  - {from: rc-017, to: cp-022}                                        # budget control-point typed-scoped allowance
+  - {from: rc-017, to: cp-023}                                        # budget enforced at dispatch
+  - {from: rc-004, to: cp-051}                                        # skill declaration is mechanism-tagged
+  - {from: rc-015, to: cp-039}                                        # cognition-tagged delegation_path (investigator role)
+  - {from: rc-030, to: cp-007}                                        # Gate control-point per CP §4.4
+  - {from: rc-030, to: cp-019}                                        # Guard control-point per CP §4.2
+  - {from: rc-027, to: cp-035}                                        # policy YAML grammar for confirm/veto
+
+  # ───────────────────────── Cross-spec BI edges ─────────────────────────
+  # BI is in RC's depends-on (beads-integration).
+  - {from: rc-008, to: bi-031}                                        # Cat 3a auto-resolver routes through BI-031
+  - {from: rc-008, to: bi-031b}                                       # status-check-before-reissue
+  - {from: rc-012, to: bi-024}                                        # br version pin per BI §4.8
+  - {from: rc-012, to: bi-024a}                                       # br --version handshake
+  - {from: rc-014, to: bi-007}                                        # Beads coarse-status enum per BI §4.7 (mapped to bi-007)
+  - {from: rc-015, to: bi-027}                                        # Beads-CLI skill per BI §4.9 BI-027/BI-028
+  - {from: rc-015, to: bi-028}                                        # git-inspection skill per BI §4.9 BI-028 (RC-015 body cites BOTH BI-027 and BI-028; R-2 v0.1.1)
+  - {from: rc-025, to: bi-010}                                        # reopen-bead routes through BI-010 write surface
+  - {from: rc-error.cat-3a, to: bi-029}                               # adapter intent file per BI-029
+  - {from: rc-error.cat-3a, to: bi-031}                               # status-check-before-reissue per BI-031
+  - {from: rc-error.cat-3a, to: bi-031b}                              # BI-031b classifier
+  - {from: rc-error.cat-3a, to: bi-032}                               # intent log is Cat 3a evidence source
+
+  # ───────────────────────── Cross-spec WM edges ─────────────────────────
+  # WM is in RC's depends-on (workspace-model).
+  - {from: rc-015, to: wm-026}                                        # session-log CASS handle per WM §4.7 (mapped to wm-026 metadata sidecar)
+  - {from: rc-022, to: wm-014}                                        # worktree reset interactions per WM §4.4 (mapped to wm-014 workspace state machine)
+  - {from: rc-026a, to: wm-026}                                       # atomic temp+rename+fsync for retry-counter file
+  - {from: rc-028, to: wm-034}                                        # reopen-bead → fresh worktree per WM-034
+
+  # ───────────────────────── Cross-spec PL edges ─────────────────────────
+  # PL is in RC's depends-on (process-lifecycle).
+  - {from: rc-002a, to: pl-002a}                                      # fd-lifetime advisory-lock primitive
+  - {from: rc-002a, to: pl-006}                                       # orphan-sweep cleans stale lock files
+  - {from: rc-002a, to: pl-011}                                       # daemon shutdown sequence releases lock (closest mapped pl-011 graceful shutdown)
+  - {from: rc-012, to: pl-005}                                        # startup ordering — Cat 0 pre-check before reconciliation
+  - {from: rc-012, to: pl-010}                                        # degraded state on prereq failure
+  - {from: rc-012a, to: pl-009}                                       # post-ready carve-out anchored to PL-009 ready criteria
+  - {from: rc-012a, to: pl-010}                                       # pre-ready degraded enum reserved per PL-010
+  - {from: rc-020a, to: pl-005}                                       # startup detector after PL-005 orphan sweep completes
+  - {from: rc-020b, to: pl-018a}                                      # per-detector recover() barrier per PL-018a
+  - {from: rc-025a, to: pl-018a}                                      # verdict-executor panic-safe per PL-018a
+  - {from: rc-026, to: pl-005}                                        # startup classification before ready
+  - {from: rc-026, to: pl-009}                                        # ordinary dispatch gated behind detection
+  - {from: rc-error.cat-0, to: pl-010}                                # Cat 0 → degraded state co-owned with PL-010
+
+  # ───────────────────────── Cross-spec ON edges ─────────────────────────
+  # ON is in RC's depends-on (operator-nfr).
+  - {from: rc-002a, to: on-027}                                       # operator pause releases lock at ON-027 entry
+  - {from: rc-012a, to: on-037}                                       # post-ready Cat 0 surfaces failing prereq via [operator-nfr.md §4.9 ON-037] health probe (R-1 v0.1.1)
+  - {from: rc-014, to: on-008}                                        # in-flight run predicate sourced from ON-008 (in_flight glossary anchor)
+  - {from: rc-024, to: on-014}                                        # operator-override consumes staleness signal (ON-014 verdict-override surface)
+  - {from: rc-025, to: on-002}                                        # operator-event consumption surface for operator_escalation_required
+  - {from: rc-026, to: on-031}                                        # restart RTO bounds reconciliation dispatch
+  - {from: rc-027, to: on-014}                                        # operator-CLI grammar surface (confirm/veto)
+# End of edges.

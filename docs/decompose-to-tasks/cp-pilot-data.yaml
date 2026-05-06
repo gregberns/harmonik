@@ -1,0 +1,1238 @@
+# CP pilot v0.1.1 — bead and edge data
+# Drafted 2026-04-30 against specs/control-points.md v0.3.2 (status: reviewed).
+# Discipline version applied: v0.9 (HC r1 lockstep release).
+#
+# v0.1.1 (2026-04-30) — applies r1 review patches per
+# docs/reviews/2026-04-30-cp-pilot-r1/synthesis.md:
+#   F-refs-CP-1 (MAJOR/local): cp-008 missing AR §4.8 role-taxonomy
+#     edges. Added cp-008 → {ar-039, ar-040, ar-041, ar-042}, mirroring
+#     peers cp-017/028/029/030/039.
+#   F-decomp-CP-1 (MINOR/local): cp-schema.hook-verdict-record description
+#     said "7-field"; field list is 8 fields per spec §6.1.6. Fixed.
+#   F-refs-CP-2 (MINOR/local): cp-048 missing `cite:wide-fanout` tag on
+#     [event-model.md §8] section-anchor cite. Added (mirrors cp-013).
+#   F-decomp-CP-2 (MINOR/local) REJECTED on inline verification — yaml
+#     description already carries bound_fired discriminator note.
+#   F-refs-CP-3 (MINOR/class) deferred to discipline-lane batch with
+#     existing F-pilot-CP-7 for post-WM discipline patch.
+# Re-run posture: edges-only mode (--skip-beads); 4 new edges expected,
+# 273 already_exists; br dep cycles MUST remain clean.
+#
+# CP is the largest reviewed spec (1126 lines). It owns the four Kinds (Gate,
+# Hook, Guard, Budget), the policy YAML grammar, the registry, the cognition
+# replay-safety contract, and the skill-declaration surface. depends-on:
+# [architecture, execution-model, event-model, handler-contract]. WM, ON, RC,
+# and BI cites are forward-deferred per F-pilot-EM-2 / Option B precedent
+# (logged as forward:wm-NNN, forward:on-NNN, forward:rc-NNN, forward:bi-NNN).
+#
+# Sanity tally (matches §3 of the future cp-pilot.md narrative bead):
+#   §4 reqs in spec:                                 55
+#   §2.3 coalesces applied:                          1 (CP-004 + CP-005 → cp-004)
+#   §2.1a pure cross-reference collapses:            1 (CP-052 → notes on cp-031)
+#   First-class §4 req beads:                        53
+#   §5 invariants (active; CP-INV-004/005 demoted):  3
+#   §6 schema beads (records / interfaces / enums):  24
+#   §8 error-taxonomy beads:                         0  (CP §8 routes to EM's
+#                                                       taxonomy; no cp-error
+#                                                       bead minted; consumers
+#                                                       block-on em-error.taxonomy
+#                                                       — see F-pilot-CP-3)
+#   Test-infra beads:                                5
+#   Multi-step §2.2 splits:                          0  (CP-034b 2-bound list
+#                                                       fails signal 1; CP-040a
+#                                                       envelope-input list
+#                                                       resolves via F8b shared
+#                                                       function body)
+#   Total beads minted:                              85
+#   Bead-to-§4-req multiplier:                       85 / 55 = 1.55×
+#                                                    (BI 1.42×; HC 0.95×;
+#                                                    CP higher driven by §6.1
+#                                                    type-hierarchy density —
+#                                                    24 schemas vs HC's 5)
+#
+# Forward-deferred edge counts (per target spec):
+#   wm:  1  (cp-040 hook-verdict path)
+#   on:  4  (cp-013 checkpoint hooks; cp-037 operator-pause; cp-038 N-1 read;
+#            cp-039 — none, see notes)
+#   rc:  4  (cp-027 wall-clock budget; cp-040a Cat-6 escalation; cp-041 stale
+#            verdict re-invocation; cp-inv-003 Cat-6 escalation)
+#   bi:  2  (cp-031 Beads-CLI bootstrap cite; cp-052 motivating default cite —
+#            collapsed onto cp-031 per §2.1a, so 1 effective forward edge after
+#            collapse)
+#
+# F-pilot-CP findings (judgment calls / discipline stress points):
+#
+# F-pilot-CP-1 [class — RESOLVED by discipline v0.9 §2.11(c.2)] —
+#   CP §8 ROUTES errors to EM's taxonomy rather than declaring its own. There
+#   is NO cp-error.taxonomy bead. The §2.11(c.2) v0.9 anti-pattern note targets
+#   a `<spec>-error.taxonomy` bead's edge direction; CP doesn't have one, so
+#   the new clause does not apply directly. The clause's spirit DOES apply:
+#   CP §4 reqs that cite EM sentinel names (CP-015 ErrTransient/ErrDeterministic;
+#   CP-034b ErrDeterministic; CP-023 budget_exhausted failure class) are
+#   CONSUMERS of EM's taxonomy and block-on `em-error.taxonomy`, never the
+#   inverse. This mirrors HC's pattern post-v0.1.1. No discipline patch needed.
+#
+# F-pilot-CP-2 [local — applies §2.1a mechanically] — CP-052 ("Beads-CLI is
+#   the motivating default") body is the verbatim restatement of CP-031 (which
+#   already mandates Beads-CLI in MVH-required role default_skills) with a
+#   single inline cite to CP-031 and a one-line "supplementing when additional
+#   skills are needed" clarifier. All three §2.1a triggers fire (one-sentence
+#   body; single in-spec cite to CP-031; no substantive impl work distinct from
+#   CP-031). Collapsed to a notes line on cp-031; req:CP-052 tag co-exists with
+#   req:CP-031 on the cp-031 bead. Same shape as AR's AR-035 → ar-026 collapse.
+#
+# F-pilot-CP-3 [class — discipline-patch candidate] — CP §6.5 enumerates 14
+#   events whose payload schemas are owned by EV §6.3, BUT THREE of those events
+#   (verdict_envelope_mismatch, policy_expression_exceeded_cost,
+#   control_points_registration_started) are MISSING from EV's bead set
+#   (/tmp/ev-mnem-map.csv has only 79 ev-events.* mnemonics; spot-checks confirm
+#   absence). Per discipline §3.1.4 type/schema cite rule, a CP req emitting one
+#   of these events SHOULD edge to the EV row bead — but the EV bead doesn't
+#   exist. Three resolution options:
+#     (a) Forward-defer to EV's next revision (treat as forward:ev-events.<name>
+#         placeholder; EV pilot runs reciprocal patch). Closest to F-pilot-EM-2
+#         Option B carry-forward debt. Chosen for this draft.
+#     (b) Patch EV's spec + pilot to add the 3 missing rows. Cross-pilot
+#         coordination cost; defer.
+#     (c) Mint a `cp-event.<name>` placeholder bead. Inverts EV's owning-spec
+#         posture (EV §4.2 EV-025 is "one owning spec for payload shape"; CP is
+#         the WHEN-emitter, EV is the SHAPE-owner). REJECTED.
+#   Recorded as `class` lane; the discipline doc could call out "EV completeness
+#   precondition for emitting-spec pilots" so future pilots (WM, RC, ON) detect
+#   the same gap proactively. CP records 3 forward:ev-events.* deferrals below.
+#
+# F-pilot-CP-4 [local — applies §3.1 step 1 supporting-cite test mechanically] —
+#   CP-007 cites `[execution-model.md §4.10]` in "consumed by S01 per [...]"
+#   construction. Operational test: remove the cite; the declaration-order +
+#   first-non-allow short-circuit rule remains independently testable from CP-007's
+#   own body text. Supporting cite per F-pilot-AR-10. No edge to em-042. Same
+#   posture for CP-010, CP-021, CP-033, CP-038's bare "per X" attachments.
+#
+# F-pilot-CP-5 [class — applies §3.1 step 4 type-cite mechanically + surfaces
+#   density question] — CP §6.1 declares 24 schema-shaped types (1 top-level
+#   ControlPoint RECORD + Kind ENUM + Evaluator RECORD + 4 per-Kind payload
+#   RECORDs + 8 supporting ENUMs + 5 verdict/cognition/side-effect RECORDs +
+#   Registry INTERFACE + 3 role/freedom RECORDs). That is 4-5× HC's 5 schemas
+#   and ~2× EV's count, driven by CP being the union-primitive declarer for
+#   four Kinds. Per §2.6, every RECORD/INTERFACE/ENUM mints its own bead — no
+#   coalesce permitted (§2.6 typed-alias-cluster F-em-r1-MIN-8 explicitly says
+#   peer typed aliases without anchor structure stay separate). Surfaces the
+#   question: at corpus scale, does §2.6's one-bead-per-schema rule produce a
+#   schema-bead population that crowds the §4-req population? CP's ratio
+#   (24 schemas / 53 §4 beads = 0.45) is the high-water mark in the corpus so
+#   far. No discipline patch proposed; recorded for post-corpus review.
+#
+# F-pilot-CP-6 [local — applies §2.2 + F8b mechanically] — CP-040a's
+#   input-envelope hash declaration enumerates 5 canonical inputs (expression
+#   text, prompt template, skill packages, context subset, policy_meta). Signal
+#   1 (≥3 steps) fires; signal 2 (independent testability)? Each input is a
+#   hash component. F8b shared-function-body tiebreaker fires: in any plausible
+#   Go implementation the 5 inputs are computed, canonicalized, and SHA-256ed in
+#   one cohesive function body (`func computeInputEnvelopeHash(...) { ... }`)
+#   with no stable testable boundary between them. → Single bead with 5
+#   sub-bullets. Same posture as EM-016's three-step git atomic sequence.
+#
+# F-pilot-CP-7 [class — discipline-patch candidate, low priority] — CP-013
+#   cites `[event-model.md §8]` (full event taxonomy) AND lists 8 specific
+#   on_* Hook trigger names that map to specific EV row beads (on_agent_started
+#   → agent_started, on_checkpoint_written → checkpoint_written, etc.). Per
+#   §3.1 step 3 (section-anchor cite), edges fan out to all reqs in the section
+#   AND tag the citing bead `cite:wide-fanout`. EV §8 has 79 rows — fanning out
+#   to all 79 is excessive. The named on_* mapping in CP-013's body permits a
+#   tighter fanout: edge only to the 8 named EV rows (agent_started,
+#   agent_output, agent_completed, timeout-equivalent, review_required-equivalent,
+#   transition_attempted-equivalent, checkpoint_written, checkpoint_failed). I
+#   applied the tighter fanout below; `cite:wide-fanout` tag still fires per
+#   §3.1 step 3 because the cite text uses §8 (section) form not specific row
+#   names. Surfaces a discipline question: when a cite is to §N (section) BUT
+#   the citing body's prose enumerates specific subordinate IDs/names, the
+#   tighter set should be the edge target, not the full section. Recorded as
+#   `class` lane.
+#
+# F-pilot-CP-8 [local — RESOLVED by discipline v0.7 §3.2 / Option E grandfather] —
+#   CP reached `reviewed` 2026-04-23 (pre-AR-053). Discipline v0.7 §3.2 grandfather
+#   carve-out names CP explicitly. CP v0.3.2's §4 starts at §4.1 with no §4.a
+#   subsystem envelope. Carve-out compliant; no envelope bead; no spec edit.
+#   Recorded for parity with EM/HC/EV.
+#
+# F-pilot-CP-9 [local — applies §3.1 no-edge list] — CP-027 cites
+#   `[docs/foundation/components.md §9.4a]` (reconciliation wall-clock budget
+#   bootstrap) and `[docs/foundation/components.md §10.9]` (Beads-CLI skill
+#   bootstrap, on CP-031 + CP-052). Per F-pilot-AR-AO3 / discipline §3.1
+#   no-edge list, doc cites under `docs/foundation/` are not specs and emit no
+#   edge. The bootstrap targets MIGRATE to reconciliation.md / beads-integration.md
+#   when those finalize; recorded as forward:rc-NNN and forward:bi-NNN
+#   respectively.
+
+spec:
+  prefix: cp
+  title: "Control Points spec — implementation"
+  spec_path: specs/control-points.md
+  spec_version: "0.3.2"
+  pilot_version: "0.1.0"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:control-points"
+  - "tag:mechanism"
+
+epic:
+  mnem: cp
+  title: "Control Points spec — implementation"
+  description: |
+    Implements specs/control-points.md v0.3.2 (53 first-class §4 req beads from 55 active §4 reqs after 1 §2.3 coalesce (CP-004/005 cluster) and 1 §2.1a collapse (CP-052 → cp-031), 3 invariants, 24 §6.1 schemas, 0 error-taxonomy beads (CP §8 routes to EM's taxonomy), 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, handler-contract]; WM, ON, RC, BI cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:<prefix>-NNN). Three EV §6.5 events (verdict_envelope_mismatch, policy_expression_exceeded_cost, control_points_registration_started) are missing from EV's bead set; recorded as forward:ev-events.<name> deferrals per F-pilot-CP-3.
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ───────────────────────── §4.1 ControlPoint as a unified primitive ─────────────────────────
+
+  - mnem: cp-001
+    kind: req
+    req: CP-001
+    title: "ControlPoint is a single typed primitive"
+    description: |
+      Per CP-001: a `ControlPoint` MUST be a single typed record (one Go struct, one lifecycle, one registration path) parameterized by `kind ∈ {Gate, Hook, Guard, Budget}`. Common fields: `name`, `kind`, `trigger`, `evaluator`, `outcome_action`, plus a Kind-specific typed payload per §4.2–§4.5. The unification is in the primitive's shape; the semantics per Kind are explicit and NOT interchangeable.
+
+  - mnem: cp-002
+    kind: req
+    req: CP-002
+    title: "ControlPoint name is unique within the registry"
+    description: |
+      Per CP-002: every ControlPoint MUST carry a unique `name` (String) that identifies it in the §4.9 registry. Policy YAML documents reference ControlPoints by `name`; DOT workflow attributes (`gate_ref`, `policy_ref`, `freedom_profile_ref`, `budget_ref` per [execution-model.md §4.2]) resolve to registered names.
+
+  - mnem: cp-003
+    kind: req
+    req: CP-003
+    title: "Evaluator is boundary-classified"
+    description: |
+      Per CP-003: every ControlPoint's `evaluator` MUST be classified as `mechanism` or `cognition` per [architecture.md §4.1]. A mechanism-tagged evaluator is a pure deterministic expression over its declared input. A cognition-tagged evaluator delegates to a model with a specified prompt, input shape, and response schema per §4.8.
+
+  - mnem: cp-004
+    kind: req
+    req: [CP-004, CP-005]   # coalesce: CP-004 declarative + CP-005 normative table
+    title: "Per-Kind semantics fixed by the §4.1 table (coalesce)"
+    description: |
+      Per CP-004 + CP-005 (coalesced per discipline §2.3): the four Kinds' triggers, evaluator inputs, evaluator return types, outcome-action enums, and boundary-classification rules MUST match the §4.1 table. No ControlPoint may deviate from its Kind's row. Table rows: Gate (transition attempt; current state + candidate transition + outcome → {allow, deny}; mechanism OR cognition); Hook (event match; matched event + subscription context → side-effect descriptor; mechanism OR cognition); Guard (edge evaluation; edge set + state + outcome → reordered edge list; mechanism only); Budget (dispatch attempt + per-chunk accrual; counter state + proposed cost + per-chunk delta → {admit, warn, deny}; mechanism only).
+
+  # ───────────────────────── §4.2 Gate semantics ─────────────────────────
+
+  - mnem: cp-006
+    kind: req
+    req: CP-006
+    title: "Gate fires on transition attempt"
+    description: |
+      Per CP-006: a Gate MUST fire on a transition attempt. The evaluator receives current state, candidate transition (after edge cascade selects it or before, per attach-point), and the handler outcome. Returns `allow` or `deny` with optional human-readable `reason`; outcome-action MAY be elevated to `escalate-to-human` by policy.
+
+  - mnem: cp-007
+    kind: req
+    req: CP-007
+    title: "Gate attach points + declared-order short-circuit"
+    description: |
+      Per CP-007: a Gate MAY be attached to nodes (pre-entry, post-exit) or to edges (before-selection, after-selection). The attach point MUST be declared on the Gate record; missing attach point fails registration. When multiple Gates are registered at the same attach point, declaration order MUST be honored and short-circuit MUST occur on the first non-`allow` verdict (record-side ordering property consumed by S01).
+
+  - mnem: cp-008
+    kind: req
+    req: CP-008
+    title: "Gate subtypes declare intent"
+    description: |
+      Per CP-008: a Gate MUST declare a `subtype ∈ {goal-gate, approval-gate, quality-gate}`. `goal-gate` is a policy-level goal assertion that cannot be bypassed; `approval-gate` requires a named approver (human role or agent role); `quality-gate` requires a prior verification node's outcome to satisfy a policy expression. Subtype is informative; enforcement uses the evaluator + outcome-action fields only.
+
+  - mnem: cp-009
+    kind: req
+    req: CP-009
+    title: "Gate denial leaves the run in the source state"
+    description: |
+      Per CP-009: on evaluator `deny`, the run MUST remain in the source state; the transition MUST NOT advance. A `gate_denied` event is emitted per [event-model.md §8.2] with payload `{run_id, gate_name, reason}`. Retry policy is governed by the node's policy per [execution-model.md §4.2], not by the Gate record.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-010
+    kind: req
+    req: CP-010
+    title: "Gate invocation is owned by S01"
+    description: |
+      Per CP-010: Gate invocation during the transition cascade MUST be performed by S01 (Orchestrator Core) consulting the §4.9 registry. This spec defines the Gate record + outcome semantics; invocation mechanics belong to the S01 subsystem spec.
+
+  - mnem: cp-011
+    kind: req
+    req: CP-011
+    title: "Gate evaluator MAY be cognition-tagged"
+    description: |
+      Per CP-011: a Gate's evaluator MAY be cognition-tagged when the policy requires judgment that a mechanism-tagged expression cannot express. Cognition-tagged Gate evaluators MUST satisfy the §4.8 replay-safety contract (persisted-verdict).
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+
+  # ───────────────────────── §4.3 Hook semantics ─────────────────────────
+
+  - mnem: cp-012
+    kind: req
+    req: CP-012
+    title: "Hook fires on event match"
+    description: |
+      Per CP-012: a Hook MUST fire when a subscribed event matches its `trigger` (event-name match, optionally with subscription filter over event payload). Evaluator receives matched event + subscription context; returns side-effect descriptor declaring (a) emit a new event, (b) apply a declared state mutation, or (c) perform an external action. Hooks MUST NOT block, halt, or alter the run's transition progression.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-013
+    kind: req
+    req: CP-013
+    title: "Hook lifecycle event types (MVH-baseline trigger set)"
+    description: |
+      Per CP-013: a Hook's `trigger` MUST match one of the declared lifecycle event types. The MVH-baseline Hook-trigger set: on_agent_started, on_agent_output, on_agent_completed, on_timeout, on_review_required, on_transition_attempted, on_checkpoint_written, on_checkpoint_failed. Hook-trigger names form a separate Hook-namespace mapping to [event-model.md §8] event types; the `on_` prefix distinguishes Hook-subscription names from raw event-type names. Subsystems MAY declare additional Hook trigger types via the subsystem envelope per [architecture.md §4.4]; declared triggers are registered at daemon init. Unrecognized trigger fails registration.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: cp-014
+    kind: req
+    req: CP-014
+    title: "Hook ordering is deterministic"
+    description: |
+      Per CP-014: when multiple Hooks match a single event, they MUST execute in an order determined by (a) declaring-subsystem priority (explicit integer), (b) within a subsystem, declaration order. The ordering is deterministic and reproducible across daemon restarts given identical registered Hooks.
+
+  - mnem: cp-015
+    kind: req
+    req: CP-015
+    title: "Hook failures are typed and do not halt the chain"
+    description: |
+      Per CP-015: a Hook evaluator MUST return a typed failure descriptor on error; per-Hook failure MUST NOT halt the chain unless `halt_on_failure = true`. Unhandled errors at the evaluator boundary are wrapped by the S05 dispatcher per [handler-contract.md §4.5]: timeout / resource-exhaustion → ErrTransient; schema-violation / type-check / registration-state → ErrDeterministic. The mapping is fixed in S05; this spec names the two error-class surface as the only legal wrap targets.
+
+  - mnem: cp-016
+    kind: req
+    req: CP-016
+    title: "Hook dispatch is owned by S05; delivery is at-least-once"
+    description: |
+      Per CP-016: Hook dispatch (subscribing to event bus, ordering, side-effect application, failure-isolation) MUST be performed by S05 (Hook System) consulting the §4.9 registry. S05 MUST deliver each Hook's side-effect at-least-once. Duplicate delivery is acceptable for `idempotency_class = idempotent`; for `non-idempotent`, S05 MUST bound delivery to at-most-once via persisted delivery-receipt mechanism (S05-owned). This spec names the at-least-once floor and the `idempotency_class` declaration.
+
+  - mnem: cp-017
+    kind: req
+    req: CP-017
+    title: "Hook evaluator MAY be cognition-tagged"
+    description: |
+      Per CP-017: a Hook's evaluator MAY be cognition-tagged (e.g., an `on_review_required` Hook that delegates to a reviewer agent). Cognition-tagged Hook evaluators MUST satisfy the §4.8 replay-safety contract. Delegation path — role (from [architecture.md §4.8]), model class, input shape, response schema — MUST be named on the Hook record.
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+
+  # ───────────────────────── §4.4 Guard semantics ─────────────────────────
+
+  - mnem: cp-018
+    kind: req
+    req: CP-018
+    title: "Guard reorders edges only"
+    description: |
+      Per CP-018: a Guard MUST fire during edge evaluation of the deterministic cascade defined in [execution-model.md §4.10]. Evaluator receives candidate edge set + current state + outcome; returns a reordered edge list that is a subset or permutation of input. A Guard MUST NOT add edges, remove edges, or block a transition. Gate semantics (deny / escalate) are NOT available to Guards.
+
+  - mnem: cp-019
+    kind: req
+    req: CP-019
+    title: "Guard precedes the cascade"
+    description: |
+      Per CP-019: in the edge-selection cascade of [execution-model.md §4.10 EM-042], Guards MUST run BEFORE the condition cascade. The cascade then operates on the Guard-reordered edge list as input; subsequent precedence rules (condition match, preferred_label, suggested_next_ids, weight, ordering_key) are applied per the execution-model spec.
+
+  - mnem: cp-020
+    kind: req
+    req: CP-020
+    title: "Guard MUST be mechanism-tagged"
+    description: |
+      Per CP-020: a Guard's evaluator MUST be mechanism-tagged. Cognition-tagged Guards are forbidden: they would place cognition inside the selection-logic layer, violating ZFC (the Zone of Forbidden Cognition) per [architecture.md §4.2]. Any Guard declaration carrying a cognition-tagged evaluator fails registration.
+
+  - mnem: cp-021
+    kind: req
+    req: CP-021
+    title: "Guard invocation is owned by S01"
+    description: |
+      Per CP-021: Guard invocation during the cascade MUST be performed by S01 (Orchestrator Core) consulting the §4.9 registry. This spec defines the Guard record + outcome semantics; invocation is S01's obligation under [execution-model.md §4.10].
+
+  # ───────────────────────── §4.5 Budget semantics ─────────────────────────
+
+  - mnem: cp-022
+    kind: req
+    req: CP-022
+    title: "Budget declares a typed, scoped allowance"
+    description: |
+      Per CP-022: a Budget MUST declare `resource ∈ {tokens, wall_clock_seconds, iterations}`, `scope ∈ {per_role, per_run, per_state}`, `limit` (positive integer), `warning_threshold` (ratio in [0, 1]). `warning_threshold` MUST default to 0.8 unless overridden per §4.7. Multiple Budgets MAY apply to a single agent run; tightest applicable Budget wins on any accrual check (smaller integer `limit` for the same `resource`).
+
+  - mnem: cp-023
+    kind: req
+    req: CP-023
+    title: "Budget is enforced at dispatch"
+    description: |
+      Per CP-023: the agent runner MUST check Budget remaining allowance AT DISPATCH (pre-exhaustion). If pending dispatch would exceed remaining limit, runner MUST emit `budget_exhausted` event per [event-model.md §8.4] and DENY dispatch (handler NOT launched). Run failure class MUST be `budget_exhausted` per [execution-model.md §8.5].
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-024
+    kind: req
+    req: CP-024
+    title: "Budget accrual is per-chunk"
+    description: |
+      Per CP-024: every agent-output chunk MUST emit a `budget_accrual` event within the same handler tick that produces the chunk (bounded by handler chunk-emission cadence per [handler-contract.md §4.2]). Per-chunk granularity is explicitly retained for MVH per [event-model.md §8.9]; a future log-level filter MAY suppress chunk events at consumer boundaries without changing the emission contract.
+    extra_labels:
+      - "axis:io-determinism-best-effort"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-025
+    kind: req
+    req: CP-025
+    title: "Budget warning threshold fires at 80% by default"
+    description: |
+      Per CP-025: when cumulative accrual crosses the `warning_threshold` fraction of `limit`, the runner MUST emit `budget_warning` event per [event-model.md §8.4] and continue. The threshold check uses live in-handler counters (handler tracks accrual against remaining budget in real time per its own tick cadence). Threshold value governed by §4.5.CP-022 (default 0.8, operator-overridable per §4.7).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-026
+    kind: req
+    req: CP-026
+    title: "Budget counter state is internal; observable only via events"
+    description: |
+      Per CP-026: the Budget counter state MUST be internal to the handler. It MUST NOT be written to any durable store other than through the typed `budget_accrual`, `budget_warning`, and `budget_exhausted` events. Cross-subsystem reads of the counter MUST go through the event bus per [event-model.md §4.3]; there is no `GetBudgetCounter()` surface.
+
+  - mnem: cp-026a
+    kind: req
+    req: CP-026a
+    title: "Budget counters rehydrate from JSONL `budget_accrual` replay"
+    description: |
+      Per CP-026a: on daemon restart with one or more in-flight runs, Budget counters MUST be rehydrated by replaying `budget_accrual` events from the JSONL event log per [event-model.md §4.4]. Replay begins at the `run_started` event for each in-flight run and consumes every subsequent `budget_accrual` event for that run, summing per-Budget deltas. JSONL event replay is the SOLE authoritative rehydration source; no other durable store (git checkpoint, snapshot file, operator-supplied counter) is legal. Implementations MUST NOT start an in-flight run's handler with a zero counter when prior `budget_accrual` events exist for that run; rehydration is complete BEFORE the handler accepts any dispatch per CP-023.
+
+  - mnem: cp-027
+    kind: req
+    req: CP-027
+    title: "Reconciliation wall-clock budget is an outer bound"
+    description: |
+      Per CP-027: reconciliation workflows carry a mandatory wall-clock Budget per [docs/foundation/components.md §9.4a]. That budget MUST register as a Budget instance with `resource = wall_clock_seconds`, `scope = per_run`, `scope_target = <reconciliation_run_id>`. Outer-bound enforcement lives in reconciliation.md §4.4; this spec contributes the composition rule: when a reconciliation wall-clock Budget is active, inner per-role / per-state Budgets MUST NOT extend the effective wall-clock beyond the outer bound. On conflict, the outer Budget wins (admissible-under-inner-but-exceeds-outer-remaining → DENIED with failure class `budget_exhausted` per [execution-model.md §8.5]).
+
+  # ───────────────────────── §4.6 Roles + freedom profiles ─────────────────────────
+
+  - mnem: cp-028
+    kind: req
+    req: CP-028
+    title: "Role permission schema"
+    description: |
+      Per CP-028: every role declared in a policy document MUST carry a `permission_schema` with fields: `allowed_tools`, `writable_paths`, `readable_paths` (defaults `["**"]`), `model_tier` (optional), `default_skills` (see §4.11), `allowed_hooks`, `invocable_by`. Role name resolution + semantics owned by [architecture.md §4.8].
+
+  - mnem: cp-029
+    kind: req
+    req: CP-029
+    title: "MVH-required roles carry concrete default permission sets"
+    description: |
+      Per CP-029: for each MVH-required role (Planner, Builder, Reviewer per [architecture.md §4.8]), the policy layer MUST supply a concrete default permission set. Default sets ship at harmonik init; overridable by higher-precedence layers per §4.7.
+
+  - mnem: cp-030
+    kind: req
+    req: CP-030
+    title: "Declared-but-deferred roles carry empty shells"
+    description: |
+      Per CP-030: for each declared-but-deferred role (Researcher, Verifier, Scheduler, Governor per [architecture.md §4.8]), the policy layer MUST supply a permission shell with `allowed_tools = []`, `writable_paths = []`, `default_skills = []`. Activating a deferred role in MVH requires a foundation amendment per [architecture.md §4.6]; shell declarations are activation-time-filled.
+
+  - mnem: cp-031
+    kind: req
+    req: [CP-031, CP-052]   # CP-052 collapsed onto cp-031 per §2.1a (F-pilot-CP-2)
+    title: "Default skills include the Beads-CLI skill (notes: CP-052)"
+    description: |
+      Per CP-031: every MVH-required role's `default_skills` MUST include the Beads-CLI skill per [docs/foundation/components.md §10.9]. Concrete instance of the general skill-injection pattern in §4.11 + [handler-contract.md §4.11]; roles MAY declare additional defaults; nodes MAY declare additional `required_skills` per [execution-model.md §4.2].
+
+      notes (CP-052, collapsed per §2.1a — pure cross-reference): CP-052 restates "Beads-CLI MUST be a default skill in every MVH-required role" with a single in-spec inline cite back to CP-031, plus a one-line "node-level declaration supplements role default" clarifier. No substantive impl work distinct from CP-031; tag req:CP-052 on this bead.
+
+  - mnem: cp-032
+    kind: req
+    req: CP-032
+    title: "Freedom profile is a per-state constraint bundle"
+    description: |
+      Per CP-032: a FreedomProfile MUST carry `tool_whitelist` (intersects role's `allowed_tools`), `writable_paths` (intersects role's `writable_paths`), `model_tier` (optional), `token_budget` (Budget name or inline), `wall_clock_budget` (Budget name or inline), `max_iterations` (positive integer). Freedom profiles compose by intersection per CP-033: tightest applicable profile wins on every field.
+
+  - mnem: cp-033
+    kind: req
+    req: CP-033
+    title: "Freedom-profile tightest-wins semantics"
+    description: |
+      Per CP-033: when multiple freedom profiles apply to a state, the effective profile is the per-field intersection: list-valued → set intersection; integer-valued → smaller value; `model_tier` → less-capable tier per the harmonik-level ordering declared in `_registry.yaml` tier table (MVH ordering: `haiku < sonnet < opus`). Enums without declared ordering are not composable by tightest-wins; both layers MUST declare compatible values or registration fails. Tightest-wins is deterministic and mechanism-tagged.
+
+  # ───────────────────────── §4.7 Policy expression grammar + documents ─────────────────────────
+
+  - mnem: cp-034
+    kind: req
+    req: CP-034
+    title: "Policy expressions use the `expr-lang/expr` grammar"
+    description: |
+      Per CP-034: the policy-expression grammar MUST be the grammar defined by `expr-lang/expr` (https://github.com/expr-lang/expr). Expressions evaluate against a typed environment: `run` (current Run record per [execution-model.md §4.3]), `outcome` (Outcome record per [execution-model.md §4.1]), `event` (matched event record in Hook context; nil otherwise), `context` (run's shared context map), `policy_meta` (policy document's `metadata` block). Expressions MUST be side-effect-free.
+
+  - mnem: cp-034b
+    kind: req
+    req: CP-034b
+    title: "Policy expression evaluation cost ceiling (AST-step + wall-clock)"
+    description: |
+      Per CP-034b: policy-expression evaluation MUST be performed with a harmonik-level cost ceiling NOT exposed as a policy-level knob. Two bounds: (1) PRIMARY — AST step count (deterministic, per-evaluation AST-visit count ceiling; implementations MUST wrap the evaluator if `expr-lang/expr` does not ship a step-counter; `expr.MaxNodes` is a complementary static bound, NOT a substitute); (2) SECONDARY — wall-clock soft-cap (best-effort backstop via `expr.Timeout`). A pathological expression MUST abort with typed `ErrDeterministic` per [handler-contract.md §4.5]. Abort + event emission are a durability pair: `policy_expression_exceeded_cost` event MUST reach JSONL durability per [event-model.md §4.4] BEFORE the evaluator wrapper returns. On crash between abort + event durability, replayer treats absence as unresolved (re-runs evaluator, relies on cost ceiling to re-abort, emits event on replay). Event payload carries `bound_fired ∈ {ast_steps, wall_clock}` discriminator + per-abort `io_determinism` tag.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-035
+    kind: req
+    req: CP-035
+    title: "Policy YAML document required sections"
+    description: |
+      Per CP-035: a policy YAML document MUST contain sections `metadata` (with `name`, `version`, `author`, `schema_version`), `roles[]`, `freedom_profiles[]`, `gates[]`, `hooks[]`, `guards[]`, `budgets[]`. Missing any required section is a validation error detected at registration time.
+
+  - mnem: cp-036
+    kind: req
+    req: CP-036
+    title: "DOT attributes reference policy YAML by name"
+    description: |
+      Per CP-036: DOT node + edge attributes `policy_ref`, `gate_ref`, `freedom_profile_ref`, `budget_ref` (per [execution-model.md §4.2]) MUST carry the `name` of a policy element registered per §4.9. DOT attributes MUST NOT embed policy bodies inline. Preserves the three-artifact separation per [architecture.md §4.10] (DOT = graph; YAML = policy; each separate artifact).
+
+  - mnem: cp-037
+    kind: req
+    req: CP-037
+    title: "Config-loading precedence"
+    description: |
+      Per CP-037: policy-source precedence (highest first): (1) runtime override set by operator before launch, (2) operator-policy file, (3) workflow definition (per-workflow overrides), (4) default configuration shipped with harmonik. Resolution is deep-merge with higher-precedence values replacing lower-precedence. A change to a higher-precedence layer takes effect on the next operator pause per [operator-nfr.md §4.3] — there are NO mid-run policy reloads.
+
+  - mnem: cp-038
+    kind: req
+    req: CP-038
+    title: "Policy schema version is per-document and N-1 readable"
+    description: |
+      Per CP-038: every policy YAML document MUST carry a `schema_version` integer in its `metadata` block. Readers MUST accept N-1 (the immediately prior schema version) per [operator-nfr.md §4.5]. Breaking changes require a migration release.
+
+  # ───────────────────────── §4.8 Cognition-tagged evaluator replay-safety ─────────────────────────
+
+  - mnem: cp-039
+    kind: req
+    req: CP-039
+    title: "Cognition-tagged evaluators name the delegation path"
+    description: |
+      Per CP-039: a cognition-tagged evaluator (Gate per §4.2, Hook per §4.3) MUST name its delegation path explicitly on the ControlPoint record: invoked role (from [architecture.md §4.8]), model class, input shape (declared input schema), response schema. A reviewer verifies the path at registration; unnamed paths fail registration.
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+
+  - mnem: cp-040
+    kind: req
+    req: CP-040
+    title: "Cognition-tagged evaluator verdict is persisted"
+    description: |
+      Per CP-040: every cognition-tagged evaluator's verdict MUST be persisted to the run's durable trace at invocation time as `GateVerdictRecord` (Gate) or `HookVerdictRecord` (Hook) per §6.1.6. For Gates, the record is written into the Transition record's `evidence` field per [execution-model.md §4.1] (keyed by `gate_name`) BEFORE the transition advances. For Hooks, the record is written to `.harmonik/hooks/<run_id>/<hook_invocation_id>.json` on the run's task branch per [workspace-model.md §4.2] and emitted as a `hook_verdict_persisted` event per [event-model.md §8.2].
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: cp-040a
+    kind: req
+    req: CP-040a
+    title: "Persisted verdict carries an input-envelope hash"
+    description: |
+      Per CP-040a: every persisted cognition-tagged verdict record MUST include an `input_envelope_hash` field computed deterministically over the evaluator's resolved input envelope. Canonical envelope inputs (5, computed in one cohesive function body per §2.2 F8b — single bead with sub-bullets):
+      • `expression_text` — full source text of the evaluator's mechanism-tagged expression (nil for pure-cognition evaluators).
+      • `prompt_template` — resolved prompt template body at the `prompt_template_ref` version pinned on the ControlPoint record (resolved body, not the ref).
+      • `skill_packages` — set of skill-package identifiers + versions snapshotted from the originating handler launch's `skills_provisioned` event (per CP-050).
+      • `context_subset` — subset of `run.context` reachable from the expression / prompt template via static AST walk; AST-walk reachability is the default mechanism (workflow-ingest per CP-035 emits a reachable-path set as a first-class by-product). Conservative fallback for non-AST-walkable templating: WHOLE `run.context` (any change busts the hash and escalates to Cat 6 per CP-041). Implementations MUST declare which mode they apply; mixing forbidden within a single ControlPoint.
+      • `policy_meta` — `metadata` block of the declaring policy document at its registered `schema_version`.
+      Hash algorithm MUST be SHA-256 over canonicalized JSON serialization in declared order. Hash co-stored with verdict. AST-walker reachability output is part of the replay-safety trust base.
+
+  - mnem: cp-041
+    kind: req
+    req: CP-041
+    title: "Replay consumes persisted verdict only when envelope hash matches"
+    description: |
+      Per CP-041: on replay or reconciliation-driven resume (per [reconciliation/spec.md §4.5]), a cognition-tagged evaluator MUST NOT be re-invoked when a persisted verdict exists for the same `{control_point_name, run_id, transition_id | event_id}` key AND the `input_envelope_hash` recomputed from the current envelope matches the stored hash. On envelope-hash match, replayer MUST read the persisted verdict from git and proceed. On MISMATCH, replayer MUST NOT silently re-invoke; replayer MUST emit a `verdict_envelope_mismatch` event and escalate to a Cat 6 reconciliation verdict path per [reconciliation/spec.md §4.2], the only authority that can authorize re-invocation. The §7.2 pseudocode is the SOLE invocation path for cognition-tagged evaluators across all Kinds. CP-012 is refined: a cognition-tagged Hook's evaluator is invoked directly ONLY on the original launch; every subsequent invocation routes through §7.2.
+
+  - mnem: cp-042
+    kind: req
+    req: CP-042
+    title: "Verdict persistence is the boundary between mechanism and cognition"
+    description: |
+      Per CP-042: persistence of the verdict is mechanism-tagged; production of the verdict is cognition-tagged. The two MUST split into separate operations per [architecture.md §4.1]: cognition-tagged evaluator produces the verdict record (idempotency=idempotent, since LLM is called freshly); mechanism-tagged persister writes it to git (idempotency=non-idempotent). Concrete application of the single-tag rule per spec-template §4.N+1.
+
+  # ───────────────────────── §4.9 ControlPoint registration ─────────────────────────
+
+  - mnem: cp-043
+    kind: req
+    req: CP-043
+    title: "Registry is a single in-process table owned by S02"
+    description: |
+      Per CP-043: the ControlPoint registry MUST be a single in-process table (Go map keyed by `name`) owned by S02 (Policy Engine). S02 constructs ControlPoint instances by reading policy YAML per §4.7 and calling the registration surface defined in CP-044. The registry is the single source of truth for registered ControlPoints within a daemon.
+
+  - mnem: cp-044
+    kind: req
+    req: CP-044
+    title: "Registration surface (re-registration-safe on identical body)"
+    description: |
+      Per CP-044: S02 MUST expose the Registry interface declared in §6.1.7. Registration is re-registration-safe on identical body: registering with already-registered `name` + identical body succeeds silently; different body under existing `name` MUST fail at startup with a specific error code. Body for equality purposes = `(kind, trigger, evaluator, payload)`; `name`, `axes`, `schema_version` are NOT part of the body (a schema-version bump on an otherwise-identical ControlPoint MUST NOT reject as divergent). Body equality computed over canonicalized serialization (field-order-independent, whitespace-normalized). Subsystems register ControlPoints during daemon init via subsystem envelope per [architecture.md §4.4].
+
+  - mnem: cp-045
+    kind: req
+    req: CP-045
+    title: "Registry scope is daemon-local"
+    description: |
+      Per CP-045: the registry MUST be daemon-scoped (process-scoped per [architecture.md §4.4]). Cross-daemon sharing MUST NOT occur; every per-project daemon maintains its own independent registry. Daemon restart rebuilds the registry from policy YAML as a startup step.
+
+  - mnem: cp-046
+    kind: req
+    req: CP-046
+    title: "Registry lookups are deterministic"
+    description: |
+      Per CP-046: all registry lookups declared in §6.1.7 (`LookupByName`, `LookupByTrigger`, `LookupByAttachPoint`) MUST be deterministic: identical registry state + identical query inputs produce identical outputs. List-returning lookups MUST apply a total ordering (by `name` ascending) before returning so iteration order is reproducible across Go runtime versions. The registry MUST NOT incorporate nondeterministic inputs (wall-clock time, PID, exposed map iteration order).
+
+  # ───────────────────────── §4.10 Ownership split ─────────────────────────
+
+  - mnem: cp-047
+    kind: req
+    req: CP-047
+    title: "S02 owns the registry; S05 owns Hook dispatch; S01 owns Gate + Guard invocation"
+    description: |
+      Per CP-047: S02 (Policy Engine) owns the §4.9 registry + registration path. S05 (Hook System) owns the Hook dispatch loop (subscribing, ordering per CP-014, side-effect application, failure isolation); S05 consults the registry but does NOT own it. S01 (Orchestrator Core) owns Gate + Guard invocation during the edge cascade (per [execution-model.md §4.10]); S01 consults the registry but does NOT own it. No other subsystem may invoke a ControlPoint except through these three owner paths.
+
+  - mnem: cp-048
+    kind: req
+    req: CP-048
+    title: "Control-point effects are observable only via events"
+    description: |
+      Per CP-048: every ControlPoint effect (Gate allow/deny/escalate, Hook side-effect, Guard reorder/error, Budget admit/warn/deny) MUST emit a typed event per [event-model.md §8]: `gate_allowed`, `gate_denied`, `gate_escalated`, `hook_fired`, `hook_failed`, `guard_reordered`, `guard_failed`, `budget_accrual`, `budget_warning`, `budget_exhausted`. No ControlPoint outcome may cross a subsystem boundary by any path other than a typed event.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  # ───────────────────────── §4.11 Skill declaration ─────────────────────────
+
+  - mnem: cp-049
+    kind: req
+    req: CP-049
+    title: "Nodes MAY declare `required_skills` (ingest-time syntactic validity)"
+    description: |
+      Per CP-049: a DOT workflow node MAY declare `required_skills` as (a) a comma-separated list of skill names as a DOT attribute value, or (b) a YAML policy reference via `policy_ref` naming a skill set declared in the §6.3 `skill_sets[]` block. Declared set is checked at workflow-ingest time per [execution-model.md §4.9] validation. Two fail-points: ingest-time syntactic validity (this spec) — every declared skill name MUST match the skill-name shape defined in [handler-contract.md §4.11]; syntactic violations fail workflow-ingest (`ErrDeterministic`). Launch-time package resolution (handler-contract) — a syntactically-valid name that does not resolve to an installed package produces `ErrSkillProvisioningFailed`. Declaration-time is this spec's surface; resolution-time is handler-contract's. Covering partition.
+
+  - mnem: cp-050
+    kind: req
+    req: CP-050
+    title: "Effective skill set is the union of node-level and role-default skills"
+    description: |
+      Per CP-050: the effective skill set for an agent launched into a node MUST be the set-union of (a) the node's declared `required_skills` and (b) the assigned role's `default_skills` per CP-028. This spec owns the UNION computation. Consumption — resolution against available skill packages, provisioning into agent process shape, emission of `skills_provisioned` event, fail-launch on resolution failure — is owned entirely by [handler-contract.md §4.11]; CP-050 does not re-specify those mechanics.
+
+  - mnem: cp-051
+    kind: req
+    req: CP-051
+    title: "Skill declaration is mechanism-tagged"
+    description: |
+      Per CP-051: skill declaration, resolution, and provisioning MUST be mechanism-tagged: no cognition participates in determining the effective skill set. The skill contents themselves (prompts, tool definitions packaged inside a skill) MAY be consumed by cognition at runtime, but the pipeline from declaration to provisioning is deterministic.
+
+  # ───────────────────────── §5 invariants ─────────────────────────
+
+  - mnem: cp-inv-001
+    kind: invariant
+    req: CP-INV-001
+    title: "Sensor: registry is the single source of truth"
+    description: |
+      Per CP-INV-001: every ControlPoint observable by the daemon MUST be resolvable through the §4.9 registry. No subsystem may maintain a private ControlPoint store, a shadow registry, or a lazy-resolved ControlPoint surface. Divergence between the registry and any subsystem-local cache is a structural invariant violation. Sensor: §10.2 group CP-043..CP-046 — invariant test asserts registry-lookup uniqueness via cross-subsystem inspection (no shadow store).
+
+  - mnem: cp-inv-002
+    kind: invariant
+    req: CP-INV-002
+    title: "Sensor: control-point effects are observable only through events"
+    description: |
+      Per CP-INV-002: every ControlPoint effect that crosses a subsystem boundary MUST be observable through one of the typed events declared in CP-048. No ControlPoint outcome may be communicated across subsystems by shared memory, direct method call across an owner boundary, or out-of-band signal. Sensor: §10.2 group CP-047..CP-048 — cross-subsystem tests verifying no ControlPoint effect crosses a boundary by any path other than a typed event.
+
+  - mnem: cp-inv-003
+    kind: invariant
+    req: CP-INV-003
+    title: "Sensor: cognition-tagged evaluators never silently re-invoke during replay"
+    description: |
+      Per CP-INV-003: for every cognition-tagged evaluator invocation that has a persisted verdict on the run's task branch with a matching `input_envelope_hash` per CP-040a, replay MUST consume the persisted verdict. On envelope-hash mismatch, replay MUST escalate to Cat 6 rather than re-invoke silently. Re-invocation during replay is permitted ONLY under an explicit Cat 6 reconciliation verdict per [reconciliation/spec.md §4.2]. Any replay path that silently re-invokes a model — whether because the verdict is missing, the envelope has drifted, or the replayer ignored the hash check — violates this invariant. Sensor: §10.2 group CP-039..CP-042 — replay-safety harness tests (envelope-hash determinism; hash-match-replay-reads-persisted; hash-mismatch-Cat-6-escalation; Cat-6 stale-verdict re-invocation).
+
+  # ───────────────────────── §6 schema beads (24) ─────────────────────────
+
+  # §6.1 ControlPoint primitive shapes
+
+  - mnem: cp-schema.control-point
+    kind: schema
+    schema_kind: schema
+    title: "Define `ControlPoint` record (§6.1)"
+    description: |
+      Implement the 9-field RECORD: name (String, unique within daemon registry); kind (Kind enum); trigger (Trigger record, Kind-specific); evaluator (Evaluator record, mechanism- or cognition-tagged); outcome_action (OutcomeAction enum, one of the Kind's declared enum); payload (KindPayload, typed per Kind per §6.1.1–§6.1.4); axes (AxisTags, four-axis tags per [architecture.md §4.1]); mode_tag (ModeTag, one of {mechanism, cognition}); schema_version (Integer, N-1 readable per CP-038).
+
+  - mnem: cp-schema.kind
+    kind: schema
+    schema_kind: enum
+    title: "Define `Kind` enum (§6.1)"
+    description: |
+      Implement the 4-value ENUM: Gate, Hook, Guard, Budget. Discriminator for ControlPoint payload + per-Kind semantics table (§4.1.CP-005).
+
+  - mnem: cp-schema.evaluator
+    kind: schema
+    schema_kind: schema
+    title: "Define `Evaluator` record (§6.1)"
+    description: |
+      Implement the 3-field RECORD: mode (ModeTag, one of mechanism | cognition); expression (PolicyExpression | None, set when mode = mechanism); delegation_path (DelegationPath | None, set when mode = cognition per §6.1.5).
+
+  # §6.1.1 Gate payload
+
+  - mnem: cp-schema.gate-payload
+    kind: schema
+    schema_kind: schema
+    title: "Define `GatePayload` record (§6.1.1)"
+    description: |
+      Implement the 4-field RECORD: subtype (GateSubtype enum, one of goal-gate | approval-gate | quality-gate); attach_point (AttachPoint enum, one of node-pre-entry | node-post-exit | edge-before-selection | edge-after-selection); named_approver (String | None, REQUIRED when subtype = approval-gate); verification_ref (String | None, REQUIRED when subtype = quality-gate).
+
+  - mnem: cp-schema.gate-subtype
+    kind: schema
+    schema_kind: enum
+    title: "Define `GateSubtype` enum (§6.1.1)"
+    description: |
+      Implement the 3-value ENUM: goal-gate, approval-gate, quality-gate. Subtype is informative for operators per CP-008; enforcement uses evaluator + outcome-action fields only.
+
+  - mnem: cp-schema.attach-point
+    kind: schema
+    schema_kind: enum
+    title: "Define `AttachPoint` enum (§6.1.1)"
+    description: |
+      Implement the 4-value ENUM: node-pre-entry, node-post-exit, edge-before-selection, edge-after-selection. Drives Gate ordering per CP-007 (declaration order + first-non-allow short-circuit at the same attach point).
+
+  # §6.1.2 Hook payload
+
+  - mnem: cp-schema.hook-payload
+    kind: schema
+    schema_kind: schema
+    title: "Define `HookPayload` record (§6.1.2)"
+    description: |
+      Implement the 5-field RECORD: trigger_event (String, event name from registered lifecycle set per CP-013); subscription_filter (PolicyExpression | None, optional filter over event payload); side_effect_kind (SideEffectKind enum, one of emit-event | state-mutation | external-action); halt_on_failure (Bool, default false; see CP-015); subsystem_priority (Integer, declared by subsystem envelope per CP-014 ordering).
+
+  - mnem: cp-schema.side-effect-kind
+    kind: schema
+    schema_kind: enum
+    title: "Define `SideEffectKind` enum (§6.1.2)"
+    description: |
+      Implement the 3-value ENUM: emit-event, state-mutation, external-action. Discriminator for SideEffect.target interpretation (event name | state key | effector id).
+
+  # §6.1.3 Guard payload
+
+  - mnem: cp-schema.guard-payload
+    kind: schema
+    schema_kind: schema
+    title: "Define `GuardPayload` record (§6.1.3)"
+    description: |
+      Implement the 1-field RECORD: applies_to_node (String | None, node_id scoping the guard; None = all). Intentionally thin per §6.1.3 NOTE; reorder logic lives entirely in the evaluator (mechanism-only per CP-020).
+
+  # §6.1.4 Budget payload
+
+  - mnem: cp-schema.budget-payload
+    kind: schema
+    schema_kind: schema
+    title: "Define `BudgetPayload` record (§6.1.4)"
+    description: |
+      Implement the 5-field RECORD: resource (BudgetResource enum, one of tokens | wall_clock_seconds | iterations); scope (BudgetScope enum, one of per_role | per_run | per_state); limit (Integer, positive, allowance ceiling); warning_threshold (Float, ratio in [0, 1], default 0.8 per CP-022); scope_target (ScopeTarget, wildcard | predicate | list | singleton per §6.1.4 declaration).
+
+  - mnem: cp-schema.scope-target
+    kind: schema
+    schema_kind: schema
+    title: "Define `ScopeTarget` syntactic shape (§6.1.4)"
+    description: |
+      Implement the 4-shape primitive: "*" (wildcard, matches every target of declared scope); "node_type:<type>" (predicate, matches targets with declared attribute); ["<id-1>", "<id-2>", ...] (list, matches enumerated targets); "<single-id>" (singleton, role name | run_id | state_id per scope). Constrained string-or-list primitive.
+    extra_labels:
+      - "kind:primitive-shape"
+
+  - mnem: cp-schema.budget-resource
+    kind: schema
+    schema_kind: enum
+    title: "Define `BudgetResource` enum (§6.1.4)"
+    description: |
+      Implement the 3-value ENUM: tokens, wall_clock_seconds, iterations. Drives tightest-applicable-Budget composition per CP-022 (smaller integer `limit` for the same `resource` wins).
+
+  - mnem: cp-schema.budget-scope
+    kind: schema
+    schema_kind: enum
+    title: "Define `BudgetScope` enum (§6.1.4)"
+    description: |
+      Implement the 3-value ENUM: per_role, per_run, per_state. Scope drives ScopeTarget interpretation (role name | run_id | state_id for singleton form).
+
+  # §6.1.5 Delegation path
+
+  - mnem: cp-schema.delegation-path
+    kind: schema
+    schema_kind: schema
+    title: "Define `DelegationPath` record (§6.1.5)"
+    description: |
+      Implement the 5-field RECORD: role (String, role name per [architecture.md §4.8]); model_class (String, e.g., "reviewer-tier-1"); input_schema_ref (String, registered input schema name); response_schema_ref (String, registered response schema name); prompt_template_ref (String, registered prompt template provisioned via skill per §4.11).
+
+  # §6.1.6 Verdict records + side-effect descriptor
+
+  - mnem: cp-schema.gate-verdict-record
+    kind: schema
+    schema_kind: schema
+    title: "Define `GateVerdictRecord` (§6.1.6)"
+    description: |
+      Implement the 6-field RECORD: gate_name (String, ControlPoint name); action (GateAction enum, one of allow | deny | escalate-to-human); reason (String | None, REQUIRED when action != allow); cognition_meta (CognitionMeta | None, set when verdict produced by cognition-tagged evaluator); input_envelope_hash (String, SHA-256 hex per CP-040a); produced_at (Timestamp, monotonic-clock-safe).
+
+  - mnem: cp-schema.hook-verdict-record
+    kind: schema
+    schema_kind: schema
+    title: "Define `HookVerdictRecord` (§6.1.6)"
+    description: |
+      Implement the 8-field RECORD: hook_name (String, ControlPoint name); invocation_id (UUID, unique per Hook firing); side_effect (SideEffect descriptor produced by evaluator); failed (Bool, true when evaluator returned typed failure); reason (String | None); cognition_meta (CognitionMeta | None); input_envelope_hash (String, SHA-256 hex per CP-040a); produced_at (Timestamp).
+
+  - mnem: cp-schema.cognition-meta
+    kind: schema
+    schema_kind: schema
+    title: "Define `CognitionMeta` record (§6.1.6)"
+    description: |
+      Implement the 3-field RECORD: delegation_path (DelegationPath, snapshot of path used per §6.1.5); model_response_digest (String, hash of raw model output for audit); token_usage (Integer | None, tokens consumed producing the verdict).
+
+  - mnem: cp-schema.side-effect
+    kind: schema
+    schema_kind: schema
+    title: "Define `SideEffect` record (§6.1.6)"
+    description: |
+      Implement the 4-field RECORD: kind (SideEffectKind enum, one of emit-event | state-mutation | external-action); target (String, event name | state key | effector id per kind); payload (Map<String, Any>, opaque to this spec; interpreted by S05 dispatcher per CP-016); idempotency_class (IdempotencyClass enum, one of idempotent | non-idempotent per CP-016).
+
+  - mnem: cp-schema.idempotency-class
+    kind: schema
+    schema_kind: enum
+    title: "Define `IdempotencyClass` enum (§6.1.6)"
+    description: |
+      Implement the 2-value ENUM: idempotent (S05 MAY deliver duplicates; handlers accept retry safely); non-idempotent (S05 MUST bound delivery to at-most-once via persisted receipt). Drives at-least-once vs at-most-once delivery per CP-016.
+
+  - mnem: cp-schema.gate-action
+    kind: schema
+    schema_kind: enum
+    title: "Define `GateAction` enum (§6.1.6)"
+    description: |
+      Implement the 3-value ENUM: allow, deny, escalate-to-human. Drives Gate outcome interpretation per CP-006 + CP-009 (deny → run remains in source state; escalate → quarantine pending external resolution).
+
+  # §6.1.7 Registry interface
+
+  - mnem: cp-schema.registry
+    kind: schema
+    schema_kind: interface
+    title: "Define `Registry` interface (§6.1.7)"
+    description: |
+      Implement the 5-method INTERFACE: Register(cp) -> error (re-registration-safe on identical body per CP-044; fails on divergent body under existing name); LookupByName(name) -> (ControlPoint, Bool) (deterministic; Bool false when name not registered); LookupByTrigger(trigger) -> List<ControlPoint> (Hooks/Gates whose trigger matches; sorted by name ascending); LookupByAttachPoint(attach_point) -> List<ControlPoint> (Gates at named attach point; sorted by declaration order); All() -> List<ControlPoint> (every registered ControlPoint in name-ascending order; used by §7.1 post-registration audit). Each method MUST satisfy CP-046 (determinism). Daemon-scoped per CP-045; owned by S02 per CP-047.
+
+  # §6.2 Role + freedom-profile schemas
+
+  - mnem: cp-schema.role
+    kind: schema
+    schema_kind: schema
+    title: "Define `Role` record (§6.2)"
+    description: |
+      Implement the 3-field RECORD: name (String, per [architecture.md §4.8]); permission_schema (PermissionSchema record); status (RoleStatus enum, one of mvh-required | declared-but-deferred). RoleStatus discriminates CP-029 (concrete defaults) from CP-030 (empty shells).
+
+  - mnem: cp-schema.permission-schema
+    kind: schema
+    schema_kind: schema
+    title: "Define `PermissionSchema` record (§6.2)"
+    description: |
+      Implement the 7-field RECORD: allowed_tools (List<String>); writable_paths (List<String>, workspace-relative globs); readable_paths (List<String>, default ["**"]); model_tier (String | None); default_skills (List<String>; MUST include "beads-cli" for MVH roles per CP-031); allowed_hooks (List<String>, Hook names that may modify behavior); invocable_by (List<String>, role names permitted to spawn this role).
+
+  - mnem: cp-schema.freedom-profile
+    kind: schema
+    schema_kind: schema
+    title: "Define `FreedomProfile` record (§6.2)"
+    description: |
+      Implement the 7-field RECORD: name (String); tool_whitelist (List<String>); writable_paths (List<String>); model_tier (String | None); token_budget_ref (String | None, Budget name per §4.5); wall_clock_budget_ref (String | None, Budget name per §4.5); max_iterations (Integer). Composes by intersection per CP-032 / CP-033 (tightest-wins).
+
+  # ───────────────────────── §8 error taxonomy ─────────────────────────
+  # Per CP §8: "Not applicable as a separate taxonomy; ControlPoint failures map onto
+  # the execution-model failure classes per [execution-model.md §8]." NO cp-error.taxonomy
+  # bead minted. Consumers (CP-015, CP-023, CP-027, CP-034b) block-on em-error.taxonomy
+  # directly per discipline §2.6 schema-cite direction (F-pilot-CP-1, F-pilot-CP-3).
+
+  # ───────────────────────── Test-infra beads (5) ─────────────────────────
+
+  - mnem: cp-test.policy-yaml-fixture
+    kind: test-infra
+    title: "Policy-YAML required-section + config-precedence + N-1-readability fixture"
+    description: |
+      Per §10.2 (CP-034..CP-038): canonical policy-YAML fixtures covering required-section validation (CP-035 missing-section rejection); deep-merge config-precedence arithmetic across the 4 layers (runtime override > operator-policy file > workflow definition > default config per CP-037); N-1 schema readability (CP-038); `expr-lang/expr` round-trip on each section's expressions (CP-034 environment binding); DOT-attribute name-resolution against §6.3 sections (CP-036, no inline policy bodies). Foundation policy-loading harness for CP + downstream subsystem tests.
+
+  - mnem: cp-test.cost-ceiling-harness
+    kind: test-infra
+    title: "Policy-expression cost-ceiling harness (AST-step + wall-clock)"
+    description: |
+      Per §10.2 (CP-034b): pathologically-deep expressions exercising primary AST-step bound (deterministic; `bound_fired=ast_steps`); pathologically-slow expressions exercising secondary wall-clock backstop (`bound_fired=wall_clock`); abort-and-emit durability pair test — crash injection between the abort and the `policy_expression_exceeded_cost` event reaching JSONL durability triggers replay re-abort, NOT silent drop; per-abort `io_determinism` tag verification.
+
+  - mnem: cp-test.replay-safety-harness
+    kind: test-infra
+    title: "Cognition-tagged replay-safety harness (envelope hash + Cat-6 escalation)"
+    description: |
+      Per §10.2 (CP-039..CP-042 + CP-INV-003): verdict-persistence-at-invocation tests (Gate writes to Transition.evidence keyed by gate_name BEFORE transition advances; Hook writes to .harmonik/hooks/<run_id>/<id>.json + emits hook_verdict_persisted); envelope-hash computation determinism tests (CP-040a 5-input canonical-JSON SHA-256, AST-walker reachability stable across runtime versions); replay-reads-persisted-verdict-on-hash-match (no second model call observable); replay-escalates-to-Cat-6-on-hash-mismatch (verdict_envelope_mismatch event emission + reconciliation/spec.md §4.2 routing); Cat-6 stale-verdict re-invocation tests.
+
+  - mnem: cp-test.budget-replay-fixture
+    kind: test-infra
+    title: "Budget JSONL-replay rehydration fixture"
+    description: |
+      Per §10.2 (CP-022..CP-027 + CP-026a): canonical run with N in-flight runs at daemon restart; JSONL log carrying `run_started` + budget_accrual events for each; rehydration must sum-from-`run_started` per-Budget deltas to reconstruct pre-crash counter state; rehydration MUST complete BEFORE handler accepts any dispatch (CP-023); double-spend negative case (in-flight run started with zero counter when prior accruals exist → defect); reconciliation wall-clock outer-bound composition test (CP-027) — admissible-under-inner-but-exceeds-outer-remaining → DENIED with `budget_exhausted`.
+
+  - mnem: cp-test.registration-fixture
+    kind: test-infra
+    title: "Two-pass registration fixture (idempotency, divergent-body, batch-id pairing)"
+    description: |
+      Per §10.2 (CP-043..CP-046 + CP-INV-001 + §7.1 registration sequence): idempotent-by-name tests (re-register identical body succeeds silently); divergent-body rejection tests; daemon-local scope (no cross-daemon sharing); deterministic-lookup tests (LookupByName / LookupByTrigger / LookupByAttachPoint return reproducible orderings); cognition-Guard rejection at registration (CP-020); two-pass cross-document reference resolution (§7.1 OQ-CP-005 default — all policies parsed before registration; missing refs fail startup); `control_points_registration_started` / `control_points_registered` batch_id pairing — absence of `_registered` paired with prior `_started` of the same batch_id signals crashed-mid-registration; replay rebuilds from policy YAML.
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples.
+#
+# Mnemonic prefix selects resolution map:
+#   cp-* → intra-spec (this spec's mnem-map, generated at load)
+#   ar-* / em-* / ev-* / hc-* → cross-spec (resolved against cross_specs[<prefix>])
+#   forward:* → forward-deferred (logged only, NOT loaded into beads)
+edges:
+  # ───────────────────────── Intra-CP edges ─────────────────────────
+
+  # §4.1 unified primitive — schema dependencies + intra-spec term-uses
+  - {from: cp-001, to: cp-schema.control-point}
+  - {from: cp-001, to: cp-schema.kind}
+  - {from: cp-002, to: cp-schema.control-point}
+  - {from: cp-003, to: cp-schema.evaluator}
+  - {from: cp-004, to: cp-schema.kind}
+  - {from: cp-004, to: cp-001}                     # term-use: "ControlPoint" defined by cp-001
+  - {from: cp-004, to: cp-schema.gate-payload}
+  - {from: cp-004, to: cp-schema.hook-payload}
+  - {from: cp-004, to: cp-schema.guard-payload}
+  - {from: cp-004, to: cp-schema.budget-payload}
+
+  # §4.2 Gate semantics
+  - {from: cp-006, to: cp-004}                     # Gate row in §4.1 table
+  - {from: cp-006, to: cp-schema.gate-payload}
+  - {from: cp-006, to: cp-schema.gate-action}
+  - {from: cp-007, to: cp-schema.attach-point}
+  - {from: cp-007, to: cp-006}                     # term-use: "Gate" defined by cp-006
+  - {from: cp-008, to: cp-schema.gate-subtype}
+  - {from: cp-008, to: cp-006}
+  - {from: cp-009, to: cp-006}
+  - {from: cp-009, to: cp-schema.gate-action}
+  - {from: cp-010, to: cp-006}
+  - {from: cp-010, to: cp-043}                     # term-use: "registry" (cp-043 owns)
+  - {from: cp-011, to: cp-006}
+  - {from: cp-011, to: cp-040}                     # term-use: "replay-safety contract" / persisted-verdict (cp-040 owns)
+
+  # §4.3 Hook semantics
+  - {from: cp-012, to: cp-004}                     # Hook row in §4.1 table
+  - {from: cp-012, to: cp-schema.hook-payload}
+  - {from: cp-012, to: cp-schema.side-effect}
+  - {from: cp-013, to: cp-012}
+  - {from: cp-014, to: cp-012}
+  - {from: cp-015, to: cp-012}
+  - {from: cp-016, to: cp-012}
+  - {from: cp-016, to: cp-043}
+  - {from: cp-016, to: cp-schema.idempotency-class}
+  - {from: cp-017, to: cp-012}
+  - {from: cp-017, to: cp-040}
+  - {from: cp-017, to: cp-schema.delegation-path}
+
+  # §4.4 Guard semantics
+  - {from: cp-018, to: cp-004}                     # Guard row in §4.1 table
+  - {from: cp-018, to: cp-schema.guard-payload}
+  - {from: cp-019, to: cp-018}
+  - {from: cp-020, to: cp-018}
+  - {from: cp-021, to: cp-018}
+  - {from: cp-021, to: cp-043}
+
+  # §4.5 Budget semantics
+  - {from: cp-022, to: cp-004}                     # Budget row in §4.1 table
+  - {from: cp-022, to: cp-schema.budget-payload}
+  - {from: cp-022, to: cp-schema.budget-resource}
+  - {from: cp-022, to: cp-schema.budget-scope}
+  - {from: cp-022, to: cp-schema.scope-target}
+  - {from: cp-023, to: cp-022}
+  - {from: cp-024, to: cp-022}
+  - {from: cp-025, to: cp-022}
+  - {from: cp-025, to: cp-024}                     # warning fires off cumulative accrual
+  - {from: cp-026, to: cp-022}
+  - {from: cp-026a, to: cp-026}
+  - {from: cp-026a, to: cp-024}                    # rehydrates by replaying budget_accrual events
+  - {from: cp-026a, to: cp-023}                    # rehydration completes BEFORE dispatch accepts
+  - {from: cp-027, to: cp-022}
+
+  # §4.6 Roles + freedom profiles
+  - {from: cp-028, to: cp-schema.role}
+  - {from: cp-028, to: cp-schema.permission-schema}
+  - {from: cp-029, to: cp-028}
+  - {from: cp-030, to: cp-028}
+  - {from: cp-031, to: cp-028}                     # default_skills field is on PermissionSchema (CP-028)
+  - {from: cp-032, to: cp-schema.freedom-profile}
+  - {from: cp-032, to: cp-022}                     # FreedomProfile.token_budget / wall_clock_budget reference Budgets
+  - {from: cp-033, to: cp-032}
+
+  # §4.7 Policy expression grammar + documents
+  - {from: cp-034, to: cp-003}                     # mechanism-tagged classifier from cp-003
+  - {from: cp-034b, to: cp-034}
+  - {from: cp-035, to: cp-028}
+  - {from: cp-035, to: cp-032}
+  - {from: cp-035, to: cp-006}                     # policy YAML's gates[] section consumes Gate
+  - {from: cp-035, to: cp-012}                     # hooks[]
+  - {from: cp-035, to: cp-018}                     # guards[]
+  - {from: cp-035, to: cp-022}                     # budgets[]
+  - {from: cp-036, to: cp-035}
+  - {from: cp-036, to: cp-002}                     # DOT refs resolve to registered NAMES
+  - {from: cp-037, to: cp-035}
+  - {from: cp-038, to: cp-035}
+
+  # §4.8 Cognition-tagged evaluator replay-safety
+  - {from: cp-039, to: cp-003}                     # cognition-tagged classifier
+  - {from: cp-039, to: cp-schema.delegation-path}
+  - {from: cp-040, to: cp-039}
+  - {from: cp-040, to: cp-schema.gate-verdict-record}
+  - {from: cp-040, to: cp-schema.hook-verdict-record}
+  - {from: cp-040a, to: cp-040}
+  - {from: cp-040a, to: cp-035}                    # workflow-ingest emits reachable-path set as by-product
+  - {from: cp-040a, to: cp-050}                    # skills_provisioned event payload (snapshot source)
+  - {from: cp-041, to: cp-040}
+  - {from: cp-041, to: cp-040a}
+  - {from: cp-042, to: cp-040}
+
+  # §4.9 ControlPoint registration
+  - {from: cp-043, to: cp-001}                     # registry holds ControlPoints
+  - {from: cp-044, to: cp-043}
+  - {from: cp-044, to: cp-schema.registry}
+  - {from: cp-045, to: cp-043}
+  - {from: cp-046, to: cp-043}
+  - {from: cp-046, to: cp-schema.registry}
+
+  # §4.10 Ownership split
+  - {from: cp-047, to: cp-043}
+  - {from: cp-047, to: cp-016}                     # S05 dispatch ownership claim
+  - {from: cp-047, to: cp-010}                     # S01 Gate invocation ownership claim
+  - {from: cp-047, to: cp-021}                     # S01 Guard invocation ownership claim
+  - {from: cp-048, to: cp-006}                     # gate_allowed/denied/escalated emission origins
+  - {from: cp-048, to: cp-012}                     # hook_fired/failed
+  - {from: cp-048, to: cp-018}                     # guard_reordered/failed
+  - {from: cp-048, to: cp-023}                     # budget_exhausted
+  - {from: cp-048, to: cp-024}                     # budget_accrual
+  - {from: cp-048, to: cp-025}                     # budget_warning
+
+  # §4.11 Skill declaration
+  - {from: cp-049, to: cp-schema.permission-schema}  # default_skills field
+  - {from: cp-050, to: cp-049}
+  - {from: cp-050, to: cp-028}
+  - {from: cp-051, to: cp-049}
+  - {from: cp-051, to: cp-003}                     # mechanism-tagged classifier from cp-003
+
+  # Schema-internal dependencies
+  - {from: cp-schema.evaluator, to: cp-schema.delegation-path}
+  - {from: cp-schema.control-point, to: cp-schema.evaluator}
+  - {from: cp-schema.control-point, to: cp-schema.kind}
+  - {from: cp-schema.gate-payload, to: cp-schema.gate-subtype}
+  - {from: cp-schema.gate-payload, to: cp-schema.attach-point}
+  - {from: cp-schema.hook-payload, to: cp-schema.side-effect-kind}
+  - {from: cp-schema.budget-payload, to: cp-schema.budget-resource}
+  - {from: cp-schema.budget-payload, to: cp-schema.budget-scope}
+  - {from: cp-schema.budget-payload, to: cp-schema.scope-target}
+  - {from: cp-schema.gate-verdict-record, to: cp-schema.gate-action}
+  - {from: cp-schema.gate-verdict-record, to: cp-schema.cognition-meta}
+  - {from: cp-schema.hook-verdict-record, to: cp-schema.side-effect}
+  - {from: cp-schema.hook-verdict-record, to: cp-schema.cognition-meta}
+  - {from: cp-schema.cognition-meta, to: cp-schema.delegation-path}
+  - {from: cp-schema.side-effect, to: cp-schema.side-effect-kind}
+  - {from: cp-schema.side-effect, to: cp-schema.idempotency-class}
+  - {from: cp-schema.role, to: cp-schema.permission-schema}
+  - {from: cp-schema.freedom-profile, to: cp-schema.budget-payload}    # token/wall_clock budget refs
+
+  # §5 invariant sensor edges (per discipline §2.5 four-source enumeration)
+  # Sensor-block body inline cites + §10.2 conformance-group prose cites.
+  - {from: cp-inv-001, to: cp-043}
+  - {from: cp-inv-001, to: cp-044}
+  - {from: cp-inv-001, to: cp-045}
+  - {from: cp-inv-001, to: cp-046}
+  - {from: cp-inv-002, to: cp-047}
+  - {from: cp-inv-002, to: cp-048}
+  - {from: cp-inv-003, to: cp-039}
+  - {from: cp-inv-003, to: cp-040}
+  - {from: cp-inv-003, to: cp-040a}
+  - {from: cp-inv-003, to: cp-041}
+  - {from: cp-inv-003, to: cp-042}
+
+  # Test-infra wiring (citing reqs / sensors → test-infra fixture)
+  - {from: cp-035, to: cp-test.policy-yaml-fixture}
+  - {from: cp-036, to: cp-test.policy-yaml-fixture}
+  - {from: cp-037, to: cp-test.policy-yaml-fixture}
+  - {from: cp-038, to: cp-test.policy-yaml-fixture}
+  - {from: cp-034, to: cp-test.policy-yaml-fixture}
+  - {from: cp-034b, to: cp-test.cost-ceiling-harness}
+  - {from: cp-039, to: cp-test.replay-safety-harness}
+  - {from: cp-040, to: cp-test.replay-safety-harness}
+  - {from: cp-040a, to: cp-test.replay-safety-harness}
+  - {from: cp-041, to: cp-test.replay-safety-harness}
+  - {from: cp-042, to: cp-test.replay-safety-harness}
+  - {from: cp-inv-003, to: cp-test.replay-safety-harness}
+  - {from: cp-022, to: cp-test.budget-replay-fixture}
+  - {from: cp-023, to: cp-test.budget-replay-fixture}
+  - {from: cp-024, to: cp-test.budget-replay-fixture}
+  - {from: cp-025, to: cp-test.budget-replay-fixture}
+  - {from: cp-026, to: cp-test.budget-replay-fixture}
+  - {from: cp-026a, to: cp-test.budget-replay-fixture}
+  - {from: cp-027, to: cp-test.budget-replay-fixture}
+  - {from: cp-043, to: cp-test.registration-fixture}
+  - {from: cp-044, to: cp-test.registration-fixture}
+  - {from: cp-045, to: cp-test.registration-fixture}
+  - {from: cp-046, to: cp-test.registration-fixture}
+  - {from: cp-020, to: cp-test.registration-fixture}    # cognition-Guard rejection at registration
+  - {from: cp-inv-001, to: cp-test.registration-fixture}
+
+  # ───────────────────────── Cross-spec AR edges ─────────────────────────
+  # AR is in CP's depends-on (architecture). Edges resolve directly.
+  - {from: cp-003, to: ar-005}                     # mechanism/cognition classifier (AR §4.1)
+  - {from: cp-003, to: ar-006}
+  - {from: cp-003, to: ar-007}
+  - {from: cp-008, to: ar-039}                     # role taxonomy (AR §4.8) — Hook delegation path role (F-refs-CP-1 r1 patch; mirrors cp-017/028/029/030/039)
+  - {from: cp-008, to: ar-040}
+  - {from: cp-008, to: ar-041}
+  - {from: cp-008, to: ar-042}
+  - {from: cp-013, to: ar-013}                     # subsystem envelope (AR §4.4)
+  - {from: cp-013, to: ar-014}
+  - {from: cp-017, to: ar-039}                     # role taxonomy (AR §4.8) — cognition delegation path role
+  - {from: cp-017, to: ar-040}
+  - {from: cp-017, to: ar-041}
+  - {from: cp-017, to: ar-042}
+  - {from: cp-020, to: ar-005}                     # ZFC (AR §4.2) → axis-tag rules
+  - {from: cp-020, to: ar-006}
+  - {from: cp-020, to: ar-007}
+  - {from: cp-028, to: ar-039}                     # role names + semantics (AR §4.8)
+  - {from: cp-028, to: ar-040}
+  - {from: cp-028, to: ar-041}
+  - {from: cp-028, to: ar-042}
+  - {from: cp-029, to: ar-039}
+  - {from: cp-029, to: ar-040}
+  - {from: cp-029, to: ar-041}
+  - {from: cp-029, to: ar-042}
+  - {from: cp-030, to: ar-020}                     # foundation amendment (AR §4.6)
+  - {from: cp-030, to: ar-039}
+  - {from: cp-030, to: ar-040}
+  - {from: cp-030, to: ar-041}
+  - {from: cp-030, to: ar-042}
+  - {from: cp-036, to: ar-052}                     # three-artifact separation (AR §4.10)
+  - {from: cp-036, to: ar-053}
+  - {from: cp-039, to: ar-039}                     # delegation path's role from AR §4.8
+  - {from: cp-039, to: ar-040}
+  - {from: cp-039, to: ar-041}
+  - {from: cp-039, to: ar-042}
+  - {from: cp-042, to: ar-005}                     # split per [architecture.md §4.1] — boundary classification (hard dep)
+  - {from: cp-042, to: ar-006}
+  - {from: cp-042, to: ar-007}
+  - {from: cp-043, to: ar-013}                     # subsystem envelope at registration
+  - {from: cp-043, to: ar-014}
+  - {from: cp-044, to: ar-013}
+  - {from: cp-044, to: ar-014}
+  - {from: cp-045, to: ar-013}
+  - {from: cp-045, to: ar-014}
+  - {from: cp-schema.role, to: ar-039}
+  - {from: cp-schema.role, to: ar-040}
+  - {from: cp-schema.role, to: ar-041}
+  - {from: cp-schema.role, to: ar-042}
+  - {from: cp-schema.delegation-path, to: ar-039}
+  - {from: cp-schema.delegation-path, to: ar-040}
+  - {from: cp-schema.delegation-path, to: ar-041}
+  - {from: cp-schema.delegation-path, to: ar-042}
+
+  # ───────────────────────── Cross-spec EM edges ─────────────────────────
+  # EM is in CP's depends-on (execution-model).
+  - {from: cp-002, to: em-008}                     # DOT attributes carrier (gate_ref/policy_ref/freedom_profile_ref/budget_ref)
+  - {from: cp-009, to: em-008}                     # node retry policy lives at em-008
+  - {from: cp-018, to: em-042}                     # cascade owner (Guards reorder; Gates permit/deny)
+  - {from: cp-019, to: em-042}                     # Guards run BEFORE condition cascade
+  - {from: cp-019, to: em-041}                     # cascade rules
+  - {from: cp-023, to: em-error.taxonomy}          # failure class budget_exhausted lives in EM §8
+  - {from: cp-027, to: em-error.taxonomy}
+  - {from: cp-031, to: em-008}                     # required_skills field on em-008
+  - {from: cp-034, to: em-005}                     # Outcome record (EM §4.1)
+  - {from: cp-034, to: em-012}                     # Run record (EM §4.3)
+  - {from: cp-034, to: em-schema.outcome}          # type-cite to Outcome shape
+  - {from: cp-034, to: em-schema.run}              # type-cite to Run shape
+  - {from: cp-036, to: em-008}                     # DOT attributes carrier
+  - {from: cp-040, to: em-schema.transition}       # Transition.evidence field per [EM §4.1]
+  - {from: cp-047, to: em-042}                     # cascade is owned by S01
+  - {from: cp-049, to: em-040}                     # workflow-ingest validation (EM §4.9)
+  - {from: cp-schema.budget-payload, to: em-error.taxonomy}    # budget_exhausted failure-class link
+  - {from: cp-schema.gate-verdict-record, to: em-schema.transition}  # written into Transition.evidence
+
+  # ───────────────────────── Cross-spec EV edges ─────────────────────────
+  # EV is in CP's depends-on (event-model). Per §6.5: 14 events emitted; 11 resolve
+  # to existing EV beads; 3 forward-deferred (F-pilot-CP-3): verdict_envelope_mismatch,
+  # policy_expression_exceeded_cost, control_points_registration_started.
+  - {from: cp-009, to: ev-events.gate-denied}
+  - {from: cp-013, to: ev-events.taxonomy}                     # §8 section anchor (Hook trigger types map)
+  - {from: cp-013, to: ev-events.agent-started}                # on_agent_started → agent_started
+  - {from: cp-013, to: ev-events.agent-output-chunk}           # on_agent_output → agent_output_chunk
+  - {from: cp-013, to: ev-events.agent-completed}              # on_agent_completed → agent_completed
+  - {from: cp-013, to: ev-events.checkpoint-written}           # on_checkpoint_written
+  - {from: cp-013, to: ev-events.transition-event}             # on_transition_attempted ~ transition_event
+  - {from: cp-016, to: ev-009}                                 # subscription declaration (EV §4.3 consumer taxonomy)
+  - {from: cp-016, to: ev-011}                                 # async consumer
+  - {from: cp-016, to: ev-schema.event}                        # event shape (EV §6.3)
+  - {from: cp-023, to: ev-events.budget-exhausted}
+  - {from: cp-024, to: ev-events.budget-accrual}
+  - {from: cp-024, to: ev-005}                                 # lifecycle-boundary signals (per-chunk granularity)
+  - {from: cp-025, to: ev-events.budget-warning}
+  - {from: cp-026, to: ev-009}                                 # cross-subsystem read of counter goes through bus
+  - {from: cp-026a, to: ev-015}                                # JSONL durable on-disk form (EV §4.4)
+  - {from: cp-026a, to: ev-018}                                # producers MUST emit events idempotently
+  - {from: cp-026a, to: ev-events.budget-accrual}              # replay source events
+  - {from: cp-026a, to: ev-events.run-started}                 # replay anchor
+  - {from: cp-034b, to: ev-015}                                # JSONL durability for cost-ceiling event
+  - {from: cp-040, to: ev-events.hook-verdict-persisted}
+  - {from: cp-048, to: ev-events.gate-allowed}
+  - {from: cp-048, to: ev-events.gate-denied}
+  - {from: cp-048, to: ev-events.gate-escalated}
+  - {from: cp-048, to: ev-events.hook-fired}
+  - {from: cp-048, to: ev-events.hook-failed}
+  - {from: cp-048, to: ev-events.guard-reordered}
+  - {from: cp-048, to: ev-events.guard-failed}
+  - {from: cp-048, to: ev-events.budget-accrual}
+  - {from: cp-048, to: ev-events.budget-warning}
+  - {from: cp-048, to: ev-events.budget-exhausted}
+  - {from: cp-050, to: ev-events.skills-provisioned}
+  - {from: cp-040a, to: ev-events.skills-provisioned}          # snapshot source
+
+  # ───────────────────────── Cross-spec HC edges ─────────────────────────
+  # HC is in CP's depends-on (handler-contract).
+  - {from: cp-015, to: hc-error.taxonomy}                      # ErrTransient / ErrDeterministic sentinel set
+  - {from: cp-015, to: hc-020}                                 # 5-primary sentinel set (HC §4.5)
+  - {from: cp-024, to: hc-007}                                 # chunk-emission cadence (HC §4.2)
+  - {from: cp-031, to: hc-046}                                 # skill-injection mechanism (HC §4.11)
+  - {from: cp-031, to: hc-048}
+  - {from: cp-031, to: hc-049}
+  - {from: cp-031, to: hc-050}
+  - {from: cp-034b, to: hc-error.taxonomy}                     # ErrDeterministic abort
+  - {from: cp-034b, to: hc-020}
+  - {from: cp-049, to: hc-046}                                 # skill-name shape (HC §4.11)
+  - {from: cp-049, to: hc-048}
+  - {from: cp-049, to: hc-050}
+  - {from: cp-049, to: hc-error.taxonomy}                      # ErrDeterministic + ErrSkillProvisioningFailed
+  - {from: cp-049, to: hc-022}                                 # ErrSkillProvisioningFailed sub-sentinel
+  - {from: cp-050, to: hc-046}
+  - {from: cp-050, to: hc-049}
+  - {from: cp-050, to: hc-050}
+
+  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
+  # WM (workspace-model) — not in depends-on
+  - {from: cp-040, to: "forward:wm-NNN"}                       # .harmonik/hooks/<run_id>/<id>.json on task branch (WM §4.2)
+
+  # ON (operator-nfr) — not in depends-on
+  - {from: cp-013, to: "forward:on-NNN"}                       # checkpoint_written event home (ON §4.5 bootstrap)
+  - {from: cp-037, to: "forward:on-NNN"}                       # operator-pause invariant (ON §4.3)
+  - {from: cp-038, to: "forward:on-NNN"}                       # N-1 readability (ON §4.5)
+  - {from: cp-047, to: "forward:on-NNN"}                       # operator surface for control-point effects (ON §4.9 — reverse-cited)
+
+  # RC (reconciliation) — not in depends-on
+  - {from: cp-027, to: "forward:rc-NNN"}                       # reconciliation wall-clock outer bound (RC §4.4)
+  - {from: cp-040a, to: "forward:rc-NNN"}                      # Cat-6 escalation per RC §4.2
+  - {from: cp-041, to: "forward:rc-NNN"}                       # replay / Cat-6 verdict path (RC §4.2 + §4.5)
+  - {from: cp-inv-003, to: "forward:rc-NNN"}                   # Cat-6 reconciliation verdict authority (RC §4.2)
+
+  # BI (beads-integration) — not in depends-on
+  - {from: cp-031, to: "forward:bi-NNN"}                       # Beads-CLI skill bootstrap cite (BI §4.9 when finalized; now docs/foundation/components.md §10.9)
+
+  # EV missing-row forward deferrals (F-pilot-CP-3 — these events appear in CP §6.5 but are absent from EV's bead set)
+  - {from: cp-034b, to: "forward:ev-events.policy-expression-exceeded-cost"}
+  - {from: cp-041, to: "forward:ev-events.verdict-envelope-mismatch"}
+  - {from: cp-043, to: "forward:ev-events.control-points-registration-started"}
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv

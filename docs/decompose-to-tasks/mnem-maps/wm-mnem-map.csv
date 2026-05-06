@@ -1,0 +1,73 @@
+mnemonic,assigned_id,title
+wm,hk-8mwo,Workspace Model spec — implementation
+wm-env-001,hk-8mwo.1,Subsystem envelope declaration (S06)
+wm-env-002,hk-8mwo.2,Minimum git version pin (≥ 2.34) detected at startup
+wm-001,hk-8mwo.3,Workspace type and required fields
+wm-002,hk-8mwo.4,Worktree path convention `<repo>/.harmonik/worktrees/<run_id>/`
+wm-003,hk-8mwo.5,Worktree creation uses `git worktree add -b <branch> <path> <parent_commit>`
+wm-003a,hk-8mwo.6,Discovery classifies partially-crashed worktree states
+wm-004,hk-8mwo.7,"Workspace ID derivable from run_id (`workspace_id = ""ws-"" + run_id`)"
+wm-005,hk-8mwo.8,Task branch named `run/<run_id>`
+wm-005a,hk-8mwo.9,Sub-workflow expansion does not create additional task branches
+wm-006,hk-8mwo.10,Integration branch naming convention (default + parent-bead-derived)
+wm-006a,hk-8mwo.11,Ref-safe bead-ID substitution via `git check-ref-format`
+wm-007,hk-8mwo.12,Three-level branching model (task → integration → main)
+wm-008,hk-8mwo.13,Small-scope collapse: operator-policy-gated merge target for parentless runs
+wm-009,hk-8mwo.14,Branch naming is stable across a harmonik minor version
+wm-010,hk-8mwo.15,"Lease is held by the run, not by individual agents"
+wm-011,hk-8mwo.16,One active agent at a time inside a workspace
+wm-012,hk-8mwo.17,One run per bead at a time
+wm-013,hk-8mwo.18,Workspace ID discoverable from run_id without a separate index
+wm-013a,hk-8mwo.19,"Lease-lock file canonical path, JSON content, atomic-write + fsync birth"
+wm-013b,hk-8mwo.20,Lease release on terminal transitions; per-terminal-path durability gates
+wm-013c,hk-8mwo.21,Lease discovery on startup (filesystem walk + lock-content read)
+wm-013d,hk-8mwo.22,Released-workspace path re-use is forbidden
+wm-013e,hk-8mwo.23,`.gitignore` hygiene for harmonik control-plane paths (write-or-fail)
+wm-014,hk-8mwo.24,Workspace state machine
+wm-015,hk-8mwo.25,Workspace lifecycle event emission obligations (WHEN)
+wm-016,hk-8mwo.26,`workspace_leased` emitted after sidecar + lease-lock fsync (4-step ordering)
+wm-018,hk-8mwo.27,Merge-back is performed by a node in the same worktree (same lease)
+wm-018a,hk-8mwo.28,Merge-back node dispatch contract (non-agentic OR agentic)
+wm-019,hk-8mwo.29,Squash-merge with `--strategy=ort`; one-commit-per-task; trailers + author/committer split
+wm-019a,hk-8mwo.30,Merge executes outside main worktree (`--ignore-other-worktrees` OR scratch worktree)
+wm-020,hk-8mwo.31,Squash-merge is non-fast-forward by construction
+wm-021,hk-8mwo.32,Merge outcome emits workspace_merge_status with status=merged
+wm-022,hk-8mwo.33,Original-implementer identification: sidecar walk (NOT trailer walk)
+wm-022a,hk-8mwo.34,All-mechanical task branches escalate directly (skip re-dispatch)
+wm-023,hk-8mwo.35,Unresolvable conflicts escalate via merge_conflict_escalation
+wm-024,hk-8mwo.36,"Conflict-resolver dispatch (mechanism) + 3-attempt cap (op-tunable [1,10])"
+wm-025,hk-8mwo.37,Session-log directory at `${workspace_path}/.harmonik/sessions/${session_id}/`
+wm-026,hk-8mwo.38,Metadata sidecar `harmonik.meta.json` (atomic write: tmp+fsync+rename+parent-fsync)
+wm-027,hk-8mwo.39,Sidecar metadata stamping precedes workspace_leased for the first session
+wm-028,hk-8mwo.40,bead_id propagates into session metadata when present
+wm-029,hk-8mwo.41,Session-log directory consumed read-only by S08
+wm-030,hk-8mwo.42,Post-merge session-log retention default (preserve-in-merged-branch)
+wm-031,hk-8mwo.43,Failed-run worktrees persist until operator cleanup
+wm-032,hk-8mwo.44,Failed-run workspace state is `discarded`; interrupt_state composes orthogonally
+wm-033,hk-8mwo.45,Startup orphan sweep removes stale lease-lock files (content-first staleness; mtime tiebreaker)
+wm-034,hk-8mwo.46,reopen-bead → fresh run_id + fresh worktree + fresh task branch
+wm-035,hk-8mwo.47,Intra-run rollback verdicts keep the same worktree + task branch
+wm-036,hk-8mwo.48,Re-run vs intra-run classification deterministic on 7-value verdict enum
+wm-037,hk-8mwo.49,interrupt_state orthogonal to lifecycle for in-flight states (5-value enum)
+wm-037a,hk-8mwo.50,Terminal lifecycle states carry no interrupt signal
+wm-038,hk-8mwo.51,interrupt_state set by operator + reconciliation pathways; WM is sole writer
+wm-038a,hk-8mwo.52,Workspace-local marker for operator/verdict-driven interrupt_state mutations
+wm-039,hk-8mwo.53,WM observes interrupt transitions but does NOT emit workspace_interrupted
+wm-040,hk-8mwo.54,interrupt_state reset to `none` requires reconciliation OR operator resume
+wm-inv-001,hk-8mwo.55,Sensor: lease-by-run is honored corpus-wide
+wm-inv-002,hk-8mwo.56,Sensor: one in-flight run per bead
+wm-inv-003,hk-8mwo.57,Sensor: checkpoint commits obey git append-only on the task branch (two-part)
+wm-inv-005,hk-8mwo.58,Sensor: canonical-path discovery without a registry
+wm-schema.workspace,hk-8mwo.59,Define `Workspace` record (§6.1)
+wm-schema.lease-lock-file,hk-8mwo.60,Define `LeaseLockFile` record (§6.1)
+wm-schema.workspace-state,hk-8mwo.61,Define `WorkspaceState` enum (§6.1)
+wm-schema.interrupt-state,hk-8mwo.62,Define `InterruptState` enum (§6.1)
+wm-schema.session-metadata-sidecar,hk-8mwo.63,Define `SessionMetadataSidecar` record (§6.1)
+wm-error.taxonomy,hk-8mwo.64,WM error taxonomy (§8) — 12-class typed sentinel set + transitions + downstream routing
+wm-test.worktree-primitive-fixture,hk-8mwo.65,Worktree primitive + crash-evidence fixture (WM-001..004 + WM-003a)
+wm-test.branch-naming-fixture,hk-8mwo.66,Branch-naming + ref-safe substitution fixture (WM-005..009 + WM-005a + WM-006a)
+wm-test.lease-fixture,hk-8mwo.67,Lease-lifecycle + crash-recovery fixture (WM-010..013 + WM-013a..e)
+wm-test.merge-back-fixture,hk-8mwo.68,Merge-back + scratch-worktree fixture (WM-018..021 + WM-018a + WM-019a)
+wm-test.conflict-resolution-harness,hk-8mwo.69,Conflict-resolution + 3-attempt-cap harness (WM-022..024 + WM-022a)
+wm-test.session-log-fixture,hk-8mwo.70,Session-log + atomic sidecar fixture (WM-025..030)
+wm-test.reconciliation-and-interrupt-harness,hk-8mwo.71,Failed-run + verdict + interrupt-state harness (WM-031..036 + WM-037..040 + WM-037a + WM-038a + WM-INV-003 part B)

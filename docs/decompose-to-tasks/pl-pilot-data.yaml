@@ -1,0 +1,1231 @@
+# PL pilot v0.1.1 — bead and edge data
+# Drafted 2026-04-30 against specs/process-lifecycle.md v0.4.1 (status: reviewed).
+# Discipline version applied: v0.9 (HC r1 lockstep release; includes §2.11(c.2)
+# taxonomy-edge-direction anti-pattern note and §2.11(d.2) co-owned event
+# payload edge direction).
+#
+# v0.1.1 (2026-04-30) — applies r1 review patches per
+# docs/reviews/2026-04-30-pl-pilot-r1/synthesis.md:
+#   F-refs-PL-7 (MAJOR/critical): removed 3 inverted impl→ar-inv-007 edges
+#     (pl-018, pl-019, pl-020a). Kept pl-inv-002 → ar-inv-007 (sensor→sensor).
+#   F-refs-PL-1 (override-to-local): added pl-inv-001 → bi-030 + pl-inv-001 →
+#     wm-013a per §2.5 source 4 (F-em-r1-MAJ-1).
+#   F-refs-PL-3 (MINOR): added cite:wide-fanout tags to 6 beads with
+#     section-anchor cites (pl-004, pl-005, pl-011, pl-015, pl-016, pl-020a).
+#   D-PL-3..7 (5 MINOR): extended PL-005/PL-011/PL-014a/PL-009/PL-INV-005
+#     bead descriptions with sub-clause mechanics.
+#   F-cov-PL-1 (MINOR): wording polish §10.
+#   D-PL-1, D-PL-2 (MAJOR/class) DEFERRED to discipline-lane batch (F8b
+#     envelope clarification — pilot-side rewrite cost too high).
+#   F-pilot-PL-4 (MEDIUM/class) DEFERRED to discipline-lane batch — 26
+#     forward:on-* §3.2 violations tracked under hk-ahvq.46.
+# Re-run posture: edges-only mode (--skip-beads); 5 net edge changes (3
+# remove + 2 add + 6 label-only); ~196 already_exists; cycles MUST stay 0.
+#
+# PL is the process-lifecycle (daemon-core / `internal/daemon`) spec. It owns
+# the per-project headless daemon: pidfile + socket layout, deterministic
+# startup sequence including the pre-classification orphan sweep, ready-state
+# transition criteria + degraded side-state, graceful + immediate shutdown,
+# agent-subprocess parentage, daemon-vs-orchestrator-agent distinction +
+# composition root, ntm adapter scoping, crash semantics, the daemon-internal
+# mechanics of `harmonik upgrade` (exec-replacement + fd-passing), and the
+# CLI command surface. depends-on: [architecture, execution-model, event-model,
+# handler-contract, control-points, reconciliation, beads-integration,
+# workspace-model]. operator-nfr (ON) is intentionally NOT in depends-on per
+# the §9.3 NOTE (PL ↔ ON front-matter cycle break); PL names ON obligations
+# (PL-008, PL-027) by reference per the template §2 / §9 "named obligation"
+# pattern. ON cites surface as F-pilot-EV-3 informational findings (NOT
+# forward-deferred edges).
+#
+# Sanity tally:
+#   §4 reqs in spec (active):                         43
+#     §4.a envelope:                                   1  (PL-ENV-001)
+#     §4.1 per-project daemon scope:                   8  (PL-001..004 +
+#                                                          PL-002a, PL-002b,
+#                                                          PL-003a, PL-003b)
+#     §4.2 startup sequence:                           6  (PL-005, PL-006,
+#                                                          PL-006a, PL-007,
+#                                                          PL-008, PL-008a)
+#     §4.3 ready-state transition:                     4  (PL-009, PL-009a,
+#                                                          PL-009b, PL-010)
+#     §4.4 shutdown:                                   4  (PL-011, PL-011a,
+#                                                          PL-012, PL-013)
+#     §4.5 agent-subprocess management:                5  (PL-014, PL-014a,
+#                                                          PL-015, PL-016,
+#                                                          PL-017)
+#     §4.6 daemon vs orchestrator-agent:               5  (PL-018, PL-018a,
+#                                                          PL-019, PL-020,
+#                                                          PL-020a)
+#     §4.7 ntm adapter scope:                          4  (PL-021, PL-021a,
+#                                                          PL-022, PL-023)
+#     §4.8 crash semantics:                            4  (PL-024, PL-025,
+#                                                          PL-025a, PL-026)
+#     §4.9 `harmonik upgrade` (daemon-internal):       1  (PL-027)
+#     §4.10 command surface:                           1  (PL-028)
+#   §2.3 coalesces applied:                            0  (every req has a
+#                                                          substantive body
+#                                                          with its own data
+#                                                          shape / codepath;
+#                                                          see F-pilot-PL-2)
+#   §2.1a pure cross-reference collapses:              0  (no req is a
+#                                                          verbatim restatement
+#                                                          of another)
+#   First-class §4 req beads:                         43
+#   §5 invariants (active):                            5  (PL-INV-001..005)
+#   §6 schema beads (records / interfaces / enums):    1  (DaemonStatus ENUM —
+#                                                          §6.1; the only §6
+#                                                          declaration; §6.2
+#                                                          co-owned event
+#                                                          payloads belong to
+#                                                          EV per §2.11(d.2);
+#                                                          §6.3 declares no
+#                                                          on-disk schema)
+#   §8 error-taxonomy beads:                           0  (PL §8 explicitly
+#                                                          says "This spec
+#                                                          does not own a
+#                                                          failure taxonomy" —
+#                                                          codes are consumed
+#                                                          from ON §8 per
+#                                                          PL-008a; see
+#                                                          F-pilot-PL-1)
+#   Multi-step §2.2 splits:                            0  (PL-005 11-step
+#                                                          startup, PL-006
+#                                                          6-bullet sweep,
+#                                                          PL-011 9-step
+#                                                          shutdown, PL-027
+#                                                          5-sub-rule upgrade
+#                                                          all collapse via
+#                                                          F8b shared-function
+#                                                          -body tiebreaker;
+#                                                          see F-pilot-PL-3)
+#   Test-infra beads:                                 10  (consolidated from
+#                                                          §10.2 obligations)
+#   Total beads minted:                               43 + 5 + 1 + 0 + 10 = 59
+#   Bead-to-§4-req multiplier:                         59 / 43 = 1.37×
+#                                                      (BI 1.42×; HC 0.95×;
+#                                                       CP 1.55×; WM 1.31×;
+#                                                       PL between WM and BI —
+#                                                       fewer schema beads
+#                                                       than WM offsets the
+#                                                       higher test-infra
+#                                                       count).
+#
+# §2.11(c.2) anti-pattern applications: N/A. PL has NO local error-taxonomy
+#   bead (per F-pilot-PL-1) — the §8 prose explicitly delegates failure-mode
+#   ownership to ON §8 + EM §6.3 + RC §8. PL-008a consumes ON exit codes by
+#   reference; the consumer→owner direction lands as cross-spec edges to
+#   forward:on-NNN (ON not yet pilot-loaded), NOT to a local taxonomy bead.
+#
+# §2.11(d.2) co-owned event payloads (PL emits, EV owns shape): PL emits
+#   eight lifecycle events per §6.2: daemon_started, daemon_ready,
+#   daemon_shutdown, daemon_startup_failed, daemon_degraded,
+#   daemon_orphan_sweep_completed, infrastructure_unavailable,
+#   dispatch_deferred. Per §2.11(d.2), edges run <pl-WHEN-rule> →
+#   <ev-events.<event-name>> (consumer-blocks-on-producer; PL's WHEN-rule is
+#   the producer, EV's row is the consumer of the payload-shape declaration —
+#   wait, inverted: PL produces the event, EV owns the shape; PL's WHEN-rule
+#   cites EV's payload schema, so the cite blocks PL's emission rule on EV's
+#   schema row → direction `pl-NNN → ev-events.<name>` per §3.1 step 5
+#   single-owner pin). EV's reciprocal direction (ev-events.<name> →
+#   pl-NNN) is owned by EV's pilot — emitted as `forward:pl-NNN`
+#   placeholders in EV's draft and resolved by PL backfill (`hk-ahvq.23`).
+#   This pilot loads BEFORE that backfill, so PL-side edges to EV resolve
+#   directly via /tmp/ev-mnem-map.csv.
+#
+# Forward-deferred edge counts (per target spec; logged only, not loaded):
+#   rc:  ~12 (PL-005 step 4 Cat 0 + step 7 + step 8 RC-008 dispatch;
+#             PL-006 reconciliation-locks bullet RC-002a/RC-002b;
+#             PL-009 RC-013 emission criterion;
+#             PL-009a Cat 3 fallback path;
+#             PL-010 Cat 0 retry;
+#             PL-017 silent-hang routing through reconciliation;
+#             PL-025 reconciliation idempotence;
+#             PL-026 reconciliation-routed crash paths;
+#             PL-INV-003 detector ordering invariant)
+#   Note: ON, RC are F-pilot-EM-2 / Option B forward-deferreds because RC's
+#   pilot has not been drafted; ON is intentionally absent from depends-on
+#   per the cycle-break NOTE — its cites surface as F-pilot-EV-3 informational
+#   findings (NOT forward-deferred edges). HOWEVER: PL DOES name ON
+#   obligations (PL-008, PL-027) by reference under the §2/§9 named-obligation
+#   pattern; the discipline question is whether those become forward:on edges
+#   or stay informational. Decision: forward:on edges WHERE the PL bead's
+#   normative behavior depends on ON's content (PL-008 catalog consumption,
+#   PL-008a code list, PL-027 ON-020 contract, PL-005 step 8a ON-020a +
+#   ON-030a marker semantics, PL-009 ON-031 RTO measurement, PL-014a
+#   ON-041 cross-daemon coordination, PL-028 ON-002 / ON-008 / ON-014 /
+#   ON-018 / ON-027 / ON-029 / ON-033 cites). These are hard deps in
+#   the discipline §3.1 supporting-cite-vs-hard-dep sense (removing the ON
+#   cite changes the PL behavior) and SHOULD be forward-deferred. See
+#   F-pilot-PL-4 for full inventory.
+#   on:  ~17 (PL-002 ON-008 exit code 5; PL-003 ON-008 exit code 6; PL-004
+#             ON-020a + ON-030a + EM/EV cites — but ON portion only: ON-020a,
+#             ON-030a; PL-005 step 8a ON-020a + ON-030a; PL-008 ON-003
+#             catalog; PL-008a ON §8 taxonomy; PL-009 ON-031/ON-033 RTO;
+#             PL-010 ON-002 + ON-035; PL-011 ON-027 + ON-029; PL-011a
+#             ON-033; PL-014a ON-041 cross-daemon; PL-018a ON §8 code 19;
+#             PL-021a ON-017 external-inputs protocol + ON §8 code 22;
+#             PL-027 ON-020 + ON-020a; PL-028 ON-002/ON-008/ON-014/
+#             ON-041 + ON §8 code 23; PL-INV-001 ON-007–ON-014 spans;
+#             PL-INV-002 AR-INV-007 only — no ON; PL-ENV-001 inherited
+#             ON-002/ON-020/ON-027/ON-031/ON-041)
+#   Note PL also depends on RC (forward:rc-*) and ON (forward:on-*) but
+#   NOT on EV via forward:* — EV is in depends-on AND its mnem map is loaded;
+#   PL→EV-row edges resolve directly.
+#
+# F-pilot-EV-3 informational findings (cross-spec inline cites to specs NOT
+# in depends-on; documented but do NOT emit forward-deferred edges):
+#   on:  ~20 cites across §4.a, §4.1, §4.2, §4.3, §4.4, §4.5, §4.6, §4.9,
+#        §4.10, §6.1, §6.3, §7.1, §9.3 — operator-nfr is the cycle-broken
+#        sibling. Per F-pilot-EV-3 baseline, ON cites would be informational.
+#        However: PL's named-obligation pattern means ~17 of the cites are
+#        hard deps where removing the ON content changes PL behavior; those
+#        ARE emitted as forward:on-NNN edges (see F-pilot-PL-4 below). The
+#        remaining ~3 cites (§9.3 anchor entries; §6.3 N-1 compatibility
+#        general claim; etc.) stay informational.
+#
+# F-pilot-PL findings (judgment calls / discipline stress points):
+#
+# F-pilot-PL-1 [class — applies §2.6 + §8 mechanically] — PL §8 prose:
+#   "This spec does not own a failure taxonomy. Startup failure modes are
+#   cataloged per §PL-008 (obligation owned by [operator-nfr.md §4.1
+#   ON-003]); §PL-008a names the codes this spec consumes from the
+#   authoritative ON §8 taxonomy." This is the FIRST pilot in the corpus
+#   where §8 declares ZERO taxonomy ownership. BI/HC/EM/EV/CP/WM all own a
+#   §8 taxonomy and emit ONE error-taxonomy bead (single-table BrError
+#   shape, multi-bead RC-style nested, etc.). PL is structurally different:
+#   PL is a CONSUMER of multiple sibling taxonomies (ON exit codes, EM
+#   run-failure, RC categories) and emits no taxonomy of its own.
+#   Decision: NO `pl-error.taxonomy` bead. The 11 ON exit codes consumed
+#   by PL-008a (5,6,7,8,9,10,14,19,22,23) become forward:on-NNN edges from
+#   PL-008a (cited normatively in PL-008a body). NOT a discipline patch
+#   candidate — the spec authoring decision is correct; this is the first
+#   confirmed instance where §2.11(c.2) consumer→owner edge direction
+#   resolves entirely via cross-spec edges with no local owner.
+#
+# F-pilot-PL-2 [local — applies §2.3 mechanically] — Coalesce candidates
+#   considered and rejected:
+#   (a) PL-002 + PL-002a + PL-002b (pidfile + lock primitive + atomic write).
+#       Test 1 (single shape/path) borderline — all three operate on the
+#       pidfile fd. Test 2 (anchor + clarifications) FIRES — PL-002 is
+#       the anchor; PL-002a is the lock-primitive clarification; PL-002b
+#       is the atomic-write clarification. Test 3 (split reduces to "see
+#       anchor") FAILS — PL-002a's fd-lifetime advisory lock is testable
+#       independently (POSIX vs flock); PL-002b's truncate-rewrite-keep-fd
+#       is testable independently (vs temp+rename). Each clarification
+#       carries its own testable predicate. → no coalesce.
+#   (b) PL-005 + PL-006 (startup sequence + orphan sweep). Test 1 FAILS —
+#       distinct shapes (sequence-of-steps vs filesystem enumeration);
+#       no single function body. → no coalesce.
+#   (c) PL-009 + PL-009a + PL-009b (ready criteria + auto-resolver
+#       fallback + ready-protocol). Test 1 borderline; Test 2 FIRES
+#       (PL-009 is the anchor); Test 3 FAILS (PL-009b's three-mechanism
+#       protocol is testable independently of the criteria; PL-009a's
+#       Cat 3 fallback is testable independently of the protocol). →
+#       no coalesce.
+#   (d) PL-011 + PL-011a (drain sequence + shutdown event). Test 1 FAILS —
+#       drain-sequence is multi-step, event-emission is single-event.
+#       Two-of-three insufficient. → no coalesce.
+#   (e) PL-014 + PL-014a (parentage + concurrency ceiling). Test 1 FAILS —
+#       parentage is OS-level relationship; ceiling is rlimit-derived
+#       integer + dispatch-defer rule. Distinct codepaths. → no coalesce.
+#   (f) PL-018 + PL-018a (no-LLM-in-daemon + panic recovery barrier).
+#       Test 1 FAILS — go-arch-lint scope vs main-goroutine recover().
+#       Distinct evaluation paths. → no coalesce.
+#   (g) PL-020 + PL-020a (composition-root rule + registry residence).
+#       Test 1 borderline; Test 2 FIRES (PL-020 is rule, PL-020a is the
+#       registry-residence application); Test 3 FAILS — PL-020a's
+#       enumeration of which registries reside in the composition root
+#       is testable independently of the import-graph rule. → no coalesce.
+#   No coalesces applied.
+#
+# F-pilot-PL-3 [local — applies §2.2 + F8b mechanically] — Multi-step
+#   candidates considered:
+#   (a) PL-005 11-step startup sequence (steps 0..9 plus 3a + 8a). Signal 1
+#       (≥3 steps) ✓; signal 2 (independent testability) ✓ each step has
+#       its own atomic discipline; signal 3 (umbrella loses meaning when
+#       stripped) borderline — "the daemon's startup sequence MUST execute
+#       these steps in order" IS the umbrella. F8b shared-function-body
+#       tiebreaker fires: `bootstrap_daemon` in §7.1 / startup-loop is
+#       one cohesive function body across all 11 steps; no stable testable
+#       boundary between steps that would survive function-body splits.
+#       → single bead with sub-bullets in description.
+#   (b) PL-006 6-bullet orphan sweep (tmux, worktree locks, subprocesses,
+#       stale intent files, stale reconciliation locks, event emission).
+#       Signal 1 ✓; signal 2 ✓; signal 3 FAILS — stripping any single
+#       bullet leaves PL-006 testable as "sweep this kind of orphan."
+#       F8b override anyway: in any plausible Go implementation, the 6
+#       bullets are sequential phases inside `orphan_sweep` sharing
+#       provenance-marker filtering + the `daemon_orphan_sweep_completed`
+#       emission epilogue. → single bead with sub-bullets.
+#   (c) PL-011 9-step shutdown (transition + queue-stop + classify +
+#       wait + emit + flush + release-leases + release-pidfile + exit).
+#       Same F8b posture — `graceful_shutdown` function body. →
+#       single bead with sub-bullets.
+#   (d) PL-027 5-sub-rule upgrade contract ((i) exec-replacement,
+#       (ii) skip-path, (iii) fd-passing, (iv) intermediate state +
+#       marker write, (v) event emissions). Signal 1 ✓; signal 2 ✓;
+#       signal 3 borderline. F8b: the 5 sub-rules form one cohesive
+#       upgrade-handoff function body — the exec-replacement step is
+#       inseparable from the fd-passing step; the marker write is
+#       inseparable from the event emission. → single bead with
+#       sub-bullets.
+#   No splits applied. Same posture as CP-040a + EM-016 + WM-016
+#   worked examples.
+#
+# F-pilot-PL-4 [class — discipline-patch candidate, MEDIUM priority] — PL
+#   is the FIRST pilot where the cycle-break NOTE (front-matter excludes
+#   ON) tension with the named-obligation pattern (PL-008, PL-027 cite ON
+#   normatively) requires an explicit edge-direction call. Decision applied:
+#   forward:on-NNN edges WHERE the PL bead's normative behavior depends
+#   on ON's content (the §3.1 supporting-cite-vs-hard-dep test fires "hard
+#   dep" — removing the ON cite changes PL behavior). ~17 such edges
+#   identified; remainder of ON cites stay informational. Same posture as
+#   §2.11(d.2) co-owned events (consumer-blocks-on-producer regardless of
+#   front-matter direction). The discipline could clarify that named-
+#   obligation cites under §2/§9 are forward-deferreds when the obligation
+#   gates behavior; recorded as class lane for future patch consideration.
+#
+# F-pilot-PL-5 [local — applies §3.1 step 5 term-use rule mechanically] —
+#   PL body has dense intra-spec term-use chains:
+#   • "daemon_instance_id" — defined at PL-005 step 0; used by PL-002b
+#     line 3, PL-004, PL-027 forbids reuse.
+#   • "project_hash" / "provenance marker" — defined at PL-006a; used by
+#     PL-006 (every bullet), PL-007, PL-014, PL-INV-005.
+#   • "composition root" — defined at PL-020 + glossary; used by PL-005
+#     step 0, PL-020a.
+#   • "Cat 0 pre-check" — sourced from RC §4.3 RC-012 (cross-spec); used
+#     by PL-005 step 4, PL-009, PL-010, PL-021a → forward:rc-NNN.
+#   • "watcher goroutine" — sourced from HC §4.3 HC-011 (cross-spec); used
+#     by PL-014, PL-016, PL-017 → cross-spec edges to hc-011.
+#   • "Run record shape" — sourced from EM §6.1 (cross-spec); used by
+#     PL-005 step 7 → edge to em-schema.run.
+#   • "checkpoint commits" — sourced from EM §4.4 EM-017 (cross-spec); used
+#     by PL-005 step 5 → edge to em-017.
+#   • "Harmonik-Run-ID trailer" — sourced from EM §6.2 (cross-spec) →
+#     edge to em-schema.checkpoint-trailers.
+#   • "task branch `run/<run_id>`" — sourced from WM §4.2 WM-005 → edge
+#     to wm-005.
+#   All emitted as intra-spec or cross-spec edges below. Per F-pilot-AR-r2-2
+#   invariant-as-target exemption, term-uses of "centralized-controller
+#   invariant" (AR-INV-007) from PL body do NOT emit edges; AR-INV-007 is
+#   sensor-only EXCEPT for explicit invariant→invariant ID-cites per
+#   F-refs-EV-6 — PL-INV-002's body explicitly cites AR-INV-007 by ID
+#   ("MUST contain no LLM invocations and no cognition-bearing components
+#   per [architecture.md §4.2] ... centralized-controller invariant"), so
+#   per D-WM-3 precedent the edge `pl-inv-002 → ar-inv-007` IS emitted.
+#
+# F-pilot-PL-6 [class — RESOLVED by discipline v0.7 §3.2 / Option E
+#   grandfather] — PL reached `reviewed` status before discipline v0.7's
+#   §4.a envelope grandfather carve-out. Spec §4.a IS present (PL-ENV-001
+#   landed in v0.3.0). PL is NOT a grandfather case at all — PL authored
+#   §4.a in r1. The single envelope req IS a first-class bead in this
+#   pilot (pl-env-001). Recorded for parity with other reviewed-status
+#   pilots that authored §4.a in r1.
+#
+# Re-run posture for re-loads: full mode (--load-beads + --load-edges) for
+# initial; subsequent passes use edges-only mode (--skip-beads). br dep
+# cycles MUST remain clean.
+
+spec:
+  prefix: pl
+  title: "Process Lifecycle spec — implementation"
+  spec_path: specs/process-lifecycle.md
+  spec_version: "0.4.1"
+  pilot_version: "0.1.1"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:process-lifecycle"
+  - "tag:mechanism"
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+# rc, on entries deliberately omitted — those specs are not yet pilot-loaded.
+# Forward-deferred edges to those specs use "forward:<prefix>-NNN" placeholders
+# below and are skipped at load time per F-pilot-EM-2 / Option B precedent.
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
+  cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
+  wm: docs/decompose-to-tasks/mnem-maps/wm-mnem-map.csv
+  bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv
+
+epic:
+  mnem: pl
+  title: "Process Lifecycle spec — implementation"
+  description: |
+    Implements specs/process-lifecycle.md v0.4.1 (43 first-class §4 req beads from 43 active §4 reqs after 0 §2.3 coalesces and 0 §2.1a collapses, 5 invariants, 1 §6 schema (DaemonStatus ENUM only — §6.2 co-owned event payloads belong to EV per §2.11(d.2); §6.3 declares no on-disk schema), 0 §8 error-taxonomy beads (PL §8 explicitly delegates to ON §8 + EM §6.3 + RC §8 — see F-pilot-PL-1), 0 multi-step splits (PL-005 / PL-006 / PL-011 / PL-027 collapse to sub-bullets via F8b — see F-pilot-PL-3), 10 test-infra beads from §10.2 obligations). depends-on: [architecture, execution-model, event-model, handler-contract, control-points, reconciliation, beads-integration, workspace-model]; ON intentionally NOT in depends-on per cycle-break NOTE (PL ↔ ON front-matter cycle). RC + ON cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:<prefix>-NNN). EV inline cites resolve directly via /tmp/ev-mnem-map.csv (EV mnem map loaded; co-owned event payloads per §2.11(d.2) edge as `pl-NNN → ev-events.<name>`).
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ───────────────────────── §4.a Subsystem envelope ─────────────────────────
+
+  - mnem: pl-env-001
+    kind: req
+    req: PL-ENV-001
+    title: "Subsystem envelope declaration (daemon-core / `internal/daemon`)"
+    description: |
+      Per PL-ENV-001: declare the process-lifecycle subsystem envelope per [architecture.md §4.0 AR-053]: (a) events produced (daemon_started, daemon_ready, daemon_shutdown, daemon_startup_failed, daemon_degraded, daemon_orphan_sweep_completed, infrastructure_unavailable, dispatch_deferred, plus operator-control suffix events emitted by the daemon-core); (b) events consumed (reconciliation_category_assigned, reconciliation_verdict_executed, operator-control events); (c) types introduced (DaemonStatus, PidfileLock, ProjectHash, ProvenanceMarker, OrphanSweepReport, SocketWireRequest/Response); (d) handlers implemented (none — daemon HOSTS handlers per HC-001); (e) state owned (DaemonStatus, daemon_instance_id, pidfile, socket, .upgrading marker, project-hash-derived tmux namespace, composition-root registries); (f) control points provided (none — daemon hosts the registry); (g) NFRs inherited (ON-002, ON-020, ON-027, ON-031, ON-041); (h) boundary classification per operation table.
+
+  # ───────────────────────── §4.1 Per-project daemon scope ─────────────────────────
+
+  - mnem: pl-001
+    kind: req
+    req: PL-001
+    title: "One daemon per project"
+    description: |
+      Per PL-001: each project (a git repo containing a `.harmonik/` directory) MUST run exactly one daemon. Multiple projects on the same machine MAY run multiple independent daemons, one per project. The daemon has no awareness of other daemons on the same machine; multi-daemon operator commands are owned by [operator-nfr.md §4.10 ON-041]. This is the structural precondition for the pidfile-based per-project singularity invariant (PL-INV-001).
+
+  - mnem: pl-002
+    kind: req
+    req: PL-002
+    title: "Pidfile at `.harmonik/daemon.pid`"
+    description: |
+      Per PL-002: daemon MUST write its PID to `.harmonik/daemon.pid` on startup and MUST hold an advisory lock on that file for its lifetime. A second daemon invocation against the same project that finds the pidfile held by a live process MUST exit with exit code `5` "pidfile-locked" per [operator-nfr.md §8], directing the operator to query the running daemon. Pairs with PL-002a (lock primitive) and PL-002b (atomic write).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-002a
+    kind: req
+    req: PL-002a
+    title: "Pidfile lock is fd-lifetime advisory (`flock` / `F_OFD_SETLK`)"
+    description: |
+      Per PL-002a: pidfile lock MUST use a fd-lifetime advisory primitive: `flock(LOCK_EX|LOCK_NB)` on macOS; `flock(LOCK_EX|LOCK_NB)` or `fcntl(F_OFD_SETLK)` on Linux. Lock MUST release automatically on daemon termination (clean OR crash) so restart can re-acquire without operator intervention. POSIX process-lifetime `fcntl(F_SETLK)` FORBIDDEN (any fd-close inside the process releases the lock). Daemon MUST disambiguate (a) "pidfile present, lock held by live process" (exit 5) from (b) "pidfile present, no lock, recorded PID not live" (stale pidfile per PL-024) by attempting `flock` first, then probing with `kill(pid, 0)`. MAY corroborate via `/proc/<pid>/cmdline` (Linux) or `proc_pidpath` (darwin); ambiguity refuses startup (OQ-PL-007).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-002b
+    kind: req
+    req: PL-002b
+    title: "Atomic pidfile write via truncate-rewrite-keep-fd"
+    description: |
+      Per PL-002b: daemon MUST write the pidfile content atomically via truncate-rewrite (NOT temp+rename, which would break the flock association). Procedure: (1) `open(.harmonik/daemon.pid, O_RDWR|O_CREAT|O_CLOEXEC)` without `O_TRUNC`; (2) acquire fd-lifetime lock per PL-002a; (3) only after lock: `ftruncate(fd, 0)`; (4) write three lines (PID / PGID / `daemon_instance_id` UUIDv7) terminated by `\n`; (5) `fsync(fd)` + `fsync(parent_directory_fd)` (REQUIRED for power-loss safety on APFS / ext4); (6) retain fd for daemon lifetime; intermediate `close()` FORBIDDEN. Readers MUST tolerate one-line (v0.2.x) and two-line (v0.4.0) backwards-compat formats. On `flock` failure with non-EAGAIN errno, exit code 9 + emit `daemon_startup_failed{failure_mode="pidfile-lock-error"}`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-003
+    kind: req
+    req: PL-003
+    title: "Socket at `.harmonik/daemon.sock` (mode 0600)"
+    description: |
+      Per PL-003: daemon MUST listen on local Unix socket at `.harmonik/daemon.sock`. Agent subprocesses and CLI clients MUST communicate exclusively through this socket. Daemon MUST remove a stale socket file on startup before binding. After bind, daemon MUST `chmod(0600)` the socket and ensure its owner is the daemon's effective uid; socket authenticity is filesystem-permission-based per [handler-contract.md §4.10 HC-044]. Second daemon observing `EADDRINUSE` exits with ON §8 code 6 `socket-bind-failed` per PL-008a.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-003a
+    kind: req
+    req: PL-003a
+    title: "Socket wire format: JSON-RPC 2.0 over NDJSON"
+    description: |
+      Per PL-003a: daemon socket MUST carry JSON-RPC 2.0 request/response framed as newline-delimited JSON per [handler-contract.md §4.2 HC-007a] (one JSON object per `\n`-terminated line; max 1 MiB; over-cap aborts connection). CLI clients MUST issue one request per connection and close on response; agents MAY hold connection per HC §4.3. JSON-RPC method-name inventory (pinned per OQ-PL-005 RESOLVED): agent-facing (`claim-next`, `emit-outcome`, `dispatch-status`, Beads-CLI-skill proxy methods per [beads-integration.md §4.9 BI-027]); CLI-facing (`status`, `pause`, `resume`, `stop`, `upgrade`, `attach`, `enqueue`, `list`); daemon-internal (`get-agent-count` returning `{count: integer ≥ 0}` for ON-041 cross-daemon machine-ceiling drift reconciliation). Method payload schemas deferred; method-name set is the stable surface.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-003b
+    kind: req
+    req: PL-003b
+    title: "Pre-ready request rejection on unknown run_id"
+    description: |
+      Per PL-003b: between socket bind (PL-005 step 3a) and in-memory model build (PL-005 step 7), daemon MUST reject any `emit-outcome`, `claim-next`, or other agent-originated request whose `run_id` is unknown, with typed error `daemon_not_ready{reason="unknown_run_id"}`. CLI daemon-status requests are exempt (ready-detection probes per PL-009b). Clients MUST treat the typed error as a bounded-retry condition with exponential backoff per PL-009b. Closes the orphan-agent-reconnect-during-startup-window race in which an orphan agent's surviving socket connection lands on the new daemon's listener before the orphan sweep reaps it.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-004
+    kind: req
+    req: PL-004
+    title: "Daemon-owned per-project file surface under `.harmonik/`"
+    description: |
+      Per PL-004: daemon's per-project file surface includes `.harmonik/daemon.pid` (PL-002), `.harmonik/daemon.sock` (PL-003), `.harmonik/daemon.instance-id` (PL-005 step 0; UUIDv7 correlation key), `.harmonik/daemon.upgrading` (PL-027(iv); ON-020a-owned content), `.harmonik/daemon.state` (ON-030a-owned content; PL-read at step 8a), `.harmonik/events/events.jsonl` + dead-letters + spill files (per EV §6.2), `.harmonik/event_id_hwm` (per EV §4.1), `.harmonik/beads-intents/` (per BI §4.10 BI-030), `.harmonik/reconciliation-locks/` (RC §4.1 RC-002a; swept by PL-006), and per-run `<workspace>/.harmonik/lease.lock` (per WM §4.3 WM-013a; WM-written but daemon hosts WM in-process per PL-020a). Daemon MUST NOT read or write harmonik state outside this surface.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  # ───────────────────────── §4.2 Startup sequence ─────────────────────────
+
+  - mnem: pl-005
+    kind: req
+    req: PL-005
+    title: "Startup order is deterministic (steps 0–9 + 3a + 8a)"
+    description: |
+      Per PL-005: daemon's startup MUST execute these steps in order, each completing before the next. (0) Composition-root bootstrap — instantiate event bus, control-point registry, handler registry, skill registry, policy registry per PL-020a; mint UUIDv7 `daemon_instance_id` and write to `.harmonik/daemon.instance-id` via WM-026 atomic discipline (temp+rename+fsync(parent_dir)); reuse across exec FORBIDDEN. (1) Acquire pidfile lock per PL-002, exit 5 on contention. (2) Emit `daemon_started`. (3) Orphan sweep per PL-006. (3a) Bind Unix socket at `.harmonik/daemon.sock` per PL-003; begin accepting connections. (4) Cat 0 pre-check per RC-012; on failure enter degraded per PL-010. (5) Walk git log for `Harmonik-Run-ID` trailers per EM §6.2; scan commits reachable from every task branch matching `run/<run_id>` (filesystem-based detection via `git for-each-ref refs/heads/run/`); branch naming is the authoritative in-flight-run index — no separate run registry. (6) Query Beads via `br ready` for dispatchable beads + audit-log/in-progress reads via BI-013/BI-016 for reconciliation input; each `br` invocation MUST carry request timeout T ≤ 5s per RC §8.1; on timeout the pre-check classifies as Cat 0 per PL-010. (7) Build in-memory Run model per EM §6.1. (8) Dispatch reconciliation per RC-008. (8a) Read `.harmonik/daemon.upgrading` (ON-020a) + `.harmonik/daemon.state` (ON-030a); upgrading marker triggers commit-hash gate (mismatch → exit 14); state marker initializes daemon into persisted suffix-state (paused/pausing/upgrade-prepare/stopped) rather than ready; corrupt markers treated as absent. (9) Transition to ready + emit `daemon_ready`, UNLESS step 8a selected a non-ready terminal target. Sequence is deterministic; no cognition.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: pl-006
+    kind: req
+    req: PL-006
+    title: "Orphan sweep precedes reconciliation (6-bullet enumeration)"
+    description: |
+      Per PL-006: before Cat 0 pre-check (PL-005 step 4), daemon MUST enumerate and clean residual resources from prior daemon instances. Every candidate MUST carry a project-scoped provenance marker (PL-006a); candidates without a valid marker MUST NOT be touched. (a) Tmux sessions matching `harmonik-<project-hash>-` killed via `tmux kill-session`; poll for process exit at 100 ms cadence up to 2-second ceiling. (b) Worktree locks per WM §4.3 WM-013a / §4.8 WM-033 staleness criterion. (c) Subprocesses re-parented to init (PID 1) whose marker matches this project's hash — covers BOTH (i) handler subprocesses AND (ii) `br` (Beads CLI) subprocesses per BI-029; SIGTERM then SIGKILL after 5-second interval (HC-018). (d) Stale intent files in `.harmonik/beads-intents/` LEFT for RC Cat 3a detector at step 8 (sweep MUST NOT invoke detectors which are gated on Cat 0). (e) Stale `.harmonik/reconciliation-locks/*.lock` (RC-002a) probed via `flock(LOCK_EX|LOCK_NB)` + `kill(creator_pid, 0)`; stale removed via `unlink` + `fsync(parent_directory_fd)`; `EWOULDBLOCK` leaves in place. (f) Emit `daemon_orphan_sweep_completed` with all kill/clear counts.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-006a
+    kind: req
+    req: PL-006a
+    title: "Project hash + provenance marker (env var + PGID)"
+    description: |
+      Per PL-006a: daemon MUST compute stable `project_hash = SHA-256(realpath(project_root))[:12]` (case-fold tracked under OQ-PL-008). Hash scopes (a) tmux session names (`harmonik-<project_hash>-<session_name>`) and (b) provenance marker on every spawned subprocess. Marker MUST be implemented BOTH ways: (i) env var `HARMONIK_PROJECT_HASH=<project_hash>` (readable via `/proc/<pid>/environ` on Linux); (ii) PGID set to deterministic per-project value. Daemon MUST `syscall.Setsid()` immediately at PL-005 step 0 (PGID = daemon-PID-at-start); PGID recorded in pidfile per PL-002b line 2. Every handler spawn MUST set `SysProcAttr{Setpgid: true, Pgid: <recorded_pgid>}` with one `EACCES` retry. Handlers internally calling `setsid` escape the marker (out of conformance per OQ-PL-011). Sweep matches on env var on Linux, PGID on darwin (OQ-PL-008).
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-007
+    kind: req
+    req: PL-007
+    title: "Orphan sweep is deterministic and complete before classification"
+    description: |
+      Per PL-007: orphan sweep MUST be deterministic given filesystem + process state AND the project-scoped provenance marker of PL-006a. After the sweep completes, no harmonik-owned process bearing this project's marker from a prior daemon is alive and no harmonik-owned worktree is locked by a prior-instance lease. The git walk (PL-005 step 5) and Beads query (step 6) operate against a quiescent project-scoped filesystem. The sweep MUST NOT match on binary path alone and MUST NOT kill a process lacking a valid project-scoped marker. Pairs with PL-INV-003 (orphan_sweep_complete_at flag asserted before any RC detector runs).
+
+  - mnem: pl-008
+    kind: req
+    req: PL-008
+    title: "Startup failure-mode catalog obligation (consumed from ON-003)"
+    description: |
+      Per PL-008: this spec DEPENDS on the normative startup failure-mode catalog produced by [operator-nfr.md §4.1 ON-003] spec-draft obligation. The Cat 0 pre-check (PL-005 step 4) consumes this catalog; the operator surface commands consume it for `harmonik status` reporting. Expected catalog entries (informative): git bad state, Beads SQLite locked, schema-version mismatch, stale-pidfile race, filesystem-unwritable, disk-full during checkpoint commit, ntm unavailable (per PL-021a). Authoritative list owned by ON-003.
+
+  - mnem: pl-008a
+    kind: req
+    req: PL-008a
+    title: "Exit-code consumption from ON §8"
+    description: |
+      Per PL-008a: daemon MUST emit exit codes from the authoritative ON §8 taxonomy. Codes consumed: 5 (`pidfile-locked` per PL-002), 6 (`socket-bind-failed` per PL-003), 7 (`git-bad-state`), 8 (`beads-unavailable`), 9 (`filesystem-unwritable`), 10 (`disk-full`), 14 (`upgrade-hash-mismatch` per PL-005 step 8a / ON-020a), 19 (`runtime-panic` per PL-018a), 22 (`ntm-unavailable` per PL-021a), 23 (`orchestrator-agent-unavailable` per PL-028 step 4). Codes 22+23 were PL-INTERIM in v0.4.0; absorbed into ON §8 in ON v0.4.0 — PL consumes by reference, no PL-side interim marker remains. On emission, daemon MUST also emit `daemon_startup_failed` with `{failed_at, exit_code, failure_mode}` BEFORE exit (where event bus has been initialized — PL-005 step 0 done). Failures BEFORE step 0 emit only the exit code to stderr.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.3 Ready-state transition ─────────────────────────
+
+  - mnem: pl-009
+    kind: req
+    req: PL-009
+    title: "Ready criteria + `daemon_ready` emission with monotonic companion"
+    description: |
+      Per PL-009: daemon MUST transition to `ready` only when ALL of the following hold: (a) orphan sweep (PL-006) complete; (b) Cat 0 pre-check passed (no infrastructure prerequisite failing per RC-012); (c) git-log walk + Beads query (PL-005 steps 5–6) complete; (d) in-memory model built (PL-005 step 7); (e) reconciliation dispatch (PL-005 step 8) complete for every in-flight run — either (i) synchronous RC-008 action-mapping succeeded and emitted `reconciliation_category_assigned` per RC-013, or (ii) the run was routed to an investigator workflow per PL-009a (investigator workflows MAY remain in-flight and MUST NOT block ready); (f) every in-flight run has received a category-assignment emission per RC-013. On transition, daemon MUST emit `daemon_ready` with `{ready_at, ready_at_ns_since_boot, investigator_run_ids[]}`. `ready_at` is RFC 3339 wall-clock (with ms); `ready_at_ns_since_boot` is the monotonic-clock companion field (CLOCK_MONOTONIC on Linux / mach_absolute_time on darwin, translated to ns) emitted alongside so restart RTO measurement per ON-031 / ON-033 is robust to wall-clock skew. Restart RTO is measured from SIGTERM (with its own monotonic companion) to `daemon_ready` emission. Boot-transition (post-reboot): monotonic comparison undefined → mark `rto_undefined`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-009a
+    kind: req
+    req: PL-009a
+    title: "Auto-resolver failure during startup dispatch routes to Cat 3"
+    description: |
+      Per PL-009a: if a synchronous action-mapping auto-resolver (Cat 1, 3a, 3b, 3c, 4 per RC §8.12) fails or raises during PL-005 step 8, daemon MUST: (a) emit `reconciliation_category_assigned` with the original category per RC-013; (b) re-classify into Cat 3 (store disagreement, generic) per RC §8.4; (c) dispatch an investigator workflow per RC-008; (d) proceed toward ready with the investigator in-flight, contributing the run_id to `investigator_run_ids[]`. Daemon MUST NOT block ready on auto-resolver failure and MUST NOT leave an in-flight run unclassified at ready emission. Permanently-stuck investigators escalate via RC's normal Cat 6 path.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-009b
+    kind: req
+    req: PL-009b
+    title: "Ready-protocol surface for external callers (3 mechanisms)"
+    description: |
+      Per PL-009b: external processes (operator CLI, supervisors, `harmonik runner` per PL-028) MUST detect daemon readiness via, in order of preference: (a) socket probe — connect to `.harmonik/daemon.sock`, send JSON-RPC `status`, receive response with `status ∈ {ready, degraded, reconciling, draining}`; on `reconciling` retry with exponential backoff (initial 100 ms, max 2 s, capped at `T_ready_wait = 60 s` per OQ-PL-002); (b) systemd-style notify (Linux) — when launched under `Type=notify` (detectable via `$NOTIFY_SOCKET`), daemon MUST call `sd_notify("READY=1")` at the same instant as PL-009 emission; (c) ready-file fallback — daemon MAY write `.harmonik/daemon.ready` at PL-009 emission, removed on any transition out of ready. External callers MUST NOT assume ready from pidfile/socket presence alone; `ECONNREFUSED` means daemon has not yet called `listen()`.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-010
+    kind: req
+    req: PL-010
+    title: "Degraded state on Cat 0 infrastructure failure (pre-ready only)"
+    description: |
+      Per PL-010: when Cat 0 pre-check (PL-005 step 4) fails, daemon MUST transition to `degraded` and remain there until prerequisites clear. In degraded, daemon MUST NOT classify or dispatch in-flight runs and MUST NOT transition to ready. Daemon MUST emit `infrastructure_unavailable` (naming the failed prerequisite) and SHOULD emit `daemon_degraded` for ON §4.9 health consumers. Daemon MUST periodically retry pre-check at configurable cadence (default 10s per OQ-PL-002). The §6.1 enum's `degraded` is PRE-`ready` Cat 0 only; post-`ready` degradation (RTO breach, health aggregation failures, silent-hang fan-out) emits `daemon_degraded` with `reason ∈ {rto_breach, reconstruction_notify, other}` but does NOT transition the §6.1 enum (OQ-PL-009). On SIGTERM while degraded, daemon proceeds to graceful shutdown per PL-011 (drain trivial — no classified runs).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.4 Shutdown ─────────────────────────
+
+  - mnem: pl-011
+    kind: req
+    req: PL-011
+    title: "Graceful shutdown drains in-flight runs (9-step sequence)"
+    description: |
+      Per PL-011: on `harmonik stop --graceful`, SIGTERM, or SIGINT, daemon MUST execute drain sequence: (1) transition to `draining`; (2) stop pulling new beads from the queue; (3) classify in-flight runs (per `in_flight(run)` of ON §3) into one of three sub-states — (i) mid-agent-work (wait up to T_drain per ON-029 for watcher per HC-011 to observe `agent_completed`/`agent_failed`; on observation run reaches durable checkpoint per EM-017), (ii) just-checkpointed (no follow-up node dispatched yet; withhold dispatch; treat as quiescent), (iii) gate-pending (sub-state of `running` per EM §7.1; treat as quiescent; withhold dispatch on subsequent gate resolution); step-3-complete signal feeding step 4 is the aggregation rule = watcher-completion aggregation across (i)-class runs combined with the immediate quiescence of (ii)+(iii)-class runs; (4) wait for agent-subprocess termination bounded by drain timeout per ON-029, on expiry SIGKILL surviving subprocesses and proceed to step 5; (5) emit `daemon_shutdown` per PL-011a; (6) flush event bus (fsync per EV §4.4); (7) release worktree leases per WM §4.3 WM-013b; (8) release pidfile lock + remove pidfile on clean shutdown + remove socket file; (9) exit code 0 on clean drain, exit 1 if drain timeout escalated to forced termination at step 4. Daemon transitions through `draining` per the operator-control state machine; subsystem-level shutdown ordering owned by ON-027 (PL-011 names the daemon-level sequence).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+      - "cite:wide-fanout"
+
+  - mnem: pl-011a
+    kind: req
+    req: PL-011a
+    title: "Shutdown event emission with monotonic companion"
+    description: |
+      Per PL-011a: daemon MUST emit `daemon_shutdown` BEFORE the bus flush (PL-011 step 6). Payload: `{shutdown_at, shutdown_at_ns_since_boot, mode}`. Mode = `graceful` for PL-011; `immediate` for the interceptable PL-012 path (SIGKILL cannot emit). `shutdown_at` is RFC 3339 wall-clock; `shutdown_at_ns_since_boot` is the monotonic-clock companion (CLOCK_MONOTONIC on Linux / mach_absolute_time on darwin) for ON-033 RTO measurement. SIGKILL terminations have no `daemon_shutdown` emission and are marked `rto_undefined` per ON-033.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-012
+    kind: req
+    req: PL-012
+    title: "Immediate shutdown aborts in-flight runs"
+    description: |
+      Per PL-012: on `harmonik stop --immediate` (interceptable) or SIGKILL, daemon MUST skip drain steps (PL-011 steps 3–4). In-flight agent subprocesses are killed; in-flight state is recoverable via next startup's orphan sweep + reconciliation. On interceptable `--immediate`, daemon MUST attempt steps 5–9 (emit `daemon_shutdown{mode=immediate}`, flush, release, exit); if any step fails, daemon MUST proceed to exit with non-zero code. On SIGKILL, steps 5–9 are skipped by force; recovery follows PL-024.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-013
+    kind: req
+    req: PL-013
+    title: "Daemon does not exit on queue-empty"
+    description: |
+      Per PL-013: when all beads are closed or deferred and nothing is in-flight, daemon MUST sleep (suspend CPU) and wait for subsequent `harmonik enqueue` or external Beads-store changes (periodically re-queried at configurable cadence). Daemon MUST NOT exit on queue-empty. Daemon exit occurs only on explicit `harmonik stop`, on operator upgrade transition (`running` → `upgrading` per ON §4.3), or on crash (PL-024). Rationale: exiting on queue-empty would make pidfile-lock handoff load-bearing for every `enqueue`; the re-query cadence trades background idle CPU for no-lock-churn.
+
+  # ───────────────────────── §4.5 Agent-subprocess management ─────────────────────────
+
+  - mnem: pl-014
+    kind: req
+    req: PL-014
+    title: "Agent subprocesses are children of the daemon (single cmd.Wait reaper)"
+    description: |
+      Per PL-014: daemon MUST spawn agent processes as children of the daemon (via ntm adapter or platform abstraction; see PL-020 + §4.7). Every spawn MUST carry the provenance marker of PL-006a. Child parentage is structural — allows OS to re-parent orphans to init on daemon crash, cleaned by next startup's orphan sweep. Subprocess supervision (watcher, cancellation, `cmd.Wait()` reap, crash detection) owned by HC §4.3 HC-011 + §4.6 HC-024; PL-014 scope is OS-level parentage + spawn-site provenance. Launch mechanics per HC-001. Every spawn MUST have exactly one Go goroutine that owns the `*exec.Cmd` and that goroutine MUST call `cmd.Wait()` exactly once. Failure produces zombies and is a PL-INV-005 conformance violation regardless of `kill(pid, 0)` reporting.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-014a
+    kind: req
+    req: PL-014a
+    title: "Per-daemon concurrency ceiling (rlimit-derived default)"
+    description: |
+      Per PL-014a: daemon MUST enforce a configurable ceiling on simultaneously-running agent subprocesses. Default = `min(RLIMIT_NOFILE_soft / FDS_PER_HANDLER, FALLBACK_CAP)` where `FDS_PER_HANDLER = 8` and `FALLBACK_CAP = 1024` (OQ-PL-010). Daemon MUST `getrlimit(RLIMIT_NOFILE)` at PL-005 step 0; if soft below `MIN_NOFILE = 4096`, daemon MUST attempt `setrlimit` to raise to `min(4096, hard)`, log warning on failure. Operator-configured ceiling per ON §4.3 takes precedence; derived value is safety default. Exceeding ceiling MUST emit `dispatch_deferred{reason="per_daemon_ceiling_exhausted"}` (NOT cross-daemon `machine_ceiling_exhausted` of ON-041).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-015
+    kind: req
+    req: PL-015
+    title: "Agent ↔ daemon communication routes through the socket"
+    description: |
+      Per PL-015: agent subprocesses MUST communicate with daemon exclusively through `.harmonik/daemon.sock` (PL-003). The daemon-facing agent-command surface (including `claim-next`, `emit-outcome`, and Beads-CLI-skill-routed invocations) MUST route over this socket using the wire format of PL-003a. Concrete method definitions for agent-side commands owned by HC §4.2 (wire protocol) and BI §4.9 BI-027 (Beads-CLI skill). PL owns "these commands route over the socket"; the command-set normative inventory is tracked as OQ-PL-005 (RESOLVED: pinned in PL-003a).
+    extra_labels:
+      - "cite:wide-fanout"
+
+  - mnem: pl-016
+    kind: req
+    req: PL-016
+    title: "Agent-subprocess failure is observed by the daemon"
+    description: |
+      Per PL-016: agent-subprocess failure (crash, hang, policy violation) MUST be observed by the daemon's watcher goroutine per HC-011 and MUST produce typed events (`agent_failed` etc. per EV §8.3). The watcher is the exclusive owner of the `*exec.Cmd` reference for its session and the exclusive caller of `cmd.Wait()` for reap. Routing of the resulting event to retry / re-plan / terminal paths is owned by EM §4.10 EM-046b (RETRY outcome re-dispatch) and RC §4.2 (reconciliation-routed paths).
+    extra_labels:
+      - "cite:wide-fanout"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-017
+    kind: req
+    req: PL-017
+    title: "Silent-hang detection obligation (named, owned by HC §4.6)"
+    description: |
+      Per PL-017: this spec NAMES the silent-hang detection obligation owned by HC §4.6. A silent hang is an agent subprocess that remains alive but produces no output, no heartbeat, and no lifecycle signal for longer than a bounded interval. The handler-contract spec owns the detection rule, the wall-clock ceiling, and the cleanup path; PL requires that the daemon's watcher goroutine (PL-016) implement the HC detection rule and route silent-hang outcomes into reconciliation per RC §4.2.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.6 Daemon vs orchestrator-agent distinction ─────────────────────────
+
+  - mnem: pl-018
+    kind: req
+    req: PL-018
+    title: "Daemon is a deterministic Go binary with no LLM logic"
+    description: |
+      Per PL-018: daemon MUST be a deterministic Go binary. Daemon MUST NOT call any LLM, MUST NOT import any LLM SDK, and MUST NOT embed any cognition-bearing component per AR §4.2. All cognition in harmonik lives in agent subprocesses launched via handlers (HC-001) or in orchestrator-agent sessions interacting via the CLI (PL-019). A proposal to embed cognition in the daemon (e.g., "let the daemon decide which bead to claim next using an LLM") violates this requirement. Pairs with PL-INV-002 (`go-arch-lint` rule on `internal/daemon` import graph).
+
+  - mnem: pl-018a
+    kind: req
+    req: PL-018a
+    title: "Panic recovery barrier in the daemon main goroutine"
+    description: |
+      Per PL-018a: daemon MUST install a top-level `recover()` barrier in its main goroutine. Unrecovered panic MUST terminate daemon with ON §8 code 19 (`runtime-panic`) per PL-008a, emit `daemon_startup_failed` (if event bus initialized) or `daemon_shutdown{mode=immediate}` (if ready reached) on best-effort basis, and leave pidfile stale; recovery follows PL-024. Panics inside HC-watcher goroutines handled by HC-011a; panics inside other daemon goroutines (dispatcher, reconciler, subsystem loops) MUST be caught by per-goroutine `recover()` and escalate to top-level barrier only on repeated failure (threshold implementation-defined at MVH). Double-panic (panic inside top-level recover) MAY bypass the exit-code-19 path; recovery proceeds via PL-024 stale-pidfile detection + PL-025a pairing-tolerance.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: pl-019
+    kind: req
+    req: PL-019
+    title: "Orchestrator-agent is a separate Claude Code session (post-MVH)"
+    description: |
+      Per PL-019: an orchestrator-agent MUST be a separate Claude Code session sitting on top of the daemon. It MUST interact with the daemon through the CLI (`harmonik enqueue`, `harmonik status`, priority triage, backlog grooming). It MUST NOT run as a thread or sub-module within the daemon process; it MUST be a separate OS process with its own PID. Orchestrator-agent is OPTIONAL in MVH — daemon is sole driver per [core-scope.md §5]; the orchestrator-agent layer is post-MVH. Cognition tag names the delegation path: role = orchestrator-agent; model-class = Claude Code (Sonnet or Opus per project config); input shape = CLI responses + Beads store via Beads-CLI skill.
+    extra_labels:
+      - "tag:cognition"
+
+  - mnem: pl-020
+    kind: req
+    req: PL-020
+    title: "Composition root is `internal/daemon`"
+    description: |
+      Per PL-020: daemon's code organization MUST treat the `internal/daemon` Go package as the composition root. Only `internal/daemon` is allowed to import across subsystem boundaries (per AR §4.4 subsystem-envelope rule and `go-arch-lint` enforcement declared in [core-scope.md §6]). Subsystems MUST NOT import each other directly except through the interfaces each subsystem exposes.
+
+  - mnem: pl-020a
+    kind: req
+    req: PL-020a
+    title: "Cross-subsystem registries reside in the composition root"
+    description: |
+      Per PL-020a: all cross-subsystem registries declared by foundation specs — including event bus (EV §4.3), control-point registry (CP §4.1), handler registry + skill registry (HC §4.1, §4.11), and policy registry — MUST be instantiated inside the composition root (`internal/daemon`) on startup per PL-005 step 0. No out-of-daemon registry is permitted for MVH per AR-INV-007. Post-MVH process-geometry changes that split registries across processes are tracked by AR §4.5 AR-019 and do NOT require a foundation amendment to PL.
+    extra_labels:
+      - "cite:wide-fanout"
+
+  # ───────────────────────── §4.7 ntm adapter scope ─────────────────────────
+
+  - mnem: pl-021
+    kind: req
+    req: PL-021
+    title: "ntm adapter consumes process/tmux surface only"
+    description: |
+      Per PL-021: ntm adapter layer MUST consume only the following ntm capabilities: (a) agent process spawning in a tmux pane; (b) agent-profile knowledge (ready-state detection per agent type, rate-limit signals, clean exit sequences); (c) lifecycle events (process start, ready, rate-limited, stopped); (d) account rotation (for agent types that support it). All other ntm features (workflow semantics, SwarmPlan, checkpoint/recovery, Agent Mail) are explicitly out of scope per PL-022.
+
+  - mnem: pl-021a
+    kind: req
+    req: PL-021a
+    title: "ntm version pin and absence-detection (Cat 0 failure)"
+    description: |
+      Per PL-021a: daemon MUST version-pin `ntm` per the external-inputs protocol (parallel to ON §4.4 ON-017); supported versions MUST be declared in the release manifest. An `ntm` version outside the supported set MUST be detected during PL-005 step 4 Cat 0 pre-check and MUST produce ON §8 code 22 (`ntm-unavailable`) per PL-008a plus `infrastructure_unavailable{failed_prerequisite=ntm_unavailable}`. `ntm` not on PATH, tmux missing, or failing the version probe MUST classify identically as Cat 0 per RC §8.1. Daemon MUST NOT attempt to spawn handler subprocesses without a working ntm adapter; spawns MUST fail-fast with the ntm-unavailable exit code rather than silently degrading to non-tmux mode (locked decision #4 requires tmux inspectability).
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-022
+    kind: req
+    req: PL-022
+    title: "ntm adapter MUST NOT consume workflow-semantic features"
+    description: |
+      Per PL-022: ntm adapter MUST NOT import or consume: (a) ntm's Pipeline System (harmonik's workflow semantics live in DOT graphs, not ntm pipelines); (b) ntm's SwarmPlan format (harmonik uses DOT per locked decision #7, not SwarmPlan); (c) ntm's checkpoint/recovery (tmux-session-resume is NOT equivalent to harmonik's git-checkpoint-based workflow-state recovery — the two solve different problems); (d) ntm's file-reservation / Agent Mail features (harmonik uses Gas Town worktree+merge per locked decision #7; file reservations are explicitly rejected).
+
+  - mnem: pl-023
+    kind: req
+    req: PL-023
+    title: "Handler contract is the ntm boundary"
+    description: |
+      Per PL-023: the handler contract at HC §4.12 is where the ntm-vs-daemon boundary lives. Proposals that cross it by importing ntm pipeline types, SwarmPlan records, or Agent Mail primitives into the daemon MUST fail review. The ntm adapter is a thin layer bounded by the handler contract on the daemon side.
+
+  # ───────────────────────── §4.8 Crash semantics ─────────────────────────
+
+  - mnem: pl-024
+    kind: req
+    req: PL-024
+    title: "Daemon crash leaves a stale pidfile"
+    description: |
+      Per PL-024: on unexpected daemon termination (panic, SIGKILL, OS crash), the pidfile (PL-002) is left stale. Next `harmonik daemon` invocation MUST detect a stale pidfile by checking that the recorded PID is no longer a live process (per PL-002a primitive selection), remove the stale pidfile, and proceed with startup per PL-005. On restart, PL-006 orphan-sweeps residual tmux sessions, locks, and re-parented subprocesses before reconciliation classifies in-flight runs. PID-reuse-on-reboot disambiguated per PL-002a by probing `/proc/<pid>/cmdline` on Linux + darwin equivalent; refusal-to-start-on-ambiguity tracked as OQ-PL-007.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-025
+    kind: req
+    req: PL-025
+    title: "Crash during startup reconciliation re-runs from step 0"
+    description: |
+      Per PL-025: if daemon crashes during startup reconciliation (after PL-005 step 3 but before reaching ready), next restart MUST re-run PL-005 from step 0. Reconciliation is idempotent per RC §4.1 RC-002: re-running detection rules against the same git + Beads state produces the same classifications. Reconciliation workflows that were in-flight at crash time are re-classified (typically Cat 5 for the outer run and Cat 3b for the investigator's verdict-unexecuted case) per RC §4.2.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: pl-025a
+    kind: req
+    req: PL-025a
+    title: "Lifecycle-event pairing tolerance"
+    description: |
+      Per PL-025a: consumers of `daemon_started`, `daemon_ready`, `daemon_orphan_sweep_completed`, `daemon_degraded`, `daemon_shutdown` MUST tolerate unpaired events produced by a crash during the startup sequence. A `daemon_started` with no subsequent `daemon_ready`, `daemon_shutdown`, or `daemon_startup_failed` before the next `daemon_started` indicates a crash between PL-005 step 2 and one of those terminal emissions; the prior instance's lifecycle is treated as orphaned. The ON §4.8 RTO measurement (ON-031) MUST use this pairing rule when computing restart RTO from SIGTERM to `daemon_ready`. A crash-induced unpaired `daemon_orphan_sweep_completed` is similarly orphaned and MUST NOT be misread as completion of the current daemon's sweep.
+
+  - mnem: pl-026
+    kind: req
+    req: PL-026
+    title: "Agent-subprocess crash routes through handler contract"
+    description: |
+      Per PL-026: an agent-subprocess crash that occurs while the daemon is alive MUST be handled per HC §4.6 (error propagation across async boundaries). The daemon routes the resulting outcome into reconciliation per RC §4.2 only if the resulting run state is ambiguous; a cleanly-failed agent subprocess (explicit `FAIL` outcome, bounded exit code) produces a normal run-failure transition and does not trigger reconciliation.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.9 `harmonik upgrade` daemon-internal mechanics ─────────────────────────
+
+  - mnem: pl-027
+    kind: req
+    req: PL-027
+    title: "Upgrade contract obligation (daemon-internal mechanics; 5 sub-rules)"
+    description: |
+      Per PL-027: this spec owns daemon-internal mechanics of `harmonik upgrade`; operator-facing contract owned by ON §4.6 ON-020. Sub-rules: (i) **Exec-replacement** — new binary MUST replace old via `execve` preserving daemon PID; new process MUST re-acquire pidfile lock per PL-002a (advisory lock NOT transferred via exec on macOS flock). (ii) **Skip-path under exec** — when launched via exec-replacement (detectable by `HARMONIK_UPGRADE=1` env marker), new instance MUST skip PL-005 step 3 (orphan sweep — no orphans exist) but MUST execute steps 0, 1, 2, 4, 5–8, 9 and re-emit `daemon_ready`. (iii) **Socket continuity via fd-passing** — outgoing daemon clears `FD_CLOEXEC` on listener fd, passes via `HARMONIK_LISTENER_FD=<n>` env var alongside upgrade marker, MUST NOT close fd before exec; new binary calls `net.FileListener(os.NewFile(fd, ""))` to adopt, then re-sets `FD_CLOEXEC`. Adoption is gap-free; clients observe no `ECONNREFUSED`. (iv) **Intermediate state + marker write** — outgoing daemon MUST write `.harmonik/daemon.upgrading` per ON-020a via WM-026 atomic discipline (temp+rename+fsync(parent_dir)) BEFORE `execve`; marker MUST be present and durable before exec; marker removed on clean transition to ready per ON-020a. (v) **Upgrade event emissions** — daemon MUST emit `operator_upgrading` before exec and `operator_upgrade_completed` after new instance reaches ready; rejection paths emit `operator_upgrade_rejected`.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.10 Command surface (daemon side) ─────────────────────────
+
+  - mnem: pl-028
+    kind: req
+    req: PL-028
+    title: "Daemon command surface (8 entry points)"
+    description: |
+      Per PL-028: daemon MUST support: (a) `harmonik daemon` — start headless, blocks until signaled; flags `--config`, `--log-level`; OQ-PL-003 tracks bare-git-repo behavior. (b) `harmonik attach` — observability TUI over the socket; multiple simultaneous attaches MUST be supported with no foundation upper limit; detach MUST NOT kill daemon; arbitration deferred to ON §4.3 (OQ-ON-004). (c) `harmonik runner` — solo-dev convenience: (1) start daemon if absent; (2) wait for `daemon_ready` per PL-009b; (3) open tmux session under project naming convention with daemon log + per-handler panes (locked decision #4 inspectability); (4) on `--orchestrator-agent` flag, spawn Claude Code session per PL-019, exit ON §8 code 23 if Claude Code unavailable; on ntm unavailable exit per PL-021a (code 22). Distinct entry point with own exit-code surface; NOT a shell alias. (d) `harmonik enqueue` — JSON-RPC `enqueue` per BI §4.4. (e) `harmonik status` — report §6.1 DaemonStatus enum value; for `degraded` MUST report failing Cat 0 prerequisite per PL-010; semantic content beyond enum owned by ON §4.1 ON-002. (f) `harmonik pause` — semantics owned by ON §4.3 ON-008; PL obligates only command-dispatch + socket routing. (g) `harmonik stop [--graceful|--immediate]` — `--graceful` default; behavior per PL-011 / PL-012. (h) `harmonik upgrade` — daemon-internal mechanics per PL-027; operator-facing per ON §4.6 ON-020. Multi-daemon coordination flags delegated to ON §4.10 ON-041.
+
+  # ───────────────────────── §5 invariants ─────────────────────────
+
+  - mnem: pl-inv-001
+    kind: invariant
+    req: PL-INV-001
+    title: "Sensor: one daemon per project (pidfile lock + content match)"
+    description: |
+      Per PL-INV-001: for each project directory at any instant, at most one daemon process MUST hold the pidfile lock at `.harmonik/daemon.pid`. Spans ON §4.3 (operator-control state machine requires singular daemon to track status), BI §4.10 BI-030 (intent log keyed against single-writer daemon), WM §4.3 WM-013a (worktree leases assume single leasing authority per project).
+      Sensor: pidfile lock held by daemon's fd AND pidfile content parseable AND parsed PID = `getpid()` AND parsed PGID = `getpgrp()` AND parsed `daemon_instance_id` = in-memory `daemon_instance_id` minted at PL-005 step 0 (line-3 check applies for v0.4.1+ pidfiles; v0.4.0 two-line pidfiles fall back to PID/PGID predicate per PL-002b reader-tolerance).
+
+  - mnem: pl-inv-002
+    kind: invariant
+    req: PL-INV-002
+    title: "Sensor: daemon is deterministic (`go-arch-lint` + binary import-graph)"
+    description: |
+      Per PL-INV-002: daemon binary MUST contain no LLM invocations and no cognition-bearing components per AR §4.2. Spans AR §4.1 (four-axis classification assigns `llm-freedom=none` to daemon as a whole), AR-INV-007 (centralized-controller invariant), and every subsystem spec's Go-package declaration.
+      Sensor: `go-arch-lint` rule on `internal/daemon` package imports asserting no LLM SDK (`github.com/anthropics/*`, `github.com/openai/*`, equivalents) appears in transitive closure; plus a binary-level import-graph scan (§10.2).
+
+  - mnem: pl-inv-003
+    kind: invariant
+    req: PL-INV-003
+    title: "Sensor: orphan sweep completes before reconciliation classification"
+    description: |
+      Per PL-INV-003: PL-006's orphan sweep MUST complete before any reconciliation detector (per RC §4.3) runs. Load-bearing for reconciliation correctness: detectors scope on runs (RC-INV-005), and a run with a live orphan subprocess or stale worktree lock cannot be classified correctly until those orphans are cleared.
+      Sensor: daemon maintains in-memory flag `orphan_sweep_complete_at: Timestamp`; every PL-005 step 8 reconciliation-dispatch path MUST assert the flag is non-nil before invoking any detector. Assertion failure is a panic per PL-018a.
+
+  - mnem: pl-inv-004
+    kind: invariant
+    req: PL-INV-004
+    title: "Sensor: socket-path exclusivity"
+    description: |
+      Per PL-INV-004: for each project directory at any instant, at most one bound Unix socket at `.harmonik/daemon.sock` MUST be serving daemon requests. Pairs with PL-INV-001 and extends it to the socket surface: two daemons could in principle race to bind the socket if pidfile-lock discipline were violated; this invariant forbids the observable outcome.
+      Sensor: the daemon that holds the pidfile lock (PL-002) is exclusive owner of the bound socket fd. A second daemon observing `EADDRINUSE` on bind MUST exit with ON §8 code 6 (`socket-bind-failed`) per PL-008a; the exit path is the sensor.
+
+  - mnem: pl-inv-005
+    kind: invariant
+    req: PL-INV-005
+    title: "Sensor: agent subprocess parentage is daemon-originated"
+    description: |
+      Per PL-INV-005: every live handler subprocess spawned during normal operation MUST have the daemon (by PID) as its initial parent; post-crash re-parenting to init (PID 1) is the only legal parentage deviation, cleaned by next daemon's orphan sweep (PL-006). Load-bearing for the orphan sweep's detection rule (PL-006a provenance marker assumes the subprocess was spawned by a daemon of this project, not by a user shell).
+      Sensor: three-mechanism verification — (a) **static lint** over the `internal/daemon` package + ntm adapter ensuring every `*exec.Cmd`-creating call site sets `SysProcAttr{Setpgid: true, Pgid: <recorded_pgid>}` AND injects `HARMONIK_PROJECT_HASH=<project_hash>` into `Cmd.Env` per PL-006a (compile-time check, no spawn site can omit the marker); (b) **scenario-level fixture** in pl-test.agent-supervision-fixture spawns a handler subprocess and asserts `/proc/<pid>/environ` (Linux) AND `getpgid(pid)` (darwin) report the expected marker; subprocess without the marker fails the fixture; (c) **reviewer scan** at `harmonik upgrade` finalize / cross-spec review checks for handler wrappers that internally call `setsid` (the OQ-PL-011 escape hatch — disclosed handler-side conformance break). PL-006 sweep MUST NOT reap a subprocess lacking the marker (zombie failure mode of PL-014's `cmd.Wait()` discipline counts as a separate PL-INV-005 violation regardless of `kill(pid, 0)` reporting).
+
+  # ───────────────────────── §6 schema beads (1) ─────────────────────────
+  # Note: §6.1 DaemonStatus is the only PL-owned schema. §6.2 co-owned event
+  # payloads belong to EV per §2.11(d.2). §6.3 declares no on-disk schema.
+
+  - mnem: pl-schema.daemon-status
+    kind: schema
+    schema_kind: enum
+    title: "Define `DaemonStatus` ENUM (§6.1)"
+    description: |
+      Implement the 7-value ENUM consumed by the daemon-status event ([event-model.md §8.7.2]) and by `harmonik status`: `starting` (pidfile locked; orphan sweep not yet complete); `reconciling` (Cat 0 passed; reconciliation dispatch in progress); `degraded` (Cat 0 prerequisite failing; classification halted; pre-ready only per PL-010); `ready` (PL-009 criteria met; normal dispatch active); `paused` (operator-initiated pause; in-flight runs drained per ON §4.3); `draining` (graceful-shutdown sequence active per PL-011); `stopped` (terminal; pidfile released per ON §4.3). PL owns the `starting → reconciling → ready` prefix and pre-`ready` `degraded` side state; the full operator-control state machine (paused/draining/stopped + suffix) is owned by ON §4.3. Consumers MUST tolerate unknown statuses by falling through to default display per ON §4.5 ON-018 N-1 compatibility. Post-`ready` degradation (RTO breach, health aggregation failures, silent-hang fan-out) emits `daemon_degraded` but does NOT correspond to a transition in this enum (OQ-PL-009).
+
+  # ───────────────────────── Test-infra beads (10) ─────────────────────────
+
+  - mnem: pl-test.pidfile-and-socket-fixture
+    kind: test-infra
+    title: "Pidfile + socket twin-driven fixture (PL-001..PL-003b + PL-INV-001 + PL-INV-004)"
+    description: |
+      Per §10.2 (PL-001, PL-002, PL-002a, PL-002b, PL-003, PL-003a, PL-003b, PL-INV-001, PL-INV-004): twin-driven test attempts to start a second daemon against the same project and asserts exit code `5` (pidfile-locked); SIGKILLs the first daemon and asserts second daemon's stale-pidfile detection via `flock` + `kill(pid, 0)` logic (PL-024). Pidfile content asserts three-line format (PID/PGID/UUIDv7), reader-tolerance for one-line and two-line backwards-compat formats. Binding test asserts socket mode `0600`, socket-path exclusivity (second daemon → `EADDRINUSE` → code 6), and NDJSON framing correctness against a JSON-RPC client. Pre-ready rejection test asserts `daemon_not_ready{reason="unknown_run_id"}` typed error during the pre-ready window.
+
+  - mnem: pl-test.startup-orphan-sweep-harness
+    kind: test-infra
+    title: "Startup + orphan sweep scenario harness (PL-005, PL-006, PL-006a, PL-007, PL-008a, PL-INV-003, PL-INV-005)"
+    description: |
+      Per §10.2 (PL-005, PL-006, PL-006a, PL-007, PL-INV-003, PL-INV-005): scenario test seeds tmux sessions, stale worktree locks, re-parented handler subprocesses AND re-parented `br` subprocesses (with and without provenance marker), stale `.harmonik/reconciliation-locks/*.lock` files (with and without `Harmonik-Verdict-Executed: true` per RC-002b), and stale intent files; starts daemon and asserts orphan-sweep event payload counts (including `br_subprocesses_killed` and `reconciliation_locks_removed`); asserts subprocesses lacking the marker are NOT killed; asserts locks under active acquisition (concurrent `flock(LOCK_EX)` from fixture) are NOT removed; asserts `orphan_sweep_complete_at` flag is set before any reconciliation detector runs. PL-008a: unit test asserts every consumed exit code (5–10, 14, 19, 22, 23) maps to a distinct failure and `daemon_startup_failed` is emitted on each (where event bus initialized).
+
+  - mnem: pl-test.ready-state-fixture
+    kind: test-infra
+    title: "Ready-state + degraded scenario fixture (PL-009, PL-009a, PL-009b, PL-010)"
+    description: |
+      Per §10.2 (PL-009, PL-009a, PL-010): scenario tests covering (a) ready transition only when criteria are met; (b) degraded persistence until Cat 0 clears; (c) auto-resolver failure routing to Cat 3 investigator workflows without blocking ready. PL-009b: ready-protocol surface tests cover socket-probe with exponential backoff, systemd `sd_notify` (Linux), and `.harmonik/daemon.ready` fallback file. Asserts `ready_at_ns_since_boot` monotonic-companion field is present and sourced from CLOCK_MONOTONIC / mach_absolute_time per ON-033.
+
+  - mnem: pl-test.shutdown-drain-fixture
+    kind: test-infra
+    title: "Shutdown + drain scenario fixture (PL-011, PL-011a, PL-012, PL-013)"
+    description: |
+      Per §10.2 (PL-011, PL-011a, PL-012): scenario tests for graceful drain — asserts in-flight runs reach checkpoint before suspend; classifies in-flight runs into (i) mid-agent-work, (ii) just-checkpointed, (iii) gate-pending; asserts step-3-complete signal is the watcher-aggregation across (i)-class combined with (ii)+(iii) immediate quiescence; asserts `daemon_shutdown{mode=graceful}` emitted before bus flush with `shutdown_at_ns_since_boot` companion. Immediate abort: asserts subprocess kill + `daemon_shutdown{mode=immediate}` on interceptable path + next-startup recovery on SIGKILL. PL-013: asserts daemon does not exit on queue-empty.
+
+  - mnem: pl-test.agent-supervision-fixture
+    kind: test-infra
+    title: "Agent supervision + spawn discipline fixture (PL-014, PL-014a, PL-015, PL-016, PL-017)"
+    description: |
+      Per §10.2 (PL-014, PL-014a, PL-015, PL-016, PL-017): tests spawn discipline — every spawn carries provenance marker per PL-006a; every spawn has exactly one goroutine owning `*exec.Cmd` calling `cmd.Wait()` exactly once (zombie failure detected as PL-INV-005 violation regardless of `kill(pid, 0)` reporting). PL-014a: rlimit-derived ceiling derived from `RLIMIT_NOFILE_soft / FDS_PER_HANDLER` capped at `FALLBACK_CAP=1024`; `setrlimit` raises soft to `min(4096, hard)`; exceeding ceiling emits `dispatch_deferred{reason="per_daemon_ceiling_exhausted"}`. Watcher / silent-hang detection routes through HC §4.6 implementation; PL test asserts the routing wiring is in place.
+
+  - mnem: pl-test.composition-root-lint
+    kind: test-infra
+    title: "Composition-root + panic-barrier lint (PL-018, PL-018a, PL-020, PL-020a, PL-INV-002)"
+    description: |
+      Per §10.2 (PL-018, PL-018a, PL-020, PL-020a, PL-INV-002): build-time lint (e.g., `go-arch-lint` per [core-scope.md §6]) asserts `internal/daemon` imports no LLM SDK (`github.com/anthropics/*`, `github.com/openai/*`, equivalents in transitive closure), plus binary-level import-graph scan. Wiring test instantiates event bus, control-point registry, handler registry, skill registry inside composition root on startup. Panic-barrier test installs a panic in a goroutine and asserts top-level `recover()` barrier terminates daemon with ON §8 code 19 (`runtime-panic`). `go-arch-lint` declaration that `internal/daemon` is the only subsystem-crossing importer.
+
+  - mnem: pl-test.ntm-adapter-fixture
+    kind: test-infra
+    title: "ntm adapter + version-pin fixture (PL-021, PL-021a, PL-022, PL-023)"
+    description: |
+      Per §10.2 (PL-021, PL-021a, PL-022, PL-023): lint rule asserts `internal/adapter/ntm` imports only the allowed ntm surface (process/tmux); importing ntm pipeline or SwarmPlan packages is a build failure. Absence-detection test runs the daemon on a PATH without `ntm` and asserts ON §8 code 22 (`ntm-unavailable`) plus `infrastructure_unavailable{failed_prerequisite=ntm_unavailable}`. Version-pin test seeds an ntm version outside the supported set and asserts identical Cat 0 classification.
+
+  - mnem: pl-test.crash-recovery-harness
+    kind: test-infra
+    title: "Crash recovery + reconciliation re-run harness (PL-024, PL-025, PL-025a, PL-026)"
+    description: |
+      Per §10.2 (PL-024, PL-025, PL-026): chaos-style scenario tests SIGKILL the daemon mid-reconciliation; assert next startup re-runs PL-005 from step 0 deterministically and produces identical classifications. Asserts stale-pidfile detection via `flock` failure + `kill(pid, 0)` non-live response. PL-025a: pairing-tolerance test seeds an unpaired `daemon_started` (no subsequent ready/shutdown) and asserts ON-031 RTO measurement uses the pairing rule. PL-026: agent-subprocess crash test asserts cleanly-failed subprocess produces normal run-failure transition (no reconciliation), ambiguous run state routes through reconciliation per RC §4.2.
+
+  - mnem: pl-test.upgrade-scenario-harness
+    kind: test-infra
+    title: "Upgrade exec-replacement scenario harness (PL-027)"
+    description: |
+      Per §10.2 (PL-027): exec-replace daemon binary and assert (i) pidfile lock is re-acquired by new instance; (ii) orphan sweep is skipped (HARMONIK_UPGRADE=1 detected); (iii) listener fd is adopted gap-free via `HARMONIK_LISTENER_FD` per fd-passing protocol — no client `ECONNREFUSED` observable across exec; (iv) `.harmonik/daemon.upgrading` marker is present + durable on disk before `execve` (temp+rename+fsync(parent_dir) per WM-026 atomic discipline) and removed on clean transition to ready; commit-hash mismatch fails with ON §8 code 14 (`upgrade-hash-mismatch`); (v) `operator_upgrading` and `operator_upgrade_completed` emission bracket the exec.
+
+  - mnem: pl-test.cli-surface-fixture
+    kind: test-infra
+    title: "CLI command surface fixture (PL-028)"
+    description: |
+      Per §10.2 (PL-028): CLI-surface test dispatches each declared command (`daemon`, `attach`, `runner`, `enqueue`, `status`, `pause`, `stop`, `upgrade`); asserts JSON-RPC method wiring per PL-003a, flag parsing, and exit-code behavior. `harmonik runner` distinct-entry-point test: asserts the four ordered steps (start, wait-ready, open tmux, optional orchestrator-agent spawn); asserts ON §8 code 23 (`orchestrator-agent-unavailable`) on Claude Code missing; asserts ON §8 code 22 (`ntm-unavailable`) on ntm missing. `harmonik attach` test: multiple simultaneous attaches, detach does not kill daemon.
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples.
+#
+# Mnemonic prefix selects resolution map:
+#   pl-* → intra-spec (this spec's mnem-map, generated at load)
+#   ar-* / em-* / hc-* / cp-* / wm-* / bi-* / ev-* → cross-spec
+#   forward:* → forward-deferred (logged only, NOT loaded into beads); used for
+#     rc, on targets per F-pilot-EM-2 / Option B precedent (specs in depends-on
+#     but not yet pilot-loaded — RC; OR specs intentionally NOT in depends-on
+#     where the named-obligation pattern still demands a hard-dep edge — ON,
+#     per F-pilot-PL-4).
+edges:
+  # ───────────────────────── Intra-PL edges ─────────────────────────
+
+  # §4.a envelope schema dependencies
+  - {from: pl-env-001, to: pl-schema.daemon-status}             # DaemonStatus is the §6.1 ENUM the envelope declares
+
+  # §4.1 per-project daemon scope — schema + intra-spec term-uses
+  - {from: pl-001, to: pl-002}                                   # pidfile is the per-project singularity mechanism
+  - {from: pl-002, to: pl-002a}                                  # lock primitive is part of the pidfile contract
+  - {from: pl-002, to: pl-002b}                                  # atomic write is part of the pidfile contract
+  - {from: pl-002a, to: pl-002b}                                 # truncate-rewrite respects fd-lifetime lock
+  - {from: pl-002, to: pl-008a}                                  # PL-002 cites exit code 5 from ON §8 via PL-008a
+  - {from: pl-003, to: pl-008a}                                  # PL-003 cites exit code 6 (socket-bind-failed) via PL-008a (sensor at PL-INV-004)
+  - {from: pl-003, to: pl-002}                                   # socket and pidfile co-resident in `.harmonik/`
+  - {from: pl-003a, to: pl-003}                                  # wire format runs over the bound socket
+  - {from: pl-003b, to: pl-003a}                                 # typed-error is JSON-RPC-shape over the wire
+  - {from: pl-003b, to: pl-005}                                  # pre-ready window is bounded by step 3a..7
+  - {from: pl-003b, to: pl-009b}                                 # clients retry per ready-protocol backoff
+  - {from: pl-004, to: pl-002}                                   # daemon.pid in the file surface
+  - {from: pl-004, to: pl-002b}                                  # daemon.instance-id companion to pidfile line 3
+  - {from: pl-004, to: pl-003}                                   # daemon.sock in the file surface
+  - {from: pl-004, to: pl-005}                                   # daemon.instance-id minted at step 0
+  - {from: pl-004, to: pl-006}                                   # reconciliation-locks dir swept by orphan-sweep
+  # NOTE: pl-004 → pl-027 reverse removed for cycle avoidance. PL-004 enumerates
+  # the file surface (including daemon.upgrading); PL-027(iv) cites PL-004's
+  # surface as the location it writes to. PL-027 is the consumer per §3.1
+  # step 5 single-owner pin (PL-004 owns the surface declaration).
+
+  # §4.2 startup sequence — internal ordering + envelope cites
+  - {from: pl-005, to: pl-002}                                   # step 1 acquires pidfile lock
+  - {from: pl-005, to: pl-002a}                                  # step 1 uses the fd-lifetime primitive
+  - {from: pl-005, to: pl-002b}                                  # step 0 atomic write of instance-id parallels pidfile discipline
+  - {from: pl-005, to: pl-003}                                   # step 3a binds the socket
+  - {from: pl-005, to: pl-006}                                   # step 3 invokes orphan sweep
+  - {from: pl-005, to: pl-008}                                   # step 4 consumes the failure-mode catalog
+  - {from: pl-005, to: pl-008a}                                  # exit-code 14 on step 8a hash mismatch
+  - {from: pl-005, to: pl-020a}                                  # step 0 instantiates registries in composition root
+  # NOTE: pl-005 → pl-009 + pl-005 → pl-010 reverse cites removed for cycle
+  # avoidance. PL-009 owns the ready-criteria predicate (§3.1 step 5
+  # single-owner pin); PL-005 step 9 is the trigger that cites the predicate
+  # — but emitting `pl-005 → pl-009` plus `pl-009 → pl-005` (via "all
+  # PL-005 step completion predicates") creates a 2-cycle. Resolution per
+  # F-pilot-AR-10 supporting-cite-vs-hard-dep test: PL-009 → PL-005 is the
+  # hard direction (PL-009's body explicitly enumerates each PL-005 step as
+  # a precondition); PL-005 → PL-009 is supporting (removing PL-009 leaves
+  # PL-005 step 9 testable as "transition to ready state"). Same posture for
+  # PL-010 (degraded ownership).
+  - {from: pl-006, to: pl-006a}                                  # sweep matches on the project-scoped marker
+  - {from: pl-006, to: pl-002b}                                  # PGID line 2 of pidfile is sweep input on darwin
+  - {from: pl-007, to: pl-006}                                   # post-sweep deterministic-completeness claim
+  - {from: pl-007, to: pl-006a}                                  # marker is the load-bearing discriminator
+  - {from: pl-007, to: pl-inv-003}                               # pre-classification ordering invariant
+  - {from: pl-008, to: pl-008a}                                  # catalog is the source for the consumed codes
+  # NOTE: PL-008a is the consumer-side rule for ON §8 exit codes; the §4 reqs
+  # that cite their respective codes (PL-002 → 5, PL-003 → 6, PL-018a → 19,
+  # PL-021a → 22, PL-028 → 23, PL-027 → 14) are the consumers per §3.1 step 5
+  # single-owner pin. The reverse direction `pl-008a → pl-NNN` was inverted
+  # in earlier draft and removed (LOAD-time cycle prevention). Edges from
+  # citing reqs TO pl-008a are emitted in their respective §4 blocks
+  # (pl-005 → pl-008a above; pl-021a → pl-008a in §4.7; etc.).
+
+  # §4.3 ready-state
+  - {from: pl-009, to: pl-005}                                   # ready criteria are PL-005 step completion predicates
+  - {from: pl-009, to: pl-006}                                   # orphan sweep is a precondition for ready
+  - {from: pl-009a, to: pl-009}                                  # auto-resolver-failure path proceeds toward ready
+  - {from: pl-009a, to: pl-005}                                  # routes through step 8 dispatch
+  - {from: pl-009b, to: pl-003}                                  # socket-probe surface
+  - {from: pl-009b, to: pl-003a}                                 # JSON-RPC `status` over the wire
+  - {from: pl-009b, to: pl-009}                                  # ready criterion is the discriminator
+  - {from: pl-010, to: pl-005}                                   # Cat 0 failure trips at step 4
+  - {from: pl-010, to: pl-009}                                   # degraded blocks transition to ready
+  - {from: pl-010, to: pl-011}                                   # SIGTERM-while-degraded path
+
+  # §4.4 shutdown
+  - {from: pl-011, to: pl-002}                                   # step 8 releases pidfile + removes pidfile
+  - {from: pl-011, to: pl-003}                                   # step 8 removes socket file
+  - {from: pl-011, to: pl-011a}                                  # step 5 emits daemon_shutdown
+  # NOTE: pl-011a → pl-011 reverse removed for cycle avoidance. PL-011a owns
+  # the daemon_shutdown emission rule; PL-011 step 5 is the trigger that
+  # cites the rule. Per F-pilot-AR-10: pl-011a's "before the bus flush
+  # (§PL-011 step 6)" is supporting context — removing PL-011 leaves
+  # pl-011a's emission contract testable as a standalone gate.
+  - {from: pl-012, to: pl-011}                                   # immediate skips drain steps 3–4
+  - {from: pl-012, to: pl-011a}                                  # interceptable path emits daemon_shutdown
+  - {from: pl-012, to: pl-024}                                   # SIGKILL recovery via stale-pidfile detection
+  # NOTE: pl-011a → pl-012 reverse removed for cycle avoidance. PL-012 cites
+  # PL-011a (interceptable immediate emits the event); PL-011a's body
+  # disambiguates mode=graceful (PL-011) vs mode=immediate (PL-012) as
+  # parameter-shape information — supporting per F-pilot-AR-10.
+  - {from: pl-013, to: pl-011}                                   # exit only on explicit stop / upgrade / crash
+
+  # §4.5 agent-subprocess management
+  - {from: pl-014, to: pl-006a}                                  # every spawn carries the marker
+  - {from: pl-014, to: pl-014a}                                  # ceiling gates spawn rate
+  - {from: pl-015, to: pl-003}                                   # agent ↔ daemon over the socket
+  - {from: pl-015, to: pl-003a}                                  # wire format
+  - {from: pl-015, to: pl-014}                                   # agent subprocesses are the spawn target
+  - {from: pl-016, to: pl-014}                                   # watcher observes the spawned subprocess
+  - {from: pl-017, to: pl-016}                                   # silent-hang routes through the watcher
+
+  # §4.6 daemon vs orchestrator-agent
+  - {from: pl-018a, to: pl-018}                                  # panic barrier is part of the deterministic-binary contract
+  - {from: pl-018a, to: pl-024}                                  # post-panic recovery via stale-pidfile detection
+  - {from: pl-018a, to: pl-025a}                                 # double-panic falls through to pairing-tolerance
+  - {from: pl-018a, to: pl-008a}                                  # exit code 19 (runtime-panic) via PL-008a
+  - {from: pl-019, to: pl-018}                                   # orchestrator-agent enforces the no-LLM-in-daemon rule
+  # NOTE: pl-019 → pl-028 reverse removed for cycle avoidance. PL-019 owns the
+  # orchestrator-agent process-shape; PL-028's `harmonik runner --orchestrator-agent`
+  # is the entry that spawns it. PL-028 → PL-019 is the hard direction
+  # (consumer cites owner). PL-019's "interacts via CLI" is supporting per
+  # F-pilot-AR-10 — removing PL-028 leaves PL-019's separate-OS-process
+  # contract independently testable.
+  - {from: pl-020, to: pl-018}                                   # composition root enforces the determinism rule
+  - {from: pl-020a, to: pl-020}                                  # registries reside inside the composition root
+
+  # §4.7 ntm adapter
+  - {from: pl-021a, to: pl-021}                                  # version-pin gates the consumed surface
+  - {from: pl-021a, to: pl-005}                                  # detection at step 4 Cat 0 pre-check
+  - {from: pl-021a, to: pl-008a}                                 # exit code 22 mapping
+  - {from: pl-021a, to: pl-010}                                  # routes Cat 0 to degraded
+  - {from: pl-022, to: pl-021}                                   # negative scope of the consumed surface
+  - {from: pl-023, to: pl-021}                                   # boundary lives at the handler contract
+
+  # §4.8 crash semantics
+  - {from: pl-024, to: pl-002}                                   # stale pidfile is the recovery discriminator
+  - {from: pl-024, to: pl-002a}                                  # `kill(pid, 0)` probe per the lock primitive
+  - {from: pl-024, to: pl-005}                                   # next startup re-runs the sequence
+  - {from: pl-024, to: pl-006}                                   # orphan sweep on restart
+  - {from: pl-025, to: pl-005}                                   # crash mid-startup re-runs from step 0
+  - {from: pl-025a, to: pl-025}                                  # pairing tolerance is the consumer-side rule
+  - {from: pl-026, to: pl-016}                                   # agent crash observed by the watcher
+
+  # §4.9 upgrade
+  - {from: pl-027, to: pl-002a}                                  # exec preserves PID; new instance re-acquires the lock
+  - {from: pl-027, to: pl-005}                                   # skip-path under HARMONIK_UPGRADE=1
+  - {from: pl-027, to: pl-008a}                                  # exit code 14 on hash mismatch
+  - {from: pl-027, to: pl-009}                                   # new instance re-emits daemon_ready
+  - {from: pl-027, to: pl-004}                                   # daemon.upgrading marker file surface
+
+  # §4.10 command surface
+  - {from: pl-028, to: pl-003}                                   # commands route over the socket
+  - {from: pl-028, to: pl-003a}                                  # JSON-RPC method names
+  - {from: pl-028, to: pl-009b}                                  # runner waits for ready per the protocol
+  - {from: pl-028, to: pl-011}                                   # `stop --graceful` behavior
+  - {from: pl-028, to: pl-012}                                   # `stop --immediate` behavior
+  - {from: pl-028, to: pl-019}                                   # runner --orchestrator-agent spawns Claude Code
+  - {from: pl-028, to: pl-021a}                                  # runner exits on ntm unavailable
+  - {from: pl-028, to: pl-008a}                                  # runner step 4 exit code 23 via PL-008a
+  - {from: pl-028, to: pl-027}                                   # `harmonik upgrade` daemon-internal mechanics
+  - {from: pl-028, to: pl-010}                                   # `harmonik status` reports degraded prerequisite
+  - {from: pl-028, to: pl-schema.daemon-status}                  # `harmonik status` reports the §6.1 enum
+
+  # §5 invariant sensor edges (per discipline §2.5 four-source enumeration;
+  # invariant-as-target one-way per F-pilot-AR-r2-2 EXCEPT explicit
+  # invariant→invariant ID cites per F-refs-EV-6 / D-WM-3 precedent).
+  # PL-INV-001 — pidfile-lock + content match
+  - {from: pl-inv-001, to: pl-002}
+  - {from: pl-inv-001, to: pl-002a}
+  - {from: pl-inv-001, to: pl-002b}
+  # F-refs-PL-1 (v0.1.1): PL-INV-001 body explicitly cites BI §4.10 BI-030
+  # and WM §4.3 WM-013a as cross-spec spans. Per §2.5 source 4 (invariant-body
+  # term-use, F-em-r1-MAJ-1) these are emitted as cross-spec edges.
+  - {from: pl-inv-001, to: bi-030}                               # PL-INV-001 body cites [beads-integration.md §4.10 BI-030] (intent-log single-writer)
+  - {from: pl-inv-001, to: wm-013a}                              # PL-INV-001 body cites [workspace-model.md §4.3 WM-013a] (worktree-lease single-leasing-authority)
+  # PL-INV-002 — go-arch-lint + binary import-graph
+  - {from: pl-inv-002, to: pl-018}
+  - {from: pl-inv-002, to: pl-020}
+  # PL-INV-003 — orphan_sweep_complete_at flag
+  - {from: pl-inv-003, to: pl-006}
+  - {from: pl-inv-003, to: pl-005}
+  # PL-INV-004 — socket-path exclusivity
+  - {from: pl-inv-004, to: pl-003}
+  - {from: pl-inv-004, to: pl-002}                               # pairs with pidfile-lock invariant
+  - {from: pl-inv-004, to: pl-008a}                              # EADDRINUSE → exit code 6 sensor
+  # PL-INV-005 — agent-subprocess parentage is daemon-originated
+  - {from: pl-inv-005, to: pl-014}
+  - {from: pl-inv-005, to: pl-006a}                              # marker is the parentage discriminator
+
+  # Test-infra wiring (citing reqs / sensors → test-infra fixture)
+  - {from: pl-001, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-002, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-002a, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-002b, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-003, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-003a, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-003b, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-inv-001, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-inv-004, to: pl-test.pidfile-and-socket-fixture}
+  - {from: pl-005, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-006, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-006a, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-007, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-008, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-008a, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-inv-003, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-inv-005, to: pl-test.startup-orphan-sweep-harness}
+  - {from: pl-009, to: pl-test.ready-state-fixture}
+  - {from: pl-009a, to: pl-test.ready-state-fixture}
+  - {from: pl-009b, to: pl-test.ready-state-fixture}
+  - {from: pl-010, to: pl-test.ready-state-fixture}
+  - {from: pl-011, to: pl-test.shutdown-drain-fixture}
+  - {from: pl-011a, to: pl-test.shutdown-drain-fixture}
+  - {from: pl-012, to: pl-test.shutdown-drain-fixture}
+  - {from: pl-013, to: pl-test.shutdown-drain-fixture}
+  - {from: pl-014, to: pl-test.agent-supervision-fixture}
+  - {from: pl-014a, to: pl-test.agent-supervision-fixture}
+  - {from: pl-015, to: pl-test.agent-supervision-fixture}
+  - {from: pl-016, to: pl-test.agent-supervision-fixture}
+  - {from: pl-017, to: pl-test.agent-supervision-fixture}
+  - {from: pl-018, to: pl-test.composition-root-lint}
+  - {from: pl-018a, to: pl-test.composition-root-lint}
+  - {from: pl-020, to: pl-test.composition-root-lint}
+  - {from: pl-020a, to: pl-test.composition-root-lint}
+  - {from: pl-inv-002, to: pl-test.composition-root-lint}
+  - {from: pl-021, to: pl-test.ntm-adapter-fixture}
+  - {from: pl-021a, to: pl-test.ntm-adapter-fixture}
+  - {from: pl-022, to: pl-test.ntm-adapter-fixture}
+  - {from: pl-023, to: pl-test.ntm-adapter-fixture}
+  - {from: pl-024, to: pl-test.crash-recovery-harness}
+  - {from: pl-025, to: pl-test.crash-recovery-harness}
+  - {from: pl-025a, to: pl-test.crash-recovery-harness}
+  - {from: pl-026, to: pl-test.crash-recovery-harness}
+  - {from: pl-019, to: pl-test.cli-surface-fixture}              # orchestrator-agent surface tested via runner
+  - {from: pl-027, to: pl-test.upgrade-scenario-harness}
+  - {from: pl-028, to: pl-test.cli-surface-fixture}
+
+  # ───────────────────────── Cross-spec AR edges ─────────────────────────
+  # AR is in PL's depends-on (architecture).
+  - {from: pl-env-001, to: ar-052}                               # spec-category front-matter
+  - {from: pl-env-001, to: ar-053}                               # subsystem envelope shape
+  # NOTE: pl-018 → ar-inv-007, pl-019 → ar-inv-007, pl-020a → ar-inv-007
+  # REMOVED in v0.1.1 per F-refs-PL-7 (MAJOR/critical) — impl→invariant
+  # direction violates F-pilot-AR-r2-2 invariant-as-target exemption.
+  # AR-INV-007 is sensor-only EXCEPT for explicit invariant→invariant ID
+  # cites (F-refs-EV-6); pl-inv-002 → ar-inv-007 below is the only correct
+  # edge to AR-INV-007 from this pilot.
+  - {from: pl-020, to: ar-016}                                   # subsystem runtime realization as a Go package
+  - {from: pl-inv-002, to: ar-inv-007}                           # invariant→invariant ID cite per F-refs-EV-6 / D-WM-3 precedent (PL-INV-002 cites AR-INV-007 by ID)
+
+  # ───────────────────────── Cross-spec EM edges ─────────────────────────
+  # EM is in PL's depends-on (execution-model).
+  - {from: pl-005, to: em-017}                                   # checkpoint-commit trailer schema (step 5 walk)
+  - {from: pl-005, to: em-schema.checkpoint-trailers}            # `Harmonik-Run-ID` trailer registry
+  - {from: pl-005, to: em-schema.run}                            # in-memory model uses Run record (step 7)
+  - {from: pl-016, to: em-046b}                                  # RETRY outcome re-dispatch routing
+
+  # ───────────────────────── Cross-spec EV edges ─────────────────────────
+  # EV is in PL's depends-on (event-model). Per §2.11(d.2), edges run
+  # `pl-NNN → ev-events.<name>` where PL's body cites EV's payload-shape row;
+  # the consumer-blocks-on-producer direction lands on EV-row as the
+  # prerequisite of PL's emission rule (PL cites EV's schema; removing the
+  # EV row leaves PL's emission predicate without a defined payload shape).
+  - {from: pl-env-001, to: ev-025}                               # one owning spec per event type per EV-025
+  - {from: pl-005, to: ev-events.daemon-started}                 # step 2 emits daemon_started
+  - {from: pl-005, to: ev-events.reconciliation-category-assigned} # step 7 consumes RC-013 emission per §4.a (b)
+  - {from: pl-005, to: ev-events.reconciliation-verdict-executed}  # consumed to clear investigator workflows per §4.a (b)
+  - {from: pl-006, to: ev-events.daemon-orphan-sweep-completed}   # bullet (f) emission
+  - {from: pl-009, to: ev-events.daemon-ready}                    # ready emission
+  - {from: pl-009a, to: ev-events.reconciliation-category-assigned} # PL-009a (a) emission
+  - {from: pl-010, to: ev-events.infrastructure-unavailable}      # Cat 0 failure emission
+  - {from: pl-010, to: ev-events.daemon-degraded}                 # post-`ready` and pre-`ready` reasons
+  - {from: pl-011a, to: ev-events.daemon-shutdown}                # graceful + immediate emissions
+  - {from: pl-008a, to: ev-events.daemon-startup-failed}          # emission on every consumed exit code
+  - {from: pl-014a, to: ev-events.dispatch-deferred}              # ceiling-exhausted emission
+  - {from: pl-027, to: ev-events.operator-upgrading}              # (v) before exec
+  - {from: pl-027, to: ev-events.operator-upgrade-completed}      # (v) after ready
+  - {from: pl-027, to: ev-events.operator-upgrade-rejected}       # (v) rejection path
+  - {from: pl-016, to: ev-events.agent-failed}                    # watcher emits typed events per §8.3
+  # ev EV-002 / EV-002b/c daemon-event ID generation
+  - {from: pl-005, to: ev-002}                                    # daemon_instance_id minted per UUIDv7 ID-generation discipline
+
+  # ───────────────────────── Cross-spec HC edges ─────────────────────────
+  # HC is in PL's depends-on (handler-contract).
+  - {from: pl-003a, to: hc-007}                                   # NDJSON framing inherited
+  - {from: pl-014, to: hc-001}                                    # launch mechanics per Handler interface
+  - {from: pl-014, to: hc-011}                                    # watcher-supervision delegation
+  - {from: pl-014, to: hc-024}                                    # subprocess-crash typed-class delegation
+  - {from: pl-014, to: hc-044}                                    # subprocess-is-child-of-daemon (HC §4.10 HC-044)
+  - {from: pl-016, to: hc-011}                                    # watcher exclusivity
+  - {from: pl-017, to: hc-007}                                    # silent-hang detection rule lives in HC §4.6 (closest mapped anchor is hc-007 for §4.2..§4.10 coalesce; backfill to a more specific row when HC adds one)
+  - {from: pl-018a, to: hc-011a}                                  # panic-barrier scope (watcher panics handled by HC, not PL)
+  - {from: pl-026, to: hc-024}                                    # error-propagation rule
+  - {from: pl-026, to: hc-024a}                                   # socket-level I/O error distinct from crash
+  - {from: pl-006, to: hc-018}                                    # SIGTERM→SIGKILL bound shared with HC-018
+  - {from: pl-015, to: hc-007}                                    # agent-command surface wire protocol (HC §4.2)
+
+  # ───────────────────────── Cross-spec CP edges ─────────────────────────
+  # CP is in PL's depends-on (control-points).
+  - {from: pl-005, to: cp-001}                                    # step 0 instantiates the control-point registry per CP §4.1 — closest anchor is cp-001 (single typed primitive)
+  - {from: pl-020a, to: cp-001}                                   # registry residence claim
+
+  # ───────────────────────── Cross-spec WM edges ─────────────────────────
+  # WM is in PL's depends-on (workspace-model).
+  - {from: pl-005, to: wm-005}                                    # task-branch naming `run/<run_id>` scanned at step 5
+  - {from: pl-006, to: wm-002}                                    # filesystem scan of worktree path convention
+  - {from: pl-006, to: wm-013a}                                   # lease-lock staleness criterion
+  - {from: pl-006, to: wm-033}                                    # WM startup orphan-sweep coordination
+  - {from: pl-005, to: wm-026}                                    # atomic write discipline for daemon.instance-id mirrors WM-026
+
+  # ───────────────────────── Cross-spec BI edges ─────────────────────────
+  # BI is in PL's depends-on (beads-integration).
+  - {from: pl-005, to: bi-013}                                    # `br ready` query at step 6
+  - {from: pl-005, to: bi-016}                                    # audit-log + in-progress reads at step 6
+  - {from: pl-006, to: bi-029}                                    # `br` subprocess marker shares the PL-006a discipline
+  - {from: pl-015, to: bi-027}                                    # Beads-CLI skill is the agent-facing access path
+  - {from: pl-028, to: bi-007}                                    # `harmonik enqueue` writes coarse status
+
+  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
+  # RC (reconciliation) — in PL's depends-on but not yet pilot-loaded.
+  - {from: pl-005, to: "forward:rc-NNN"}                          # step 4 Cat 0 pre-check per RC-012; step 8 RC-008 dispatch
+  - {from: pl-006, to: "forward:rc-NNN"}                          # reconciliation-locks bullet RC-002a/RC-002b
+  - {from: pl-008, to: "forward:rc-NNN"}                          # Cat 0 catalog consumption
+  - {from: pl-009, to: "forward:rc-NNN"}                          # RC-013 emission criterion
+  - {from: pl-009a, to: "forward:rc-NNN"}                         # Cat 3 fallback path
+  - {from: pl-010, to: "forward:rc-NNN"}                          # Cat 0 retry
+  - {from: pl-017, to: "forward:rc-NNN"}                          # silent-hang routes through reconciliation
+  - {from: pl-021a, to: "forward:rc-NNN"}                         # ntm-unavailable classifies as Cat 0 per RC §8.1
+  - {from: pl-025, to: "forward:rc-NNN"}                          # reconciliation idempotence per RC-002
+  - {from: pl-026, to: "forward:rc-NNN"}                          # reconciliation-routed crash paths
+  - {from: pl-inv-003, to: "forward:rc-NNN"}                      # detector ordering invariant
+  - {from: pl-005, to: "forward:rc-002a"}                         # per-target-run reconciliation lock at step 8
+  - {from: pl-005, to: "forward:rc-002b"}                         # verdict-executed-trailer discriminator
+
+  # ON (operator-nfr) — intentionally NOT in PL's depends-on per cycle-break
+  # NOTE; nevertheless these are hard deps under the §2/§9 named-obligation
+  # pattern (PL's normative behavior depends on ON's content — see F-pilot-PL-4).
+  - {from: pl-002, to: "forward:on-008"}                          # exit code 5 mapping in ON §8
+  - {from: pl-003, to: "forward:on-NNN"}                          # exit code 6 mapping
+  - {from: pl-004, to: "forward:on-020a"}                         # daemon.upgrading marker content owner
+  - {from: pl-004, to: "forward:on-030a"}                         # daemon.state marker content owner
+  - {from: pl-005, to: "forward:on-020a"}                         # step 8a marker semantics
+  - {from: pl-005, to: "forward:on-030a"}                         # step 8a state marker
+  - {from: pl-008, to: "forward:on-003"}                          # ON-003 catalog obligation
+  - {from: pl-008a, to: "forward:on-NNN"}                         # ON §8 taxonomy is the source of consumed codes
+  - {from: pl-009, to: "forward:on-031"}                          # RTO measurement endpoint
+  - {from: pl-009, to: "forward:on-033"}                          # monotonic-companion fields
+  - {from: pl-010, to: "forward:on-002"}                          # `harmonik status` reports degraded prerequisite
+  - {from: pl-010, to: "forward:on-035"}                          # corrupt-marker structured-log warning
+  - {from: pl-011, to: "forward:on-027"}                          # graceful-shutdown cross-subsystem ordering
+  - {from: pl-011, to: "forward:on-029"}                          # drain timeout
+  - {from: pl-011a, to: "forward:on-033"}                         # monotonic-companion fields
+  - {from: pl-014a, to: "forward:on-041"}                         # cross-daemon machine-ceiling coordination
+  - {from: pl-018a, to: "forward:on-NNN"}                         # ON §8 code 19 runtime-panic
+  - {from: pl-021a, to: "forward:on-017"}                         # external-inputs protocol
+  - {from: pl-027, to: "forward:on-020"}                          # operator-facing upgrade contract
+  - {from: pl-027, to: "forward:on-020a"}                         # marker file content
+  - {from: pl-028, to: "forward:on-002"}                          # status reporting beyond the enum
+  - {from: pl-028, to: "forward:on-008"}                          # operator-control state machine semantics
+  - {from: pl-028, to: "forward:on-014"}                          # operator commands
+  - {from: pl-028, to: "forward:on-041"}                          # multi-daemon coordination
+  - {from: pl-env-001, to: "forward:on-NNN"}                      # inherited ON-002 / ON-020 / ON-027 / ON-031 / ON-041
+  - {from: pl-inv-001, to: "forward:on-NNN"}                      # ON §4.3 operator-control state machine span

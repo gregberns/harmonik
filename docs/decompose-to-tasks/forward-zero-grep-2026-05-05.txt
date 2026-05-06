@@ -1,0 +1,137 @@
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:39:    Implements specs/handler-contract.md v0.3.3 (62 first-class §4 req beads from 65 active §4 reqs after 2 §2.3 coalesces (HC-007/007a/007b cluster, HC-046/047 cluster), 7 invariants, 5 §6.1 schemas, 1 §8 error-taxonomy bead, 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, process-lifecycle]; PL not yet drafted at draft time → cross-spec edges to PL forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:pl-NNN). Non-depends-on cross-spec inline cites (WM, CP, RC, ON, BI) surfaced as forward-cite findings per F-pilot-EV-3.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:864:  - {from: hc-007, to: "forward:pl-001"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:865:  - {from: hc-016a, to: "forward:pl-003b"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:866:  - {from: hc-016a, to: "forward:pl-009b"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:867:  - {from: hc-044, to: "forward:pl-001"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:868:  - {from: hc-044, to: "forward:pl-005"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:869:  - {from: hc-044a, to: "forward:pl-001"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/hc-pilot-data.yaml:870:  - {from: hc-051, to: "forward:pl-006"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:26:# (logged as forward:wm-NNN, forward:on-NNN, forward:rc-NNN, forward:bi-NNN).
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:92:#     (a) Forward-defer to EV's next revision (treat as forward:ev-events.<name>
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:102:#   the same gap proactively. CP records 3 forward:ev-events.* deferrals below.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:164:#   when those finalize; recorded as forward:rc-NNN and forward:bi-NNN
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:183:    Implements specs/control-points.md v0.3.2 (53 first-class §4 req beads from 55 active §4 reqs after 1 §2.3 coalesce (CP-004/005 cluster) and 1 §2.1a collapse (CP-052 → cp-031), 3 invariants, 24 §6.1 schemas, 0 error-taxonomy beads (CP §8 routes to EM's taxonomy), 0 multi-step splits, 5 test-infra beads). depends-on: [architecture, execution-model, event-model, handler-contract]; WM, ON, RC, BI cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:<prefix>-NNN). Three EV §6.5 events (verdict_envelope_mismatch, policy_expression_exceeded_cost, control_points_registration_started) are missing from EV's bead set; recorded as forward:ev-events.<name> deferrals per F-pilot-CP-3.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1211:  - {from: cp-040, to: "forward:wm-NNN"}                       # .harmonik/hooks/<run_id>/<id>.json on task branch (WM §4.2)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1214:  - {from: cp-013, to: "forward:on-NNN"}                       # checkpoint_written event home (ON §4.5 bootstrap)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1215:  - {from: cp-037, to: "forward:on-NNN"}                       # operator-pause invariant (ON §4.3)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1216:  - {from: cp-038, to: "forward:on-NNN"}                       # N-1 readability (ON §4.5)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1217:  - {from: cp-047, to: "forward:on-NNN"}                       # operator surface for control-point effects (ON §4.9 — reverse-cited)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1220:  - {from: cp-027, to: "forward:rc-NNN"}                       # reconciliation wall-clock outer bound (RC §4.4)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1221:  - {from: cp-040a, to: "forward:rc-NNN"}                      # Cat-6 escalation per RC §4.2
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1222:  - {from: cp-041, to: "forward:rc-NNN"}                       # replay / Cat-6 verdict path (RC §4.2 + §4.5)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1223:  - {from: cp-inv-003, to: "forward:rc-NNN"}                   # Cat-6 reconciliation verdict authority (RC §4.2)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1226:  - {from: cp-031, to: "forward:bi-NNN"}                       # Beads-CLI skill bootstrap cite (BI §4.9 when finalized; now docs/foundation/components.md §10.9)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1229:  - {from: cp-034b, to: "forward:ev-events.policy-expression-exceeded-cost"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1230:  - {from: cp-041, to: "forward:ev-events.verdict-envelope-mismatch"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1231:  - {from: cp-043, to: "forward:ev-events.control-points-registration-started"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:162:      After CP is loaded and patched, resolve `forward:cp:*` edges that prior pilots
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:164:      pilot's yaml that carries `forward:cp:*` edges:
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:165:        1. Replace `forward:cp-NNN` with `cp-NNN` in `<prior>-pilot-data.yaml`.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:221:      Resolve `forward:wm:*` edges in {bi, ar, em, ev, hc, cp (if loaded)} pilots' yamls.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:270:      Resolve `forward:pl:*` edges across all already-loaded pilots (HC's 7 deferred
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:317:      Resolve `forward:on:*` edges across already-loaded pilots. Standard backfill protocol.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/meta-pilot-data.yaml:364:      Resolve `forward:rc:*` edges across already-loaded pilots. After RC backfill,
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:7:#   F-refs-ON-2 (MAJOR): added on-028 → forward:rc-NNN (resolved to RC-007 —
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:11:#     forward:rc-014, on-045 → forward:rc-018) — verified no spec cite
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:55:# (PL is loaded). PL cites ON → forward:on-* in PL pilot — F-pilot-PL-4
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:190:#   EDGES IN OTHER PILOTS (PL's §3.2 violation — forward:on-NNN — is
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:212:#   below). EV's reciprocal direction is owned by EV's pilot (forward:on-*
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:264:#   ON's depends-on (see ON v0.4.1 front matter). No forward:wm-* edges
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:467:#   to ON-without-depends-on (forward:on-* hard-dep edges); ON has
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:573:# Forward-deferred edges to RC use "forward:rc-NNN" placeholders below
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:588:    Implements specs/operator-nfr.md v0.4.1 (60 first-class §4 req beads from 60 active §4 entries — 1 envelope + 59 topical — after 0 §2.3 coalesces and 0 §2.1a collapses, 4 invariants — ON-INV-001/003/005/006; ON-INV-002 + ON-INV-004 retired in v0.3 never reusable, 0 §6 schemas — §6.1/§6.2/§6.3 explicitly omitted per §6 declaration, see F-pilot-ON-3, 1 §8 single-bead error-taxonomy on-error.taxonomy covering 24 exit codes (codes 0..23 incl. code 0 success) — single-bead form per §2.11(c) + SHAPE-not-COUNT tiebreaker per F-pilot-WM-2, see F-pilot-ON-4, 1 multi-step split — ON-027 8-step graceful-shutdown drain SPLIT into umbrella + 8 step beads, DEVIATES from PL precedent per F8b independent-code-path tiebreaker, see F-pilot-ON-5, 11 test-infra beads from §10.2 obligations). depends-on: [architecture, event-model, execution-model, handler-contract, control-points, process-lifecycle, reconciliation, beads-integration]. Workspace-model NOT in depends-on; WM cites surface as F-pilot-EV-3 informational findings (see F-pilot-ON-6). PL ↔ ON cycle-break per PL §9.3 NOTE (PL excludes ON; ON includes PL). RC cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:rc-NNN).
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1638:  # edges. The reverse (PL → ON via forward:on-*) is owned by PL pilot, NOT
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1676:  - {from: on-003, to: "forward:rc-012"}                              # Cat 0 detector for startup prereq failures
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1677:  - {from: on-009, to: "forward:rc-014"}                              # canceled-class reconciliation classification on aborted runs
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1678:  - {from: on-010, to: "forward:rc-002"}                              # reconciliation carve-out per RC §4.1
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1679:  - {from: on-014, to: "forward:rc-018"}                              # fallback-verdict / investigator-bound budget
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1680:  - {from: on-014, to: "forward:rc-025"}                              # operator-override attaches to verdict execution
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1681:  - {from: on-027.s2, to: "forward:rc-002"}                           # checkpoint reach is reconciliation idempotency boundary
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1682:  - {from: on-028, to: "forward:rc-007"}                              # F-refs-ON-2: ON-028 cites [reconciliation/spec.md §4.2] for restart-recovery; load-bearing single-owner is RC-007 (action-mapping dispatch contract)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1683:  - {from: on-030, to: "forward:rc-008"}                              # reconciliation dispatch on restart
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1684:  - {from: on-032, to: "forward:rc-018"}                              # wall-clock budget bound on investigator runs
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1685:  # F-refs-ON-3 REMOVED: on-040 → forward:rc-014 (verified ON-040 spec body cites HC §4.6 / EV §8.3 / HC §7.1 / ON-037 / ON-029 only — no RC cite)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1686:  # F-refs-ON-3 REMOVED: on-045 → forward:rc-018 (verified ON-045 spec body cites CP §4.5 / ON-042 only — no RC cite)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1687:  - {from: on-047, to: "forward:rc-018"}                              # 10 min wall-clock per-reconciliation-workflow default
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1688:  - {from: on-048, to: "forward:rc-018"}                              # fallback-verdict path
+/Users/gb/github/harmonik/docs/decompose-to-tasks/on-pilot-data.yaml:1689:  - {from: on-inv-005, to: "forward:rc-008"}                          # reconciliation-bounded reconstruction predicate
+/Users/gb/github/harmonik/docs/decompose-to-tasks/rc-pilot-data.yaml:304:#   owned by EV's pilot per §2.11(d.2) — those edges are forward:rc-NNN
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:21:#     forward:on-* §3.2 violations tracked under hk-ahvq.46.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:117:#   forward:on-NNN (ON not yet pilot-loaded), NOT to a local taxonomy bead.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:130:#   pl-NNN) is owned by EV's pilot — emitted as `forward:pl-NNN`
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:150:#   pattern; the discipline question is whether those become forward:on edges
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:151:#   or stay informational. Decision: forward:on edges WHERE the PL bead's
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:171:#   Note PL also depends on RC (forward:rc-*) and ON (forward:on-*) but
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:182:#        ARE emitted as forward:on-NNN edges (see F-pilot-PL-4 below). The
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:199:#   by PL-008a (5,6,7,8,9,10,14,19,22,23) become forward:on-NNN edges from
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:279:#   forward:on-NNN edges WHERE the PL bead's normative behavior depends
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:297:#     by PL-005 step 4, PL-009, PL-010, PL-021a → forward:rc-NNN.
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1189:  - {from: pl-005, to: "forward:rc-NNN"}                          # step 4 Cat 0 pre-check per RC-012; step 8 RC-008 dispatch
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1190:  - {from: pl-006, to: "forward:rc-NNN"}                          # reconciliation-locks bullet RC-002a/RC-002b
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1191:  - {from: pl-008, to: "forward:rc-NNN"}                          # Cat 0 catalog consumption
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1192:  - {from: pl-009, to: "forward:rc-NNN"}                          # RC-013 emission criterion
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1193:  - {from: pl-009a, to: "forward:rc-NNN"}                         # Cat 3 fallback path
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1194:  - {from: pl-010, to: "forward:rc-NNN"}                          # Cat 0 retry
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1195:  - {from: pl-017, to: "forward:rc-NNN"}                          # silent-hang routes through reconciliation
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1196:  - {from: pl-021a, to: "forward:rc-NNN"}                         # ntm-unavailable classifies as Cat 0 per RC §8.1
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1197:  - {from: pl-025, to: "forward:rc-NNN"}                          # reconciliation idempotence per RC-002
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1198:  - {from: pl-026, to: "forward:rc-NNN"}                          # reconciliation-routed crash paths
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1199:  - {from: pl-inv-003, to: "forward:rc-NNN"}                      # detector ordering invariant
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1200:  - {from: pl-005, to: "forward:rc-002a"}                         # per-target-run reconciliation lock at step 8
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1201:  - {from: pl-005, to: "forward:rc-002b"}                         # verdict-executed-trailer discriminator
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1206:  - {from: pl-002, to: "forward:on-008"}                          # exit code 5 mapping in ON §8
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1207:  - {from: pl-003, to: "forward:on-NNN"}                          # exit code 6 mapping
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1208:  - {from: pl-004, to: "forward:on-020a"}                         # daemon.upgrading marker content owner
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1209:  - {from: pl-004, to: "forward:on-030a"}                         # daemon.state marker content owner
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1210:  - {from: pl-005, to: "forward:on-020a"}                         # step 8a marker semantics
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1211:  - {from: pl-005, to: "forward:on-030a"}                         # step 8a state marker
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1212:  - {from: pl-008, to: "forward:on-003"}                          # ON-003 catalog obligation
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1213:  - {from: pl-008a, to: "forward:on-NNN"}                         # ON §8 taxonomy is the source of consumed codes
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1214:  - {from: pl-009, to: "forward:on-031"}                          # RTO measurement endpoint
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1215:  - {from: pl-009, to: "forward:on-033"}                          # monotonic-companion fields
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1216:  - {from: pl-010, to: "forward:on-002"}                          # `harmonik status` reports degraded prerequisite
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1217:  - {from: pl-010, to: "forward:on-035"}                          # corrupt-marker structured-log warning
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1218:  - {from: pl-011, to: "forward:on-027"}                          # graceful-shutdown cross-subsystem ordering
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1219:  - {from: pl-011, to: "forward:on-029"}                          # drain timeout
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1220:  - {from: pl-011a, to: "forward:on-033"}                         # monotonic-companion fields
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1221:  - {from: pl-014a, to: "forward:on-041"}                         # cross-daemon machine-ceiling coordination
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1222:  - {from: pl-018a, to: "forward:on-NNN"}                         # ON §8 code 19 runtime-panic
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1223:  - {from: pl-021a, to: "forward:on-017"}                         # external-inputs protocol
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1224:  - {from: pl-027, to: "forward:on-020"}                          # operator-facing upgrade contract
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1225:  - {from: pl-027, to: "forward:on-020a"}                         # marker file content
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1226:  - {from: pl-028, to: "forward:on-002"}                          # status reporting beyond the enum
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1227:  - {from: pl-028, to: "forward:on-008"}                          # operator-control state machine semantics
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1228:  - {from: pl-028, to: "forward:on-014"}                          # operator commands
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1229:  - {from: pl-028, to: "forward:on-041"}                          # multi-daemon coordination
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1230:  - {from: pl-env-001, to: "forward:on-NNN"}                      # inherited ON-002 / ON-020 / ON-027 / ON-031 / ON-041
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1231:  - {from: pl-inv-001, to: "forward:on-NNN"}                      # ON §4.3 operator-control state machine span
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:28:#   R-WM-4 (MINOR): added wm-036 → forward:on-014 — ON-014 owns the
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:247:#       dep at the verdict-routing surface; emit one edge to forward:rc-NNN).
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1260:  - {from: wm-022a, to: "forward:rc-NNN"}                     # all-mechanical escalation routes to RC
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1261:  - {from: wm-023, to: "forward:rc-NNN"}                      # escalate-to-human path per RC §4.5 RC-020
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1262:  - {from: wm-024, to: "forward:rc-NNN"}                      # 3-cap escalation per RC-020
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1263:  - {from: wm-034, to: "forward:rc-NNN"}                      # reopen-bead verdict per RC-020
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1264:  - {from: wm-035, to: "forward:rc-NNN"}                      # rollback verdicts per RC-020
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1265:  - {from: wm-036, to: "forward:rc-NNN"}                      # 7-value verdict enum per [reconciliation/schemas.md §6.1]
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1266:  - {from: wm-038, to: "forward:rc-NNN"}                      # verdict-driven interrupt mutation per RC §4.5
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1267:  - {from: wm-040, to: "forward:rc-NNN"}                      # verdict-driven interrupt clearance per RC §4.5
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1268:  - {from: wm-inv-001, to: "forward:rc-NNN"}                  # Cat 6 lost-lease detector per RC §8.11
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1269:  - {from: wm-inv-002, to: "forward:rc-NNN"}                  # Cat 6a multi-run-per-bead detector per RC schemas §6.3
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1270:  - {from: wm-032, to: "forward:rc-NNN"}                      # branch reference in run's bead history per RC schemas §6.2
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1271:  - {from: wm-033, to: "forward:rc-NNN"}                      # WM-003a routes to reconciliation Cat 3
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1274:  - {from: wm-008, to: "forward:on-NNN"}                      # operator-policy-gated default integration target
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1275:  - {from: wm-019, to: "forward:on-NNN"}                      # operator-configured daemon-identity override
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1276:  - {from: wm-024, to: "forward:on-NNN"}                      # operator-configurable cap [1,10]
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1277:  - {from: wm-031, to: "forward:on-NNN"}                      # operator-cleanup workflows per ON §4.9
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1278:  - {from: wm-036, to: "forward:on-014"}                      # ON-014 owns `--promote-to escalate-to-human` operator-command per ON §4.3 (R-WM-4 r1 patch)
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1279:  - {from: wm-038, to: "forward:on-NNN"}                      # ON-013 operator-control event drivers
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1280:  - {from: wm-040, to: "forward:on-NNN"}                      # operator_resuming clears interrupt_state
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1281:  - {from: wm-009, to: "forward:on-NNN"}                      # ON-018 N-1 schema compatibility
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1282:  - {from: wm-env-001, to: "forward:on-NNN"}                  # ON-018 + ON-027 inherited NFRs
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1285:  - {from: wm-013c, to: "forward:pl-NNN"}                     # PL-006 orphan-sweep mechanics
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1286:  - {from: wm-033, to: "forward:pl-NNN"}                      # PL-006 startup orphan sweep
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1287:  - {from: wm-env-002, to: "forward:pl-NNN"}                  # PL-021 ntm-version pin coordination per OQ-WM-015
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1290:  - {from: wm-001, to: "forward:bi-NNN"}                      # bead_id correlation field per BI-017, BI-018
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1291:  - {from: wm-006, to: "forward:bi-NNN"}                      # parent-bead dependency-graph query per BI-014
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1292:  - {from: wm-028, to: "forward:bi-NNN"}                      # bead_id propagation per BI-017, BI-018
+/Users/gb/github/harmonik/docs/decompose-to-tasks/wm-pilot-data.yaml:1293:  - {from: wm-inv-002, to: "forward:bi-NNN"}                  # BI-010 terminal-write rule cite

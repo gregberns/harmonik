@@ -1,0 +1,1303 @@
+# WM pilot v0.1.1 — bead and edge data
+# Drafted 2026-04-30 against specs/workspace-model.md v0.4.2 (status: reviewed).
+# Discipline version applied: v0.9 (HC r1 lockstep release, includes §2.11(c.2)
+# taxonomy-edge-direction anti-pattern note).
+#
+# v0.1.1 (2026-04-30) — applies r1 review patches per
+# docs/reviews/2026-04-30-wm-pilot-r1/synthesis.md:
+#   F-cov-WM-1 (MINOR): tally arithmetic 71→72 (epic-inclusive sum).
+#   D-WM-1 / R-WM-1 (MAJOR/MINOR): narrative §6 count claim 13→11
+#     (consumer→wm-error.taxonomy edges; wm-002, wm-003 correctly omitted —
+#     §7.2-pseudocode-only sentinel references, not §4-body cites).
+#   D-WM-2 (MAJOR): wm-036 description extended with v0.4.2 no-op-accept
+#     interrupt-state clearance side-effect (WM-040 interaction).
+#   D-WM-3 (MAJOR/class): added wm-inv-001 → ar-inv-007 per F-refs-EV-6
+#     explicit invariant→invariant ID-cite rule (precedence over
+#     F-pilot-AR-r2-2 impl→invariant exemption tracked in discipline batch).
+#   D-WM-4 (MAJOR): added wm-inv-002 → em-schema.checkpoint-trailers per
+#     §2.5 source 4 trailer-evidence sensor (F-em-r1-MAJ-1 pattern).
+#   D-WM-5 (MAJOR): VERIFIED — spec §5.WM-INV-003 cites only
+#     [execution-model.md §4.7] (section-anchor) for state-reconstruction;
+#     EM-INV-001 is NOT explicitly cited in WM body. Per F-refs-EV-6,
+#     edge wm-inv-003 → em-inv-001 does NOT satisfy invariant→invariant
+#     explicit ID-cite rule. REMOVED the edge. Not a wide-fanout candidate
+#     (invariant→invariant is too narrow). Sibling-cite claim was
+#     orchestrator-inferred, not spec-grounded.
+#   R-WM-2 (MINOR): added wm-024 → hc-schema.handler (HC §4.1 cite).
+#   R-WM-3 (MINOR): added wm-031 → em-schema.run (EM §7.1 cite).
+#   R-WM-4 (MINOR): added wm-036 → forward:on-014 — ON-014 owns the
+#     `--promote-to escalate-to-human` operator-command per ON §4.3
+#     (closest specific anchor for the escalate-to-human verdict).
+#   R-WM-5 (MINOR): SKIPPED — BI §6.1 declares `bead_id : String` directly,
+#     NOT a `BeadID` type-alias. The wm-schema.workspace cite to
+#     [beads-integration.md §6.1] for BeadID has no specific BI-NNN target.
+#     Closest anchor is BI-008 (bead-ID stability) but that is a semantic
+#     rule, not a type-alias declaration. Skip per protocol guard.
+#   sub-MINOR: rc forward count fix 9→12 (verified by grep).
+#   D-WM-6 / F-pilot-WM-2 (MINOR/class) deferred to discipline-lane batch.
+# Re-run posture: edges-only mode (--skip-beads); ~5 new edges expected
+# (D-WM-3, D-WM-4, R-WM-2, R-WM-3, R-WM-4) + 1 removed (D-WM-5);
+# ~200 already_exists; br dep cycles MUST remain 0.
+#
+# WM is the workspace-manager (S06) spec. It owns: per-run git worktrees +
+# canonical path convention, lease-by-run model with structured lease-lock JSON
+# file, three-level branching (task → integration → main), squash-merge with
+# author/committer split + merge-back inside lease, original-implementer
+# identification via session-sidecar walk (NOT trailer walk per v0.4.0 B1),
+# session-log directory + harmonik.meta.json sidecar, failed-run worktree
+# persistence + startup orphan sweep, fresh-run_id-on-reopen-bead rule,
+# orthogonal interrupt_state field over in-flight states with terminal
+# clearance, .gitignore hygiene + git ≥ 2.34 pin. depends-on:
+# [architecture, execution-model, handler-contract, control-points,
+# reconciliation, operator-nfr, process-lifecycle, beads-integration].
+# event-model is intentionally NOT in depends-on per v0.4.0 NOTE (consume-produce
+# pair resolved directionally via §9.3 co-references).
+#
+# Sanity tally (matches §3 of the eventual wm-pilot.md narrative bead):
+#   §4 reqs in spec (active, ex-retired):           54
+#     §4.a envelope:                                 2  (WM-ENV-001, WM-ENV-002)
+#     §4.1 worktree primitive:                       5  (WM-001..004 + WM-003a)
+#     §4.2 branch naming:                            7  (WM-005..009 + WM-005a, WM-006a)
+#     §4.3 lease model:                              9  (WM-010..013 + WM-013a..e)
+#     §4.4 lifecycle states + events:                3  (WM-014, WM-015, WM-016; WM-017 retired)
+#     §4.5 merge back:                               6  (WM-018..021 + WM-018a, WM-019a)
+#     §4.6 conflict resolution:                      4  (WM-022..024 + WM-022a)
+#     §4.7 session-log + sidecar:                    6  (WM-025..030)
+#     §4.8 failed-run persistence:                   3  (WM-031..033)
+#     §4.9 re-run rule:                              3  (WM-034, WM-035, WM-036)
+#     §4.10 interrupt-state:                         6  (WM-037..040 + WM-037a, WM-038a)
+#   §2.3 coalesces applied:                          0  (candidates considered;
+#                                                       see F-pilot-WM-1 — none
+#                                                       passed the three-AND test)
+#   §2.1a pure cross-reference collapses:            0  (none qualify)
+#   First-class §4 req beads:                        54
+#   §5 invariants (active; WM-INV-004 retired):      4  (WM-INV-001/002/003/005)
+#   §6 schema beads (records / interfaces / enums):  5
+#     Workspace RECORD                                  (wm-schema.workspace)
+#     LeaseLockFile RECORD                              (wm-schema.lease-lock-file)
+#     WorkspaceState ENUM                               (wm-schema.workspace-state)
+#     InterruptState ENUM                               (wm-schema.interrupt-state)
+#     SessionMetadataSidecar RECORD                     (wm-schema.session-metadata-sidecar)
+#   §8 error-taxonomy beads:                         1  (single-bead form per §2.6
+#                                                       BrError shape; 12 sentinel
+#                                                       classes is just above the
+#                                                       ~11 §2.11(c) threshold —
+#                                                       see F-pilot-WM-2 judgment
+#                                                       call defending single-table
+#                                                       treatment)
+#   Multi-step §2.2 splits:                          0  (multiple candidates fail
+#                                                       F8b shared-function-body
+#                                                       tiebreaker; see F-pilot-WM-3)
+#   Test-infra beads:                                7  (one per §10.2 test-obligation
+#                                                       bullet that is genuinely
+#                                                       shared infrastructure)
+#   Total beads minted:                              54 + 4 + 5 + 1 + 7 = 71
+#   Bead-to-§4-req multiplier:                       71 / 54 = 1.31×
+#                                                    (BI 1.42×; HC 0.95×; CP 1.55×;
+#                                                    WM lower than CP — fewer
+#                                                    schema beads relative to
+#                                                    req count; higher than HC —
+#                                                    no large coalesce clusters)
+#
+# §2.11(c.2) anti-pattern applications:
+#   wm-error.taxonomy is a vocabulary OWNER (12 sentinel classes from §6.1 + §8).
+#   Per discipline v0.9 §2.11(c.2), edges run <req> → wm-error.taxonomy
+#   (consumer → owner), NEVER the inverse. Consumer set (each cites a sentinel
+#   name in its §4-body normative text — 11 edges, per v0.1.1 r1 patch
+#   D-WM-1/R-WM-1 count correction; wm-002 + wm-003 cite sentinels in §7.2
+#   pseudocode only, not §4 body, so are correctly omitted per discipline §2.7):
+#     • wm-003a     — BareWorktreeNoLease, SidecarWithoutLease (evidence-type names)
+#     • wm-006a     — RefNameInvalid (post-fallback validation)
+#     • wm-013a     — LeaseLockHeldByOrphan (lock-file-collision class)
+#     • wm-013c     — LeaseLockHeldByOrphan (live-pid lookup class)
+#     • wm-013e     — GitignoreWriteForbidden (write-permission class)
+#     • wm-016      — SidecarWriteFailed (gate class)
+#     • wm-023      — MergeConflictUnresolvable (escalation class)
+#     • wm-026      — SidecarWriteFailed (atomicity class)
+#     • wm-034      — RunIdReuseForbidden (anti-reuse class)
+#     • wm-037a     — InterruptOnTerminalWorkspace (silent-reject class)
+#     • wm-env-002  — GitVersionTooOld (startup fail-fast class)
+#   The taxonomy bead's OWN predecessors are the schema beads its sentinels
+#   reference (none mechanical at MVH — typed errors don't carry record fields).
+#   Nothing edges INTO wm-error.taxonomy from §6 schemas; the bead is leaf-
+#   shaped on the schema side.
+#
+# Forward-deferred edge counts (per target spec; logged only, not loaded):
+#   rc: 12  (WM-022a all-mechanical escalation; WM-023 escalate-to-human path;
+#            WM-024 RC-020 verdict consumer + cap escalation; WM-034 reopen-bead
+#            verdict; WM-035 rollback verdicts; WM-036 verdict-disposition
+#            classifier; WM-038 verdict-driven interrupt mutation; WM-040 verdict-
+#            driven reset; WM-INV-001 sensor — RC §8.11 Cat 6 detector;
+#            WM-INV-002 Cat 6a multi-run-per-bead detector;
+#            WM-032 branch reference in run's bead history per RC schemas §6.2;
+#            WM-033 routes to RC Cat 3 via WM-003a)
+#   on:  9  (WM-008 operator-policy gating; WM-009 ON-018 N-1 compat;
+#            WM-019 daemon-identity operator override; WM-024 operator
+#            re-dispatch cap config; WM-031 retention-window operator
+#            workflow; WM-036 ON-014 escalate-to-human (R-WM-4 patch);
+#            WM-038 / WM-040 ON-013 operator-control event drivers;
+#            wm-env-001 ON-018+ON-027 inherited NFRs)
+#   pl:  3  (WM-013c orphan-sweep delegation; WM-033 PL-006 sweep mechanics;
+#            §10.2 invariant-auditor wired through PL-006)
+#   bi:  4  (WM-001 bead_id correlation field; WM-006 BI-014 parent-bead
+#            dependency-graph query; WM-028 bead_id propagation; WM-INV-002
+#            multi-run-per-bead sensor edge)
+#
+# F-pilot-EV-3 informational findings (cross-spec inline cites to specs NOT in
+# depends-on; document but do NOT emit forward-deferred edges):
+#   ev:  ~25 cites across §4, §6.5, §7.1, §9.3 — every event-emission rule
+#        cedes payload shape to EV per EV-025. Not edges; informational. Will
+#        materialize when EV's reciprocal pilot loads via the §6.5 co-owned
+#        event payload pattern (§2.11(d)). Listed in eventual narrative §5.
+#
+# F-pilot-WM findings (judgment calls / discipline stress points):
+#
+# F-pilot-WM-1 [local — applies §2.3 mechanically] — Two coalesce candidates
+#   considered and rejected:
+#   (a) WM-022 + WM-022a (implementer identification + all-mechanical fallback
+#       escalation). Test 1 (single shape/path) FIRES — both walk
+#       implementer_handler_ref. Test 2 (anchor + clarifications) FIRES —
+#       WM-022 is anchor; WM-022a is the null-handler-ref clarification.
+#       Test 3 (split reduces to "see anchor") FAILS — WM-022a is its own
+#       testable escalation path (no agentic sidecar → emit
+#       merge_conflict_escalation directly per WM-023, skipping re-dispatch).
+#       Two-of-three insufficient → no coalesce. Same posture as the EM
+#       typed-alias-cluster pattern (F-em-r1-MIN-8): peer rules without true
+#       anchor structure stay separate.
+#   (b) WM-037 + WM-037a (interrupt-state orthogonality + terminal clearance).
+#       Test 1 FIRES (same enum/state machine). Test 2 FIRES (WM-037 declares
+#       orthogonality; WM-037a is the terminal-state bound). Test 3 FAILS —
+#       WM-037a's "terminal states clear interrupt_state to none" is its own
+#       testable transition rule, distinct from WM-037's enum declaration.
+#       Same posture; no coalesce.
+#   No coalesces applied; recorded for parity with HC's two-coalesce pattern.
+#
+# F-pilot-WM-2 [class — discipline-patch candidate, low priority] — WM §8 has
+#   12 typed sentinel error classes (WorkspaceAlreadyExists, RunIdReuseForbidden,
+#   WorktreeCreationFailed, LeaseLockHeldByOrphan, SidecarWriteFailed,
+#   MergeConflictUnresolvable, InterruptOnTerminalWorkspace, RefNameInvalid,
+#   BareWorktreeNoLease, SidecarWithoutLease, GitignoreWriteForbidden,
+#   GitVersionTooOld). Discipline §2.11(c) names "MULTIPLE classification
+#   entries (e.g., RC's 11 reconciliation categories at §8.1–§8.12)" as the
+#   trigger for one-bead-per-§8.x splitting. WM's 12 is just above RC's 11
+#   threshold figure. SHAPE check: WM's classes are flat typed-sentinel errors
+#   (BI shape), NOT a multi-stage classification scheme (RC shape). The
+#   discriminator that matters is SHAPE (BI's BrError flat enum vs RC's
+#   §8.1-§8.12 nested category sub-sections), not COUNT. WM is BI-shape →
+#   single-bead `wm-error.taxonomy` per §2.6. The discipline could clarify
+#   that the ~11 figure is descriptive-of-RC-not-prescriptive; recorded as
+#   class lane for future patch consideration (low priority — peer authors
+#   can apply the SHAPE test).
+#
+# F-pilot-WM-3 [local — applies §2.2 + F8b mechanically] — Multiple multi-
+#   step candidates considered:
+#   (a) WM-016 four-step ordering (worktree → branch → sidecar → lease-lock →
+#       workspace_leased emission). Signal 1 (≥3 steps) ✓; signal 2
+#       (independent testability) ✓ each step has its own atomic discipline;
+#       signal 3 (umbrella loses meaning when stripped) borderline. F8b shared-
+#       function-body tiebreaker fires: launch_session in §7.2 pseudocode is
+#       one cohesive function body across all four steps; no stable testable
+#       boundary between them. → single bead with sub-bullets.
+#   (b) WM-013b per-terminal-path release gates (4 paths: merged, run_failed,
+#       post_escalation, verdict_driven). Signal 1 ✓ (4 paths); signal 2 ✓
+#       (each path has distinct event gate); signal 3 ✓ (merged-path and
+#       failed-run-path are genuinely independent code branches). Three
+#       signals fire — split-eligible. F8b override: in any plausible Go
+#       implementation, the 4 paths are switch branches inside discard_workspace
+#       / complete_merge sharing a release_lease_lock + write_marker epilogue.
+#       One cohesive function body. F8b → single bead with sub-bullets.
+#       Same shape as EM-016's three-step git atomic sequence and CP-040a's
+#       5-input envelope hash.
+#   (c) WM-019a scratch merge-worktree 7-step lifecycle (worktree add → merge
+#       → resolve → commit → push → remove → prune). Same F8b posture —
+#       merge-node function body. Single bead.
+#   (d) WM-013a 4-step atomic write (write-tmp → fsync → rename → parent-
+#       fsync). Same F8b posture; single bead.
+#   (e) WM-026 sidecar 4-step atomic write. Same F8b posture; single bead.
+#   (f) WM-024 5-bullet re-dispatch contract + 3-attempt cap. Same F8b posture
+#       (single redispatch_implementer_for_merge_conflict function); single
+#       bead.
+#   (g) WM-013e 4-entry gitignore + write-or-fail posture. Same F8b posture;
+#       single bead.
+#   No splits applied. Same posture as CP-040a + EM-016 worked example. WM has
+#   numerous F8b candidates — the spec is strongly mechanism-tagged with many
+#   inline numbered sequences embedded in single-function-body operations.
+#
+# F-pilot-WM-4 [class — RESOLVED by discipline v0.9 §2.11(c.2)] — WM's
+#   wm-error.taxonomy bead is a vocabulary owner (§6.1 + §8 sentinel-class
+#   set). Edge direction is ALWAYS <req> → wm-error.taxonomy (consumer →
+#   owner), per the v0.9 §2.11(c.2) clause. The clause was added in response
+#   to HC r1 LOAD-time cycle rejections of inverted hc-error.taxonomy edges;
+#   WM is the first pilot drafted entirely under v0.9, so the inverted-edge
+#   class should NOT manifest here. Pilot-time cycle check should be clean.
+#
+# F-pilot-WM-5 [local — applies §3.1 step 1 supporting-cite test mechanically] —
+#   Several "per [other-spec.md §N]" cites attached to stand-alone normative
+#   assertions are supporting cites, not hard deps:
+#   (a) WM-002 "per [control-points.md §4.7 CP-037]" attached to operator-
+#       configurable worktree-root claim. Removing CP-037 leaves WM-002's
+#       canonical path rule independently testable. Supporting cite — NO edge
+#       to cp-037; the operator-policy precedence is informational here.
+#   (b) WM-007 "under developer or operator policy" — no cite attached.
+#   (c) WM-024 "per [reconciliation/spec.md §4.5 RC-020]" attached to
+#       escalate-to-human routing. WM-024's body fully describes the cap +
+#       escalation; removing RC-020 leaves the rule testable. Supporting →
+#       NO edge to RC-020 from WM-024 escalation context (RC-020 IS cited
+#       elsewhere in WM-024 as the verdict authority — that cite IS a hard
+#       dep at the verdict-routing surface; emit one edge to forward:rc-NNN).
+#   (d) WM-031 "per [operator-nfr.md §4.9]" attached to operator-cleanup
+#       claim. Supporting cite. Decision: NOT emit; the bare "per ON §4.9"
+#       attachment to a stand-alone normative claim is informational.
+#   No discipline patch needed; the operational test is mechanical. Same
+#   posture as F-pilot-CP-4 (CP-007 et al.).
+#
+# F-pilot-WM-6 [class — RESOLVED by discipline v0.7 §3.2 / Option E grandfather] —
+#   WM reached `reviewed` status 2026-04-24 (v0.4.0). Discipline §3.2 grandfather
+#   carve-out names WM explicitly in the {EM, HC, CP, WM, PL, RC, EV} set.
+#   WM v0.4.2's §4.a IS present (WM-ENV-001 + WM-ENV-002 envelope reqs landed
+#   v0.4.0). WM is therefore NOT a grandfather case at all — WM authored §4.a
+#   in its r2 review. The two envelope reqs ARE first-class beads in this
+#   pilot (wm-env-001, wm-env-002). Recorded for parity with EM/HC/EV/CP
+#   grandfathered-without-§4.a notes.
+#
+# F-pilot-WM-7 [local — applies §3.1 step 5 term-use rule mechanically] —
+#   WM body has dense intra-spec term-use chains. Significant term-uses with
+#   single-owner definitions (emit blocks edge from user → definer):
+#   • "session_id" — defined at WM-025; used throughout WM-026, WM-027.
+#   • "lease-lock file" — defined at WM-013a; used by WM-013b, WM-013c,
+#     WM-013d, WM-016, WM-033.
+#   • "workspace-local events JSONL" — defined at WM-013b; used by WM-038a.
+#   • "scratch merge-worktree" — defined at WM-019a; used by §6.2 path table.
+#   • "implementer_handler_ref" — defined at WM-022; used by WM-024.
+#   • "interrupt_state" enum — declared at WM-037; used by WM-038, WM-038a,
+#     WM-039, WM-040, WM-037a, WM-032.
+#   • "evidence types" (orphan classification) — defined at WM-003a; used
+#     by §6.2 + §8 entries.
+#   • "agentic" classification — sourced from AR §4.7 AR-024 (cross-spec
+#     term-use) → emit edges to ar-024.
+#   All emitted as intra-spec or cross-spec blocks edges below. Per F-pilot-
+#   AR-r2-2 invariant-as-target exemption, term-uses of "centralized-controller
+#   invariant" (AR-INV-007) from WM body do NOT emit edges; AR-INV-007 is
+#   sensor-only.
+#
+# Re-run posture for re-loads: full mode (--load-beads + --load-edges) for
+# initial; subsequent passes use edges-only mode (--skip-beads). br dep
+# cycles MUST remain clean.
+
+spec:
+  prefix: wm
+  title: "Workspace Model spec — implementation"
+  spec_path: specs/workspace-model.md
+  spec_version: "0.4.2"
+  pilot_version: "0.1.0"
+
+# Auto-applied to every non-epic bead in this file.
+default_labels:
+  - "spec:workspace-model"
+  - "tag:mechanism"
+
+epic:
+  mnem: wm
+  title: "Workspace Model spec — implementation"
+  description: |
+    Implements specs/workspace-model.md v0.4.2 (54 first-class §4 req beads from 54 active §4 reqs after 0 §2.3 coalesces and 0 §2.1a collapses, 4 invariants (WM-INV-004 retired), 5 §6 schemas, 1 §8 error-taxonomy bead (single-table form per §2.6, 12 sentinels), 0 multi-step splits (multiple F8b candidates collapsed to sub-bullets), 7 test-infra beads). depends-on: [architecture, execution-model, handler-contract, control-points, reconciliation, operator-nfr, process-lifecycle, beads-integration]; event-model intentionally NOT in depends-on (consume-produce pair resolved directionally). RC, ON, PL, BI cross-spec edges forward-deferred per F-pilot-EM-2 / Option B precedent (logged as forward:<prefix>-NNN). EV inline cites are F-pilot-EV-3 informational findings (NOT forward-deferred edges) — they will materialize when EV's reciprocal pilot edges per §2.11(d) co-owned events.
+  labels:
+    - "kind:spec-parent"
+
+beads:
+  # kinds: req | invariant | schema | error-taxonomy | test-infra
+
+  # ───────────────────────── §4.a Subsystem envelope ─────────────────────────
+
+  - mnem: wm-env-001
+    kind: req
+    req: WM-ENV-001
+    title: "Subsystem envelope declaration (S06)"
+    description: |
+      Per WM-ENV-001: declare the workspace-manager subsystem envelope per [architecture.md §4.0 AR-053]: (a) events produced (workspace_created, workspace_leased, workspace_merge_status, workspace_discarded, merge_conflict_escalation); (b) events consumed (session_log_location, operator_pausing/paused/stopping/stopped/resuming, reconciliation_verdict_executed, workspace_interrupted observed-but-not-emitted); (c) types introduced (Workspace, WorkspaceState, InterruptState, SessionMetadataSidecar, LeaseLockFile, WorkspaceRef consumed); (d) handlers implemented (none); (e) state owned (Workspace record, LeaseLockFile, session-log directories + sidecars; Run consumed); (f) control points provided (none); (g) NFRs inherited (ON-018, ON-027); (h) boundary classification per operation table; (i) environment pin (git ≥ 2.34 per WM-ENV-002).
+
+  - mnem: wm-env-002
+    kind: req
+    req: WM-ENV-002
+    title: "Minimum git version pin (≥ 2.34) detected at startup"
+    description: |
+      Per WM-ENV-002: workspace manager requires git ≥ 2.34. Three mechanical dependencies: `git merge --strategy=ort` default since 2.34 (WM-019); `git for-each-ref --format '%(trailers:key=X,valueonly=true)'` requires 2.34 trailers format token; `git worktree repair` stabilized in 2.34. Daemon MUST detect at startup by parsing `git --version` and MUST refuse to start if below 2.34 (typed `GitVersionTooOld` error per §8). Detection at startup (not per-operation) so failure surfaces ONCE at daemon-start. Cross-subsystem version coordination with PL tracked at OQ-WM-015.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  # ───────────────────────── §4.1 Worktree primitive ─────────────────────────
+
+  - mnem: wm-001
+    kind: req
+    req: WM-001
+    title: "Workspace type and required fields"
+    description: |
+      Per WM-001: a `Workspace` MUST carry workspace_id (stable across restarts), run_id, repository (absolute path to LOCAL clone), parent_commit, branch_name, path, state, interrupt_state, metadata (closed map: created_at + operator_fingerprint), implementer_handler_ref (optional; null when task branch has no agentic commits), schema_version, optional bead_id (opaque correlation field). The `metadata` map is closed at MVH (additional keys forbidden).
+
+  - mnem: wm-002
+    kind: req
+    req: WM-002
+    title: "Worktree path convention `<repo>/.harmonik/worktrees/<run_id>/`"
+    description: |
+      Per WM-002: every workspace MUST be created at canonical path `<repo>/.harmonik/worktrees/<run_id>/`. The daemon operates on a local clone only; workspaces MUST NOT be materialized against a bare remote URL. Worktree root operator-configurable per [control-points.md §4.7 CP-037] (precedence-layer reload at next operator pause); per-run subdirectory `<run_id>/` is fixed. `run_id` MUST match `[A-Za-z0-9-]+` (UUIDv7 satisfies this).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-003
+    kind: req
+    req: WM-003
+    title: "Worktree creation uses `git worktree add -b <branch> <path> <parent_commit>`"
+    description: |
+      Per WM-003: workspace manager MUST create a worktree + fresh task branch atomically via `git worktree add -b <branch> <path> <parent_commit>` against the backing repo. The `-b` form is REQUIRED (the task branch does not yet exist). Explicit `<parent_commit>` start-point is REQUIRED to pin the branch base deterministically; omitting it would default to HEAD and race with operator activity in the main worktree. No provisioning layer (adze, devbox, container) at MVH; plain subfolder. Git minimum-version pin per WM-ENV-002.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-003a
+    kind: req
+    req: WM-003a
+    title: "Discovery classifies partially-crashed worktree states"
+    description: |
+      Per WM-003a: a directory under `<repo>/.harmonik/worktrees/<run_id>/` registered by `git worktree list --porcelain` but with NO lease-lock AND NO sessions dir is classified `bare-worktree-no-lease` and routed to reconciliation Cat 3 per [reconciliation/spec.md §8]. A registered worktree with sidecar present but NO lease-lock is classified `sidecar-without-lease` (same Cat 3 route). Both arise from SIGKILL/power-loss between `git worktree add` and the lease-lock fsync gate of WM-016. Cat 3 routing gives reconciliation right to propose `reopen-bead` or `accept-close-with-note`.
+
+  - mnem: wm-004
+    kind: req
+    req: WM-004
+    title: "Workspace ID derivable from run_id (`workspace_id = \"ws-\" + run_id`)"
+    description: |
+      Per WM-004: `workspace_id` MUST be generated by deterministic construction `workspace_id = "ws-" + run_id` so daemon restart finds the same workspace_id without consulting a separate store. State reconstruction uses git + Beads per [execution-model.md §4.7]. `workspace_id` MUST be treated as opaque by event consumers — downstream MUST NOT parse the prefix or embedded run_id; the correlation field for joins is `run_id`, carried explicitly in every event payload per [event-model.md §8.5].
+
+  # ───────────────────────── §4.2 Branch naming ─────────────────────────
+
+  - mnem: wm-005
+    kind: req
+    req: WM-005
+    title: "Task branch named `run/<run_id>`"
+    description: |
+      Per WM-005: every run's task branch MUST be named `run/<run_id>`. Created off the current integration branch (WM-006) at worktree-create time. Checkpoint commits per [execution-model.md §4.5 EM-023] land on this branch only.
+
+  - mnem: wm-005a
+    kind: req
+    req: WM-005a
+    title: "Sub-workflow expansion does not create additional task branches"
+    description: |
+      Per WM-005a: sub-workflow expansion per [execution-model.md §4.8 EM-034] does NOT create additional task branches or workspaces. All checkpoint commits produced by an expanded sub-workflow's nodes MUST land on the parent run's task branch per EM-023 + EM-035. Workspace is leased by the parent run; nested execution occupies the same worktree. A sub-workflow attempting to materialize its own workspace is a foundation-amendment-requiring change.
+
+  - mnem: wm-006
+    kind: req
+    req: WM-006
+    title: "Integration branch naming convention (default + parent-bead-derived)"
+    description: |
+      Per WM-006: default integration branch MUST be named `harmonik/integration`. When a run has parent-bead context per [beads-integration.md §4.5 BI-014], task branch MUST target a derived branch named `harmonik/integration/<parent_bead_id_refsafe>` per WM-006a. Substitution template operator-configurable per OQ-WM-002; default is verbatim bead-ID substitution. When no parent-bead context, merge target determined by WM-008.
+
+  - mnem: wm-006a
+    kind: req
+    req: WM-006a
+    title: "Ref-safe bead-ID substitution via `git check-ref-format`"
+    description: |
+      Per WM-006a: workspace manager MUST delegate ref-name validation to `git check-ref-format(1)` rather than independent character-class enumeration. Procedure: invoke `git check-ref-format refs/heads/<proposed>`; non-zero exit → apply canonical fallback (hex-encode bytes NOT in `[a-zA-Z0-9/_-]` as `%HH` uppercase; collapse `//` runs; reject bare `@`/empty/single-`.` or second-pass-failing names) and re-validate. `git check-ref-format` is the single source of truth for ref-name validity at each check; workspace manager MUST NOT cache or encode git's accepted set independently. Bead IDs whose transformed form would be empty / case-collide / still-fail-after-fallback rejected at workspace-create time with `RefNameInvalid` per §8.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: wm-007
+    kind: req
+    req: WM-007
+    title: "Three-level branching model (task → integration → main)"
+    description: |
+      Per WM-007: system MUST use three-level branching: (a) node commits land on task branch per WM-005 + EM-023; (b) task branch squash-merges onto integration branch at run-terminal-success per §4.5; (c) integration branch merges to main under developer or operator policy. Harmonik's contract ends at "integration branch holds one commit per task." Merge style from integration to main is NOT dictated; `workspace_merge_status` fires ONLY for the task-branch → integration-branch merge.
+
+  - mnem: wm-008
+    kind: req
+    req: WM-008
+    title: "Small-scope collapse: operator-policy-gated merge target for parentless runs"
+    description: |
+      Per WM-008: when a run has no parent-bead per [beads-integration.md §4.5 BI-014], task branch's merge target MUST be determined by operator policy per [operator-nfr.md §4.3] with two allowed values: `integration` (squash-merge to harmonik/integration; default) or `main` (squash-merge directly to main; small-scope-collapse shape). Absent operator override, default MUST be `integration`. Decision is deterministic on configured policy value; no cognition. Policy knob's precedence layer + reload semantics tracked in OQ-WM-002.
+
+  - mnem: wm-009
+    kind: req
+    req: WM-009
+    title: "Branch naming is stable across a harmonik minor version"
+    description: |
+      Per WM-009: task-branch and integration-branch naming conventions MUST be stable across a harmonik minor version per [operator-nfr.md §4.5 ON-018]. A breaking change to branch naming requires a migration release.
+
+  # ───────────────────────── §4.3 Lease model ─────────────────────────
+
+  - mnem: wm-010
+    kind: req
+    req: WM-010
+    title: "Lease is held by the run, not by individual agents"
+    description: |
+      Per WM-010: a workspace MUST be leased by exactly one Run for the run's full lifetime — interval starts on `workspace_leased` emission (WM-016) and ends on terminal workspace event (`workspace_merge_status status=merged` or `workspace_discarded`) per WM-013b. Multiple agents (planner, researcher, builder, reviewer, merge agent) MUST occupy the same worktree sequentially across their nodes. An agent MUST NOT hold exclusive ownership for the duration of its session; the centralized-controller principle ([architecture.md §4.9]) requires the run — not the agent — to be the lease holder.
+
+  - mnem: wm-011
+    kind: req
+    req: WM-011
+    title: "One active agent at a time inside a workspace"
+    description: |
+      Per WM-011: at any instant AT MOST ONE agent process MAY be actively writing to the worktree. Agents run sequentially as the run traverses its workflow graph; parallel nodes within one run MUST NOT share a worktree. Parallel nodes across different runs occupy separate worktrees per WM-002. Enforcement delegated to the orchestrator (S01); workspace manager's storage-level contribution is the lease-lock file (WM-013a). The lease-lock content identifies the owning run but does not by itself arbitrate per-agent concurrency.
+
+  - mnem: wm-012
+    kind: req
+    req: WM-012
+    title: "One run per bead at a time"
+    description: |
+      Per WM-012: at any instant AT MOST ONE run MAY be in flight for a given bead. A second run for the same bead is permitted ONLY after the first has reached a terminal state (completed, failed, or canceled) per [execution-model.md §4.3]. Re-claim semantics defined in §4.9.
+
+  - mnem: wm-013
+    kind: req
+    req: WM-013
+    title: "Workspace ID discoverable from run_id without a separate index"
+    description: |
+      Per WM-013: given a `run_id`, workspace manager MUST resolve workspace record (path, branch, state) by deterministic construction per WM-002 + WM-004 plus a filesystem check per WM-013c. No separate run-to-workspace index MAY be required as the authoritative lookup path.
+
+  - mnem: wm-013a
+    kind: req
+    req: WM-013a
+    title: "Lease-lock file canonical path, JSON content, atomic-write + fsync birth"
+    description: |
+      Per WM-013a: lease-lock file at canonical path `${workspace_path}/.harmonik/lease.lock` (per §6.2). Lock-file existence represents the lease; absence represents released. JSON content MUST carry `run_id` (UUID, required), `pid` (integer, required), `created_at` (RFC 3339, required), `ttl_sec` (integer, required; advisory). Workspace manager MUST write atomically (write-to-temp + rename) and MUST fsync before emitting `workspace_leased` (WM-016). Birth timing: immediately preceding `workspace_leased` emission; emission ordering of WM-016 unchanged. On every `workspace_created` emission the workspace manager MUST NOT yet have written a lease-lock file — the lock is tied to lease acquisition, not to workspace existence. Cross-spec coordination: HC-044a + PL-006 currently disagree; OQ-WM-005 elevated to BLOCKING-CROSS-SPEC; WM's path + JSON content authoritative.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-013b
+    kind: req
+    req: WM-013b
+    title: "Lease release on terminal transitions; per-terminal-path durability gates"
+    description: |
+      Per WM-013b: workspace manager MUST release the lease (remove lease-lock file) on every terminal workspace transition (entering `merged` or `discarded`). Per-terminal-path release gate (sub-bullets — F8b shared epilogue, single bead per F-pilot-WM-3):
+      • Merged path. Release AFTER `workspace_merge_status status=merged` flushed to durable events journal per [event-model.md §4.4 EV-015] (class F).
+      • Failed-run path. Release AFTER `run_failed` flushed (EV §8.1.3, class F). NOT `workspace_discarded` (class O, may be lost on power loss).
+      • Post-escalation path. Release AFTER appending `lease_released` JSONL line to `${workspace_path}/.harmonik/events/workspace-<workspace_id>.jsonl` and fsyncing (workspace-local durability marker; reconciliation consumes).
+      • Operator-forced discard (verdict-driven). Release AFTER `reconciliation_verdict_executed` flushed AND workspace-local marker written + fsynced.
+      Across all paths the workspace-local `lease_released` marker MUST precede lock-file unlink (idempotent replay if crash mid-release). Workspace-local events file owned by this spec (§6.2). Marker is durable signal; not the global EV journal. Release itself is idempotent.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: wm-013c
+    kind: req
+    req: WM-013c
+    title: "Lease discovery on startup (filesystem walk + lock-content read)"
+    description: |
+      Per WM-013c: workspace manager startup MUST discover live workspaces by (a) enumerating subdirectories of `<repo>/.harmonik/worktrees/` matching the run_id regex; (b) calling `git worktree list --porcelain` against `<repo>` to confirm registered status; (c) reading the lease-lock file per WM-013a (if present) to recover run_id/pid/created_at; (d) stat-ing `${path}/.harmonik/sessions/` to detect whether any session was started. A directory failing (b) is an orphan worktree subject to PL-006. A directory passing (b) with a live lease-lock file whose recorded pid is NOT the current daemon is subject to the orphan-sweep rule of WM-033 (stale → sweep; live non-orphan → fail-fast coordination with HC-044a).
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: wm-013d
+    kind: req
+    req: WM-013d
+    title: "Released-workspace path re-use is forbidden"
+    description: |
+      Per WM-013d: a released workspace's canonical path (WM-002) MUST NOT be re-leased by a subsequent run. New runs receive new canonical paths via new run_ids per WM-034. Prior run's worktree directory and branch MAY persist on disk per WM-031; re-use of the path for a different run_id is forbidden — the canonical-path invariant (WM-INV-005) would be violated.
+
+  - mnem: wm-013e
+    kind: req
+    req: WM-013e
+    title: "`.gitignore` hygiene for harmonik control-plane paths (write-or-fail)"
+    description: |
+      Per WM-013e: workspace manager MUST ensure backing-repo root `.gitignore` excludes harmonik control-plane paths. Required entries (relative to repo root, order preserved): `.harmonik/lease.lock`, `.harmonik/sessions/`, `.harmonik/worktrees/`, `.harmonik/events/`. The `.harmonik/sessions/` inclusion is scoped to root-level (sessions live INSIDE worktrees); per-worktree `.harmonik/sessions/` are NOT excluded by this entry (gitignore interpretation rooted at main worktree; checkpoint commits inside task worktrees see their own session dirs as in-tree per WM-030). At daemon startup workspace manager MUST check root `.gitignore` for these entries; if missing, daemon MUST add them AND stage + commit on dedicated branch `harmonik/gitignore-init` BEFORE creating any worktree. If daemon lacks write permission, startup MUST fail-fast with `GitignoreWriteForbidden` per §8. Operator-side override tracked in OQ-WM-014.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  # ───────────────────────── §4.4 Lifecycle states + events ─────────────────────────
+
+  - mnem: wm-014
+    kind: req
+    req: WM-014
+    title: "Workspace state machine"
+    description: |
+      Per WM-014: a Workspace MUST traverse the lifecycle states `created → ready → leased → (optionally merge-pending → optionally conflict-resolving) → (merged | discarded)`. Lifecycle state is orthogonal to interrupt_state (§4.10); orthogonality applies only to in-flight states per WM-037a. See §7.1 for the transition table. The `setup` state from WM v0.2 has been retired in v0.3.0; retired enum value MUST NOT be reintroduced.
+
+  - mnem: wm-015
+    kind: req
+    req: WM-015
+    title: "Workspace lifecycle event emission obligations (WHEN)"
+    description: |
+      Per WM-015: workspace manager MUST emit the events at the §7.1 transitions. Event type names AND payload schemas are authoritative in [event-model.md §8.5] per EV-025; this spec is normative ONLY for WHEN each event fires:
+      • workspace_created — emit on entry to `created`.
+      • workspace_leased — emit on entry to `leased` AFTER WM-016 ordering gates.
+      • workspace_merge_status — single paired-phase event per [event-model.md §8.9(h)]: emit ONCE with `status=pending` on entry to `merge-pending` and ONCE with `status=merged` on entry to `merged`.
+      • workspace_discarded — emit on entry to `discarded`.
+      • merge_conflict_escalation — emit when implementer-resolution path is exhausted per WM-023.
+      `workspace_interrupted` is emitted by reconciliation detector (NOT by WM); see WM-039. Prior-version inline payload enumerations (WM-017 / WM-023 / WM-039) are retired per §12; wire format read from EV alone.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-016
+    kind: req
+    req: WM-016
+    title: "`workspace_leased` emitted after sidecar + lease-lock fsync (4-step ordering)"
+    description: |
+      Per WM-016: workspace manager MUST complete in order BEFORE emitting `workspace_leased` (sub-bullets — F8b shared launch_session function body, single bead per F-pilot-WM-3):
+      • (a) `git worktree add` succeeded (WM-003).
+      • (b) Task branch (WM-005) exists.
+      • (c) First-session log directory + harmonik.meta.json sidecar per §4.7 written + fsynced.
+      • (d) Lease-lock file per WM-013a written + fsynced.
+      Only after (a)–(d) does `workspace_leased` emit. Workspace's lifecycle state MUST transition to `leased` BEFORE emission so consumers observing the event see a consistent record. Per-workspace emission tied to FIRST session's sidecar; subsequent sessions (WM-025) write their own sidecars per WM-026 and do NOT re-transition or re-emit.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # WM-017 retired (v0.3.0). Payload-field declarations violated EV-025; correlation-field obligations now discoverable from [event-model.md §8.5]. ID NOT reusable. No bead minted.
+
+  # ───────────────────────── §4.5 Merge back to integration ─────────────────────────
+
+  - mnem: wm-018
+    kind: req
+    req: WM-018
+    title: "Merge-back is performed by a node in the same worktree (same lease)"
+    description: |
+      Per WM-018: merge-back operation (merging task branch onto integration branch) MUST be performed by a workflow node executing INSIDE the run's already-leased worktree. The merge is NOT a new workspace; it is another node in the same run consuming the same lease per WM-010. A design that creates a new workspace for the merge step is forbidden.
+
+  - mnem: wm-018a
+    kind: req
+    req: WM-018a
+    title: "Merge-back node dispatch contract (non-agentic OR agentic)"
+    description: |
+      Per WM-018a: every workflow producing a merge-back MUST declare the merge step as one of two node shapes: (a) **non-agentic merge node** — orchestrator-dispatched directly; orchestrator executes `git merge --squash` + commit per WM-019, no handler subprocess; (b) **agentic merge node** — dispatched through [handler-contract.md §4.1] whose handler executes the same git operations plus pre-merge validation per its LaunchSpec. Choice is workflow-author concern. In both shapes the merge node's dispatch occurs INSIDE the existing lease per WM-018; node's Outcome carries the terminal merge outcome and drives §7.1 transition from `merge-pending` to `merged` or `conflict-resolving`. Conflict detection is mechanical: non-zero exit from `git merge --squash` OR conflict markers in `git status --porcelain` → conflict entry per WM-020.
+
+  - mnem: wm-019
+    kind: req
+    req: WM-019
+    title: "Squash-merge with `--strategy=ort`; one-commit-per-task; trailers + author/committer split"
+    description: |
+      Per WM-019: merge-back MUST produce exactly one commit on integration branch per completed task. Implemented as `git merge --squash --strategy=ort <task_branch>` followed by `git commit` (or porcelain-equivalent preserving identical tree-and-trailer semantics). `--strategy=ort` pin REQUIRED (default since git 2.34 per WM-ENV-002; explicit specification prevents older or differently-configured site falling back to `recursive`).
+      **Commit message synthesis.** Synthesized by the merge node (non-agentic OR agentic per WM-018a). Body MUST include summary of task-branch's checkpoint commit set — at minimum first-line subject of each checkpoint, concatenated in commit order — so the squashed commit remains human-readable. Trailers MUST carry `Harmonik-Run-ID: <run_id>` and (when bead-tied) `Harmonik-Bead-ID: <bead_id>` per [execution-model.md §4.4 EM-017]. Re-synthesized from run's invariant identifiers (equivalent to last-checkpoint trailers per WM-INV-003).
+      **Author/committer split.** Author = LaunchSpec identity of merge-node's implementer (agentic variant — `implementer_handler_ref.identifier`) OR daemon identity (non-agentic variant). Committer = daemon identity in BOTH variants (`Harmonik Daemon <no-reply@harmonik.local>` or operator-configured override per [operator-nfr.md §4.3]).
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-019a
+    kind: req
+    req: WM-019a
+    title: "Merge executes outside main worktree (`--ignore-other-worktrees` OR scratch worktree)"
+    description: |
+      Per WM-019a: merge operation (WM-019) MUST NOT execute `git checkout` against integration branch in a worktree concurrently used by operator activity. Two accepted mechanisms:
+      • (a) `--ignore-other-worktrees` flag — merge node MAY run `git checkout --ignore-other-worktrees <integration_branch>` against merge-staging area. Tells git to proceed even if another worktree has the branch checked out.
+      • (b) **Scratch merge-worktree (PREFERRED)** — merge node creates dedicated short-lived worktree at `<repo>/.harmonik/worktrees/merge-<merge_id>/` (UUIDv7 minted for the merge), executes the merge inside, removes worktree after commit. Lifecycle (sub-bullets — F8b cohesive merge function body, single bead per F-pilot-WM-3): worktree add `-b merge-<merge_id> <merge_path> <integration_tip>` → `git merge --squash --strategy=ort <task_branch>` → resolve conflicts per WM-024 if present → `git commit` with trailers per WM-019 → push integration tip → `git worktree remove --force` + `git worktree prune` → delete transient `merge-<merge_id>` branch. Scratch worktree is unleased; no lease-lock; not subject to §4.3 lifecycle; never classified as orphan by WM-003a. `merge_id` distinct from any run_id.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-020
+    kind: req
+    req: WM-020
+    title: "Squash-merge is non-fast-forward by construction"
+    description: |
+      Per WM-020: a squash-merge is non-fast-forward by its nature: `git merge --squash` produces a single new commit on integration branch whose tree equals the merged result but whose parent is the integration-branch tip (not the task-branch tip). Integration-branch tip therefore ADVANCES to a new commit containing squashed content; task-branch tip is UNCHANGED and is NOT an ancestor of the new integration-branch tip. The phrasing "not fast-forward-only" used in prior WM drafts is retired — under squash a fast-forward is not representable. Conflict markers in the index are real and MUST be resolved per §4.6 before the merge commit is created. Detection mechanical per WM-018a (non-zero exit OR conflict markers in `git status --porcelain`).
+
+  - mnem: wm-021
+    kind: req
+    req: WM-021
+    title: "Merge outcome emits workspace_merge_status with status=merged"
+    description: |
+      Per WM-021: on successful merge, workspace manager MUST emit `workspace_merge_status` with `status=merged` per [event-model.md §8.5.3]; payload schema (including `merge_commit_hash`, `source_branch`, `target_branch`) declared there. State MUST transition to `merged` per §7.1. On entry to `merge-pending` (prior to merge execution), workspace manager MUST emit `workspace_merge_status` with `status=pending` — same event type per paired-phase rule of [event-model.md §8.9(h)]. Two separate `workspace_merge_pending` and `workspace_merged` event types are NOT registered; references in WM v0.2 retired per §12.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  # ───────────────────────── §4.6 Conflict resolution ─────────────────────────
+
+  - mnem: wm-022
+    kind: req
+    req: WM-022
+    title: "Original-implementer identification: sidecar walk (NOT trailer walk)"
+    description: |
+      Per WM-022: "original implementer" for a merge-back MUST be identified mechanically from `implementer_handler_ref` (§6.1). Field MUST be set by workspace manager at merge-pending entry (§7.1) to the `handler_ref` derived from the most-recent agentic session sidecar.
+      **Identification mechanism (sidecar walk).** Workspace manager MUST enumerate `${workspace_path}/.harmonik/sessions/*/harmonik.meta.json` (sidecars written by WM-026) and order by sidecar's `launched_at` (RFC 3339) in REVERSE chronological order. For each, inspect `agent_type` (conformance-class identifier per [architecture.md §4.7 AR-024] + [handler-contract.md §6.1]); the FIRST sidecar whose `agent_type` belongs to the agentic handler classes (mechanical / generator / merge-node classes are non-agentic) supplies `implementer_handler_ref` and the LaunchSpec template. Sidecar is authoritative because WM-026 guarantees write-and-fsync before handler launch — durable prerequisite for any commit that may have landed.
+      **No git-trailer walk.** This rule does NOT walk git commit trailers. Trailers in EM-017 carry run_id/state_id/transition_id/schema_version/bead_id — none identify the emitting agent's conformance class. Earlier drafts cited a fabricated `Harmonik-Actor-Role` trailer; no such trailer exists; retired at v0.4.0. Enriching EM trailer set with `Harmonik-Agent-Type` tracked at OQ-WM-012.
+      **Null fallback.** If sidecar walk finds no agentic session, `implementer_handler_ref` MUST be set to null and WM-022a governs the escalation path.
+      Resolution agent MUST be a fresh handler session launched from `implementer_handler_ref` per WM-024. No dedicated "merge-agent" role in MVH. "Original" refers to HANDLER-CLASS LINEAGE, not process-identity.
+    extra_labels:
+      - "tag:cognition"
+      - "axis:llm-freedom-bounded"
+      - "axis:io-determinism-best-effort"
+      - "axis:replay-safety-unsafe"
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-022a
+    kind: req
+    req: WM-022a
+    title: "All-mechanical task branches escalate directly (skip re-dispatch)"
+    description: |
+      Per WM-022a: if `implementer_handler_ref` is null at merge-pending entry (task branch contains only non-agentic commits — mechanical refactors, generated-code landings, or merge-node commits), workspace manager MUST skip WM-024 re-dispatch and emit `merge_conflict_escalation` directly per WM-023 on conflict detection. The system MUST NOT silently remap the implementer role to an unrelated handler class. Human resolution is the MVH fallback for all-mechanical conflict paths.
+
+  - mnem: wm-023
+    kind: req
+    req: WM-023
+    title: "Unresolvable conflicts escalate via merge_conflict_escalation"
+    description: |
+      Per WM-023: if re-dispatched implementer per WM-024 cannot resolve within handler-contract budget per [handler-contract.md §6.1], or returns any terminal outcome other than a successful merge commit, workspace manager MUST emit `merge_conflict_escalation` per [event-model.md §8.5.6] (EV owns the payload schema including workspace_id, run_id, conflict_paths[], escalated_at). The run MUST transition to `conflict-resolving` per §7.1 on initial conflict detection (NOT again on escalation — single-entry transition). Escalation marks resolution path as exhausted; workspace transitions to `discarded` per §7.1 after escalation event emitted.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: wm-024
+    kind: req
+    req: WM-024
+    title: "Conflict-resolver dispatch (mechanism) + 3-attempt cap (op-tunable [1,10])"
+    description: |
+      Per WM-024: mechanism of dispatching implementer agent back into worktree to resolve conflict is deterministic (mechanism-tagged; this spec owns it). Agent's reasoning during resolution is delegated to implementer's handler per [handler-contract.md §4.1] (cognition-tagged; owned there). Mechanical delegation path:
+      • Role: handler class resolved from `workspace.implementer_handler_ref` per WM-022.
+      • Model-class: `agent_type` from session sidecar that produced latest agentic commit.
+      • Input shape: fresh LaunchSpec with `workspace_path` pointing at existing worktree, `required_skills` including conflict-resolution skill (skill name pending OQ-WM-007), input payload of (task branch tip, integration branch tip, conflict-markered paths, transition history per [execution-model.md §4.7]).
+      • Budget: fresh per handler-contract LaunchSpec default; prior session's unused budget NOT inherited.
+      • Re-dispatch attempt cap: DEFAULT THREE (3) per merge-pending cycle. Each attempt spawns fresh LaunchSpec; outcome recorded in workspace-local events JSONL per WM-013b. After three non-successful attempts, WM-022a/WM-023 routes verdict to `escalate-to-human` per [reconciliation/spec.md §4.5 RC-020]. Cap operator-configurable per [operator-nfr.md §4.3] in [1, 10]; out-of-range overrides rejected at daemon startup.
+      If recorded handler class has been retired between initial commit time and merge-time re-dispatch (post-MVH concern), workspace manager MUST treat as unresolvable-conflict path and route to WM-023 escalation without silent handler-class remap.
+
+  # ───────────────────────── §4.7 Session-log directory + metadata sidecar ─────────────────────────
+
+  - mnem: wm-025
+    kind: req
+    req: WM-025
+    title: "Session-log directory at `${workspace_path}/.harmonik/sessions/${session_id}/`"
+    description: |
+      Per WM-025: for every agent session launched against a workspace, a session-log directory MUST exist at `${workspace_path}/.harmonik/sessions/${session_id}/`. Directory is the join point for handler-written session logs (S04) and CASS-read metadata (S08). Workspace manager OWNS directory creation; handlers OWN log-file contents; handler's `session_log_location` progress-stream emission per [handler-contract.md §4.2 HC-010] announces this pre-existing path to the watcher. `session_id` is per-session UUID minted by workspace manager at session start; generation rule in [handler-contract.md §4.2]. Distinct sessions never collide because session_id is unique per launch.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-026
+    kind: req
+    req: WM-026
+    title: "Metadata sidecar `harmonik.meta.json` (atomic write: tmp+fsync+rename+parent-fsync)"
+    description: |
+      Per WM-026: workspace manager MUST write metadata sidecar at `${workspace_path}/.harmonik/sessions/${session_id}/harmonik.meta.json` BEFORE handler launches. Required fields: run_id, node_id, agent_type (conformance-class identifier per [architecture.md §4.7 AR-024]), workflow_id, launched_at (RFC 3339), schema_version, bead_id (present iff bead-tied per [execution-model.md §4.3 EM-014]). Sidecar is authoritative join key for CASS indexing AND authoritative source for agent-type at merge-time implementer identification (WM-022). For runs inside expanded sub-workflows per [execution-model.md §4.8 EM-034a], sidecar's `node_id` MUST carry namespaced `<parent_node_id>/<sub_node_id>` form.
+      **Atomicity discipline.** Same as lease-lock per WM-013a (sub-bullets — F8b cohesive write_json_atomic_fsync helper, single bead per F-pilot-WM-3): (i) write JSON to sibling temp file `harmonik.meta.json.tmp-<pid>`; (ii) fsync temp file; (iii) `rename(2)` temp → canonical name (POSIX rename atomic); (iv) fsync parent directory `${workspace_path}/.harmonik/sessions/${session_id}/` to durably record rename. Step (iv) REQUIRED — power loss after (iii) without parent-dir fsync can lose rename on some filesystems. WM-016's four-step ordering requires both sidecar AND lease-lock durable on disk before `workspace_leased`; parent-dir fsync MUST complete before `workspace_leased` for the first session's sidecar.
+      Interrupted write (process death between (i)-(iii)) leaves `.tmp-<pid>` file and no canonical sidecar. Startup sweep MUST tolerate orphan `.tmp-<pid>` files by removing them; missing sidecar with present lease-lock classified per WM-013c; missing lease-lock with present sidecar is `sidecar-without-lease` evidence type per WM-003a.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-027
+    kind: req
+    req: WM-027
+    title: "Sidecar metadata stamping precedes workspace_leased for the first session"
+    description: |
+      Per WM-027: workspace manager MUST write the first session's metadata sidecar BEFORE emitting `workspace_leased` per WM-016. This ordering ensures any consumer of `workspace_leased` observing handler launch can join metadata without racing the sidecar write. For subsequent sessions within a workspace (WM-010 allows many sessions per workspace), sidecar write precedes handler launch but does NOT re-emit `workspace_leased`; proceeds as stand-alone sidecar-write covered by WM-026.
+
+  - mnem: wm-028
+    kind: req
+    req: WM-028
+    title: "bead_id propagates into session metadata when present"
+    description: |
+      Per WM-028: when run is bead-tied, sidecar's `bead_id` field MUST carry the same `bead_id` value the checkpoint trailer carries per [execution-model.md §4.4 EM-017] and [beads-integration.md §4.6 BI-017, BI-018] — trailer name (`Harmonik-Bead-ID`) and schema owned by execution-model and beads-integration respectively. This spec asserts only the VALUE correlation. `bead_id` MUST be absent (or explicit null) when run has no bead tie. CASS uses this metadata to join session logs to Beads task ledger.
+
+  - mnem: wm-029
+    kind: req
+    req: WM-029
+    title: "Session-log directory consumed read-only by S08"
+    description: |
+      Per WM-029: session-log directory (including metadata sidecar and handler-written logs) MUST be treated as read-only from memory-layer subsystem's perspective. S08 indexes contents into CASS without mutating any file under `${workspace_path}/.harmonik/sessions/`. MVH does not declare a mechanical sensor; read-only contract enforced by reviewer discipline until memory-layer spec (deferred) names operator-auditable permission or audit hook. See OQ-WM-003.
+
+  - mnem: wm-030
+    kind: req
+    req: WM-030
+    title: "Post-merge session-log retention default (preserve-in-merged-branch)"
+    description: |
+      Per WM-030: on successful merge (`workspace_merge_status status=merged`), workspace manager MUST preserve sessions directory inside merged branch (i.e., session logs remain in integration-branch commit tree) by default. Operator-configured alternative MAY move directory to post-merge archive path post-MVH; MVH default is preserve-in-merged-branch for audit retention. MVH default requires project `.gitignore` MUST NOT exclude `.harmonik/sessions/`; gitignored sessions silently break the preserve-in-merged-branch contract. Violations are operator-observable misconfiguration per [operator-nfr.md §4.9].
+
+  # ───────────────────────── §4.8 Failed-run worktree persistence ─────────────────────────
+
+  - mnem: wm-031
+    kind: req
+    req: WM-031
+    title: "Failed-run worktrees persist until operator cleanup"
+    description: |
+      Per WM-031: a worktree whose run reached terminal failure (`failed` or `canceled` per [execution-model.md §7.1]) MUST persist on disk with branch intact. Workspace manager MUST NOT auto-delete failed-run worktrees beyond startup orphan sweep (WM-033). Failed-run worktrees retained for audit and post-mortem. Lease-lock files released per WM-013b; worktree directory and branch remain. MVH imposes no retention window; operators facing disk pressure handle via operator-initiated cleanup workflows per [operator-nfr.md §4.9]; automatic retention-window default tracked in OQ-WM-008.
+
+  - mnem: wm-032
+    kind: req
+    req: WM-032
+    title: "Failed-run workspace state is `discarded`; interrupt_state composes orthogonally"
+    description: |
+      Per WM-032: on terminal failure, workspace state MUST transition to `discarded` per §7.1. A workspace's `interrupt_state` (§4.10) MAY be non-`none` at the moment of terminal failure (e.g., operator-stopped run reaches `discarded`); per WM-037a, terminal transition MUST clear any non-`none` interrupt_state back to `none` — terminal states are absorbing and do not carry interrupt signals. Branch MUST NOT be deleted; branch reference in run's bead history per [reconciliation/schemas.md §6.2] preserves auditability.
+
+  - mnem: wm-033
+    kind: req
+    req: WM-033
+    title: "Startup orphan sweep removes stale lease-lock files (content-first staleness; mtime tiebreaker)"
+    description: |
+      Per WM-033: on daemon startup, orphan sweep (per [process-lifecycle.md §4.2 PL-006]) MUST remove stale lease-lock files from worktrees whose owning daemon is no longer running. Sweep MUST NOT delete worktree directories or branches. Full worktree cleanup is operator-initiated.
+      **Staleness — content-first, mtime tiebreaker.** Determined PRIMARILY from JSON content (WM-013a): `pid` and `created_at` combined with liveness-probe per [handler-contract.md §4.10 HC-044a] (recorded PID not live OR PID recycled to non-harmonik-daemon argv) establish staleness. Filesystem `mtime` MAY be used ONLY as tie-breaker when content-based probe is ambiguous (PID live but argv identifies different harmonik-daemon generation). Content parses cleanly + PID live + identifies current generation → NOT stale regardless of mtime. PID dead → stale regardless of mtime. v0.3.0 mtime-only dependence narrowed.
+      **Post-sweep `git worktree prune`.** After removing stale locks AND after WM-003a orphan-directory routing (WM-003a routes to reconciliation Cat 3; routing does NOT itself remove git metadata), sweep MUST invoke `git worktree prune` against `<repo>` to drop stale `.git/worktrees/<name>/` metadata entries. Prune is safe: skips entries with operator-issued `git worktree lock`; harmonik never issues `git worktree lock` itself (worktree-lock disjoint per glossary I5). Operator lock respected.
+      **Cross-spec coordination.** OQ-WM-005 elevated to BLOCKING-CROSS-SPEC; WM's path + JSON content authoritative. WM does NOT write a second legacy-compatible lock file.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  # ───────────────────────── §4.9 Re-run rule ─────────────────────────
+
+  - mnem: wm-034
+    kind: req
+    req: WM-034
+    title: "reopen-bead → fresh run_id + fresh worktree + fresh task branch"
+    description: |
+      Per WM-034: when investigator agent issues `reopen-bead` verdict per [reconciliation/spec.md §4.5 RC-020] and [reconciliation/schemas.md §6.1 Verdict], subsequent claim of reopened bead MUST produce a new run with FRESH `run_id` distinct from every prior run_id ever dispatched against the bead. Fresh run_id becomes lease key for FRESH worktree at canonical path `<repo>/.harmonik/worktrees/<new_run_id>/` and FRESH task branch `run/<new_run_id>` per WM-005. Prior run's run_id, worktree, and branch persist on disk per WM-031 (lease-lock released per WM-013b). This rule closes tension between path canonicality (WM-002) and failed-run persistence (WM-031): distinct runs land at distinct paths because run_ids differ. Minting of fresh run_id is execution-model's responsibility; this spec asserts only that workspace manager MUST observe a new run_id on entry and MUST reject any attempt to reuse a prior run_id at workspace-create time.
+    extra_labels:
+      - "axis:idempotency-non-idempotent"
+
+  - mnem: wm-035
+    kind: req
+    req: WM-035
+    title: "Intra-run rollback verdicts keep the same worktree + task branch"
+    description: |
+      Per WM-035: intra-run rollback verdicts — `resume-here`, `resume-with-context`, `reset-to-checkpoint` per [reconciliation/spec.md §4.5 RC-020] — MUST keep the same worktree and same task branch. Run's `run_id` unchanged; state reverts to the named checkpoint via git operations inside existing worktree per [execution-model.md §4.10 EM-044]. The `rollback_to_state_id` field on the transition record (EM-044) is the mechanical driver of the rollback.
+
+  - mnem: wm-036
+    kind: req
+    req: WM-036
+    title: "Re-run vs intra-run classification deterministic on 7-value verdict enum"
+    description: |
+      Per WM-036: decision between "fresh worktree" (WM-034) and "keep worktree" (WM-035) MUST be deterministic on verdict enum value declared in [reconciliation/schemas.md §6.1 Verdict]. No cognition participates. Authoritative classification against the seven-value verdict enum (per RC-020 as amended in RC v0.3.0):
+      • `reopen-bead` — fresh worktree + fresh task branch + fresh run_id (WM-034).
+      • `resume-here` — keep worktree + keep task branch (WM-035).
+      • `resume-with-context` — keep worktree + keep task branch (WM-035).
+      • `reset-to-checkpoint` — keep worktree + keep task branch; state reverts via EM-044.
+      • `accept-close-with-note` — no re-run; workspace remains in current terminal state.
+      • `no-op-accept` (v0.4.2 row) — no workspace action; record verdict; clear any non-`none` interrupt_state per WM-040 if reconciliation had marked the workspace interrupted; outer run continues per [reconciliation/spec.md §8.12].
+      • `escalate-to-human` — no re-run; workspace remains in current terminal state; operator escalation per [operator-nfr.md §4.3].
+      Prior WM v0.2 `abandon` verdict text retired per §12. Any verdict value not in the table is malformed per [reconciliation/spec.md §4.5 RC-023] and MUST NOT be routed; classifier returns classification-error to caller and emits no workspace action. Bilateral attribute proposal (`worktree_disposition` on Verdict) tracked at OQ-WM-009. The `no-op-accept` row resolves OQ-RC-011.
+      **Interrupt-state side-effect (v0.4.2 row).** On `no-op-accept`, the orchestrator MUST also clear the per-run InterruptState sidecar per WM-040 if the workspace had been previously marked interrupted by reconciliation, ensuring no stale interrupt persists for the same `(run_id, node_id)` after the verdict-disposition completes. This composes with the no-workspace-action posture: the verdict is recorded and any non-`none` `interrupt_state` is cleared back to `none` via the WM-040 mechanical clearance path; the outer run continues per [reconciliation/spec.md §8.12].
+
+  # ───────────────────────── §4.10 Interrupt-state representation ─────────────────────────
+
+  - mnem: wm-037
+    kind: req
+    req: WM-037
+    title: "interrupt_state orthogonal to lifecycle for in-flight states (5-value enum)"
+    description: |
+      Per WM-037: workspace record MUST carry `interrupt_state` field orthogonal to lifecycle state of §4.4 FOR THE IN-FLIGHT STATES (`created`, `ready`, `leased`, `merge-pending`, `conflict-resolving`). Values: `none` (default; no interruption), `operator-paused` (operator pause interrupted lease), `operator-stopped-graceful` (graceful stop in progress), `operator-stopped-immediate` (immediate stop; handler subprocess may have been killed), `daemon-crash-suspected` (pre-reconciliation placeholder for run whose lease was not cleanly released). Lifecycle state (e.g., `leased`) and interrupt_state (e.g., `operator-paused`) compose independently within the in-flight set. Enum values locally owned by this spec but map onto operator-control vocabulary per [operator-nfr.md §4.3 ON-011] and reconciliation Cat 6 detector carve-out per [reconciliation/spec.md §8.11]. This spec does NOT redefine those vocabularies; projects them onto a workspace-local field for dispatch convenience.
+
+  - mnem: wm-037a
+    kind: req
+    req: WM-037a
+    title: "Terminal lifecycle states carry no interrupt signal"
+    description: |
+      Per WM-037a: terminal lifecycle states `merged` and `discarded` MUST carry `interrupt_state = none`. A transition into terminal state MUST clear any non-`none` interrupt state as part of the transition. Any interrupt signal received against a workspace already in terminal state MUST be rejected silently by workspace manager (`InterruptOnTerminalWorkspace` per §8) and logged as operator-observability event per [operator-nfr.md §4.9]; workspace state MUST NOT transition and `workspace_interrupted` (emitted by reconciliation per WM-039) MUST NOT fire against a terminal workspace. Bounds the orthogonality claim of WM-037 to the in-flight state set; eliminates the "interrupt a merged workspace" semantic anomaly.
+
+  - mnem: wm-038
+    kind: req
+    req: WM-038
+    title: "interrupt_state set by operator + reconciliation pathways; WM is sole writer"
+    description: |
+      Per WM-038: transitions of `interrupt_state` driven by (a) operator control subsystem per [operator-nfr.md §4.3 ON-013] emitting operator-control events that the workspace manager observes and applies; (b) reconciliation per [reconciliation/spec.md §4.5] emitting verdicts that the workspace manager applies. Workspace manager MUST be the SOLE writer of `interrupt_state` field on the Workspace record. Workspace manager MUST NOT mutate `interrupt_state` except in response to (a) observed operator-control event or (b) observed reconciliation verdict execution. No other subsystem may mutate the field; cross-subsystem requests to change interrupt_state MUST route through the event bus.
+
+  - mnem: wm-038a
+    kind: req
+    req: WM-038a
+    title: "Workspace-local marker for operator/verdict-driven interrupt_state mutations"
+    description: |
+      Per WM-038a: when workspace manager mutates `interrupt_state` in response to operator-control event (pause, stop, upgrade) OR reconciliation verdict (crash-recovery disposition), there is currently NO durable wire-event signaling the mutation: [event-model.md §8.5.5] names reconciliation detector as sole emitter of `workspace_interrupted` and scopes to Cat 6 crash detection. Operator-driven and verdict-driven transitions therefore risk being invisible to downstream consumers until the next full reconciliation pass.
+      To close locally (without waiting for EV's emitter broadening per OQ-WM-016), workspace manager MUST on every `interrupt_state` mutation (`none → non-none` OR `non-none → non-none`) append a single workspace-scoped JSONL line to `${workspace_path}/.harmonik/events/workspace-<workspace_id>.jsonl` and fsync. Marker shape: `{"event":"interrupt_state_changed", "workspace_id":..., "run_id":..., "prior_interrupt_state":..., "new_interrupt_state":..., "cause":<operator-event-type | verdict-kind>, "cause_event_id":<optional>, "changed_at":<rfc3339>}`. Marker is authoritative durable record consumed by reconciliation's sweep pass per [reconciliation/spec.md §4.3]. WM MAY additionally emit async bus event as in-process hint; marker is the durability signal.
+    extra_labels:
+      - "axis:idempotency-idempotent"
+
+  - mnem: wm-039
+    kind: req
+    req: WM-039
+    title: "WM observes interrupt transitions but does NOT emit workspace_interrupted"
+    description: |
+      Per WM-039: on any transition of `interrupt_state` from `none` to non-`none`, workspace manager MUST update record atomically with causing input (operator-control event or reconciliation verdict) such that new state is durable and observable by reconciliation detector. The `workspace_interrupted` event per [event-model.md §8.5.5] is emitted by reconciliation detector, NOT by workspace manager; payload schema (workspace_id, run_id, detected_at, category) is EV-owned. Workspace manager MUST NOT emit `workspace_interrupted`. This rule reflects split of emission authority: workspace manager owns the interrupt_state FIELD (mutation per WM-038); reconciliation detector owns the wire EVENT (emission per EV §8.5.5). Prior WM v0.2 text declaring WM as emitter retired per §12. OQ-WM-006 tracks unresolved coordination with EV.
+
+  - mnem: wm-040
+    kind: req
+    req: WM-040
+    title: "interrupt_state reset to `none` requires reconciliation OR operator resume"
+    description: |
+      Per WM-040: clearing `interrupt_state` back to `none` MUST be driven by either (a) `operator_resuming` event per [event-model.md §8.7] and [operator-nfr.md §4.3 ON-013] for operator-initiated interrupts, or (b) reconciliation verdict per [reconciliation/spec.md §4.5] for daemon-crash or lost-lease interrupts. Workspace manager MUST NOT silently clear the field. Sensor: any mutation of `interrupt_state` to `none` not preceded by a matching causing event is a violation, detected by reconciliation detector's transition-audit pass per [reconciliation/spec.md §4.3 RC-010].
+
+  # ───────────────────────── §5 invariants ─────────────────────────
+
+  - mnem: wm-inv-001
+    kind: invariant
+    req: WM-INV-001
+    title: "Sensor: lease-by-run is honored corpus-wide"
+    description: |
+      Per WM-INV-001: every subsystem observing a workspace MUST treat workspace's run_id as exclusive lease holder for run's full lifetime per WM-010. No subsystem MAY mechanism a per-agent lease acquisition. Constrains orchestrator (S01; dispatch), agent runner (S04; handler-launch preconditions), workspace manager (S06; storage), reconciliation (lost-lease detection), memory layer (S08; session-metadata consumption). Workspace-layer realization of centralized-controller principle per [architecture.md §4.9 AR-INV-007].
+      Sensor: reconciliation's startup lost-lease detector per [reconciliation/spec.md §8.11 Cat 6] correlates each live lease-lock file against Beads' record of owning run_id and against daemon's live-run registry; any workspace with lease-lock whose run_id does not appear as in-flight run (or whose lease-lock is missing while run is in-flight) is a violation evidence route.
+
+  - mnem: wm-inv-002
+    kind: invariant
+    req: WM-INV-002
+    title: "Sensor: one in-flight run per bead"
+    description: |
+      Per WM-INV-002: for every bead, every subsystem routing on run activity MUST assume at-most-one in-flight run. Multi-run-per-bead allowed across time only after prior run has reached terminal state per [execution-model.md §4.3 EM-014]. Reconciliation's post-crash detectors MUST reject observations of multiple in-flight runs for one bead as inconsistency evidence per [reconciliation/spec.md §8.11 Cat 6a]. Beads-integration's terminal-write rule (BI-010) and workspace-manager's WM-012 both rely on this.
+      Sensor: Cat 6a detector (bead `in_progress` with two+ task branches each advertising `Harmonik-Run-ID` without `Harmonik-Verdict-Executed`) per [reconciliation/schemas.md §6.3].
+
+  - mnem: wm-inv-003
+    kind: invariant
+    req: WM-INV-003
+    title: "Sensor: checkpoint commits obey git append-only on the task branch (two-part)"
+    description: |
+      Per WM-INV-003: any git observer of a run's task branch MUST reject commits whose new tip is not a fast-forward descendant of the prior tip (no amend, rebase, filter-branch, force-push, `git replace` rewrite, or history-editing operation may rewrite history on a task branch that has emitted `workspace_leased`). Git's native commit semantics are the contract; this spec adds no transactional layer. Constrains handler-contract (S04 handlers per [handler-contract.md §4.1]), workspace manager (merge-back), execution-model's checkpoint-cadence per [execution-model.md §4.5 EM-023].
+      Sensor (two-part):
+      • Part A: branch-tip monotonicity. EM-024a check — daemon persists last-observed task-branch-tip SHA per in-flight run; any non-fast-forward discrepancy routes to reconciliation Cat 3 per [reconciliation/spec.md §8.4]. Catches amend/rebase/force-push.
+      • Part B: history-editing audit. Conformance-time invariant-auditor tool walks `git reflog` for every live task branch; rejects any reflog entry whose operation is `filter-branch`, `replace`, or non-fast-forward `update` on a run still in in-flight state. Tool home pending `testing.md` per OQ-WM-017. Catches filter-branch/replace tip-identity-preserving rewrites.
+      WM does NOT rely on reflog for state reconstruction (per [execution-model.md §4.7]); reflog dependence confined to invariant-auditor test tool — robust against operator-configured aggressive `gc.reflogExpire`.
+
+  - mnem: wm-inv-005
+    kind: invariant
+    req: WM-INV-005
+    title: "Sensor: canonical-path discovery without a registry"
+    description: |
+      Per WM-INV-005: any subsystem reconstructing workspace state from filesystem MUST derive workspace location from run_id alone per WM-002 without consulting a separate registry, index, or SQLite table. No registry-backed lookup MAY be declared authoritative for workspace path resolution. Constrains workspace manager (WM-013, WM-013c), reconciliation's startup pass per [reconciliation/spec.md §4.3], orchestrator's run-resume logic at restart.
+      Sensor: WM-013c filesystem discovery by construction — any workspace whose path does not match `<repo>/.harmonik/worktrees/<run_id>/` for some recognized run_id is a violation, detected by startup enumeration pass and routed to reconciliation Cat 3c (inverse premature-close) or Cat 6a (integrity violation) per [reconciliation/schemas.md §6.3].
+
+  # ───────────────────────── §6 schema beads (5) ─────────────────────────
+
+  - mnem: wm-schema.workspace
+    kind: schema
+    schema_kind: schema
+    title: "Define `Workspace` record (§6.1)"
+    description: |
+      Implement the 12-field RECORD: workspace_id (String, deterministic from run_id per WM-004); run_id (UUID); repository (String, absolute path to LOCAL clone per WM-001 + WM-002); parent_commit (CommitSHA); branch_name (String, task-branch name per §4.2); path (String, absolute filesystem path); state (WorkspaceState ENUM); interrupt_state (InterruptState ENUM); bead_id (BeadID | None, opaque correlation field); implementer_handler_ref (HandlerRef | None, set at merge-pending per WM-022); metadata (Map<String, String>, closed map: keys "created_at" RFC 3339, "operator_fingerprint"); schema_version (Integer, N-1 readable per §6.4; set by S06 on create). Type aliases: CommitSHA per [execution-model.md §6.1]; BeadID per [beads-integration.md §6.1]; HandlerRef per [handler-contract.md §6.1]; UUID is UUIDv7 per [event-model.md §4.1 EV-002].
+
+  - mnem: wm-schema.lease-lock-file
+    kind: schema
+    schema_kind: schema
+    title: "Define `LeaseLockFile` record (§6.1)"
+    description: |
+      Implement the 4-field RECORD (per-workspace file at canonical §6.2 path; JSON body per WM-013a): run_id (UUID, owning run); pid (Integer, daemon PID that wrote the lock); created_at (Timestamp, RFC 3339 wall clock); ttl_sec (Integer, advisory lifetime; does not enforce auto-expiry — informative for orphan sweep). Lock-file existence represents the lease; absence represents released. Birth at `leased`, death at `merged` / `discarded` per WM-013b. Atomic write discipline per WM-013a. Cross-spec coordination: HC-044a + PL-006 disagree on filename; OQ-WM-005 BLOCKING-CROSS-SPEC; WM's path + JSON content authoritative.
+
+  - mnem: wm-schema.workspace-state
+    kind: schema
+    schema_kind: enum
+    title: "Define `WorkspaceState` enum (§6.1)"
+    description: |
+      Implement the 7-value ENUM: created, ready, leased, merge-pending, conflict-resolving, merged, discarded. Terminal states: `merged`, `discarded`. In-flight states: everything else. Drives §7.1 transition table. The `setup` value retired in v0.3.0; MUST NOT be reintroduced (was never reachable in §7.2 pseudocode and contradicted WM-016 ordering).
+
+  - mnem: wm-schema.interrupt-state
+    kind: schema
+    schema_kind: enum
+    title: "Define `InterruptState` enum (§6.1)"
+    description: |
+      Implement the 5-value ENUM: none (default; no interruption), operator-paused, operator-stopped-graceful, operator-stopped-immediate, daemon-crash-suspected. Orthogonal to WorkspaceState for in-flight states only per WM-037 / WM-037a. Enum values locally owned by this spec but map onto operator-control vocabulary per [operator-nfr.md §4.3 ON-011] and reconciliation Cat 6 detector per [reconciliation/spec.md §8.11].
+
+  - mnem: wm-schema.session-metadata-sidecar
+    kind: schema
+    schema_kind: schema
+    title: "Define `SessionMetadataSidecar` record (§6.1)"
+    description: |
+      Implement the 7-field RECORD: run_id (UUID); node_id (String, namespaced `<parent_node_id>/<sub_node_id>` inside expanded sub-workflows per WM-026); agent_type (String, agent-type conformance class per [architecture.md §4.7 AR-024]); workflow_id (UUID); bead_id (BeadID | None, present iff run is bead-tied); launched_at (Timestamp, RFC 3339); schema_version (Integer, N-1 readable per §6.4; set by S06). Authoritative join key for CASS indexing AND authoritative source for agent-type at merge-time implementer identification per WM-022. Atomic write discipline per WM-026.
+
+  # ───────────────────────── §8 error taxonomy (single bead per §2.6 BrError shape; F-pilot-WM-2) ─────────────────────────
+
+  - mnem: wm-error.taxonomy
+    kind: error-taxonomy
+    title: "WM error taxonomy (§8) — 12-class typed sentinel set + transitions + downstream routing"
+    description: |
+      Per §8: implement the 12 typed sentinel classes + workspace-transition consequences + downstream routing rules:
+      • `WorkspaceAlreadyExists` — `create_workspace` observes existing directory at canonical path. (no transition) → orchestrator reports run-create failure; reconciliation Cat 3c may fire on reboot if prior run's terminal transition incomplete.
+      • `RunIdReuseForbidden` — `create_workspace` observes run_id has been dispatched before (violates WM-034). (no transition) → orchestrator run-create failure; caller-error class.
+      • `WorktreeCreationFailed` — `git worktree add` non-zero (bad parent_commit, concurrent git lock, disk full). (remains in initial) → orchestrator run-create failure; operator-observability per [operator-nfr.md §4.1 ON-001].
+      • `LeaseLockHeldByOrphan` — `create_workspace` / `launch_session` observes live lease-lock belonging to prior daemon generation per WM-013c / HC-044a. (stays out of `leased`) → Launch fail-fast per [handler-contract.md §4.10 HC-044a]; reconciliation Cat 6a investigator if correlation reveals lost lease.
+      • `SidecarWriteFailed` — metadata sidecar write fails on I/O (disk full, permissions, concurrent file conflict). (stays out of `leased`) → run reported failed; operator-observability.
+      • `MergeConflictUnresolvable` — implementer re-dispatch or all-mechanical-branch per WM-022a produces no successful merge. `conflict-resolving → discarded` → `merge_conflict_escalation` per WM-023.
+      • `InterruptOnTerminalWorkspace` — operator-control or reconciliation signal targets `merged` / `discarded` workspace. (no transition per WM-037a) → silent reject; operator-observability log entry only.
+      • `RefNameInvalid` — integration-branch template substitution (WM-006a) produces a name that fails `git check-ref-format` after canonical fallback, or transformed name is empty / collides case-insensitively. (remains in initial) → orchestrator run-create failure; operator-observability.
+      • `BareWorktreeNoLease` — discovery (WM-003a) finds registered worktree with no lease-lock and no sessions. (no transition; directory is orphan) → reconciliation Cat 3 via evidence type `bare-worktree-no-lease`.
+      • `SidecarWithoutLease` — discovery (WM-003a) finds registered worktree with sidecars but no lease-lock. (no transition; directory is orphan) → reconciliation Cat 3 via evidence type `sidecar-without-lease`.
+      • `GitignoreWriteForbidden` — WM-013e detects `.gitignore` missing required entries AND daemon lacks write permission. (startup-fail) → daemon refuses to start; operator must fix `.gitignore` permissions.
+      • `GitVersionTooOld` — WM-ENV-002 detects installed git below 2.34 at daemon startup. (startup-fail) → daemon refuses to start; operator must upgrade git.
+      Detection of each class is daemon's responsibility; class identity flows to event bus via appropriate lifecycle event's payload (event-model owns schema), or to operator-observability per [operator-nfr.md §4.9].
+      **Single-bead form (per discipline §2.6 + F-pilot-WM-2).** WM's §8 is a flat typed-sentinel set (BI shape: BrError-style enum of error sentinels), NOT a multi-stage classification scheme like RC's Cat 1..Cat 6. Single `wm-error.taxonomy` bead is correct. The 12-class count is just above RC's ~11 threshold figure — the SHAPE discriminator (flat vs nested) drives the §2.11(c) decision, not COUNT.
+      **§2.11(c.2) edge direction.** Vocabulary owner → consumers `block-on` taxonomy. Edge direction `<req> → wm-error.taxonomy` ALWAYS; never inverse.
+    extra_labels:
+      - "kind:taxonomy"
+
+  # ───────────────────────── Test-infra beads (7) ─────────────────────────
+
+  - mnem: wm-test.worktree-primitive-fixture
+    kind: test-infra
+    title: "Worktree primitive + crash-evidence fixture (WM-001..004 + WM-003a)"
+    description: |
+      Per §10.2 (WM-001..004 + WM-003a): filesystem-scenario tests — `git worktree add -b` runs produce canonical path + fresh branch atomically; workspace_id derivable from run_id after daemon restart; run_id filesystem-safety regex enforced; workspace_id prefix treated as opaque by consumers (negative test); crash scenarios produce `bare-worktree-no-lease` and `sidecar-without-lease` evidence types per WM-003a and route to reconciliation Cat 3. Foundation harness for downstream WM tests.
+
+  - mnem: wm-test.branch-naming-fixture
+    kind: test-infra
+    title: "Branch-naming + ref-safe substitution fixture (WM-005..009 + WM-005a + WM-006a)"
+    description: |
+      Per §10.2 (WM-005..009 + WM-005a + WM-006a): branch-naming unit tests — task-branch and integration-branch templates produce expected names; parent-bead-derived integration branch survives `git check-ref-format` validation; pathological bead-ID inputs (`@{`, `//`, sole `@`, leading `.`, trailing `.lock`, control chars) exercise canonical hex-encode fallback and re-validate; small-scope-collapse operator-policy-gated (default `integration`, override `main`); sub-workflow expansion does not create additional task branches.
+
+  - mnem: wm-test.lease-fixture
+    kind: test-infra
+    title: "Lease-lifecycle + crash-recovery fixture (WM-010..013 + WM-013a..e)"
+    description: |
+      Per §10.2 (WM-010..013e): multi-agent-sequential scenario tests — three agents run in sequence in one worktree; lease-lock written exactly once per lease with atomic temp+rename+fsync+parent-dir-fsync; lock JSON content matches WM-013a; lock released on terminal transitions (WM-013b) with lock absence AND workspace-local `lease_released` marker as release proofs; per-terminal-path release gates exercised (merged, run_failed, post_escalation, verdict_driven); filesystem discovery matches canonical path (WM-013c); canonical-path re-use rejected (WM-013d); `.gitignore` hygiene enforced at startup with `GitignoreWriteForbidden` surfaced if daemon lacks write permission (WM-013e).
+
+  - mnem: wm-test.merge-back-fixture
+    kind: test-infra
+    title: "Merge-back + scratch-worktree fixture (WM-018..021 + WM-018a + WM-019a)"
+    description: |
+      Per §10.2 (WM-018..021 + WM-018a + WM-019a): merge-back scenario tests — one-commit-per-task on integration branch; `--strategy=ort` pinning verified; synthesized commit message carries `Harmonik-Run-ID` + conditional `Harmonik-Bead-ID` trailers with author = LaunchSpec identity (agentic) or daemon identity (non-agentic), committer = daemon identity; scratch merge-worktree lifecycle (create-use-remove) validated via WM-019a option (b); conflict detection from non-zero `git merge --squash` exit + porcelain status works.
+
+  - mnem: wm-test.conflict-resolution-harness
+    kind: test-infra
+    title: "Conflict-resolution + 3-attempt-cap harness (WM-022..024 + WM-022a)"
+    description: |
+      Per §10.2 (WM-022..024 + WM-022a): cognition-tagged integration tests with twin implementer — synthetic merge conflict triggers implementer re-dispatch using `implementer_handler_ref` derived from sidecar walk (NOT from trailer walk; confirm absence of `Harmonik-Actor-Role` dependency); three-attempt default cap exercised with escalation on cap-reach; operator-configured cap in [1, 10] tested and out-of-range values rejected at startup; unresolvable case emits `merge_conflict_escalation`; all-mechanical task branch skips re-dispatch and escalates directly per WM-022a; handler-class retirement case routes to escalation (WM-024 terminal clause).
+    extra_labels:
+      - "tag:cognition"
+
+  - mnem: wm-test.session-log-fixture
+    kind: test-infra
+    title: "Session-log + atomic sidecar fixture (WM-025..030)"
+    description: |
+      Per §10.2 (WM-025..030): filesystem tests — metadata sidecar exists before `workspace_leased` for first session; sidecar atomic write (temp+rename+parent-dir-fsync) verified; `.tmp-<pid>` orphan cleanup by startup sweep; subsequent session sidecars do not re-emit `workspace_leased`; namespaced `node_id` tested inside expanded sub-workflow; `.gitignore` excluding `.harmonik/sessions/` detected as misconfiguration; CASS (S08) reads sidecar + log; post-merge retention default verified.
+
+  - mnem: wm-test.reconciliation-and-interrupt-harness
+    kind: test-infra
+    title: "Failed-run + verdict + interrupt-state harness (WM-031..036 + WM-037..040 + WM-037a + WM-038a + WM-INV-003 part B)"
+    description: |
+      Per §10.2 (WM-031..033, WM-034..036, WM-037..040 + WM-037a/WM-038a + WM-INV-003 Part B): daemon-restart scenario tests — failed-run worktrees persist across restart; lease-lock released on terminal failure per WM-013b with marker before unlink; orphan sweep uses content-first staleness (mtime tiebreaker only) per WM-033; `git worktree prune` invoked after sweep; operator-issued `git worktree lock` respected. Verdict-driven scenario tests — `reopen-bead` creates fresh worktree at `run/<new_run_id>`; reuse of prior run_id rejected; `reset-to-checkpoint` / `resume-here` / `resume-with-context` keep worktree; `accept-close-with-note` / `escalate-to-human` produce no re-run; `no-op-accept` clears interrupt_state if previously marked; unknown-verdict produces classification error. Interrupt-state tests — interrupt_state composes with lifecycle in in-flight set; `workspace_interrupted` emission comes from reconciliation detector only (crash path); operator/verdict-driven transitions write workspace-local `interrupt_state_changed` markers per WM-038a and consumed by reconciliation on next sweep; interrupt signals against terminal workspaces silently rejected per WM-037a; clearing requires operator resume or reconciliation verdict; non-matching clearance attempts detected by reconciliation's transition-audit pass. WM-INV-003 Part B prose-level test — synthetic `git filter-branch` on task branch during live run MUST be detected by invariant-auditor tool once `testing.md` lands (OQ-WM-017).
+
+# Edges. `from` = citing bead; `to` = prerequisite/blocker bead.
+# discipline §2.5 convention: "A blocks B" → loader emits `br dep add B A -t blocks`
+# (B depends on A). YAML `from`/`to` matches the (citing, prereq) tuples.
+#
+# Mnemonic prefix selects resolution map:
+#   wm-* → intra-spec (this spec's mnem-map, generated at load)
+#   ar-* / em-* / hc-* / cp-* → cross-spec (resolved against cross_specs[<prefix>])
+#   forward:* → forward-deferred (logged only, NOT loaded into beads); used for
+#     rc, on, pl, bi targets per F-pilot-EM-2 / Option B precedent (specs in
+#     depends-on but not yet pilot-loaded).
+edges:
+  # ───────────────────────── Intra-WM edges ─────────────────────────
+
+  # §4.a envelope schema dependencies
+  - {from: wm-env-001, to: wm-schema.workspace}
+  - {from: wm-env-001, to: wm-schema.workspace-state}
+  - {from: wm-env-001, to: wm-schema.interrupt-state}
+  - {from: wm-env-001, to: wm-schema.session-metadata-sidecar}
+  - {from: wm-env-001, to: wm-schema.lease-lock-file}
+  - {from: wm-env-002, to: wm-error.taxonomy}                 # GitVersionTooOld sentinel
+
+  # §4.1 worktree primitive — schema dependencies + intra-spec term-uses
+  - {from: wm-001, to: wm-schema.workspace}
+  - {from: wm-002, to: wm-001}                                # term-use: "Workspace" defined by wm-001
+  - {from: wm-003, to: wm-002}                                # canonical path from WM-002
+  - {from: wm-003, to: wm-005}                                # task branch from WM-005
+  - {from: wm-003, to: wm-env-002}                            # git minimum-version pin
+  - {from: wm-003a, to: wm-003}                               # registers worktree post-add
+  - {from: wm-003a, to: wm-013a}                              # lease-lock absence is the discriminator
+  - {from: wm-003a, to: wm-error.taxonomy}                    # BareWorktreeNoLease, SidecarWithoutLease classes
+  - {from: wm-004, to: wm-002}                                # ws-id derives from run_id which is the path key
+
+  # §4.2 branch naming
+  - {from: wm-005, to: wm-006}                                # task branch is created off integration tip
+  - {from: wm-005a, to: wm-005}                               # sub-workflow expansion shares parent task branch
+  - {from: wm-006, to: wm-006a}                               # F13 slot-rule: WM-006 declares the template (slot); WM-006a validates it (content). Slot → content survives.
+  # NOTE: F13 reverse cite `wm-006a → wm-006` reclassified to no-edge per
+  # F-pilot-AR-8 slot-rule/content-rule heuristic — WM-006a's "after constructing
+  # the proposed branch name (WM-006's integration-branch template)" is
+  # informational plumbing; removing WM-006 leaves WM-006a's validation rule
+  # independently testable.
+  - {from: wm-006a, to: wm-error.taxonomy}                    # RefNameInvalid sentinel
+  - {from: wm-007, to: wm-005}                                # task branch level
+  - {from: wm-007, to: wm-006}                                # integration branch level
+  - {from: wm-008, to: wm-006}                                # default integration target if no override
+  - {from: wm-009, to: wm-005}
+  - {from: wm-009, to: wm-006}
+
+  # §4.3 lease model
+  - {from: wm-010, to: wm-013a}                               # lease represented by lease-lock per WM-013a
+  - {from: wm-010, to: wm-016}                                # lease lifetime starts at workspace_leased
+  - {from: wm-011, to: wm-010}                                # one-active-agent constrains the run-lease
+  - {from: wm-011, to: wm-013a}                               # lease-lock content identifies owning run
+  - {from: wm-012, to: wm-010}
+  - {from: wm-013, to: wm-002}
+  - {from: wm-013, to: wm-004}
+  - {from: wm-013, to: wm-013c}
+  - {from: wm-013a, to: wm-schema.lease-lock-file}            # JSON content schema
+  # NOTE: WM-013a body says "Lock-file birth timing: immediately preceding the
+  # `workspace_leased` emission; the emission ordering of WM-016 applies
+  # unchanged." Per F13 slot-rule, WM-016 is the emission-ordering slot;
+  # WM-013a is the content (the lock file the slot references). Slot → content
+  # is the normative direction (`wm-016 → wm-013a` survives below in §4.4 block).
+  # Reverse `wm-013a → wm-016` reclassified to no-edge — supporting cite per
+  # F-pilot-AR-10 (operational test: removing WM-016 leaves WM-013a's atomic-
+  # write contract testable on its own).
+  - {from: wm-013a, to: wm-error.taxonomy}                    # LeaseLockHeldByOrphan sentinel
+  - {from: wm-013b, to: wm-013a}                              # release inverts birth
+  - {from: wm-013b, to: wm-021}                               # merged-path gates on workspace_merge_status flush
+  - {from: wm-013c, to: wm-013a}                              # discovery reads lease-lock content
+  - {from: wm-013c, to: wm-002}                               # filesystem walk uses canonical path
+  - {from: wm-013c, to: wm-error.taxonomy}                    # LeaseLockHeldByOrphan
+  - {from: wm-013d, to: wm-002}                               # path canonicality re-use rule
+  - {from: wm-013d, to: wm-034}                               # fresh-run_id rule pairs with anti-reuse
+  - {from: wm-013d, to: wm-031}                               # prior worktree persists, just not re-leasable
+  - {from: wm-013e, to: wm-013a}                              # gitignore covers lease-lock path
+  - {from: wm-013e, to: wm-013b}                              # gitignore covers events JSONL
+  - {from: wm-013e, to: wm-025}                               # gitignore covers sessions root
+  - {from: wm-013e, to: wm-002}                               # gitignore covers worktrees root
+  - {from: wm-013e, to: wm-error.taxonomy}                    # GitignoreWriteForbidden sentinel
+
+  # §4.4 lifecycle states + events
+  - {from: wm-014, to: wm-schema.workspace-state}
+  - {from: wm-015, to: wm-014}                                # emissions tied to lifecycle transitions
+  - {from: wm-016, to: wm-003}                                # gate (a)
+  - {from: wm-016, to: wm-005}                                # gate (b) task branch
+  - {from: wm-016, to: wm-026}                                # gate (c) sidecar atomic write
+  - {from: wm-016, to: wm-013a}                               # gate (d) lease-lock atomic write
+  # NOTE: WM-016 ↔ WM-027 reverse cite removed. WM-027's body restates WM-016's
+  # ordering for the first session and adds the subsequent-session clause.
+  # Per F13 slot-rule: WM-016 is the master ordering rule (slot); WM-027 is the
+  # elaboration (content). Forward direction `wm-027 → wm-016` survives in §4.7
+  # below. The cite from WM-016's NOTE block to WM-027 ("Subsequent sessions ...
+  # write their own sidecars per WM-026") is supporting (operational test:
+  # removing WM-027 leaves WM-016's emission gate testable). No edge.
+  - {from: wm-016, to: wm-error.taxonomy}                     # SidecarWriteFailed gates the emission
+
+  # §4.5 merge back to integration
+  - {from: wm-018, to: wm-010}                                # merge in the same lease
+  - {from: wm-018a, to: wm-018}                               # node-shape contract over merge-back primitive
+  - {from: wm-018a, to: wm-019}                               # mechanical conflict-detection tied to merge command
+  - {from: wm-018a, to: wm-020}                               # conflict-detection mechanism cite
+  - {from: wm-019, to: wm-007}                                # three-level branching is the merge target context
+  - {from: wm-019, to: wm-env-002}                            # ort default since git ≥ 2.34
+  - {from: wm-019a, to: wm-019}                               # execution mode for the merge command
+  - {from: wm-020, to: wm-019}                                # squash semantics tied to merge command
+  - {from: wm-021, to: wm-015}                                # emission obligation
+  - {from: wm-021, to: wm-014}                                # state transition
+
+  # §4.6 conflict resolution
+  - {from: wm-022, to: wm-026}                                # sidecar walk reads WM-026 sidecars
+  - {from: wm-022, to: wm-014}                                # set at merge-pending entry
+  - {from: wm-022a, to: wm-022}                               # null-handler-ref clarification
+  - {from: wm-022a, to: wm-023}                               # routes directly to escalation
+  - {from: wm-023, to: wm-024}                                # post-redispatch escalation path
+  - {from: wm-023, to: wm-015}                                # emission obligation
+  - {from: wm-023, to: wm-error.taxonomy}                     # MergeConflictUnresolvable sentinel
+  - {from: wm-024, to: wm-022}                                # uses implementer_handler_ref
+  - {from: wm-024, to: wm-013b}                               # records attempt outcomes in workspace-local JSONL
+
+  # §4.7 session-log + sidecar
+  - {from: wm-025, to: wm-002}                                # session-log dir under workspace path
+  - {from: wm-026, to: wm-025}                                # sidecar lives in session-log dir
+  - {from: wm-026, to: wm-schema.session-metadata-sidecar}
+  - {from: wm-026, to: wm-013a}                               # same atomic discipline as lease-lock
+  # NOTE: WM-026 → WM-016 reverse cite removed. WM-026's body restates the
+  # WM-016 ordering gate for completeness ("The ordering gate of WM-016 ...
+  # requires both the sidecar AND the lease-lock to be durable on disk before
+  # the event emits"); per F-pilot-AR-10 supporting-cite test, removing WM-016
+  # leaves WM-026's atomic-write contract independently testable. No edge.
+  # The forward direction `wm-016 → wm-026` (gate (c)) survives in §4.4 block.
+  - {from: wm-026, to: wm-003a}                               # sidecar-without-lease evidence
+  - {from: wm-026, to: wm-error.taxonomy}                     # SidecarWriteFailed sentinel
+  - {from: wm-027, to: wm-016}                                # ordering rule
+  - {from: wm-027, to: wm-026}
+  - {from: wm-028, to: wm-026}                                # bead_id field on sidecar
+  - {from: wm-029, to: wm-025}                                # read-only contract over session-log dir
+  - {from: wm-030, to: wm-021}                                # post-merge retention timing
+  - {from: wm-030, to: wm-025}
+
+  # §4.8 failed-run persistence
+  - {from: wm-031, to: wm-013b}                               # lease-lock released on failure
+  - {from: wm-032, to: wm-031}                                # discarded state for failed-run worktrees
+  - {from: wm-032, to: wm-014}
+  - {from: wm-032, to: wm-037a}                               # interrupt_state cleared at terminal entry
+  - {from: wm-033, to: wm-013a}                               # sweep removes stale lease-lock files
+  - {from: wm-033, to: wm-013c}                               # discovery feeds the sweep
+  - {from: wm-033, to: wm-003a}                               # sweep cooperates with orphan classification
+
+  # §4.9 re-run rule
+  - {from: wm-034, to: wm-002}                                # fresh canonical path per fresh run_id
+  - {from: wm-034, to: wm-005}                                # fresh task branch
+  - {from: wm-034, to: wm-031}                                # prior persists per WM-031
+  - {from: wm-034, to: wm-013b}                               # prior released per WM-013b
+  - {from: wm-034, to: wm-error.taxonomy}                     # RunIdReuseForbidden sentinel
+  - {from: wm-035, to: wm-034}                                # contrast with reopen-bead
+  - {from: wm-036, to: wm-034}                                # classifier routes to fresh-worktree path
+  - {from: wm-036, to: wm-035}                                # classifier routes to keep-worktree path
+
+  # §4.10 interrupt-state
+  - {from: wm-037, to: wm-schema.interrupt-state}
+  - {from: wm-037, to: wm-014}                                # orthogonality scoped to in-flight states
+  - {from: wm-037a, to: wm-037}                               # narrows orthogonality to in-flight set
+  - {from: wm-037a, to: wm-014}                               # terminal-state rule
+  - {from: wm-037a, to: wm-error.taxonomy}                    # InterruptOnTerminalWorkspace sentinel
+  - {from: wm-038, to: wm-037}                                # mutates the field
+  - {from: wm-038a, to: wm-038}                               # marker for every mutation
+  - {from: wm-038a, to: wm-013b}                              # workspace-local events JSONL is shared
+  - {from: wm-039, to: wm-038}                                # observable-update rule
+  - {from: wm-039, to: wm-015}                                # emission cession to reconciliation
+  - {from: wm-040, to: wm-038}                                # clearance is a special case of mutation
+
+  # §5 invariant sensor edges (per discipline §2.5 four-source enumeration)
+  # WM-INV-001 — §10.2 names the lease-by-run group; sensor blocks-on every constrained §4 req.
+  - {from: wm-inv-001, to: wm-010}
+  - {from: wm-inv-001, to: wm-011}
+  - {from: wm-inv-001, to: wm-013a}
+  - {from: wm-inv-001, to: wm-013c}
+  - {from: wm-inv-001, to: wm-016}
+  # WM-INV-002 — one-run-per-bead constrains WM-012 + RC Cat 6a sensor
+  - {from: wm-inv-002, to: wm-012}
+  # WM-INV-003 — checkpoint append-only constrains merge-back + sidecar walk + EM-024a sensor
+  - {from: wm-inv-003, to: wm-019}
+  - {from: wm-inv-003, to: wm-022}
+  # WM-INV-005 — canonical-path discovery constrains WM-002 / WM-013 / WM-013c + reconciliation startup
+  - {from: wm-inv-005, to: wm-002}
+  - {from: wm-inv-005, to: wm-013}
+  - {from: wm-inv-005, to: wm-013c}
+
+  # Schema-internal dependencies
+  - {from: wm-schema.workspace, to: wm-schema.workspace-state}
+  - {from: wm-schema.workspace, to: wm-schema.interrupt-state}
+
+  # Test-infra wiring (citing reqs / sensors → test-infra fixture)
+  - {from: wm-001, to: wm-test.worktree-primitive-fixture}
+  - {from: wm-002, to: wm-test.worktree-primitive-fixture}
+  - {from: wm-003, to: wm-test.worktree-primitive-fixture}
+  - {from: wm-003a, to: wm-test.worktree-primitive-fixture}
+  - {from: wm-004, to: wm-test.worktree-primitive-fixture}
+  - {from: wm-005, to: wm-test.branch-naming-fixture}
+  - {from: wm-005a, to: wm-test.branch-naming-fixture}
+  - {from: wm-006, to: wm-test.branch-naming-fixture}
+  - {from: wm-006a, to: wm-test.branch-naming-fixture}
+  - {from: wm-007, to: wm-test.branch-naming-fixture}
+  - {from: wm-008, to: wm-test.branch-naming-fixture}
+  - {from: wm-009, to: wm-test.branch-naming-fixture}
+  - {from: wm-010, to: wm-test.lease-fixture}
+  - {from: wm-011, to: wm-test.lease-fixture}
+  - {from: wm-012, to: wm-test.lease-fixture}
+  - {from: wm-013, to: wm-test.lease-fixture}
+  - {from: wm-013a, to: wm-test.lease-fixture}
+  - {from: wm-013b, to: wm-test.lease-fixture}
+  - {from: wm-013c, to: wm-test.lease-fixture}
+  - {from: wm-013d, to: wm-test.lease-fixture}
+  - {from: wm-013e, to: wm-test.lease-fixture}
+  - {from: wm-018, to: wm-test.merge-back-fixture}
+  - {from: wm-018a, to: wm-test.merge-back-fixture}
+  - {from: wm-019, to: wm-test.merge-back-fixture}
+  - {from: wm-019a, to: wm-test.merge-back-fixture}
+  - {from: wm-020, to: wm-test.merge-back-fixture}
+  - {from: wm-021, to: wm-test.merge-back-fixture}
+  - {from: wm-022, to: wm-test.conflict-resolution-harness}
+  - {from: wm-022a, to: wm-test.conflict-resolution-harness}
+  - {from: wm-023, to: wm-test.conflict-resolution-harness}
+  - {from: wm-024, to: wm-test.conflict-resolution-harness}
+  - {from: wm-025, to: wm-test.session-log-fixture}
+  - {from: wm-026, to: wm-test.session-log-fixture}
+  - {from: wm-027, to: wm-test.session-log-fixture}
+  - {from: wm-028, to: wm-test.session-log-fixture}
+  - {from: wm-029, to: wm-test.session-log-fixture}
+  - {from: wm-030, to: wm-test.session-log-fixture}
+  - {from: wm-031, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-032, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-033, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-034, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-035, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-036, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-037, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-037a, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-038, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-038a, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-039, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-040, to: wm-test.reconciliation-and-interrupt-harness}
+  - {from: wm-inv-003, to: wm-test.reconciliation-and-interrupt-harness}
+
+  # ───────────────────────── Cross-spec AR edges ─────────────────────────
+  # AR is in WM's depends-on (architecture). Edges resolve directly.
+  - {from: wm-env-001, to: ar-052}                            # spec-category front-matter
+  - {from: wm-env-001, to: ar-053}                            # subsystem envelope shape
+  - {from: wm-022, to: ar-024}                                # agent_type conformance class (AR §4.7)
+  - {from: wm-026, to: ar-024}                                # agent_type field on sidecar
+  - {from: wm-schema.session-metadata-sidecar, to: ar-024}    # type-cite to agent_type identifier
+  - {from: wm-inv-001, to: ar-inv-007}                        # F-refs-EV-6 explicit invariant→invariant ID cite (D-WM-3 r1 patch); precedence over F-pilot-AR-r2-2 impl→invariant exemption tracked in discipline batch
+  # NOTE: AR-INV-007 (centralized-controller invariant) term-uses from §4.3
+  # lead-in and impl-req bodies remain edge-suppressed per F-pilot-AR-r2-2
+  # invariant-as-target exemption. The wm-inv-001 → ar-inv-007 edge above is
+  # a different rule: invariant→invariant explicit ID-cite per F-refs-EV-6
+  # (WM-INV-001's body explicitly cites AR-INV-007 by ID at spec line 647).
+
+  # ───────────────────────── Cross-spec EM edges ─────────────────────────
+  # EM is in WM's depends-on (execution-model).
+  - {from: wm-001, to: em-014}                                # bead_id correlation field per BI-017,BI-018 + EM-014
+  - {from: wm-004, to: em-014}                                # state reconstruction uses git + Beads (EM §4.7) — but EM §4.7 is referenced; here we cite EM-014 as the bead-tied anchor
+  - {from: wm-005, to: em-023}                                # checkpoint commits land on task branch (EM-023)
+  - {from: wm-005a, to: em-034}                               # sub-workflow expansion pin
+  - {from: wm-005a, to: em-035}                               # parent's checkpoint trail covers nested
+  - {from: wm-019, to: em-017}                                # checkpoint trailer schema
+  - {from: wm-026, to: em-014}                                # bead-tied iff EM-014
+  - {from: wm-026, to: em-034}                                # namespaced node_id inside expanded sub-workflows
+  - {from: wm-028, to: em-017}                                # bead_id trailer name + schema (EM-017)
+  - {from: wm-035, to: em-044}                                # rollback_to_state_id mechanics
+  - {from: wm-schema.workspace, to: em-schema.commit-range}   # CommitSHA type alias (EM §6.1) — closest mapped anchor
+  - {from: wm-inv-003, to: em-023}                            # checkpoint-cadence rule constraint
+  # D-WM-5 (r1 patch): wm-inv-003 → em-inv-001 REMOVED. WM spec §5.WM-INV-003
+  # cites only [execution-model.md §4.7] (section-anchor) for state-reconstruction
+  # source; EM-INV-001 is NOT explicitly cited in the WM body. Per F-refs-EV-6
+  # (explicit invariant→invariant ID-cite required), the prior edge did not
+  # satisfy the rule. Not a wide-fanout candidate (invariant→invariant is too
+  # narrow). Sibling-invariant claim was orchestrator-inferred, not spec-grounded.
+  - {from: wm-inv-002, to: em-schema.checkpoint-trailers}     # §2.5 source 4 trailer-evidence sensor (F-em-r1-MAJ-1) — D-WM-4 r1 patch
+  - {from: wm-031, to: em-schema.run}                         # EM §7.1 transition table cite for failed/canceled run states (R-WM-3 r1 patch)
+
+  # ───────────────────────── Cross-spec HC edges ─────────────────────────
+  # HC is in WM's depends-on (handler-contract).
+  - {from: wm-018a, to: hc-schema.handler}                    # Handler interface for agentic merge-node variant
+  - {from: wm-018a, to: hc-schema.launch-spec}                # LaunchSpec for merge-node dispatch
+  - {from: wm-022, to: hc-schema.launch-spec}                 # handler_ref shape
+  - {from: wm-024, to: hc-schema.launch-spec}                 # fresh LaunchSpec for re-dispatch
+  - {from: wm-024, to: hc-schema.handler}                     # HC §4.1 Handler interface cite (R-WM-2 r1 patch); mirrors wm-018a's treatment
+  - {from: wm-024, to: hc-046}                                # required_skills + skill provisioning (HC §4.11)
+  - {from: wm-025, to: hc-010}                                # session_log_location announces pre-created path
+  - {from: wm-025, to: hc-schema.session-id}                  # session_id minted at session start (HC §4.2)
+  - {from: wm-013a, to: hc-007}                               # liveness-probe discipline references HC §4.10 HC-044a; HC-044a is closest mapped anchor — see note below
+  # NOTE on HC-044a: WM cites [handler-contract.md §4.10 HC-044a] in WM-013c
+  # and WM-033. HC-044a is not present as a top-level mnem in the HC mnem-map
+  # (HC pilot's anchor mapping). Closest anchor is hc-007 (wire protocol coalesce
+  # covering §4.2..§4.10) plus hc-016 (worker-queue/orphan-reconnect window).
+  # Use hc-007 as the carrier; if HC pilot adds an explicit hc-044a row at re-load,
+  # backfill the more specific edge.
+  - {from: wm-013c, to: hc-007}                               # liveness-probe coordination
+  - {from: wm-033, to: hc-007}                                # cross-spec coordination on lock semantics
+  - {from: wm-022, to: hc-046}                                # skill provisioning surface (cognition-tagged conflict resolver)
+  - {from: wm-schema.workspace, to: hc-schema.launch-spec}    # HandlerRef type alias (HC §6.1)
+
+  # ───────────────────────── Cross-spec CP edges ─────────────────────────
+  # CP is in WM's depends-on (control-points).
+  # WM-002 cites [control-points.md §4.7 CP-037] for operator-config precedence;
+  # per F-pilot-WM-5 the cite is supporting, NOT a hard dep — NO edge to cp-037.
+  # Active CP edges:
+  - {from: wm-008, to: cp-037}                                # operator-policy-gated default integration target — config-precedence is load-bearing here
+  - {from: wm-024, to: cp-037}                                # operator-configurable cap is policy-precedence-driven
+
+  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
+  # RC (reconciliation) — in depends-on but not yet pilot-loaded.
+  - {from: wm-022a, to: "forward:rc-NNN"}                     # all-mechanical escalation routes to RC
+  - {from: wm-023, to: "forward:rc-NNN"}                      # escalate-to-human path per RC §4.5 RC-020
+  - {from: wm-024, to: "forward:rc-NNN"}                      # 3-cap escalation per RC-020
+  - {from: wm-034, to: "forward:rc-NNN"}                      # reopen-bead verdict per RC-020
+  - {from: wm-035, to: "forward:rc-NNN"}                      # rollback verdicts per RC-020
+  - {from: wm-036, to: "forward:rc-NNN"}                      # 7-value verdict enum per [reconciliation/schemas.md §6.1]
+  - {from: wm-038, to: "forward:rc-NNN"}                      # verdict-driven interrupt mutation per RC §4.5
+  - {from: wm-040, to: "forward:rc-NNN"}                      # verdict-driven interrupt clearance per RC §4.5
+  - {from: wm-inv-001, to: "forward:rc-NNN"}                  # Cat 6 lost-lease detector per RC §8.11
+  - {from: wm-inv-002, to: "forward:rc-NNN"}                  # Cat 6a multi-run-per-bead detector per RC schemas §6.3
+  - {from: wm-032, to: "forward:rc-NNN"}                      # branch reference in run's bead history per RC schemas §6.2
+  - {from: wm-033, to: "forward:rc-NNN"}                      # WM-003a routes to reconciliation Cat 3
+
+  # ON (operator-nfr) — in depends-on but not yet pilot-loaded.
+  - {from: wm-008, to: "forward:on-NNN"}                      # operator-policy-gated default integration target
+  - {from: wm-019, to: "forward:on-NNN"}                      # operator-configured daemon-identity override
+  - {from: wm-024, to: "forward:on-NNN"}                      # operator-configurable cap [1,10]
+  - {from: wm-031, to: "forward:on-NNN"}                      # operator-cleanup workflows per ON §4.9
+  - {from: wm-036, to: "forward:on-014"}                      # ON-014 owns `--promote-to escalate-to-human` operator-command per ON §4.3 (R-WM-4 r1 patch)
+  - {from: wm-038, to: "forward:on-NNN"}                      # ON-013 operator-control event drivers
+  - {from: wm-040, to: "forward:on-NNN"}                      # operator_resuming clears interrupt_state
+  - {from: wm-009, to: "forward:on-NNN"}                      # ON-018 N-1 schema compatibility
+  - {from: wm-env-001, to: "forward:on-NNN"}                  # ON-018 + ON-027 inherited NFRs
+
+  # PL (process-lifecycle) — in depends-on but not yet pilot-loaded.
+  - {from: wm-013c, to: "forward:pl-NNN"}                     # PL-006 orphan-sweep mechanics
+  - {from: wm-033, to: "forward:pl-NNN"}                      # PL-006 startup orphan sweep
+  - {from: wm-env-002, to: "forward:pl-NNN"}                  # PL-021 ntm-version pin coordination per OQ-WM-015
+
+  # BI (beads-integration) — in depends-on but not yet pilot-loaded.
+  - {from: wm-001, to: "forward:bi-NNN"}                      # bead_id correlation field per BI-017, BI-018
+  - {from: wm-006, to: "forward:bi-NNN"}                      # parent-bead dependency-graph query per BI-014
+  - {from: wm-028, to: "forward:bi-NNN"}                      # bead_id propagation per BI-017, BI-018
+  - {from: wm-inv-002, to: "forward:bi-NNN"}                  # BI-010 terminal-write rule cite
+
+# Cross-spec mnem-map paths (CSV from prior pilot loads).
+# rc, on, pl, bi entries deliberately omitted — those specs are not yet loaded.
+# Forward-deferred edges to those specs use "forward:<prefix>-NNN" placeholders
+# above and are skipped at load time per F-pilot-EM-2 / Option B precedent.
+cross_specs:
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
+  cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv

@@ -1,0 +1,90 @@
+mnemonic,assigned_id,title
+em,hk-b3f,Execution Model spec - implementation
+em-001,hk-b3f.1,"Workflow is a named, versioned directed graph"
+em-002,hk-b3f.2,Edge is a directed transition with deterministic selection inputs
+em-003,hk-b3f.3,State is a position in a run's progression
+em-004,hk-b3f.4,Transition is the full AlphaGo trace record
+em-005,hk-b3f.5,Outcome is the handler-produced node result + kind discriminator (coalesce)
+em-006,hk-b3f.6,Node type is one of five declared kinds
+em-007,hk-b3f.7,Agentic nodes carry a handler reference
+em-008,hk-b3f.8,"Node carries handler-timeout, required-skills, and policy references"
+em-009,hk-b3f.9,Node carries an idempotency-class tag
+em-010,hk-b3f.10,Idempotency-class default mapping by node role
+em-011,hk-b3f.11,Node carries four-axis tagging per architecture
+em-012,hk-b3f.12,Run executes one workflow against one input
+em-013,hk-b3f.13,Run ID propagates as commit trailer and event field
+em-014,hk-b3f.14,Bead-to-run relationship is many-runs-per-bead
+em-015,hk-b3f.15,Intra-run loops are not new runs
+em-015a,hk-b3f.16,run_started emission on dispatch
+em-015b,hk-b3f.17,run_completed and run_failed emission on terminal state
+em-015c,hk-b3f.18,Terminal-state detection rule
+em-016,hk-b3f.19,Checkpoint is a git commit with work-product tree + transition-record sibling
+em-017,hk-b3f.20,Checkpoint commit carries structured trailers
+em-017a,hk-b3f.21,Corrupted-checkpoint fallback rule
+em-018,hk-b3f.22,Transition record sibling file at canonical run-scoped path
+em-018a,hk-b3f.23,Transition ID generation contract (daemon-local UUIDv7)
+em-019,hk-b3f.24,Transition record discoverable by git-show
+em-020,hk-b3f.25,Transition records are immutable
+em-020a,hk-b3f.26,Audit tool detection rule for transition-record integrity
+em-021,hk-b3f.27,Large evidence payloads externalize under transition directory
+em-022,hk-b3f.28,Checkpoint schema is N-1 readable
+em-023,hk-b3f.29,Durable transition: one commit per durable transition + decision procedure (coalesce)
+em-024,hk-b3f.30,Git always knows the last durable state of every in-flight run
+em-024a,hk-b3f.31,Branch-tip monotonicity check (vs external force-push / reset)
+em-025,hk-b3f.32,Failed transitions MUST NOT create checkpoint commits at MVH
+em-025a,hk-b3f.33,Emission ordering: transition_event MUST NOT precede update-ref
+em-026,hk-b3f.34,Reconciliation workflows are an explicit exception to EM-023
+em-027,hk-b3f.35,"Outcome spine: handler outcome threads through hook, gate, transition, event"
+em-028,hk-b3f.36,Transition record is canonical durable form; transition_event is its projection
+em-029,hk-b3f.37,Transition event MUST NOT duplicate full trace payload
+em-030,hk-b3f.38,Consumers requiring full audit fidelity MUST read transition record from git
+em-031,hk-b3f.39,State reconstruction uses git plus Beads only
+em-031a,hk-b3f.40,Active-run discovery at startup
+em-032,hk-b3f.41,Deterministic replay contract
+em-033,hk-b3f.42,No workflow-level transactionality
+em-034,hk-b3f.43,Sub-workflow node expands in place within parent run
+em-034a,hk-b3f.44,Sub-workflow node-ID namespacing
+em-034b,hk-b3f.45,Sub-workflow reference graph MUST be acyclic
+em-034c,hk-b3f.46,Sub-workflow expansion pin durable on entry checkpoint
+em-035,hk-b3f.47,Parent run's checkpoint trail covers nested sub-workflow execution
+em-036,hk-b3f.48,Sub-workflow entry and exit emit lifecycle events
+em-036a,hk-b3f.49,Sub-workflow terminal outcome is last-expanded-node's Outcome
+em-037,hk-b3f.50,Sub-workflow composition is the ONLY composition mechanism
+em-038,hk-b3f.51,Pre-run validator MUST run before any node executes
+em-039,hk-b3f.52,Validator is mechanism-tagged
+em-040,hk-b3f.53,Agents that generate DOT MUST run validation before submission
+em-041,hk-b3f.54,Deterministic edge-selection cascade + context-update ordering (coalesce)
+em-042,hk-b3f.55,Guards reorder; Gates permit/deny; otherwise edges follow EM-041
+em-042a,hk-b3f.56,Gate-deny continuation protocol (gate-pending sub-state)
+em-043,hk-b3f.57,"Cycle traversal cap + per-(run_id, edge) counter storage (coalesce)"
+em-044,hk-b3f.58,Backtracking is transition_kind plus rollback_to_state_id
+em-045,hk-b3f.59,"Rollback transitions are recorded as new transitions, not history-rewrites"
+em-046,hk-b3f.60,Context restore is agent-scoped; does not alter graph state
+em-046a,hk-b3f.61,No-matching-edge failure class is structural
+em-046b,hk-b3f.62,RETRY outcome re-dispatch protocol
+em-inv-001,hk-b3f.63,Sensor: git is the state-reconstruction source
+em-inv-004,hk-b3f.64,Sensor: no subsystem implements workflow-level transactionality
+em-inv-005,hk-b3f.65,Sensor: git wins on completion disagreement
+em-schema.run-id,hk-b3f.66,Define `RunID` typed alias (§6.1)
+em-schema.state-id,hk-b3f.67,Define `StateID` typed alias (§6.1)
+em-schema.transition-id,hk-b3f.68,Define `TransitionID` typed alias (§6.1)
+em-schema.node-id,hk-b3f.69,Define `NodeID` typed alias (§6.1)
+em-schema.bead-id,hk-b3f.70,Define `BeadID` typed alias (§6.1)
+em-schema.commit-range,hk-b3f.71,Define `CommitRange` tuple shape (§6.1)
+em-schema.workflow,hk-b3f.72,Define `Workflow` record (§6.1)
+em-schema.node,hk-b3f.73,Define `Node` record (§6.1)
+em-schema.edge,hk-b3f.74,Define `Edge` record (§6.1)
+em-schema.run,hk-b3f.75,Define `Run` record (§6.1)
+em-schema.state,hk-b3f.76,Define `State` record (§6.1)
+em-schema.transition,hk-b3f.77,Define `Transition` record (§6.1)
+em-schema.checkpoint,hk-b3f.78,Define `Checkpoint` record (§6.1)
+em-schema.outcome,hk-b3f.79,Define `Outcome` record (§6.1)
+em-schema.node-type,hk-b3f.80,Define `NodeType` enum (§6.1)
+em-schema.idempotency-class,hk-b3f.81,Define `IdempotencyClass` enum (§6.1)
+em-schema.transition-kind,hk-b3f.82,Define `TransitionKind` enum (§6.1)
+em-schema.outcome-status,hk-b3f.83,Define `OutcomeStatus` enum (§6.1)
+em-schema.outcome-kind,hk-b3f.84,"Define `OutcomeKind` enum (§6.1, v0.3.3)"
+em-schema.checkpoint-trailers,hk-b3f.85,Define checkpoint-commit trailer registry (§6.2)
+em-error.taxonomy,hk-b3f.86,EM failure-class taxonomy (§8)
+em-test.crash-recovery-harness,hk-b3f.87,Crash-recovery scenario harness for EM checkpoint contract
+em-test.validator-fixture,hk-b3f.88,Workflow-validator unit-test fixture (canonical malformed-DOT corpus)

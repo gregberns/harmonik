@@ -1,4 +1,4 @@
-# HC pilot v0.1.1 — bead and edge data
+# HC pilot v0.1.2 — bead and edge data
 # Mechanically translated from /tmp/load-hc.py (933-line Python loader).
 # Descriptions preserved verbatim. Includes 7 forward-deferred PL edges from
 # docs/decompose-to-tasks/hc-pilot.md §5.4 (logged-only at load time, not loaded into beads).
@@ -9,6 +9,16 @@
 # `hc-026a → hc-008a` (F-load-HC-2; reclassified supporting per F-pilot-AR-10);
 # dropped cycle-closing `hc-044 → hc-007` (F-load-HC-3; F13 slot-rule keeps
 # `hc-007 → hc-044`); added missing `hc-inv-006 → hc-021` predecessor (F-dq-HC-8).
+# v0.1.2 (2026-04-30) drops 20 inverted HC→ev-events.* edges (former lines 844,
+# 845, 846, 848–854, 857, 860–868 of v0.1.1) per discipline §2.11(d.2) co-owned-
+# events sibling class. EV's pilot authored `ev-events.X → hc-Y` direction (EV
+# row blocks-on HC WHEN-rule); HC must NOT author the inverse. 13 of the 20 had
+# corresponding EV→HC backfill counterparts that hit CYCLE_DETECTED in
+# hk-ahvq.43; the other 7 (hc-024a, hc-043, hc-044a, hc-048, hc-049a,
+# hc-error.taxonomy→budget-exhausted, hc-013a → ev-events.*) are the same
+# anti-pattern with no EV-side counterpart authored. HC r1 caught §2.11(c.2)
+# taxonomy direction class but missed §2.11(d.2) co-owned-events sibling class.
+# Added under hk-ahvq.44 patch bead.
 
 spec:
   prefix: hc
@@ -839,33 +849,16 @@ edges:
   - {from: hc-schema.launch-spec, to: em-schema.workflow}
   - {from: hc-error.taxonomy, to: em-error.taxonomy}
 
-  # Cross-spec EV edges (26)
+  # Cross-spec EV edges (6; was 26 in v0.1.1 — 20 HC→ev-events.* edges removed
+  # in v0.1.2 per §2.11(d.2). Surviving 6 are HC reqs term-using non-§8 EV reqs
+  # (ev-001, ev-009, ev-011, ev-034, ev-036), where HC→EV is the canonical
+  # consumer-blocks-on-producer direction.)
   - {from: hc-007, to: ev-001}
-  - {from: hc-008, to: ev-events.outcome-emitted}
-  - {from: hc-009, to: ev-events.handler-capabilities}
-  - {from: hc-010, to: ev-events.session-log-location}
   - {from: hc-011, to: ev-009}
-  - {from: hc-024, to: ev-events.agent-failed}
-  - {from: hc-024a, to: ev-events.agent-failed}
-  - {from: hc-025, to: ev-events.agent-rate-limit-status}
-  - {from: hc-026, to: ev-events.agent-warning-silent-hang}
-  - {from: hc-026, to: ev-events.agent-soft-terminating}
-  - {from: hc-026, to: ev-events.agent-hard-terminating}
-  - {from: hc-026, to: ev-events.agent-resumed-after-warning}
   - {from: hc-027, to: ev-009}
   - {from: hc-027, to: ev-011}
-  - {from: hc-029, to: ev-events.agent-started}
   - {from: hc-033, to: ev-034}
   - {from: hc-033, to: ev-036}
-  - {from: hc-039, to: ev-events.agent-ready}
-  - {from: hc-043, to: ev-events.agent-failed}
-  - {from: hc-044a, to: ev-events.agent-failed}
-  - {from: hc-048, to: ev-events.agent-failed}
-  - {from: hc-049, to: ev-events.skills-provisioned}
-  - {from: hc-049a, to: ev-events.skills-provisioned}
-  - {from: hc-error.taxonomy, to: ev-events.agent-failed}
-  - {from: hc-error.taxonomy, to: ev-events.budget-exhausted}
-  - {from: hc-013a, to: ev-events.agent-completed}
 
   # Forward-deferred PL edges (7; logged only, not loaded)
   - {from: hc-007, to: "forward:pl-001"}
@@ -878,6 +871,6 @@ edges:
 
 # Cross-spec mnem-map paths (CSV from prior pilot loads).
 cross_specs:
-  ar: /tmp/ar-mnem-map.csv
-  em: /tmp/em-mnem-map.csv
-  ev: /tmp/ev-mnem-map.csv
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv

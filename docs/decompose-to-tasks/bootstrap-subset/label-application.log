@@ -1,0 +1,313 @@
+# scope:bootstrap label application — 2026-05-06T04:58:38Z
+# Total IDs:      291
+
+## Chunk 1: 30 IDs
+Updated hk-8mup.1: Subsystem envelope declaration (daemon-core / `internal/daemon`)
+Updated hk-8mup.2: One daemon per project
+Updated hk-8mup.3: Pidfile at `.harmonik/daemon.pid`
+Updated hk-8mup.4: Pidfile lock is fd-lifetime advisory (`flock` / `F_OFD_SETLK`)
+Updated hk-8mup.5: Atomic pidfile write via truncate-rewrite-keep-fd
+Updated hk-8mup.6: Socket at `.harmonik/daemon.sock` (mode 0600)
+Updated hk-8mup.7: Socket wire format: JSON-RPC 2.0 over NDJSON
+Updated hk-8mup.8: Pre-ready request rejection on unknown run_id
+Updated hk-8mup.9: Daemon-owned per-project file surface under `.harmonik/`
+Updated hk-8mup.10: Startup order is deterministic (steps 0–9 + 3a + 8a)
+Updated hk-8mup.11: Orphan sweep precedes reconciliation (6-bullet enumeration)
+Updated hk-8mup.12: Project hash + provenance marker (env var + PGID)
+Updated hk-8mup.13: Orphan sweep is deterministic and complete before classification
+Updated hk-8mup.14: Startup failure-mode catalog obligation (consumed from ON-003)
+Updated hk-8mup.15: Exit-code consumption from ON §8
+Updated hk-8mup.16: Ready criteria + `daemon_ready` emission with monotonic companion
+Updated hk-8mup.18: Ready-protocol surface for external callers (3 mechanisms)
+Updated hk-8mup.19: Degraded state on Cat 0 infrastructure failure (pre-ready only)
+Updated hk-8mup.20: Graceful shutdown drains in-flight runs (9-step sequence)
+Updated hk-8mup.21: Shutdown event emission with monotonic companion
+Updated hk-8mup.22: Immediate shutdown aborts in-flight runs
+Updated hk-8mup.23: Daemon does not exit on queue-empty
+Updated hk-8mup.24: Agent subprocesses are children of the daemon (single cmd.Wait reaper)
+Updated hk-8mup.26: Agent ↔ daemon communication routes through the socket
+Updated hk-8mup.27: Agent-subprocess failure is observed by the daemon
+Updated hk-8mup.30: Panic recovery barrier in the daemon main goroutine
+Updated hk-8mup.33: Cross-subsystem registries reside in the composition root
+Updated hk-8mup.35: ntm version pin and absence-detection (Cat 0 failure)
+Updated hk-8mup.38: Daemon crash leaves a stale pidfile
+Updated hk-8mup.43: Daemon command surface (8 entry points)
+
+## Chunk 2: 30 IDs
+Updated hk-8mup.49: Define `DaemonStatus` ENUM (§6.1)
+Updated hk-8mup.50: Pidfile + socket twin-driven fixture (PL-001..PL-003b + PL-INV-001 + PL-INV-004)
+Updated hk-8mup.51: Startup + orphan sweep scenario harness (PL-005, PL-006, PL-006a, PL-007, PL-008a, PL-INV-003, PL-INV-005)
+Updated hk-8mup.52: Ready-state + degraded scenario fixture (PL-009, PL-009a, PL-009b, PL-010)
+Updated hk-8mup.53: Shutdown + drain scenario fixture (PL-011, PL-011a, PL-012, PL-013)
+Updated hk-8mup.54: Agent supervision + spawn discipline fixture (PL-014, PL-014a, PL-015, PL-016, PL-017)
+Updated hk-8mup.59: CLI command surface fixture (PL-028)
+Updated hk-8mwo.1: Subsystem envelope declaration (S06)
+Updated hk-8mwo.2: Minimum git version pin (≥ 2.34) detected at startup
+Updated hk-8mwo.3: Workspace type and required fields
+Updated hk-8mwo.4: Worktree path convention `<repo>/.harmonik/worktrees/<run_id>/`
+Updated hk-8mwo.5: Worktree creation uses `git worktree add -b <branch> <path> <parent_commit>`
+Updated hk-8mwo.6: Discovery classifies partially-crashed worktree states
+Updated hk-8mwo.7: Workspace ID derivable from run_id (`workspace_id = "ws-" + run_id`)
+Updated hk-8mwo.8: Task branch named `run/<run_id>`
+Updated hk-8mwo.9: Sub-workflow expansion does not create additional task branches
+Updated hk-8mwo.10: Integration branch naming convention (default + parent-bead-derived)
+Updated hk-8mwo.11: Ref-safe bead-ID substitution via `git check-ref-format`
+Updated hk-8mwo.12: Three-level branching model (task → integration → main)
+Updated hk-8mwo.15: Lease is held by the run, not by individual agents
+Updated hk-8mwo.16: One active agent at a time inside a workspace
+Updated hk-8mwo.17: One run per bead at a time
+Updated hk-8mwo.18: Workspace ID discoverable from run_id without a separate index
+Updated hk-8mwo.19: Lease-lock file canonical path, JSON content, atomic-write + fsync birth
+Updated hk-8mwo.20: Lease release on terminal transitions; per-terminal-path durability gates
+Updated hk-8mwo.21: Lease discovery on startup (filesystem walk + lock-content read)
+Updated hk-8mwo.23: `.gitignore` hygiene for harmonik control-plane paths (write-or-fail)
+Updated hk-8mwo.24: Workspace state machine
+Updated hk-8mwo.25: Workspace lifecycle event emission obligations (WHEN)
+Updated hk-8mwo.26: `workspace_leased` emitted after sidecar + lease-lock fsync (4-step ordering)
+
+## Chunk 3: 30 IDs
+Updated hk-8mwo.27: Merge-back is performed by a node in the same worktree (same lease)
+Updated hk-8mwo.28: Merge-back node dispatch contract (non-agentic OR agentic)
+Updated hk-8mwo.29: Squash-merge with `--strategy=ort`; one-commit-per-task; trailers + author/committer split
+Updated hk-8mwo.30: Merge executes outside main worktree (`--ignore-other-worktrees` OR scratch worktree)
+Updated hk-8mwo.31: Squash-merge is non-fast-forward by construction
+Updated hk-8mwo.32: Merge outcome emits workspace_merge_status with status=merged
+Updated hk-8mwo.37: Session-log directory at `${workspace_path}/.harmonik/sessions/${session_id}/`
+Updated hk-8mwo.38: Metadata sidecar `harmonik.meta.json` (atomic write: tmp+fsync+rename+parent-fsync)
+Updated hk-8mwo.39: Sidecar metadata stamping precedes workspace_leased for the first session
+Updated hk-8mwo.40: bead_id propagates into session metadata when present
+Updated hk-8mwo.45: Startup orphan sweep removes stale lease-lock files (content-first staleness; mtime tiebreaker)
+Updated hk-8mwo.59: Define `Workspace` record (§6.1)
+Updated hk-8mwo.60: Define `LeaseLockFile` record (§6.1)
+Updated hk-8mwo.61: Define `WorkspaceState` enum (§6.1)
+Updated hk-8mwo.62: Define `InterruptState` enum (§6.1)
+Updated hk-8mwo.63: Define `SessionMetadataSidecar` record (§6.1)
+Updated hk-8mwo.64: WM error taxonomy (§8) — 12-class typed sentinel set + transitions + downstream routing
+Updated hk-8mwo.65: Worktree primitive + crash-evidence fixture (WM-001..004 + WM-003a)
+Updated hk-8mwo.66: Branch-naming + ref-safe substitution fixture (WM-005..009 + WM-005a + WM-006a)
+Updated hk-8mwo.67: Lease-lifecycle + crash-recovery fixture (WM-010..013 + WM-013a..e)
+Updated hk-8mwo.68: Merge-back + scratch-worktree fixture (WM-018..021 + WM-018a + WM-019a)
+Updated hk-8mwo.70: Session-log + atomic sidecar fixture (WM-025..030)
+Updated hk-b3f.1: Workflow is a named, versioned directed graph
+Updated hk-b3f.2: Edge is a directed transition with deterministic selection inputs
+Updated hk-b3f.3: State is a position in a run's progression
+Updated hk-b3f.4: Transition is the full AlphaGo trace record
+Updated hk-b3f.5: Outcome is the handler-produced node result + kind discriminator (coalesce)
+Updated hk-b3f.6: Node type is one of five declared kinds
+Updated hk-b3f.7: Agentic nodes carry a handler reference
+Updated hk-b3f.8: Node carries handler-timeout, required-skills, and policy references
+
+## Chunk 4: 30 IDs
+Updated hk-b3f.9: Node carries an idempotency-class tag
+Updated hk-b3f.10: Idempotency-class default mapping by node role
+Updated hk-b3f.11: Node carries four-axis tagging per architecture
+Updated hk-b3f.12: Run executes one workflow against one input
+Updated hk-b3f.13: Run ID propagates as commit trailer and event field
+Updated hk-b3f.14: Bead-to-run relationship is many-runs-per-bead
+Updated hk-b3f.15: Intra-run loops are not new runs
+Updated hk-b3f.16: run_started emission on dispatch
+Updated hk-b3f.17: run_completed and run_failed emission on terminal state
+Updated hk-b3f.18: Terminal-state detection rule
+Updated hk-b3f.19: Checkpoint is a git commit with work-product tree + transition-record sibling
+Updated hk-b3f.20: Checkpoint commit carries structured trailers
+Updated hk-b3f.22: Transition record sibling file at canonical run-scoped path
+Updated hk-b3f.23: Transition ID generation contract (daemon-local UUIDv7)
+Updated hk-b3f.24: Transition record discoverable by git-show
+Updated hk-b3f.25: Transition records are immutable
+Updated hk-b3f.29: Durable transition: one commit per durable transition + decision procedure (coalesce)
+Updated hk-b3f.30: Git always knows the last durable state of every in-flight run
+Updated hk-b3f.32: Failed transitions MUST NOT create checkpoint commits at MVH
+Updated hk-b3f.33: Emission ordering: transition_event MUST NOT precede update-ref
+Updated hk-b3f.35: Outcome spine: handler outcome threads through hook, gate, transition, event
+Updated hk-b3f.36: Transition record is canonical durable form; transition_event is its projection
+Updated hk-b3f.37: Transition event MUST NOT duplicate full trace payload
+Updated hk-b3f.38: Consumers requiring full audit fidelity MUST read transition record from git
+Updated hk-b3f.39: State reconstruction uses git plus Beads only
+Updated hk-b3f.40: Active-run discovery at startup
+Updated hk-b3f.41: Deterministic replay contract
+Updated hk-b3f.42: No workflow-level transactionality
+Updated hk-b3f.50: Sub-workflow composition is the ONLY composition mechanism
+Updated hk-b3f.51: Pre-run validator MUST run before any node executes
+
+## Chunk 5: 30 IDs
+Updated hk-b3f.52: Validator is mechanism-tagged
+Updated hk-b3f.53: Agents that generate DOT MUST run validation before submission
+Updated hk-b3f.54: Deterministic edge-selection cascade + context-update ordering (coalesce)
+Updated hk-b3f.61: No-matching-edge failure class is structural
+Updated hk-b3f.63: Sensor: git is the state-reconstruction source
+Updated hk-b3f.66: Define `RunID` typed alias (§6.1)
+Updated hk-b3f.67: Define `StateID` typed alias (§6.1)
+Updated hk-b3f.68: Define `TransitionID` typed alias (§6.1)
+Updated hk-b3f.69: Define `NodeID` typed alias (§6.1)
+Updated hk-b3f.70: Define `BeadID` typed alias (§6.1)
+Updated hk-b3f.71: Define `CommitRange` tuple shape (§6.1)
+Updated hk-b3f.72: Define `Workflow` record (§6.1)
+Updated hk-b3f.73: Define `Node` record (§6.1)
+Updated hk-b3f.74: Define `Edge` record (§6.1)
+Updated hk-b3f.75: Define `Run` record (§6.1)
+Updated hk-b3f.76: Define `State` record (§6.1)
+Updated hk-b3f.77: Define `Transition` record (§6.1)
+Updated hk-b3f.78: Define `Checkpoint` record (§6.1)
+Updated hk-b3f.79: Define `Outcome` record (§6.1)
+Updated hk-b3f.80: Define `NodeType` enum (§6.1)
+Updated hk-b3f.81: Define `IdempotencyClass` enum (§6.1)
+Updated hk-b3f.82: Define `TransitionKind` enum (§6.1)
+Updated hk-b3f.83: Define `OutcomeStatus` enum (§6.1)
+Updated hk-b3f.85: Define checkpoint-commit trailer registry (§6.2)
+Updated hk-b3f.86: EM failure-class taxonomy (§8)
+Updated hk-b3f.87: Crash-recovery scenario harness for EM checkpoint contract
+Updated hk-b3f.88: Workflow-validator unit-test fixture (canonical malformed-DOT corpus)
+Updated hk-8i31.1: Handler is the Go interface defined in §6.1
+Updated hk-8i31.2: Session is the Go interface defined in §6.1
+Updated hk-8i31.3: Handler selection is config-level
+
+## Chunk 6: 30 IDs
+Updated hk-8i31.4: Launch is idempotent on (run_id, node_id)
+Updated hk-8i31.5: LaunchSpec delivery is JSON-on-stdin or file argument
+Updated hk-8i31.6: LaunchSpec is the record defined in §6.1
+Updated hk-8i31.7: Wire protocol: progress-stream messages over Unix domain socket (coalesce)
+Updated hk-8i31.8: Outcome delivery is event-based, not exit-code-based
+Updated hk-8i31.10: Version negotiation via handler_capabilities first-message
+Updated hk-8i31.11: Session log path emission via session_log_location
+Updated hk-8i31.12: Daemon owns exactly one watcher goroutine per active session
+Updated hk-8i31.14: S04 owns the per-agent-type adapter
+Updated hk-8i31.15: Adapter surface is fixed
+Updated hk-8i31.21: Every public method takes ctx as first parameter
+Updated hk-8i31.24: Five primary sentinel classes plus two structural sub-sentinels
+Updated hk-8i31.25: ErrProtocolMismatch is a structural sub-sentinel
+Updated hk-8i31.26: ErrSkillProvisioningFailed is a structural sub-sentinel
+Updated hk-8i31.28: Subprocess crash emits agent_failed with typed class
+Updated hk-8i31.34: Dead-letter behavior for undeliverable events
+Updated hk-8i31.42: Twins implement the same Handler interface
+Updated hk-8i31.43: Twin subprocesses honor the same wire protocol
+Updated hk-8i31.44: Twins carry identical boundary-classification tags
+Updated hk-8i31.45: Twin conformance drift detection scoped to S07
+Updated hk-8i31.46: Ready-state signaled by agent_ready event
+Updated hk-8i31.47: Twins MUST emit agent_ready identically
+Updated hk-8i31.48: Adapter-level ready detection
+Updated hk-8i31.49: Handler subprocess launched from repo-relative path
+Updated hk-8i31.50: Commit-hash check for in-repo binaries
+Updated hk-8i31.51: Subprocess is a child of the daemon
+Updated hk-8i31.52: Launch MUST fail-fast on orphan-held workspace
+Updated hk-8i31.53: Twin binaries obey same launch rules
+Updated hk-8i31.55: Skill provisioning + resolution surface (coalesce)
+Updated hk-8i31.58: Emit skills_provisioned before agent_ready
+
+## Chunk 7: 30 IDs
+Updated hk-8i31.59: Twin-parity for skill provisioning is wire-only
+Updated hk-8i31.64: Sensor: exactly one watcher goroutine per active session
+Updated hk-8i31.65: Sensor: twin handlers indistinguishable from real handlers
+Updated hk-8i31.67: Sensor: agent_ready precedes work dispatch
+Updated hk-8i31.69: Sensor: exactly one terminal event per session
+Updated hk-8i31.71: Define `Handler` interface (§6.1)
+Updated hk-8i31.72: Define `Session` interface (§6.1)
+Updated hk-8i31.73: Define `Adapter` interface (§6.1)
+Updated hk-8i31.74: Define `LaunchSpec` record (§6.1)
+Updated hk-8i31.75: Define `SessionID` record (§6.1)
+Updated hk-8i31.76: HC error sentinel set + 5-class detection-and-emission table
+Updated hk-8i31.77: Canonical twin handler binary for scenario-harness tests
+Updated hk-8i31.78: NDJSON wire-protocol fixture (well-formed + 5 negative-case scenarios)
+Updated hk-hqwn.1: Every event MUST carry the common envelope fields
+Updated hk-hqwn.2: event_id MUST be a UUIDv7
+Updated hk-hqwn.3: UUIDv7 generation MUST be monotonic within a process
+Updated hk-hqwn.4: Handler-subprocess event_id generation MUST route through the daemon
+Updated hk-hqwn.7: source_subsystem is layout-open
+Updated hk-hqwn.11: Partial-order contract
+Updated hk-hqwn.12: Subscription is declared at registration, not inferred
+Updated hk-hqwn.13: Synchronous consumer class
+Updated hk-hqwn.16: Observer consumer class
+Updated hk-hqwn.17: Consumer class is opt-in at subscription
+Updated hk-hqwn.19: Dispatch semantics
+Updated hk-hqwn.23: JSONL is the durable on-disk form
+Updated hk-hqwn.24: Every §8 row MUST declare durability class; fsync derives from class (coalesce)
+Updated hk-hqwn.26: Producers MUST emit events idempotently
+Updated hk-hqwn.29: JSONL writes MUST be append-only
+Updated hk-hqwn.31: State reconstruction MUST NOT walk JSONL
+Updated hk-hqwn.41: Events are tagged-union envelope plus payload-constructor registry
+
+## Chunk 8: 30 IDs
+Updated hk-hqwn.42: Type dispatch is deterministic on the type field
+Updated hk-hqwn.43: Registry registration is startup-time
+Updated hk-hqwn.53: Define Event envelope record (§6.1)
+Updated hk-hqwn.54: Define TraceContext record (§6.1)
+Updated hk-hqwn.55: Define Subscription record (§6.1)
+Updated hk-hqwn.57: Define EventBus interface (§6.1)
+Updated hk-hqwn.58: Define on-disk JSONL line format (§6.2)
+Updated hk-hqwn.59.1: Event row: run_started (§8.1.1)
+Updated hk-hqwn.59.2: Event row: run_completed (§8.1.2)
+Updated hk-hqwn.59.3: Event row: run_failed (§8.1.3)
+Updated hk-hqwn.59.6: Event row: transition_event (§8.1.6)
+Updated hk-hqwn.59.7: Event row: checkpoint_written (§8.1.7)
+Updated hk-hqwn.59.8: Event row: outcome_emitted (§8.1.8)
+Updated hk-hqwn.59.21: Event row: agent_ready (§8.3.1)
+Updated hk-hqwn.59.22: Event row: agent_started (§8.3.2)
+Updated hk-hqwn.59.23: Event row: agent_output_chunk (§8.3.3)
+Updated hk-hqwn.59.24: Event row: agent_completed (§8.3.4)
+Updated hk-hqwn.59.25: Event row: agent_failed (§8.3.5)
+Updated hk-hqwn.59.37: Event row: workspace_created (§8.5.1)
+Updated hk-hqwn.59.38: Event row: workspace_leased (§8.5.2)
+Updated hk-hqwn.59.39: Event row: workspace_merge_status (§8.5.3)
+Updated hk-hqwn.59.44: Event row: reconciliation_category_assigned (§8.6.2)
+Updated hk-hqwn.59.46: Event row: reconciliation_verdict_executed (§8.6.4)
+Updated hk-hqwn.59.57: Event row: daemon_started (§8.7.1)
+Updated hk-hqwn.59.58: Event row: daemon_ready (§8.7.2)
+Updated hk-hqwn.59.59: Event row: daemon_shutdown (§8.7.3)
+Updated hk-hqwn.59.60: Event row: daemon_startup_failed (§8.7.4)
+Updated hk-hqwn.59.61: Event row: daemon_degraded (§8.7.5)
+Updated hk-hqwn.59.70: Event row: daemon_orphan_sweep_completed (§8.7.14)
+Updated hk-hqwn.59.71: Event row: infrastructure_unavailable (§8.7.15)
+
+## Chunk 9: 30 IDs
+Updated hk-872: Beads Integration spec — implementation
+Updated hk-872.1: Adopt Beads SQLite fork; reject Dolt variant
+Updated hk-872.2: Route all Beads I/O through the br CLI
+Updated hk-872.3: Forbid br serve (Beads MCP server)
+Updated hk-872.4: Daemon to br direct; agents to br via Beads-CLI skill
+Updated hk-872.5: Beads is authoritative for bead content
+Updated hk-872.6: Beads owns typed dependency edges
+Updated hk-872.7: Coarse status: HarmonikWriteStatus 5-value subset; reads tolerate Beads enum
+Updated hk-872.8: Bead IDs stable for bead lifetime; project-scoped opaque
+Updated hk-872.9: Beads provides atomic-claim semantics
+Updated hk-872.10: Implement terminal-transition write surface (claim/close/reopen)
+Updated hk-872.11: Forbid intra-run Beads writes
+Updated hk-872.12: Route every terminal-transition write through the adapter
+Updated hk-872.13: Implement br ready query (ready-work)
+Updated hk-872.14: Implement dependency-graph query
+Updated hk-872.15: Implement bead-detail query
+Updated hk-872.16: Implement reconciliation queries (audit log + status)
+Updated hk-872.18: Run metadata records bead_id
+Updated hk-872.19: Checkpoint trailer Harmonik-Bead-ID for bead-bound runs
+Updated hk-872.20: Bead-scoped event payloads carry bead_id
+Updated hk-872.21: Session logs for bead-bound runs carry bead_id metadata
+Updated hk-872.22: Beads is authoritative for content + coarse status
+Updated hk-872.23: Git is authoritative for completion
+Updated hk-872.24: JSONL is observational only
+Updated hk-872.26: br --version handshake at startup
+Updated hk-872.27: Implement single br-CLI adapter (sole translation layer)
+Updated hk-872.28: br exit-code to BrError classification
+Updated hk-872.29: Mandatory --format json invocation; no text parsing
+Updated hk-872.41: Sensor: no intra-run Beads writes (corpus + os/exec lint + scenario)
+Updated hk-872.43: Sensor: git wins on completion disagreement
+
+## Chunk 10: 21 IDs (final)
+Updated hk-872.45: Define BeadRecord (§6.1)
+Updated hk-872.46: Define CoarseStatus enum (§6.1)
+Updated hk-872.47: Define HarmonikWriteStatus enum (§6.1, BI v0.4.1 split)
+Updated hk-872.48: Define DependencyEdge (§6.1)
+Updated hk-872.49: Define EdgeKind enum (§6.1)
+Updated hk-872.52: Define TerminalOp enum (§6.1)
+Updated hk-zs0.50: Sensor: mechanism/cognition split is strict at the process boundary
+Updated hk-zs0.51: Sensor: search + verifier + traces are required, not optional
+Updated hk-zs0.52: Sensor: centralized-controller invariant
+Updated hk-zs0.53: Sensor: three-artifact separation
+Updated hk-zs0.54: Define agent_type identifier regex (§6.1)
+Updated hk-sx9r.2: Operator-observable exit codes are structured
+Updated hk-sx9r.3: Exit-code taxonomy obligation
+Updated hk-sx9r.4: Startup failure-mode catalog obligation
+Updated hk-sx9r.20: Queue schema version check on daemon startup
+Updated hk-sx9r.73: ON exit-code taxonomy (§8) — 23-code authoritative table
+Updated hk-sx9r.74: Exit-code taxonomy + obligations fixture (ON-001..ON-004)
+Updated hk-63oh.16: Cat 0 pre-check runs before any other detector
+Updated hk-63oh.17: Post-`ready` Cat 0 does not transition daemon state
+Updated hk-63oh.62: Cat 0 — Infrastructure unavailable (§8.1)
+Updated hk-63oh.70: Cat 5 — Clean restart (§8.8)

@@ -201,7 +201,7 @@ Output (real or dry-run):
 
 The mnem-map CSV is the resume ledger:
 
-    /tmp/<prefix>-mnem-map.csv          # default; --map overrides
+    docs/decompose-to-tasks/mnem-maps/<prefix>-mnem-map.csv  # canonical; --map overrides
     mnemonic,assigned_id,title
     hc,hk-8i31,Handler Contract spec — implementation
     hc-001,hk-8i31.1,Handler is the Go interface defined in §6.1

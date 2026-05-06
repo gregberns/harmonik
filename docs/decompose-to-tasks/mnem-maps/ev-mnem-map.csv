@@ -1,0 +1,143 @@
+mnemonic,assigned_id,title
+ev,hk-hqwn,Event Model spec - implementation
+ev-001,hk-hqwn.1,Every event MUST carry the common envelope fields
+ev-002,hk-hqwn.2,event_id MUST be a UUIDv7
+ev-002a,hk-hqwn.3,UUIDv7 generation MUST be monotonic within a process
+ev-002b,hk-hqwn.4,Handler-subprocess event_id generation MUST route through the daemon
+ev-002c,hk-hqwn.5,UUIDv7 monotonicity across daemon restart via high-water-mark file
+ev-003,hk-hqwn.6,timestamp_mono_nsec is process-scoped and NOT cross-process-comparable
+ev-004,hk-hqwn.7,source_subsystem is layout-open
+ev-005,hk-hqwn.8,"Events are lifecycle-boundary signals, not agent internals"
+ev-006,hk-hqwn.9,Wall clock is advisory for cross-process ordering
+ev-007,hk-hqwn.10,Monotonic time orders intra-process events
+ev-008,hk-hqwn.11,Partial-order contract
+ev-009,hk-hqwn.12,"Subscription is declared at registration, not inferred"
+ev-010,hk-hqwn.13,Synchronous consumer class
+ev-011,hk-hqwn.14,Asynchronous consumer class
+ev-011a,hk-hqwn.15,Non-blocking producer back-pressure
+ev-012,hk-hqwn.16,Observer consumer class
+ev-013,hk-hqwn.17,Consumer class is opt-in at subscription
+ev-014,hk-hqwn.18,Subscription-time class conflict is a startup error
+ev-014a,hk-hqwn.19,Dispatch semantics
+ev-014b,hk-hqwn.20,Consumers MUST be idempotent on recovery and dead-letter replay
+ev-014c,hk-hqwn.21,Observer dispatch uses per-observer goroutine plus bounded queue
+ev-014d,hk-hqwn.22,Consumer-recovery replay contract (closes EV-INV-002 consumer side)
+ev-015,hk-hqwn.23,JSONL is the durable on-disk form
+ev-016,hk-hqwn.24,Every §8 row MUST declare durability class; fsync derives from class (coalesce)
+ev-017,hk-hqwn.25,Event loss between fsyncs is acceptable because git is authoritative
+ev-018,hk-hqwn.26,Producers MUST emit events idempotently
+ev-019,hk-hqwn.27,Panic handler MUST flush structured logs
+ev-019a,hk-hqwn.28,Panic handler SHOULD best-effort flush the bus
+ev-020,hk-hqwn.29,JSONL writes MUST be append-only
+ev-021,hk-hqwn.30,Observational replay MUST NOT reconstruct state
+ev-022,hk-hqwn.31,State reconstruction MUST NOT walk JSONL
+ev-023,hk-hqwn.32,Divergence-evidence read with post-crash-window guardrail + inconclusive classification (coalesce)
+ev-024,hk-hqwn.33,Replay cannot re-establish agent state or re-invoke LLMs
+ev-025,hk-hqwn.34,Each event type has exactly one owning spec for payload shape
+ev-026,hk-hqwn.35,Subsystems MAY emit internal events not on this list
+ev-027,hk-hqwn.36,Adding or removing a cross-bus event type requires a foundation amendment
+ev-028,hk-hqwn.37,Each event type and the envelope carry schema_version
+ev-029,hk-hqwn.38,N-1 readable compatibility window (per-type AND envelope)
+ev-030,hk-hqwn.39,Breaking-change classification is declared in §6.4
+ev-031,hk-hqwn.40,Every event type declared in §8 MUST carry four-axis tags AND durability class
+ev-032,hk-hqwn.41,Events are tagged-union envelope plus payload-constructor registry
+ev-033,hk-hqwn.42,Type dispatch is deterministic on the type field
+ev-034,hk-hqwn.43,Registry registration is startup-time
+ev-034a,hk-hqwn.44,source_subsystem identifiers are registered at startup
+ev-035,hk-hqwn.45,Redaction registry applied before emission
+ev-036,hk-hqwn.46,Compile-time check: no payload field name matches secret-prefix rule
+ev-inv-001,hk-hqwn.47,"Sensor: events are observational, not authoritative"
+ev-inv-002,hk-hqwn.48,Sensor: event-loss between fsyncs acceptable; consumers MUST handle it
+ev-inv-003,hk-hqwn.49,"Sensor: at most one synchronous consumer per event type, no reentrant emission"
+ev-inv-004,hk-hqwn.50,Sensor: every event carries valid monotonic UUIDv7 event_id
+ev-inv-005,hk-hqwn.51,Sensor: every event type in §8 carries full tagging
+ev-inv-006,hk-hqwn.52,Sensor: best-effort redaction plus compile-time structural check
+ev-schema.event,hk-hqwn.53,Define Event envelope record (§6.1)
+ev-schema.trace-context,hk-hqwn.54,Define TraceContext record (§6.1)
+ev-schema.subscription,hk-hqwn.55,Define Subscription record (§6.1)
+ev-schema.event-pattern,hk-hqwn.56,Define EventPattern record (§6.1)
+ev-schema.event-bus,hk-hqwn.57,Define EventBus interface (§6.1)
+ev-schema.jsonl-line,hk-hqwn.58,Define on-disk JSONL line format (§6.2)
+ev-events.run-started,hk-hqwn.59.1,Event row: run_started (§8.1.1)
+ev-events.run-completed,hk-hqwn.59.2,Event row: run_completed (§8.1.2)
+ev-events.run-failed,hk-hqwn.59.3,Event row: run_failed (§8.1.3)
+ev-events.state-entered,hk-hqwn.59.4,Event row: state_entered (§8.1.4)
+ev-events.state-exited,hk-hqwn.59.5,Event row: state_exited (§8.1.5)
+ev-events.transition-event,hk-hqwn.59.6,Event row: transition_event (§8.1.6)
+ev-events.checkpoint-written,hk-hqwn.59.7,Event row: checkpoint_written (§8.1.7)
+ev-events.outcome-emitted,hk-hqwn.59.8,Event row: outcome_emitted (§8.1.8)
+ev-events.sub-workflow-entered,hk-hqwn.59.9,Event row: sub_workflow_entered (§8.1.9)
+ev-events.sub-workflow-exited,hk-hqwn.59.10,Event row: sub_workflow_exited (§8.1.10)
+ev-events.node-dispatch-requested,hk-hqwn.59.11,Event row: node_dispatch_requested (§8.1.11)
+ev-events.hook-fired,hk-hqwn.59.12,Event row: hook_fired (§8.2.1)
+ev-events.hook-failed,hk-hqwn.59.13,Event row: hook_failed (§8.2.2)
+ev-events.hook-verdict-persisted,hk-hqwn.59.14,Event row: hook_verdict_persisted (§8.2.3)
+ev-events.gate-allowed,hk-hqwn.59.15,Event row: gate_allowed (§8.2.4)
+ev-events.gate-denied,hk-hqwn.59.16,Event row: gate_denied (§8.2.5)
+ev-events.gate-escalated,hk-hqwn.59.17,Event row: gate_escalated (§8.2.6)
+ev-events.guard-reordered,hk-hqwn.59.18,Event row: guard_reordered (§8.2.7)
+ev-events.guard-failed,hk-hqwn.59.19,Event row: guard_failed (§8.2.8)
+ev-events.control-points-registered,hk-hqwn.59.20,Event row: control_points_registered (§8.2.9)
+ev-events.agent-ready,hk-hqwn.59.21,Event row: agent_ready (§8.3.1)
+ev-events.agent-started,hk-hqwn.59.22,Event row: agent_started (§8.3.2)
+ev-events.agent-output-chunk,hk-hqwn.59.23,Event row: agent_output_chunk (§8.3.3)
+ev-events.agent-completed,hk-hqwn.59.24,Event row: agent_completed (§8.3.4)
+ev-events.agent-failed,hk-hqwn.59.25,Event row: agent_failed (§8.3.5)
+ev-events.agent-rate-limit-status,hk-hqwn.59.26,Event row: agent_rate_limit_status (§8.3.6)
+ev-events.session-log-location,hk-hqwn.59.27,Event row: session_log_location (§8.3.7)
+ev-events.skills-provisioned,hk-hqwn.59.28,Event row: skills_provisioned (§8.3.8)
+ev-events.handler-capabilities,hk-hqwn.59.29,Event row: handler_capabilities (§8.3.9)
+ev-events.agent-warning-silent-hang,hk-hqwn.59.30,Event row: agent_warning_silent_hang (§8.3.10)
+ev-events.agent-resumed-after-warning,hk-hqwn.59.31,Event row: agent_resumed_after_warning (§8.3.11)
+ev-events.agent-soft-terminating,hk-hqwn.59.32,Event row: agent_soft_terminating (§8.3.12)
+ev-events.agent-hard-terminating,hk-hqwn.59.33,Event row: agent_hard_terminating (§8.3.13)
+ev-events.budget-warning,hk-hqwn.59.34,Event row: budget_warning (§8.4.1)
+ev-events.budget-accrual,hk-hqwn.59.35,Event row: budget_accrual (§8.4.2)
+ev-events.budget-exhausted,hk-hqwn.59.36,Event row: budget_exhausted (§8.4.3)
+ev-events.workspace-created,hk-hqwn.59.37,Event row: workspace_created (§8.5.1)
+ev-events.workspace-leased,hk-hqwn.59.38,Event row: workspace_leased (§8.5.2)
+ev-events.workspace-merge-status,hk-hqwn.59.39,Event row: workspace_merge_status (§8.5.3)
+ev-events.workspace-discarded,hk-hqwn.59.40,Event row: workspace_discarded (§8.5.4)
+ev-events.workspace-interrupted,hk-hqwn.59.41,Event row: workspace_interrupted (§8.5.5)
+ev-events.merge-conflict-escalation,hk-hqwn.59.42,Event row: merge_conflict_escalation (§8.5.6)
+ev-events.reconciliation-started,hk-hqwn.59.43,Event row: reconciliation_started (§8.6.1)
+ev-events.reconciliation-category-assigned,hk-hqwn.59.44,Event row: reconciliation_category_assigned (§8.6.2)
+ev-events.reconciliation-verdict-emitted,hk-hqwn.59.45,Event row: reconciliation_verdict_emitted (§8.6.3)
+ev-events.reconciliation-verdict-executed,hk-hqwn.59.46,Event row: reconciliation_verdict_executed (§8.6.4)
+ev-events.reconciliation-verdict-malformed,hk-hqwn.59.47,Event row: reconciliation_verdict_malformed (§8.6.5)
+ev-events.reconciliation-budget-exhausted,hk-hqwn.59.48,Event row: reconciliation_budget_exhausted (§8.6.6)
+ev-events.reconciliation-verdict-stale,hk-hqwn.59.49,Event row: reconciliation_verdict_stale (§8.6.7)
+ev-events.store-divergence-detected,hk-hqwn.59.50,Event row: store_divergence_detected (§8.6.8)
+ev-events.operator-escalation-required,hk-hqwn.59.51,Event row: operator_escalation_required (§8.6.9)
+ev-events.divergence-inconclusive,hk-hqwn.59.52,Event row: divergence_inconclusive (§8.6.10)
+ev-events.reconciliation-dispatch-deduplicated,hk-hqwn.59.53,Event row: reconciliation_dispatch_deduplicated (§8.6.11)
+ev-events.reconciliation-detector-panic,hk-hqwn.59.54,Event row: reconciliation_detector_panic (§8.6.12)
+ev-events.reconciliation-verdict-execution-retry,hk-hqwn.59.55,Event row: reconciliation_verdict_execution_retry (§8.6.13)
+ev-events.bead-terminal-transition-recovered,hk-hqwn.59.56,Event row: bead_terminal_transition_recovered (§8.6.14)
+ev-events.daemon-started,hk-hqwn.59.57,Event row: daemon_started (§8.7.1)
+ev-events.daemon-ready,hk-hqwn.59.58,Event row: daemon_ready (§8.7.2)
+ev-events.daemon-shutdown,hk-hqwn.59.59,Event row: daemon_shutdown (§8.7.3)
+ev-events.daemon-startup-failed,hk-hqwn.59.60,Event row: daemon_startup_failed (§8.7.4)
+ev-events.daemon-degraded,hk-hqwn.59.61,Event row: daemon_degraded (§8.7.5)
+ev-events.operator-pause-status,hk-hqwn.59.62,Event row: operator_pause_status (§8.7.6)
+ev-events.operator-resuming,hk-hqwn.59.63,Event row: operator_resuming (§8.7.7)
+ev-events.operator-stopped,hk-hqwn.59.64,Event row: operator_stopped (§8.7.8)
+ev-events.operator-upgrading,hk-hqwn.59.65,Event row: operator_upgrading (§8.7.9)
+ev-events.operator-upgrade-completed,hk-hqwn.59.66,Event row: operator_upgrade_completed (§8.7.10)
+ev-events.operator-upgrade-rejected,hk-hqwn.59.67,Event row: operator_upgrade_rejected (§8.7.11)
+ev-events.operator-command-rejected,hk-hqwn.59.68,Event row: operator_command_rejected (§8.7.12)
+ev-events.dispatch-deferred,hk-hqwn.59.69,Event row: dispatch_deferred (§8.7.13)
+ev-events.daemon-orphan-sweep-completed,hk-hqwn.59.70,Event row: daemon_orphan_sweep_completed (§8.7.14)
+ev-events.infrastructure-unavailable,hk-hqwn.59.71,Event row: infrastructure_unavailable (§8.7.15)
+ev-events.operator-command-failed,hk-hqwn.59.72,Event row: operator_command_failed (§8.7.16)
+ev-events.operator-escalation-cleared,hk-hqwn.59.73,Event row: operator_escalation_cleared (§8.7.17)
+ev-events.metric,hk-hqwn.59.74,Event row: metric (§8.8.1)
+ev-events.consumer-failed,hk-hqwn.59.75,Event row: consumer_failed (§8.8.2)
+ev-events.dead-letter-enqueued,hk-hqwn.59.76,Event row: dead_letter_enqueued (§8.8.3)
+ev-events.bus-overflow,hk-hqwn.59.77,Event row: bus_overflow (§8.8.4)
+ev-events.redaction-failed,hk-hqwn.59.78,Event row: redaction_failed (§8.8.5)
+ev-test.jsonl-fixture,hk-hqwn.60,Canonical JSONL fixture for envelope + durability + read-recovery tests
+ev-test.overflow-harness,hk-hqwn.61,Bus-overflow scenario harness for non-blocking back-pressure tests
+ev-test.uuidv7-monotonicity-harness,hk-hqwn.62,UUIDv7 monotonicity stress test (intra-process + cross-restart)
+ev-test.taxonomy-lint,hk-hqwn.63,§8 taxonomy lint (durability class + tags + at-least-one-consumer-in-sibling-spec)
+ev-events.taxonomy,hk-hqwn.59,Event taxonomy umbrella (§8)

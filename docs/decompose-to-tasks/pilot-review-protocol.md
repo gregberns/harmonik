@@ -157,7 +157,7 @@ After review patches land, the pilot is loaded into the project-local `.beads/` 
 - **Pilot's discipline version MUST match current.** If review surfaced a class finding that bumped the discipline to a new version, the pilot MUST be re-drafted against the new version before loading; the prior-version draft is dead. (Rationale: a class finding propagates if the gate accepts an unrevised pilot.)
 - **`br dep cycles` MUST return clean.** Any cycle is either a discipline bug or a pilot bug; resolve before declaring the pilot loaded.
 - **All `br create` calls MUST succeed.** Failures (bad enum value, missing parent, etc.) indicate a pilot bug.
-- **`br ready` MUST return zero issues for the just-loaded spec** (every bead enters `draft`; readiness workflow promotes later).
+- **`br ready` MUST return zero issues for the just-loaded spec.** Beads enter the store as `draft` per discipline §2.9 (mechanical loading procedure). At the time of writing this protocol, a "readiness workflow" was contemplated as the promoter from `draft → open`; that gate has been withdrawn (2026-05-05). Loaded beads are flipped to `open` at load time (or per the loader's discretion) so that agents can dispatch them directly. The `br ready` clean-on-load criterion still applies as a structural check that no bead is incorrectly cycle-blocked or missing prerequisites.
 
 If the load surfaces a structural bug not caught by the reviewers, that's a signal to update the reviewer prompts in §3 (add the missed check); record in this protocol's revision history.
 

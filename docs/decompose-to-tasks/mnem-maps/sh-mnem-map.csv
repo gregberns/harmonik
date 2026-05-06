@@ -1,0 +1,55 @@
+mnemonic,assigned_id,title
+sh,hk-i0tw,Scenario Harness spec — implementation
+sh-001,hk-i0tw.1,Scenario format is YAML at v0.1
+sh-002,hk-i0tw.2,Scenario files live under `scenarios/` at the repo root
+sh-003,hk-i0tw.3,Scenario file is declarative-loadable without code execution
+sh-004,hk-i0tw.4,Malformed scenarios fail with `scenario-load-failure`
+sh-005,hk-i0tw.5,Scenario name uniqueness is repository-wide
+sh-006,hk-i0tw.6,Suite-load is a discrete discovery + parse + validate phase
+sh-007,hk-i0tw.7,Scenario execution order is deterministic byte-lex of `name`
+sh-008,hk-i0tw.8,"Twin substitution is a handler-config override, not a runtime branch"
+sh-009,hk-i0tw.9,Twin-binary discovery uses scenario path or PATH prefix
+sh-010,hk-i0tw.10,Missing twin binary fails the scenario with `twin-binary-not-found`
+sh-011,hk-i0tw.11,Twin parity is the parity surface declared in HC §4.8
+sh-012,hk-i0tw.12,Fixture setup precedes orchestration
+sh-013,hk-i0tw.13,Each scenario uses an isolated workspace
+sh-014,hk-i0tw.14,Each scenario uses an isolated event-log directory
+sh-015,hk-i0tw.15,"Fixture teardown runs on every terminal path (5-step ordered, idempotent)"
+sh-015a,hk-i0tw.16,Workspace snapshot mechanism (in-place worktree)
+sh-016,hk-i0tw.17,Per-suite ephemeral fixture root (operator inspects; not auto-deleted)
+sh-016a,hk-i0tw.18,Per-scenario synthetic project root (one ephemeral project per scenario)
+sh-017,hk-i0tw.19,Harness uses the production orchestrator entry-point
+sh-018,hk-i0tw.20,No test-mode branches in production-imported packages
+sh-019,hk-i0tw.21,Orchestration internal error fails with `orchestration-internal-error`
+sh-020,hk-i0tw.22,Harness reads captured JSONL event log as the assertion surface
+sh-021,hk-i0tw.23,Assertion vocabulary at v0.1 is four kinds
+sh-022,hk-i0tw.24,Workspace-state predicates inspect the captured snapshot in-place
+sh-023,hk-i0tw.25,Assertion failure produces verdict `fail` with `assertion-failed`
+sh-024,hk-i0tw.26,Event-log capture failure escalates to `harness-internal-error`
+sh-025,hk-i0tw.27,Every scenario declares a wall-clock budget (`timeout_secs` 1..7200)
+sh-026,hk-i0tw.28,Timeout exceedance produces verdict `timeout` with `scenario-timeout`
+sh-027,hk-i0tw.29,Identical inputs MUST produce identical observable verdicts
+sh-028,hk-i0tw.30,Harness MUST NOT depend on external network access
+sh-029,hk-i0tw.31,Every scenario declares a cadence tag
+sh-030,hk-i0tw.32,Scenarios MAY declare a parameter matrix (cap 1024 cells)
+sh-031,hk-i0tw.33,Scenarios run sequentially at MVH
+sh-032,hk-i0tw.34,Harness CLI grammar at MVH (`harmonik harness`)
+sh-033,hk-i0tw.35,Signal handling and graceful shutdown
+sh-034,hk-i0tw.36,ScenarioResult durability and emission
+sh-inv-001,hk-i0tw.37,Sensor: no test-mode branches in production code (4-layer corpus grep)
+sh-inv-002,hk-i0tw.38,"Sensor: workspace state fully reset on teardown (descendant-tree, leases, fds)"
+sh-inv-003,hk-i0tw.39,Sensor: harness operates only on twin binaries (path-prefix + HC-043 hash)
+sh-inv-004,hk-i0tw.40,Sensor: scenarios produce identical observable verdicts on rerun (N≥10 nightly)
+sh-inv-005,hk-i0tw.41,Sensor: scenario files are declarative-loadable (suite-load lint with strict YAML)
+sh-schema.scenario-file,hk-i0tw.42,Define `ScenarioFile` record (§6.1)
+sh-schema.agent-override,hk-i0tw.43,Define `AgentOverride` record (§6.1)
+sh-schema.fixture-setup,hk-i0tw.44,Define `FixtureSetup` record (§6.1)
+sh-schema.git-seed-op,hk-i0tw.45,Define `GitSeedOp` record (§6.1)
+sh-schema.file-seed,hk-i0tw.46,Define `FileSeed` record (§6.1)
+sh-schema.event-expectation,hk-i0tw.47,Define `EventExpectation` record (§6.1)
+sh-schema.workspace-predicate,hk-i0tw.48,Define `WorkspacePredicate` record (§6.1) + per-kind interpretation
+sh-schema.outcome-expectation,hk-i0tw.49,Define `OutcomeExpectation` record (§6.1)
+sh-schema.scenario-result,hk-i0tw.50,Define `ScenarioResult` record (§6.1)
+sh-schema.assertion-result,hk-i0tw.51,Define `AssertionResult` record (§6.1)
+sh-schema.suite-result,hk-i0tw.52,Define `SuiteResult` record (§6.1)
+sh-error.taxonomy,hk-i0tw.53,SH §8 failure-class taxonomy (8 classes + §8.0 precedence table)

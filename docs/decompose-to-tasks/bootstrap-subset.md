@@ -2,9 +2,9 @@
 
 **Date:** 2026-05-05
 **Parent bead:** `hk-ahvq.41` (decompose-to-tasks · "identify minimum bead subset that constitutes the bootstrap")
-**Status:** v0.1 — synthesis complete (S07 pending)
+**Status:** v0.2 — synthesis complete + S07 loaded
 
-> The parent bead `hk-ahvq.41` is **not** marked complete by this document: it is gated on the S07 scenario-harness spec being authored as a parallel work stream and its beads joining `scope:bootstrap` on load. See §7.
+> The parent bead `hk-ahvq.41` is **not** marked complete by this document: it remains open pending Phase-0 exit gates (`hk-ahvq.39` forward-zero verification, `hk-ahvq.42` milestone close) and the v0.2.1 SH spec patch tracked at `hk-ahvq.47`. The S07 gate referenced in v0.1 is now closed (see §7).
 
 ---
 
@@ -25,7 +25,7 @@ User-resolved opening-pass questions applied throughout: **Q1 twin handler IN, Q
 
 ---
 
-## §2. Final INCLUDE set — 291 beads
+## §2. Final INCLUDE set — 345 beads
 
 | Cluster | Spec | Epic | INCLUDE |
 |---|---|---|---:|
@@ -35,15 +35,16 @@ User-resolved opening-pass questions applied throughout: **Q1 twin handler IN, Q
 | C — Handler interface + twin | HC | `hk-8i31` | 46 (45 + 1 PULL_IN) |
 | D — Event-bus skeleton | EV | `hk-hqwn` | 47 (42 + 5 PULL_INs) |
 | E — Beads adapter | BI | `hk-872` | 36 (1 epic + 35 children) |
+| G — Scenario harness | SH | `hk-i0tw` | 54 (1 epic + 36 reqs + 5 invariants + 11 schemas + 1 taxonomy) |
 | Deferred — AR | `hk-zs0` | — | 5 |
 | Deferred — ON | `hk-sx9r` | — | 6 |
 | Deferred — RC | `hk-63oh` | — | 4 |
 | Deferred — CP | `hk-a8bg` | — | **0** (fully deferred) |
-| **Total** | | | **291** |
+| **Total** | | | **345** |
 
 The IDs are enumerated below by cluster. Per-bead rationale lives in the cluster reports under `docs/decompose-to-tasks/bootstrap-subset/{pl,wm,em,hc,ev,bi}-bootstrap.md`, `ar-verification.md`, and `deferred-bootstrap.md`. This document references those rationales rather than re-pasting them.
 
-> **Counts.** Closure-check (`closure-check.md`) is authoritative. The Pass-2 SUMMARY's headline "~271" undercounted because HC's and BI's bullet enumerations had top-line tally errors and AR was given the wrong sensor list. The 291 figure here = 285 from the closure-check sum (PL 37 + WM 45 + EM 65 + HC 45 + EV 42 + BI 36 + AR 5 + ON 6 + RC 4) + 6 PULL_INs.
+> **Counts.** Closure-check (`closure-check.md`) is authoritative for the v0.1 (non-SH) subset. The Pass-2 SUMMARY's headline "~271" undercounted because HC's and BI's bullet enumerations had top-line tally errors and AR was given the wrong sensor list. The 291 v0.1 figure = 285 from the closure-check sum (PL 37 + WM 45 + EM 65 + HC 45 + EV 42 + BI 36 + AR 5 + ON 6 + RC 4) + 6 PULL_INs. The v0.2 figure 345 = 291 + 54 SH (loaded 2026-05-05 from `sh-pilot-data.yaml`; load surfaced 4 cycle-rejected edges captured in `sh-load-findings.md`).
 
 ### A — PL (Process skeleton, 37 beads)
 
@@ -84,6 +85,12 @@ First-class (24): `hk-hqwn.1, .2, .3, .4, .7, .11, .12, .13, .16, .17, .19, .23,
 Source: `bi-bootstrap.md`. 1 epic envelope + 35 children spanning §4.1–4.8 (selection / managed-data / write / read / propagation / authority / adapter), §6 schemas (minimal 6), §10.2 INV-001 sensor.
 
 `hk-872, hk-872.1, .2, .3, .4, .5, .6, .7, .8, .9, .10, .11, .12, .13, .14, .15, .16, .18, .19, .20, .21, .22, .23, .24, .26, .27, .28, .29, .41, .43, .45, .46, .47, .48, .49, .52`.
+
+### G — SH (Scenario harness, 54 beads)
+
+Source: `sh-pilot.md` v0.1.1 (loaded 2026-05-05). 1 spec-parent epic + 36 first-class §4 reqs (SH-001..SH-034 + SH-015a + SH-016a) + 5 §5 invariants (SH-INV-001..SH-INV-005) + 11 §6.1 RECORD schemas + 1 §8 error-taxonomy umbrella (folds 8 failure classes per discipline §2.6 single-table form). 0 §2.3 coalesces, 0 §2.2 multi-step splits, 0 forward-deferred edges (first pilot in the corpus to ship zero — depends-on targets architecture / handler-contract / event-model / workspace-model / execution-model / process-lifecycle / operator-nfr were all loaded prior). 91 intra-spec edges + 42 cross-spec edges resolved at load (38 declared in pilot tally + 2 type-cite edges added in r1 review wave per F-ref-SH-2/F-ref-SH-4 + the 2 ON drain-timeout edges = 42).
+
+Per discipline §2.10 mnemonic→assigned-ID translation, the 54 IDs are: `hk-i0tw, hk-i0tw.1` through `hk-i0tw.53`. The full mnem→ID map lives at `docs/decompose-to-tasks/mnem-maps/sh-mnem-map.csv`. SH is the regression net for self-build cycles per `docs/bootstrap.md` §5 step 8 — the §1 working-definition acceptance test routes through SH-driven scenarios.
 
 ### Deferred-AR (Architecture, 5 beads)
 
@@ -170,22 +177,20 @@ The full violation table is in `closure-check.md` §"Violations — classified b
 
 ---
 
-## §7. S07 placeholder — pending
+## §7. S07 SH addendum — loaded 2026-05-05
 
-**S07 scenario-harness has no dedicated spec or epic in the corpus as of this synthesis.** `bootstrap.md` step 8 names S07; the decompose-to-tasks pass never authored an S07 spec or any S07 beads. The closest existing bead is `hk-8i31.77` (canonical twin handler binary, in the HC cluster, already INCLUDE).
+**S07 scenario-harness was authored as a parallel work stream and loaded 2026-05-05.** Spec at `specs/scenario-harness.md` v0.2.0 reviewed; pilot at `docs/decompose-to-tasks/sh-pilot.md` v0.1.1 (load-eligible per `docs/reviews/2026-05-05-sh-pilot-r1/synthesis.md`). 54 beads created (1 spec-parent epic `hk-i0tw` + 36 first-class §4 reqs + 5 §5 invariants + 11 §6.1 RECORDs + 1 §8 error-taxonomy umbrella per discipline §2.11(c)). 0 §2.3 coalesces, 0 §2.2 multi-step splits.
 
-**Resolution path:** S07 is being authored in a parallel work stream as a peer spec. It will produce its own beads later; **those beads will join `scope:bootstrap` on load**, bringing the total above 291.
+**Cross-spec resolution.** SH's depends-on list cites 7 specs: architecture, handler-contract, event-model, workspace-model, execution-model, process-lifecycle, operator-nfr. All 7 were loaded prior to SH, so 42 cross-spec edges resolved directly via the existing mnem-maps under `docs/decompose-to-tasks/mnem-maps/`. Breakdown per loader output: AR 2 + EM 5 + EV 6 + HC 14 + WM 4 + PL 9 + ON 2. **SH is the first pilot in the corpus to ship with zero forward-deferred edges** — every cross-spec target was a real ID in a loaded mnem-map.
 
-This synthesis pass does not author S07 content. Until S07 lands:
+**Edge tally.** 91 intra-spec + 42 cross-spec = 133 attempted; 4 rejected by Beads cycle-detector at add-time (logged as load-time pilot findings, not added to DB). Final accepted: 129 edges from SH beads. The 4 rejections are `sh-015a→sh-012` (yaml line 639), `sh-016a→sh-014` (line 643), `sh-017→sh-016a` (line 645), `sh-022→sh-015a` (line 657) — each forms a 2-cycle with an opposite-direction edge already in the yaml. Captured separately in `sh-load-findings.md` for the v0.2.x pilot patch.
 
-- `hk-ahvq.41` parent bead remains open (do not flip status to `closed`).
-- The 291 IDs labelled here form the **non-S07 bootstrap subset** — necessary, but not sufficient for the §1 working-definition acceptance test (which requires the harness to drive the round-trip).
-- Forward-zero verification (`hk-ahvq.39`) and milestone close (`hk-ahvq.42`) carry the S07-pending caveat.
+**Bootstrap subset count.** 291 v0.1 baseline + 54 SH = **345 beads** labelled `scope:bootstrap`.
 
-When S07 beads land:
-1. Apply `scope:bootstrap` to the new IDs via the same `br update --add-label` command pattern (§8).
-2. Re-run `br dep cycles` and re-run a closure-check over the expanded INCLUDE set.
-3. Update §2's count and revision history; flip `hk-ahvq.41` to `closed` once `br dep cycles` is clean and the S07 INCLUDE list is dependency-closed.
+**Parent bead `hk-ahvq.41` remains open.** Phase-0 exit gates not yet met:
+- `hk-ahvq.39` forward-zero verification remains gated on the closure check over the expanded 345-bead INCLUDE set.
+- `hk-ahvq.42` milestone close remains gated on `.39` plus the v0.2.1 SH spec patch tracked at `hk-ahvq.47`.
+- The 4 cycle-rejected edges flagged above are pilot-level concerns, not subset-closure concerns; they don't block `.41` directly but should land in a v0.2.x pilot patch.
 
 ---
 
@@ -199,7 +204,7 @@ Command pattern (chunked for shell-arg sanity, ~30 IDs per invocation):
 br update <id1> <id2> ... <id30> --add-label scope:bootstrap
 ```
 
-Application: 291 IDs, 10 chunks (9 × 30 + 1 × 21), zero failures.
+Application: v0.1 round 291 IDs in 10 chunks (9 × 30 + 1 × 21), zero failures. v0.2 round (2026-05-05) added 54 SH IDs in 2 chunks (30 + 24), zero failures. Cumulative: 345 IDs.
 
 Sample output (chunk 1, first 5 IDs):
 
@@ -227,12 +232,7 @@ Full log: `docs/decompose-to-tasks/bootstrap-subset/label-application.log`.
 
 ### Label-count sanity
 
-```
-$ br list -l scope:bootstrap --limit 0 | grep -c "^❄"
-291
-```
-
-Per-cluster verification (matches §2 table):
+Per-cluster (decompose-to-tasks subset) verification (matches §2 table):
 
 | Cluster | Expected | Verified |
 |---|---:|---:|
@@ -242,22 +242,26 @@ Per-cluster verification (matches §2 table):
 | HC (`hk-8i31`) | 46 | 46 |
 | EV (`hk-hqwn`) | 47 | 47 |
 | BI (`hk-872`, incl. epic) | 36 | 36 |
+| SH (`hk-i0tw`, incl. epic) | 54 | 54 |
 | AR (`hk-zs0`) | 5 | 5 |
 | ON (`hk-sx9r`) | 6 | 6 |
 | RC (`hk-63oh`) | 4 | 4 |
-| **Total** | **291** | **291** |
+| **Total (decompose-to-tasks)** | **345** | **345** |
+
+The corpus-wide `br list -l scope:bootstrap` count is higher than 345 because pre-existing meta-workflow beads (`hk-pvcs.*` build-scaffolding meta-epic, `hk-ahvq.48.*` SH conformance-scenario authoring tasks) carry `scope:bootstrap` independently — those 19 beads are not part of the decompose-to-tasks subset enumerated in §2 but are tracked under the same scope label for Phase-1 planning.
 
 ---
 
 ## §10. What this unblocks
 
-- **`hk-ahvq.39` (forward-zero verification of the deferred-cluster carve-outs)** — can proceed with the caveat that S07-emitted forward-deferred references are not yet in the corpus. Verification result will need an S07-pending caveat in its closure note.
-- **`hk-ahvq.42` (decompose-to-tasks milestone close)** — gated on S07 spec landing + S07 beads joining `scope:bootstrap` + a final closure-check over the expanded set. Until then, `.42` stays open.
+- **`hk-ahvq.39` (forward-zero verification of the deferred-cluster carve-outs)** — proceeds against the full 345-bead INCLUDE set. SH ships zero forward-deferred edges (first pilot in the corpus to do so), so the SH addition does not introduce new forward-zero violations.
+- **`hk-ahvq.42` (decompose-to-tasks milestone close)** — gated on `.39` completion plus the v0.2.1 SH spec patch tracked at `hk-ahvq.47` (per `sh-pilot-r1` synthesis). Until both clear, `.42` stays open.
 
-`hk-ahvq.41` itself is **not** flipped to `closed` by this synthesis. The bootstrap subset is identified and labelled; the parent bead's acceptance criterion includes "subset is dependency-closed and sufficient for the §1 foothold scenario", and the S07 gap means the second clause is not yet met.
+`hk-ahvq.41` itself is **not** flipped to `closed` by this synthesis. The bootstrap subset is identified and labelled (345 beads, dependency-closed); the parent bead's acceptance criterion includes "subset is dependency-closed and sufficient for the §1 foothold scenario", and the SH spec-patch + Phase-0 exit gates remain open.
 
 ---
 
 ## §11. Revision history
 
 - **v0.1 (2026-05-05).** Initial synthesis. Pass 2 cluster reports + ar-verification + closure-check consolidated. 291 beads labelled `scope:bootstrap`. RELAX-candidate `hk-sx9r.20` kept (rule trivially satisfied at v1). S07 placeholder section added; parent bead intentionally not closed.
+- **v0.2 (2026-05-05).** S07 scenario-harness loaded; 54 SH beads added to `scope:bootstrap`; bootstrap-subset count 291 → 345. SH cluster row added to §2 INCLUDE table; §7 placeholder replaced with SH addendum (zero forward-deferred edges, 4 cycle-rejected intra-spec edges captured for v0.2.x patch); §9 cluster-verification table extended; §10 S07-pending caveats removed. Parent bead `hk-ahvq.41` remains open pending Phase-0 exit gates `.39` / `.42` and SH spec-patch `.47`.

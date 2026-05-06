@@ -339,9 +339,8 @@ default_labels:
   - "tag:mechanism"
 
 # Cross-spec mnem-map paths (CSV from prior pilot loads).
-# rc, on entries deliberately omitted — those specs are not yet pilot-loaded.
-# Forward-deferred edges to those specs use "forward:<prefix>-NNN" placeholders
-# below and are skipped at load time per F-pilot-EM-2 / Option B precedent.
+# `on` deliberately omitted — ON cross-spec edges remain forward-deferred (b2 §3.2
+# violations under hk-ahvq.46). RC added by .39 follow-on pass after .37 backfill.
 cross_specs:
   ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
   em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
@@ -350,6 +349,7 @@ cross_specs:
   cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
   wm: docs/decompose-to-tasks/mnem-maps/wm-mnem-map.csv
   bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv
+  rc: docs/decompose-to-tasks/mnem-maps/rc-mnem-map.csv
 
 epic:
   mnem: pl
@@ -1185,20 +1185,22 @@ edges:
   - {from: pl-028, to: bi-007}                                    # `harmonik enqueue` writes coarse status
 
   # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
-  # RC (reconciliation) — in PL's depends-on but not yet pilot-loaded.
-  - {from: pl-005, to: "forward:rc-NNN"}                          # step 4 Cat 0 pre-check per RC-012; step 8 RC-008 dispatch
-  - {from: pl-006, to: "forward:rc-NNN"}                          # reconciliation-locks bullet RC-002a/RC-002b
-  - {from: pl-008, to: "forward:rc-NNN"}                          # Cat 0 catalog consumption
-  - {from: pl-009, to: "forward:rc-NNN"}                          # RC-013 emission criterion
-  - {from: pl-009a, to: "forward:rc-NNN"}                         # Cat 3 fallback path
-  - {from: pl-010, to: "forward:rc-NNN"}                          # Cat 0 retry
-  - {from: pl-017, to: "forward:rc-NNN"}                          # silent-hang routes through reconciliation
-  - {from: pl-021a, to: "forward:rc-NNN"}                         # ntm-unavailable classifies as Cat 0 per RC §8.1
-  - {from: pl-025, to: "forward:rc-NNN"}                          # reconciliation idempotence per RC-002
-  - {from: pl-026, to: "forward:rc-NNN"}                          # reconciliation-routed crash paths
-  - {from: pl-inv-003, to: "forward:rc-NNN"}                      # detector ordering invariant
-  - {from: pl-005, to: "forward:rc-002a"}                         # per-target-run reconciliation lock at step 8
-  - {from: pl-005, to: "forward:rc-002b"}                         # verdict-executed-trailer discriminator
+  # RC cross-spec edges (resolved via .37 backfill; yaml-rewrite by .39 follow-on pass).
+  # 7 cycle-rejected edges DELETED — RC pilot owns the reverse direction per F13
+  # bidirectional-cite rule. The deleted yaml lines were:
+  #   pl-005 → rc-NNN (RC-012/RC-008 — RC owns rc-012/rc-008 → pl-005)
+  #   pl-006 → rc-NNN (RC-002a — RC owns rc-002a → pl-006)
+  #   pl-008 → rc-NNN (Cat 0 catalog consumption — section-cite-only, no single-owner)
+  #   pl-010 → rc-NNN (RC-012 — RC owns rc-012 → pl-010)
+  #   pl-inv-003 → rc-NNN (detector ordering — section-cite-only, no single-owner)
+  #   pl-005 → rc-002a (RC owns rc-002a → pl-005)
+  #   pl-005 → rc-002b (RC owns rc-002b → pl-005 via discriminator routing)
+  - {from: pl-009, to: rc-013}                                    # RC-013 emission criterion
+  - {from: pl-009a, to: rc-error.cat-3}                           # Cat 3 fallback path
+  - {from: pl-017, to: rc-007}                                    # silent-hang routes through reconciliation (action-mapping dispatch)
+  - {from: pl-021a, to: rc-error.cat-0}                           # ntm-unavailable classifies as Cat 0 per RC §8.1
+  - {from: pl-025, to: rc-002}                                    # reconciliation idempotence per RC-002
+  - {from: pl-026, to: rc-007}                                    # reconciliation-routed crash paths (action-mapping dispatch)
 
   # ON (operator-nfr) — intentionally NOT in PL's depends-on per cycle-break
   # NOTE; nevertheless these are hard deps under the §2/§9 named-obligation

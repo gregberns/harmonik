@@ -1255,49 +1255,55 @@ edges:
   - {from: wm-008, to: cp-037}                                # operator-policy-gated default integration target — config-precedence is load-bearing here
   - {from: wm-024, to: cp-037}                                # operator-configurable cap is policy-precedence-driven
 
-  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
-  # RC (reconciliation) — in depends-on but not yet pilot-loaded.
-  - {from: wm-022a, to: "forward:rc-NNN"}                     # all-mechanical escalation routes to RC
-  - {from: wm-023, to: "forward:rc-NNN"}                      # escalate-to-human path per RC §4.5 RC-020
-  - {from: wm-024, to: "forward:rc-NNN"}                      # 3-cap escalation per RC-020
-  - {from: wm-034, to: "forward:rc-NNN"}                      # reopen-bead verdict per RC-020
-  - {from: wm-035, to: "forward:rc-NNN"}                      # rollback verdicts per RC-020
-  - {from: wm-036, to: "forward:rc-NNN"}                      # 7-value verdict enum per [reconciliation/schemas.md §6.1]
-  - {from: wm-038, to: "forward:rc-NNN"}                      # verdict-driven interrupt mutation per RC §4.5
-  - {from: wm-040, to: "forward:rc-NNN"}                      # verdict-driven interrupt clearance per RC §4.5
-  - {from: wm-inv-001, to: "forward:rc-NNN"}                  # Cat 6 lost-lease detector per RC §8.11
-  - {from: wm-inv-002, to: "forward:rc-NNN"}                  # Cat 6a multi-run-per-bead detector per RC schemas §6.3
-  - {from: wm-032, to: "forward:rc-NNN"}                      # branch reference in run's bead history per RC schemas §6.2
-  - {from: wm-033, to: "forward:rc-NNN"}                      # WM-003a routes to reconciliation Cat 3
+  # ───────────────────────── Cross-spec edges resolved by .39 follow-on pass ─────────────────────────
+  # RC cross-spec edges (resolved via .37 backfill; yaml-rewrite by .39 pass).
+  # 1 deferred edge (wm-032 → rc-NNN — section-cite-only, no single-owner) DELETED per .37 log.
+  - {from: wm-022a, to: rc-020}                               # all-mechanical escalation routes to RC verdict enum
+  - {from: wm-023, to: rc-020}                                # escalate-to-human path per RC §4.5 RC-020
+  - {from: wm-024, to: rc-020}                                # 3-cap escalation per RC-020
+  - {from: wm-034, to: rc-020}                                # reopen-bead verdict per RC-020
+  - {from: wm-035, to: rc-020}                                # rollback verdicts per RC-020
+  - {from: wm-036, to: rc-schema.verdict}                     # 7-value verdict enum per [reconciliation/schemas.md §6.1]
+  - {from: wm-038, to: rc-020}                                # verdict-driven interrupt mutation per RC §4.5
+  - {from: wm-040, to: rc-020}                                # verdict-driven interrupt clearance per RC §4.5
+  - {from: wm-inv-001, to: rc-error.cat-6a}                   # Cat 6 lost-lease detector per RC §8.11
+  - {from: wm-inv-002, to: rc-error.cat-6a}                   # Cat 6a multi-run-per-bead detector per RC schemas §6.3
+  - {from: wm-033, to: rc-error.cat-3}                        # WM-003a routes to reconciliation Cat 3
 
-  # ON (operator-nfr) — in depends-on but not yet pilot-loaded.
-  - {from: wm-008, to: "forward:on-NNN"}                      # operator-policy-gated default integration target
-  - {from: wm-019, to: "forward:on-NNN"}                      # operator-configured daemon-identity override
-  - {from: wm-024, to: "forward:on-NNN"}                      # operator-configurable cap [1,10]
-  - {from: wm-031, to: "forward:on-NNN"}                      # operator-cleanup workflows per ON §4.9
-  - {from: wm-036, to: "forward:on-014"}                      # ON-014 owns `--promote-to escalate-to-human` operator-command per ON §4.3 (R-WM-4 r1 patch)
-  - {from: wm-038, to: "forward:on-NNN"}                      # ON-013 operator-control event drivers
-  - {from: wm-040, to: "forward:on-NNN"}                      # operator_resuming clears interrupt_state
-  - {from: wm-009, to: "forward:on-NNN"}                      # ON-018 N-1 schema compatibility
-  - {from: wm-env-001, to: "forward:on-NNN"}                  # ON-018 + ON-027 inherited NFRs
+  # ON cross-spec edges (resolved via .30 backfill; yaml-rewrite by .39 pass).
+  # 4 deferred edges (wm-008/wm-019/wm-024/wm-031 → on-NNN — §-only, no single-owner)
+  # DELETED per .30 log.
+  - {from: wm-036, to: on-014}                                # ON-014 owns `--promote-to escalate-to-human` operator-command per ON §4.3 (R-WM-4 r1 patch)
+  - {from: wm-038, to: on-013}                                # ON-013 operator-control event drivers
+  - {from: wm-040, to: on-013}                                # operator_resuming clears interrupt_state
+  - {from: wm-009, to: on-018}                                # ON-018 N-1 schema compatibility
+  - {from: wm-env-001, to: on-018}                            # ON-018 inherited NFR (1 of 2; see next line)
+  - {from: wm-env-001, to: on-027}                            # ON-027 inherited NFR (2 of 2; multi-target split per .30)
 
-  # PL (process-lifecycle) — in depends-on but not yet pilot-loaded.
-  - {from: wm-013c, to: "forward:pl-NNN"}                     # PL-006 orphan-sweep mechanics
-  - {from: wm-033, to: "forward:pl-NNN"}                      # PL-006 startup orphan sweep
-  - {from: wm-env-002, to: "forward:pl-NNN"}                  # PL-021 ntm-version pin coordination per OQ-WM-015
+  # PL cross-spec edges (.23 backfill: 0/3 added — all 3 blocked).
+  # All 3 yaml lines DELETED per .23 findings:
+  #   wm-013c → pl-NNN (PL-006 already cites wm-013a as prereq — reciprocal-cite cycle)
+  #   wm-033 → pl-NNN  (PL-006 cites wm-033 as prereq — reciprocal-cite cycle)
+  #   wm-env-002 → pl-NNN (PL-021 ntm-version pin — OQ-coordination ambiguity, not a real edge)
 
-  # BI (beads-integration) — in depends-on but not yet pilot-loaded.
-  - {from: wm-001, to: "forward:bi-NNN"}                      # bead_id correlation field per BI-017, BI-018
-  - {from: wm-006, to: "forward:bi-NNN"}                      # parent-bead dependency-graph query per BI-014
-  - {from: wm-028, to: "forward:bi-NNN"}                      # bead_id propagation per BI-017, BI-018
-  - {from: wm-inv-002, to: "forward:bi-NNN"}                  # BI-010 terminal-write rule cite
+  # BI cross-spec edges (added by .39 follow-on pass — no prior backfill bead covered the
+  # WM→BI direction; targets are loadable per BI mnem-map).
+  - {from: wm-001, to: bi-017}                                # bead_id correlation field per BI-017 (1 of 2)
+  - {from: wm-001, to: bi-018}                                # bead_id correlation field per BI-018 (2 of 2; multi-target split)
+  - {from: wm-006, to: bi-014}                                # parent-bead dependency-graph query per BI-014
+  - {from: wm-028, to: bi-017}                                # bead_id propagation per BI-017 (1 of 2)
+  - {from: wm-028, to: bi-018}                                # bead_id propagation per BI-018 (2 of 2; multi-target split)
+  - {from: wm-inv-002, to: bi-010}                            # BI-010 terminal-write rule cite
 
 # Cross-spec mnem-map paths (CSV from prior pilot loads).
-# rc, on, pl, bi entries deliberately omitted — those specs are not yet loaded.
-# Forward-deferred edges to those specs use "forward:<prefix>-NNN" placeholders
-# above and are skipped at load time per F-pilot-EM-2 / Option B precedent.
+# rc, on, bi added by .39 follow-on pass after .16/.23/.30/.37 backfills.
+# pl deliberately omitted — all 3 WM→PL edges were blocked (reciprocal-cite cycles
+# + OQ-coordination ambiguity) and DELETED from the yaml per .23 findings.
 cross_specs:
   ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
   em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
   hc: docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
   cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
+  rc: docs/decompose-to-tasks/mnem-maps/rc-mnem-map.csv
+  on: docs/decompose-to-tasks/mnem-maps/on-mnem-map.csv
+  bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv

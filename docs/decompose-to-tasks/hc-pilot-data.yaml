@@ -860,17 +860,18 @@ edges:
   - {from: hc-033, to: ev-034}
   - {from: hc-033, to: ev-036}
 
-  # Forward-deferred PL edges (7; logged only, not loaded)
-  - {from: hc-007, to: "forward:pl-001"}
-  - {from: hc-016a, to: "forward:pl-003b"}
-  - {from: hc-016a, to: "forward:pl-009b"}
-  - {from: hc-044, to: "forward:pl-001"}
-  - {from: hc-044, to: "forward:pl-005"}
-  - {from: hc-044a, to: "forward:pl-001"}
-  - {from: hc-051, to: "forward:pl-006"}
+  # PL cross-spec edges (resolved via .23 backfill; yaml-rewrite by .39 follow-on pass)
+  - {from: hc-007, to: pl-001}
+  - {from: hc-016a, to: pl-003b}
+  - {from: hc-016a, to: pl-009b}
+  - {from: hc-044, to: pl-001}
+  - {from: hc-044, to: pl-005}
+  - {from: hc-044a, to: pl-001}
+  - {from: hc-051, to: pl-006}
 
 # Cross-spec mnem-map paths (CSV from prior pilot loads).
 cross_specs:
   ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
   em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
   ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
+  pl: docs/decompose-to-tasks/mnem-maps/pl-mnem-map.csv

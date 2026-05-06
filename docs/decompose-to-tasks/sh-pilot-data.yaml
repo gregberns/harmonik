@@ -1,8 +1,10 @@
-# SH pilot v0.1.0 — bead and edge data
+# SH pilot v0.1.1 — bead and edge data
 # Drafted 2026-05-05 against specs/scenario-harness.md v0.2.0 (status: reviewed).
 # Discipline version applied: v0.9 (HC r1 lockstep release; includes
 # §2.11(c.2) taxonomy-edge-direction anti-pattern note and §2.11(d.2)
-# co-owned event payload edge direction).
+# co-owned event payload edge direction). The post-r1 review wave
+# patched 2 missed type-cite edges (F-ref-SH-2, F-ref-SH-4) and
+# corrected the cross-spec tally arithmetic (38 → 42).
 #
 # SH is the scenario-harness spec — the end-to-end test rig that loads
 # declarative scenario files, drives the production daemon stack against
@@ -119,7 +121,7 @@ spec:
   title: "Scenario Harness spec — implementation"
   spec_path: specs/scenario-harness.md
   spec_version: "0.2.0"
-  pilot_version: "0.1.0"
+  pilot_version: "0.1.1"
 
 # Auto-applied to every non-epic bead in this file.
 default_labels:
@@ -732,7 +734,7 @@ edges:
   - {from: sh-error.taxonomy, to: ar-020}
 
   # ===========================================================================
-  # Cross-spec HC edges (12)
+  # Cross-spec HC edges (14)
   # ===========================================================================
   - {from: sh-008, to: hc-003}                        # [handler-contract.md §4.1.HC-003]
   - {from: sh-008, to: hc-inv-002}                    # [handler-contract.md §5.HC-INV-002]
@@ -747,14 +749,23 @@ edges:
   - {from: sh-027, to: hc-026a}                       # [handler-contract.md §4.6.HC-026a] heartbeat carve-out
   - {from: sh-inv-003, to: hc-035}                    # [handler-contract.md §4.8.HC-035]
   - {from: sh-inv-003, to: hc-043}                    # HC-043 hash check
+  # F-ref-SH-2 (v0.1.1 patch): sh-schema.fixture-setup body cites
+  # [handler-contract.md §6.1 LaunchSpec] for skill_search_paths field
+  # injection — type-cite per discipline §3.1 step 4.
+  - {from: sh-schema.fixture-setup, to: hc-schema.launch-spec}
 
   # ===========================================================================
-  # Cross-spec EM edges (3)
+  # Cross-spec EM edges (5)
   # ===========================================================================
   - {from: sh-021, to: em-005}                        # [execution-model.md §4.1 EM-005] Outcome.status enum
   - {from: sh-021, to: em-schema.outcome-status}      # term-use of OutcomeStatus enum
   - {from: sh-schema.outcome-expectation, to: em-005}
   - {from: sh-schema.outcome-expectation, to: em-schema.outcome-status}
+  # F-ref-SH-4 (v0.1.1 patch): sh-schema.scenario-file body cites
+  # workflow_id per [execution-model.md §4.1] — type-cite per discipline §3.1
+  # step 4 to em-schema.workflow (the EM-001 Workflow record that owns the
+  # workflow_id field).
+  - {from: sh-schema.scenario-file, to: em-schema.workflow}
 
   # ===========================================================================
   # Cross-spec EV edges (consumer-blocks-on-producer per §3.1 step 5)

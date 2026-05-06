@@ -2,7 +2,7 @@
 
 > Actionable work items. **[HANDOFF.md](HANDOFF.md) is authoritative for current session state and the next concrete steps.** This file tracks higher-level phase boundaries; it may lag.
 >
-> Last updated: 2026-05-05 — **Decompose-to-tasks COMPLETE for all 10 specs.** All 10 pilots loaded into Beads (~639 child beads, ~1700 edges, zero cycles corpus-wide). **Bootstrap-subset (`hk-ahvq.41`) synthesis complete: 291 beads labelled `scope:bootstrap`; consolidated doc at `docs/decompose-to-tasks/bootstrap-subset.md`. Parent `.41` stays open pending S07 scenario-harness spec (parallel work stream); S07 beads will join `scope:bootstrap` on load.** Phase-0 exit remaining: forward-deferred verification (`.39`, S07-caveated), milestone close (`.42`, gated on S07), discipline v0.10 patch batch. See HANDOFF.md.
+> Last updated: 2026-05-05 — **Decompose-to-tasks COMPLETE for all 11 specs incl. SH (loaded today).** All 11 pilots in Beads (~693 child beads, ~1830 edges, zero cycles corpus-wide). **Bootstrap-subset v0.2 synthesis complete: 345 beads labelled `scope:bootstrap` (291 prior + 54 SH); consolidated doc at `docs/decompose-to-tasks/bootstrap-subset.md` updated.** SH load surfaced 4 cycle-rejected intra-spec edges captured in `sh-load-findings.md` for v0.2.x pilot patch; all 42 cross-spec edges resolved (zero forward-deferred — first pilot in corpus to ship that). Parent `hk-ahvq.41` stays open pending Phase-0 exit gates `.39` (forward-zero verification, now uncaveated) + `.42` (milestone close) + `.47` (SH spec v0.2.1 patch). See HANDOFF.md.
 
 ## Spec corpus — Phase 0b (in progress)
 
@@ -65,8 +65,7 @@ All §12 revision-history rows added; all spec IDs FROZEN; net new IDs (EM-005a,
 
 ### Phase 1 implementation gate — pending
 
-- [ ] Loaded bead set → readiness workflow (per memory: loaded beads start in `parked`; readiness workflow promotes them to dispatchable).
-- [ ] Begin implementation.
+- [ ] Begin implementation. (Note: the prior "loaded bead set → readiness workflow" gate was withdrawn 2026-05-05 — loaded beads are agent-dispatchable directly. Operator queue-pause / stop controls remain per `docs/bootstrap.md §4`; those operate at the queue level, not on individual bead lifecycle.)
 
 ## Spec template + tooling (complete)
 

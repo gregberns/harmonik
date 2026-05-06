@@ -580,6 +580,7 @@ cross_specs:
   cp: docs/decompose-to-tasks/mnem-maps/cp-mnem-map.csv
   pl: docs/decompose-to-tasks/mnem-maps/pl-mnem-map.csv
   bi: docs/decompose-to-tasks/mnem-maps/bi-mnem-map.csv
+  rc: docs/decompose-to-tasks/mnem-maps/rc-mnem-map.csv
 
 epic:
   mnem: "on"
@@ -1671,22 +1672,20 @@ edges:
   - {from: on-030, to: bi-013}                                        # restart queries `br ready`
   - {from: on-030, to: bi-016}                                        # restart audit-log + in-progress reads
 
-  # ───────────────────────── Forward-deferred edges (logged only, not loaded) ─────────────────────────
-  # RC (reconciliation) — in ON's depends-on but not yet pilot-loaded.
-  - {from: on-003, to: "forward:rc-012"}                              # Cat 0 detector for startup prereq failures
-  - {from: on-009, to: "forward:rc-014"}                              # canceled-class reconciliation classification on aborted runs
-  - {from: on-010, to: "forward:rc-002"}                              # reconciliation carve-out per RC §4.1
-  - {from: on-014, to: "forward:rc-018"}                              # fallback-verdict / investigator-bound budget
-  - {from: on-014, to: "forward:rc-025"}                              # operator-override attaches to verdict execution
-  - {from: on-027.s2, to: "forward:rc-002"}                           # checkpoint reach is reconciliation idempotency boundary
-  - {from: on-028, to: "forward:rc-007"}                              # F-refs-ON-2: ON-028 cites [reconciliation/spec.md §4.2] for restart-recovery; load-bearing single-owner is RC-007 (action-mapping dispatch contract)
-  - {from: on-030, to: "forward:rc-008"}                              # reconciliation dispatch on restart
-  - {from: on-032, to: "forward:rc-018"}                              # wall-clock budget bound on investigator runs
+  # RC cross-spec edges (resolved via .37 backfill; yaml-rewrite by .39 follow-on pass).
+  # 3 cycle-rejected edges (on-014→rc-018, on-014→rc-025, on-032→rc-018) DELETED — RC pilot
+  # owns the reverse direction per F13 bidirectional-cite rule.
+  - {from: on-003, to: rc-012}                                        # Cat 0 detector for startup prereq failures
+  - {from: on-009, to: rc-014}                                        # canceled-class reconciliation classification on aborted runs
+  - {from: on-010, to: rc-002}                                        # reconciliation carve-out per RC §4.1
+  - {from: on-027.s2, to: rc-002}                                     # checkpoint reach is reconciliation idempotency boundary
+  - {from: on-028, to: rc-007}                                        # F-refs-ON-2: ON-028 cites [reconciliation/spec.md §4.2] for restart-recovery; load-bearing single-owner is RC-007 (action-mapping dispatch contract)
+  - {from: on-030, to: rc-008}                                        # reconciliation dispatch on restart
   # F-refs-ON-3 REMOVED: on-040 → forward:rc-014 (verified ON-040 spec body cites HC §4.6 / EV §8.3 / HC §7.1 / ON-037 / ON-029 only — no RC cite)
   # F-refs-ON-3 REMOVED: on-045 → forward:rc-018 (verified ON-045 spec body cites CP §4.5 / ON-042 only — no RC cite)
-  - {from: on-047, to: "forward:rc-018"}                              # 10 min wall-clock per-reconciliation-workflow default
-  - {from: on-048, to: "forward:rc-018"}                              # fallback-verdict path
-  - {from: on-inv-005, to: "forward:rc-008"}                          # reconciliation-bounded reconstruction predicate
+  - {from: on-047, to: rc-018}                                        # 10 min wall-clock per-reconciliation-workflow default
+  - {from: on-048, to: rc-018}                                        # fallback-verdict path
+  - {from: on-inv-005, to: rc-008}                                    # reconciliation-bounded reconstruction predicate
 
 # End of edges.
 

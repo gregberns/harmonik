@@ -141,3 +141,6 @@ ev-test.overflow-harness,hk-hqwn.61,Bus-overflow scenario harness for non-blocki
 ev-test.uuidv7-monotonicity-harness,hk-hqwn.62,UUIDv7 monotonicity stress test (intra-process + cross-restart)
 ev-test.taxonomy-lint,hk-hqwn.63,§8 taxonomy lint (durability class + tags + at-least-one-consumer-in-sibling-spec)
 ev-events.taxonomy,hk-hqwn.59,Event taxonomy umbrella (§8)
+ev-events.control-points-registration-started,hk-hqwn.59.79,Event row: control_points_registration_started (§8.2.10)
+ev-events.verdict-envelope-mismatch,hk-hqwn.59.80,Event row: verdict_envelope_mismatch (§8.2.11)
+ev-events.policy-expression-exceeded-cost,hk-hqwn.59.81,Event row: policy_expression_exceeded_cost (§8.2.12)

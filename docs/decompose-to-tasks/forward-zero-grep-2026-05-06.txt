@@ -1,0 +1,29 @@
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1244:  - {from: cp-034b, to: "forward:ev-events.policy-expression-exceeded-cost"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1245:  - {from: cp-041, to: "forward:ev-events.verdict-envelope-mismatch"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/cp-pilot-data.yaml:1246:  - {from: cp-043, to: "forward:ev-events.control-points-registration-started"}
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1208:  - {from: pl-002, to: "forward:on-008"}                          # exit code 5 mapping in ON §8
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1209:  - {from: pl-003, to: "forward:on-NNN"}                          # exit code 6 mapping
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1210:  - {from: pl-004, to: "forward:on-020a"}                         # daemon.upgrading marker content owner
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1211:  - {from: pl-004, to: "forward:on-030a"}                         # daemon.state marker content owner
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1212:  - {from: pl-005, to: "forward:on-020a"}                         # step 8a marker semantics
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1213:  - {from: pl-005, to: "forward:on-030a"}                         # step 8a state marker
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1214:  - {from: pl-008, to: "forward:on-003"}                          # ON-003 catalog obligation
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1215:  - {from: pl-008a, to: "forward:on-NNN"}                         # ON §8 taxonomy is the source of consumed codes
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1216:  - {from: pl-009, to: "forward:on-031"}                          # RTO measurement endpoint
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1217:  - {from: pl-009, to: "forward:on-033"}                          # monotonic-companion fields
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1218:  - {from: pl-010, to: "forward:on-002"}                          # `harmonik status` reports degraded prerequisite
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1219:  - {from: pl-010, to: "forward:on-035"}                          # corrupt-marker structured-log warning
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1220:  - {from: pl-011, to: "forward:on-027"}                          # graceful-shutdown cross-subsystem ordering
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1221:  - {from: pl-011, to: "forward:on-029"}                          # drain timeout
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1222:  - {from: pl-011a, to: "forward:on-033"}                         # monotonic-companion fields
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1223:  - {from: pl-014a, to: "forward:on-041"}                         # cross-daemon machine-ceiling coordination
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1224:  - {from: pl-018a, to: "forward:on-NNN"}                         # ON §8 code 19 runtime-panic
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1225:  - {from: pl-021a, to: "forward:on-017"}                         # external-inputs protocol
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1226:  - {from: pl-027, to: "forward:on-020"}                          # operator-facing upgrade contract
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1227:  - {from: pl-027, to: "forward:on-020a"}                         # marker file content
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1228:  - {from: pl-028, to: "forward:on-002"}                          # status reporting beyond the enum
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1229:  - {from: pl-028, to: "forward:on-008"}                          # operator-control state machine semantics
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1230:  - {from: pl-028, to: "forward:on-014"}                          # operator commands
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1231:  - {from: pl-028, to: "forward:on-041"}                          # multi-daemon coordination
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1232:  - {from: pl-env-001, to: "forward:on-NNN"}                      # inherited ON-002 / ON-020 / ON-027 / ON-031 / ON-041
+/Users/gb/github/harmonik/docs/decompose-to-tasks/pl-pilot-data.yaml:1233:  - {from: pl-inv-001, to: "forward:on-NNN"}                      # ON §4.3 operator-control state machine span

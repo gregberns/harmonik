@@ -1241,9 +1241,9 @@ edges:
   # §3.2 violation (EV is in CP's depends-on).
   #
   # EV missing-row forward deferrals (F-pilot-CP-3 — these events appear in CP §6.5 but are absent from EV's bead set)
-  - {from: cp-034b, to: "forward:ev-events.policy-expression-exceeded-cost"}
-  - {from: cp-041, to: "forward:ev-events.verdict-envelope-mismatch"}
-  - {from: cp-043, to: "forward:ev-events.control-points-registration-started"}
+  - {from: cp-034b, to: ev-events.policy-expression-exceeded-cost}
+  - {from: cp-041, to: ev-events.verdict-envelope-mismatch}
+  - {from: cp-043, to: ev-events.control-points-registration-started}
 
 # Cross-spec mnem-map paths (CSV from prior pilot loads).
 cross_specs:

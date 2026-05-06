@@ -1,10 +1,28 @@
 # Harmonik Tasks
 
-> Actionable work items. **[HANDOFF.md](HANDOFF.md) is authoritative for current session state and the next concrete steps.** This file tracks higher-level phase boundaries; it may lag.
+> **Phase 0: CLOSED 2026-05-06.** See [`docs/foundation/phase-0-milestone-close.md`](docs/foundation/phase-0-milestone-close.md). The list under "Phase 0 historical" below is preserved for reference; do not re-action items there. Active task surface is the bead corpus: `br ready -l scope:bootstrap` returns claimable work.
 >
-> Last updated: 2026-05-05 — **Decompose-to-tasks COMPLETE for all 11 specs incl. SH (loaded today).** All 11 pilots in Beads (~693 child beads, ~1830 edges, zero cycles corpus-wide). **Bootstrap-subset v0.2 synthesis complete: 345 beads labelled `scope:bootstrap` (291 prior + 54 SH); consolidated doc at `docs/decompose-to-tasks/bootstrap-subset.md` updated.** SH load surfaced 4 cycle-rejected intra-spec edges captured in `sh-load-findings.md` for v0.2.x pilot patch; all 42 cross-spec edges resolved (zero forward-deferred — first pilot in corpus to ship that). Parent `hk-ahvq.41` stays open pending Phase-0 exit gates `.39` (forward-zero verification, now uncaveated) + `.42` (milestone close) + `.47` (SH spec v0.2.1 patch). See HANDOFF.md.
+> **[HANDOFF.md](HANDOFF.md) remains authoritative for per-session current state and the next concrete steps.** This file tracks phase boundaries.
+>
+> Last updated: 2026-05-06 — Phase 0 closed: 11 reviewed specs, 905 live beads (3,589 edges, zero cycles), 376 `scope:bootstrap` beads (348 spec-corpus + 28 meta), discipline v0.12, all readiness gaps closed in beads. Phase 1 implementation gate **lifted**; agents claim work directly.
 
-## Spec corpus — Phase 0b (in progress)
+## Phase 1 (implementation) — active
+
+Agents pull from `br ready -l scope:bootstrap`. Suggested ordering per the milestone-close doc §"What unblocks now":
+
+1. `hk-pvcs` — build/test scaffolding (Makefile + golangci + lefthook + coverage + BUILDING.md). 8 beads. **Start here.**
+2. `hk-jhob.1` — agent-reviewer skill + JSON-verdict schema v1.
+3. `hk-jhob.2` — beads-cli skill.
+4. `hk-kle6.1` — trivial-slice paper walkthrough validation artifact.
+5. `hk-kle6.2` — corpus label reconciliation (apply `post-mvh` / `scope:bootstrap` to ~520 untagged beads).
+6. PL cluster A (37 beads) → WM cluster B-WM (45) → EM cluster B-EM+F (65) for the trivial-slice happy-path.
+7. Second cycle: HC cluster C (46 beads) + `hk-ahvq.48` twin-binary mini-epic (10 beads) → first SH-driven scenario assertions.
+
+## Phase 0 historical — closed 2026-05-06
+
+The lists in this section captured Phase-0 in-flight work and are kept verbatim as a historical record of how the plan was refined and the spec corpus reviewed. Every item is closed; the milestone-close doc is the authoritative summary.
+
+## Spec corpus — Phase 0b (closed)
 
 ### Batch 1 — REVIEWED (patch-bumped by citation cleanup)
 
@@ -63,9 +81,9 @@ All §12 revision-history rows added; all spec IDs FROZEN; net new IDs (EM-005a,
 
 - [ ] **Ingestion-validation-requirements stub doc** (proposed mid-session 2026-04-27 but not written). Two-paragraph capture of "what harmonik's runtime task-ingestion validation will do." Cheap to write later; defer until nearer to implementation.
 
-### Phase 1 implementation gate — pending
+### Phase 1 implementation gate — LIFTED 2026-05-06
 
-- [ ] Begin implementation. (Note: the prior "loaded bead set → readiness workflow" gate was withdrawn 2026-05-05 — loaded beads are agent-dispatchable directly. Operator queue-pause / stop controls remain per `docs/bootstrap.md §4`; those operate at the queue level, not on individual bead lifecycle.)
+- [x] **Begin implementation.** Gate lifted at Phase-0 milestone close (`hk-ahvq.42`). The prior "loaded bead set → readiness workflow" gate was withdrawn 2026-05-05; loaded beads are agent-dispatchable directly. Operator queue-pause / stop controls remain per `docs/bootstrap.md §4`; those operate at the queue level, not on individual bead lifecycle. See [`docs/foundation/phase-0-milestone-close.md`](docs/foundation/phase-0-milestone-close.md) §"What unblocks now" for the suggested first-claim ordering.
 
 ## Spec template + tooling (complete)
 
@@ -95,20 +113,18 @@ All §12 revision-history rows added; all spec IDs FROZEN; net new IDs (EM-005a,
 
 Round 2 landed 2026-04-24. (Prior content preserved — see git history for the 36-finding delta.)
 
-## Phase 0: Refine the Plan (current)
+## Phase 0: Refine the Plan — CLOSED 2026-05-06
 
-The knowledge base captures decisions made so far, but several decisions are still open and several subsystems are out of date with the latest framing. Goal of this phase: get to a plan firm enough that bootstrap implementation can start.
+The knowledge base captured the open Phase-0 decisions; spec drafting + review + decomposition + bootstrap-labelling absorbed each one. The bullets below are kept as a historical inventory of the decision surface that Phase 0 closed against; the authoritative outcome is the 11-spec corpus + bootstrap subset + the closed-out readiness gaps captured in [`docs/foundation/phase-0-milestone-close.md`](docs/foundation/phase-0-milestone-close.md).
 
-### A. User decisions on bootstrap.md
+### A. User decisions on bootstrap.md (resolved through specs + bootstrap subset)
 
-[docs/bootstrap.md](docs/bootstrap.md) has explicit "Decisions needed" sections. Each one is a blocker for the next phase.
-
-- [ ] **§2 MVH cut.** Is the proposed minimum viable harmonik the right scope?
-- [ ] **§3 Workflow lifecycle.** Human gates, revision_loop retry cap, cycle granularity.
-- [ ] **§4 Operator controls.** Stop default, queue compat contract, control interface, config scope.
-- [ ] **§5 Build order.** Orchestrator before policy engine? Scenario stub timing? Twin format day 1?
-- [ ] **§6 Risk specifics.** Regression baseline shape? Human review cadence?
+- [x] **§2 MVH cut.** Resolved via `bootstrap-subset.md` §1 working definition + the 376-bead `scope:bootstrap` subset.
+- [x] **§3 Workflow lifecycle.** Resolved via EM v0.3.3 (Outcome.kind discriminator + revision-loop semantics) + the §3 open question on retry cap explicitly deferred (conservative default suffices at MVH).
+- [x] **§4 Operator controls.** Resolved via ON v0.4.1 (queue-level pause/stop FSM) + the parked-state-rule withdrawal (Z.2): operator safety at queue level, not bead level.
+- [x] **§5 Build order.** Resolved via the bootstrap-subset cluster ordering (PL → WM/EM → HC + twin) and the milestone-close §"What unblocks now" sequence.
+- [x] **§6 Risk specifics.** Resolved via SH (S07) regression-baseline shape + the agent-reviewer-every-commit decision; first-cycle review cadence is local-pass-only per Z.1.
 
 ### B. Refresh subsystems still on pre-2026-04-19 framing
 
-(See prior TASKS.md entries — not updated this session.)
+- [x] Implicitly absorbed by the 11-spec foundation corpus authoring + R1/R2 review cycles. No subsystem doc remains on pre-2026-04-19 framing as a normative reference; older docs in `docs/` are superseded by the `specs/` corpus.

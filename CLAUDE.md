@@ -52,7 +52,6 @@ Don't skip the planning process. Measure twice, cut once.
 
 ## Don't
 
-- Don't write code yet. Phase 0 (plan refinement → spec drafting) is active. Code begins after the bootstrap subset of tasks is identified.
 - Don't reopen locked-in decisions without explicit user request.
 - Don't add abstraction layers the user hasn't asked for.
 - Don't skip the AGENT_INDEX → STATUS → TASKS reading order when picking up the project.

@@ -165,3 +165,85 @@ func TestHarmonikWriteStatusMarshalText(t *testing.T) {
 		t.Error("MarshalText accepted invalid value")
 	}
 }
+
+// TestHarmonikWriteStatusSubsetInvariant asserts that every HarmonikWriteStatus
+// value is a valid CoarseStatus (BI-007: write surface is a strict subset of the
+// read surface).  If either enum is mutated without updating the other, this test
+// will fail at compile / test time, surfacing the drift.
+func TestHarmonikWriteStatusSubsetInvariant(t *testing.T) {
+	t.Parallel()
+
+	writeValues := []HarmonikWriteStatus{
+		HarmonikWriteStatusOpen,
+		HarmonikWriteStatusInProgress,
+		HarmonikWriteStatusClosed,
+		HarmonikWriteStatusDeferred,
+		HarmonikWriteStatusTombstone,
+	}
+	for _, s := range writeValues {
+		cs := s.CoarseStatus()
+		if !cs.Valid() {
+			t.Errorf("HarmonikWriteStatus %q converted to CoarseStatus %q which is not valid; subset invariant broken", s, cs)
+		}
+	}
+}
+
+// TestHarmonikWriteStatusRoundTrip asserts that every HarmonikWriteStatus value
+// survives a round-trip through CoarseStatus and back via AsHarmonikWriteStatus.
+func TestHarmonikWriteStatusRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	writeValues := []HarmonikWriteStatus{
+		HarmonikWriteStatusOpen,
+		HarmonikWriteStatusInProgress,
+		HarmonikWriteStatusClosed,
+		HarmonikWriteStatusDeferred,
+		HarmonikWriteStatusTombstone,
+	}
+	for _, s := range writeValues {
+		got, ok := s.CoarseStatus().AsHarmonikWriteStatus()
+		if !ok {
+			t.Errorf("AsHarmonikWriteStatus(%q) returned false; expected true", s)
+			continue
+		}
+		if got != s {
+			t.Errorf("AsHarmonikWriteStatus(%q) = %q, want %q", s, got, s)
+		}
+	}
+}
+
+// TestCoarseStatusAsHarmonikWriteStatusRejectNonSubset asserts that read-only
+// CoarseStatus values (blocked, draft, pinned) are rejected by AsHarmonikWriteStatus.
+func TestCoarseStatusAsHarmonikWriteStatusRejectNonSubset(t *testing.T) {
+	t.Parallel()
+
+	readOnly := []CoarseStatus{
+		CoarseStatusBlocked,
+		CoarseStatusDraft,
+		CoarseStatusPinned,
+	}
+	for _, c := range readOnly {
+		got, ok := c.AsHarmonikWriteStatus()
+		if ok {
+			t.Errorf("AsHarmonikWriteStatus(%q) returned (%q, true); expected (\"\", false)", c, got)
+		}
+		if got != "" {
+			t.Errorf("AsHarmonikWriteStatus(%q) returned non-empty zero value %q", c, got)
+		}
+	}
+}
+
+// TestCoarseStatusAsHarmonikWriteStatusRejectUnknown asserts that an unknown
+// CoarseStatus literal is rejected by AsHarmonikWriteStatus.
+func TestCoarseStatusAsHarmonikWriteStatusRejectUnknown(t *testing.T) {
+	t.Parallel()
+
+	unknown := CoarseStatus("something_future_beads_adds")
+	got, ok := unknown.AsHarmonikWriteStatus()
+	if ok {
+		t.Errorf("AsHarmonikWriteStatus(%q) returned (%q, true); expected (\"\", false)", unknown, got)
+	}
+	if got != "" {
+		t.Errorf("AsHarmonikWriteStatus(%q) returned non-empty zero value %q", unknown, got)
+	}
+}

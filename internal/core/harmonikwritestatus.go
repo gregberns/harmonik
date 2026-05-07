@@ -45,3 +45,22 @@ func (s *HarmonikWriteStatus) UnmarshalText(text []byte) error {
 	*s = v
 	return nil
 }
+
+// CoarseStatus returns the CoarseStatus value corresponding to s.
+// Every HarmonikWriteStatus value is a member of CoarseStatus per BI-007 (the
+// write surface is a strict subset of the read surface).
+func (s HarmonikWriteStatus) CoarseStatus() CoarseStatus {
+	return CoarseStatus(string(s))
+}
+
+// AsHarmonikWriteStatus returns the HarmonikWriteStatus equivalent of c if c is
+// one of the five write-surface values, plus true; otherwise the zero value
+// and false. Use this when narrowing a Beads-sourced read value to a value
+// harmonik MAY write back per BI-007.
+func (c CoarseStatus) AsHarmonikWriteStatus() (HarmonikWriteStatus, bool) {
+	w := HarmonikWriteStatus(string(c))
+	if !w.Valid() {
+		return "", false
+	}
+	return w, true
+}

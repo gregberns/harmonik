@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# Re-exec under bash 4+ if the default `bash` on PATH is too old (macOS ships 3.2,
+# which lacks `declare -A`). Homebrew installs bash 4+ to /opt/homebrew/bin/bash.
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+    for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$candidate" ]]; then
+            exec "$candidate" "$0" "$@"
+        fi
+    done
+    echo "coverage-gate.sh requires bash >= 4 (associative arrays). Found: ${BASH_VERSION:-unknown}." >&2
+    echo "Install via Homebrew: brew install bash" >&2
+    exit 1
+fi
+
 # coverage-gate.sh — Harmonik coverage enforcement gate (hk-pvcs.5)
 #
 # RULES (all locked, per STATUS.md "Decisions in force"):
@@ -168,6 +181,20 @@ CORE_THRESHOLD=95.0
 FLOOR_THRESHOLD=90.0
 REGRESSION_MAX=0.3
 
+# Packages exempt from FLOOR/CORE thresholds. Test infrastructure is the
+# canonical case: internal/testhelpers exists to be invoked from other
+# packages' tests; covering it standalone is a category error.
+EXCLUDED_PACKAGES=(
+    "${MODULE_PREFIX}/internal/testhelpers"
+)
+is_excluded() {
+    local pkg="$1"
+    for excl in "${EXCLUDED_PACKAGES[@]}"; do
+        [[ "$pkg" == "$excl" ]] && return 0
+    done
+    return 1
+}
+
 # awk helper: returns 1 if $1 < $2 (floating point)
 bc_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a < b)}'; }
 bc_sub() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.4f", a - b}'; }
@@ -175,6 +202,7 @@ bc_sub() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.4f", a - b}'; }
 for pkg in "${!PKG_COVERAGE[@]}"; do
     pct="${PKG_COVERAGE[${pkg}]}"
     [[ "${pct}" == "SKIP" ]] && continue
+    is_excluded "${pkg}" && continue
 
     # Determine if this is an internal package
     is_internal=0

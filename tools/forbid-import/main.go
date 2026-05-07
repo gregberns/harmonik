@@ -138,8 +138,8 @@ func isAllowed(imp string, allowedModules []string) bool {
 
 // goListPackage mirrors the subset of "go list -json" output we need.
 type goListPackage struct {
-	ImportPath string
-	Imports    []string
+	ImportPath  string
+	Imports     []string
 	TestImports []string
 }
 

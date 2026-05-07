@@ -11,7 +11,7 @@ linters:
     - staticcheck     # SA/ST/S correctness + simplification
     - ineffassign     # writes with no read
     - unused          # dead code (replaces deadcode/structcheck/varcheck)
-    - gosimple        # subsumed by staticcheck but explicit is clearer
+    # gosimple removed: merged into `staticcheck` in golangci-lint v2 (no longer a standalone linter name)
     - errorlint       # %w wrapping + errors.Is/As correctness
     - nilerr          # returning nil when err is non-nil
     - copyloopvar     # Go 1.22+ loop var capture (redundant now, belt+suspenders)
@@ -38,6 +38,15 @@ linters:
     - gosec           # security smells (advisory; see below)
     - forbidigo       # ban specific calls (see config)
     - depguard        # import-graph + component-layer rules (subsystem-organization.md)
+  exclusions:
+    rules:
+      # tools/ holds one-shot CLI utilities that print to stdout and run synchronously
+      # without a broader cancellation context. forbidigo (fmt.Print*) and noctx
+      # (exec.Command) bans target daemon/library code, not CLI tools.
+      - path: ^tools/
+        linters:
+          - forbidigo
+          - noctx
 linters-settings:
   errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
   revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
@@ -188,4 +197,4 @@ linters-settings:
     default-signifies-exhaustive: true
   testifylint:
     enable-all: true
-issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: false }
+issues: { max-issues-per-linter: 0, max-same-issues: 0 }

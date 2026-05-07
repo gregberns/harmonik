@@ -1,0 +1,20 @@
+# coverage.baseline — Harmonik per-package coverage baseline (hk-pvcs.5)
+#
+# FORMAT: one entry per line
+#   <fully-qualified-package-path> <coverage-pct>
+#
+# Example (once packages land):
+#   github.com/gregberns/harmonik/internal/core/scheduler 97.3
+#   github.com/gregberns/harmonik/internal/eventbus       91.5
+#
+# POLICY (quality-checks.md §Agent-enforceability):
+#   This is a "protected rule file". Any commit that edits this file MUST:
+#   1. Cite a kerf codename in the commit body explaining why the baseline changed.
+#   2. Be a single-concern commit (baseline bump OR code change, not both).
+#   3. Trigger the `rule-change` CI surface (watches this path).
+#   Agents MUST bump the baseline when coverage genuinely improves (ratchet up);
+#   lowering an entry or deleting it is treated as a rule relaxation and requires
+#   the same single-concern commit protocol.
+#
+# CURRENT STATE: no Go packages exist yet; baseline is empty.
+# The regression gate is vacuously satisfied when no entries are present.

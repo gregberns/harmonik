@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v3 2026-05-07 main -->
+<!-- PP-TRIAL:v3 2026-05-06 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -36,7 +36,9 @@ Reviewer brief MUST encode two clauses every time, verbatim:
 Path-discrepancy resolution: when a bead body and a referenced doc disagree
 on a path or identifier, the bead body wins. Implementer patches the
 inconsistent file in the same commit and surfaces the still-stale doc to a
-follow-up bead.
+follow-up bead. EXCEPTION — for *spec content* (e.g., enum values, regex
+shapes), the spec wins per CLAUDE.md ("specs are normative"); bead body
+gets the follow-up note.
 
 Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
 meets bead acceptance, you may merge with a closure note explaining the
@@ -61,13 +63,19 @@ Merge dance — RUN FROM THE MAIN REPO DIR, NOT THE WORKTREE. The recurring
 failure mode: `cd worktree && rebase && merge` runs the merge inside the
 worktree, making it a no-op (merging branch into itself); push reports
 "Everything up-to-date"; worktree-remove succeeds; `branch -d` and
-`br close` then fail with "cwd no longer exists". Correct chain:
+`br close` then fail with "cwd no longer exists". Correct chain — split
+into TWO Bash invocations so the cwd doesn't leak across the boundary:
 
+    # invocation 1 (cwd = worktree):
     cd <worktree-path> && git fetch origin main && git rebase origin/main
+
+    # invocation 2 (cwd = main repo, freshly cd'd):
     cd /Users/gb/github/harmonik && git merge --ff-only <branch>
     git push origin main
     git worktree unlock <worktree-path>
-    git worktree remove <worktree-path>
+    git worktree remove --force <worktree-path>   # --force needed: implementers
+                                                  # symlink .tools/ into worktrees,
+                                                  # which leaves untracked entries
     git branch -d <branch>
     br close <bead-id> -r "<closure note>"
 
@@ -84,109 +92,56 @@ judge whether to continue or hand off cleanly.
 # Session Handoff
 
 ## State
-Clean. Main at `c00253e` and pushed. **8-bead batch landed** plus three
-orchestrator-tier infrastructure commits.
+Clean. Main at `99ccdf6` and pushed. **8-bead enum batch landed in one cycle**,
+no fix iterations needed — process is humming.
 
 Beads closed this session:
-- `hk-pvcs.8` BUILDING.md (closes the `hk-pvcs` build-scaffolding epic)
-- `hk-b3f.66` RunID, `.67` StateID, `.68` TransitionID — UUID-backed
-  named types in `internal/core/`, with `String/MarshalText/UnmarshalText`
-- `hk-b3f.69` NodeID, `.70` BeadID — String-backed named types
-- `hk-b3f.71` CommitRange — named struct (FirstCommitSHA, LastCommitSHA)
-- `hk-b3f.80` NodeType — typed-string enum (5 spec-exact values, Valid()
-  predicate, MarshalText/UnmarshalText reject unknowns)
+- `hk-872.46` CoarseStatus, `.47` HarmonikWriteStatus, `.49` EdgeKind, `.52` TerminalOp
+- `hk-b3f.81` IdempotencyClass, `.82` TransitionKind, `.83` OutcomeStatus
+- `hk-zs0.54` AgentType (regex-validated typed string + 4 reserved MVH IDs)
 
-Orchestrator-tier infrastructure commits (see `git log` between
-`6fcdfaf..c00253e`):
-- `d4b47c0` build: repair check gauntlet — drop `gosimple` (subsumed
-  into `staticcheck` in golangci-lint v2), exempt `tools/` from
-  forbidigo+noctx (CLI tools print to stdout / call exec.Command),
-  gofumpt-align goListPackage struct, bash-4 re-exec preamble for
-  coverage-gate.sh (macOS ships bash 3.2; lacks `declare -A`), exempt
-  `internal/testhelpers` from FLOOR coverage gate (test infra).
-- `e5e1616` build: add `allow: [$gostd, github.com/google/uuid]` to the
-  depguard `core` rule. v2 deny-only rules implicitly default to
-  stdlib-only and blocked uuid until this landed.
-- `0b9b453` build: migrate `.golangci.yml` to v2 schema (`linters-settings:`
-  → `linters.settings:`; `disable-all: true` → `default: none`; forbidigo
-  `p:` → `pattern:`; add `internal/testhelpers/` to forbidigo exclusions);
-  cover StateID/TransitionID with package-internal tests (95% CORE gate
-  was firing once methods landed). Verified with `golangci-lint config
-  verify`.
+All eight follow the NodeType pattern (typed string + `Valid()` + `Marshal/UnmarshalText`),
+package `core`, 100% coverage on `internal/core`, full `make check` green on integrated main.
 
-**Why all this gauntlet repair was needed.** Despite the prior session
-closing `hk-pvcs.{1..7}` as "CLEAN", `make check` was actually red on
-clean `main` for five independent reasons listed above. Most likely the
-prior session ran `check-fast` or stopped at the first red and didn't
-notice downstream gates. Implementer #1 surfaced this by running `make
-check` honestly and reporting the failures rather than "passing". The
-RunID implementer (Sonnet) tried to fix all of them in-bead — overscoped
-but with a correct read of the situation. Their fixes were re-derived
-orchestrator-side and landed as separate infrastructure commits; their
-overlapping diffs were dropped during rebase via `git checkout --ours`.
+## Notes from this batch
+- **CoarseStatus bead-body vs spec discrepancy.** Bead body listed
+  `{parked, cancelled}`; the spec at `specs/beads-integration.md` §6.1
+  has `{draft, pinned}`. Implementer correctly took the spec (CLAUDE.md:
+  specs are normative). Closure note records the discrepancy. The
+  PRECEDENCE-resolution clause in the directives now codifies this:
+  spec wins for spec content; bead body wins for paths/identifiers.
+- **Worktree `.tools/` symlinks.** Every implementer this batch had to
+  symlink `/Users/gb/github/harmonik/.tools/` into their worktree to make
+  `make check` work — fresh worktrees don't inherit the pinned tool dir.
+  That leaves an untracked entry, so `git worktree remove` needs `--force`.
+  Directive updated to use `--force` by default and to split the merge
+  dance into two Bash invocations (orchestrator hit the cwd-leak trap once
+  and recovered cleanly; the two-invocation pattern prevents it).
 
-20 ready in `br ready -l scope:bootstrap` (next cluster: hk-872 enums,
-hk-b3f.81/.82, hk-zs0.54).
+## Next step — §6.1 record-type batch (smaller, batches of 3)
+The enums just landed compose into the §6.1 record types. Suggested first
+batch (all parents are now unblocked):
+1. `hk-872.48` DependencyEdge (composes EdgeKind)
+2. `hk-b3f.74` Edge record (composes EdgeKind)
+3. `hk-b3f.76` State record
 
-## Lessons for the next batch — encode in implementer briefs
+Records are denser than enums (multiple fields, cross-references to other
+records, validators). The prior HANDOFF flagged them for "tighter review
+batches of 3" — keep that. Use the same implementer/reviewer template:
+NodeType for the typed-string shape, but for the record shape itself
+follow `internal/core/commitrange.go` (the only existing struct in core).
 
-1. **internal/core test files use `package core`, not `package core_test`.**
-   The depguard `core` rule denies `github.com/gregberns/harmonik/internal/`
-   imports from `internal/core/**` files. External-test convention
-   (`package core_test`) requires importing `internal/core` to reach the
-   exported API, which trips the rule. Internal-test convention (the
-   stateid_test.go / transitionid_test.go pattern) avoids the import
-   entirely.
-2. **Each new public exported method needs a test or the 95% CORE gate
-   fires.** NodeType's `MarshalText` slipped through the implementer's
-   table-driven `UnmarshalText` test; orchestrator added a one-function
-   test inline-amend. Brief should say: "tests must cover every exported
-   method body, not just the one named in the bead."
-3. **The first `internal/core` file in any batch carries the package doc
-   comment** (`// Package core ...` above `package core`). Subsequent
-   files in the same package don't need their own. revive's
-   `package-comments` rule fires on whichever file is alphabetically
-   first in the package without one — and on a clean main, packages are
-   often empty before the first bead lands. Briefs: "if your file might
-   be the first in `internal/core/`, include the package doc comment."
+After that initial 3, the next records would be `hk-b3f.78` Checkpoint,
+`hk-hqwn.54` TraceContext, then Run/Transition/Outcome/Workflow/Node.
 
-## Next step — bulk work
-Process is now nailed AND the gauntlet is solid. Switch to ~8-concurrent
-and continue eating the ready corpus.
-
-Suggested next batch (mechanical enums + a typed alias):
-1. `hk-872.46` CoarseStatus, `.47` HarmonikWriteStatus, `.49` EdgeKind,
-   `.52` TerminalOp — 4 enums (typed-string + Valid() + Marshal/Unmarshal)
-2. `hk-b3f.81` IdempotencyClass, `.82` TransitionKind — 2 more enums
-3. `hk-zs0.54` agent_type identifier regex — typed string with regex
-
-That's ~7 beads, all matching the NodeType pattern. The next "bigger"
-batch would be the §6.1 record types (Workflow, Node, Edge, Run, State,
-Transition, Checkpoint, Outcome) which compose the typed aliases just
-landed; those are larger and warrant tighter review batches of 3.
-
-Briefs: reuse the implementer + reviewer templates from this session
-(see git log on `worktree-agent-*` commits and closure notes on the
-8 closed beads). Always encode the two reviewer clauses verbatim. Add
-the three "Lessons for the next batch" items above to implementer briefs
-for all internal/core work going forward.
-
-## If something changes
-- BLOCKER persisting through 4 review rounds → tag `needs-clarification`,
-  move on. Do NOT block on the user.
-- `br ready -l scope:bootstrap` returns 0 → claim from open epic
-  children directly via `br show <id>` (parent-child filter quirk;
-  not a real blocker).
-- `make check` fails on a clean main → trust the failure; the gauntlet
-  is now honest. Triage which gate, fix the root cause, commit as an
-  orchestrator-tier infrastructure commit before resuming bead merges.
-- Context past ~80% → write fresh HANDOFF, `/clear`, `/session-resume`.
+`br ready -l scope:bootstrap` shows 20 ready (closing 8 unblocked 8 more).
 
 ## Files to open first
-1. `git log --oneline -12` (recent infrastructure + bead commits)
-2. `br ready -l scope:bootstrap` (claimable corpus; should still show ~20)
-3. Bead body for the next target via `br show <id>` — only consult the
-   docs the bead cites.
+1. `git log --oneline -12` — the 8 enum commits + lineage
+2. `internal/core/commitrange.go` — the only existing struct shape
+3. `internal/core/nodetype.go` — pattern for typed identifiers (still relevant)
+4. `br ready -l scope:bootstrap` — claimable corpus
+5. Bead body for the chosen target via `br show <id>` — only consult docs the bead cites
 
 ## Blocking question for user
 None.

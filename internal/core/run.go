@@ -21,10 +21,9 @@ type Run struct {
 	// (execution-model.md §6.1 Run.workflow_id; UUID-backed named type).
 	WorkflowID WorkflowID
 
-	// WorkflowVersion is the pinned version of the workflow at dispatch time.
-	// A WorkflowVersion typed alias is deferred per the typed-alias-deferral rule —
-	// see hk-b3f.91 for the WorkflowVersion typed-alias follow-up (execution-model.md §6.1).
-	WorkflowVersion string
+	// WorkflowVersion is the pinned version of the workflow at dispatch time
+	// (execution-model.md §6.1 Run.workflow_version; string-backed, semver-ish).
+	WorkflowVersion WorkflowVersion
 
 	// Input is the workspace reference for this run (workspace-model.md §4.1).
 	// A WorkspaceRef typed alias is deferred per the typed-alias-deferral rule —

@@ -19,7 +19,7 @@ func validRun(t *testing.T) Run {
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
-		WorkflowVersion: "1.0.0",
+		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           "workspace://project/input",
 		BeadID:          &beadID,
 		State:           StateID(uuid.Must(uuid.NewV7())),
@@ -102,7 +102,7 @@ func TestRunValid_EmptyWorkflowVersion(t *testing.T) {
 	t.Parallel()
 
 	r := validRun(t)
-	r.WorkflowVersion = ""
+	r.WorkflowVersion = WorkflowVersion("")
 	if r.Valid() {
 		t.Error("Valid() = true with empty WorkflowVersion, want false")
 	}

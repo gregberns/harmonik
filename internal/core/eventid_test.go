@@ -93,6 +93,55 @@ func TestEventID_NominalTyping(t *testing.T) {
 	}
 }
 
+// TestEventID_EV002_AcceptsV7 verifies that a genuine UUIDv7 value passes the
+// EV-002 sensor (event-model.md §4.1 EV-002).
+func TestEventID_EV002_AcceptsV7(t *testing.T) {
+	u, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7(): %v", err)
+	}
+	e := EventID(u)
+	if !e.IsUUIDv7() {
+		t.Errorf("EV-002: IsUUIDv7() = false for a UUIDv7 value %v", e)
+	}
+}
+
+// TestEventID_EV002_RejectsV4 verifies that a UUIDv4 value fails the EV-002 sensor
+// (event-model.md §4.1 EV-002). UUIDv4 is the most common alternative and is
+// explicitly forbidden by EV-002.
+func TestEventID_EV002_RejectsV4(t *testing.T) {
+	u := uuid.New() // uuid.New returns a random v4
+	e := EventID(u)
+	if e.IsUUIDv7() {
+		t.Errorf("EV-002: IsUUIDv7() = true for a UUIDv4 value %v; v4 is forbidden", e)
+	}
+}
+
+// TestEventID_EV002_RejectsV1 verifies that a UUIDv1 value fails the EV-002 sensor
+// (event-model.md §4.1 EV-002). UUIDv1 is explicitly forbidden by EV-002.
+func TestEventID_EV002_RejectsV1(t *testing.T) {
+	u, err := uuid.NewUUID() // uuid.NewUUID returns a v1 (MAC-address + time)
+	if err != nil {
+		// v1 generation can fail when no hardware address is available (e.g. in
+		// some CI environments). Document the limitation and skip rather than fail.
+		t.Skipf("EV-002: uuid.NewUUID (v1) unavailable in this environment: %v", err)
+	}
+	e := EventID(u)
+	if e.IsUUIDv7() {
+		t.Errorf("EV-002: IsUUIDv7() = true for a UUIDv1 value %v; v1 is forbidden", e)
+	}
+}
+
+// TestEventID_EV002_RejectsZero verifies that the zero-value EventID (uuid.Nil)
+// fails the EV-002 sensor (event-model.md §4.1 EV-002). The nil UUID has version 0
+// and MUST NOT be accepted as a valid event_id.
+func TestEventID_EV002_RejectsZero(t *testing.T) {
+	e := EventID(uuid.Nil)
+	if e.IsUUIDv7() {
+		t.Errorf("EV-002: IsUUIDv7() = true for zero-value EventID (uuid.Nil); nil UUID is forbidden")
+	}
+}
+
 // TestEventID_JSONViaMarshalText verifies that EventID serialises correctly when
 // used as a JSON field via encoding.TextMarshaler/TextUnmarshaler.
 func TestEventID_JSONViaMarshalText(t *testing.T) {

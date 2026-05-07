@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-06 main -->
+<!-- PP-TRIAL:v3 2026-05-06 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -6,27 +6,75 @@ Act as the orchestrator. Delegate substantively; keep main thread small.
 Claim from `br ready` (type=task; scope:bootstrap first). Spawn implementers
 (model: sonnet, effort: high) with `isolation: worktree`, run_in_background.
 
-Maintain ~8 concurrent agents. When one finishes, immediately spawn the next
-ready bead. Don't drain the batch before refilling — that's the bottleneck.
+Maintain ~8 concurrent agents during bulk work. When one finishes, immediately
+spawn the next ready bead. Don't drain the batch before refilling — that's the
+bottleneck. (For early-process-refinement passes, smaller batches of 3 are OK
+to tighten review loops.)
+
+Before claiming a parallel batch: audit dep edges. Sibling-artifact beads with
+content-only `blocks` deps (i.e., one references the other at runtime, not
+at authoring time) must have those edges converted: `br dep remove <a> <b>`
+then `br dep add <a> <b> --type related`. Without this, `br update --status
+in_progress` refuses the claim.
 
 Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
 to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain. If still
-open at round 4, tag bead `needs-clarification` and move on.
+open at round 4, tag `needs-clarification` and move on.
 
-Consider scaling reviews by bead criticality: more reviewers (and Opus) for
-cross-cutting / high-fanout / architecture-touching work; fewer for
-mechanical beads. Use judgment.
+Reviewer brief MUST encode two clauses every time, verbatim:
+1. PRECEDENCE — orchestrator directives override `build-practices.md` for
+   implementer commits. Expected commit format: subject + 1-line file
+   bullets + `Refs:`. Do NOT flag absence of `## Why / ## What / ## Spec
+   alignment / ## Test plan / ## Risk` sections, or `Reviewed-By:` /
+   `Review-Verdict:` trailers. Implementer self-stamping bit-rots during
+   fix iterations; the orchestrator stamps post-merge if anything stamps.
+2. TIER DISCIPLINE — MEDIUM = defect against THIS bead's acceptance
+   criteria. Cross-cutting / future-bead / spec-doc concerns = MINOR or
+   follow-up note, not MEDIUM. Improvements to other files are not
+   defects against this bead.
+
+Path-discrepancy resolution: when a bead body and a referenced doc disagree
+on a path or identifier, the bead body wins. Implementer patches the
+inconsistent file in the same commit and surfaces the still-stale doc to a
+follow-up bead.
+
+Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
+meets bead acceptance, you may merge with a closure note explaining the
+tier-override and (optionally) filing a follow-up bead for the underlying
+spec/doc concern. Don't mechanically iterate on cross-cutting noise.
+
+Inline-amend by orchestrator (no fix-agent) for: trivial single-line text
+fixes; literal one-line code fixes (e.g., flipping a comparison operator,
+fixing a single off-by-one). Re-review for these is theatrical — verify by
+reading the result and merge. Spawn fix-agents only for multi-line logic
+or when the fix might introduce new issues.
+
+Re-review may also be skipped after a metadata-only fix (commit-message
+text only, no file change). Orchestrator may amend and merge directly.
 
 When ambiguity arises, spend real effort resolving without escalation.
 Paths to consider: sibling specs, the discipline doc, parent bead body,
 git log of related work, a second sub-agent for an independent read. Bead
 acceptance criteria is authoritative.
 
-After each bead merges: rebase the worktree branch onto main, ff-merge,
-push, then `git worktree unlock && git worktree remove <path>` and
-`git branch -d <branch>` to clean up. Close the bead via `br update
---status closed` with a closure note. No stale worktrees under
-`.claude/worktrees/`.
+Merge dance — RUN FROM THE MAIN REPO DIR, NOT THE WORKTREE. The recurring
+failure mode: `cd worktree && rebase && merge` runs the merge inside the
+worktree, making it a no-op (merging branch into itself); push reports
+"Everything up-to-date"; worktree-remove succeeds; `branch -d` and
+`br close` then fail with "cwd no longer exists". Correct chain:
+
+    cd <worktree-path> && git fetch origin main && git rebase origin/main
+    cd /Users/gb/github/harmonik && git merge --ff-only <branch>
+    git push origin main
+    git worktree unlock <worktree-path>
+    git worktree remove <worktree-path>
+    git branch -d <branch>
+    br close <bead-id> -r "<closure note>"
+
+Use `br close <id> -r "..."` for the closure note. `br update <id> -c "..."`
+does NOT exist (no `-c` flag).
+
+After each bead merges, leave no stale worktrees under `.claude/worktrees/`.
 
 On resume: continue working unless the handoff body flags a real blocker.
 If context fills or the session feels long: write a fresh HANDOFF, then
@@ -36,56 +84,54 @@ judge whether to continue or hand off cleanly.
 # Session Handoff
 
 ## State
-Clean. Phase 0 closed and pushed (final commit `84a666a`). Worktree
-pipeline piloted end-to-end on `hk-pvcs.1` (Go module init, merged at
-`bc0688a` on `origin/main`). 145 beads ready corpus-wide; 20 ready in
-`scope:bootstrap` per `br ready -l scope:bootstrap`.
+Clean. Main at `b0c999e` and pushed. Bootstrap build/test scaffolding
+cluster complete: `hk-pvcs.{1..7}` all closed (Makefile, .golangci.yml,
+lefthook.yml + commit-msg validator, coverage-gate.sh + baseline,
+internal/testhelpers + test/{scenario,integration,crash} build-tagged
+stubs, tools/forbid-import). `hk-pvcs.8` (BUILDING.md) remains open and
+is the natural close-out for the `hk-pvcs` epic. `hk-pvcs.9` is open at
+P3 — consolidated doc-cleanup follow-ups (Trivial: true bypass keyword
+in build-practices.md, agent-review timeout strategy, .lefthook.yml
+typo, tools/forbid-import path stale in quality-checks.md) — defer
+unless touched.
 
-## Next step — refine briefs, then two batches of 3 concurrent
+20 ready in `br ready -l scope:bootstrap`; substantially more once the
+parent-epic quirk filters lift after `hk-pvcs` closes (file pvcs.8 to
+land that).
 
-The pilot worked but surfaced six small refinements. Encode 1–4 into
-the implementer/reviewer brief templates you write inline when spawning
-sub-agents (no separate charter doc — keep it close to the call site).
+## Next step — bulk work
+Process is now nailed. Two-batch shakeout produced 9 durable refinements
+encoded in the directives above (precedence clause, tier discipline,
+dep-edge audit, merge-cd discipline, inline-amend scope, etc.). Switch
+to ~8-concurrent and start eating the ready corpus.
 
-1. Implementer must NOT self-stamp `Reviewed-By` / `Review-Verdict`
-   trailers in commit bodies. Real review happens after; orchestrator
-   stamps if anything stamps.
-2. Implementer commit messages: subject + 1-line bullets of files
-   changed + `Refs: <bead-id>`. Avoid `## What / ## Risk` narrative
-   sections — they bit-rot when fix-iterations change file content,
-   producing stale-text MEDIUMs in the next review.
-3. Re-review after a metadata-only fix (commit-message text only, no
-   file change) is theatrical. Orchestrator may skip and merge.
-4. Trivial single-line text fixes do not need a fix-agent. Orchestrator
-   inline amendment is faster than spawning.
-5. `br ready` parent-child quirk: epic children look "blocked" because
-   the parent epic counts as a dep. The directive's `type=task` filter
-   handles this; confirm in dispatcher when picking work.
-6. Worktree cleanup discipline is now in the directives block above
-   (rebase → ff-merge → push → unlock + remove → branch -d → close).
-   Apply consistently after every bead.
+Suggested ordering:
+1. `hk-pvcs.8` (BUILDING.md) on its own — short, closes the parent epic
+   and unlocks downstream filtering. Can run alongside the next batch.
+2. Then dispatch from `br ready -l scope:bootstrap` in priority order.
+   The next clusters are typed-aliases / enums under `hk-b3f.*` and
+   `hk-872.*` (~mechanical: small files defining typed identifiers and
+   enums per spec §6.1); those are good candidates for a high-concurrency
+   sweep with light review.
 
-Then run **two batches of 3 concurrent**, not 8. Targets:
-`hk-pvcs.{2,3,4}` first batch (Makefile, golangci, lefthook), then
-`hk-pvcs.{5,6,7}` second (coverage-gate, test-helper scaffold,
-forbid-import). `hk-pvcs.8` (BUILDING.md) last — it documents what the
-others built. This gets the build-scaffolding epic complete and unblocks
-everything downstream.
+Briefs: reuse the implementer + reviewer templates from this session
+(see git history for `worktree-agent-*` commits and the closure notes
+on `hk-pvcs.{2..7}`). Encode the two reviewer clauses verbatim every
+time.
 
 ## If something changes
 - BLOCKER persisting through 4 review rounds → tag `needs-clarification`,
   move on. Do NOT block on the user.
-- `br ready -l scope:bootstrap` returns 0 → claim from `hk-pvcs`
-  children directly via `br show hk-pvcs.<n>` (parent-child filter
-  quirk; not a real blocker).
+- `br ready -l scope:bootstrap` returns 0 → claim from open epic
+  children directly via `br show <id>` (parent-child filter quirk;
+  not a real blocker).
 - Context past ~80% → write fresh HANDOFF, `/clear`, `/session-resume`.
 
 ## Files to open first
-1. `git log --oneline -5` (recent state at a glance)
-2. `br ready -l scope:bootstrap` (claimable work; 20 currently)
-3. `docs/foundation/project-level/{quality-checks,subsystem-organization,
-   build-practices}.md` — only consult when a bead cites them; do not
-   pre-read
+1. `git log --oneline -10` (recent state)
+2. `br ready -l scope:bootstrap` (claimable corpus)
+3. Bead body for the next target via `br show <id>` — only consult the
+   docs the bead cites; do not pre-read the foundation tree.
 
 ## Blocking question for user
 None.

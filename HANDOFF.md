@@ -92,68 +92,99 @@ judge whether to continue or hand off cleanly.
 # Session Handoff
 
 ## State
-Clean. Main at `069b3f5` and pushed. **3-bead record batch landed in one cycle**,
-all APPROVE-CLEAN, no fix iterations. Process is still humming.
+Clean. Main at `28259d1` and pushed. **Second 3-bead record batch landed in one
+cycle.** Two consecutive 3-batches now (DependencyEdge/Edge/State, then
+Checkpoint/TraceContext/BeadRecord) with effectively zero fix work — only one
+trivial inline orchestrator amend (godoc text on Checkpoint). Process is stable.
 
 Beads closed this session:
-- `hk-872.48` DependencyEdge (composes EdgeKind + typed BeadID)
-- `hk-b3f.74` Edge (8-field record, optionals via pointer)
-- `hk-b3f.76` State (5-field record, uuid.Nil + !IsZero validation)
+- `hk-hqwn.54` TraceContext (3 optional pointer fields; APPROVE-CLEAN)
+- `hk-872.45` BeadRecord (7 fields, composes BeadID + CoarseStatus + []DependencyEdge; APPROVE-CLEAN)
+- `hk-b3f.78` Checkpoint (7 fields, composes RunID/StateID/TransitionID + optional *BeadID; APPROVE-WITH-NITS — single godoc text fix amended inline)
 
-All three follow the existing core conventions: package `core`, named struct,
+All follow the existing core conventions: package `core`, named struct,
 `Valid() bool` method, table-driven tests in `package core` (not `core_test`),
 100% coverage on `internal/core`, full `make check` green.
 
 ## Notes from this batch
-- **PolicyExpression deferral (Edge).** Spec line 664 declares
-  `condition : PolicyExpression | None`, but no typed-alias bead for
-  `PolicyExpression` exists yet (`br list | grep -i policy` shows only
-  unrelated event-row beads). Orchestrator pre-decided to render it as
-  `*string` with godoc citing `control-points.md §6.4` for the grammar.
-  Future hoist to a typed alias is non-breaking. If a Workflow / Edge
-  consumer bead needs the typed shape, file a fresh bead for
-  `PolicyExpression` first rather than re-opening Edge.
-- **WorkspaceRef will block hk-b3f.75 (Run).** Run record's `input` field
-  is `WorkspaceRef` (workspace-model §4.1). Same posture as PolicyExpression:
-  if no typed-alias bead exists when Run is claimed, decide *before* the
-  implementer brief whether to defer to `*string` placeholder or insert a
-  prerequisite WorkspaceRef bead. Current `internal/core/` has no
-  workspaceref.go.
-- **BeadID-vs-string convention reconfirmed.** Spec text says "String" for
-  bead IDs; implementer used typed `BeadID` (which exists at
-  `internal/core/beadid.go` as `type BeadID string`). Reviewer accepted.
-  Pattern: when a typed wrapper already exists in `core`, prefer it over
-  raw `string` even if the spec text uses the abstract type name.
-- **Cwd-leak trap, mitigated.** The Bash tool's cwd persists across
-  invocations. The merge-dance directive (split into two Bash invocations)
-  prevents the worktree-cwd from leaking into the merge step. Followed
-  cleanly all three times this batch.
 
-## Next step — second record batch (still 3-at-a-time)
-`br ready -l scope:bootstrap` shows 20 ready. Suggested next batch (all
-deps closed, all should follow the State / Edge pattern):
-1. `hk-b3f.78` Checkpoint (§6.1) — composes RunID, StateID, commit-trailer fields
-2. `hk-hqwn.54` TraceContext (§6.1, event-model) — likely a small struct
-3. `hk-872.45` BeadRecord (§6.1, beads-integration) — composes DependencyEdge,
-   CoarseStatus, BeadID
+- **SchemaVersion = `int`, guard rejects only `== 0`.** The Checkpoint godoc
+  initially claimed "non-zero (positive)" — reviewer caught the mismatch (a
+  `-1` would pass). Spec says `Integer` without "positive" constraint
+  (unlike `timeout` which does). Orchestrator amended godoc to drop "positive"
+  (matching code to documentation, not the other way). **Future SchemaVersion
+  fields: same call** — keep guard at `!= 0`, do not over-claim positivity in
+  godoc unless the spec explicitly requires positive.
+- **All-optional records: Valid() permits the zero-value.** TraceContext
+  Valid() returns true when all three pointers are nil — that's the central
+  invariant of an all-optional record. The non-nil-but-empty rejections are
+  what make Valid() useful. (Pattern reusable for any future all-optional
+  record.)
+- **Inline-amend pattern works cleanly.** For the SchemaVersion godoc tweak:
+  edit in worktree → `git commit --amend --no-edit` → rebase → merge dance.
+  No fix-agent spawned, no re-review. Total elapsed: ~30s. Use this for any
+  one-line text/code fix the reviewer flags as MINOR/MEDIUM.
+- **Two-Bash-invocation merge dance held throughout.** No cwd-leak failures.
+  Rebase in worktree (invocation 1), merge from main repo dir (invocation 2,
+  freshly cd'd). Six successful merges this session under this pattern.
 
-Audit deps before claiming the batch. None of the three should sibling-block
-each other, but `br show` each one and check.
+## Next-batch decision overhang
 
-After that batch: `hk-b3f.75` Run (needs WorkspaceRef decision — see Notes
-above), `hk-b3f.77` Transition (composes State, OutcomeStatus, TransitionKind),
-then Outcome / Workflow / Node — most of §6.1 will be done.
+**`hk-hqwn.53` Event envelope** is now ready (TraceContext closed it). Body
+references `type` field as `EventType` enum. **No EventType file in `core/`
+yet.** The EventType enum is large — `br list -l spec:event-model` shows
+~80 leaf beads under parent `hk-hqwn.59` (one per event-row in §8.6/§8.7/§8.8).
+That parent appears to be the EventType-enum aggregator.
+
+Two options when claiming Event envelope:
+
+  (a) **Defer EventType to `string` placeholder** with godoc citing
+  `event-model.md §8` and a follow-up bead for the typed enum. Mirrors the
+  PolicyExpression deferral on Edge. **Risk:** EventType drives a typed
+  payload registry per §6.3 — string is fragile for future
+  payload-deserialization work.
+
+  (b) **Insert prerequisite bead first.** Check whether `hk-hqwn.59`
+  (or sibling) is the EventType-enum parent and whether it's claimable as
+  a single bead. If yes, claim and land that first; Event envelope follows
+  cleanly with typed `EventType`.
+
+  Recommendation: (b) if `hk-hqwn.59` is small and self-contained as the
+  enum-only definition (i.e., the .59.XX leaf beads are the per-row event
+  taxonomy work, not enum-definition work). Otherwise (a). Inspect with
+  `br show hk-hqwn.59` before claiming.
+
+**`hk-b3f.75` Run** is also ready. Body: `input` field is `WorkspaceRef`
+(workspace-model §4.1). No `workspaceref.go` in `core/`. **Pre-decided last
+session: apply `*string` deferral with godoc citing workspace-model §4.1.**
+Same posture as PolicyExpression on Edge. Future hoist to typed alias is
+non-breaking.
+
+**`hk-b3f.77` Transition is NOT ready** — blocked by `hk-zs0.33` (Seven roles
+named — canonical role vocabulary). The 13-field record references
+`actor_role` which depends on the role enum. Skip Transition until roles land.
+
+## Suggested next batch — 3 beads, mixed shape
+
+1. `hk-b3f.75` Run — apply WorkspaceRef → `*string` deferral
+2. `hk-hqwn.53` Event envelope — see option (a)/(b) above; resolve before brief
+3. `hk-8i31.24` Five primary sentinel classes (HC-020) — different shape
+   (`var ErrTransient = errors.New(...)` etc., with `%w`-wrapping for the
+   two structural sub-sentinels). Good shape-diversity test for the process.
+
+Audit deps before claiming. None of these three should sibling-block each
+other (Run + Event envelope are different specs; Sentinels is HC). `br show`
+each one anyway.
 
 ## Files to open first
-1. `git log --oneline -8` — the three record commits + prior enum batch
-2. `internal/core/state.go`, `edge.go`, `dependencyedge.go` — record-shape patterns
-3. `internal/core/commitrange.go` — minimal struct godoc form
-4. `internal/core/nodetype.go` — typed-identifier pattern
-5. `br ready -l scope:bootstrap` — claimable corpus
+1. `git log --oneline -10` — six record commits + prior batches
+2. `internal/core/checkpoint.go`, `beadrecord.go`, `tracecontext.go` — latest record-shape patterns
+3. `internal/core/edge.go` — **PolicyExpression deferral pattern** (relevant for WorkspaceRef on Run)
+4. `br ready -l scope:bootstrap` — claimable corpus (20 entries)
+5. `br show hk-hqwn.59` — check whether this is the EventType enum parent (resolves (a)/(b) above)
 6. Bead body via `br show <id>` — only consult docs the bead cites
 
 ## Blocking question for user
-None. Continue per directives unless WorkspaceRef decision needs an explicit
-escalation when Run is claimed (it shouldn't — orchestrator authority covers
-the same `*string`-with-godoc-citation deferral pattern used for
-PolicyExpression).
+None. Continue per directives. Resolve Event envelope's EventType deferral
+question (a)/(b) by inspecting `br show hk-hqwn.59`; orchestrator authority
+covers either path.

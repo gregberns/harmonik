@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v3 2026-05-06 main -->
+<!-- PP-TRIAL:v3 2026-05-07 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -92,56 +92,68 @@ judge whether to continue or hand off cleanly.
 # Session Handoff
 
 ## State
-Clean. Main at `99ccdf6` and pushed. **8-bead enum batch landed in one cycle**,
-no fix iterations needed — process is humming.
+Clean. Main at `069b3f5` and pushed. **3-bead record batch landed in one cycle**,
+all APPROVE-CLEAN, no fix iterations. Process is still humming.
 
 Beads closed this session:
-- `hk-872.46` CoarseStatus, `.47` HarmonikWriteStatus, `.49` EdgeKind, `.52` TerminalOp
-- `hk-b3f.81` IdempotencyClass, `.82` TransitionKind, `.83` OutcomeStatus
-- `hk-zs0.54` AgentType (regex-validated typed string + 4 reserved MVH IDs)
+- `hk-872.48` DependencyEdge (composes EdgeKind + typed BeadID)
+- `hk-b3f.74` Edge (8-field record, optionals via pointer)
+- `hk-b3f.76` State (5-field record, uuid.Nil + !IsZero validation)
 
-All eight follow the NodeType pattern (typed string + `Valid()` + `Marshal/UnmarshalText`),
-package `core`, 100% coverage on `internal/core`, full `make check` green on integrated main.
+All three follow the existing core conventions: package `core`, named struct,
+`Valid() bool` method, table-driven tests in `package core` (not `core_test`),
+100% coverage on `internal/core`, full `make check` green.
 
 ## Notes from this batch
-- **CoarseStatus bead-body vs spec discrepancy.** Bead body listed
-  `{parked, cancelled}`; the spec at `specs/beads-integration.md` §6.1
-  has `{draft, pinned}`. Implementer correctly took the spec (CLAUDE.md:
-  specs are normative). Closure note records the discrepancy. The
-  PRECEDENCE-resolution clause in the directives now codifies this:
-  spec wins for spec content; bead body wins for paths/identifiers.
-- **Worktree `.tools/` symlinks.** Every implementer this batch had to
-  symlink `/Users/gb/github/harmonik/.tools/` into their worktree to make
-  `make check` work — fresh worktrees don't inherit the pinned tool dir.
-  That leaves an untracked entry, so `git worktree remove` needs `--force`.
-  Directive updated to use `--force` by default and to split the merge
-  dance into two Bash invocations (orchestrator hit the cwd-leak trap once
-  and recovered cleanly; the two-invocation pattern prevents it).
+- **PolicyExpression deferral (Edge).** Spec line 664 declares
+  `condition : PolicyExpression | None`, but no typed-alias bead for
+  `PolicyExpression` exists yet (`br list | grep -i policy` shows only
+  unrelated event-row beads). Orchestrator pre-decided to render it as
+  `*string` with godoc citing `control-points.md §6.4` for the grammar.
+  Future hoist to a typed alias is non-breaking. If a Workflow / Edge
+  consumer bead needs the typed shape, file a fresh bead for
+  `PolicyExpression` first rather than re-opening Edge.
+- **WorkspaceRef will block hk-b3f.75 (Run).** Run record's `input` field
+  is `WorkspaceRef` (workspace-model §4.1). Same posture as PolicyExpression:
+  if no typed-alias bead exists when Run is claimed, decide *before* the
+  implementer brief whether to defer to `*string` placeholder or insert a
+  prerequisite WorkspaceRef bead. Current `internal/core/` has no
+  workspaceref.go.
+- **BeadID-vs-string convention reconfirmed.** Spec text says "String" for
+  bead IDs; implementer used typed `BeadID` (which exists at
+  `internal/core/beadid.go` as `type BeadID string`). Reviewer accepted.
+  Pattern: when a typed wrapper already exists in `core`, prefer it over
+  raw `string` even if the spec text uses the abstract type name.
+- **Cwd-leak trap, mitigated.** The Bash tool's cwd persists across
+  invocations. The merge-dance directive (split into two Bash invocations)
+  prevents the worktree-cwd from leaking into the merge step. Followed
+  cleanly all three times this batch.
 
-## Next step — §6.1 record-type batch (smaller, batches of 3)
-The enums just landed compose into the §6.1 record types. Suggested first
-batch (all parents are now unblocked):
-1. `hk-872.48` DependencyEdge (composes EdgeKind)
-2. `hk-b3f.74` Edge record (composes EdgeKind)
-3. `hk-b3f.76` State record
+## Next step — second record batch (still 3-at-a-time)
+`br ready -l scope:bootstrap` shows 20 ready. Suggested next batch (all
+deps closed, all should follow the State / Edge pattern):
+1. `hk-b3f.78` Checkpoint (§6.1) — composes RunID, StateID, commit-trailer fields
+2. `hk-hqwn.54` TraceContext (§6.1, event-model) — likely a small struct
+3. `hk-872.45` BeadRecord (§6.1, beads-integration) — composes DependencyEdge,
+   CoarseStatus, BeadID
 
-Records are denser than enums (multiple fields, cross-references to other
-records, validators). The prior HANDOFF flagged them for "tighter review
-batches of 3" — keep that. Use the same implementer/reviewer template:
-NodeType for the typed-string shape, but for the record shape itself
-follow `internal/core/commitrange.go` (the only existing struct in core).
+Audit deps before claiming the batch. None of the three should sibling-block
+each other, but `br show` each one and check.
 
-After that initial 3, the next records would be `hk-b3f.78` Checkpoint,
-`hk-hqwn.54` TraceContext, then Run/Transition/Outcome/Workflow/Node.
-
-`br ready -l scope:bootstrap` shows 20 ready (closing 8 unblocked 8 more).
+After that batch: `hk-b3f.75` Run (needs WorkspaceRef decision — see Notes
+above), `hk-b3f.77` Transition (composes State, OutcomeStatus, TransitionKind),
+then Outcome / Workflow / Node — most of §6.1 will be done.
 
 ## Files to open first
-1. `git log --oneline -12` — the 8 enum commits + lineage
-2. `internal/core/commitrange.go` — the only existing struct shape
-3. `internal/core/nodetype.go` — pattern for typed identifiers (still relevant)
-4. `br ready -l scope:bootstrap` — claimable corpus
-5. Bead body for the chosen target via `br show <id>` — only consult docs the bead cites
+1. `git log --oneline -8` — the three record commits + prior enum batch
+2. `internal/core/state.go`, `edge.go`, `dependencyedge.go` — record-shape patterns
+3. `internal/core/commitrange.go` — minimal struct godoc form
+4. `internal/core/nodetype.go` — typed-identifier pattern
+5. `br ready -l scope:bootstrap` — claimable corpus
+6. Bead body via `br show <id>` — only consult docs the bead cites
 
 ## Blocking question for user
-None.
+None. Continue per directives unless WorkspaceRef decision needs an explicit
+escalation when Run is claimed (it shouldn't — orchestrator authority covers
+the same `*string`-with-godoc-citation deferral pattern used for
+PolicyExpression).

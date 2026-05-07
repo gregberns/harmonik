@@ -1,0 +1,43 @@
+# lefthook.yml — local git hooks for harmonik
+#
+# Wires pre-commit / pre-push / commit-msg to make targets.
+# Runs LOCALLY only; CI is a mirror of the same make targets.
+# --no-verify is forbidden (build-practices.md §Git hygiene).
+#
+# Tier 1 (<15s): pre-commit runs make check-fast + make agent-review.
+# Tier 2 (~3-5 min): pre-push runs make check.
+# commit-msg: validates Conventional Commits + required trailers.
+#
+# Install: `lefthook install` after cloning.
+
+pre-commit:
+  commands:
+    check-fast:
+      run: make check-fast
+      # Runs gofumpt, gci, go vet, go build, delta-lint, go test -short.
+      # Scoped to staged files where possible; must stay under 15s.
+    agent-review:
+      run: make agent-review
+      # Invokes the agent-reviewer skill against the staged diff.
+      # The Makefile target (hk-pvcs.2) stubs this until the skill lands
+      # (hk-jhob.1). Stub exits 0 so the hook does not block; once the
+      # real skill is wired the target will block on BLOCK verdicts.
+
+pre-push:
+  commands:
+    check:
+      run: make check
+      # Tier 2: full tree lint + go test -race -count=1 + go mod tidy
+      # diff + coverage gate + govulncheck. Catches what the staged-file
+      # delta scope in pre-commit misses.
+
+commit-msg:
+  commands:
+    validate:
+      run: scripts/validate-commit-msg.sh {1}
+      # {1} is the path to the commit-message file (lefthook passes it
+      # as the first positional arg when run under the commit-msg hook).
+      # Validates:
+      #   1. Conventional Commits subject format.
+      #   2. Reviewed-By: + Review-Verdict: trailers (non-trivial commits).
+      #   3. Review-Verdict JSON is well-formed.

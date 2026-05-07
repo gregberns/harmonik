@@ -1,0 +1,191 @@
+version: "2"
+run:
+  timeout: 5m
+  go: "1.25"
+linters:
+  disable-all: true
+  enable:
+    # Correctness
+    - errcheck        # unhandled errors — CRITICAL for agent-coded
+    - govet           # stdlib correctness analyzers
+    - staticcheck     # SA/ST/S correctness + simplification
+    - ineffassign     # writes with no read
+    - unused          # dead code (replaces deadcode/structcheck/varcheck)
+    - gosimple        # subsumed by staticcheck but explicit is clearer
+    - errorlint       # %w wrapping + errors.Is/As correctness
+    - nilerr          # returning nil when err is non-nil
+    - copyloopvar     # Go 1.22+ loop var capture (redundant now, belt+suspenders)
+    - testifylint     # testify misuse (wrong assertion fn, missing compare, etc.)
+    - errchkjson      # ignored JSON marshal/unmarshal errors
+    - exhaustive      # missing enum cases in switch statements
+    # Resource / context
+    - bodyclose       # http.Response.Body leaks
+    - rowserrcheck    # sql.Rows.Err()
+    - sqlclosecheck   # sql.Rows/Stmt close
+    - contextcheck    # context.Context propagation
+    - noctx           # http requests without context
+    - containedctx    # context.Context stored in structs (ban)
+    - fatcontext      # context.Context leaks in loops
+    # Style / diagnostics
+    - gocritic        # diagnostic + style bundle
+    - revive          # replacement for golint; minimal ruleset
+    - misspell        # typos in comments/strings
+    - unparam         # always-same param values (catches dead branches)
+    - unconvert       # unnecessary type conversions
+    - prealloc        # slice prealloc hints
+    - nakedret        # naked returns > 20 lines
+    - nolintlint      # nolint directives must be justified
+    - gosec           # security smells (advisory; see below)
+    - forbidigo       # ban specific calls (see config)
+    - depguard        # import-graph + component-layer rules (subsystem-organization.md)
+linters-settings:
+  errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
+  revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
+  gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
+  nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
+  forbidigo:
+    forbid:
+      - { p: '^fmt\.Print.*$', msg: "use the structured logger" }
+      - { p: '^panic$',         msg: "return an error; panics only in main/init" }
+  depguard:
+    # Component-graph rules (subsystem layering) live here per subsystem-organization.md §Dependency layering enforcement.
+    # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.
+    # Full matrix is in subsystem-organization.md. Example stub:
+    rules:
+      # PL-INV-002: the daemon binary MUST NOT import any LLM SDK in its transitive closure.
+      # At MVH no packages exist yet, so this is encoded as a global deny rule covering all source files.
+      # When cmd/harmonik/ and internal/daemon/ land, narrow this rule to those file trees
+      # and remove the global catch-all (or keep both for belt-and-suspenders).
+      # Rationale: specs/process-lifecycle.md §PL-INV-002, §PL-018, architecture.md §4.2.
+      llm-sdk-ban:
+        files: ["**/*.go"]
+        deny:
+          - { pkg: "github.com/anthropics/", desc: "PL-INV-002: daemon must not import any LLM SDK" }
+          - { pkg: "github.com/openai/", desc: "PL-INV-002: daemon must not import any LLM SDK" }
+          - { pkg: "github.com/sashabaranov/go-openai", desc: "PL-INV-002: daemon must not import any LLM SDK" }
+          - { pkg: "github.com/liushuangls/go-anthropic", desc: "PL-INV-002: daemon must not import any LLM SDK" }
+
+      # Leaf: internal/core must not import any sibling subsystem.
+      core:
+        files: ["**/internal/core/**"]
+        deny:
+          - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
+
+      # eventbus / policy / handler-contract: may import core only.
+      # Add these rules when the packages land.
+      # eventbus:
+      #   files: ["**/internal/eventbus/**"]
+      #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+      # policy:
+      #   files: ["**/internal/policy/**"]
+      #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+      # handler-contract:
+      #   files: ["**/internal/handler/contract/**"]
+      #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+
+      # Adapters: core only.
+      # Add these rules when the packages land.
+      # adapter-br:
+      #   files: ["**/internal/adapter/br/**"]
+      #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+      # adapter-ntm:
+      #   files: ["**/internal/adapter/ntm/**"]
+      #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+
+      # Workspace: core + eventbus + adapter-br.
+      # workspace:
+      #   files: ["**/internal/workspace/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+      #     - "github.com/gregberns/harmonik/internal/adapter/br"
+
+      # Agent runner: core + eventbus + handler contract + adapter-ntm.
+      # agentrunner:
+      #   files: ["**/internal/agentrunner/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+      #     - "github.com/gregberns/harmonik/internal/handler/contract"
+      #     - "github.com/gregberns/harmonik/internal/adapter/ntm"
+
+      # Hook: core + eventbus.
+      # hook:
+      #   files: ["**/internal/hook/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+
+      # Memory: core + eventbus.
+      # memory:
+      #   files: ["**/internal/memory/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+
+      # Handlers (claudecode, pi, twin): core + handler/contract.
+      # handler-impls:
+      #   files: ["**/internal/handler/claudecode/**", "**/internal/handler/pi/**", "**/internal/handler/twin/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/handler/contract"
+
+      # Scenario harness: core + eventbus + agentrunner + orchestrator.
+      # Revisit if the harness needs broader access (subsystem-organization.md §Deferred).
+      # scenario:
+      #   files: ["**/internal/scenario/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+      #     - "github.com/gregberns/harmonik/internal/agentrunner"
+      #     - "github.com/gregberns/harmonik/internal/orchestrator"
+
+      # Improvement loop: core + eventbus + memory.
+      # improvement:
+      #   files: ["**/internal/improvement/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+      #     - "github.com/gregberns/harmonik/internal/memory"
+
+      # Orchestrator: everything listed above except daemon/cmd.
+      # orchestrator:
+      #   files: ["**/internal/orchestrator/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/eventbus"
+      #     - "github.com/gregberns/harmonik/internal/policy"
+      #     - "github.com/gregberns/harmonik/internal/handler/contract"
+      #     - "github.com/gregberns/harmonik/internal/workspace"
+      #     - "github.com/gregberns/harmonik/internal/hook"
+      #     - "github.com/gregberns/harmonik/internal/adapter/br"
+
+      # Composition root: may import every subsystem.
+      # Also subject to llm-sdk-ban (see above).
+      # daemon:
+      #   files: ["**/internal/daemon/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/..."
+
+      # cmd: daemon + core only.
+      # Also subject to llm-sdk-ban (see above).
+      # cmd:
+      #   files: ["**/cmd/**"]
+      #   allow:
+      #     - "$gostd"
+      #     - "github.com/gregberns/harmonik/internal/core"
+      #     - "github.com/gregberns/harmonik/internal/daemon"
+  exhaustive:
+    default-signifies-exhaustive: true
+  testifylint:
+    enable-all: true
+issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: false }

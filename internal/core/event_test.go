@@ -19,7 +19,7 @@ func validEvent(t *testing.T) Event {
 	tc := validTraceContext(t)
 
 	return Event{
-		EventID:           uuid.Must(uuid.NewV7()),
+		EventID:           EventID(uuid.Must(uuid.NewV7())),
 		SchemaVersion:     1,
 		Type:              "checkpoint_written",
 		TimestampWall:     time.Now(),
@@ -68,7 +68,7 @@ func TestEventValid_ZeroEventID(t *testing.T) {
 	t.Parallel()
 
 	e := validEvent(t)
-	e.EventID = uuid.Nil
+	e.EventID = EventID(uuid.Nil)
 	if e.Valid() {
 		t.Error("Valid() = true with zero EventID (uuid.Nil), want false")
 	}

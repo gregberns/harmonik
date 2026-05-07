@@ -29,8 +29,9 @@ type Run struct {
 	// execution-model.md §6.1 Run.input).
 	Input WorkspaceRef
 
-	// BeadID is present when the run is tied to a bead per EM-014 and
-	// beads-integration.md §4.3 BI-008; absent otherwise.
+	// BeadID carries the bead identifier for bead-bound runs (beads-integration.md §4 BI-017).
+	// A bead-bound Run carries a non-nil non-empty BeadID; non-bead-bound Runs carry nil.
+	// The field is never set to an empty string — set-but-empty is a validation error.
 	BeadID *BeadID
 
 	// State is the current state of the run (StateID of the current run-state).

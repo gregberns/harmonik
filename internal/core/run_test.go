@@ -169,3 +169,39 @@ func TestRunValid_NonNilZeroEndTimeIsInvalid(t *testing.T) {
 		t.Error("Valid() = true with non-nil but zero EndTime, want false")
 	}
 }
+
+// TestRunBeadID_BI017Sensor is the requirement-traceable sensor for BI-017.
+// Per beads-integration.md §4 BI-017: Run.bead_id is recorded for bead-bound
+// runs and unset (nil) for non-bead-bound runs.
+func TestRunBeadID_BI017Sensor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_BeadID_valid_non_bead_bound", func(t *testing.T) {
+		t.Parallel()
+		r := validRun(t)
+		r.BeadID = nil
+		if !r.Valid() {
+			t.Error("Valid() = false with nil BeadID, want true (non-bead-bound run; BI-017)")
+		}
+	})
+
+	t.Run("non_nil_non_empty_BeadID_valid_bead_bound", func(t *testing.T) {
+		t.Parallel()
+		r := validRun(t)
+		id := BeadID("bead-017-sensor")
+		r.BeadID = &id
+		if !r.Valid() {
+			t.Error("Valid() = false with non-nil non-empty BeadID, want true (bead-bound run; BI-017)")
+		}
+	})
+
+	t.Run("non_nil_empty_BeadID_invalid_set_but_empty", func(t *testing.T) {
+		t.Parallel()
+		r := validRun(t)
+		empty := BeadID("")
+		r.BeadID = &empty
+		if r.Valid() {
+			t.Error("Valid() = true with set-but-empty BeadID, want false (BI-017: never set to empty string)")
+		}
+	})
+}

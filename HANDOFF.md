@@ -6,10 +6,12 @@ Act as the orchestrator. Delegate substantively; keep main thread small.
 Claim from `br ready` (type=task; scope:bootstrap first). Spawn implementers
 (model: sonnet, effort: high) with `isolation: worktree`, run_in_background.
 
-Maintain ~8 concurrent agents during bulk work. When one finishes, immediately
-spawn the next ready bead. Don't drain the batch before refilling — that's the
-bottleneck. (For early-process-refinement passes, smaller batches of 3 are OK
-to tighten review loops.)
+Run as many concurrent agents as the work can absorb — 6-8 is a midpoint
+reference, not a ceiling. Scale up when the shape is familiar (records,
+typed aliases, enums); only throttle down when there's a specific reason
+(e.g., a real merge-conflict risk on the same file). When one finishes,
+immediately spawn the next ready bead — don't drain the batch before
+refilling. That's the bottleneck.
 
 Before claiming a parallel batch: audit dep edges. Sibling-artifact beads with
 content-only `blocks` deps (i.e., one references the other at runtime, not
@@ -84,18 +86,55 @@ does NOT exist (no `-c` flag).
 
 After each bead merges, leave no stale worktrees under `.claude/worktrees/`.
 
+Pipelined merges. When 3+ APPROVE-CLEAN reviews come back close together,
+chain the merges in invocation 2 instead of one Bash call per bead:
+
+    cd /Users/gb/github/harmonik
+    git fetch origin main
+    git merge --ff-only <branch-1> && git merge --ff-only <branch-2> && \
+      git merge --ff-only <branch-3>
+    git push origin main         # one push for the whole chain
+    # then cleanup each in series:
+    for B in <branch-1> <branch-2> <branch-3>; do
+        git worktree unlock "$WORKTREE_FOR_$B" 2>/dev/null
+        git worktree remove --force "$WORKTREE_FOR_$B"
+        git branch -d "$B"
+    done
+    # then close each bead:
+    br close <bead-1> -r "..."
+    br close <bead-2> -r "..."
+    br close <bead-3> -r "..."
+
+Saves a round-trip per bead. Each branch must rebase clean against
+`origin/main` first (invocation 1 per branch); only chain the FF merges
+after all rebases land.
+
+Typed-alias deferral (recurring decision). When a record references a type
+not yet in `core/` (e.g., WorkspaceRef, PolicyExpression, EventType):
+default to `*string`/`string` placeholder + godoc citing the spec section +
+`br create` follow-up bead for the typed wrapper. Only insert a prerequisite
+bead when the dependent type is unambiguously small (<10 values) AND a
+single existing parent bead can carry the whole enum in one shot. Don't
+escalate to the user — the future hoist from `string` to a typed alias is
+non-breaking.
+
 On resume: continue working unless the handoff body flags a real blocker.
-If context fills or the session feels long: write a fresh HANDOFF, then
-judge whether to continue or hand off cleanly.
+Context budget: keep dispatching below ~200k tokens. When you cross ~200k,
+finish the in-flight batch cleanly (don't refill mid-batch), then write a
+fresh HANDOFF and stop. Don't write a HANDOFF earlier than that on a "session
+feels long" hunch — the goal is high throughput per session, not pristine
+context.
 <!-- END DIRECTIVES -->
 
 # Session Handoff
 
 ## State
-Clean. Main at `28259d1` and pushed. **Second 3-bead record batch landed in one
-cycle.** Two consecutive 3-batches now (DependencyEdge/Edge/State, then
-Checkpoint/TraceContext/BeadRecord) with effectively zero fix work — only one
-trivial inline orchestrator amend (godoc text on Checkpoint). Process is stable.
+Clean. Main at `2ecdcc0` and pushed. **Two consecutive clean 3-batches**
+(DependencyEdge/Edge/State, then Checkpoint/TraceContext/BeadRecord) with
+effectively zero fix work — only one trivial inline orchestrator amend
+(godoc text on Checkpoint). **Process is stable; scale up batch size.**
+Prior sessions ran 3-at-a-time as an early-process carve-out; that's retired.
+Default to 6-8+ concurrent agents now per the directives.
 
 Beads closed this session:
 - `hk-hqwn.54` TraceContext (3 optional pointer fields; APPROVE-CLEAN)
@@ -128,63 +167,87 @@ All follow the existing core conventions: package `core`, named struct,
   Rebase in worktree (invocation 1), merge from main repo dir (invocation 2,
   freshly cd'd). Six successful merges this session under this pattern.
 
-## Next-batch decision overhang
+## Ready candidates — claim a batch, don't over-plan
 
-**`hk-hqwn.53` Event envelope** is now ready (TraceContext closed it). Body
-references `type` field as `EventType` enum. **No EventType file in `core/`
-yet.** The EventType enum is large — `br list -l spec:event-model` shows
-~80 leaf beads under parent `hk-hqwn.59` (one per event-row in §8.6/§8.7/§8.8).
-That parent appears to be the EventType-enum aggregator.
+`br ready -l scope:bootstrap` returned 20 entries at session end. The
+typed-alias deferral rule in the directives resolves the "what about
+EventType / WorkspaceRef" overhang automatically — apply `*string`
+placeholder + godoc + follow-up `br create`, don't escalate.
 
-Two options when claiming Event envelope:
+**Records (closest match for the State/Edge/Checkpoint pattern):**
 
-  (a) **Defer EventType to `string` placeholder** with godoc citing
-  `event-model.md §8` and a follow-up bead for the typed enum. Mirrors the
-  PolicyExpression deferral on Edge. **Risk:** EventType drives a typed
-  payload registry per §6.3 — string is fragile for future
-  payload-deserialization work.
+- `hk-b3f.75` Run — 8 fields. `input` is WorkspaceRef → `*string` deferral
+  (workspace-model §4.1). No new file in `core/` for WorkspaceRef yet.
+- `hk-hqwn.53` Event envelope — 10 fields. `type` is EventType (no enum
+  in `core/` yet — defer to `string` per standing rule; `payload` is
+  `json.RawMessage`). EventType is large (~80 event rows under parent
+  `hk-hqwn.59`); deferring is the right call.
 
-  (b) **Insert prerequisite bead first.** Check whether `hk-hqwn.59`
-  (or sibling) is the EventType-enum parent and whether it's claimable as
-  a single bead. If yes, claim and land that first; Event envelope follows
-  cleanly with typed `EventType`.
+**Primitive-shape (different shape, pattern-friendly):**
 
-  Recommendation: (b) if `hk-hqwn.59` is small and self-contained as the
-  enum-only definition (i.e., the .59.XX leaf beads are the per-row event
-  taxonomy work, not enum-definition work). Otherwise (a). Inspect with
-  `br show hk-hqwn.59` before claiming.
+- `hk-8i31.24` Five sentinel error classes (HC-020) — `var ErrTransient
+  = errors.New(...)` etc., with two `%w`-wrapped structural sub-sentinels.
+  Tests cover `errors.Is` dispatch.
+- `hk-b3f.85` Checkpoint-commit trailer registry (§6.2) — 7-key constant
+  table; trailer-lint discriminates required/conditional/extension. Likely
+  a `var trailerRegistry = map[string]TrailerSpec{...}` or set of typed
+  constants.
+- `hk-b3f.86` EM failure-class taxonomy (§8) — enum/constant table. Inspect
+  before claiming.
 
-**`hk-b3f.75` Run** is also ready. Body: `input` field is `WorkspaceRef`
-(workspace-model §4.1). No `workspaceref.go` in `core/`. **Pre-decided last
-session: apply `*string` deferral with godoc citing workspace-model §4.1.**
-Same posture as PolicyExpression on Edge. Future hoist to typed alias is
-non-breaking.
+**Likely sensor / invariant (read first to confirm shape):**
 
-**`hk-b3f.77` Transition is NOT ready** — blocked by `hk-zs0.33` (Seven roles
-named — canonical role vocabulary). The 13-field record references
-`actor_role` which depends on the role enum. Skip Transition until roles land.
+- `hk-872.6` Beads owns typed dependency edges
+- `hk-872.7` CoarseStatus 5-value subset; reads tolerate Beads enum
+- `hk-872.8` Bead IDs stable
+- `hk-872.9` Atomic-claim semantics
+- `hk-872.18` Run metadata records bead_id
+- `hk-b3f.2` Edge is a directed transition with deterministic selection inputs
+- `hk-b3f.24` Transition record discoverable by git-show
+- `hk-hqwn.2` event_id MUST be a UUIDv7
+- `hk-hqwn.26` Producers MUST emit events idempotently
+- `hk-8i31.49` Handler subprocess launched from repo-relative path
 
-## Suggested next batch — 3 beads, mixed shape
+These are likely sensor/invariant beads (not pure record types); their
+implementation may be a test fixture or a sensor function rather than a
+new core type. `br show <id>` to confirm before briefing — different shape
+needs a different brief skeleton.
 
-1. `hk-b3f.75` Run — apply WorkspaceRef → `*string` deferral
-2. `hk-hqwn.53` Event envelope — see option (a)/(b) above; resolve before brief
-3. `hk-8i31.24` Five primary sentinel classes (HC-020) — different shape
-   (`var ErrTransient = errors.New(...)` etc., with `%w`-wrapping for the
-   two structural sub-sentinels). Good shape-diversity test for the process.
+**Bigger / specialized (claim solo or as their own small batch):**
 
-Audit deps before claiming. None of these three should sibling-block each
-other (Run + Event envelope are different specs; Sentinels is HC). `br show`
-each one anyway.
+- `hk-872.27` br-CLI adapter (sole translation layer) — substantive
+  subsystem implementation, not a single-file primitive.
+- `hk-b3f.87` Crash-recovery scenario harness — test infrastructure.
+- `hk-b3f.88` Workflow-validator unit-test fixture — canonical
+  malformed-DOT corpus.
+
+**Known blocked (don't claim):**
+
+- `hk-b3f.77` Transition — blocked by `hk-zs0.33` (Seven roles named).
+  Will unblock once the role enum lands. Composes State + OutcomeStatus +
+  TransitionKind otherwise.
+
+## Suggested first move
+
+Spawn 6-8 implementer agents in parallel from the **Records** + **Primitive-shape**
+sections above. The two Records (Run, Event envelope) and the three Primitive-shape
+beads (Sentinels, Trailer registry, Failure-class taxonomy) are five clean candidates
+with no sibling blocks between them. Pick a 6th-8th from the **Likely sensor**
+group after confirming shape via `br show`.
+
+Audit deps before claiming. None of the listed candidates should sibling-block
+each other within a batch, but verify with `br show` — if a `blocks` edge
+between two batch members is content-only (runtime reference, not authoring),
+convert it: `br dep remove a b && br dep add a b --type related`.
 
 ## Files to open first
-1. `git log --oneline -10` — six record commits + prior batches
+1. `git log --oneline -12` — six record commits + prior enum/typed-alias batches
 2. `internal/core/checkpoint.go`, `beadrecord.go`, `tracecontext.go` — latest record-shape patterns
-3. `internal/core/edge.go` — **PolicyExpression deferral pattern** (relevant for WorkspaceRef on Run)
-4. `br ready -l scope:bootstrap` — claimable corpus (20 entries)
-5. `br show hk-hqwn.59` — check whether this is the EventType enum parent (resolves (a)/(b) above)
+3. `internal/core/edge.go` — **PolicyExpression deferral pattern** (the template for WorkspaceRef on Run, EventType on Event envelope, and any future "type not in core/ yet" record)
+4. `internal/core/state.go` + `state_test.go` — the canonical multi-field record + Valid() pattern
+5. `ls internal/core/` — full inventory of typed wrappers + enums already shipped (don't redefine)
 6. Bead body via `br show <id>` — only consult docs the bead cites
 
 ## Blocking question for user
-None. Continue per directives. Resolve Event envelope's EventType deferral
-question (a)/(b) by inspecting `br show hk-hqwn.59`; orchestrator authority
-covers either path.
+None. Standing rules resolve the typed-alias deferral question; orchestrator
+authority covers MEDIUM tier-overrides; context budget governs when to hand off.

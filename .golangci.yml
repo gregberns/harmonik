@@ -75,8 +75,13 @@ linters-settings:
           - { pkg: "github.com/liushuangls/go-anthropic", desc: "PL-INV-002: daemon must not import any LLM SDK" }
 
       # Leaf: internal/core must not import any sibling subsystem.
+      # In depguard v2 a deny-only rule defaults to stdlib-only; we must list
+      # the narrow set of external deps core is permitted to use.
       core:
         files: ["**/internal/core/**"]
+        allow:
+          - "$gostd"
+          - "github.com/google/uuid"
         deny:
           - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
 

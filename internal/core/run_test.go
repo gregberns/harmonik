@@ -20,7 +20,7 @@ func validRun(t *testing.T) Run {
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
-		Input:           "workspace://project/input",
+		Input:           WorkspaceRef("workspace://project/input"),
 		BeadID:          &beadID,
 		State:           StateID(uuid.Must(uuid.NewV7())),
 		Context:         map[string]any{},
@@ -112,7 +112,7 @@ func TestRunValid_EmptyInput(t *testing.T) {
 	t.Parallel()
 
 	r := validRun(t)
-	r.Input = ""
+	r.Input = WorkspaceRef("")
 	if r.Valid() {
 		t.Error("Valid() = true with empty Input, want false")
 	}

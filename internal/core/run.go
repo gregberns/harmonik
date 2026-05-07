@@ -25,10 +25,9 @@ type Run struct {
 	// (execution-model.md §6.1 Run.workflow_version; string-backed, semver-ish).
 	WorkflowVersion WorkflowVersion
 
-	// Input is the workspace reference for this run (workspace-model.md §4.1).
-	// A WorkspaceRef typed alias is deferred per the typed-alias-deferral rule —
-	// see hk-b3f.92 for the WorkspaceRef typed-alias follow-up.
-	Input string
+	// Input is the workspace reference for this run (workspace-model.md §4.1;
+	// execution-model.md §6.1 Run.input).
+	Input WorkspaceRef
 
 	// BeadID is present when the run is tied to a bead per EM-014 and
 	// beads-integration.md §4.3 BI-008; absent otherwise.

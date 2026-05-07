@@ -18,7 +18,7 @@ func validRun(t *testing.T) Run {
 	end := now.Add(time.Minute)
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      "wf-abc-123",
+		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: "1.0.0",
 		Input:           "workspace://project/input",
 		BeadID:          &beadID,
@@ -88,13 +88,13 @@ func TestRunValid_ZeroRunID(t *testing.T) {
 	}
 }
 
-func TestRunValid_EmptyWorkflowID(t *testing.T) {
+func TestRunValid_ZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	r := validRun(t)
-	r.WorkflowID = ""
+	r.WorkflowID = WorkflowID(uuid.Nil)
 	if r.Valid() {
-		t.Error("Valid() = true with empty WorkflowID, want false")
+		t.Error("Valid() = true with zero WorkflowID, want false")
 	}
 }
 

@@ -17,11 +17,9 @@ type Run struct {
 	// RunID is the stable UUIDv7 run identifier (execution-model.md §6.1; unique across project).
 	RunID RunID
 
-	// WorkflowID is the resolved workflow identifier pinned at dispatch time.
-	// This field carries a UUID in string form; a WorkflowID typed alias is deferred
-	// per the typed-alias-deferral rule — see hk-b3f.90 for the WorkflowID typed-alias
-	// follow-up (execution-model.md §6.1).
-	WorkflowID string
+	// WorkflowID is the resolved workflow identifier pinned at dispatch time
+	// (execution-model.md §6.1 Run.workflow_id; UUID-backed named type).
+	WorkflowID WorkflowID
 
 	// WorkflowVersion is the pinned version of the workflow at dispatch time.
 	// A WorkflowVersion typed alias is deferred per the typed-alias-deferral rule —
@@ -68,7 +66,7 @@ func (r Run) Valid() bool {
 	if uuid.UUID(r.RunID) == uuid.Nil {
 		return false
 	}
-	if r.WorkflowID == "" {
+	if uuid.UUID(r.WorkflowID) == uuid.Nil {
 		return false
 	}
 	if r.WorkflowVersion == "" {

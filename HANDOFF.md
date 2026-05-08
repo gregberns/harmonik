@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v9 2026-05-08 main -->
+<!-- PP-TRIAL:v9 2026-05-08 main (afternoon refresh after 18-bead session) -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -147,120 +147,167 @@ and stop.
 # Session Handoff
 
 ## State
-Clean. Main at `5ca45d9`, pushed to origin. **13 beads landed and closed
-this session** across 7 packages: 12 normal closes via worktree-merge plus
-1 subsumed-close (hk-jhob meta-epic — all 4 children already shipped). All
-worktrees cleaned. **5 follow-up beads filed: hk-872.56, hk-zs0.55,
-hk-zs0.56, hk-zs0.57, hk-zs0.58.** No tasks left open from this session.
+Clean. Main at `7fcf8b0`, pushed to origin. **18 beads landed + 1
+closed-as-subsumed = 19 closures this session** across 5 packages
+(brcli, core, lifecycle, specaudit, testhelpers). All worktrees cleaned.
+**10 follow-up beads filed**: hk-zs0.59, .60, .61, .62, hk-b3f.93,
+hk-hqwn.65, .66, .67, .68, .69. No tasks left open from this session.
+
+The session also caught **87 real spec defects** via the audit-style
+binding tests (5 from AR-001 axes, 2 from AR-032 roles, 80 from §8
+taxonomy lint). All pinned via expected-violations skip-list with
+follow-up beads filed for each fix family.
 
 ## What landed this session
 
-Wave-1 (hk-ahvq.48.10, hk-872.25, hk-872.4, hk-ahvq.48.2): twin-binary
-ldflags wire + Beads-version pin + BI-004 handler-brcli depguard + twin
-NDJSON wire-protocol with 12 HC-007 emitters. Wave-2 (hk-872.30, hk-b3f.84,
-hk-hqwn.56, hk-872.42, hk-hqwn.27): brcli timeout discipline (5s/10s
-SIGTERM-grace-SIGKILL per HC-018) + OutcomeKind + EventPattern + BI-INV-002
-sensor + EV-019 panic-recovery helper. Wave-3 (hk-zs0.13, hk-872.50,
-hk-zs0.7, hk-hqwn.62): 11-field Trace RECORD + BrError closed-set enum +
-AR-005 spec audit + UUIDv7 monotonicity stress test. hk-jhob meta-epic
-closed-as-subsumed.
+Wave-1 (hk-872.51, hk-872.56, hk-zs0.3): IntentLogEntry RECORD +
+BrError-sentinel migration to enum + AR-001 four-axis Axes: line audit
+(caught 5 real spec defects). Wave-2 (hk-zs0.55/.57/.56 bundled):
+`ActorRole` (9-value closed enum) + `PolicyVersion` + `ActionDescriptor`
+typed aliases — all 4 placeholders in trace.go substituted; ActionDescriptor
+chose typed-string-alias because OQ-EM-005 + handler-contract.md §4.1
+genuinely silent on shape (validated by reviewer). Wave-3 (hk-872.31,
+hk-b3f.79, hk-872.17): bounded br-stderr capture (5 BI-025d scenarios) +
+Outcome RECORD with discriminated-union enforcement + orphan br subprocess
+sweep (BI-014a). Wave-4 (hk-zs0.33, hk-b3f.65, hk-hqwn.55, hk-872.53):
+AR-032 role-vocabulary audit (caught `investigator` non-canonical use) +
+EM-INV-005 git-wins sensor + Subscription RECORD + BrError→reconciliation
+routing table. Wave-5 (hk-hqwn.6, hk-hqwn.60, hk-a8bg.58, hk-hqwn.63,
+hk-zs0.40): EV-003 process-scope sensor + canonical JSONL fixture in
+testhelpers + Kind enum (Gate/Hook/Guard/Budget) + §8 taxonomy lint
+(caught 80 defects: 81 events lack Axes: annotation slot in §8 table
+format, 6 lack consumer citation) + AR-041 repo-as-SOT audit (clean).
 
-## Process scars to internalize (NEW v9.5)
+hk-872.34 (Beads-CLI skill) closed-as-subsumed — fully shipped at
+`.claude/skills/beads-cli/SKILL.md`.
 
-1. **Inline-amend ceiling = ~3 mechanical edits in 1 file.** Above that,
-   spawn a fix-agent. Hit by hk-872.30 (4 lint fixes including signature
-   change at 2 call sites) where the verification cost outweighed dispatch.
-   Easy heuristic: if you'd need to Read the file twice, dispatch.
+## Process scars to internalize (NEW this session)
 
-2. **Spec-binding tests need an expected-violations skip-list.** When an
-   audit (e.g., AR-005 mechanism|cognition tagging) catches a real spec
-   defect, the audit can't ship in a perpetually-failing state. The right
-   pattern (used by hk-zs0.7) is: `expectedViolations` map keyed by
-   `(file:line:requirement-id)` with bead pin; pinned-and-present →
-   `t.Logf`, pinned-and-absent → `t.Errorf` (stale-entry guard), unexpected
-   violation → `t.Errorf`. Generalizable to any audit-style binding test.
+1. **Audit-style binding tests are extraordinarily productive.** Five
+   audits this session (AR-001, AR-032, §8 taxonomy, AR-041 + last
+   session's AR-005) caught 95 real spec defects in aggregate. The
+   `expectedViolations` skip-list pattern (Path B from prior session)
+   absorbs known violations cleanly; stale-entry guard catches drift.
+   The ratio of "audit lines shipped" to "spec defects caught" is
+   excellent. **Treat new normative-discipline beads as candidate
+   binding-tests by default.**
 
-3. **Migration follow-up beads belong in the brief, not the implementer's
-   judgment.** hk-872.30's `ErrBrTimeout` got a `TODO(hk-872.50)` because
-   the brief told it to defer. hk-872.50's brief told the implementer to
-   file the migration follow-up bead (hk-872.56) explicitly. The pattern:
-   when a bead defines an enum/type that other code wants to migrate to,
-   file the migration as a sibling bead, not as part of the defining bead.
+2. **Audit scope errors come from file-collector narrowness.**
+   hk-hqwn.63's round-1 review caught a false-positive pin because
+   `hqwn63FixtureSiblingSpecFiles` only collected `*/spec.md`, missing
+   `schemas.md`. Generalize: when implementing audit-style binding tests,
+   the sibling-file collector should default to `**/*.md` one level deep,
+   not a single hard-coded filename. Add this default to future briefs.
 
-4. **Empty `cmd/` for daemon binary defers caller-wiring beads.** hk-872.25
-   shipped `internal/release.BeadsVersion` but the daemon-startup
-   `CheckBrVersion(release.BeadsVersion, ...)` wiring is deferred — no
-   daemon binary in `cmd/` yet. When a bead's primary use-case is "wired
-   into the daemon," scope the deliverable to "the artifact + its self
-   tests"; the wiring lands with the daemon-binary bead. Currently affects:
-   `internal/release.BeadsVersion`, `internal/lifecycle.RecoverWithLogFlush`.
+3. **Closed-set follow-up beads after typed-alias-deferral.** Pattern
+   reinforced: hk-hqwn.55 deferred ConsumerClass and OnPanic as string
+   placeholders, filing hk-hqwn.65/.66 explicitly. The follow-up bead's
+   `--description` should name the eventual file (`consumerclass.go`),
+   the canonical-sibling pattern (`outcomekind.go`), and the substitution
+   work (replace placeholder in subscription.go). The bead body IS the
+   work spec — invest in description quality at filing time.
 
-5. **`OutcomeKind` vs `OutcomeStatus`** — both live in `internal/core/`,
-   distinct concepts. `OutcomeKind` (hk-b3f.84, just landed) is the §6.1
-   discriminator for `Outcome.payload` envelope (2 values). `OutcomeStatus`
-   (pre-existing) is the 4-value result enum. hk-zs0.13's reviewer caught
-   the potential confusion; the implementer correctly used `OutcomeStatus`
-   for `Trace.Outcome`. Future briefs naming "outcome" should disambiguate.
+4. **`br create` flag syntax: title is positional, not `-t`.** v9.5
+   directives noted `-p N` for priority and `--labels "a,b,c"` comma-sep.
+   This session added: **`-t` is `--type`, NOT title.** Use the positional
+   title argument (`br create "title goes here" -p 2 --labels "..."`).
+   I made this mistake once filing hk-zs0.61.
 
-6. **HC-020 sentinel-set discipline persists.** No new HC-020 sub-sentinels
-   added this session (vs prior session's hk-8i31.50 fix-iteration).
-   `ErrBrTimeout` (hk-872.30) lives in `internal/brcli/`, NOT in
-   `internal/handlercontract/sentinels.go` — that distinction matters.
+5. **Race-condition risk on package-var test knobs.** hk-872.17's round-1
+   fix added test-time mutation of `orphanSweepGracePeriod` /
+   `orphanSweepPollInterval` package vars; the round-2 review's race
+   detector caught a real data race because parallel tests read these vars
+   while the writer test mutated them. **Fix pattern: drop `t.Parallel()`
+   from the writer test only.** Non-parallel tests run before parallel
+   tests in Go's test scheduler, so `t.Cleanup` restoration completes
+   before any parallel reader fires. Future briefs adding test-tunable
+   package vars should warn about this race surface.
+
+6. **Spec-defect-as-design-evidence.** When an audit catches a structural
+   defect (e.g., §8 table format has no Axes: annotation slot — 81
+   violations), the right move is to PIN ALL the violations and file ONE
+   spec-fix bead (hk-hqwn.67), not to weaken the audit. The audit
+   correctly captures "the spec is wrong here"; the fix bead captures
+   "fix the spec format".
+
+7. **Inline-amend ceiling held.** Multiple successful inline-amends this
+   session: hk-872.31 NIT skipped (orchestrator authority), hk-zs0.40
+   comment-only fix inline-amended cleanly, hk-hqwn.6 MEDIUM godoc fix
+   spawned fix-agent (correctly above ceiling because 2 files needed
+   coordinated edit). The ≤3-mechanical-edits-in-1-file ceiling is the
+   right discriminator.
 
 ## Suggested first move
 
 1. **Verify state**: `git status` clean; `git log --oneline -3` shows
-   `5ca45d9 test(core): add UUIDv7 monotonicity stress tests (hk-hqwn.62)`.
+   `7fcf8b0 test(specaudit): clarify ar041 prohibited-channels comment`
+   on top of `dc400ab test(specaudit): add AR-041 repo-as-single-source-of-truth binding test`.
 
-2. **Open with a 4-bead wave** — concrete, all parallel-safe:
-   - **hk-872.56** (just filed): mechanical migration — replace
-     `ErrBrTimeout` (timeout.go) and `ErrBrVersionIncompatible` (version.go)
-     sentinels with `BrError` enum values; remove the `TODO(hk-872.50)` /
-     `TODO(hk-872.28)` lines. Small, ~30-line bead, unblocks the brcli
-     error-classification cleanup.
-   - **hk-zs0.55** (just filed): `ActorRole` typed string alias (7 AR-032
-     roles + daemon/reconciliation synthesized) with Valid/MarshalText/
-     UnmarshalText. Sibling pattern: outcomekind.go, failureclass.go.
-     Substitutes the placeholder string in trace.go.
-   - **hk-zs0.56** (just filed): `ActionDescriptor` schema for
-     `candidate_actions`/`chosen_action` fields in trace.go. Slightly more
-     substantive — read AR-012 to confirm the shape before dispatching.
-   - **hk-zs0.57** (just filed): `PolicyVersion` typed string alias for
-     trace.go's `policy_version` field. Smallest of the three.
+2. **Open with 4 typed-enum follow-ups** — small, parallel-safe, all
+   filed by this session's bundled work:
+   - **hk-hqwn.65** (just filed): `ConsumerClass` typed string alias
+     (3 values: synchronous, asynchronous, observer per event-model §6.1).
+     Substitutes string placeholder in subscription.go. Sibling pattern:
+     `internal/core/outcomekind.go`. ~80-line bead.
+   - **hk-hqwn.66** (just filed): `OnPanic` typed string alias (3 values:
+     recover_and_log, quarantine_consumer, fail_daemon). Same pattern as
+     hk-hqwn.65. Substitutes placeholder in subscription.go. **Bundle
+     hk-hqwn.65 + .66 into ONE implementer per v9 directive (both touch
+     subscription.go).**
+   - **hk-b3f.93** (just filed): VerdictEvent 8-field RECORD per
+     reconciliation/schemas.md §6.1. Substitutes `*string` Payload
+     placeholder in outcome.go. Sibling pattern: intentlogentry.go.
+     Reviewer's hk-b3f.79 review noted this is well-scoped already.
+   - **hk-zs0.61** (just filed): ActionDescriptor record promotion —
+     **deferred** until handler-contract.md §4.1 defines the structured
+     shape. Currently not actionable; leave for spec-author work.
 
-3. **Subsumed-bead pre-check** (per Scar #4 prior session): before
-   dispatching anything from the 200+ ready queue, grep for the bead's
-   named symbols. Several beads in the corpus may already have shipped
-   under sibling work — `internal/specaudit/` is a fresh package and may
-   absorb other audit-style beads (e.g., AR-001 four-axis classification,
-   hk-hqwn.40 four-axis tags on event types).
+3. **Spec-fix beads** (cognition-tagged, defer to user pair-on per
+   session scar from prior session): hk-zs0.58 (RC-015 split), hk-zs0.59
+   (BI-025a/b/c idempotency=safe), hk-zs0.60 (RC-015 invalid axis
+   vocabulary), hk-zs0.62 (investigator role), hk-hqwn.67 (§8 table needs
+   per-row Axes: slot — substantive spec format change), hk-hqwn.68
+   (6 events lacking sibling citation — possibly trivially fixable but
+   each event needs its own owning-spec citation drafted). **Don't
+   dispatch these as implementer briefs.**
 
-4. **hk-zs0.58 (RC-015 split) is NOT a typical implementer brief.** It's
-   a substantive spec-author edit splitting a normative requirement into
-   two halves (mechanism + cognition). Either dispatch with a kerf jig or
-   defer until the user pairs on it.
+4. **Subsystem-add candidates**: `internal/reconciliation/` doesn't exist
+   yet but `ReconciliationCategory` (hk-872.53) is a string-alias
+   placeholder; when reconciliation/spec.md drives a Go package, the
+   typed wrapper migrates there. Watch the `go-subsystem-add` skill.
+
+5. **Subsumed-bead pre-check** (recurring discipline): before dispatching
+   anything from the 200+ ready queue, grep for the bead's named symbols.
+   This session caught hk-872.34 (Beads-CLI skill) as subsumed by the
+   already-shipped `.claude/skills/beads-cli/SKILL.md`. Look for similar
+   patterns: anything in the docs/skills/test-fixture corpus may be
+   already-done.
 
 ## Files to open first
 
-1. `git log --oneline -16` — this session's 16 commits (13 features +
-   3 fix-iterations).
-2. `.claude/implementer-protocol.md` — standing rules; nothing changed
-   structurally this session.
-3. `internal/release/manifest.go` — new leaf package shipped this session
-   (BeadsVersion=0.1.45). Will be the import target for the daemon-binary
-   bead's CheckBrVersion call.
-4. `internal/brcli/{timeout.go,brerror.go,sensorbiinv002_test.go}` — three
-   landings this session. hk-872.56 will touch timeout.go to migrate the
-   sentinel.
-5. `cmd/harmonik-twin-claude/wire.go` — 12 HC-007 emitters now in place;
-   integration test target for OPEN bead `hk-uwie` (the real-binary
-   round-trip test deferred since hk-ahvq.48.4).
-6. `internal/specaudit/ar005_tags_test.go` — audit-style binding-test
-   pattern; sibling beads in zs0/sx9r/hqwn families may follow this shape.
-7. `internal/core/{trace.go,outcomekind.go,eventpattern.go}` — three
-   RECORD/enum landings this session. Trace's typed-alias placeholders
-   (`ActorRole`, `CandidateActions`, `ChosenAction`, `PolicyVersion`) are
-   the targets of hk-zs0.55/.56/.57.
+1. `git log --oneline -25` — this session's commits (18 features +
+   3 fix-iteration commits + 1 inline-amend + handoff doc).
+2. `.claude/implementer-protocol.md` — standing rules; no structural
+   change this session.
+3. `internal/specaudit/` — the audit family is now 5 binding tests:
+   `ar005_tags_test.go`, `ar001_axes_test.go`, `ar032_roles_test.go`,
+   `hqwn63_eventmodel_taxonomy_test.go`, `ar041_repo_sot_test.go`. Pattern
+   reuse for future audit-style beads.
+4. `internal/core/{outcome.go,subscription.go,kind.go,actorrole.go,
+   policyversion.go,actiondescriptor.go,intentlogentry.go,
+   gitwins_b3f65_test.go,monotsmono_hqwn6_test.go}` — this session's
+   8 core landings. Subscription.go is the substitution target for
+   hk-hqwn.65/.66; outcome.go is target for hk-b3f.93.
+5. `internal/brcli/{stderrcap.go,classifyreconciliation.go}` — two
+   brcli landings. classifyreconciliation.go is the BrError→Cat routing.
+6. `internal/lifecycle/orphansweepbr.go` — BI-014a sweep helper, no
+   daemon-startup wiring yet (deferred per scope rule scar).
+7. `internal/testhelpers/jsonlfixture.go` — 8 canonical JSONL fixtures
+   for envelope/durability/read-recovery tests. Wire-form precedent set
+   via package-private `jsonlEventWire` struct.
 
 ## Blocking question for user
-None.
+None. The 6 cognition-tagged spec-fix beads (hk-zs0.58, .59, .60, .62,
+hk-hqwn.67, .68) require user pair-on or kerf jig — they're not
+auto-dispatchable. The next session can pick from the typed-enum
+follow-ups (hk-hqwn.65/.66 bundled, hk-b3f.93) freely.

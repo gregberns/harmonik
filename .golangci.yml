@@ -112,6 +112,27 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
   
+        # BI-004: The handler subsystem MUST NOT import internal/brcli.
+        # The daemon invokes br directly (as a subprocess via the brcli adapter);
+        # agents invoke br only through the Beads-CLI skill injected at launch time
+        # per handler-contract.md §4.11. Neither the handler launch path nor the
+        # handler-contract package may short-circuit that discipline by importing
+        # the brcli adapter directly.
+        #
+        # Scope: internal/handler and internal/handlercontract.
+        # Both packages are part of the handler subsystem (skill-injection seam).
+        # The structural guard in internal/handler/bi004_handler_gate_test.go is
+        # the belt-and-suspenders runtime check; this rule is the primary static
+        # enforcement surface.
+        #
+        # Rationale: specs/beads-integration.md §4.2 BI-004.
+        handler-brcli-ban:
+          files:
+            - "**/internal/handler/**"
+            - "**/internal/handlercontract/**"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "BI-004: handler MUST NOT import brcli; agents access br only via the Beads-CLI skill per handler-contract.md §4.11 (specs/beads-integration.md §4.2)" }
+
         # eventbus / policy / handler-contract: may import core only.
         # Add these rules when the packages land.
         # eventbus:

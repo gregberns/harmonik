@@ -229,30 +229,9 @@ func TestWM006a_BeadIDToRefSafe_ResultPassesCheckRefFormat(t *testing.T) {
 // These helpers are local to this fixture (bead hk-8mwo.11).
 // ---------------------------------------------------------------------------
 
-// refnameFixtureIsRefSafe is an alias to refNameCheckRefFormat used in tests
-// to check a full branch path (not just a bead ID).
-//
-// Prefixed refnameFixture to avoid sibling-bead collision (bead hk-8mwo.11).
-func refnameFixtureIsRefSafe(t *testing.T, branch string) bool {
-	t.Helper()
-	return refNameIsRefSafe(t, branch)
-}
-
 // refNameIsRefSafe wraps refNameCheckRefFormat with a testing.T for use in
 // table-driven tests that need to assert the outcome.
 func refNameIsRefSafe(t *testing.T, branch string) bool {
 	t.Helper()
 	return refNameCheckRefFormat(t.Context(), branch)
-}
-
-// refnameFixtureAssertRefSafe calls t.Errorf if the branch name is not
-// accepted by git check-ref-format.
-//
-// Prefixed refnameFixture to avoid sibling-bead collision (bead hk-8mwo.11).
-func refnameFixtureAssertRefSafe(t *testing.T, wmClause, branch string) {
-	t.Helper()
-	if !refnameFixtureIsRefSafe(t, branch) {
-		t.Errorf("%s: branch %q rejected by git check-ref-format; expected valid ref name",
-			wmClause, branch)
-	}
 }

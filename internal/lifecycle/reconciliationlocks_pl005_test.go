@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -13,6 +14,7 @@ import (
 // true the file content carries "Harmonik-Verdict-Executed: true" per
 // RC-002b. The creatorPID is written as metadata so that kill(pid, 0) can be
 // used to check liveness; pass a non-existent PID to simulate a stale lock.
+//
 //nolint:unparam // creatorPID is intentionally parameterized; all current call sites use 99999 to simulate dead PID, but callers may pass any value for future coverage of live-PID scenarios.
 func startupSweepFixtureSeedReconciliationLock(t *testing.T, projectDir, name string, creatorPID int, verdictExecuted bool) string {
 	t.Helper()
@@ -143,7 +145,7 @@ func TestPL006_ReconciliationLockSweepWithVerdictTrailer(t *testing.T) {
 		t.Fatalf("PL-006 recon lock (verdict): ReadFile: %v", err)
 	}
 	const wantTrailer = "Harmonik-Verdict-Executed: true"
-	if !containsStr(string(data), wantTrailer) {
+	if !strings.Contains(string(data), wantTrailer) {
 		t.Errorf("PL-006 recon lock (verdict): file does not contain trailer %q", wantTrailer)
 	}
 
@@ -220,19 +222,4 @@ func TestPL006_ReconciliationLockPayloadCounters(t *testing.T) {
 		t.Errorf("PL-006 recon lock counters: payload.ReconciliationLocksRemoved = %d, want 3",
 			payload.ReconciliationLocksRemoved)
 	}
-}
-
-// containsStr reports whether s contains substr.
-// Local helper to avoid importing strings in this file independently (strings
-// is not currently needed for other declarations here).
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || substr == "" ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
 }

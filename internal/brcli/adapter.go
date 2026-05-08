@@ -58,15 +58,15 @@ type Result struct {
 // Run is the LOW-LEVEL PRIMITIVE; it does not implement:
 //   - BI-025a exit-code taxonomy → hk-872.28
 //   - BI-025b --format json flag → hk-872.29
-//   - BI-025c timeout discipline → hk-872.30
+//   - BI-025c timeout discipline → implemented in RunWithTimeout (timeout.go)
 //   - BI-025d stderr cap + classification → hk-872.31
 //   - BI-025e concurrency discipline → hk-872.32
 //
 // Higher-level methods built on Run will add those layers.
 func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// TODO(hk-872.29): prepend --format json to args.
-	// TODO(hk-872.30): wrap ctx with a 5s (read) or 10s (write) deadline before
-	// passing to CommandContext.
+	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
+	// low-level primitive used by higher-level methods that add their own timeout wrapping.
 	// TODO(hk-872.31): enforce 1 MiB stderr cap and classify captured stderr.
 	// TODO(hk-872.32): no adapter-side mutex; SQLite WAL handles concurrent writes.
 
@@ -85,8 +85,10 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 			// context has an error it means exec.CommandContext sent the kill
 			// (cancellation or timeout); treat this as an exec-level failure so
 			// callers can observe context.Canceled / context.DeadlineExceeded.
-			// TODO(hk-872.30): the timeout discipline bead will wrap the context
-			// before passing it here; that path will also land here as -1.
+			// NOTE(hk-872.30): RunWithTimeout handles the timeout path; when it
+			// fires SIGTERM/SIGKILL the context is a non-canceling Background()
+			// so this branch is not taken from that path — timeout errors are
+			// classified as ErrBrTimeout directly in RunWithTimeout.
 			if exitErr.ExitCode() == -1 && ctx.Err() != nil {
 				return Result{}, fmt.Errorf("brcli: subprocess killed by context: %w", ctx.Err())
 			}

@@ -2,8 +2,6 @@ package brcli
 
 // TODO(hk-872.28): When BrError enum lands, classify Run's exit codes via that
 // taxonomy; ErrBrVersionIncompatible will be informed by BrUnavailable / BrSchemaMismatch.
-// TODO(hk-872.30): When read-timeout discipline lands, the 5s read timeout will
-// wrap ctx automatically; no explicit timeout needed here.
 
 import (
 	"context"

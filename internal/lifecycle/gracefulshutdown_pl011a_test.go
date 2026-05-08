@@ -1,7 +1,6 @@
 package lifecycle
 
 import (
-	"runtime"
 	"testing"
 	"time"
 )
@@ -86,7 +85,6 @@ func shutdownFixtureMonotonicNs() uint64 {
 	// For the fixture we return time.Now().UnixNano() as a non-zero uint64.
 	// The production implementation replaces this with the OS syscall.
 	t := time.Now()
-	_ = runtime.Version()       // ensure runtime import is used
 	return uint64(t.UnixNano()) //nolint:gosec // G115: conversion from int64 to uint64 safe for positive timestamps
 }
 

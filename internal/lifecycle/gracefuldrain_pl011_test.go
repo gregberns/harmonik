@@ -63,7 +63,11 @@ func shutdownFixtureClassifyInFlight(s shutdownFixtureRunState) shutdownFixtureI
 		return shutdownFixtureClassGatePending
 	case s.checkpointLanded:
 		return shutdownFixtureClassJustCheckpointed
+	case s.agentActive:
+		return shutdownFixtureClassMidAgentWork
 	default:
+		// No flags set: treat as mid-agent-work by spec convention (an in-flight
+		// run with no checkpoint and no gate must be agent-active).
 		return shutdownFixtureClassMidAgentWork
 	}
 }
@@ -252,10 +256,6 @@ func TestPL011_Step3CompleteWatcherAggregation(t *testing.T) {
 	// After aggregation, all (i)-class runs have reached a durable checkpoint.
 	// Spec ref: PL-011 step 3 (i) — "On observation, the run reaches a durable
 	// checkpoint per [execution-model.md §4.4 EM-017]."
-	step3Blocked = false // step-3 is now complete
-	if step3Blocked {
-		t.Error("PL-011 step-3: step3Blocked should be false after watcher settlement")
-	}
 }
 
 // TestPL011_DrainDoesNotPullNewBeads verifies that once drain is entered, no

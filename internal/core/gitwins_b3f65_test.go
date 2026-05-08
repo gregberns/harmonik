@@ -78,15 +78,17 @@ func gitWinsSensorMakeClosedBead(t *testing.T, id BeadID) BeadRecord {
 func gitWinsSensorMakeCheckpointWithMissingCommit(t *testing.T, id BeadID) Checkpoint {
 	t.Helper()
 	beadID := id
+	runID := RunID(uuid.Must(uuid.NewV7()))
+	transitionID := TransitionID(uuid.Must(uuid.NewV7()))
 	return Checkpoint{
 		// A plausible-looking but deliberately absent commit SHA.
 		CommitHash:           "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-		RunID:                RunID(uuid.Must(uuid.NewV7())),
+		RunID:                runID,
 		StateID:              StateID(uuid.Must(uuid.NewV7())),
-		TransitionID:         TransitionID(uuid.Must(uuid.NewV7())),
+		TransitionID:         transitionID,
 		BeadID:               &beadID,
 		SchemaVersion:        1,
-		TransitionRecordPath: ".harmonik/transitions/run-gitwins-b3f65/trans-001.json",
+		TransitionRecordPath: TransitionRecordPath(runID, transitionID),
 	}
 }
 

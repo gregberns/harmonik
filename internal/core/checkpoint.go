@@ -5,12 +5,33 @@ import "github.com/google/uuid"
 // Checkpoint records the durable evidence of a single successful state transition
 // as a git commit on the run's task branch (execution-model.md §6.1).
 //
-// Every Checkpoint corresponds to exactly one checkpoint commit whose tree carries
-// both the work product and a transition-record sibling file at the canonical path
-// defined by EM-018: .harmonik/transitions/<run_id>/<transition_id>.json.
-// Run-scoping of the path is a structural uniqueness guarantee: cross-run merges,
-// cherry-picks, and replay-tree construction from distinct runs cannot collide
-// because each run's transitions occupy a disjoint sub-directory.
+// # EM-016 atomicity contract
+//
+// A Checkpoint MUST be represented as a single git commit whose tree contains
+// (a) the work product and (b) the transition-record sibling file at the
+// canonical path .harmonik/transitions/<run_id>/<transition_id>.json
+// (execution-model.md §4.4.EM-016, §4.4.EM-018).
+//
+// The commit sequence is write-tree → commit-tree → update-ref. The atomicity
+// boundary is the update-ref step: before update-ref completes, the transition
+// is NOT observable to any subsystem. A crash between commit-tree and update-ref
+// MAY leave loose objects in .git/objects/; those objects carry no reference and
+// MUST NOT be treated as observable state — they are eligible for reclamation by
+// git gc. The atomicity boundary covers reference visibility only; it does NOT
+// cover the loose-object writes themselves.
+//
+// The task branch MUST exist before any checkpoint is attempted; branch-creation
+// lifecycle is owned by workspace-model.md §4.2.
+//
+// # Path coherence
+//
+// TransitionRecordPath MUST equal
+// ".harmonik/transitions/<RunID>/<TransitionID>.json" — the run_id and
+// transition_id path components MUST match this record's RunID and TransitionID
+// fields respectively (execution-model.md §4.4.EM-018). Run-scoping of the path
+// is a structural uniqueness guarantee: cross-run merges, cherry-picks, and
+// replay-tree construction from distinct runs cannot collide because each run's
+// transitions occupy a disjoint sub-directory. Valid() enforces this invariant.
 type Checkpoint struct {
 	// CommitHash is the git commit SHA on the task branch for this checkpoint.
 	CommitHash string
@@ -40,15 +61,20 @@ type Checkpoint struct {
 	TransitionRecordPath string
 }
 
-// Valid reports whether all required fields carry non-zero values.
-// A Checkpoint is considered valid iff:
+// Valid reports whether all required fields carry non-zero values and the
+// path-coherence invariant of EM-016/EM-018 holds.
+//
+// A Checkpoint is valid iff:
 //   - CommitHash is non-empty
 //   - RunID is not the zero UUID
 //   - StateID is not the zero UUID
 //   - TransitionID is not the zero UUID
 //   - BeadID, when non-nil, dereferences to a non-empty value
-//   - SchemaVersion is non-zero
-//   - TransitionRecordPath is non-empty
+//   - SchemaVersion is non-zero (positive)
+//   - TransitionRecordPath equals
+//     ".harmonik/transitions/<RunID>/<TransitionID>.json"
+//     (run_id and transition_id components MUST match this record's
+//     RunID and TransitionID per execution-model.md §4.4.EM-018)
 func (c Checkpoint) Valid() bool {
 	if c.CommitHash == "" {
 		return false
@@ -68,8 +94,9 @@ func (c Checkpoint) Valid() bool {
 	if c.SchemaVersion == 0 {
 		return false
 	}
-	if c.TransitionRecordPath == "" {
-		return false
-	}
-	return true
+	// EM-018: TransitionRecordPath MUST be the canonical run-scoped path.
+	// The run_id and transition_id path components MUST match this record's
+	// RunID and TransitionID fields; a mismatch indicates a construction error.
+	want := TransitionRecordPath(c.RunID, c.TransitionID)
+	return c.TransitionRecordPath == want
 }

@@ -1,8 +1,8 @@
 package core
 
 import (
+	"encoding/json"
 	"testing"
-	"time"
 )
 
 // b3f73NodeValid returns a fully-populated Node with all required fields set to
@@ -177,9 +177,9 @@ func TestNodeValid_ControlPointWithHandlerRef(t *testing.T) {
 func TestNodeValid_NegativeTimeout(t *testing.T) {
 	t.Parallel()
 
-	dur := -5 * time.Second
+	secs := -5
 	n := b3f73NodeValid(t)
-	n.Timeout = &dur
+	n.Timeout = &secs
 	if n.Valid() {
 		t.Error("Valid() = true with negative Timeout, want false")
 	}
@@ -188,9 +188,9 @@ func TestNodeValid_NegativeTimeout(t *testing.T) {
 func TestNodeValid_ZeroTimeout(t *testing.T) {
 	t.Parallel()
 
-	dur := time.Duration(0)
+	secs := 0
 	n := b3f73NodeValid(t)
-	n.Timeout = &dur
+	n.Timeout = &secs
 	if n.Valid() {
 		t.Error("Valid() = true with zero Timeout, want false")
 	}
@@ -199,9 +199,9 @@ func TestNodeValid_ZeroTimeout(t *testing.T) {
 func TestNodeValid_PositiveTimeout(t *testing.T) {
 	t.Parallel()
 
-	dur := 30 * time.Second
+	secs := 30
 	n := b3f73NodeValid(t)
-	n.Timeout = &dur
+	n.Timeout = &secs
 	if !n.Valid() {
 		t.Error("Valid() = false with positive Timeout, want true")
 	}
@@ -341,5 +341,105 @@ func TestNodeValid_OptionalRefsSet(t *testing.T) {
 	n.BudgetRef = &bRef
 	if !n.Valid() {
 		t.Error("Valid() = false with all optional refs set, want true")
+	}
+}
+
+// TestNodeValid_SubWorkflowWithHandlerRef verifies EM-007: HandlerRef is
+// forbidden when Type == NodeTypeSubWorkflow.
+func TestNodeValid_SubWorkflowWithHandlerRef(t *testing.T) {
+	t.Parallel()
+
+	ref := "handlers/foo"
+	n := b3f73NodeSubWorkflow(t)
+	n.HandlerRef = &ref
+	if n.Valid() {
+		t.Error("Valid() = true for sub-workflow Node with non-nil HandlerRef, want false (EM-007)")
+	}
+}
+
+// TestNodeValid_ControlPointWithSubWorkflowRef verifies that SubWorkflowRef is
+// forbidden when Type == NodeTypeControlPoint (EM-007 / §6.1 invariant).
+func TestNodeValid_ControlPointWithSubWorkflowRef(t *testing.T) {
+	t.Parallel()
+
+	ref := "workflows/wf-001"
+	n := b3f73NodeNonAgentic(t)
+	n.Type = NodeTypeControlPoint
+	n.SubWorkflowRef = &ref
+	if n.Valid() {
+		t.Error("Valid() = true for control-point Node with non-nil SubWorkflowRef, want false")
+	}
+}
+
+// TestNodeTimeoutJSONRoundTrip verifies that Timeout serialises as an integer
+// number of seconds (not nanoseconds) per execution-model.md §6.1
+// ("Integer | None — positive seconds").
+func TestNodeTimeoutJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	secs := 120
+	n := b3f73NodeValid(t)
+	n.Timeout = &secs
+
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// Decode into a generic map so we can inspect the raw Timeout value.
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal into map: %v", err)
+	}
+
+	rawTimeout, ok := raw["Timeout"]
+	if !ok {
+		t.Fatal("Timeout field absent from JSON output")
+	}
+	// json.Number / float64 — both are numeric. json.Unmarshal into any gives float64.
+	got, ok := rawTimeout.(float64)
+	if !ok {
+		t.Fatalf("Timeout JSON value type = %T, want float64 (integer seconds)", rawTimeout)
+	}
+	if got != float64(secs) {
+		t.Errorf("Timeout JSON value = %v, want %v (integer seconds per §6.1)", got, secs)
+	}
+
+	// Round-trip: unmarshal back and verify the value is preserved.
+	var n2 Node
+	if err := json.Unmarshal(data, &n2); err != nil {
+		t.Fatalf("json.Unmarshal back to Node: %v", err)
+	}
+	if n2.Timeout == nil {
+		t.Fatal("Timeout is nil after round-trip, want non-nil")
+	}
+	if *n2.Timeout != secs {
+		t.Errorf("Timeout after round-trip = %d, want %d", *n2.Timeout, secs)
+	}
+}
+
+// TestNodeTimeoutNilJSON verifies that a nil Timeout serialises as JSON null.
+func TestNodeTimeoutNilJSON(t *testing.T) {
+	t.Parallel()
+
+	n := b3f73NodeValid(t)
+	n.Timeout = nil
+
+	data, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal into map: %v", err)
+	}
+
+	rawTimeout, ok := raw["Timeout"]
+	if !ok {
+		t.Fatal("Timeout field absent from JSON output")
+	}
+	if rawTimeout != nil {
+		t.Errorf("Timeout JSON value = %v, want null for nil Timeout", rawTimeout)
 	}
 }

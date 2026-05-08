@@ -1,7 +1,5 @@
 package core
 
-import "time"
-
 // Node is the 12-field graph vertex record for a workflow node
 // (execution-model.md §6.1 RECORD Node).
 //
@@ -25,10 +23,10 @@ type Node struct {
 	// TODO(hk-8mwo.72): replace *string with HandlerRef typed alias.
 	HandlerRef *string
 
-	// Timeout is the optional execution deadline for this node.
-	// When set, must be positive (> 0). Corresponds to the spec's
-	// "positive integer, seconds" shape (execution-model.md §6.1 Node.timeout).
-	Timeout *time.Duration
+	// Timeout is the optional execution deadline for this node in integer seconds.
+	// When set, must be positive (> 0). The wire shape is Integer | None per
+	// execution-model.md §6.1 Node.timeout ("positive seconds").
+	Timeout *int
 
 	// RequiredSkills is the list of skill names this node requires, resolved
 	// per [control-points.md §4.11] and [handler-contract.md §4.11].

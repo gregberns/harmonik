@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v8 2026-05-07 main -->
+<!-- PP-TRIAL:v9 2026-05-08 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -6,8 +6,10 @@ Act as the orchestrator. Delegate substantively; keep main thread small.
 **Implementer + reviewer agents read `.claude/implementer-protocol.md` for
 standing conventions** (commit format, lint rules, helper-prefix discipline,
 typed-alias-deferral, reporting format, gofmt-clean discipline, run-before-
-commit checks, pre-flight reading order). Do NOT duplicate that content into
-briefs. Briefs orchestrate; the protocol doc instructs.
+commit checks, pre-flight reading order, **and worktree discipline — added
+v8.5 after 4-of-5 wave-1 implementers committed directly to main**). Do NOT
+duplicate that content into briefs. Briefs orchestrate; the protocol doc
+instructs.
 
 THROUGHPUT FLOOR. The bead body IS the work spec. Implementer briefs cap at
 ~30 lines: bead-id, worktree pointer, helper prefix, canonical-sibling
@@ -19,34 +21,26 @@ Active-work floor: 4 concurrent agents. Target: 6–8 across non-overlapping
 packages. **Refill on review-dispatch, not review-return** — when you spawn
 a reviewer, immediately spawn the next implementer if the ready queue has
 non-conflicting work. Reviews and implementers run in parallel at the agent
-level; the orchestrator should layer them. The "wait for foundation" rule
-applies ONLY when the next bead literally cannot be briefed without the
-foundation file's content; if the brief can name the canonical pattern
-abstractly, dispatch in parallel.
+level; the orchestrator should layer them.
 
 Pre-flight investigation cap: orchestrator reads ≤3 files per dispatch (bead
-body via `br show`, the cited spec section, ONE canonical sibling). Do NOT
-sample real CLI output unless an exact JSON/output shape is load-bearing AND
-not in the bead body. The implementer is competent; let them read.
+body via `br show`, the cited spec section, ONE canonical sibling).
 
 Spawn implementers (model: sonnet, effort: high) with `isolation: worktree`,
 run_in_background. Reviewers same model/effort, no isolation.
 
-Before claiming a parallel batch: audit dep edges. Sibling-artifact beads
-with content-only `blocks` deps (i.e., one references the other at runtime,
-not at authoring time) must have those edges converted: `br dep remove <a>
-<b>` then `br dep add <a> <b> --type related`. Without this, `br update
---status in_progress` refuses the claim. Also fires when `blocks` deps point
-at already-closed type beads. Convert and retry — don't escalate.
+**Same-package-different-file is parallel-safe.** Same-file conflict (3+
+beads mutating one file) → combine into ONE implementer with sequential
+commits.
 
-Same-file sibling conflict: when 3+ beads in one ready slice all mutate the
-SAME file, do NOT dispatch them in parallel. Combine into ONE implementer
-with a brief that lists all the bead IDs and instructs sequential commits
-(one per bead, each carrying its own `Refs:`).
+**Sibling-overlap pre-check (NEW v9).** Before dispatching, scan in-flight
+worktrees for *types* that the new bead may also define. The hk-i0tw.52 vs
+hk-i0tw.31 collision (both defined CadenceFilter) cost a fix-agent round.
+For wide-impact siblings (RECORDs, enums) consider serializing or naming
+the canonical-source bead in the later brief.
 
 Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
-to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain. If still
-open at round 4, tag `needs-clarification` and move on.
+to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain.
 
 Reviewer brief MUST encode TIER DISCIPLINE: MEDIUM = defect against THIS
 bead's acceptance criteria. Cross-cutting / future-bead / spec-doc concerns
@@ -57,10 +51,11 @@ trailers — those are not used in this project.
 
 Inline-amend by orchestrator (no fix-agent) for: trivial single-line text
 fixes; literal one-line code fixes; **mechanical multi-line refactors
-verifiable by reading** (gofmt reflows, search-and-replace renames, drop-an-
-unused-import, substitute strings.Contains for hand-rolled helper). Amends
-are faster than fix-agents when the fix doesn't need judgment. Re-review
-may be skipped after a metadata-only fix.
+verifiable by reading**. **Read the worktree file BEFORE Edit** — Edit
+requires Read in the same conversation, and bash `git commit` returns 0 on
+"nothing to commit" so a missed Edit can sneak through a chained merge.
+(Hit this on hk-b3f.87 fix; recovered with a post-merge follow-up commit.)
+Re-review may be skipped after a metadata-only or pure-deletion fix.
 
 Path-discrepancy resolution: bead body wins over docs. EXCEPTION — for spec
 content (enum values, regex shapes, RECORD field-types), the spec wins per
@@ -70,40 +65,51 @@ Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
 meets bead acceptance, you may merge with a closure note explaining the
 tier-override and (optionally) filing a follow-up bead.
 
-Merge dance — RUN FROM THE MAIN REPO DIR, NOT THE WORKTREE. Split into TWO
-Bash invocations so the cwd doesn't leak across the boundary:
+Merge dance — RUN FROM THE MAIN REPO DIR, NOT THE WORKTREE. **Do NOT pipe
+git commands through `head`/`tail`** in chains — `| head -1` swallows the
+exit code and `&&` short-circuits don't catch upstream failures. Use raw
+`git` calls in chains, or `bash -c 'set -o pipefail; ...'`. (Hit this on
+hk-8mwo.64; recovered with checkout+rebase+ff-merge from main repo dir.)
 
-    # invocation 1 (cwd = worktree):
-    cd <worktree-path> && git fetch origin main && git rebase origin/main
+For the actual merge dance use a for-loop pattern that worked well this
+session:
 
-    # invocation 2 (cwd = main repo, freshly cd'd):
-    cd /Users/gb/github/harmonik && git merge --ff-only <branch>
+    cd /Users/gb/github/harmonik
+    for id in <agent-id-1> <agent-id-2> <agent-id-3>; do
+      WTPATH=".claude/worktrees/agent-$id"
+      BRANCH="worktree-agent-$id"
+      git -C "$WTPATH" rebase main
+      git merge --ff-only "$BRANCH"
+      git worktree unlock "$WTPATH"
+      git worktree remove --force "$WTPATH"
+      git branch -d "$BRANCH"
+    done
     git push origin main
-    git worktree unlock <worktree-path>
-    git worktree remove --force <worktree-path>   # --force needed: symlinks
-    git branch -d <branch>
-    br close <bead-id> -r "<closure note>"
+
+Use `set -e` at the top of the bash script (NOT `| head` / `| tail`).
+
+**Post-merge close failures from `blocks` deps are common.** When
+`br close <id>` fails with "blocked by: <other-id>", convert the edge:
+
+    br dep remove <id> <other-id> && br dep add <id> <other-id> --type related && br close <id> -r "..."
 
 Use `br close <id> -r "..."` for the closure note. `br update <id> -c "..."`
-does NOT exist (no `-c` flag).
+does NOT exist.
 
-Pipelined merges. When 3+ APPROVE-CLEAN reviews come back close together,
-chain the merges in invocation 2 and push once for the whole chain.
+Pipelined merges. When 3+ APPROVE reviews come back close together, chain
+the merges in one bash invocation and push once for the whole chain.
 
 Inline fix-iteration on existing worktrees (no new isolation): when a review
 returns REQUEST-CHANGES with mechanical findings, spawn a fix-agent WITHOUT
 `isolation: worktree` — point it at the existing worktree path. The agent
 cd's into the existing branch, applies fixes, creates a NEW commit (never
-amend pre-merge commits unless user asks). Two-commit branches FF-merge
-cleanly.
+amend pre-merge commits). Two-commit branches FF-merge cleanly.
 
 Typed-alias deferral (recurring decision). When a record references a type
 not yet in `core/`: default to `*string`/`string` placeholder + godoc citing
-the spec section + `br create` follow-up bead for the typed wrapper. Only
-insert a prerequisite bead when the dependent type is unambiguously small
-(<10 values) AND a single existing parent bead can carry it. The brief
-names the `br create` command; the implementer creates the bead, captures
-its ID, and substitutes it into godoc before committing.
+the spec section + `br create` follow-up bead for the typed wrapper. The
+brief names the `br create` command; the implementer creates the bead,
+captures its ID, and substitutes it into godoc before committing.
 
 When ambiguity arises, spend real effort resolving without escalation. Bead
 acceptance criteria is authoritative.
@@ -111,151 +117,120 @@ acceptance criteria is authoritative.
 On resume: continue working unless the handoff body flags a real blocker.
 Context budget on this 1M-context model is generous (~700k effective). When
 you cross ~500k, finish in-flight batch cleanly, then write a fresh HANDOFF
-and stop. Don't write a HANDOFF earlier on a "session feels long" hunch.
+and stop.
 <!-- END DIRECTIVES -->
 
 # Session Handoff
 
 ## State
-Clean. Main at `a103cf5` and pushed. **5 beads landed this session: hk-872.15
-ShowBead, hk-i0tw.50 ScenarioResult, hk-872.14 ListDependencies, hk-8mup.5
-AcquirePidfile, hk-872.16 AuditLog + ListInFlightBeads.** 2 inline-amend
-review fixes (gofumpt struct alignment on `.15`, trailing-newline on `.5`).
-2 follow-up beads filed: `hk-872.55` (EdgeKind extension for Beads's broader
-dep-type surface incl. `related`), `hk-ido0` (scenario-harness FailureClass
-enum hoist).
+Clean. Main at `869e43f`, pushed to origin. **17 beads landed and closed
+this session** across 5 packages. New auto-registered skills: `agent-reviewer`,
+`beads-cli`, `agent-config-reviewer`, `go-subsystem-add`. Protocol patched
+at `3201f63` with mandatory worktree-discipline checks.
 
-`hk-8i31.76` (HC error sentinels) shipped from worktree
-`agent-ac5423283dd4787c7` at commit `25aec8a`; reviewer dispatched, **NOT
-yet merged.** Pick up that thread first.
+## What landed this session
 
-## What landed this session (in commit order)
+Wave 1 (5 closed; 4 of 5 escaped worktree → protocol patched mid-session):
+hk-872.26, hk-i0tw.14, hk-jhob.1, hk-8mwo.24, hk-sx9r.74.
 
-1. `cdd6596` `hk-872.15` ShowBead query (BI-015)
-2. `6ce2398` `hk-872.15` review-fix — gofumpt brShowItem alignment (orchestrator inline-amend)
-3. `0a8190a` `hk-i0tw.50` ScenarioResult RECORD + ScenarioVerdict enum (last scenario RECORD)
-4. `bea460f` `hk-872.14` ListDependencies query (BI-014)
-5. `85a8abb` `hk-8mup.5` AcquirePidfile production API (PL-002b)
-6. `367995d` `hk-8mup.5` review-fix — trailing-newline gofmt (orchestrator inline-amend)
-7. `157072b` `hk-872.16` AuditLog + ListInFlightBeads (BI-016)
-8. (uncommitted-on-main) `25aec8a` in worktree `agent-ac5423283dd4787c7` — `hk-8i31.76` HC sentinels (review in flight)
+Wave 2 (8 closed; all worktree-isolated correctly post-patch):
+hk-jhob.2, hk-i0tw.17, hk-8mwo.64, hk-jhob.4, hk-872.33, hk-i0tw.31,
+hk-jhob.3, hk-b3f.88.
 
-## NEW this session — `.claude/implementer-protocol.md`
+Wave 3 (4 closed): hk-8mup.12, hk-8mup.4, hk-i0tw.52, hk-i0tw.18, hk-b3f.87.
 
-Single canonical conventions doc. Cited by every brief; not duplicated into
-them. Currently UNTRACKED (`.claude/` is not gitignored — git just hasn't
-been told about it). **First action next session: `git add
-.claude/implementer-protocol.md` and commit it on main.** Implementer + reviewer
-briefs already reference this path; if it's missing, the agents will fail
-the read.
+Follow-up beads filed (typed-alias-deferral): hk-8mwo.72 (HandlerRef),
+hk-i0tw.54 (SuiteID), hk-8mup.60 (ProjectHash + PGID).
 
-## Throughput lessons from this session
+## Process scars to internalize
 
-5 beads merged but peak concurrency was only 2-3 agents. Root causes
-identified and codified into the directives above:
+1. **Worktree escape (4-of-5 wave 1).** Implementer agents committed
+   directly to main from /Users/gb/github/harmonik because their
+   prompts/CLAUDE.md mentioned that path and they cd'd into it. Patched at
+   3201f63: protocol now mandates `pwd` + `git branch --show-current` +
+   `git rev-parse --show-toplevel` before every commit, with branch MUST
+   start `worktree-agent-`. Wave 2+ all behaved correctly. Keep the patch.
 
-1. **Briefs were 200-400 lines** because I paraphrased bead content. The
-   bead body IS the work spec; the brief should orchestrate, not duplicate.
-   New cap: ~30 lines.
-2. **Sequential dispatch.** I waited for `.15` to land before dispatching
-   `.14`/`.16` even though their briefs could have referenced the canonical
-   pattern abstractly. New rule: dispatch on review-dispatch, not review-
-   return.
-3. **Orchestrator did implementer's reading.** I sampled real CLI output,
-   read sibling files in full, extracted spec sub-sections — all to bake
-   detail into briefs the implementer could have read itself. Pre-flight
-   cap: ≤3 files per dispatch.
-4. **No batch start.** I dispatched 1-2 agents and waited. New floor: 4
-   concurrent during active work, target 6-8.
+2. **Pipefail + `&&`-chains.** Bash chains with `git X | head -1` swallow
+   the upstream exit code; `&&` doesn't short-circuit. Hit on hk-8mwo.64
+   merge dance. Recovered. Avoid piping git commands in chained merge
+   logic — emit raw output.
 
-The thin-brief pattern was demoed at the end with `.76`'s reviewer (~25
-lines vs prior ~150). Apply to ALL dispatches next session.
+3. **Edit-then-commit fragility.** Inline-amend in a chained bash that
+   does `git add && git commit` will silently no-op if the file wasn't
+   actually edited (Edit tool requires prior Read in same conversation).
+   `git commit` returns 0 on "nothing to commit" so set -e doesn't catch
+   it. Hit on hk-b3f.87. Mitigate: read worktree file BEFORE Edit, or
+   verify modification with `git status` between Edit and merge.
 
-## Ready candidates — claim a wave on entry
+4. **`blocks` deps on bead close.** `hk-872.26→hk-872.25`,
+   `hk-872.33→hk-872.25`, `hk-i0tw.18→hk-8mup.10/.2` all blocked close
+   on closed-or-not-yet-implemented siblings. Convert pattern works. The
+   directive block now describes it.
 
-`br ready -l scope:bootstrap` after this session's closures. Group by package:
+5. **Sibling type-symbol collision.** hk-i0tw.52 (SuiteResult) defined
+   `CadenceFilter` while hk-i0tw.31 (cadence) defined the same type.
+   When .31 merged first, .52 hit duplicate-symbol on rebase. The .52
+   reviewer caught it with a rebase-preview before approving. Fixed by
+   removing the .52 definition. Pre-dispatch sibling-overlap scan added
+   to the directive block.
 
-**`internal/brcli/` (post-`.16`; 5 methods now exist):**
-- `hk-872.26` `br --version` handshake (BI-024a) — likely small, new file `version.go`
-- `hk-872.28` exit-code taxonomy → `BrError` enum (BI-025a) — new file `brerror.go`; foundational for all other policy beads
-- `hk-872.29` mandatory `--format json` argv prepend (BI-025b) — modifies `Run` in `adapter.go`
-- `hk-872.30` subprocess timeout discipline (BI-025c, 5s/10s) — modifies `Run`
-- `hk-872.31` stderr 1 MiB cap + 5 scenarios (BI-025d) — modifies `Run` and `Result`
-- `hk-872.32` concurrent-invocation discipline (BI-025e) — mostly contract test
-- `hk-872.33` Beads-breakage absorption (BI-026)
+## Ready candidates (17 with no blockers, scope:bootstrap)
 
-**Same-file conflict warning:** `.29/.30/.31` ALL touch `Run` in `adapter.go`.
-Per directives, combine them into ONE implementer brief listing all three
-bead IDs with sequential commits. Don't parallel-dispatch them. `.26` and
-`.28` are independent (new files) and parallel-safe.
+`br ready -l scope:bootstrap` snapshot:
 
-**`internal/handlercontract/` (post-`.76` if it merges):**
-- HC follow-up beads (TBD — bead inventory exists; check `br ready
-  -l spec:handler-contract`). The package is now seeded for sibling beads.
-
-**`internal/lifecycle/` (post-`.5`; production code exists):**
-- `hk-8mup.12` Project hash + provenance marker (env var + PGID)
-- `hk-8mup.4` Pidfile lock is fd-lifetime advisory (sensor)
-- `hk-8mup.3` Pidfile at `.harmonik/daemon.pid` (sensor)
-- `hk-8mup.10` Startup order is deterministic (steps 0-9 + 3a + 8a)
-- `hk-8mup.11` Orphan sweep precedes reconciliation
-- `hk-8mup.44` Sensor: one daemon per project (pidfile lock + content match)
-- `hk-8mup.9` Daemon-owned per-project file surface
-
-**`internal/workspace/` (substantial Go work):**
-- `hk-8mwo.24` Workspace state machine — production code
-- `hk-8mwo.64` WM error taxonomy (12-class typed sentinel set)
-
-**`internal/scenario/` (operational, not RECORDs — last RECORD shipped):**
-- `hk-i0tw.14` Each scenario uses isolated event-log directory
-- `hk-i0tw.17` Per-suite ephemeral fixture root
-- `hk-i0tw.31` Every scenario declares a cadence tag
-
-**Other / cross-cutting:**
-- `hk-8i31.76` HC sentinels — IN-FLIGHT; review the result first
-- `hk-sx9r.74` Exit-code taxonomy + obligations fixture (ON-001..004)
-- `hk-b3f.87` Crash-recovery scenario harness for EM checkpoint contract
-- `hk-b3f.88` Workflow-validator unit-test fixture
-
-**Skill beads (`.claude/skills/` markdown content, NOT Go):**
-- `hk-jhob.1/2/3/4` — agent-reviewer / beads-cli / agent-config-reviewer / go-subsystem-add skills
+- **brcli foundation:** hk-872.2 (Route all Beads I/O through br),
+  hk-872.4 (Daemon to br direct, agents via skill).
+- **Workspace pre-startup:** hk-8mwo.2 (Min git version pin ≥ 2.34),
+  hk-8mwo.11 (Ref-safe bead-ID substitution via `git check-ref-format`),
+  hk-8mwo.25 (Workspace lifecycle event emission obligations — WHEN).
+- **Operator NFR:** hk-sx9r.73 (ON exit-code taxonomy §8 — 23-code
+  authoritative table; sibling to closed hk-sx9r.74 fixture).
+- **Twin/handler:** hk-ahvq.48.1 (cmd/harmonik-twin-claude/main.go
+  scaffold + module entry-point), hk-8i31.26 (ErrSkillProvisioningFailed
+  sub-sentinel), hk-8i31.50 (commit-hash check for in-repo binaries).
+- **MVH composition root:** hk-b3f.89 (no-op PolicyEngine wired in
+  composition root, resolves §A5).
+- **Typed-alias follow-ups (this session's children):** hk-i0tw.54
+  (SuiteID), hk-8mup.60 (ProjectHash + PGID), hk-8mwo.72 was created
+  earlier this session for HandlerRef.
+- **Hoists/cleanups:** hk-szv5 (EventExpectation.Type → core.EventType),
+  hk-ido0 (FailureClass enum + hoist), hk-872.55 (core.EdgeKind extend
+  for Beads dep-type surface), hk-pvcs.9 (P3, doc cleanup).
 
 ## Suggested first move
 
-1. **Add `.claude/implementer-protocol.md` to git** and commit it on main
-   before dispatching any agents. They depend on the path.
+1. **Verify state**: `git status` clean; `git log --oneline -5` shows
+   `869e43f fix(scenario): correct stale "five" count to "six"`.
 
-2. **Resolve `.76` thread**: the reviewer (agentId `ad27e999d5f65b1ca`) was
-   dispatched with the new thin-brief pattern. If APPROVE, merge dance
-   per directives + close `hk-8i31.76`. Note this is the first dispatch
-   under the protocol-doc-driven pattern — verify the reviewer found the
-   doc and the dispatch worked end-to-end.
+2. **Open with a 5-bead wave**, all parallel-safe across packages:
+   - `hk-8mwo.2` (git version pin) — internal/lifecycle/ or
+     internal/workspace/, sensor-style
+   - `hk-8mwo.11` (ref-safe bead-ID) — internal/workspace/, sibling to
+     errors.go (just landed)
+   - `hk-sx9r.73` (exit-code taxonomy 23-code table) — internal/operatornfr/
+     or new package; sibling pattern from .74 fixture
+   - `hk-i0tw.54` (SuiteID typed alias) — internal/core/, very small,
+     unblocks future scenario RECORDs
+   - `hk-jhob` (operational-skills meta-epic) — investigate if there's a
+     concrete subtask, otherwise pick another typed-alias follow-up
 
-3. **Open with a 5-bead wave**, all dispatched in one Agent-tool message
-   batch (parallel):
-   - `hk-872.26` (br --version, internal/brcli/version.go — new file)
-   - `hk-872.28` (BrError enum, internal/brcli/brerror.go — new file)
-   - `hk-8mwo.24` or `.64` (workspace package — different package, no
-     collision with brcli)
-   - `hk-i0tw.14` (scenario operational — different package)
-   - `hk-sx9r.74` (operator-nfr exit codes — likely new package)
-
-   Each brief: ~25 lines, points at the protocol doc, names the per-bead
-   helper prefix, optionally points at one canonical sibling. Bead body
-   has the work spec. Do NOT paraphrase.
-
-4. After dispatching the wave, immediately convert closed-blocks deps for
-   the NEXT wave (`.29/.30/.31` combined-implementer brief; substantive
-   workspace beads; etc.) so dispatches are queued for refill the moment
-   reviewers go out.
+3. **Watch for sibling-symbol collisions** in the wave (per Scar #5).
 
 ## Files to open first
 
-1. `git log --oneline -10` — this session's commits
-2. `.claude/implementer-protocol.md` — the new conventions doc; read it before dispatching anything
-3. `internal/brcli/adapter.go` + the 5 method files (`show.go`, `listdependencies.go`, `audit.go`, `listinflight.go`) — canonical brcli-consumer pattern
-4. `internal/handlercontract/sentinels.go` (if `.76` merges) — HC sentinel pattern for sibling beads
-5. `internal/lifecycle/pidfile.go` — production-code-from-fixture pattern reference
+1. `git log --oneline -25` — this session's commits
+2. `.claude/implementer-protocol.md` — current standing rules; read
+   §"Worktree discipline" carefully
+3. `internal/scenario/` — many siblings landed here this session; the
+   package now has ScenarioResult, AssertionResult, EventExpectation,
+   FileSeed, GitSeedOp, WorkspacePredicate, EventLogPath/EventLogDir,
+   FixtureRoot, CadenceTag/CadenceFilter, SuiteResult, SyntheticProjectRoot,
+   CrashRecoveryFixture
+4. `internal/lifecycle/` — Pidfile, ProbePidfileLock (PL-002a/PL-024 +
+   linux/darwin variants), provenance (PL-006a)
+5. `internal/workspace/` — workspace.go state machine + errors.go 12-class
+   sentinel taxonomy
 
 ## Blocking question for user
 None.

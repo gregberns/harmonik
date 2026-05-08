@@ -86,15 +86,13 @@ type ScenarioResult struct {
 	// FailureClass is the harness-level failure classification per §8 ENUM
 	// FailureClass: one of {scenario-load-failure, twin-binary-not-found,
 	// fixture-setup-failed, orchestration-internal-error, harness-internal-error,
-	// assertion-failed, scenario-timeout, cleanup-failed}. This field is
-	// currently `string` pending the typed `FailureClass` enum (TODO: hk-ido0
-	// — see follow-up bead). When that lands, this field should hoist to the
-	// typed enum (non-breaking: string-constant assignment is assignable to
-	// typed-string). NOTE: this is the SCENARIO-HARNESS FailureClass enum, NOT
-	// internal/core/FailureClass (the execution-model §8 enum) — the two enums
-	// share a name but are scoped to different specs. Empty string represents
-	// `None` (absent — required iff verdict=pass).
-	FailureClass string `json:"failure_class,omitempty" yaml:"failure_class,omitempty"`
+	// assertion-failed, scenario-timeout, cleanup-failed}.
+	// NOTE: this is the SCENARIO-HARNESS FailureClass enum defined in this
+	// package, NOT internal/core/FailureClass (the execution-model §8 enum) —
+	// the two enums share a name but are scoped to different specs.
+	// The zero value (empty string) represents None (absent — required iff
+	// verdict=pass).
+	FailureClass FailureClass `json:"failure_class,omitempty" yaml:"failure_class,omitempty"`
 
 	// AssertionResults holds one entry per declared assertion. It is empty only
 	// if the scenario terminated before §7.1 step 4 entered (i.e., no assertions
@@ -164,7 +162,7 @@ func (r ScenarioResult) Valid() bool {
 			return false
 		}
 	} else {
-		if r.FailureClass == "" {
+		if !r.FailureClass.Valid() {
 			return false
 		}
 	}

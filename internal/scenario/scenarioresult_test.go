@@ -35,7 +35,7 @@ func scenarioResultFixtureValid(t *testing.T) ScenarioResult {
 
 // scenarioResultFixtureNonPass returns a valid ScenarioResult with the given
 // non-pass verdict and a non-empty FailureClass.
-func scenarioResultFixtureNonPass(t *testing.T, verdict ScenarioVerdict, failureClass string) ScenarioResult {
+func scenarioResultFixtureNonPass(t *testing.T, verdict ScenarioVerdict, failureClass FailureClass) ScenarioResult {
 	t.Helper()
 	r := scenarioResultFixtureValid(t)
 	r.Verdict = verdict
@@ -168,7 +168,7 @@ func TestScenarioResultValid(t *testing.T) {
 			build: func(t *testing.T) ScenarioResult {
 				t.Helper()
 				r := scenarioResultFixtureValid(t)
-				r.FailureClass = "assertion-failed"
+				r.FailureClass = FailureClassAssertionFailed
 				return r
 			},
 			want: false,
@@ -188,7 +188,7 @@ func TestScenarioResultValid(t *testing.T) {
 			name: "fail with sample FailureClass is valid",
 			build: func(t *testing.T) ScenarioResult {
 				t.Helper()
-				return scenarioResultFixtureNonPass(t, ScenarioVerdictFail, "assertion-failed")
+				return scenarioResultFixtureNonPass(t, ScenarioVerdictFail, FailureClassAssertionFailed)
 			},
 			want: true,
 		},
@@ -196,7 +196,7 @@ func TestScenarioResultValid(t *testing.T) {
 			name: "timeout with sample FailureClass is valid",
 			build: func(t *testing.T) ScenarioResult {
 				t.Helper()
-				return scenarioResultFixtureNonPass(t, ScenarioVerdictTimeout, "scenario-timeout")
+				return scenarioResultFixtureNonPass(t, ScenarioVerdictTimeout, FailureClassScenarioTimeout)
 			},
 			want: true,
 		},
@@ -204,7 +204,7 @@ func TestScenarioResultValid(t *testing.T) {
 			name: "error with sample FailureClass is valid",
 			build: func(t *testing.T) ScenarioResult {
 				t.Helper()
-				return scenarioResultFixtureNonPass(t, ScenarioVerdictError, "harness-internal-error")
+				return scenarioResultFixtureNonPass(t, ScenarioVerdictError, FailureClassHarnessInternalError)
 			},
 			want: true,
 		},
@@ -333,7 +333,7 @@ func TestScenarioResultValid(t *testing.T) {
 			name: "empty AssertionResults is valid for early-termination scenario",
 			build: func(t *testing.T) ScenarioResult {
 				t.Helper()
-				r := scenarioResultFixtureNonPass(t, ScenarioVerdictError, "fixture-setup-failed")
+				r := scenarioResultFixtureNonPass(t, ScenarioVerdictError, FailureClassFixtureSetupFailed)
 				r.AssertionResults = []AssertionResult{}
 				return r
 			},

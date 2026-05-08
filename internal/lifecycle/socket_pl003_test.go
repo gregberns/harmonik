@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,16 +24,16 @@ import (
 func TestPL003_SocketPathAndMode(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
+	projectDir := plFixtureTempProjectDir(t)
 
-	ln, err := plFixture_bindSocket(t, projectDir)
+	ln, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
 		t.Fatalf("PL-003: bindSocket: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
 
 	// Assert socket at canonical path.
-	sockPath := plFixture_socketPath(projectDir)
+	sockPath := plFixtureSocketPath(projectDir)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
 		t.Errorf("PL-003: socket not at canonical path %q", sockPath)
 	}
@@ -61,34 +62,40 @@ func TestPL003_SocketPathAndMode(t *testing.T) {
 func TestPL003_SocketExclusivity_EADDRINUSE(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
+	projectDir := plFixtureTempProjectDir(t)
 
 	// First bind succeeds.
-	ln1, err := plFixture_bindSocket(t, projectDir)
+	ln1, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
 		t.Fatalf("PL-003 exclusivity: first bind: %v", err)
 	}
-	t.Cleanup(func() { _ = ln1.Close() })
+	t.Cleanup(func() { _ = ln1.Close() }) //nolint:errcheck // cleanup error unactionable
 
-	// Second bind: we replicate what plFixture_bindSocket does BUT skip the
+	// Second bind: we replicate what plFixtureBindSocket does BUT skip the
 	// stale-socket removal step, because the socket is actively held.
-	sockPath := plFixture_socketPath(projectDir)
-	_, err = net.Listen("unix", sockPath)
+	sockPath := plFixtureSocketPath(projectDir)
+	_, err = (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err == nil {
 		t.Fatal("PL-003 exclusivity: second bind succeeded; want EADDRINUSE")
 	}
 
 	// The error must unwrap to EADDRINUSE.
+	// Direct type assertions are intentional here: we are specifically
+	// testing the exact kernel error structure returned by net.Listen on
+	// a live socket. plFixtureExtractErrno encapsulates the same logic.
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain
 	opErr, ok := err.(*net.OpError)
 	if !ok {
 		t.Fatalf("PL-003 exclusivity: second bind error type = %T, want *net.OpError", err)
 	}
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain
 	sysErr, ok := opErr.Err.(*os.SyscallError)
 	if !ok {
 		t.Fatalf("PL-003 exclusivity: inner error type = %T, want *os.SyscallError", opErr.Err)
 	}
 
 	// On macOS/Linux the errno is EADDRINUSE for a live socket.
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain
 	errno, ok := sysErr.Err.(syscall.Errno)
 	if !ok {
 		t.Fatalf("PL-003 exclusivity: errno type = %T, want syscall.Errno", sysErr.Err)
@@ -98,7 +105,7 @@ func TestPL003_SocketExclusivity_EADDRINUSE(t *testing.T) {
 	}
 
 	// The fixture mapper must return exit code 6 for EADDRINUSE.
-	exitCode := plFixture_errToExitCode(errno)
+	exitCode := plFixtureErrToExitCode(errno)
 	if exitCode != 6 {
 		t.Errorf("PL-003 exclusivity: errToExitCode(EADDRINUSE) = %d, want 6 (socket-bind-failed)", exitCode)
 	}
@@ -140,7 +147,7 @@ func stubNDJSONResponder(ln net.Listener, ready bool, done chan<- struct{}) {
 	if err != nil {
 		return // listener closed — test is done
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
@@ -174,9 +181,9 @@ func stubNDJSONResponder(ln net.Listener, ready bool, done chan<- struct{}) {
 		}
 	}
 
-	data, _ := json.Marshal(resp)
+	data, _ := json.Marshal(resp) //nolint:errcheck,errchkjson // stub: encoding a known-good struct never fails; RawMessage field is always nil or valid JSON
 	// NDJSON framing: one JSON object per line terminated by \n (PL-003a).
-	_, _ = fmt.Fprintf(conn, "%s\n", data)
+	_, _ = fmt.Fprintf(conn, "%s\n", data) //nolint:errcheck // stub: write errors ignored intentionally
 }
 
 // TestPL003a_NDJSONFraming verifies that the daemon's Unix socket carries
@@ -190,26 +197,26 @@ func stubNDJSONResponder(ln net.Listener, ready bool, done chan<- struct{}) {
 func TestPL003a_NDJSONFraming(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
+	projectDir := plFixtureTempProjectDir(t)
 
-	ln, err := plFixture_bindSocket(t, projectDir)
+	ln, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
 		t.Fatalf("PL-003a: bindSocket: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	done := make(chan struct{})
 	go stubNDJSONResponder(ln, true /* ready */, done)
 
 	// Connect and send one JSON-RPC 2.0 request line.
-	conn, err := net.Dial("unix", plFixture_socketPath(projectDir))
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", plFixtureSocketPath(projectDir))
 	if err != nil {
 		t.Fatalf("PL-003a: Dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	req := jsonrpcRequest{JSONRPC: "2.0", ID: 1, Method: "status"}
-	reqBytes, _ := json.Marshal(req)
+	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct; interface{} Params field is always map[string]string
 	// Write the request as one NDJSON line.
 	_, err = fmt.Fprintf(conn, "%s\n", reqBytes)
 	if err != nil {
@@ -245,8 +252,8 @@ func TestPL003a_NDJSONFraming(t *testing.T) {
 	}
 
 	// Wait for the responder goroutine to finish.
-	_ = conn.Close()
-	ln.Close()
+	_ = conn.Close() //nolint:errcheck // cleanup error unactionable
+	_ = ln.Close()   //nolint:errcheck // cleanup error unactionable
 	<-done
 }
 
@@ -266,23 +273,23 @@ func TestPL003a_NDJSONFraming(t *testing.T) {
 func TestPL003b_PreReadyRejection(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
+	projectDir := plFixtureTempProjectDir(t)
 
-	ln, err := plFixture_bindSocket(t, projectDir)
+	ln, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
 		t.Fatalf("PL-003b: bindSocket: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	done := make(chan struct{})
 	// Spawn the stub with ready=false (pre-ready window).
 	go stubNDJSONResponder(ln, false /* not ready */, done)
 
-	conn, err := net.Dial("unix", plFixture_socketPath(projectDir))
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", plFixtureSocketPath(projectDir))
 	if err != nil {
 		t.Fatalf("PL-003b: Dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Send a claim-next request (agent-originated, run_id not in model).
 	req := jsonrpcRequest{
@@ -291,7 +298,7 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 		Method:  "claim-next",
 		Params:  map[string]string{"run_id": "01950000-ffff-7000-8000-000000000099"},
 	}
-	reqBytes, _ := json.Marshal(req)
+	reqBytes, _ := json.Marshal(req) //nolint:errcheck,errchkjson // encoding a known-good struct; interface{} Params field is always map[string]string
 	_, err = fmt.Fprintf(conn, "%s\n", reqBytes)
 	if err != nil {
 		t.Fatalf("PL-003b: write request: %v", err)
@@ -300,7 +307,7 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 	// Read the rejection response.
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil && err != io.EOF {
+		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
 			t.Fatalf("PL-003b: scan response: %v", err)
 		}
 		t.Fatal("PL-003b: no response line received")
@@ -324,12 +331,12 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 		t.Errorf("PL-003b: error message = %q; expected to contain %q", resp.Error.Message, "unknown_run_id")
 	}
 
-	_ = conn.Close()
-	ln.Close()
+	_ = conn.Close() //nolint:errcheck // cleanup error unactionable
+	_ = ln.Close()   //nolint:errcheck // cleanup error unactionable
 	<-done
 }
 
-// TestPL003_SocketStaleRemovalOnStartup verifies that plFixture_bindSocket
+// TestPL003_SocketStaleRemovalOnStartup verifies that plFixtureBindSocket
 // removes a stale socket file before binding, consistent with the PL-003
 // startup contract.
 //
@@ -338,8 +345,8 @@ func TestPL003b_PreReadyRejection(t *testing.T) {
 func TestPL003_SocketStaleRemovalOnStartup(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
-	sockPath := plFixture_socketPath(projectDir)
+	projectDir := plFixtureTempProjectDir(t)
+	sockPath := plFixtureSocketPath(projectDir)
 
 	// Lay down a stale socket file (simulates a previously crashed daemon).
 	if err := os.WriteFile(sockPath, []byte("stale"), 0o600); err != nil {
@@ -347,11 +354,11 @@ func TestPL003_SocketStaleRemovalOnStartup(t *testing.T) {
 	}
 
 	// bindSocket must remove the stale file and succeed.
-	ln, err := plFixture_bindSocket(t, projectDir)
+	ln, err := plFixtureBindSocket(t, projectDir)
 	if err != nil {
 		t.Fatalf("PL-003 stale-removal: bindSocket failed: %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() }) //nolint:errcheck // cleanup error unactionable
 
 	// The socket must now be a valid Unix domain socket (stat it).
 	info, err := os.Stat(sockPath)
@@ -371,9 +378,9 @@ func TestPL003_SocketStaleRemovalOnStartup(t *testing.T) {
 func TestPL003_SocketPathInDotHarmonik(t *testing.T) {
 	t.Parallel()
 
-	projectDir := plFixture_tempProjectDir(t)
+	projectDir := plFixtureTempProjectDir(t)
 	wantPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
-	gotPath := plFixture_socketPath(projectDir)
+	gotPath := plFixtureSocketPath(projectDir)
 	if gotPath != wantPath {
 		t.Errorf("PL-003: socket path = %q, want %q", gotPath, wantPath)
 	}

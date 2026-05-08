@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// plFixture_tempProjectDir creates a temporary directory tree that looks like
+// plFixtureTempProjectDir creates a temporary directory tree that looks like
 // a harmonik project root: the returned path contains an initialised
 // .harmonik/ sub-directory. All sibling fixtures reuse this helper.
 //
@@ -24,7 +24,7 @@ import (
 //
 // Spec ref: process-lifecycle.md §4.1 PL-002 — "The daemon MUST write its PID
 // to .harmonik/daemon.pid on startup".
-func plFixture_tempProjectDir(t *testing.T) string {
+func plFixtureTempProjectDir(t *testing.T) string {
 	t.Helper()
 
 	// Candidate: try t.TempDir() first and check whether the resulting socket
@@ -40,20 +40,21 @@ func plFixture_tempProjectDir(t *testing.T) string {
 		// Fall back to a short /tmp path so the socket path fits.
 		dir, err := os.MkdirTemp("/tmp", "pl-")
 		if err != nil {
-			t.Fatalf("plFixture_tempProjectDir: MkdirTemp /tmp: %v", err)
+			t.Fatalf("plFixtureTempProjectDir: MkdirTemp /tmp: %v", err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:errcheck // cleanup error unactionable
 		root = dir
 	}
 
 	harmonikDir := filepath.Join(root, ".harmonik")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
-		t.Fatalf("plFixture_tempProjectDir: MkdirAll .harmonik: %v", err)
+		t.Fatalf("plFixtureTempProjectDir: MkdirAll .harmonik: %v", err)
 	}
 	return root
 }
 
-// plFixture_acquirePidfile opens .harmonik/daemon.pid, takes an exclusive
+// plFixtureAcquirePidfile opens .harmonik/daemon.pid, takes an exclusive
 // non-blocking flock (flock(LOCK_EX|LOCK_NB)), writes the three-line pidfile
 // content, and returns a releaseFn that closes the fd (releasing the lock).
 //
@@ -67,7 +68,7 @@ func plFixture_tempProjectDir(t *testing.T) string {
 //   - process-lifecycle.md §4.1 PL-002 — pidfile at .harmonik/daemon.pid
 //   - process-lifecycle.md §4.1 PL-002a — fd-lifetime advisory lock (flock LOCK_EX|LOCK_NB)
 //   - process-lifecycle.md §4.1 PL-002b — atomic three-line write; truncate-rewrite-keep-fd
-func plFixture_acquirePidfile(t *testing.T, projectDir string, pid, pgid int, instanceID string) (releaseFn func(), err error) {
+func plFixtureAcquirePidfile(t *testing.T, projectDir string, pid, pgid int, instanceID string) (releaseFn func(), err error) {
 	if t != nil {
 		t.Helper()
 	}
@@ -77,81 +78,83 @@ func plFixture_acquirePidfile(t *testing.T, projectDir string, pid, pgid int, in
 	// Open with O_RDWR|O_CREATE — NOT O_TRUNC. Matching PL-002b step 1.
 	f, err := os.OpenFile(pidfilePath, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // mode 0600 is correct per PL-002
 	if err != nil {
-		return nil, fmt.Errorf("plFixture_acquirePidfile: open pidfile: %w", err)
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: open pidfile: %w", err)
 	}
 
 	// PL-002a: acquire exclusive non-blocking advisory lock via flock.
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("plFixture_acquirePidfile: flock LOCK_EX|LOCK_NB: %w", err)
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: flock LOCK_EX|LOCK_NB: %w", err)
 	}
 
 	// PL-002b step 3: truncate only after lock acquisition.
 	if err := f.Truncate(0); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("plFixture_acquirePidfile: ftruncate: %w", err)
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: ftruncate: %w", err)
 	}
 	if _, err := f.Seek(0, 0); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("plFixture_acquirePidfile: seek: %w", err)
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: seek: %w", err)
 	}
 
 	// PL-002b step 4: write three lines: PID / PGID / daemon_instance_id.
 	content := fmt.Sprintf("%d\n%d\n%s\n", pid, pgid, instanceID)
 	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("plFixture_acquirePidfile: write: %w", err)
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: write: %w", err)
 	}
 
 	// PL-002b step 5: fsync the fd.
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("plFixture_acquirePidfile: fsync fd: %w", err)
+		_ = f.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureAcquirePidfile: fsync fd: %w", err)
 	}
 
 	// PL-002b step 5: fsync the parent directory.
 	parentDir := filepath.Dir(pidfilePath)
+	//nolint:gosec // G304: parentDir derived from t.TempDir(), not user input
 	pf, err := os.Open(parentDir)
 	if err == nil {
-		_ = pf.Sync()
-		_ = pf.Close()
+		_ = pf.Sync()  //nolint:errcheck // cleanup error unactionable
+		_ = pf.Close() //nolint:errcheck // cleanup error unactionable
 	}
 
 	releaseFn = func() {
-		_ = f.Close() // closing fd releases the flock automatically (kernel advisory lock)
+		_ = f.Close() //nolint:errcheck // closing fd releases the flock; cleanup error unactionable
 	}
 	return releaseFn, nil
 }
 
-// plFixture_bindSocket binds a Unix socket at .harmonik/daemon.sock with mode
+// plFixtureBindSocket binds a Unix socket at .harmonik/daemon.sock with mode
 // 0600 and returns the net.Listener. Returns an error if the path is already
 // in use (EADDRINUSE).
 //
 // Spec refs:
 //   - process-lifecycle.md §4.1 PL-003 — socket at .harmonik/daemon.sock, mode 0600
-func plFixture_bindSocket(t *testing.T, projectDir string) (net.Listener, error) {
+func plFixtureBindSocket(t *testing.T, projectDir string) (net.Listener, error) {
 	t.Helper()
 
 	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
 
 	// PL-003: remove stale socket file on startup before binding.
-	_ = os.Remove(sockPath)
+	_ = os.Remove(sockPath) //nolint:errcheck // cleanup error unactionable
 
-	ln, err := net.Listen("unix", sockPath)
+	// Use ListenConfig with t.Context() so the listener is context-aware.
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
 	if err != nil {
-		return nil, fmt.Errorf("plFixture_bindSocket: listen unix: %w", err)
+		return nil, fmt.Errorf("plFixtureBindSocket: listen unix: %w", err)
 	}
 
 	// PL-003: chmod 0600 after bind.
-	if err := os.Chmod(sockPath, 0o600); err != nil { //nolint:gosec // 0600 is correct per PL-003
-		_ = ln.Close()
-		return nil, fmt.Errorf("plFixture_bindSocket: chmod 0600: %w", err)
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
+		return nil, fmt.Errorf("plFixtureBindSocket: chmod 0600: %w", err)
 	}
 
 	return ln, nil
 }
 
-// plFixture_readPidfile reads .harmonik/daemon.pid and parses its content
+// plFixtureReadPidfile reads .harmonik/daemon.pid and parses its content
 // with reader-tolerance for one-line (v0.2.x), two-line (v0.4.0), and
 // three-line (v0.4.1+) formats. A missing line 3 returns instanceID =
 // "unknown"; a missing line 2 returns pgid = 0.
@@ -160,13 +163,14 @@ func plFixture_bindSocket(t *testing.T, projectDir string) (net.Listener, error)
 // one-line pidfiles for backward compatibility with v0.2.x format and
 // two-line pidfiles for backward compatibility with v0.4.0 format; a missing
 // line 3 is treated as daemon_instance_id = unknown."
-func plFixture_readPidfile(t *testing.T, projectDir string) (pid, pgid int, instanceID string, err error) {
+func plFixtureReadPidfile(t *testing.T, projectDir string) (pid, pgid int, instanceID string, err error) {
 	t.Helper()
 
 	pidfilePath := filepath.Join(projectDir, ".harmonik", "daemon.pid")
+	//nolint:gosec // G304: pidfilePath derived from t.TempDir(), not user input
 	data, err := os.ReadFile(pidfilePath)
 	if err != nil {
-		return 0, 0, "", fmt.Errorf("plFixture_readPidfile: ReadFile: %w", err)
+		return 0, 0, "", fmt.Errorf("plFixtureReadPidfile: ReadFile: %w", err)
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
@@ -179,18 +183,18 @@ func plFixture_readPidfile(t *testing.T, projectDir string) (pid, pgid int, inst
 	}
 
 	if len(lines) == 0 {
-		return 0, 0, "", errors.New("plFixture_readPidfile: empty pidfile")
+		return 0, 0, "", errors.New("plFixtureReadPidfile: empty pidfile")
 	}
 
 	pid, err = strconv.Atoi(lines[0])
 	if err != nil {
-		return 0, 0, "", fmt.Errorf("plFixture_readPidfile: parse PID: %w", err)
+		return 0, 0, "", fmt.Errorf("plFixtureReadPidfile: parse PID: %w", err)
 	}
 
 	if len(lines) >= 2 {
 		pgid, err = strconv.Atoi(lines[1])
 		if err != nil {
-			return 0, 0, "", fmt.Errorf("plFixture_readPidfile: parse PGID: %w", err)
+			return 0, 0, "", fmt.Errorf("plFixtureReadPidfile: parse PGID: %w", err)
 		}
 	}
 
@@ -202,14 +206,14 @@ func plFixture_readPidfile(t *testing.T, projectDir string) (pid, pgid int, inst
 	return pid, pgid, instanceID, nil
 }
 
-// plFixture_isPidLive probes whether the given PID is a live process by
+// plFixtureIsPidLive probes whether the given PID is a live process by
 // sending signal 0 via kill(pid, 0). Returns false if the process is not
 // found (ESRCH). Returns true if the process exists (even if it is a zombie).
 //
 // Spec ref: process-lifecycle.md §4.1 PL-002a + §4.8 PL-024 — "stale pidfile
 // detection: flock + kill(pid, 0)"; kill(pid, 0) probes the kernel process
 // table for liveness.
-func plFixture_isPidLive(pid int) bool {
+func plFixtureIsPidLive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	if err == nil {
 		return true
@@ -224,14 +228,14 @@ func plFixture_isPidLive(pid int) bool {
 	return false
 }
 
-// plFixture_errToExitCode maps the fixture-level errors to the ON §8 exit
+// plFixtureErrToExitCode maps the fixture-level errors to the ON §8 exit
 // codes defined in process-lifecycle.md §4.1 PL-008a. This is a test-side
 // helper that exercises the error → exit-code mapping without requiring a
 // real daemon binary.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-008a — exit codes 5 (pidfile-locked)
 // and 6 (socket-bind-failed) per [operator-nfr.md §8].
-func plFixture_errToExitCode(err error) int {
+func plFixtureErrToExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
@@ -246,16 +250,49 @@ func plFixture_errToExitCode(err error) int {
 	return 1
 }
 
-// plFixture_socketPath returns the canonical Unix socket path for a project.
+// plFixtureSocketPath returns the canonical Unix socket path for a project.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-003.
-func plFixture_socketPath(projectDir string) string {
+func plFixtureSocketPath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "daemon.sock")
 }
 
-// plFixture_pidfilePath returns the canonical pidfile path for a project.
+// plFixturePidfilePath returns the canonical pidfile path for a project.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-002.
-func plFixture_pidfilePath(projectDir string) string {
+func plFixturePidfilePath(projectDir string) string {
 	return filepath.Join(projectDir, ".harmonik", "daemon.pid")
+}
+
+// plFixtureExtractErrno digs out the underlying syscall.Errno from a
+// *net.OpError wrapping a *os.SyscallError. Returns 0 if the chain does not
+// match.
+//
+// The direct type assertions here are intentional: this helper exists to
+// inspect the exact error structure returned by net.Listen, not to handle
+// arbitrary wrapped errors. The kernel errno is always at this exact chain
+// depth for POSIX socket errors.
+//
+// Used by PL-INV-004 to check that EADDRINUSE is the exact errno returned by
+// the kernel when a live socket is already bound.
+func plFixtureExtractErrno(err error) syscall.Errno {
+	if err == nil {
+		return 0
+	}
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain structure
+	opErr, ok := err.(*net.OpError)
+	if !ok {
+		return 0
+	}
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain structure
+	sysErr, ok := opErr.Err.(*os.SyscallError)
+	if !ok {
+		return 0
+	}
+	//nolint:errorlint // intentional: inspecting exact net.Listen error chain structure
+	errno, ok := sysErr.Err.(syscall.Errno)
+	if !ok {
+		return 0
+	}
+	return errno
 }

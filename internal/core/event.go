@@ -54,8 +54,10 @@ type Event struct {
 	TimestampWall time.Time
 
 	// TimestampMonoNsec is the optional monotonic nanoseconds from the emitter's
-	// process clock (event-model.md §6.1 EV-001, EV-003). Process-scoped; not
-	// meaningful across process restarts. When non-nil must be > 0.
+	// process clock (event-model.md §6.1 EV-001, EV-003). Process-scoped;
+	// MUST NOT be compared across daemon restarts or across processes. Meaningful
+	// ONLY for intra-process ordering within the emitter's lifetime.
+	// When non-nil must be > 0.
 	TimestampMonoNsec *int64
 
 	// RunID is present when the event is scoped to a run (EV-001).

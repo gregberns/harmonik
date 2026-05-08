@@ -204,8 +204,9 @@ func TestMonoTsMono_EV003_SpecExplicitCrossProcessDaemonRestartProhibition(t *te
 // reviewers without leaving the Go type declaration.
 //
 // The godoc must mention:
-//   - "EV-003" — spec traceability anchor
-//   - "process" (in any form) — the scope constraint
+//   - "EV-003"              — spec traceability anchor
+//   - "MUST NOT be compared" — the normative canonical prohibition phrase (EV-003);
+//     advisory language such as "not meaningful" is NOT sufficient
 func TestMonoTsMono_EV003_CodeGodocCarriesProcessScopeProhibition(t *testing.T) {
 	t.Parallel()
 
@@ -224,8 +225,8 @@ func TestMonoTsMono_EV003_CodeGodocCarriesProcessScopeProhibition(t *testing.T) 
 			hint:   "TimestampMonoNsec godoc must cite EV-003 so spec traceability is visible at the field declaration",
 		},
 		{
-			phrase: "process",
-			hint:   "TimestampMonoNsec godoc must contain 'process' to document the process-scope constraint",
+			phrase: "MUST NOT be compared",
+			hint:   "TimestampMonoNsec godoc must contain the canonical EV-003 prohibition phrase 'MUST NOT be compared'; advisory language ('not meaningful') does not satisfy the normative requirement",
 		},
 	}
 

@@ -92,8 +92,9 @@ br list --format json --parent <epic_id>
 # Search by text
 br search --format json "keyword"
 
-# Count by status
-br count --group-by status
+# Count by status. Note: br count returns scalar text and does not support
+# --format json — this is one of the rare BI-025b exceptions; do not pipe to jq.
+br count --by status
 ```
 
 ### Dependency queries

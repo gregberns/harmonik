@@ -5,62 +5,6 @@ import (
 	"time"
 )
 
-// CadenceFilter is the per-suite cadence filter enum.
-//
-// Spec ref: specs/scenario-harness.md §6.1 RECORD SuiteResult — field cadence_filter.
-type CadenceFilter string
-
-// Declared CadenceFilter constants per specs/scenario-harness.md §6.1.
-const (
-	// CadenceFilterSmoke selects only smoke-tagged scenarios.
-	CadenceFilterSmoke CadenceFilter = "smoke"
-
-	// CadenceFilterRegression selects smoke and regression scenarios
-	// (superset per SH-029).
-	CadenceFilterRegression CadenceFilter = "regression"
-
-	// CadenceFilterNightly selects smoke, regression, and nightly scenarios
-	// (superset per SH-029).
-	CadenceFilterNightly CadenceFilter = "nightly"
-
-	// CadenceFilterAll selects every scenario regardless of cadence tag
-	// (superset per SH-029).
-	CadenceFilterAll CadenceFilter = "all"
-)
-
-// Valid reports whether f is one of the four declared CadenceFilter constants.
-func (f CadenceFilter) Valid() bool {
-	switch f {
-	case CadenceFilterSmoke,
-		CadenceFilterRegression,
-		CadenceFilterNightly,
-		CadenceFilterAll:
-		return true
-	default:
-		return false
-	}
-}
-
-// MarshalText implements encoding.TextMarshaler so CadenceFilter serialises
-// correctly in JSON and YAML.
-func (f CadenceFilter) MarshalText() ([]byte, error) {
-	if !f.Valid() {
-		return nil, fmt.Errorf("cadencefilter: unknown value %q", string(f))
-	}
-	return []byte(f), nil
-}
-
-// UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value not in the declared set.
-func (f *CadenceFilter) UnmarshalText(text []byte) error {
-	candidate := CadenceFilter(text)
-	if !candidate.Valid() {
-		return fmt.Errorf("cadencefilter: unknown value %q; must be one of smoke, regression, nightly, all", string(text))
-	}
-	*f = candidate
-	return nil
-}
-
 // SuiteVerdict is the top-level outcome of a suite execution.
 //
 // Spec ref: specs/scenario-harness.md §6.1 RECORD SuiteResult — field suite_verdict.

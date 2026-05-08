@@ -29,7 +29,7 @@ func subscriptionMinimal(t *testing.T) Subscription {
 		EventPattern:            EventPattern{Wildcard: true, Types: map[string]struct{}{}},
 		Since:                   nil,
 		OffsetCheckpointEventID: nil,
-		OnPanic:                 "recover_and_log",
+		OnPanic:                 OnPanicRecoverAndLog,
 		Handler:                 func(_ context.Context, _ Event) error { return nil },
 	}
 }
@@ -64,9 +64,9 @@ func TestSubscriptionValid_AllConsumerClasses(t *testing.T) {
 func TestSubscriptionValid_AllOnPanicPolicies(t *testing.T) {
 	t.Parallel()
 
-	for _, policy := range []string{"recover_and_log", "quarantine_consumer", "fail_daemon"} {
+	for _, policy := range []OnPanic{OnPanicRecoverAndLog, OnPanicQuarantineConsumer, OnPanicFailDaemon} {
 		policy := policy
-		t.Run(policy, func(t *testing.T) {
+		t.Run(string(policy), func(t *testing.T) {
 			t.Parallel()
 			s := subscriptionMinimal(t)
 			s.OnPanic = policy
@@ -210,7 +210,7 @@ func TestSubscriptionValid_EmptyOnPanic(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	s.OnPanic = ""
+	s.OnPanic = OnPanic("")
 	if s.Valid() {
 		t.Error("Valid() = true with empty OnPanic, want false")
 	}
@@ -220,7 +220,7 @@ func TestSubscriptionValid_InvalidOnPanic(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	s.OnPanic = "unknown_policy"
+	s.OnPanic = OnPanic("unknown_policy")
 	if s.Valid() {
 		t.Error("Valid() = true with unknown OnPanic, want false")
 	}

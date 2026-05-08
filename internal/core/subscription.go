@@ -58,25 +58,13 @@ type Subscription struct {
 	OffsetCheckpointEventID *EventID
 
 	// OnPanic is the policy for consumer-goroutine panics per OQ-EV-007.
-	// Must be one of: "recover_and_log" (default), "quarantine_consumer",
-	// "fail_daemon".
-	//
-	// TODO(hk-hqwn.66): replace string placeholder with core.OnPanic
-	// once the typed enum is defined (event-model.md §6.1 Enum
-	// recover_and_log|quarantine_consumer|fail_daemon, OQ-EV-007).
-	OnPanic string
+	// Must be one of: OnPanicRecoverAndLog (default), OnPanicQuarantineConsumer,
+	// OnPanicFailDaemon.
+	OnPanic OnPanic
 
 	// Handler is the consumer-supplied callback invoked for each matched
 	// event. Required (non-nil).
 	Handler func(context.Context, Event) error
-}
-
-// validOnPanicPolicies is the closed set of allowed OnPanic values per
-// event-model.md §6.1 OQ-EV-007.
-var validOnPanicPolicies = map[string]struct{}{
-	"recover_and_log":     {},
-	"quarantine_consumer": {},
-	"fail_daemon":         {},
 }
 
 // Valid reports whether all required fields carry valid values.
@@ -87,7 +75,7 @@ var validOnPanicPolicies = map[string]struct{}{
 //   - EventPattern satisfies EventPattern.Validate()
 //   - Since, when non-nil, must not be EventID(uuid.Nil)
 //   - OffsetCheckpointEventID, when non-nil, must not be EventID(uuid.Nil)
-//   - OnPanic is one of: "recover_and_log", "quarantine_consumer", "fail_daemon"
+//   - OnPanic.Valid() is true
 //   - Handler is non-nil
 func (s Subscription) Valid() bool {
 	if s.ConsumerID == "" {
@@ -105,7 +93,7 @@ func (s Subscription) Valid() bool {
 	if s.OffsetCheckpointEventID != nil && uuid.UUID(*s.OffsetCheckpointEventID) == uuid.Nil {
 		return false
 	}
-	if _, ok := validOnPanicPolicies[s.OnPanic]; !ok {
+	if !s.OnPanic.Valid() {
 		return false
 	}
 	if s.Handler == nil {

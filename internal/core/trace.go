@@ -12,7 +12,6 @@ package core
 // a foundation amendment per architecture.md §4.6.
 //
 // Several fields use placeholder types pending typed-alias beads:
-//   - ActorRole  → TODO(hk-zs0.55): hoist to core.ActorRole once that bead lands.
 //   - CandidateActions / ChosenAction → TODO(hk-zs0.56): hoist to []core.ActionDescriptor /
 //     core.ActionDescriptor once that bead lands.
 //   - PolicyVersion → TODO(hk-zs0.57): hoist to core.PolicyVersion once that bead lands.
@@ -23,13 +22,10 @@ type Trace struct {
 
 	// ActorRole is the role-name of the actor that produced this decision
 	// (AR-012 field 2; architecture.md §4.8.AR-032).
-	// The seven declared role names are Planner, Researcher, Builder, Reviewer,
-	// Verifier, Scheduler, Governor. Daemon-synthesized transitions use
-	// "daemon" or "reconciliation" per execution-model.md §4.10.EM-046.
-	// Required (non-empty).
-	//
-	// TODO(hk-zs0.55): hoist to core.ActorRole once the typed alias lands.
-	ActorRole string
+	// The nine declared values are Planner, Researcher, Builder, Reviewer,
+	// Verifier, Scheduler, Governor, daemon, and reconciliation.
+	// Required (must satisfy ActorRole.Valid()).
+	ActorRole ActorRole
 
 	// CandidateActions is the full set of actions the actor considered before
 	// choosing (AR-012 field 3; execution-model.md §6.1 candidate_actions).
@@ -91,7 +87,7 @@ type Trace struct {
 //
 // Rules:
 //   - PriorState satisfies State.Valid()
-//   - ActorRole is non-empty
+//   - ActorRole satisfies ActorRole.Valid()
 //   - CandidateActions is non-nil (may be empty slice)
 //   - ChosenAction is non-empty
 //   - PolicyVersion is non-empty
@@ -106,7 +102,7 @@ func (tr Trace) Valid() bool {
 	if !tr.PriorState.Valid() {
 		return false
 	}
-	if tr.ActorRole == "" {
+	if !tr.ActorRole.Valid() {
 		return false
 	}
 	if tr.CandidateActions == nil {

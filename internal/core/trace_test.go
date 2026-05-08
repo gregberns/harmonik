@@ -32,7 +32,7 @@ func traceFixture(t *testing.T) Trace {
 	confidence := 0.87
 	return Trace{
 		PriorState:       traceFixtureState(t),
-		ActorRole:        "Builder",
+		ActorRole:        ActorRoleBuilder,
 		CandidateActions: []string{"action-a", "action-b", "action-c"},
 		ChosenAction:     "action-a",
 		PolicyVersion:    "v1.0.0",
@@ -108,11 +108,12 @@ func TestTraceValid_InvalidPriorState(t *testing.T) {
 }
 
 // TestTraceValid_EmptyActorRole verifies that an empty ActorRole fails Valid().
+// (Kept for regression coverage; see actorrole_test.go for full ActorRole test suite.)
 func TestTraceValid_EmptyActorRole(t *testing.T) {
 	t.Parallel()
 
 	tr := traceFixture(t)
-	tr.ActorRole = ""
+	tr.ActorRole = ActorRole("")
 	if tr.Valid() {
 		t.Error("Valid() = true with empty ActorRole, want false")
 	}
@@ -260,7 +261,7 @@ func TestTraceJSONRoundTrip(t *testing.T) {
 
 	// Spot-check scalar fields that must survive the round-trip exactly.
 	if decoded.ActorRole != original.ActorRole {
-		t.Errorf("ActorRole: got %q, want %q", decoded.ActorRole, original.ActorRole)
+		t.Errorf("ActorRole: got %q, want %q", string(decoded.ActorRole), string(original.ActorRole))
 	}
 	if decoded.ChosenAction != original.ChosenAction {
 		t.Errorf("ChosenAction: got %q, want %q", decoded.ChosenAction, original.ChosenAction)

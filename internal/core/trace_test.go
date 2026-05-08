@@ -224,7 +224,6 @@ func TestTraceValid_AllOutcomeStatusValues(t *testing.T) {
 	}
 
 	for _, s := range validStatuses {
-		s := s
 		t.Run(string(s), func(t *testing.T) {
 			t.Parallel()
 

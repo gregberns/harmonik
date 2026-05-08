@@ -6,10 +6,26 @@ import "github.com/google/uuid"
 // state to another in a workflow run (execution-model.md §4.1.EM-004, §6.1).
 //
 // The record is the canonical, authoritative durable form of every transition
-// (EM-036). It is stored as a typed JSON sibling file at
+// (EM-028). It is stored as a typed JSON sibling file at
 // .harmonik/transitions/<run_id>/<transition_id>.json (EM-018, EM-019) and
 // must be written atomically within a checkpoint commit (EM-016). The
-// transition event on the event bus is a projection of this record (EM-036).
+// transition event on the event bus is a projection of this record (EM-028);
+// the projection type is TransitionEventPayload.
+//
+// # Immutability contract (EM-020)
+//
+// Once committed to a checkpoint commit, a Transition record file MUST NEVER
+// be rewritten. A new transition in the same run MUST be written under a new
+// transition_id at a new sibling-file path; it MUST NOT modify any prior file.
+// History-rewriting operations (git amend, rebase, filter-branch) against
+// committed transition records are a policy violation detected by post-hoc
+// audit tooling per §4.4.EM-020a (see hk-b3f.26 for the audit tool bead).
+//
+// The write-once guarantee is structural: each transition occupies a unique
+// path (.harmonik/transitions/<run_id>/<transition_id>.json) derived from a
+// daemon-generated UUIDv7 transition_id per EM-018a. No caller path appends
+// to or overwrites an existing sibling file; callers MUST generate a new
+// transition_id (and therefore a new path) for every new transition.
 //
 // # Field notes
 //

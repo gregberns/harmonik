@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // b3f22ValidTransition builds a fully-populated forward Transition suitable for
@@ -263,5 +265,44 @@ func TestValidateTransitionSchemaVersion_ZeroCommitVersion(t *testing.T) {
 	err := ValidateTransitionSchemaVersion(tr, 0)
 	if err == nil {
 		t.Fatal("ValidateTransitionSchemaVersion: expected error for zero commitSchemaVersion, got nil")
+	}
+}
+
+// --- EM-020 immutability structural invariant ---
+
+// hkb3f25PathForTransition is a helper that returns TransitionRecordPath for a
+// Transition value. Used by hk-b3f.25 immutability tests.
+func hkb3f25PathForTransition(tr Transition) string {
+	return TransitionRecordPath(tr.RunID, tr.TransitionID)
+}
+
+// TestTransitionRecord_ImmutabilityDistinctPaths verifies the structural
+// invariant of EM-020: two distinct transitions (with distinct transition_ids)
+// MUST produce distinct sibling-file paths.
+//
+// This is the code-level encoding of the write-once contract: because each new
+// transition must carry a new daemon-generated UUIDv7 transition_id (EM-018a),
+// and the path is derived from (run_id, transition_id), no two transitions
+// within the same run can collide at the file-system path. If they did, one
+// would silently overwrite the other — the per-EM-020 violation this test
+// guards against.
+func TestTransitionRecord_ImmutabilityDistinctPaths(t *testing.T) {
+	t.Parallel()
+
+	tr1 := b3f22ValidTransition(t)
+	tr2 := b3f22ValidTransition(t)
+	// b3f22ValidTransition generates fresh UUIDs each call, so TransitionIDs
+	// should already differ. Force distinct IDs to make the invariant explicit.
+	tr2.TransitionID = TransitionID(uuid.Must(uuid.NewV7()))
+
+	p1 := hkb3f25PathForTransition(tr1)
+	p2 := hkb3f25PathForTransition(tr2)
+
+	if p1 == p2 {
+		t.Errorf(
+			"EM-020: two transitions with distinct transition_ids produced the same path %q; "+
+				"transition_id1=%s transition_id2=%s",
+			p1, tr1.TransitionID, tr2.TransitionID,
+		)
 	}
 }

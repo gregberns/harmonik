@@ -44,6 +44,18 @@ func (k WorkspacePredicateKind) MarshalText() ([]byte, error) {
 	return []byte(k), nil
 }
 
+// UnmarshalText implements encoding.TextUnmarshaler. It rejects any value
+// that is not one of the five declared constants, ensuring scenario files
+// loaded from JSON or YAML cannot smuggle unknown kinds past the boundary.
+func (k *WorkspacePredicateKind) UnmarshalText(text []byte) error {
+	v := WorkspacePredicateKind(text)
+	if !v.Valid() {
+		return fmt.Errorf("workspacepredicate: unknown kind %q", string(text))
+	}
+	*k = v
+	return nil
+}
+
 // WorkspacePredicate is a declared expectation about workspace state at the
 // end of scenario execution: file presence, file contents, git-ref target,
 // or commit-trailer presence. Per-kind `Expected` semantics are declared in

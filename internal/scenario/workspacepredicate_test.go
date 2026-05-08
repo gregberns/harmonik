@@ -146,6 +146,45 @@ func TestWorkspacePredicateKindMarshalText(t *testing.T) {
 	}
 }
 
+func TestWorkspacePredicateKindUnmarshalText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    WorkspacePredicateKind
+		wantErr bool
+	}{
+		{"file_exists", "file_exists", WorkspacePredicateKindFileExists, false},
+		{"file_contents_equal", "file_contents_equal", WorkspacePredicateKindFileContentsEqual, false},
+		{"file_contents_match", "file_contents_match", WorkspacePredicateKindFileContentsMatch, false},
+		{"git_ref_at", "git_ref_at", WorkspacePredicateKindGitRefAt, false},
+		{"commit_trailer_present", "commit_trailer_present", WorkspacePredicateKindCommitTrailerPresent, false},
+		{"unknown kind", "file_bogus", "", true},
+		{"empty", "", "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var k WorkspacePredicateKind
+			err := k.UnmarshalText([]byte(tc.input))
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("UnmarshalText(%q) expected error, got nil", tc.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UnmarshalText(%q) unexpected error: %v", tc.input, err)
+			}
+			if k != tc.want {
+				t.Errorf("UnmarshalText(%q) = %q, want %q", tc.input, string(k), string(tc.want))
+			}
+		})
+	}
+}
+
 func TestWorkspacePredicateValid(t *testing.T) {
 	t.Parallel()
 

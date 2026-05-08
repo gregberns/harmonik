@@ -111,6 +111,10 @@ the spec section + `br create` follow-up bead for the typed wrapper. The
 brief names the `br create` command; the implementer creates the bead,
 captures its ID, and substitutes it into godoc before committing.
 
+`br create` flag syntax (hit this 2026-05-08): use `-p N` for priority NOT
+`-P N`; use `--labels "a,b,c"` (comma-separated single arg) NOT repeated
+`-l a -l b`; use `--parent <id>` not `-P`. Run `br create --help` if unsure.
+
 When ambiguity arises, spend real effort resolving without escalation. Bead
 acceptance criteria is authoritative.
 
@@ -123,114 +127,89 @@ and stop.
 # Session Handoff
 
 ## State
-Clean. Main at `869e43f`, pushed to origin. **17 beads landed and closed
-this session** across 5 packages. New auto-registered skills: `agent-reviewer`,
-`beads-cli`, `agent-config-reviewer`, `go-subsystem-add`. Protocol patched
-at `3201f63` with mandatory worktree-discipline checks.
+Clean. Main at `435c0d4`, pushed to origin. **15 beads landed and closed
+this session** across 7 packages: 12 normal closes via worktree-merge, 2
+subsumed-closes (hk-8i31.26 + hk-sx9r.3 — work already shipped under prior
+closed siblings), 1 fix-iteration close (hk-8i31.50 — sentinel-taxonomy fix).
+All worktrees cleaned. New follow-up beads filed: `hk-uwie`, `hk-pvcs.10`,
+`hk-ahvq.48.10`.
 
 ## What landed this session
+hk-i0tw.54 (SuiteID), hk-8mwo.2 (git ≥2.34 detector), hk-sx9r.73 (ON 23-code
+exit taxonomy), hk-8mwo.11 (ref-safe bead-ID), hk-8mup.60 (ProjectHash+PGID),
+hk-ahvq.48.1 (twin-claude scaffold), hk-872.2 (BI-002 depguard), hk-pvcs.9
+(P3 doc cleanup), hk-ido0 (scenario FailureClass), hk-8i31.50 (commithash
+verifier), hk-ahvq.48.5 (Makefile twin target), hk-8mwo.10 (integration
+branch naming), hk-ahvq.48.4 (twin --version + ldflags var). Subsumed:
+hk-8i31.26, hk-sx9r.3.
 
-Wave 1 (5 closed; 4 of 5 escaped worktree → protocol patched mid-session):
-hk-872.26, hk-i0tw.14, hk-jhob.1, hk-8mwo.24, hk-sx9r.74.
+## Process scars to internalize (NEW)
 
-Wave 2 (8 closed; all worktree-isolated correctly post-patch):
-hk-jhob.2, hk-i0tw.17, hk-8mwo.64, hk-jhob.4, hk-872.33, hk-i0tw.31,
-hk-jhob.3, hk-b3f.88.
+1. **Sentinel-taxonomy expansion is a spec violation.** hk-8i31.50
+   implementer added `ErrCommitHashMismatch` as a third structural sub-
+   sentinel; HC-020 enumerates exactly "5 primary + 2 sub-sentinels".
+   Reviewer caught it; fix-iteration removed it. Reviewer briefs for any
+   bead in HC sentinel space MUST flag the enumerated set as a hard limit.
 
-Wave 3 (4 closed): hk-8mup.12, hk-8mup.4, hk-i0tw.52, hk-i0tw.18, hk-b3f.87.
+2. **Build-artifact directories need gitignore.** hk-ahvq.48.5 created
+   `twins/` but didn't `.gitignore` the build output; reviewer caught the
+   3.4MB binary sitting untracked. When a bead introduces a new artifact
+   directory, the gitignore entry is part of the deliverable — say so in
+   the brief.
 
-Follow-up beads filed (typed-alias-deferral): hk-8mwo.72 (HandlerRef),
-hk-i0tw.54 (SuiteID), hk-8mup.60 (ProjectHash + PGID).
+3. **Tests must exercise the function under test.** hk-8mwo.10 implementer
+   wrote an "IntegrationBranchName propagates Err…" sub-test that never
+   called IntegrationBranchName — it called a helper that called
+   BeadIDToRefSafe + a `t.Logf`. A `t.Logf` is not a test. Reviewer caught
+   it; orchestrator inline-deleted the bogus test.
 
-## Process scars to internalize
+4. **Pre-grep the codebase before dispatching for already-shipped work.**
+   hk-8i31.26 (ErrSkillProvisioningFailed sub-sentinel) and hk-sx9r.3 (ON
+   exit-code obligation) both turned out to be already implemented under
+   closed sibling beads. Saved two waves by closing as subsumed instead of
+   dispatching. Orchestrator pre-flight: `grep` the bead's named symbols
+   before writing the brief; if the work has shipped, close-as-subsumed.
 
-1. **Worktree escape (4-of-5 wave 1).** Implementer agents committed
-   directly to main from /Users/gb/github/harmonik because their
-   prompts/CLAUDE.md mentioned that path and they cd'd into it. Patched at
-   3201f63: protocol now mandates `pwd` + `git branch --show-current` +
-   `git rev-parse --show-toplevel` before every commit, with branch MUST
-   start `worktree-agent-`. Wave 2+ all behaved correctly. Keep the patch.
-
-2. **Pipefail + `&&`-chains.** Bash chains with `git X | head -1` swallow
-   the upstream exit code; `&&` doesn't short-circuit. Hit on hk-8mwo.64
-   merge dance. Recovered. Avoid piping git commands in chained merge
-   logic — emit raw output.
-
-3. **Edit-then-commit fragility.** Inline-amend in a chained bash that
-   does `git add && git commit` will silently no-op if the file wasn't
-   actually edited (Edit tool requires prior Read in same conversation).
-   `git commit` returns 0 on "nothing to commit" so set -e doesn't catch
-   it. Hit on hk-b3f.87. Mitigate: read worktree file BEFORE Edit, or
-   verify modification with `git status` between Edit and merge.
-
-4. **`blocks` deps on bead close.** `hk-872.26→hk-872.25`,
-   `hk-872.33→hk-872.25`, `hk-i0tw.18→hk-8mup.10/.2` all blocked close
-   on closed-or-not-yet-implemented siblings. Convert pattern works. The
-   directive block now describes it.
-
-5. **Sibling type-symbol collision.** hk-i0tw.52 (SuiteResult) defined
-   `CadenceFilter` while hk-i0tw.31 (cadence) defined the same type.
-   When .31 merged first, .52 hit duplicate-symbol on rebase. The .52
-   reviewer caught it with a rebase-preview before approving. Fixed by
-   removing the .52 definition. Pre-dispatch sibling-overlap scan added
-   to the directive block.
-
-## Ready candidates (17 with no blockers, scope:bootstrap)
-
-`br ready -l scope:bootstrap` snapshot:
-
-- **brcli foundation:** hk-872.2 (Route all Beads I/O through br),
-  hk-872.4 (Daemon to br direct, agents via skill).
-- **Workspace pre-startup:** hk-8mwo.2 (Min git version pin ≥ 2.34),
-  hk-8mwo.11 (Ref-safe bead-ID substitution via `git check-ref-format`),
-  hk-8mwo.25 (Workspace lifecycle event emission obligations — WHEN).
-- **Operator NFR:** hk-sx9r.73 (ON exit-code taxonomy §8 — 23-code
-  authoritative table; sibling to closed hk-sx9r.74 fixture).
-- **Twin/handler:** hk-ahvq.48.1 (cmd/harmonik-twin-claude/main.go
-  scaffold + module entry-point), hk-8i31.26 (ErrSkillProvisioningFailed
-  sub-sentinel), hk-8i31.50 (commit-hash check for in-repo binaries).
-- **MVH composition root:** hk-b3f.89 (no-op PolicyEngine wired in
-  composition root, resolves §A5).
-- **Typed-alias follow-ups (this session's children):** hk-i0tw.54
-  (SuiteID), hk-8mup.60 (ProjectHash + PGID), hk-8mwo.72 was created
-  earlier this session for HandlerRef.
-- **Hoists/cleanups:** hk-szv5 (EventExpectation.Type → core.EventType),
-  hk-ido0 (FailureClass enum + hoist), hk-872.55 (core.EdgeKind extend
-  for Beads dep-type surface), hk-pvcs.9 (P3, doc cleanup).
+5. **Stale bead-body wording vs. spec — spec wins.** hk-ahvq.48.1 bead body
+   referenced `LaunchSpec.SocketPath`; spec §6.1 has no such field; HC-044
+   fixes the path at `.harmonik/daemon.sock`. Implementer correctly took
+   the `--socket-path` CLI-flag route. Orchestrator inline-amended the
+   perpetuating comment in main.go and noted the bead-body staleness in
+   the close reason.
 
 ## Suggested first move
 
-1. **Verify state**: `git status` clean; `git log --oneline -5` shows
-   `869e43f fix(scenario): correct stale "five" count to "six"`.
+1. **Verify state**: `git status` clean; `git log --oneline -3` shows
+   `435c0d4 feat(cmd/twin-claude): add commitHash ldflags stamp + --version`.
 
-2. **Open with a 5-bead wave**, all parallel-safe across packages:
-   - `hk-8mwo.2` (git version pin) — internal/lifecycle/ or
-     internal/workspace/, sensor-style
-   - `hk-8mwo.11` (ref-safe bead-ID) — internal/workspace/, sibling to
-     errors.go (just landed)
-   - `hk-sx9r.73` (exit-code taxonomy 23-code table) — internal/operatornfr/
-     or new package; sibling pattern from .74 fixture
-   - `hk-i0tw.54` (SuiteID typed alias) — internal/core/, very small,
-     unblocks future scenario RECORDs
-   - `hk-jhob` (operational-skills meta-epic) — investigate if there's a
-     concrete subtask, otherwise pick another typed-alias follow-up
+2. **Open with a 4-bead wave**, all parallel-safe:
+   - `hk-ahvq.48.10` (just filed): wire `-ldflags "-X main.commitHash=..."`
+     into Makefile `build-twin-claude` target. Small, mechanical, unblocks
+     hk-uwie integration test.
+   - `hk-ahvq.48.2` (twin wire-protocol parity loop): the substantive twin
+     work. Larger; pre-grep for any in-tree NDJSON helpers first.
+   - `hk-872.4` (Daemon to br direct, agents via skill): brcli + handler.
+     Disjoint from .48.x.
+   - `hk-jhob` (operational-skills meta-epic): investigate for a concrete
+     subtask; otherwise skip.
 
-3. **Watch for sibling-symbol collisions** in the wave (per Scar #5).
+3. **Subsumed-bead pre-check** (per Scar #4): before dispatching any of
+   the remaining `br ready` queue, grep for the bead's named symbols. The
+   handoff list contains beads from a corpus where some may already have
+   shipped under sibling work.
 
 ## Files to open first
 
-1. `git log --oneline -25` — this session's commits
-2. `.claude/implementer-protocol.md` — current standing rules; read
-   §"Worktree discipline" carefully
-3. `internal/scenario/` — many siblings landed here this session; the
-   package now has ScenarioResult, AssertionResult, EventExpectation,
-   FileSeed, GitSeedOp, WorkspacePredicate, EventLogPath/EventLogDir,
-   FixtureRoot, CadenceTag/CadenceFilter, SuiteResult, SyntheticProjectRoot,
-   CrashRecoveryFixture
-4. `internal/lifecycle/` — Pidfile, ProbePidfileLock (PL-002a/PL-024 +
-   linux/darwin variants), provenance (PL-006a)
-5. `internal/workspace/` — workspace.go state machine + errors.go 12-class
-   sentinel taxonomy
+1. `git log --oneline -25` — this session's 16 commits (15 features + 1
+   fix-iteration deletion).
+2. `.claude/implementer-protocol.md` — standing rules; nothing changed
+   structurally this session.
+3. `internal/handler/` — commithash.go (HC-043 verifier) and launchpath.go
+   (SH-009 search-path resolver) just landed; sibling pattern for any new
+   handler work.
+4. `cmd/harmonik-twin-claude/` — main.go scaffold + version.go ldflags var.
+5. `internal/scenario/` and `internal/core/` — both have a `FailureClass`
+   enum now (different 8-value vs 6-value sets); don't conflate.
 
 ## Blocking question for user
 None.

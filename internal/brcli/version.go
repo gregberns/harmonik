@@ -56,8 +56,12 @@ var brVersionRegex = regexp.MustCompile(`br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0
 //   - Output does not match version regex → ErrBrVersionIncompatible
 //   - Observed version != pinnedVersion  → ErrBrVersionIncompatible
 //
-// The caller MUST translate ErrBrVersionIncompatible to daemon startup exit
-// code 8 and emit daemon_startup_failed{failure_mode="br-version-incompatible"}.
+// The caller MUST treat ANY non-nil error from CheckBrVersion as a startup-
+// blocking failure: translate to daemon startup exit code 8 and emit
+// daemon_startup_failed{failure_mode="br-version-incompatible"}. This includes
+// both ErrBrVersionIncompatible (sentinel-wrapped) AND the plain exec-failure
+// case above (br binary missing / not executable / etc.) — exit code 8 is
+// uniform for "br unavailable in any way at startup."
 func (a *Adapter) CheckBrVersion(ctx context.Context, pinnedVersion string) error {
 	result, err := a.Run(ctx, "--version")
 	if err != nil {

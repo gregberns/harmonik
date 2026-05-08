@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v4 2026-05-07 main -->
+<!-- PP-TRIAL:v6 2026-05-07 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -131,7 +131,7 @@ ALSO rebased on the new local `main`. Pre-rebasing every branch on
     done
     # then close each bead with its closure note.
 
-Two clean 5-chain merges this session under this pattern.
+Three clean pipelined chains last session (5 + 6 + 6 = 17 beads, no conflicts).
 
 Typed-alias deferral (recurring decision). When a record references a type
 not yet in `core/` (e.g., WorkspaceRef, PolicyExpression, EventType):
@@ -142,7 +142,7 @@ single existing parent bead can carry the whole enum in one shot. Don't
 escalate to the user — the future hoist from `string` to a typed alias is
 non-breaking. **Hoist follow-up beads should mutate the consumer record's
 field type and Valid() guard in the same commit; godoc deferral notes get
-removed at hoist time.** Done this session for hk-b3f.90/.91/.92 (Run
+removed at hoist time.** Done in prior session for hk-b3f.90/.91/.92 (Run
 WorkflowID/WorkflowVersion/Input) and hk-hqwn.64 (Event EventID).
 
 Implementer commit-format template (HEREDOC; required in every brief):
@@ -173,165 +173,132 @@ context.
 # Session Handoff
 
 ## State
-Clean. Main at `f488d0c` and pushed. **Twelve beads landed this session
-across two clean 5-chain pipelined merges:**
+Clean. Main at `37b93da` and pushed. **Eight commits this session: 6-pack
+chain (sensors + enum), one inline-amend fixup, foundation WM fixture solo.**
+All HEREDOC subjects clean.
 
-- Batch 1 (records / enums / sentinels):
-  - `hk-b3f.75` Run record (9 fields)
-  - `hk-hqwn.53` Event envelope (10 fields)
-  - `hk-8i31.24` HC-020 sentinels (new package `internal/handler/`)
-  - `hk-b3f.85` Trailer registry (8 entries)
-  - `hk-b3f.86` Failure-class taxonomy (6-value closed enum)
+## What landed (in commit order)
 
-- Batch 2 (typed-alias hoists + records + sensor):
-  - `hk-hqwn.64` EventID typed alias (Event.EventID hoisted)
-  - `hk-b3f.90` WorkflowID typed alias (Run.WorkflowID hoisted)
-  - `hk-b3f.91` WorkflowVersion typed alias (Run.WorkflowVersion hoisted)
-  - `hk-b3f.92` WorkspaceRef typed alias (Run.Input hoisted)
-  - `hk-8i31.75` SessionID record (string-backed)
-  - `hk-8mwo.60` LeaseLockFile record (4 fields)
-  - `hk-872.7` HarmonikWriteStatus/CoarseStatus subset adapter (sensor)
-
-All commits in batch 2 follow the HEREDOC commit-format pattern; subject
-lines are clean. Batch 1 commits (78c8ebf..f5c131a) carry the
-collapsed-subject defect — cosmetic, force-push to fix is forbidden.
+1. `9505a39` BI-003 `br serve` forbidden sensor (`hk-872.3`)
+2. `c399766` PL DaemonStatus enum (`hk-8mup.49`)
+3. `b47d8e6` BI-001 Beads-fork-adoption sensor (`hk-872.1`)
+4. `301495a` BI-009 atomic-claim invariant sensor (`hk-872.9`)
+5. `7f6193f` BI-022 git-authoritative-completion sensor (`hk-872.23`)
+6. `8ba189a` EV-002b handler-event-id-daemon-route sensor (`hk-hqwn.4`)
+7. `1a5cd98` post-merge fixup (repoRoot dedup + gosec nolint + gofumpt)
+8. `37b93da` WM-001..004 worktree-primitive foundation fixture (`hk-8mwo.65`)
 
 ## Notes from this session
 
-- **Pipelined-chain merge pattern is now correctly documented in the
-  directives block.** Two 5-chain runs, no conflicts.
-- **HEREDOC commit-format pattern works; mandate it in every brief.**
-  Pre-batch-2 implementers collapsed bullets into the subject. Post-fix:
-  7 of 7 commits in batch 2 came out clean.
-- **Stuck `blocks`-on-closed-deps fired again on hk-872.7.** Conversion
-  to `related` still works. Pattern likely recurs for sensor/invariant
-  beads referencing closed type beads.
-- **Same-file sibling conflict (3 beads on run.go) handled by combining
-  into one implementer.** Three sequential commits, each its own
-  `Refs:`. Worked clean. Pattern documented in directives.
-- **§6.1 RECORD type contract overrides §8.x wire-fill conventions.**
-  SessionID landed as `type SessionID string` because §6.1 RECORD says
-  `value: String`. The §8.3 "handler fills with UUIDv7" wording is a
-  wire-fill convention, not a type constraint.
-- **Orchestrator inline-amend used twice.** Run record (3 godoc nits:
-  bead-ID citations + EM-012 cross-ref correction) and Trailer registry
-  (1 godoc disambiguation). Single-line edits + `git commit --amend
-  --no-edit` + rebase + merge.
-- **Stale CLAUDE.md text — non-blocking, user-touch.** Both root and
-  worktree CLAUDE.md still say *"Don't write code yet. Phase 0
-  (plan refinement → spec drafting) is active."* Implementation is
-  clearly active (12 beads landed in this session alone). Update is a
-  user-touch follow-up: orchestrator should NOT silent-fix CLAUDE.md
-  without surfacing — the prohibition reads like a load-bearing
-  authorization check.
+- **Same-package shared-symbol collision in parallel batches.** Two implementers
+  in batch 1 each defined `func repoRoot(t *testing.T) string` in
+  `internal/core/` package — invisible to each reviewer (each saw only their
+  own worktree); collision surfaces only post-merge as a `redeclared in this
+  block` vet error. Caught by the next bead's `make check`. Cost: one inline
+  fixup commit.
+  - **Mitigation for future parallel batches:** when 2+ beads in one slice add
+    new helpers to the same Go package, brief one of them to define the helper
+    and the others to consume it (cite the originating file in their brief),
+    OR explicitly require the helper live in a shared `*_test.go` file from
+    the start. The reviewer for `hk-872.1` did flag the DRY observation as a
+    MINOR — promote it to MAJOR/blocker when a sibling parallel bead is also
+    queued in the same package.
+- **Implementer-bypass-of-worktree.** `hk-872.3` implementer wrote
+  `internal/core/brserve_bi003_test.go` directly into the main repo dir
+  (committed at `9505a39` on main, not in its assigned worktree). Result was
+  correct, but it desynchronized the merge-dance and the reviewer had to
+  review post-hoc on main HEAD. **Brief mitigation:** add to implementer
+  briefs an explicit instruction "ALL file edits must occur inside your
+  worktree path; do NOT cd to or write into `/Users/gb/github/harmonik/`
+  directly." The Agent-tool `isolation: worktree` parameter gives the agent
+  a worktree, but doesn't prevent it from writing elsewhere if it tries.
+- **Three-chain rhythm holds.** Pre-rebase + per-pair `rebase main` + single
+  push at end + cleanup loop + batched `br close`. No merge conflicts on the
+  5-branch chain.
+- **Stuck-blocks-on-closed-deps still reflexive.** Three deps converted at
+  audit time on the 6-pack: `hk-872.9→.45`, `hk-872.23→.19`, `hk-hqwn.4→.3`.
+- **Foundation WM fixture established.** `internal/workspace/` package now
+  exists with shared helpers in `testfixture_test.go` (`tempRepo`,
+  `runIDValid`, `runIDRegex`, `canonicalWorktreePath`,
+  `classifyCrashEvidence` placeholder). Downstream fixtures
+  `.66/.67/.68/.70` reuse these helpers in-package — no import needed.
+- **gosec G304 on os.ReadFile.** Spec/file-content sensors using
+  `os.ReadFile(constructedPath)` need `//nolint:gosec // G304: path is
+  constructed from runtime.Caller + known relative segments, not user input`.
+  Pattern already present in `gitauthoritative_bi022_test.go:55` and
+  `atomicclaim_bi009_test.go:59`. Add it to NEW spec-content sensor briefs.
 
-## Ready candidates — claim a batch, don't over-plan
+## Ready candidates — claim a batch
 
-`br ready -l scope:bootstrap` returned 20 entries at session end. New
-since last session: `hk-8mwo.61` (WorkspaceState enum), `hk-8mwo.62`
-(InterruptState enum), `hk-8mwo.64` (WM error taxonomy 12-class).
-`hk-8i31.76` (HC error sentinel detection-and-emission table) is now
-unblocked since `hk-b3f.86` closed.
+`br ready -l scope:bootstrap` returns 19 (6 closed this session, 5 newly
+unblocked appeared earlier). Most remaining work is "substantive."
 
-**Records / enums (clean record-shape; closest match to last batches):**
+**Top parallel batch (workspace-model fixtures, mirror `hk-8mwo.65`):**
+- `hk-8mwo.66` Branch-naming + ref-safe substitution (WM-005..009 + WM-005a/.6a)
+- `hk-8mwo.67` Lease-lifecycle + crash-recovery (WM-010..013e)
+- `hk-8mwo.68` Merge-back + scratch-worktree (WM-018..021 + WM-018a/.19a)
+- `hk-8mwo.70` Session-log + atomic sidecar (WM-025..030)
 
-- `hk-8mwo.61` WorkspaceState enum (§6.1) — string enum; mirror
-  `coarsestatus.go`. Quick.
-- `hk-8mwo.62` InterruptState enum (§6.1) — string enum; mirror
-  `coarsestatus.go`. Quick.
-- `hk-8i31.74` LaunchSpec record (§6.1) — read shape via `br show`.
+These four MUST add new tests to the same `internal/workspace/` package
+where `.65` already lives. **Risk:** any test-helper any of them adds will
+collide with siblings (see "Same-package shared-symbol collision" note
+above). **Brief mitigation: instruct each implementer to consume the helpers
+from `testfixture_test.go` (already present) and to NOT add new package-level
+test helpers; if a new helper is unavoidable, use a distinctive prefix
+(`leaseSetup_`, `branchNameFixture_`, etc.) and surface it in the commit
+bullet.** Dispatch in parallel only with that brief mitigation.
 
-**Substantive (claim solo or small batch — bigger briefs):**
+**Process-lifecycle fixtures (also parallelizable, separate package
+`internal/lifecycle/` or wherever PL chooses to land):**
+- `hk-8mup.50` Pidfile + socket twin (PL-001..003b + PL-INV-001/004)
+- `hk-8mup.51` Startup + orphan-sweep harness (PL-005, .006, .006a, .007, .008a, INV-003/005)
+- `hk-8mup.52` Ready-state + degraded scenario (PL-009..010)
+- `hk-8mup.53` Shutdown + drain scenario (PL-011..013)
+- `hk-8mup.54` Agent supervision + spawn discipline (PL-014..017)
+- `hk-8mup.59` CLI command surface (PL-028)
 
-- `hk-8mwo.64` WM error taxonomy — 12-class typed sentinel set. Decide
-  package layout: extend `internal/handler/errors.go` or create
-  `internal/workspace/errors.go`. Read shape first.
-- `hk-8i31.76` HC error sentinel detection-and-emission table — the 5
-  primary + 2 sub sentinels exist (hk-8i31.24); this adds the §8.1-§8.7
-  detection rules per class. Likely a data-table mapping
-  observable-condition → sentinel, OR actual classifier code. Inspect
-  before briefing.
-- `hk-872.27` br-CLI adapter — substantive subsystem implementation.
-- `hk-b3f.87` Crash-recovery scenario harness — test infrastructure.
-- `hk-b3f.88` Workflow-validator unit-test fixture (canonical malformed-
-  DOT corpus).
-- `hk-hqwn.41` Tagged-union event registry — needs `EventType` enum
-  (deferred follow-up filed at `hk-hqwn.59.82` for the ~80 EventType
-  rows). Effectively blocked until that lands.
+PL package doesn't yet exist — first PL fixture will establish the
+foundation harness (mirror the `hk-8mwo.65` pattern). Don't dispatch the
+first PL fixture in parallel with the others.
 
-**Interface-shape (different shape — brief carefully, NOT records):**
-
-- `hk-8i31.71` Handler interface (§6.1)
-- `hk-8i31.72` Session interface (§6.1)
-- `hk-8i31.73` Adapter interface (§6.1)
-
-**Sensor / invariant (different shape — read first; brief differently
-from records; expect stuck-blocks-deps conversions):**
-
-- `hk-872.8` BeadIDs opaque — discipline rule for adapter. Doc
-  codification or compile-time test asserting BeadID has no parsing
-  helpers.
-- `hk-872.18` Run metadata records bead_id — sensor confirming
-  Run.BeadID usage. Test fixture exercising bead-tied vs.
-  non-bead-tied runs.
-- `hk-b3f.14` many-runs-per-bead — invariant; test fixture for once
-  lifecycle code lands.
-- `hk-b3f.2` Edge directed transition — sensor for Edge type.
-- `hk-b3f.24` Transition record discoverable by git-show — sensor for
-  EM-019.
-- `hk-hqwn.2` UUIDv7 invariant — sensor.
-- `hk-hqwn.26` Idempotent emission — sensor.
-- `hk-8i31.49` Repo-relative subprocess launch path — sensor.
-
-**Discipline rules (low priority; doc/test-only):**
-
-- `hk-872.1` Adopt Beads SQLite fork; reject Dolt — doc / test.
-- `hk-872.3` Forbid `br serve` — discipline; likely a doc note.
-- `hk-872.6` Beads owns typed dependency edges — discipline.
-- `hk-872.9` Atomic-claim semantics — sensor against br adapter.
+**Substantive (solo briefs):**
+- `hk-872.27` br-CLI adapter (subsystem implementation — likely big)
+- `hk-hqwn.41` Events tagged-union envelope + payload-constructor registry
+  (will touch `internal/core/event*.go`; coordinate with WM/PL fixture work
+  to avoid conflicts)
+- `hk-8i31.76` HC error sentinel set + 5-class detection-and-emission table
+- `hk-8mwo.24` Workspace state machine (will likely add non-test code under
+  `internal/workspace/`; coordinate with WM-fixture batch)
+- `hk-8mwo.64` WM error taxonomy (12-class)
+- `hk-b3f.87` Crash-recovery scenario harness, `hk-b3f.88` workflow-validator
+  fixture corpus
 
 ## Suggested first move
 
-Spawn 6-8 implementers from the top of the ready queue, biased toward
-clean records / enums:
-
-1. `hk-8mwo.61` WorkspaceState enum (mirror coarsestatus.go)
-2. `hk-8mwo.62` InterruptState enum (mirror coarsestatus.go)
-3. `hk-8i31.74` LaunchSpec record (read shape via `br show`)
-4. `hk-872.8` BeadIDs opaque sensor (small; doc-codification or
-   compile-time test)
-5. `hk-872.18` Run metadata records bead_id sensor
-6. `hk-b3f.14` Many-runs-per-bead sensor
-
-Audit dep edges before claiming. Expect at least one stuck-blocks-on-
-closed-deps conversion (recurring this session). For larger items
-(`hk-8mwo.64`, `hk-8i31.76`, `hk-872.27`), claim solo with deliberate
-briefs — the record-pattern template won't fit.
+1. Audit deps on `hk-8mwo.66/.67/.68/.70` (expect ≥1 stuck-blocks-on-closed
+   conversion).
+2. Dispatch all four in parallel with the **same-package mitigation** in each
+   brief: "Use the helpers in `internal/workspace/testfixture_test.go`; do
+   NOT add new package-level test helpers without a prefix; cite
+   `hk-8mwo.65` as the foundation."
+3. Then dispatch `hk-8mup.50` SOLO as the PL foundation fixture (mirror the
+   solo-then-parallelize pattern that worked for WM).
+4. After PL-50 lands and establishes its harness, parallelize
+   `hk-8mup.51/.52/.53/.54/.59`.
 
 ## Files to open first
 
-1. `git log --oneline -15` — 7 batch-2 commits + 5 batch-1 record commits
-2. `internal/core/eventid.go`, `workflowid.go` — UUID-backed typed-alias
-   pattern (mirror `runid.go`)
-3. `internal/core/sessionid.go` — string-backed typed-alias pattern
-   (mirror `beadid.go`); §6.1 RECORD says String even when wire-fill is
-   UUIDv7
-4. `internal/core/leaselockfile.go` — multi-field record with
-   int + time.Time + RunID composing
-5. `internal/core/harmonikwritestatus.go` — read the subset-adapter
-   pattern for future write/read-split sensors; subset-invariant test
-   shape catches enum drift
-6. `internal/handler/errors.go` — handler-package sentinel pattern; DO
-   NOT redefine; `hk-8i31.76`'s detection table likely extends this
-7. `ls internal/core/` — full inventory of typed wrappers, enums,
-   records already shipped
-8. Bead body via `br show <id>` — only consult docs the bead cites
+1. `git log --oneline -10` — this session's 8 commits
+2. `internal/workspace/testfixture_test.go` — WM foundation harness (helpers
+   to reuse in `.66/.67/.68/.70`)
+3. `internal/workspace/worktreeprimitive_wm001_test.go` — WM filesystem-scenario
+   test pattern
+4. `internal/core/failureclass.go` + `internal/core/daemonstatus.go` —
+   strict-closed enum mirror (for any new enum bead)
+5. `internal/core/atomicclaim_bi009_test.go` + `gitauthoritative_bi022_test.go`
+   — Shape-B (spec-content) sensor pattern with `//nolint:gosec` boilerplate
+6. `internal/core/handlereventidroute_ev002b_test.go` — multi-shape sensor
+   (A: import boundary walk, B: AST godoc check, C: spec-content)
 
 ## Blocking question for user
-None. Standing rules + orchestrator authority resolve everything.
-
-User-touch follow-up (non-blocking): update root CLAUDE.md
-*"Don't write code yet. Phase 0..."* text. Implementation is active per
-the orchestrator directives in this HANDOFF; the prohibition reads like
-a load-bearing authorization check, so an orchestrator silent-fix would
-be the wrong move.
+None.

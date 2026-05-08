@@ -38,9 +38,9 @@ var brVersionRegex = regexp.MustCompile(`br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0
 // observed).
 //
 // pinnedVersion is the version string declared in the harmonik release manifest
-// per BI-024. At MVH the release manifest is not yet implemented as a
-// structured artifact (hk-872.25); the daemon startup caller is responsible
-// for providing the pinned version string (e.g., from a build-time constant).
+// per BI-024.  Pass [internal/release.BeadsVersion] as this argument; that
+// constant is the structured release-manifest artifact introduced by hk-872.25.
+// Daemon-startup wiring (PL-005 step 4) is deferred until cmd/harmonik/ lands.
 //
 // The version regex `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?` extracts
 // the full dotted version token from the `br --version` output; the observed

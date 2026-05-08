@@ -22,6 +22,8 @@ import "github.com/google/uuid"
 //   - StartNodeID is non-empty and present in Nodes
 //   - TerminalNodeIDs is non-empty (§4.1.EM-001: "non-empty terminal_node_ids list")
 //   - every NodeID in TerminalNodeIDs is present in Nodes
+//   - every Edge satisfies Edge.Valid() and its FromNode/ToNode are present in
+//     Nodes (well-formed directed graph per §4.1.EM-001)
 //   - WorkflowClass, when non-nil, equals "reconciliation" (the only MVH value;
 //     §4.1.EM-001, §6.2 Harmonik-Workflow-Class trailer; validator per
 //     §4.9.EM-038 MUST reject any other non-None value)
@@ -102,6 +104,8 @@ const workflowClassReconciliation = "reconciliation"
 //   - StartNodeID is non-empty and present in Nodes
 //   - TerminalNodeIDs is non-empty
 //   - every NodeID in TerminalNodeIDs is present in Nodes
+//   - every Edge is structurally valid (Edge.Valid()) and its FromNode and
+//     ToNode are present in Nodes (well-formed directed graph per EM-001)
 //   - WorkflowClass, when non-nil, equals "reconciliation"
 //   - SchemaVersion > 0
 func (w Workflow) Valid() bool {
@@ -128,6 +132,19 @@ func (w Workflow) Valid() bool {
 	// Every terminal node ID must be present in Nodes.
 	for _, tid := range w.TerminalNodeIDs {
 		if !b3f72nodeIDInList(tid, w.Nodes) {
+			return false
+		}
+	}
+	// Every edge must be structurally valid and its FromNode/ToNode must be
+	// present in Nodes (well-formed directed graph per EM-001).
+	for _, e := range w.Edges {
+		if !e.Valid() {
+			return false
+		}
+		if !b3f72nodeIDInList(e.FromNode, w.Nodes) {
+			return false
+		}
+		if !b3f72nodeIDInList(e.ToNode, w.Nodes) {
 			return false
 		}
 	}

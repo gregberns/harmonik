@@ -302,6 +302,61 @@ func TestWorkflowValid_WithEdges(t *testing.T) {
 	}
 }
 
+// TestWorkflowValid_EdgeFromNodeAbsent verifies that an edge whose FromNode is
+// not in Nodes fails Valid() (well-formed directed graph, §4.1.EM-001).
+// Helper prefix: hk-b3f1impl (per implementer-protocol.md).
+func TestWorkflowValid_EdgeFromNodeAbsent(t *testing.T) {
+	t.Parallel()
+
+	wf := b3f72WorkflowValid(t)
+	wf.Edges = []Edge{
+		{
+			FromNode:    NodeID("ghost"),
+			ToNode:      NodeID("done"),
+			OrderingKey: "a",
+		},
+	}
+	if wf.Valid() {
+		t.Error("Valid() = true with edge FromNode absent from Nodes, want false (EM-001 well-formed graph)")
+	}
+}
+
+// TestWorkflowValid_EdgeToNodeAbsent verifies that an edge whose ToNode is not
+// in Nodes fails Valid() (well-formed directed graph, §4.1.EM-001).
+func TestWorkflowValid_EdgeToNodeAbsent(t *testing.T) {
+	t.Parallel()
+
+	wf := b3f72WorkflowValid(t)
+	wf.Edges = []Edge{
+		{
+			FromNode:    NodeID("start"),
+			ToNode:      NodeID("ghost"),
+			OrderingKey: "a",
+		},
+	}
+	if wf.Valid() {
+		t.Error("Valid() = true with edge ToNode absent from Nodes, want false (EM-001 well-formed graph)")
+	}
+}
+
+// TestWorkflowValid_EdgeInvalidStructure verifies that a structurally invalid
+// edge (empty OrderingKey) fails Valid() via Edge.Valid() delegation.
+func TestWorkflowValid_EdgeInvalidStructure(t *testing.T) {
+	t.Parallel()
+
+	wf := b3f72WorkflowValid(t)
+	wf.Edges = []Edge{
+		{
+			FromNode:    NodeID("start"),
+			ToNode:      NodeID("done"),
+			OrderingKey: "", // invalid: OrderingKey must be non-empty per Edge.Valid()
+		},
+	}
+	if wf.Valid() {
+		t.Error("Valid() = true with structurally invalid Edge (empty OrderingKey), want false")
+	}
+}
+
 func TestWorkflowValid_StartNodeEqualToTerminal(t *testing.T) {
 	t.Parallel()
 

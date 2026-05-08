@@ -104,7 +104,7 @@ func TestVerifyCommitHash_HC043_MatchFound(t *testing.T) {
 
 // TestVerifyCommitHash_HC043_MismatchReturnsErrStructural verifies that a
 // hash that is NOT present in the binary causes VerifyCommitHash to return an
-// error wrapping both ErrCommitHashMismatch and ErrStructural, per HC-043:
+// error wrapping ErrStructural, per HC-043:
 // "Mismatch MUST fail launch with ErrStructural."
 func TestVerifyCommitHash_HC043_MismatchReturnsErrStructural(t *testing.T) {
 	t.Parallel()
@@ -116,18 +116,15 @@ func TestVerifyCommitHash_HC043_MismatchReturnsErrStructural(t *testing.T) {
 	if err == nil {
 		t.Fatal("VerifyCommitHash: expected error for mismatched hash, got nil")
 	}
-	if !errors.Is(err, ErrCommitHashMismatch) {
-		t.Errorf("VerifyCommitHash mismatch: error does not wrap ErrCommitHashMismatch; got %v", err)
-	}
 	if !errors.Is(err, ErrStructural) {
 		t.Errorf("VerifyCommitHash mismatch: error does not wrap ErrStructural; got %v", err)
 	}
 }
 
 // TestVerifyCommitHash_HC043_MismatchOnPlainFile verifies that a file whose
-// bytes do not contain the expected hash returns ErrCommitHashMismatch
-// (wrapping ErrStructural).  This covers the case where the binary was built
-// without ldflags embedding or with a different hash.
+// bytes do not contain the expected hash returns an error wrapping ErrStructural.
+// This covers the case where the binary was built without ldflags embedding or
+// with a different hash.
 func TestVerifyCommitHash_HC043_MismatchOnPlainFile(t *testing.T) {
 	t.Parallel()
 
@@ -137,9 +134,6 @@ func TestVerifyCommitHash_HC043_MismatchOnPlainFile(t *testing.T) {
 	err := VerifyCommitHash(path, commitHashFixtureKnownHash)
 	if err == nil {
 		t.Fatal("VerifyCommitHash: expected error for plain file without embedded hash, got nil")
-	}
-	if !errors.Is(err, ErrCommitHashMismatch) {
-		t.Errorf("VerifyCommitHash on plain file: error does not wrap ErrCommitHashMismatch; got %v", err)
 	}
 	if !errors.Is(err, ErrStructural) {
 		t.Errorf("VerifyCommitHash on plain file: error does not wrap ErrStructural; got %v", err)

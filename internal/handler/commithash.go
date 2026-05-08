@@ -37,20 +37,6 @@ import (
 	"os"
 )
 
-// ErrCommitHashMismatch is a structural sub-sentinel that wraps ErrStructural.
-// It is emitted when VerifyCommitHash finds that the binary's embedded commit
-// hash does not match the expected hash supplied by the caller.  Because it
-// wraps ErrStructural, errors.Is(err, ErrStructural) returns true for any
-// error that wraps ErrCommitHashMismatch — callers that need hash-specific
-// routing MUST check this sub-sentinel first (narrowest-first dispatch per
-// HC-020).
-//
-// errors.Is(err, ErrCommitHashMismatch) == true  → hash-mismatch matched
-// errors.Is(err, ErrStructural)         == true  → structural routing applies
-//
-// Cite: specs/handler-contract.md §4.10.HC-043, §4.5.HC-020.
-var ErrCommitHashMismatch = fmt.Errorf("handler: commit hash mismatch: %w", ErrStructural)
-
 // VerifyCommitHash reads binaryPath and verifies that the expected commit hash
 // is embedded in the binary's data segment.
 //
@@ -59,12 +45,12 @@ var ErrCommitHashMismatch = fmt.Errorf("handler: commit hash mismatch: %w", ErrS
 // format constraint — it delegates format validation to the caller.
 //
 // Return values:
-//   - nil             — the expected hash was found in the binary; proceed with launch.
-//   - ErrCommitHashMismatch (wrapping ErrStructural) — hash not present in binary;
+//   - nil         — the expected hash was found in the binary; proceed with launch.
+//   - ErrStructural (wrapping diagnostic detail) — hash not present in binary;
 //     the caller MUST fail launch and emit agent_failed with mismatch details
 //     per HC-043.  Note: agent_failed emission is the orchestrator's obligation,
 //     not this verifier's.
-//   - other error     — I/O failure reading the file; treat as ErrStructural at
+//   - other error — I/O failure reading the file; treat as ErrStructural at
 //     the call site (the launch cannot safely proceed without a verified hash).
 //
 // Follow-up bead: an integration test that exercises VerifyCommitHash against
@@ -84,8 +70,8 @@ func VerifyCommitHash(binaryPath, expected string) error {
 	}
 
 	if !bytes.Contains(data, []byte(expected)) {
-		return fmt.Errorf("handler: binary %q: expected commit hash %q not found: %w",
-			binaryPath, expected, ErrCommitHashMismatch)
+		return fmt.Errorf("commit-hash mismatch: expected %q not present in %q: %w",
+			expected, binaryPath, ErrStructural)
 	}
 
 	return nil

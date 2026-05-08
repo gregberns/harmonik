@@ -19,10 +19,6 @@ type EventPayload interface{}
 
 // ErrUnknownEventType is returned by DecodePayload when Event.Type has no
 // registered constructor.
-//
-// TODO(hk-hqwn.33): EV-033 — callers that are observational consumers MUST skip
-// the event; synchronous consumers MUST fail with a structured error. Not
-// implemented here; the dispatch layer owns that policy.
 var ErrUnknownEventType = errors.New("core: unknown event type")
 
 // ErrDuplicateEventType is returned by RegisterEventType when the same type
@@ -84,8 +80,8 @@ func RegisterEventType(typeName string, constructor func() EventPayload) error {
 //   - (nil, ErrUnknownEventType) when e.Type has no registered constructor.
 //   - (nil, <unmarshal error>) when JSON decoding fails (e.g., json.SyntaxError).
 //
-// TODO(hk-hqwn.33/EV-033): deterministic dispatch policy (skip vs. fail on
-// ErrUnknownEventType) belongs in the dispatch layer, not here.
+// Callers should prefer DispatchObservational or DispatchSynchronous
+// (eventdispatch.go) which implement the EV-033 skip-vs-fail policy.
 func (e Event) DecodePayload() (EventPayload, error) {
 	r := globalEventRegistry
 	r.mu.Lock()

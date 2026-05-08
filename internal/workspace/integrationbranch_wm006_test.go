@@ -402,8 +402,8 @@ func TestWM006_IntegrationBranchName_ParentBeadVerbatim(t *testing.T) {
 		},
 		{
 			name:         "bead ID with dot-separated numeric suffix",
-			parentBeadID: "hk-8mwo10",
-			want:         "harmonik/integration/hk-8mwo10",
+			parentBeadID: "hk-8mwo.10",
+			want:         "harmonik/integration/hk-8mwo.10",
 		},
 		{
 			name:         "all-lowercase alphanumeric",
@@ -512,19 +512,15 @@ func TestWM006_IntegrationBranchName_ParentBeadRefUnsafeFallback(t *testing.T) {
 	}
 }
 
-// TestWM006_IntegrationBranchName_ErrorOnUnrecoverable verifies that
-// IntegrationBranchName propagates ErrRefNameInvalid when BeadIDToRefSafe
-// cannot produce a valid ref name after the canonical fallback.
+// TestWM006_IntegrationBranchName_ErrorOnUnrecoverable verifies the unrecoverable
+// input path that IntegrationBranchName forwards to BeadIDToRefSafe.
 //
-// The sole documented trigger for ErrRefNameInvalid from BeadIDToRefSafe is
-// an empty bead ID (empty fallback result). IntegrationBranchName("") routes
-// to the default branch rather than calling BeadIDToRefSafe, so we verify
-// the propagation contract in two steps:
-//
-//  1. Confirm BeadIDToRefSafe("") returns ErrRefNameInvalid (the unrecoverable
-//     input per WM-006a).
-//  2. Confirm IntegrationBranchName propagates that error by using the fixture
-//     helper integrationBranchFixtureBeadIDToRefSafeContract.
+// IntegrationBranchName("") short-circuits to the default branch and does NOT
+// call BeadIDToRefSafe, so the only canonical unrecoverable trigger documented
+// by WM-006a (empty fallback result) is unreachable through IntegrationBranchName.
+// The propagation guarantee is therefore a one-liner verifiable by reading
+// (`safe, err := BeadIDToRefSafe(...); if err != nil { return "", err }`); the
+// underlying BeadIDToRefSafe error path is unit-tested in hk-8mwo.11's suite.
 //
 // Spec ref: workspace-model.md §4.2 WM-006a — "reject and return
 // ErrRefNameInvalid if the result is empty".
@@ -532,28 +528,13 @@ func TestWM006_IntegrationBranchName_ParentBeadRefUnsafeFallback(t *testing.T) {
 func TestWM006_IntegrationBranchName_ErrorOnUnrecoverable(t *testing.T) {
 	t.Parallel()
 
-	t.Run("BeadIDToRefSafe returns ErrRefNameInvalid for empty bead ID", func(t *testing.T) {
-		t.Parallel()
-
-		// BeadIDToRefSafe("") → empty fallback → ErrRefNameInvalid.
-		// This is the canonical unrecoverable input per WM-006a.
-		_, err := BeadIDToRefSafe(t.Context(), "")
-		if !errors.Is(err, ErrRefNameInvalid) {
-			t.Errorf("WM-006a: BeadIDToRefSafe(\"\") = %v, want ErrRefNameInvalid", err)
-		}
-	})
-
-	t.Run("IntegrationBranchName propagates ErrRefNameInvalid", func(t *testing.T) {
-		t.Parallel()
-
-		// IntegrationBranchName("") short-circuits to the default branch and does
-		// not call BeadIDToRefSafe. The propagation path is exercised by the
-		// integrationBranchFixtureBeadIDToRefSafeContract helper, which injects a
-		// synthetic unrecoverable bead ID directly into BeadIDToRefSafe and
-		// confirms the error wraps ErrRefNameInvalid — matching what
-		// IntegrationBranchName would return if such an input were non-empty.
-		integrationBranchFixtureBeadIDToRefSafeContract(t)
-	})
+	// BeadIDToRefSafe("") → empty fallback → ErrRefNameInvalid.
+	// This is the canonical unrecoverable input per WM-006a; the
+	// IntegrationBranchName-level propagation is verifiable by reading.
+	_, err := BeadIDToRefSafe(t.Context(), "")
+	if !errors.Is(err, ErrRefNameInvalid) {
+		t.Errorf("WM-006a: BeadIDToRefSafe(\"\") = %v, want ErrRefNameInvalid", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -574,29 +555,3 @@ func integrationBranchFixtureAssertRefSafe(t *testing.T, wmClause, branch string
 	}
 }
 
-// integrationBranchFixtureBeadIDToRefSafeContract verifies the propagation
-// contract between IntegrationBranchName and BeadIDToRefSafe:
-// any error from BeadIDToRefSafe MUST be returned unchanged by IntegrationBranchName.
-//
-// The empty bead ID is the canonical unrecoverable input per WM-006a. Since
-// IntegrationBranchName("") short-circuits to the default branch (per WM-006 /
-// WM-008), this helper verifies the contract at the BeadIDToRefSafe boundary
-// and confirms the error sentinel is ErrRefNameInvalid.
-func integrationBranchFixtureBeadIDToRefSafeContract(t *testing.T) {
-	t.Helper()
-
-	// BeadIDToRefSafe("") is the only canonical unrecoverable input documented
-	// by WM-006a. Verify it returns ErrRefNameInvalid.
-	_, err := BeadIDToRefSafe(t.Context(), "")
-	if !errors.Is(err, ErrRefNameInvalid) {
-		t.Errorf("WM-006a propagation contract: BeadIDToRefSafe(\"\") = %v, want errors.Is(err, ErrRefNameInvalid) == true", err)
-		return
-	}
-
-	// Confirm the IntegrationBranchName wrapper does NOT swallow errors:
-	// for any non-empty bead ID that BeadIDToRefSafe rejects, IntegrationBranchName
-	// must surface the same error. The IntegrationBranchName implementation
-	// contains only: safe, err := BeadIDToRefSafe(ctx, parentBeadID); if err != nil { return "", err }.
-	// A unit test of that one-liner is sufficient; the cross-boundary contract is verified here.
-	t.Logf("WM-006 propagation contract: BeadIDToRefSafe error-return path confirmed; IntegrationBranchName propagates it unchanged per implementation review")
-}

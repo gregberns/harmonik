@@ -10,10 +10,6 @@ package core
 //
 // The 11-field shape is normative per AR-012. No 12th field is admitted without
 // a foundation amendment per architecture.md §4.6.
-//
-// Several fields use placeholder types pending typed-alias beads:
-//   - CandidateActions / ChosenAction → TODO(hk-zs0.56): hoist to []core.ActionDescriptor /
-//     core.ActionDescriptor once that bead lands.
 type Trace struct {
 	// PriorState is the run state immediately before the transition (AR-012 field 1).
 	// Required (all subfields must be non-zero per State.Valid()).
@@ -30,16 +26,12 @@ type Trace struct {
 	// choosing (AR-012 field 3; execution-model.md §6.1 candidate_actions).
 	// Required (non-nil; MAY be empty for deterministic-dispatch transitions where
 	// no alternative actions were considered).
-	//
-	// TODO(hk-zs0.56): hoist element type to core.ActionDescriptor once that bead lands.
-	CandidateActions []string
+	CandidateActions []ActionDescriptor
 
 	// ChosenAction is the action the actor selected from CandidateActions
 	// (AR-012 field 4; execution-model.md §6.1 chosen_action).
-	// Required (non-empty).
-	//
-	// TODO(hk-zs0.56): hoist to core.ActionDescriptor once that bead lands.
-	ChosenAction string
+	// Required (must satisfy ActionDescriptor.Valid()).
+	ChosenAction ActionDescriptor
 
 	// PolicyVersion identifies the policy snapshot under which the decision was
 	// made (AR-012 field 5; execution-model.md §6.1 policy_version).
@@ -86,7 +78,7 @@ type Trace struct {
 //   - PriorState satisfies State.Valid()
 //   - ActorRole satisfies ActorRole.Valid()
 //   - CandidateActions is non-nil (may be empty slice)
-//   - ChosenAction is non-empty
+//   - ChosenAction satisfies ActionDescriptor.Valid()
 //   - PolicyVersion satisfies PolicyVersion.Valid()
 //   - Outcome satisfies OutcomeStatus.Valid()
 //   - NextState satisfies State.Valid()
@@ -105,7 +97,7 @@ func (tr Trace) Valid() bool {
 	if tr.CandidateActions == nil {
 		return false
 	}
-	if tr.ChosenAction == "" {
+	if !tr.ChosenAction.Valid() {
 		return false
 	}
 	if !tr.PolicyVersion.Valid() {

@@ -33,8 +33,8 @@ func traceFixture(t *testing.T) Trace {
 	return Trace{
 		PriorState:       traceFixtureState(t),
 		ActorRole:        ActorRoleBuilder,
-		CandidateActions: []string{"action-a", "action-b", "action-c"},
-		ChosenAction:     "action-a",
+		CandidateActions: []ActionDescriptor{"action-a", "action-b", "action-c"},
+		ChosenAction:     ActionDescriptor("action-a"),
 		PolicyVersion:    PolicyVersion("v1.0.0"),
 		ParameterVector:  map[string]any{"temperature": 0.7, "max_tokens": 4096},
 		Evidence:         map[string]any{"lint_passed": true, "test_count": 42},
@@ -78,7 +78,7 @@ func TestTraceValid_EmptyCandidateActionsIsValid(t *testing.T) {
 	t.Parallel()
 
 	tr := traceFixture(t)
-	tr.CandidateActions = []string{}
+	tr.CandidateActions = []ActionDescriptor{}
 	if !tr.Valid() {
 		t.Error("Valid() = false with empty (non-nil) CandidateActions, want true")
 	}
@@ -120,11 +120,12 @@ func TestTraceValid_EmptyActorRole(t *testing.T) {
 }
 
 // TestTraceValid_EmptyChosenAction verifies that an empty ChosenAction fails Valid().
+// (Kept for regression coverage; see actiondescriptor_test.go for full ActionDescriptor test suite.)
 func TestTraceValid_EmptyChosenAction(t *testing.T) {
 	t.Parallel()
 
 	tr := traceFixture(t)
-	tr.ChosenAction = ""
+	tr.ChosenAction = ActionDescriptor("")
 	if tr.Valid() {
 		t.Error("Valid() = true with empty ChosenAction, want false")
 	}
@@ -265,7 +266,7 @@ func TestTraceJSONRoundTrip(t *testing.T) {
 		t.Errorf("ActorRole: got %q, want %q", string(decoded.ActorRole), string(original.ActorRole))
 	}
 	if decoded.ChosenAction != original.ChosenAction {
-		t.Errorf("ChosenAction: got %q, want %q", decoded.ChosenAction, original.ChosenAction)
+		t.Errorf("ChosenAction: got %q, want %q", string(decoded.ChosenAction), string(original.ChosenAction))
 	}
 	if decoded.PolicyVersion != original.PolicyVersion {
 		t.Errorf("PolicyVersion: got %q, want %q", string(decoded.PolicyVersion), string(original.PolicyVersion))

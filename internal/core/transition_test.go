@@ -47,7 +47,7 @@ func b3f77ValidTransition(t *testing.T) Transition {
 		CandidateActions:  []ActionDescriptor{"action-a", "action-b"},
 		ChosenAction:      ActionDescriptor("action-a"),
 		PolicyVersion:     PolicyVersion("v1.0.0"),
-		Evidence:          map[string]any{"key": "value"},
+		Evidence:          Evidence{"key": "value"},
 		VerifierMetrics:   map[string]any{"score": 0.95},
 		Confidence:        b3f77Confidence(0.9),
 		OutcomeStatus:     OutcomeStatusSuccess,
@@ -381,7 +381,7 @@ func TestTransitionValid_SynthesisedEvidenceKey(t *testing.T) {
 
 	tr := b3f77ValidTransition(t)
 	tr.ActorRole = ActorRoleDaemon
-	tr.Evidence = map[string]any{"synthesized_outcome": true}
+	tr.Evidence = Evidence{"synthesized_outcome": true}
 	if !tr.Valid() {
 		t.Error("Valid() = false for daemon transition with synthesized_outcome evidence key, want true")
 	}

@@ -13,13 +13,9 @@ import "github.com/google/uuid"
 //
 // # Field notes
 //
-// Evidence is Map[string]any per the spec. Reserved keys:
-//   - evidence.sub_workflow_pin: sub-workflow expansion pin per EM-034c.
-//   - evidence.synthesized_outcome: set to true for daemon/reconciliation
-//     synthesized outcomes per EM-023a / EM-046.
-//
-// A future revision may introduce a typed Evidence wrapper; see follow-up
-// bead hk-b3f.95 (Define Evidence typed wrapper, execution-model.md §6.1).
+// Evidence is the typed Evidence wrapper (execution-model.md §6.1). Reserved
+// keys EvidenceKeySubWorkflowPin (EM-034c) and EvidenceKeySynthesizedOutcome
+// (EM-023a) are declared as constants on the Evidence type.
 //
 // VerifierMetrics is Map[string]any per the spec. A future revision may
 // introduce a typed VerifierMetrics wrapper; see follow-up bead hk-b3f.96
@@ -71,13 +67,10 @@ type Transition struct {
 	PolicyVersion PolicyVersion
 
 	// Evidence carries structured evidence for the transition.
-	// Reserved keys: sub_workflow_pin (EM-034c), synthesized_outcome (EM-023a).
-	// Large payloads MUST be externalised per EM-021 and referenced by relative
-	// path from this map.
-	//
-	// TODO(hk-b3f.95): replace map[string]any with a typed Evidence wrapper
-	// once Define Evidence typed wrapper (execution-model.md §6.1) is resolved.
-	Evidence map[string]any
+	// Reserved keys: EvidenceKeySubWorkflowPin (EM-034c),
+	// EvidenceKeySynthesizedOutcome (EM-023a). Large payloads MUST be
+	// externalised per EM-021 and referenced by relative path from this map.
+	Evidence Evidence
 
 	// VerifierMetrics carries structured verifier metrics for this transition.
 	//

@@ -20,7 +20,7 @@ func TestWM006_DefaultIntegrationBranchName(t *testing.T) {
 
 	// The spec mandates exactly this string for the default integration branch.
 	// WM-009 requires this name to be stable across minor versions.
-	got := branchNameFixture_defaultIntegrationBranch()
+	got := branchNameFixtureDefaultIntegrationBranch()
 	if got != want {
 		t.Errorf("WM-006: default integration branch = %q, want %q", got, want)
 	}
@@ -68,12 +68,11 @@ func TestWM006_ParentBeadDerivedIntegrationBranch(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			// Default template: verbatim bead-ID substitution per WM-006.
-			got := branchNameFixture_integrationBranchForBead(tc.parentBeadID)
+			got := branchNameFixtureIntegrationBranchForBead(tc.parentBeadID)
 			if got != tc.want {
 				t.Errorf("WM-006: parent-bead integration branch for bead_id %q = %q, want %q",
 					tc.parentBeadID, got, tc.want)
@@ -101,12 +100,11 @@ func TestWM006_ParentBeadIntegrationBranchRefSafe(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			branch := branchNameFixture_integrationBranchForBead(tc.parentBeadID)
-			branchNameFixture_assertRefSafe(t, "WM-006", branch)
+			branch := branchNameFixtureIntegrationBranchForBead(tc.parentBeadID)
+			branchNameFixtureAssertRefSafe(t, "WM-006", branch)
 		})
 	}
 }
@@ -181,23 +179,29 @@ func TestWM006a_RefSafeSubstitutionDelegatesToGitCheckRefFormat(t *testing.T) {
 		},
 	}
 
+	// TODO: WM-006a clause (iii) — "re-validate after fallback" path not yet exercised
+	// in this fixture. Covered by future bead.
+
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			rawBranch := branchNameFixture_integrationBranchForBead(tc.beadID)
+			rawBranch := branchNameFixtureIntegrationBranchForBead(tc.beadID)
 
-			// (a) The raw name should be rejected by git check-ref-format.
-			// Note: we only assert rejected here if git actually rejects it;
-			// some inputs (like leading dot) git DOES reject, others may be
-			// ambiguous. We use a MUST check for the cases spec explicitly enumerates.
-			rawRefSafe := branchNameFixture_isRefSafe(rawBranch)
+			// (a) The raw name should be rejected by git check-ref-format for
+			// pathological inputs. We assert rawRefSafe == false for every case
+			// except the bare "@" bead ID — git accepts "harmonik/integration/@"
+			// verbatim (as noted in wantRaw documentation above).
+			rawRefSafe := branchNameFixtureIsRefSafe(t, rawBranch)
+			if tc.beadID != "@" && rawRefSafe {
+				t.Errorf("WM-006a: expected raw branch %q to be rejected by git check-ref-format for pathological bead_id %q, but it was accepted",
+					rawBranch, tc.beadID)
+			}
 
 			// (b) Apply canonical hex-encode fallback and assert result is ref-safe.
-			fallbackBeadID := branchNameFixture_hexEncodeFallback(tc.beadID)
-			fallbackBranch := branchNameFixture_integrationBranchForBead(fallbackBeadID)
-			fallbackRefSafe := branchNameFixture_isRefSafe(fallbackBranch)
+			fallbackBeadID := branchNameFixtureHexEncodeFallback(tc.beadID)
+			fallbackBranch := branchNameFixtureIntegrationBranchForBead(fallbackBeadID)
+			fallbackRefSafe := branchNameFixtureIsRefSafe(t, fallbackBranch)
 
 			if !fallbackRefSafe {
 				t.Errorf("WM-006a: canonical hex-encode fallback for bead_id %q produced %q, which FAILS git check-ref-format; fallback MUST produce a valid ref name",
@@ -222,38 +226,38 @@ func TestWM006a_RefSafeGitCheckRefFormatIsUsed(t *testing.T) {
 
 	// A definitely-valid ref name must be accepted.
 	valid := "refs/heads/harmonik/integration/abc123"
-	cmd := exec.Command("git", "check-ref-format", valid)
+	cmd := exec.CommandContext(t.Context(), "git", "check-ref-format", valid)
 	if err := cmd.Run(); err != nil {
 		t.Errorf("WM-006a: git check-ref-format accepted %q should return exit 0, got error: %v", valid, err)
 	}
 
 	// A definitely-invalid ref name must be rejected.
 	invalid := "refs/heads/harmonik/integration/bead@{broken}"
-	cmd2 := exec.Command("git", "check-ref-format", invalid)
+	cmd2 := exec.CommandContext(t.Context(), "git", "check-ref-format", invalid)
 	if err := cmd2.Run(); err == nil {
 		t.Errorf("WM-006a: git check-ref-format rejected %q should return non-zero exit code, got success", invalid)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// branchNameFixture_ helpers — prefixed to avoid sibling-bead collision.
+// branchNameFixture helpers — prefixed to avoid sibling-bead collision.
 // These helpers are local to this fixture (bead hk-8mwo.66) and must NOT be
-// declared at package level without the branchNameFixture_ prefix.
+// declared at package level without the branchNameFixture prefix.
 // ---------------------------------------------------------------------------
 
-// branchNameFixture_defaultIntegrationBranch returns the canonical default integration
+// branchNameFixtureDefaultIntegrationBranch returns the canonical default integration
 // branch name per WM-006.
-func branchNameFixture_defaultIntegrationBranch() string {
+func branchNameFixtureDefaultIntegrationBranch() string {
 	return "harmonik/integration"
 }
 
-// branchNameFixture_integrationBranchForBead returns the integration branch name for
+// branchNameFixtureIntegrationBranchForBead returns the integration branch name for
 // a given parent bead ID using verbatim substitution (the default per WM-006).
-func branchNameFixture_integrationBranchForBead(parentBeadID string) string {
+func branchNameFixtureIntegrationBranchForBead(parentBeadID string) string {
 	return fmt.Sprintf("harmonik/integration/%s", parentBeadID)
 }
 
-// branchNameFixture_hexEncodeFallback applies the canonical hex-encode fallback
+// branchNameFixtureHexEncodeFallback applies the canonical hex-encode fallback
 // transformation described in WM-006a:
 //
 //	(i) hex-encode every byte NOT in [a-zA-Z0-9/_-] as %HH (uppercase);
@@ -262,7 +266,7 @@ func branchNameFixture_integrationBranchForBead(parentBeadID string) string {
 // This is the deterministic fallback the workspace manager MUST apply when the verbatim
 // bead-ID substitution fails git check-ref-format. The transformation is
 // operator-configurable per OQ-WM-002; hex-encode is the spec-mandated default.
-func branchNameFixture_hexEncodeFallback(beadID string) string {
+func branchNameFixtureHexEncodeFallback(beadID string) string {
 	var sb strings.Builder
 	for i := 0; i < len(beadID); i++ {
 		b := beadID[i]
@@ -285,38 +289,39 @@ func branchNameFixture_hexEncodeFallback(beadID string) string {
 	return result
 }
 
-// branchNameFixture_isRefSafe returns true iff `git check-ref-format refs/heads/<branch>`
+// branchNameFixtureIsRefSafe returns true iff `git check-ref-format refs/heads/<branch>`
 // exits 0. This is the delegation mechanism mandated by WM-006a.
-func branchNameFixture_isRefSafe(branch string) bool {
+func branchNameFixtureIsRefSafe(t *testing.T, branch string) bool {
+	t.Helper()
 	refPath := "refs/heads/" + branch
-	cmd := exec.Command("git", "check-ref-format", refPath)
+	cmd := exec.CommandContext(t.Context(), "git", "check-ref-format", refPath) //nolint:gosec // refPath is not user input; git is a fixed binary
 	return cmd.Run() == nil
 }
 
-// branchNameFixture_assertRefSafe calls t.Errorf if the branch name is not accepted by
+// branchNameFixtureAssertRefSafe calls t.Errorf if the branch name is not accepted by
 // git check-ref-format, providing a WM-clause-tagged error message.
-func branchNameFixture_assertRefSafe(t *testing.T, wmClause, branch string) {
+func branchNameFixtureAssertRefSafe(t *testing.T, wmClause, branch string) {
 	t.Helper()
-	if !branchNameFixture_isRefSafe(branch) {
+	if !branchNameFixtureIsRefSafe(t, branch) {
 		t.Errorf("%s: branch name %q rejected by git check-ref-format; expected valid ref name",
 			wmClause, branch)
 	}
 }
 
-// branchNameFixture_createBranch creates a git branch in repo at the given commit SHA.
+// branchNameFixtureCreateBranch creates a git branch in repo at the given commit SHA.
 // Fails the test if the git command fails.
-func branchNameFixture_createBranch(t *testing.T, repo, branch, sha string) {
+func branchNameFixtureCreateBranch(t *testing.T, repo, branch, sha string) {
 	t.Helper()
-	cmd := exec.Command("git", "-C", repo, "branch", branch, sha)
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repo, "branch", branch, sha)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git branch %q %q: %v\n%s", branch, sha, err, out)
 	}
 }
 
-// branchNameFixture_listRunBranches returns all branches in repo with the "run/" prefix.
-func branchNameFixture_listRunBranches(t *testing.T, repo string) []string {
+// branchNameFixtureListRunBranches returns all branches in repo with the "run/" prefix.
+func branchNameFixtureListRunBranches(t *testing.T, repo string) []string {
 	t.Helper()
-	cmd := exec.Command("git", "-C", repo, "branch", "--list", "run/*")
+	cmd := exec.CommandContext(t.Context(), "git", "-C", repo, "branch", "--list", "run/*")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("git branch --list run/*: %v", err)
@@ -332,11 +337,11 @@ func branchNameFixture_listRunBranches(t *testing.T, repo string) []string {
 	return branches
 }
 
-// branchNameFixture_assertOnlyOneBranch asserts that exactly one run/* branch exists
+// branchNameFixtureAssertOnlyOneBranch asserts that exactly one run/* branch exists
 // in repo and that it matches the expected branch name.
-func branchNameFixture_assertOnlyOneBranch(t *testing.T, repo, expectedBranch string) {
+func branchNameFixtureAssertOnlyOneBranch(t *testing.T, repo, expectedBranch string) {
 	t.Helper()
-	branches := branchNameFixture_listRunBranches(t, repo)
+	branches := branchNameFixtureListRunBranches(t, repo)
 	if len(branches) != 1 {
 		t.Errorf("WM-005a: expected exactly 1 run/* branch, got %d: %v", len(branches), branches)
 		return

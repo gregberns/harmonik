@@ -37,7 +37,7 @@ func TestWM007_ThreeLevelBranchingModel(t *testing.T) {
 		taskBranch := "run/" + runID
 
 		// Verify the task branch name is ref-safe (it will be when the run_id is valid).
-		branchNameFixture_assertRefSafe(t, "WM-007(a)", taskBranch)
+		branchNameFixtureAssertRefSafe(t, "WM-007(a)", taskBranch)
 
 		// Assert task branch starts with the normative "run/" prefix.
 		const taskPrefix = "run/"
@@ -50,14 +50,14 @@ func TestWM007_ThreeLevelBranchingModel(t *testing.T) {
 	t.Run("level-2-integration-branch", func(t *testing.T) {
 		t.Parallel()
 
-		integrationBranch := branchNameFixture_defaultIntegrationBranch()
+		integrationBranch := branchNameFixtureDefaultIntegrationBranch()
 		want := "harmonik/integration"
 		if integrationBranch != want {
 			t.Errorf("WM-007(b): integration branch = %q, want %q", integrationBranch, want)
 		}
 
 		// Verify the integration branch is ref-safe.
-		branchNameFixture_assertRefSafe(t, "WM-007(b)", integrationBranch)
+		branchNameFixtureAssertRefSafe(t, "WM-007(b)", integrationBranch)
 	})
 
 	// Level 3: main is the external merge target — harmonik does NOT dictate merge style.
@@ -87,7 +87,7 @@ func TestWM007_ThreeLevelBranchingModel(t *testing.T) {
 
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0051"
 		taskBranch := "run/" + runID
-		integrationBranch := branchNameFixture_defaultIntegrationBranch()
+		integrationBranch := branchNameFixtureDefaultIntegrationBranch()
 
 		if taskBranch == integrationBranch {
 			t.Errorf("WM-007: task branch %q must differ from integration branch %q",
@@ -118,7 +118,7 @@ func TestWM007_WorkspaceMergeStatusScope(t *testing.T) {
 
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0052"
 	taskBranch := "run/" + runID
-	integrationBranch := branchNameFixture_defaultIntegrationBranch()
+	integrationBranch := branchNameFixtureDefaultIntegrationBranch()
 
 	// The ONE merge that workspace_merge_status covers.
 	managedMerge := mergeEvent{from: taskBranch, to: integrationBranch}

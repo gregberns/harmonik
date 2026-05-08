@@ -41,7 +41,6 @@ func TestWM005_TaskBranchNamingConvention(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -80,10 +79,10 @@ func TestWM005_TaskBranchCreatedInGit(t *testing.T) {
 	taskBranch := "run/" + runID
 
 	// Verify that git check-ref-format accepts the task branch name.
-	branchNameFixture_assertRefSafe(t, "WM-005", taskBranch)
+	branchNameFixtureAssertRefSafe(t, "WM-005", taskBranch)
 
 	// Create the branch in the repository to confirm it works end-to-end.
-	branchNameFixture_createBranch(t, repo, taskBranch, sha)
+	branchNameFixtureCreateBranch(t, repo, taskBranch, sha)
 }
 
 // TestWM005a_SubWorkflowNoExtraTaskBranches verifies that sub-workflow expansion does
@@ -105,11 +104,11 @@ func TestWM005a_SubWorkflowNoExtraTaskBranches(t *testing.T) {
 	parentTaskBranch := "run/" + parentRunID
 
 	// Create the parent task branch.
-	branchNameFixture_createBranch(t, repo, parentTaskBranch, sha)
+	branchNameFixtureCreateBranch(t, repo, parentTaskBranch, sha)
 
 	// Simulate sub-workflow expansion: the sub-workflow does NOT create a new
 	// task branch. All commits produced by sub-workflow nodes land on the parent
 	// task branch. We verify that after "sub-workflow expansion", only the parent
 	// task branch exists — no additional run/* branches appear.
-	branchNameFixture_assertOnlyOneBranch(t, repo, parentTaskBranch)
+	branchNameFixtureAssertOnlyOneBranch(t, repo, parentTaskBranch)
 }

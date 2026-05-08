@@ -104,7 +104,6 @@ func TestWM008_PolicyValuesAreExhaustive(t *testing.T) {
 
 	// Verify both allowed values produce ref-safe branch names.
 	for _, policy := range allowedPolicies {
-		policy := policy
 		t.Run("policy-"+policy+"-is-ref-safe", func(t *testing.T) {
 			t.Parallel()
 
@@ -116,7 +115,7 @@ func TestWM008_PolicyValuesAreExhaustive(t *testing.T) {
 				targetBranch = "main"
 			}
 
-			branchNameFixture_assertRefSafe(t, "WM-008", targetBranch)
+			branchNameFixtureAssertRefSafe(t, "WM-008", targetBranch)
 		})
 	}
 

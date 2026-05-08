@@ -30,3 +30,12 @@ func (t *TransitionID) UnmarshalText(data []byte) error {
 	*t = TransitionID(u)
 	return nil
 }
+
+// IsUUIDv7 reports whether the underlying UUID is version 7 (time-ordered per RFC 9562).
+//
+// This is the EM-018a enforcement point (execution-model.md §4.4 EM-018a): callers
+// that accept a TransitionID from an external source MUST call IsUUIDv7 and reject
+// the value if it returns false.
+func (t TransitionID) IsUUIDv7() bool {
+	return uuid.UUID(t).Version() == 7
+}

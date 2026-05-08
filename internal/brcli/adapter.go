@@ -88,7 +88,7 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 			// NOTE(hk-872.30): RunWithTimeout handles the timeout path; when it
 			// fires SIGTERM/SIGKILL the context is a non-canceling Background()
 			// so this branch is not taken from that path — timeout errors are
-			// classified as ErrBrTimeout directly in RunWithTimeout.
+			// classified as BrUnavailable directly in RunWithTimeout.
 			if exitErr.ExitCode() == -1 && ctx.Err() != nil {
 				return Result{}, fmt.Errorf("brcli: subprocess killed by context: %w", ctx.Err())
 			}

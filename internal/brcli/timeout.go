@@ -11,15 +11,6 @@ import (
 	"time"
 )
 
-// ErrBrTimeout is returned by RunWithTimeout when the br subprocess exceeds
-// its wall-clock budget and is terminated via SIGTERM-then-SIGKILL.
-//
-// Per BI-025c: a SIGTERM-then-SIGKILL'd subprocess MUST classify as
-// BrUnavailable (NOT BrOther).
-//
-// TODO(hk-872.50): re-classify as BrError.BrUnavailable when enum lands.
-var ErrBrTimeout = errors.New("brcli: br subprocess timed out (BrUnavailable)")
-
 // CommandKind distinguishes read commands from write commands for the purpose
 // of selecting the default wall-clock timeout budget per BI-025c.
 //
@@ -93,8 +84,8 @@ func (c TimeoutConfig) effectiveTimeout(kind CommandKind) time.Duration {
 //  3. Sends SIGKILL if the subprocess is still running.
 //  4. Calls cmd.Wait() to reap the subprocess per PL-014.
 //
-// A subprocess terminated via this path returns ErrBrTimeout (classified as
-// BrUnavailable per BI-025c; NOT BrOther).
+// A subprocess terminated via this path returns an error wrapping BrUnavailable
+// (per BI-025c; NOT BrOther). Callers test with errors.Is(err, BrUnavailable).
 //
 // On success or non-zero subprocess exit (before the timeout fires),
 // RunWithTimeout returns the same Result semantics as Run.
@@ -137,11 +128,11 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 
 	case <-budgetTimer.C:
 		return terminateAndClassify(cmd, waitCh,
-			fmt.Errorf("brcli: br subprocess wall-clock timeout (%s): %w", budget, ErrBrTimeout))
+			fmt.Errorf("brcli: br subprocess wall-clock timeout (%s): %w", budget, BrUnavailable))
 
 	case <-ctx.Done():
 		return terminateAndClassify(cmd, waitCh,
-			fmt.Errorf("brcli: br subprocess killed by context cancellation: %w", ErrBrTimeout))
+			fmt.Errorf("brcli: br subprocess killed by context cancellation: %w", BrUnavailable))
 	}
 }
 
@@ -151,7 +142,7 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 //  3. Send SIGKILL if still running.
 //  4. Call cmd.Wait() via waitCh to reap per PL-014.
 //
-// The returned error is always baseErr (ErrBrTimeout-wrapped), regardless of
+// The returned error is always baseErr (BrUnavailable-wrapped), regardless of
 // what the subprocess exited with after being signalled.
 func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, baseErr error) (Result, error) {
 	// Step 1: SIGTERM.

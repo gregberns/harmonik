@@ -40,10 +40,10 @@ func TestCheckBrVersionMismatch(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), pinned)
 	if err == nil {
-		t.Fatal("expected ErrBrVersionIncompatible for version mismatch, got nil")
+		t.Fatal("expected BrSchemaMismatch for version mismatch, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrVersionIncompatible) {
-		t.Errorf("errors.Is(err, ErrBrVersionIncompatible) = false; got %v", err)
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
 	}
 }
 
@@ -57,10 +57,10 @@ func TestCheckBrVersionUnparseableOutput(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), "0.5.2")
 	if err == nil {
-		t.Fatal("expected ErrBrVersionIncompatible for unparseable output, got nil")
+		t.Fatal("expected BrSchemaMismatch for unparseable output, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrVersionIncompatible) {
-		t.Errorf("errors.Is(err, ErrBrVersionIncompatible) = false; got %v", err)
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
 	}
 }
 
@@ -74,10 +74,10 @@ func TestCheckBrVersionNonZeroExit(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), "0.5.2")
 	if err == nil {
-		t.Fatal("expected ErrBrVersionIncompatible for non-zero exit, got nil")
+		t.Fatal("expected BrSchemaMismatch for non-zero exit, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrVersionIncompatible) {
-		t.Errorf("errors.Is(err, ErrBrVersionIncompatible) = false; got %v", err)
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
 	}
 }
 
@@ -91,10 +91,10 @@ func TestCheckBrVersionExecFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for exec failure, got nil")
 	}
-	// Exec failure does NOT wrap ErrBrVersionIncompatible — the binary could
+	// Exec failure does NOT wrap BrSchemaMismatch — the binary could
 	// not be launched, so no version output exists to classify.
-	if errors.Is(err, brcli.ErrBrVersionIncompatible) {
-		t.Error("exec failure should NOT wrap ErrBrVersionIncompatible")
+	if errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Error("exec failure should NOT wrap BrSchemaMismatch")
 	}
 }
 
@@ -118,7 +118,7 @@ func TestCheckBrVersionWithPrereleaseObserved(t *testing.T) {
 
 func TestCheckBrVersionPrereleaseMismatch(t *testing.T) {
 	// Even with a pre-release suffix, if the numeric part doesn't match,
-	// it must return ErrBrVersionIncompatible.
+	// it must return BrSchemaMismatch.
 	path := brcliFixtureMockBinary(t, "br 0.5.3-alpha\n", "", 0)
 
 	adapter, err := brcli.New(path)
@@ -128,10 +128,10 @@ func TestCheckBrVersionPrereleaseMismatch(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), "0.5.2")
 	if err == nil {
-		t.Fatal("expected ErrBrVersionIncompatible for pre-release mismatch, got nil")
+		t.Fatal("expected BrSchemaMismatch for pre-release mismatch, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrVersionIncompatible) {
-		t.Errorf("errors.Is(err, ErrBrVersionIncompatible) = false; got %v", err)
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
 	}
 }
 

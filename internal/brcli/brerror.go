@@ -68,6 +68,10 @@ func (e BrError) Valid() bool {
 // String implements fmt.Stringer.
 func (e BrError) String() string { return string(e) }
 
+// Error implements the error interface so BrError constants can be used as
+// sentinel errors in errors.Is chains (e.g. errors.Is(err, BrUnavailable)).
+func (e BrError) Error() string { return "brcli: " + string(e) }
+
 // MarshalText implements encoding.TextMarshaler so BrError serialises
 // correctly in JSON and YAML.
 // It rejects any value that is not one of the seven declared constants.

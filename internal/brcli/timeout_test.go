@@ -128,7 +128,7 @@ func TestRunWithTimeoutNonZeroExit(t *testing.T) {
 }
 
 // TestRunWithTimeoutReadTimeout verifies that a subprocess exceeding the read
-// budget is terminated and ErrBrTimeout is returned.
+// budget is terminated and an error wrapping BrUnavailable is returned.
 func TestRunWithTimeoutReadTimeout(t *testing.T) {
 	// Sleep much longer than the tight read budget.
 	path := timeoutFixtureSleepBinary(t, 10*time.Second)
@@ -141,10 +141,10 @@ func TestRunWithTimeoutReadTimeout(t *testing.T) {
 	elapsed := time.Since(start)
 
 	if err == nil {
-		t.Fatal("RunWithTimeout: expected ErrBrTimeout, got nil")
+		t.Fatal("RunWithTimeout: expected BrUnavailable, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrTimeout) {
-		t.Errorf("err = %v; want errors.Is(err, ErrBrTimeout) = true", err)
+	if !errors.Is(err, brcli.BrUnavailable) {
+		t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", err)
 	}
 	// Should return promptly: budget (50ms) + sigtermGrace (5s worst-case) + slack.
 	// In practice the subprocess terminates quickly on SIGTERM, so we use 8s.
@@ -154,7 +154,7 @@ func TestRunWithTimeoutReadTimeout(t *testing.T) {
 }
 
 // TestRunWithTimeoutWriteTimeout verifies that a subprocess exceeding the write
-// budget is terminated and ErrBrTimeout is returned.
+// budget is terminated and an error wrapping BrUnavailable is returned.
 func TestRunWithTimeoutWriteTimeout(t *testing.T) {
 	path := timeoutFixtureSleepBinary(t, 10*time.Second)
 	a := timeoutFixtureAdapter(t, path)
@@ -163,15 +163,15 @@ func TestRunWithTimeoutWriteTimeout(t *testing.T) {
 
 	_, err := a.RunWithTimeout(context.Background(), cfg, brcli.CommandKindWrite)
 	if err == nil {
-		t.Fatal("RunWithTimeout: expected ErrBrTimeout, got nil")
+		t.Fatal("RunWithTimeout: expected BrUnavailable, got nil")
 	}
-	if !errors.Is(err, brcli.ErrBrTimeout) {
-		t.Errorf("err = %v; want errors.Is(err, ErrBrTimeout) = true", err)
+	if !errors.Is(err, brcli.BrUnavailable) {
+		t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", err)
 	}
 }
 
 // TestRunWithTimeoutContextCancellation verifies that canceling the outer ctx
-// terminates the subprocess and returns ErrBrTimeout.
+// terminates the subprocess and returns BrUnavailable.
 func TestRunWithTimeoutContextCancellation(t *testing.T) {
 	path := timeoutFixtureSleepBinary(t, 10*time.Second)
 	a := timeoutFixtureAdapter(t, path)
@@ -193,10 +193,10 @@ func TestRunWithTimeoutContextCancellation(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil {
-			t.Fatal("RunWithTimeout: expected ErrBrTimeout after ctx cancellation, got nil")
+			t.Fatal("RunWithTimeout: expected BrUnavailable after ctx cancellation, got nil")
 		}
-		if !errors.Is(err, brcli.ErrBrTimeout) {
-			t.Errorf("err = %v; want errors.Is(err, ErrBrTimeout) = true", err)
+		if !errors.Is(err, brcli.BrUnavailable) {
+			t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", err)
 		}
 	case <-time.After(8 * time.Second):
 		t.Fatal("RunWithTimeout did not return promptly after ctx cancellation")
@@ -237,7 +237,7 @@ func TestRunWithTimeoutDefaultWriteConfig(t *testing.T) {
 }
 
 // TestRunWithTimeoutMissingBinary verifies that a missing br binary returns an
-// exec failure error (not ErrBrTimeout).
+// exec failure error (not BrUnavailable).
 func TestRunWithTimeoutMissingBinary(t *testing.T) {
 	a := timeoutFixtureAdapter(t, "/nonexistent/br")
 
@@ -245,7 +245,7 @@ func TestRunWithTimeoutMissingBinary(t *testing.T) {
 	if err == nil {
 		t.Fatal("RunWithTimeout: expected error for missing binary, got nil")
 	}
-	if errors.Is(err, brcli.ErrBrTimeout) {
-		t.Errorf("missing-binary error should NOT be ErrBrTimeout; got: %v", err)
+	if errors.Is(err, brcli.BrUnavailable) {
+		t.Errorf("missing-binary error should NOT be BrUnavailable; got: %v", err)
 	}
 }

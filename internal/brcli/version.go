@@ -1,26 +1,10 @@
 package brcli
 
-// TODO(hk-872.28): When BrError enum lands, classify Run's exit codes via that
-// taxonomy; ErrBrVersionIncompatible will be informed by BrUnavailable / BrSchemaMismatch.
-
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 )
-
-// ErrBrVersionIncompatible is returned by CheckBrVersion when the observed
-// `br --version` output does not match the pinned version OR the output does
-// not match the required version regex.
-//
-// Per BI-024a: either condition MUST fail daemon startup with exit code 8
-// (beads-unavailable). The caller (daemon startup, PL-005 step 4 Cat 0
-// pre-check) is responsible for translating this error to exit code 8 and
-// emitting daemon_startup_failed{failure_mode="br-version-incompatible"}.
-//
-// TODO(hk-872.28): Full BrError integration may absorb this sentinel as BrSchemaMismatch.
-var ErrBrVersionIncompatible = errors.New("brcli: br version incompatible")
 
 // brVersionRegex is the regex specified in BI-024a for parsing `br --version`
 // output. It matches output of the form `br <major>.<minor>.<patch>[pre-release]`
@@ -50,16 +34,19 @@ var brVersionRegex = regexp.MustCompile(`br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0
 //
 // Error semantics:
 //   - Exec failure launching `br`        → wrapped exec error (no sentinel)
-//   - Non-zero br exit (any reason)      → ErrBrVersionIncompatible (unparseable)
-//   - Output does not match version regex → ErrBrVersionIncompatible
-//   - Observed version != pinnedVersion  → ErrBrVersionIncompatible
+//   - Non-zero br exit (any reason)      → wraps BrSchemaMismatch (unparseable)
+//   - Output does not match version regex → wraps BrSchemaMismatch
+//   - Observed version != pinnedVersion  → wraps BrSchemaMismatch
 //
 // The caller MUST treat ANY non-nil error from CheckBrVersion as a startup-
 // blocking failure: translate to daemon startup exit code 8 and emit
 // daemon_startup_failed{failure_mode="br-version-incompatible"}. This includes
-// both ErrBrVersionIncompatible (sentinel-wrapped) AND the plain exec-failure
-// case above (br binary missing / not executable / etc.) — exit code 8 is
-// uniform for "br unavailable in any way at startup."
+// both BrSchemaMismatch-wrapping errors AND the plain exec-failure case above
+// (br binary missing / not executable / etc.) — exit code 8 is uniform for
+// "br unavailable in any way at startup." Callers test with
+// errors.Is(err, BrSchemaMismatch).
+//
+// Spec ref: specs/beads-integration.md §6.1a, §4.8a BI-024a.
 func (a *Adapter) CheckBrVersion(ctx context.Context, pinnedVersion string) error {
 	result, err := a.Run(ctx, "--version")
 	if err != nil {
@@ -70,7 +57,7 @@ func (a *Adapter) CheckBrVersion(ctx context.Context, pinnedVersion string) erro
 		return fmt.Errorf(
 			"brcli.CheckBrVersion: br --version exited %d (unparseable): %w",
 			result.ExitCode,
-			ErrBrVersionIncompatible,
+			BrSchemaMismatch,
 		)
 	}
 
@@ -80,7 +67,7 @@ func (a *Adapter) CheckBrVersion(ctx context.Context, pinnedVersion string) erro
 		return fmt.Errorf(
 			"brcli.CheckBrVersion: output does not match version regex %q: %w",
 			output,
-			ErrBrVersionIncompatible,
+			BrSchemaMismatch,
 		)
 	}
 
@@ -94,7 +81,7 @@ func (a *Adapter) CheckBrVersion(ctx context.Context, pinnedVersion string) erro
 			"brcli.CheckBrVersion: version mismatch: pinned=%q observed=%q: %w",
 			pinnedVersion,
 			observedVersion,
-			ErrBrVersionIncompatible,
+			BrSchemaMismatch,
 		)
 	}
 

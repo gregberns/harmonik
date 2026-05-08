@@ -44,10 +44,11 @@ func main() {
 func run() int {
 	fs := flag.NewFlagSet("harmonik-twin-claude", flag.ContinueOnError)
 
-	// --socket-path: the Unix-domain socket path supplied by the daemon.
-	// Corresponds to LaunchSpec.SocketPath per specs/handler-contract.md §6.1
-	// and the dial-back obligation of §4.10.HC-044.
-	socketPath := fs.String("socket-path", "", "Unix-domain socket path the daemon is listening on (LaunchSpec.SocketPath; required)")
+	// --socket-path: the Unix-domain socket path supplied by the daemon at
+	// launch time. Per §4.10.HC-044/HC-007 the production daemon listens at
+	// .harmonik/daemon.sock; this flag is the launch-time delivery vehicle
+	// (the path is NOT a LaunchSpec field per §6.1).
+	socketPath := fs.String("socket-path", "", "Unix-domain socket path the daemon is listening on (HC-044; required)")
 
 	// --launch-spec: file-path form of LaunchSpec delivery per HC-005.
 	// When the LaunchSpec payload exceeds 1 MiB the daemon writes it to a

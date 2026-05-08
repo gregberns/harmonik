@@ -29,13 +29,13 @@ var ErrBrShowFailed = errors.New("brcli: br show failed")
 // brShowItem is the per-element JSON shape returned by `br show <id> --format json`.
 // The top-level response is a JSON array; each element has this structure.
 type brShowItem struct {
-	ID          string        `json:"id"`
-	Title       string        `json:"title"`
-	Description string        `json:"description"`
-	Status      string        `json:"status"`
-	IssueType   string        `json:"issue_type"`
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	Status       string       `json:"status"`
+	IssueType    string       `json:"issue_type"`
 	Dependencies []brShowEdge `json:"dependencies"`
-	Dependents  []brShowEdge  `json:"dependents"`
+	Dependents   []brShowEdge `json:"dependents"`
 	// Parent field is intentionally not used for edge construction — its
 	// parent-child entry is already present in Dependencies. Parsing it here
 	// allows us to unmarshal the full JSON without unknown-field errors.

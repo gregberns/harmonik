@@ -6,15 +6,18 @@
 //
 // # Message types emitted (HC-007, HC-036)
 //
-//   - handler_capabilities  — first message on stream (HC-009)
-//   - session_log_location  — after capabilities, before skills_provisioned (HC-010)
-//   - skills_provisioned    — after session_log_location, before agent_ready (HC-049)
-//   - agent_ready           — ready-state signal (HC-039, HC-040)
-//   - agent_started         — subprocess is live (HC-007, §6.4)
-//   - agent_heartbeat       — liveness pulse at ≤T/2; scripted-mode carve-out (HC-026a)
-//   - agent_completed       — clean subprocess exit after outcome_emitted (HC-024)
-//   - agent_failed          — crash or fatal error (HC-024)
-//   - outcome_emitted       — carries run Outcome; MUST be final message (HC-008)
+//   - handler_capabilities     — first message on stream (HC-009)
+//   - session_log_location     — after capabilities, before skills_provisioned (HC-010)
+//   - skills_provisioned       — after session_log_location, before agent_ready (HC-049)
+//   - agent_ready              — ready-state signal (HC-039, HC-040)
+//   - agent_started            — subprocess is live (HC-007, §6.4)
+//   - agent_output_chunk       — per-chunk output signal (HC-007, §6.4; event-model §8.3.3)
+//   - agent_heartbeat          — liveness pulse at ≤T/2; scripted-mode carve-out (HC-026a)
+//   - agent_rate_limited       — rate-limit onset; twin emits directly per HC-OQ-011 Interp.A
+//   - agent_rate_limit_cleared — rate-limit clearance; twin emits directly per HC-OQ-011 Interp.A
+//   - agent_completed          — clean subprocess exit after outcome_emitted (HC-024)
+//   - agent_failed             — crash or fatal error (HC-024)
+//   - outcome_emitted          — carries run Outcome; MUST be final message (HC-008)
 //
 // # NDJSON framing (HC-007a)
 //
@@ -41,26 +44,6 @@ import (
 // twinWireFixture — per-bead helper prefix for test helpers in this file.
 // (Actual test helpers are in wire_test.go; the prefix is declared here as
 // a godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
-
-// ────────────────────────────────────────────────────────────────────────────
-// §6.2 Wire-protocol message envelope
-// ────────────────────────────────────────────────────────────────────────────
-
-// wireMsg is the NDJSON-framed envelope for all progress-stream messages.
-//
-// Fields:
-//   - Type: the message-type discriminator (e.g. "handler_capabilities").
-//   - Payload: type-specific fields inlined into the JSON object via the
-//     json.RawMessage approach — each Emit* function builds the full object
-//     directly so there is no nested "payload" key; the type field is
-//     alongside the payload fields in one flat JSON object per HC-007a.
-//
-// The envelope uses a flat structure: {"type":"...", <payload fields>}.
-// There is no separate "payload" wrapper key in the wire format; event-model
-// §4.1 wraps at the bus layer, not the progress-stream layer.
-type wireMsg struct {
-	Type string `json:"type"`
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Emitter
@@ -286,6 +269,90 @@ func (e *wireEmitter) emitAgentHeartbeat(sessionID string, phase heartbeatPhase)
 		Type:      "agent_heartbeat",
 		SessionID: sessionID,
 		Phase:     phase,
+	})
+}
+
+// emitAgentOutputChunk emits an agent_output_chunk message.
+//
+// Emitted for every output chunk produced by the agent subprocess (HC-007, §6.4).
+// The chunk stream is best-effort; exactly-once durability lives in the
+// session-log file on disk, not on the bus (HC-007b).
+//
+// Payload (event-model §8.3.3): run_id, session_id, chunk_index,
+// bytes_emitted, chunk_digest?.
+//
+// Cite: specs/handler-contract.md §4.2.HC-007; specs/event-model.md §8.3.3.
+func (e *wireEmitter) emitAgentOutputChunk(runID, sessionID string, chunkIndex, bytesEmitted int, chunkDigest *string) error {
+	type msg struct {
+		Type         string  `json:"type"`
+		RunID        string  `json:"run_id"`
+		SessionID    string  `json:"session_id"`
+		ChunkIndex   int     `json:"chunk_index"`
+		BytesEmitted int     `json:"bytes_emitted"`
+		ChunkDigest  *string `json:"chunk_digest,omitempty"`
+	}
+	return e.emit(msg{
+		Type:         "agent_output_chunk",
+		RunID:        runID,
+		SessionID:    sessionID,
+		ChunkIndex:   chunkIndex,
+		BytesEmitted: bytesEmitted,
+		ChunkDigest:  chunkDigest,
+	})
+}
+
+// emitAgentRateLimited emits the agent_rate_limited message.
+//
+// Emitted when the twin detects (or scripted mode triggers) rate-limit onset
+// (HC-025).  For the canonical twin, rate-limit events are emitted directly
+// per HC-OQ-011 Interpretation A: the twin emits the progress-stream message
+// directly; the adapter's DetectRateLimit is a trivial pass-through.
+//
+// Payload (event-model §8.3.6 agent_rate_limit_status, active variant):
+// run_id, session_id, rate_limit_source?, retry_after_seconds?, changed_at.
+//
+// Cite: specs/handler-contract.md §4.6.HC-025; §OQ-HC-008 (Interp. A).
+func (e *wireEmitter) emitAgentRateLimited(runID, sessionID string, rateLimitSource *string, retryAfterSeconds *int, changedAt time.Time) error {
+	type msg struct {
+		Type              string  `json:"type"`
+		RunID             string  `json:"run_id"`
+		SessionID         string  `json:"session_id"`
+		RateLimitSource   *string `json:"rate_limit_source,omitempty"`
+		RetryAfterSeconds *int    `json:"retry_after_seconds,omitempty"`
+		ChangedAt         string  `json:"changed_at"`
+	}
+	return e.emit(msg{
+		Type:              "agent_rate_limited",
+		RunID:             runID,
+		SessionID:         sessionID,
+		RateLimitSource:   rateLimitSource,
+		RetryAfterSeconds: retryAfterSeconds,
+		ChangedAt:         changedAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// emitAgentRateLimitCleared emits the agent_rate_limit_cleared message.
+//
+// Emitted when the twin detects (or scripted mode triggers) rate-limit
+// clearance (HC-025).  For the canonical twin, clearance events are emitted
+// directly per HC-OQ-011 Interpretation A.
+//
+// Payload (event-model §8.3.6 agent_rate_limit_status, cleared variant):
+// run_id, session_id, changed_at.
+//
+// Cite: specs/handler-contract.md §4.6.HC-025; §OQ-HC-008 (Interp. A).
+func (e *wireEmitter) emitAgentRateLimitCleared(runID, sessionID string, changedAt time.Time) error {
+	type msg struct {
+		Type      string `json:"type"`
+		RunID     string `json:"run_id"`
+		SessionID string `json:"session_id"`
+		ChangedAt string `json:"changed_at"`
+	}
+	return e.emit(msg{
+		Type:      "agent_rate_limit_cleared",
+		RunID:     runID,
+		SessionID: sessionID,
+		ChangedAt: changedAt.UTC().Format(time.RFC3339Nano),
 	})
 }
 

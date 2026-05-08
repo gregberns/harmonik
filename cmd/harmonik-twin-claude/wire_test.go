@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -288,6 +289,122 @@ func TestEmitAgentHeartbeat(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// agent_output_chunk (HC-007, event-model §8.3.3)
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestEmitAgentOutputChunk verifies the type, required fields, and optional
+// chunk_digest omission/inclusion for agent_output_chunk (HC-007, §6.4;
+// event-model §8.3.3).
+func TestEmitAgentOutputChunk(t *testing.T) {
+	t.Run("without_chunk_digest", func(t *testing.T) {
+		e, buf := twinWireFixtureEmitter(t)
+		if err := e.emitAgentOutputChunk("run-1", "sess-1", 0, 256, nil); err != nil {
+			t.Fatalf("emitAgentOutputChunk: %v", err)
+		}
+		m := twinWireFixtureDecode(t, buf, 0)
+		twinWireFixtureAssertType(t, m, "agent_output_chunk")
+		if got := m["chunk_index"].(float64); got != 0 {
+			t.Errorf("chunk_index = %v, want 0", got)
+		}
+		if got := m["bytes_emitted"].(float64); got != 256 {
+			t.Errorf("bytes_emitted = %v, want 256", got)
+		}
+		if _, exists := m["chunk_digest"]; exists {
+			t.Error("chunk_digest present for nil arg; want omitted")
+		}
+	})
+
+	t.Run("with_chunk_digest", func(t *testing.T) {
+		e, buf := twinWireFixtureEmitter(t)
+		digest := "sha256:abc123"
+		if err := e.emitAgentOutputChunk("run-1", "sess-1", 3, 512, &digest); err != nil {
+			t.Fatalf("emitAgentOutputChunk: %v", err)
+		}
+		m := twinWireFixtureDecode(t, buf, 0)
+		twinWireFixtureAssertType(t, m, "agent_output_chunk")
+		if got, ok := m["chunk_digest"].(string); !ok || got != digest {
+			t.Errorf("chunk_digest = %v, want %q", m["chunk_digest"], digest)
+		}
+	})
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// agent_rate_limited (HC-025, HC-OQ-011 Interp. A)
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestEmitAgentRateLimited verifies the type, required fields, and optional
+// field omission for agent_rate_limited (HC-025; event-model §8.3.6).
+func TestEmitAgentRateLimited(t *testing.T) {
+	t.Run("without_optional_fields", func(t *testing.T) {
+		e, buf := twinWireFixtureEmitter(t)
+		ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		if err := e.emitAgentRateLimited("run-1", "sess-1", nil, nil, ts); err != nil {
+			t.Fatalf("emitAgentRateLimited: %v", err)
+		}
+		m := twinWireFixtureDecode(t, buf, 0)
+		twinWireFixtureAssertType(t, m, "agent_rate_limited")
+		if _, exists := m["rate_limit_source"]; exists {
+			t.Error("rate_limit_source present for nil arg; want omitted")
+		}
+		if _, exists := m["retry_after_seconds"]; exists {
+			t.Error("retry_after_seconds present for nil arg; want omitted")
+		}
+		if got, ok := m["changed_at"].(string); !ok || got == "" {
+			t.Errorf("changed_at missing or empty: %v", m["changed_at"])
+		}
+	})
+
+	t.Run("with_optional_fields", func(t *testing.T) {
+		e, buf := twinWireFixtureEmitter(t)
+		ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		src := "anthropic"
+		retryAfter := 30
+		if err := e.emitAgentRateLimited("run-1", "sess-1", &src, &retryAfter, ts); err != nil {
+			t.Fatalf("emitAgentRateLimited: %v", err)
+		}
+		m := twinWireFixtureDecode(t, buf, 0)
+		twinWireFixtureAssertType(t, m, "agent_rate_limited")
+		if got, ok := m["rate_limit_source"].(string); !ok || got != src {
+			t.Errorf("rate_limit_source = %v, want %q", m["rate_limit_source"], src)
+		}
+		if got := m["retry_after_seconds"].(float64); got != 30 {
+			t.Errorf("retry_after_seconds = %v, want 30", got)
+		}
+	})
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// agent_rate_limit_cleared (HC-025, HC-OQ-011 Interp. A)
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestEmitAgentRateLimitCleared verifies the type and required fields for
+// agent_rate_limit_cleared (HC-025; event-model §8.3.6).
+func TestEmitAgentRateLimitCleared(t *testing.T) {
+	e, buf := twinWireFixtureEmitter(t)
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := e.emitAgentRateLimitCleared("run-1", "sess-1", ts); err != nil {
+		t.Fatalf("emitAgentRateLimitCleared: %v", err)
+	}
+	m := twinWireFixtureDecode(t, buf, 0)
+	twinWireFixtureAssertType(t, m, "agent_rate_limit_cleared")
+	if got, ok := m["run_id"].(string); !ok || got != "run-1" {
+		t.Errorf("run_id = %v, want run-1", m["run_id"])
+	}
+	if got, ok := m["session_id"].(string); !ok || got != "sess-1" {
+		t.Errorf("session_id = %v, want sess-1", m["session_id"])
+	}
+	if got, ok := m["changed_at"].(string); !ok || got == "" {
+		t.Errorf("changed_at missing or empty: %v", m["changed_at"])
+	}
+	// Verify changed_at is parseable RFC3339Nano.
+	if cat, ok := m["changed_at"].(string); ok {
+		if _, err := time.Parse(time.RFC3339Nano, cat); err != nil {
+			t.Errorf("changed_at %q not RFC3339Nano: %v", cat, err)
+		}
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // outcome_emitted (HC-008)
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -419,7 +536,7 @@ func TestWireReaderUnknownTypeIgnored(t *testing.T) {
 func TestWireReaderEOF(t *testing.T) {
 	r := newWireReader(strings.NewReader(""))
 	_, err := r.readControlMsg()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected io.EOF at empty reader, got %v", err)
 	}
 }
@@ -451,7 +568,7 @@ func TestWireReaderMultipleMessages(t *testing.T) {
 	}
 
 	_, err = r.readControlMsg()
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected io.EOF after last message, got %v", err)
 	}
 }

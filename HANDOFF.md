@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v6 2026-05-07 main -->
+<!-- PP-TRIAL:v7 2026-05-07 main -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -177,120 +177,191 @@ stop. Don't write a HANDOFF earlier on a "session feels long" hunch.
 # Session Handoff
 
 ## State
-Clean. Main at `905b04e` and pushed. **18 commits this session: 11 beads
-landed (1 substantive Go + 4 WM fixtures + 1 PL foundation + 5 PL
-fixtures), 6 fix-iteration commits, plus a metadata-only HANDOFF refresh
-(this).** All HEREDOC subjects clean.
+Clean. Main at `ec6c535` and pushed. **9 commits this session: 8 beads
+landed (1 dispatch policy + 6 scenario RECORDs + 1 brcli scaffold), 1
+review-fix commit (inline-amend on `.48`).** All HEREDOC subjects clean.
+One follow-up bead created (`hk-szv5`).
 
 ## What landed (in commit order, oldest first)
 
-Implementations:
-
-1. `cfed79a` `hk-hqwn.41` EV-032 event payload-constructor registry
-   (`internal/core/eventregistry.go` + tests; `EventPayload` marker,
-   `RegisterEventType`, `DecodePayload`, `Err{Unknown,Duplicate}EventType`)
-2. `df338ce → cf72cd0` `hk-8mwo.66` WM-005..009 + WM-005a/006a branch-naming
-3. `4ec5f82 → 0495f25` `hk-8mwo.68` WM-018..021 + WM-018a/019a merge-back
-4. `c8110c4 → e97a03f` `hk-8mwo.67` WM-010..013 + WM-013a..e lease-lifecycle
-5. `498fcf4 → c6e957d` `hk-8mup.50` PL-001..003b twin-driven foundation —
-   established `internal/lifecycle/` package with `plFixture*` helpers
-6. `040c99b → c3a3873` `hk-8mwo.70` WM-025..030 session-log + atomic sidecar
-7. `5eec581 → b77c3ea` `hk-8mup.51` PL-005..008a startup + orphan-sweep
-8. `e010809` `hk-8mup.54` PL-014..017 + PL-014a agent supervision
-9. `c6250bd → e482e38` `hk-8mup.52` PL-009..010 ready-state + degraded
-10. `49bb814 → 1b57c4a` `hk-8mup.59` PL-028 CLI command surface
-11. `f69df9a → 905b04e` `hk-8mup.53` PL-011..013 shutdown + drain
+1. `af799c4` `hk-hqwn.42` EV-033 dispatch policy
+   (`internal/core/eventdispatch.go` — `DispatchObservational` returns
+   `ErrSkipUnknown`; `DispatchSynchronous` returns `*DispatchUnknownEventError`
+   wrapping `ErrUnknownEventType`; deterministic-lookup test over 20 iters)
+2. `5a40fed` `hk-i0tw.43` AgentOverride RECORD — also seeded the new
+   `internal/scenario/` package (doc.go + foundation)
+3. `ec80efa` `hk-i0tw.45` GitSeedOp RECORD + `GitSeedOpKind` enum +
+   per-op required-keys table from §6.3
+4. `7d36c09` `hk-i0tw.46` FileSeed RECORD + `FileSeedEncoding` enum
+   (utf8/base64; mode validates octal in `[0, 0o777]`)
+5. `df16692` `hk-i0tw.47` EventExpectation RECORD + `EventExpectationKind`
+   enum. `Type` is `string` placeholder per typed-alias-deferral; follow-up
+   hoist bead **`hk-szv5`** created
+6. `9548a5e` `hk-i0tw.51` AssertionResult RECORD + `AssertionResultKind` enum;
+   `ActualValue`/`ExpectedValue` typed as `any` (JSONValue)
+7. `13685da` `hk-i0tw.48` WorkspacePredicate RECORD + 5-value enum + per-kind
+   interpretation table (§6.3) + SH-022 path safety
+8. `dfa5e42` `hk-i0tw.48` review-fix — added `UnmarshalText` to
+   `WorkspacePredicateKind` (orchestrator inline-amend, ~12-line additive
+   method + 39-line test table)
+9. `ec6c535` `hk-872.27` br-CLI adapter scaffold (BI-025) — new
+   `internal/brcli/` package: `New(brPath) (*Adapter, error)` +
+   `Run(ctx, args) (Result, error)` low-level primitive. TODO stubs cite
+   sibling beads for BI-024a/025a/025b/025c/025d/025e behavior (`.26/.28-.32`)
 
 ## Notes from this session — LEARNINGS
 
-- **Underscore prefix convention from prior session was wrong.** `<bead>Fixture_<func>`
-  trips revive var-naming. Pivoted mid-session to `<bead>FixtureFunc` (camelCase, no underscore).
-  Updated DIRECTIVES above to make this explicit so future briefs don't re-introduce the bug.
-- **Pre-baking lint patterns into briefs eliminates round-2 fix iteration.**
-  WM-batch: 4/4 needed round-2 fixes (mostly systemic). PL-batch (with
-  patterns pre-baked): 5/5 reported "0 lint issues" from implementer.
-  Reviewers still found 2-3 small bead-specific issues per bead (unprefixed
-  package-level helper, misleading comment, atomic+mutex hybrid, dead
-  assertion, runtime side-effect anchor) — all inline-amendable.
-- **Inline-amend is the right pattern for mechanical multi-line refactors.**
-  Renames, dropping unused imports, substituting `strings.Contains` for
-  hand-rolled helper, mutex-only counters: orchestrator does these directly
-  rather than spawning fix-agents. Faster and equally safe (verify by
-  reading + run tests).
-- **PL-50 `truncate-rewrite-keep-fd` vs `temp+rename`.** Implementer flagged
-  this — the spec mandates the former because rename changes the inode and
-  breaks the flock association. Important for pidfile semantics. The brief
-  text said "temp+rename" (wrong); implementer correctly read the spec.
-  Future PL implementer briefs should NOT mention "temp+rename" for pidfile
-  contexts.
-- **macOS `sun_path` 104-byte limit on `t.TempDir()`.** PL-50's
-  `plFixtureTempProjectDir` falls back to `os.MkdirTemp("/tmp", ...)`
-  when needed for unix-socket tests. Pattern is reusable; sibling beads
-  picked it up.
-- **Package growth pattern.** `internal/lifecycle/` went from 0 → 1 (foundation)
-  → 6 (full PL fixture corpus) in one session. Same shape `internal/workspace/`
-  followed in prior session. Future test-infra batches should follow:
-  solo foundation first, then parallelize peers.
-- **Fix-agent operating on existing worktree (not isolation: worktree).**
-  Pattern: the implementer's worktree is still on disk + locked after their
-  run. Fix-agent gets the path + branch name in its brief and operates there
-  directly. Creates a NEW commit (per directive). Two-commit branches
-  FF-merge cleanly.
+- **Harness anomaly: `isolation: worktree` silently failed on `.27`.**
+  Implementer reported committing on `main` directly, not in
+  `.claude/worktrees/agent-*`. The harness did not produce the
+  `<worktree>` block in its completion notification (compare to `.42/.43/.45/.46/.47/.48/.51` which all DID). Mitigation: post-hoc
+  reviewer pass before push; commit was on local `main` but unpushed,
+  so review still gated origin. **Future protocol:** when an
+  implementer's notification lacks the `<worktree>` block AND its
+  report says `branch: main`, treat as a no-isolation run — review
+  before `git push`, fix-up commits go on `main` directly (NOT amend),
+  one push at the end. Don't block on this — verify and proceed.
+- **Reviewer inconsistency: UnmarshalText on typed enums.** `.47`
+  reviewer (EventExpectationKind) accepted absence (relied on Go's
+  implicit string conversion); `.48` reviewer (WorkspacePredicateKind)
+  flagged absence as MEDIUM. The `.48` reviewer is right: without
+  `UnmarshalText`, JSON/YAML deserialisation silently accepts unknown
+  enum values and only `Valid()` catches them at use time — the
+  boundary is the right place to reject. **PRE-BAKE INTO BRIEFS:**
+  when a bead adds a typed enum that participates in JSON/YAML, REQUIRE
+  the brief to specify BOTH `MarshalText` AND `UnmarshalText` with
+  explicit rejection of unknown values + a corresponding test table.
+  `.45/.46/.51` pre-baked it correctly; `.47` did not. Consider a
+  follow-up bead to add `UnmarshalText` to `EventExpectationKind` for
+  consistency, or just patch on next touch.
+- **Typed-alias-deferral pattern works cleanly for cross-spec types.**
+  `EventExpectation.Type` references `EventType` (event-model.md §8) which
+  doesn't yet have a Go enum. Used `string` placeholder + godoc TODO
+  citing `hk-szv5` (the auto-created hoist bead). Same shape as the
+  prior `hk-hqwn.59.82` TODO in `eventregistry.go`. **Implementer
+  briefs MUST: (a) supply the bead-creation `br create` command in the
+  brief, (b) require the implementer to substitute the returned bead
+  ID into the godoc.** `.47` did this correctly.
+- **Same-package parallel dispatch with per-bead helper prefix is
+  proven at scale.** 5 sibling RECORD beads (`.45/.46/.47/.48/.51`)
+  landed in `internal/scenario/` simultaneously. Zero collisions.
+  Per-bead prefixes: `gitSeedOpFixture`, `fileSeedFixture`,
+  `eventExpectationFixture`, `workspacePredicateFixture`,
+  `assertionResultFixture`. Reviewers caught ZERO unprefixed
+  package-level helpers. The discipline is enforceable as a brief
+  contract.
+- **Foundation-then-parallelize cadence still pays.** `.43` shipped
+  solo to seed `internal/scenario/` (doc.go + AgentOverride). Then
+  `.45/.46/.47/.48/.51` parallel-dispatched safely on top. Same shape
+  as prior `internal/lifecycle/` and `internal/workspace/` package
+  bootstrap. **Use this pattern for any green-field package.**
+- **Inline-amend continues to outperform fix-agent for mechanical
+  changes.** `.48`'s missing `UnmarshalText` was a 12-line method +
+  one new test function. Orchestrator amended in main thread (~30 sec
+  of edits + 1 verification test run + 1 commit) — no fix-agent spawn.
+  Two-commit branches FF-merge cleanly. **Heuristic:** if the
+  reviewer's MEDIUM finding describes a fix in a single sentence and
+  the patch is &lt;30 lines, inline-amend; spawn a fix-agent only when
+  the fix needs judgment or careful integration with surrounding code.
 
 ## Ready candidates — claim a batch
 
-`br ready -l scope:bootstrap` returns 20 (11 closed this session, several
-new appeared). Top candidates:
+`br ready -l scope:bootstrap` returns 20 after this session's closures.
+`.27` unblocked five br-CLI consumer beads. Top candidates:
 
-**Substantive Go (no test-infra):**
-- `hk-872.27` Single br-CLI adapter — likely the next big subsystem-impl bead
-- `hk-hqwn.42` Type dispatch is deterministic on type field (EV-033) —
-  builds on `hk-hqwn.41` (already closed); small focused commit
-- `hk-8i31.76` HC error sentinel set + 5-class detection-and-emission table
-- `hk-8mwo.24` Workspace state machine — will add non-test code under
+**brcli consumer batch (NEW — `.27` just shipped; `internal/brcli/` exists):**
+- `hk-872.15` Implement bead-detail query (`br show <id> --format json`)
+  — likely smallest, single typed return, good foundation bead
+- `hk-872.14` Implement dependency-graph query (`br dep`)
+- `hk-872.16` Implement reconciliation queries (audit log + status)
+- `hk-872.13` (already-closed in prior session? verify) — `br ready` query
+- `hk-872.2` Route all Beads I/O through the br CLI (umbrella sensor;
+  mostly a discipline test that ensures no scattered `os/exec br` calls)
+- `hk-872.4` Daemon to br direct; agents to br via Beads-CLI skill
+
+These all add methods to `internal/brcli/Adapter` (consume `Run`). Each
+likely 1 file (`query_<name>.go`). Same-package collision risk if 3+
+parallelize without distinct files; brief MUST specify per-bead filename
++ `<bead>Fixture<...>` helper prefix.
+
+**brcli adapter-policy siblings (UNBLOCKED by `.27`):**
+- `hk-872.26` `br --version` handshake (BI-024a)
+- `hk-872.28` exit-code taxonomy (BI-025a) → `BrError` enum
+- `hk-872.29` `--format json` mandatory (BI-025b)
+- `hk-872.30` subprocess timeout discipline (BI-025c, 5s read / 10s write)
+- `hk-872.31` stderr 1 MiB cap + 5 scenarios (BI-025d)
+- `hk-872.32` concurrent-invocation discipline (BI-025e — no adapter
+  mutex; mostly contract test)
+- `hk-872.33` Beads-breakage absorption (BI-026)
+
+(Verify which are in `br ready` — not all may be unblocked yet.)
+
+**Substantive Go (independent of brcli):**
+- `hk-8mup.5` Atomic pidfile write — consumer of PL-50's
+  `plFixtureAcquirePidfile`; small focused
+- `hk-8mup.12` Project hash + provenance marker
+- `hk-8mwo.24` Workspace state machine — production code in
   `internal/workspace/`
 - `hk-8mwo.64` WM error taxonomy (12-class typed sentinel set)
-- `hk-8mup.5` Atomic pidfile write via truncate-rewrite-keep-fd —
-  consumer of PL-50's `plFixtureAcquirePidfile`; small focused
-- `hk-8mup.12` Project hash + provenance marker (env var + PGID)
-- `hk-sx9r.74` Exit-code taxonomy + obligations fixture (ON-001..ON-004)
+- `hk-8i31.76` HC error sentinel set + 5-class detection table
+- `hk-sx9r.74` Exit-code taxonomy + obligations fixture (ON-001..004)
 
-**Test-infra fixtures (test-only, parallelizable):**
-- `hk-b3f.87` Crash-recovery scenario harness for EM checkpoint contract
-- `hk-b3f.88` Workflow-validator unit-test fixture (canonical malformed-DOT corpus)
-- `hk-i0tw.14/.17/.31/.43..51` — scenario-harness records (8 candidates,
-  parallelizable, mostly small RECORD definitions)
+**Last RECORD remaining:**
+- `hk-i0tw.50` ScenarioResult RECORD (11 fields). References
+  `FailureClass` (scenario-harness §8 — DIFFERENT from
+  `internal/core/FailureClass` for execution-model). Needs
+  string-placeholder + follow-up hoist bead. References `AssertionResult`
+  (already shipped this session).
+
+**Scenario-harness operational beads (not RECORDs):**
+- `hk-i0tw.14` Each scenario uses an isolated event-log directory
+- `hk-i0tw.17` Per-suite ephemeral fixture root
+- `hk-i0tw.31` Every scenario declares a cadence tag
+
+**Skill beads (`.claude/skills/` markdown content, NOT Go):**
+- `hk-jhob.1/2/3/4` agent-reviewer / beads-cli / agent-config-reviewer /
+  go-subsystem-add skills
 
 ## Suggested first move
 
-1. **Tackle `hk-hqwn.42`** (type-dispatch determinism) as a quick warm-up —
-   builds directly on the just-shipped `hk-hqwn.41` registry; should be a
-   single small commit that adds `ErrUnknownEventType` surfacing + tests
-   for deterministic-lookup invariant. Verify it doesn't already overlap
-   with `hk-hqwn.41`'s scope.
+1. **Solo `hk-872.15` (bead-detail query)** as the brcli-consumer-pattern
+   foundation. `br show <id> --format json` returns a single typed
+   `BeadRecord` (already exists in `internal/core/beadrecord.go`). The
+   implementer:
+   - adds `Adapter.ShowBead(ctx, beadID string) (core.BeadRecord, error)`
+   - parses JSON output via `Result.Stdout`
+   - foundation for typed-error classification (defer to `.28`)
+   - establishes the consumer-method file pattern (`query_show.go` or
+     `show.go`)
 
-2. **Then a parallel batch of `hk-i0tw.43..51`** (RECORD definitions for
-   scenario-harness) — 7-8 small RECORD beads in one parallel dispatch.
-   These mirror the typed-alias-deferral pattern from prior sessions (see
-   `internal/core/event.go` for the shape). Each is small enough that
-   round-1 should APPROVE-CLEAN.
+2. **Then parallel batch `.14/.16` (dep-graph + reconciliation queries)**
+   once `.15` lands — each its own file, each `<bead>Fixture<...>` helper
+   prefix. Two beads, same package, distinct files: safe to parallelize.
 
-3. **Then `hk-872.27` br-CLI adapter** SOLO — this is likely the largest
-   non-test bead in the queue and may need its own design pass. Inspect
-   the bead body before dispatch.
+3. **OR alternative: `.26/.28/.29` policy enhancements** if you'd rather
+   build the adapter "correct" before adding queries on top. `.26` is
+   tiny (parse `br --version` regex); `.28` is the `BrError` enum +
+   classification table; `.29` is mandatory `--format json` argv
+   prepending. Each refines `Run` or wraps it.
+
+Choose by appetite: queries deliver visible end-user value faster; policy
+beads close gaps in the adapter contract before more callers depend on it.
 
 ## Files to open first
 
-1. `git log --oneline -20` — this session's commits
-2. `internal/lifecycle/testfixture_test.go` — PL foundation harness with
-   `plFixture*` helpers (consumer pattern for future PL beads)
-3. `internal/lifecycle/socket_pl003_test.go` — socket + ListenConfig pattern
-4. `internal/core/eventregistry.go` + `eventregistry_test.go` — registry
-   pattern (consumer pattern for `hk-hqwn.42`)
-5. `internal/workspace/leasefixture_helpers_test.go` — file-extracted helpers
-   pattern (when bead has many helpers reused across files)
-6. `.golangci.yml` — full lint config (the LINT COMPLIANCE block in the
-   directives above is a summary of the rules that bite tests)
+1. `git log --oneline -15` — this session's commits
+2. `internal/brcli/adapter.go` — `Adapter`, `Result`, `Run`; the consumer
+   pattern foundation for `.13/.14/.15/.16/.2/.4`
+3. `internal/brcli/adapter_test.go` — `brcliFixtureMockBinary` shell-script
+   pattern for testing query implementations against a mock `br`
+4. `internal/scenario/agentoverride.go` — sibling-style reference (still
+   the canonical record convention)
+5. `internal/core/eventdispatch.go` + `eventregistry.go` — the .42-shipped
+   dispatch primitive; consumers across the codebase
+6. `internal/core/beadrecord.go` — existing `BeadRecord` shape that
+   `.15` will return from `ShowBead`
+7. `specs/beads-integration.md` lines 306-376 — full BI-025 family for
+   the brcli policy beads (`.26/.28-.33`)
 
 ## Blocking question for user
 None.

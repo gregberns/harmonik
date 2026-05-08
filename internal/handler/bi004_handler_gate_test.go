@@ -32,7 +32,6 @@ type bi004FixtureGoListPackage struct {
 // any exec or parse error.
 func bi004FixtureListHarmonikPackages(t *testing.T) []bi004FixtureGoListPackage {
 	t.Helper()
-	//nolint:gosec // G204: "go" is resolved from PATH; args are static strings, not user input.
 	cmd := exec.CommandContext(t.Context(), "go", "list", "-json", "./...")
 	out, err := cmd.Output()
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ProvenanceEnvKey is the environment variable name set on every subprocess
@@ -25,15 +27,12 @@ const ProvenanceEnvKey = "HARMONIK_PROJECT_HASH"
 // responsible for resolving symlinks via filepath.EvalSymlinks (or equivalent)
 // before calling.
 //
-// The return type is string (placeholder). TODO(hk-8mup.60): promote to
-// core.ProjectHash once the typed wrapper lands in core/.
-//
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "The daemon MUST compute a
 // stable project_hash at startup as the first 12 hexadecimal characters of
 // SHA-256(realpath(project_root))."
-func ComputeProjectHash(projectRoot string) string {
+func ComputeProjectHash(projectRoot string) core.ProjectHash {
 	sum := sha256.Sum256([]byte(projectRoot))
-	return fmt.Sprintf("%x", sum[:6]) // 6 bytes → 12 lowercase hex chars
+	return core.ProjectHash(fmt.Sprintf("%x", sum[:6])) // 6 bytes → 12 lowercase hex chars
 }
 
 // ProvenanceEnvVar returns the environment variable assignment string
@@ -41,29 +40,26 @@ func ComputeProjectHash(projectRoot string) string {
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a — provenance marker (i): env
 // var on every spawned subprocess.
-func ProvenanceEnvVar(hash string) string {
-	return ProvenanceEnvKey + "=" + hash
+func ProvenanceEnvVar(hash core.ProjectHash) string {
+	return ProvenanceEnvKey + "=" + hash.String()
 }
 
 // SpawnSysProcAttr returns a *syscall.SysProcAttr that, when applied to an
 // exec.Cmd, places the child process into the process group identified by pgid.
 // This implements the PGID side of the PL-006a provenance marker.
 //
-// The returned value sets Setpgid=true and Pgid=pgid. The daemon's caller MUST
-// retry once on EACCES (the race where the child has already called execve
-// before the parent's setpgid(2) runs; Go's os/exec retries this
-// transparently when SysProcAttr is used).
-//
-// The pgid parameter is int (placeholder). TODO(hk-8mup.60): promote to
-// core.PGID once the typed wrapper lands in core/.
+// The returned value sets Setpgid=true and Pgid=pgid.Int(). The daemon's
+// caller MUST retry once on EACCES (the race where the child has already
+// called execve before the parent's setpgid(2) runs; Go's os/exec retries
+// this transparently when SysProcAttr is used).
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "On every handler subprocess
 // spawn, the daemon MUST set Go's SysProcAttr{Setpgid: true,
 // Pgid: <recorded_pgid>} and MUST retry once on EACCES."
-func SpawnSysProcAttr(pgid int) *syscall.SysProcAttr {
+func SpawnSysProcAttr(pgid core.PGID) *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
 		Setpgid: true,
-		Pgid:    pgid,
+		Pgid:    pgid.Int(),
 	}
 }
 
@@ -96,8 +92,8 @@ func SetsidDaemon() (int, error) {
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "This PGID MUST be recorded
 // in the pidfile per PL-002b (line 2). On every handler subprocess spawn, the
 // daemon MUST set Go's SysProcAttr{Setpgid: true, Pgid: <recorded_pgid>}."
-func RecordedPGID() int {
-	return syscall.Getpgrp()
+func RecordedPGID() core.PGID {
+	return core.PGID(syscall.Getpgrp())
 }
 
 // TmuxSessionPrefix returns the tmux session name prefix for the given project
@@ -107,15 +103,15 @@ func RecordedPGID() int {
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "Scope tmux session names
 // (harmonik-<project_hash>-<session_name>)."
-func TmuxSessionPrefix(hash string) string {
-	return "harmonik-" + hash + "-"
+func TmuxSessionPrefix(hash core.ProjectHash) string {
+	return "harmonik-" + hash.String() + "-"
 }
 
 // TmuxSessionName returns the full tmux session name for a given project hash
 // and logical session name: "harmonik-<hash>-<sessionName>".
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "harmonik-<project_hash>-<session_name>".
-func TmuxSessionName(hash, sessionName string) string {
+func TmuxSessionName(hash core.ProjectHash, sessionName string) string {
 	return TmuxSessionPrefix(hash) + sessionName
 }
 
@@ -129,7 +125,7 @@ func TmuxSessionName(hash, sessionName string) string {
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a — "The orphan sweep MUST match
 // on the environment variable on Linux and on the PGID on darwin."
-func MatchesProvenanceMarker(env []string, wantHash string) bool {
+func MatchesProvenanceMarker(env []string, wantHash core.ProjectHash) bool {
 	target := ProvenanceEnvVar(wantHash)
 	for _, e := range env {
 		if e == target {

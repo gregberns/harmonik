@@ -4,6 +4,8 @@ import (
 	"os"
 	"syscall"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // projectHashFixtureProjectDir returns a canonical project root for hash tests.
@@ -91,7 +93,7 @@ func TestProvenanceEnvVar_Format(t *testing.T) {
 	hash := ComputeProjectHash(projectHashFixtureProjectDir(t))
 	envEntry := ProvenanceEnvVar(hash)
 
-	want := ProvenanceEnvKey + "=" + hash
+	want := ProvenanceEnvKey + "=" + hash.String()
 	if envEntry != want {
 		t.Errorf("ProvenanceEnvVar: got %q, want %q", envEntry, want)
 	}
@@ -172,7 +174,7 @@ func TestMatchesProvenanceMarker_WrongHash(t *testing.T) {
 func TestSpawnSysProcAttr_Fields(t *testing.T) {
 	t.Parallel()
 
-	wantPGID := 12345
+	wantPGID := core.PGID(12345)
 	attr := SpawnSysProcAttr(wantPGID)
 
 	if attr == nil {
@@ -181,8 +183,8 @@ func TestSpawnSysProcAttr_Fields(t *testing.T) {
 	if !attr.Setpgid {
 		t.Error("SpawnSysProcAttr: Setpgid = false, want true")
 	}
-	if attr.Pgid != wantPGID {
-		t.Errorf("SpawnSysProcAttr: Pgid = %d, want %d", attr.Pgid, wantPGID)
+	if attr.Pgid != wantPGID.Int() {
+		t.Errorf("SpawnSysProcAttr: Pgid = %d, want %d", attr.Pgid, wantPGID.Int())
 	}
 }
 
@@ -196,7 +198,7 @@ func TestTmuxSessionPrefix_Format(t *testing.T) {
 	hash := ComputeProjectHash(projectHashFixtureProjectDir(t))
 	prefix := TmuxSessionPrefix(hash)
 
-	want := "harmonik-" + hash + "-"
+	want := "harmonik-" + hash.String() + "-"
 	if prefix != want {
 		t.Errorf("TmuxSessionPrefix: got %q, want %q", prefix, want)
 	}
@@ -212,7 +214,7 @@ func TestTmuxSessionName_Format(t *testing.T) {
 	hash := ComputeProjectHash(projectHashFixtureProjectDir(t))
 	name := TmuxSessionName(hash, "main")
 
-	want := "harmonik-" + hash + "-main"
+	want := "harmonik-" + hash.String() + "-main"
 	if name != want {
 		t.Errorf("TmuxSessionName: got %q, want %q", name, want)
 	}
@@ -227,7 +229,7 @@ func TestRecordedPGID_ReturnsCurrentPGID(t *testing.T) {
 	t.Parallel()
 
 	got := RecordedPGID()
-	want := syscall.Getpgrp()
+	want := core.PGID(syscall.Getpgrp())
 
 	if got != want {
 		t.Errorf("RecordedPGID: got %d, want %d (syscall.Getpgrp)", got, want)

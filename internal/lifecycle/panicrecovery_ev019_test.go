@@ -13,9 +13,6 @@ import (
 type panicRecoveryFixtureFlusher struct {
 	flushCalled bool
 	flushErr    error
-	// flushOrder records the sequence number at which Flush was called, for
-	// ordering assertions (flush BEFORE re-panic).
-	flushOrder int
 }
 
 func (f *panicRecoveryFixtureFlusher) Flush() error {
@@ -23,22 +20,17 @@ func (f *panicRecoveryFixtureFlusher) Flush() error {
 	return f.flushErr
 }
 
-// panicRecoveryFixtureRecoverPanic calls fn in a goroutine wrapper that
-// captures a panic via recover(), returning the recovered value. Used to
-// observe the re-panic value emitted by RecoverWithLogFlush.
-//
-// The helper wraps the call in an additional defer so the test itself does not
-// crash. It returns (panicValue, true) if a panic was observed, or
-// ("", false) if no panic occurred.
-func panicRecoveryFixtureRecoverPanic(fn func()) (recovered interface{}, panicked bool) {
+// panicRecoveryFixtureRecoverPanic calls fn inside a deferred recover() wrapper
+// so the panic re-emitted by RecoverWithLogFlush does not crash the test itself.
+// Returns true if fn panicked, false otherwise.
+func panicRecoveryFixtureRecoverPanic(fn func()) (panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			recovered = r
 			panicked = true
 		}
 	}()
 	fn()
-	return nil, false
+	return false
 }
 
 // panicRecoveryFixtureLogger creates a *log.Logger writing to os.Stderr for
@@ -79,7 +71,7 @@ func TestEV019_FlushCalledBeforeRepanic(t *testing.T) {
 
 	flusher := &panicRecoveryFixtureFlusher{}
 
-	_, panicked := panicRecoveryFixtureRecoverPanic(func() {
+	panicked := panicRecoveryFixtureRecoverPanic(func() {
 		defer RecoverWithLogFlush(flusher, nil)
 		panic("trigger") //nolint:forbidigo // test-only; exercising the production panic-handler contract
 	})
@@ -104,7 +96,7 @@ func TestEV019_FlushCalledBeforeRepanic(t *testing.T) {
 func TestEV019_NilFlusherIsNopSafe(t *testing.T) {
 	t.Parallel()
 
-	_, panicked := panicRecoveryFixtureRecoverPanic(func() {
+	panicked := panicRecoveryFixtureRecoverPanic(func() {
 		defer RecoverWithLogFlush(nil, nil)
 		panic("trigger") //nolint:forbidigo // test-only; exercising the production panic-handler contract
 	})
@@ -152,7 +144,7 @@ func TestEV019_FlushErrorStillRepanicsPanic(t *testing.T) {
 	flusher := &panicRecoveryFixtureFlusher{flushErr: flushErr}
 	logger := panicRecoveryFixtureLogger()
 
-	_, panicked := panicRecoveryFixtureRecoverPanic(func() {
+	panicked := panicRecoveryFixtureRecoverPanic(func() {
 		defer RecoverWithLogFlush(flusher, logger)
 		panic("trigger") //nolint:forbidigo // test-only; exercising the production panic-handler contract
 	})

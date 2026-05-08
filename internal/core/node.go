@@ -39,11 +39,8 @@ type Node struct {
 	PolicyRef *PolicyRef
 
 	// GateRef is an optional reference to the gate governing this node.
-	// See [control-points.md §6.2]. Bead hk-b3f.100 tracks the typed-alias
-	// upgrade from *string once GateRef is defined in core.
-	//
-	// TODO(hk-b3f.100): replace *string with GateRef typed alias.
-	GateRef *string
+	// See [control-points.md §6.2].
+	GateRef *GateRef
 
 	// FreedomProfileRef is an optional reference to the freedom profile for this node.
 	// See [control-points.md §4.6]. Bead hk-b3f.101 tracks the typed-alias

@@ -122,8 +122,10 @@ func (f *CadenceFilter) UnmarshalText(text []byte) error {
 //   - nightly  → includes scenarios tagged smoke, regression, or nightly
 //   - all      → includes all three tags (equivalent to nightly)
 //
-// Includes panics if f is not a valid CadenceFilter; callers MUST validate f
-// before calling Includes.
+// Includes returns false if f is not a valid CadenceFilter; callers SHOULD
+// validate f via Valid() before calling Includes. Returning false on an
+// unknown filter rather than panicking keeps Includes safe for use in
+// production paths (no panic outside testhelpers per project lint policy).
 func (f CadenceFilter) Includes(t CadenceTag) bool {
 	switch f {
 	case CadenceFilterSmoke:
@@ -133,6 +135,6 @@ func (f CadenceFilter) Includes(t CadenceTag) bool {
 	case CadenceFilterNightly, CadenceFilterAll:
 		return t == CadenceTagSmoke || t == CadenceTagRegression || t == CadenceTagNightly
 	default:
-		panic(fmt.Sprintf("cadencefilter: Includes called with invalid filter %q", string(f)))
+		return false
 	}
 }

@@ -16,6 +16,10 @@
 /coverage.out
 *.test
 
+# Twin-binary build artifacts (SH-009 in-tree default dir; binaries are not committed)
+/twins/*
+!/twins/.gitkeep
+
 # Harmonik runtime state
 /.harmonik/
 

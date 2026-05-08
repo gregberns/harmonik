@@ -119,7 +119,7 @@ type Transition struct {
 // Valid reports whether the Transition record carries valid values for all
 // required fields.
 //
-// Rules (per execution-model.md §4.1.EM-004, §4.10.EM-044, §6.1):
+// Rules (per execution-model.md §4.1.EM-004, §4.10.EM-044, §4.10.EM-046, §6.1):
 //   - TransitionID is not uuid.Nil
 //   - RunID is not uuid.Nil
 //   - FromState.Valid() is true
@@ -130,7 +130,9 @@ type Transition struct {
 //   - OutcomeStatus is a declared OutcomeStatus constant
 //   - TransitionKind is a declared TransitionKind constant
 //   - RollbackToStateID is non-nil iff TransitionKind ∈ {architectural-rollback,
-//     policy-rollback}; nil for forward, local-patchback, context-restore
+//     policy-rollback}; nil for forward, local-patchback, context-restore (EM-044)
+//   - context-restore MUST NOT carry RollbackToStateID (EM-046: context-restore
+//     does not relocate the run's graph position)
 //   - SchemaVersion > 0
 func (tr Transition) Valid() bool {
 	if uuid.UUID(tr.TransitionID) == uuid.Nil {
@@ -160,8 +162,9 @@ func (tr Transition) Valid() bool {
 	if !tr.TransitionKind.Valid() {
 		return false
 	}
-	// EM-044: rollback_to_state_id is required for architectural-rollback and
-	// policy-rollback; must be absent for all other kinds.
+	// EM-044/EM-046: rollback_to_state_id is required for architectural-rollback
+	// and policy-rollback; must be absent for all other kinds, including
+	// context-restore (EM-046: context-restore does not relocate graph position).
 	needsRollback := tr.TransitionKind == TransitionKindArchitecturalRollback ||
 		tr.TransitionKind == TransitionKindPolicyRollback
 	if needsRollback && tr.RollbackToStateID == nil {

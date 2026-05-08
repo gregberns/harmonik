@@ -35,6 +35,8 @@ The JSON trailer is schema-validated in the pre-commit hook; an unparseable JSON
 
 Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers. `BLOCK` verdicts never land in commits — the agent fixes first.
 
+**`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). The pre-commit hook (`scripts/validate-commit-msg.sh`) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make check-full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
+
 Forbidden: emoji, "WIP" subjects on main, single-word subjects, messages that describe the diff instead of the intent.
 
 Examples: `feat(s04): add claude-twin handler adapter` — `fix(workspace): honor run_id in worktree path` — `spec(handler-contract): narrow skill-injection failure to fail-launch`.

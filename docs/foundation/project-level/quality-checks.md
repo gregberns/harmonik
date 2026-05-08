@@ -126,6 +126,8 @@ Explicit **NO** on: `wsl`, `lll`, `funlen`, `gocyclo`, `cyclop`, `godox`, `tagli
 - `golangci-lint run --new-from-rev=HEAD~1` (delta only).
 - `go test -short` on packages with changed files.
 
+**`make agent-review` (pre-commit, invokes `agent-reviewer` skill).** Runs alongside `make check-fast` as a pre-commit command. The `agent-reviewer` skill makes an LLM call; to prevent unbounded hangs that would tempt `--no-verify`, the Makefile target MUST enforce a hard wall-clock timeout (recommended: 60s). When the timeout fires, the target exits non-zero and the commit is blocked with an error message indicating a manual retry. Timeout enforcement is a required acceptance criterion for the `agent-review` make target; see follow-up bead hk-pvcs.10 for the implementation task.
+
 **Tier 2 — `make check` (~3–5 min target).** Default pre-push + work-in-progress verification. Full linter + unit + property:
 
 - Everything in Tier 1 on the full tree (not delta).
@@ -133,7 +135,7 @@ Explicit **NO** on: `wsl`, `lll`, `funlen`, `gocyclo`, `cyclop`, `godox`, `tagli
 - `go test -race -count=1 ./...` (unit + property, `-short` off).
 - `go mod tidy` diff check (`go.sum` cleanliness; fails if `go mod tidy` would change files).
 - Coverage gate (`scripts/coverage-gate.sh`).
-- Import allowlist linter (`tools/go-linters/forbid-import`).
+- Import allowlist linter (`tools/forbid-import`).
 - `govulncheck ./...`.
 
 **Tier 3 — `make check-full` (~10–15 min target).** **Agent declared-done MUST pass this.** Everything in Tier 2 plus:
@@ -167,11 +169,11 @@ Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to es
 5. **Protected rule files.** The files that define the gates themselves are protected; edits MUST trigger dedicated attention:
 
    - `.golangci.yml`, `.depguard.yml` (if factored out)
-   - `tools/go-linters/forbid-import.go` (library allowlist)
+   - `tools/forbid-import/main.go` (library allowlist)
    - `scripts/coverage-gate.sh`
    - `.github/workflows/*.yml`
    - `Makefile` (the `check-*` targets)
-   - `.lefthook.yml`
+   - `lefthook.yml`
    - `CONSTITUTION.md` — additionally requires a `Constitution-Edit-Approved-By: <name-or-email>` commit trailer on any edit (per `agent-configuration.md §CONSTITUTION.md`); commits lacking the trailer are rejected by pre-commit hook and flagged red by post-commit CI.
 
    A commit that touches any of these MUST:

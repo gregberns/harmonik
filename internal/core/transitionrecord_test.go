@@ -99,6 +99,7 @@ func TestMarshalTransitionRecord_FieldNamesSnakeCase(t *testing.T) {
 		"policy_version",
 		"evidence",
 		"verifier_metrics",
+		"confidence",
 		"outcome_status",
 		"transition_kind",
 		"schema_version",

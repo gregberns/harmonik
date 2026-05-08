@@ -442,4 +442,3 @@ func TestReadPidfile_UnparsablePGID(t *testing.T) {
 func pidfileFixturePath(projectDir string) string {
 	return plFixturePidfilePath(projectDir)
 }
-

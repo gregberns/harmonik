@@ -50,11 +50,12 @@ package specaudit_test
 // present; all 81 events lack the required Axes: line. A spec-level amendment
 // is required (hk-hqwn.67). Pinned so the suite passes today.
 //
-// Check (c): seven events have no backtick-quoted consumer citation:
-// state_entered, state_exited, sub_workflow_exited, agent_rate_limit_status,
+// Check (c): six events have no backtick-quoted consumer citation:
+// state_exited, sub_workflow_exited, agent_rate_limit_status,
 // reconciliation_started, consumer_failed, dead_letter_enqueued. The spec
 // defect requires adding cross-spec consumer citations (hk-hqwn.68). Pinned
 // so the suite passes today.
+// (state_entered is cited at specs/reconciliation/schemas.md:162 and is NOT pinned.)
 
 import (
 	"bufio"
@@ -233,12 +234,9 @@ var hqwn63FixtureExpectedViolations = map[string]hqwn63FixtureExpectedViolationE
 
 	// ── Check (c): no backtick-quoted consumer citation in sibling specs ───────
 	// Per §8.9(g) each non-exempt §8 event MUST appear by backtick-quoted name
-	// in at least one sibling spec. Seven events are missing that citation.
+	// in at least one sibling spec. Six events are missing that citation.
+	// (state_entered is cited at specs/reconciliation/schemas.md:162 — not pinned.)
 	// Consumer citations will be added by hk-hqwn.68.
-	"c-consumer:8.1.4:state_entered": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "state_entered cited only in emit_event() pseudocode in execution-model.md without backtick quoting; backtick consumer citation required per §8.9(g)",
-	},
 	"c-consumer:8.1.5:state_exited": {
 		pinnedBy: "hk-hqwn.68",
 		reason:   "state_exited cited only in emit_event() pseudocode in execution-model.md without backtick quoting; backtick consumer citation required per §8.9(g)",
@@ -287,9 +285,9 @@ func hqwn63FixtureEventModelPath(t *testing.T) string {
 }
 
 // hqwn63FixtureSiblingSpecFiles returns all spec files under specs/ except
-// event-model.md itself. Scope mirrors ar005FixtureSpecFiles:
+// event-model.md itself. Scope:
 //   - specs/*.md (top-level, excluding event-model.md)
-//   - specs/**/spec.md (subsystem spec files one level deep)
+//   - specs/**/*.md (all *.md files one level deep under each subdirectory)
 func hqwn63FixtureSiblingSpecFiles(t *testing.T) []string {
 	t.Helper()
 	specsDir := filepath.Join(hqwn63FixtureRepoRoot(t), "specs")
@@ -310,14 +308,21 @@ func hqwn63FixtureSiblingSpecFiles(t *testing.T) []string {
 		files = append(files, filepath.Join(specsDir, e.Name()))
 	}
 
-	// Nested spec.md files (one level deep).
+	// All *.md files one level deep under each subdirectory (e.g. specs/reconciliation/*.md).
 	for _, e := range topEntries {
 		if !e.IsDir() {
 			continue
 		}
-		candidate := filepath.Join(specsDir, e.Name(), "spec.md")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			files = append(files, candidate)
+		subDir := filepath.Join(specsDir, e.Name())
+		subEntries, subErr := os.ReadDir(subDir)
+		if subErr != nil {
+			t.Fatalf("hqwn63FixtureSiblingSpecFiles: ReadDir %s: %v", subDir, subErr)
+		}
+		for _, se := range subEntries {
+			if se.IsDir() || !strings.HasSuffix(se.Name(), ".md") {
+				continue
+			}
+			files = append(files, filepath.Join(subDir, se.Name()))
 		}
 	}
 

@@ -16,14 +16,14 @@ func b3f72WorkflowValid(t *testing.T) Workflow {
 		NodeID:           NodeID("start"),
 		Type:             NodeTypeNonAgentic,
 		IdempotencyClass: IdempotencyClassIdempotent,
-		Axes:             "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
+		Axes:             BaselineAxisTags,
 		ModeTag:          "mechanism",
 	}
 	termNode := Node{
 		NodeID:           NodeID("done"),
 		Type:             NodeTypeNonAgentic,
 		IdempotencyClass: IdempotencyClassIdempotent,
-		Axes:             "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
+		Axes:             BaselineAxisTags,
 		ModeTag:          "mechanism",
 	}
 	return Workflow{
@@ -147,7 +147,7 @@ func TestWorkflowValid_MultipleTerminalNodes(t *testing.T) {
 		NodeID:           NodeID("done-alt"),
 		Type:             NodeTypeNonAgentic,
 		IdempotencyClass: IdempotencyClassIdempotent,
-		Axes:             "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
+		Axes:             BaselineAxisTags,
 		ModeTag:          "mechanism",
 	}
 	wf := b3f72WorkflowValid(t)
@@ -310,7 +310,7 @@ func TestWorkflowValid_StartNodeEqualToTerminal(t *testing.T) {
 		NodeID:           NodeID("only"),
 		Type:             NodeTypeNonAgentic,
 		IdempotencyClass: IdempotencyClassIdempotent,
-		Axes:             "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
+		Axes:             BaselineAxisTags,
 		ModeTag:          "mechanism",
 	}
 	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000000002"))

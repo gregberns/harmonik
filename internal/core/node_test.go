@@ -22,7 +22,7 @@ func b3f73NodeValid(t *testing.T) Node {
 		FreedomProfileRef: nil,
 		BudgetRef:         nil,
 		IdempotencyClass:  IdempotencyClassIdempotent,
-		Axes:              "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
+		Axes:              BaselineAxisTags,
 		ModeTag:           ModeTagMechanism,
 		SubWorkflowRef:    nil,
 	}
@@ -40,7 +40,7 @@ func b3f73NodeNonAgentic(t *testing.T) Node {
 // b3f73NodeSubWorkflow returns a valid sub-workflow Node with SubWorkflowRef set.
 func b3f73NodeSubWorkflow(t *testing.T) Node {
 	t.Helper()
-	ref := "workflows/sub-wf-001"
+	ref := SubWorkflowRef("workflows/sub-wf-001")
 	n := b3f73NodeValid(t)
 	n.Type = NodeTypeSubWorkflow
 	n.HandlerRef = nil
@@ -238,13 +238,13 @@ func TestNodeValid_AllIdempotencyClasses(t *testing.T) {
 	}
 }
 
-func TestNodeValid_EmptyAxes(t *testing.T) {
+func TestNodeValid_InvalidAxes(t *testing.T) {
 	t.Parallel()
 
 	n := b3f73NodeValid(t)
-	n.Axes = ""
+	n.Axes = AxisTags{} // zero-value: all sub-enums empty, !Valid()
 	if n.Valid() {
-		t.Error("Valid() = true with empty Axes, want false")
+		t.Error("Valid() = true with zero-value AxisTags, want false")
 	}
 }
 
@@ -271,7 +271,7 @@ func TestNodeValid_SubWorkflowMissingSubWorkflowRef(t *testing.T) {
 func TestNodeValid_NonSubWorkflowWithSubWorkflowRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "workflows/wf-001"
+	ref := SubWorkflowRef("workflows/wf-001")
 	n := b3f73NodeValid(t) // agentic
 	n.SubWorkflowRef = &ref
 	if n.Valid() {
@@ -282,7 +282,7 @@ func TestNodeValid_NonSubWorkflowWithSubWorkflowRef(t *testing.T) {
 func TestNodeValid_GateWithSubWorkflowRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "workflows/wf-001"
+	ref := SubWorkflowRef("workflows/wf-001")
 	n := b3f73NodeNonAgentic(t)
 	n.Type = NodeTypeGate
 	n.SubWorkflowRef = &ref
@@ -331,8 +331,8 @@ func TestNodeValid_OptionalRefsSet(t *testing.T) {
 
 	pRef := PolicyRef("policies/p001")
 	gRef := GateRef("gates/g001")
-	fRef := "freedom-profiles/fp001"
-	bRef := "budgets/b001"
+	fRef := FreedomProfileRef("freedom-profiles/fp001")
+	bRef := BudgetRef("budgets/b001")
 
 	n := b3f73NodeNonAgentic(t)
 	n.PolicyRef = &pRef
@@ -362,7 +362,7 @@ func TestNodeValid_SubWorkflowWithHandlerRef(t *testing.T) {
 func TestNodeValid_ControlPointWithSubWorkflowRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "workflows/wf-001"
+	ref := SubWorkflowRef("workflows/wf-001")
 	n := b3f73NodeNonAgentic(t)
 	n.Type = NodeTypeControlPoint
 	n.SubWorkflowRef = &ref

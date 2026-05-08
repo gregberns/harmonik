@@ -43,18 +43,12 @@ type Node struct {
 	GateRef *GateRef
 
 	// FreedomProfileRef is an optional reference to the freedom profile for this node.
-	// See [control-points.md §4.6]. Bead hk-b3f.101 tracks the typed-alias
-	// upgrade from *string once FreedomProfileRef is defined in core.
-	//
-	// TODO(hk-b3f.101): replace *string with FreedomProfileRef typed alias.
-	FreedomProfileRef *string
+	// See [control-points.md §4.6].
+	FreedomProfileRef *FreedomProfileRef
 
 	// BudgetRef is an optional reference to the budget configuration for this node.
-	// See [control-points.md §4.5]. Bead hk-b3f.102 tracks the typed-alias
-	// upgrade from *string once BudgetRef is defined in core.
-	//
-	// TODO(hk-b3f.102): replace *string with BudgetRef typed alias.
-	BudgetRef *string
+	// See [control-points.md §4.5].
+	BudgetRef *BudgetRef
 
 	// IdempotencyClass is the per-node tag driving reconciliation behavior.
 	// One of: idempotent, non-idempotent, recoverable-non-idempotent.
@@ -66,11 +60,8 @@ type Node struct {
 
 	// Axes carries the four-axis classification tuple for this node
 	// (llm-freedom, io-determinism, replay-safety, idempotency) per
-	// [architecture.md §4.1 AR-001]. Bead hk-b3f.97 tracks the typed-alias
-	// upgrade from string once AxisTags is defined in core.
-	//
-	// TODO(hk-b3f.97): replace string with AxisTags typed alias.
-	Axes string
+	// [architecture.md §4.1 AR-001].
+	Axes AxisTags
 
 	// ModeTag is the mechanism/cognition classification for this node
 	// per [architecture.md §4.2 AR-005]. One of: "mechanism", "cognition".
@@ -78,11 +69,8 @@ type Node struct {
 
 	// SubWorkflowRef is the reference to the sub-workflow definition for
 	// sub-workflow nodes. Required when Type == NodeTypeSubWorkflow; forbidden
-	// otherwise. Bead hk-b3f.103 tracks the typed-alias upgrade from *string
-	// once SubWorkflowRef is defined in core.
-	//
-	// TODO(hk-b3f.103): replace *string with SubWorkflowRef typed alias.
-	SubWorkflowRef *string
+	// otherwise.
+	SubWorkflowRef *SubWorkflowRef
 }
 
 // Valid reports whether n satisfies all structural invariants declared in
@@ -93,7 +81,7 @@ type Node struct {
 //   - HandlerRef is non-nil iff Type == NodeTypeAgentic
 //   - Timeout, when non-nil, is positive (> 0)
 //   - IdempotencyClass is one of the three declared values
-//   - Axes is non-empty
+//   - Axes is a valid AxisTags tuple
 //   - ModeTag is one of the two declared ModeTag values
 //   - SubWorkflowRef is non-nil iff Type == NodeTypeSubWorkflow
 func (n Node) Valid() bool {
@@ -117,7 +105,7 @@ func (n Node) Valid() bool {
 	if !n.IdempotencyClass.Valid() {
 		return false
 	}
-	if n.Axes == "" {
+	if !n.Axes.Valid() {
 		return false
 	}
 	if !n.ModeTag.Valid() {

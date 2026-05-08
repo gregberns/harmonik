@@ -31,31 +31,31 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 
 		// Three checkpoint commits on the task branch → exactly one on integration.
 		runID := "0196b100-0000-7000-8000-000000000019"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 			"checkpoint: first node",
 			"checkpoint: second node",
 			"checkpoint: third node",
 		})
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-019-one")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-one")
 		taskBranch := "run/" + runID
 
 		// --strategy=ort explicitly per WM-019 pin.
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: git merge --squash --strategy=ort: %v\n%s", err, out)
 		}
 
 		commitMsg := "squash: run " + runID + "\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: git commit: %v\n%s", err, out)
 		}
 
 		// Assert exactly ONE new commit on integration branch.
-		out, err := exec.Command("git", "-C", integPath, "rev-list", "--count",
+		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-list", "--count",
 			"HEAD", "^"+sha).Output()
 		if err != nil {
 			t.Fatalf("WM-019: rev-list count: %v", err)
@@ -72,12 +72,12 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		// Use a distinct run ID from the "one-commit-per-task" subtest to avoid
 		// worktree path collisions when subtests run in parallel within the same tempDir.
 		runIDB := "0196b100-0000-7000-8000-00000000019b"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runIDB, []string{"checkpoint: work"})
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runIDB, []string{"checkpoint: work"})
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-019-trailer")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-trailer")
 		taskBranch := "run/" + runIDB
 
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: merge for trailer test: %v\n%s", err, out)
@@ -85,14 +85,14 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 
 		// Commit message with Harmonik-Run-ID trailer (always present).
 		commitMsg := "squash: run " + runIDB + "\n\nHarmonik-Run-ID: " + runIDB
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: commit with trailer: %v\n%s", err, out)
 		}
 
 		// Assert via git log trailer extraction (git 2.34+ per WM-ENV-002).
-		out, err := exec.Command("git", "-C", integPath, "log", "-1",
+		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Run-ID,valueonly)").Output()
 		if err != nil {
 			t.Fatalf("WM-019: git log trailer Harmonik-Run-ID: %v", err)
@@ -107,12 +107,12 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		t.Parallel()
 
 		runID := "0196b100-0000-7000-8000-00000000019c"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{"checkpoint: bead work"})
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{"checkpoint: bead work"})
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-019-beadid")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-beadid")
 		taskBranch := "run/" + runID
 
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: merge for bead-id test: %v\n%s", err, out)
@@ -123,14 +123,14 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		commitMsg := "squash: run " + runID + "\n\n" +
 			"Harmonik-Run-ID: " + runID + "\n" +
 			"Harmonik-Bead-ID: " + beadID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: commit with bead-id trailer: %v\n%s", err, out)
 		}
 
 		// Assert Harmonik-Run-ID trailer present.
-		out, err := exec.Command("git", "-C", integPath, "log", "-1",
+		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Run-ID,valueonly)").Output()
 		if err != nil {
 			t.Fatalf("WM-019: git log Harmonik-Run-ID: %v", err)
@@ -141,7 +141,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert Harmonik-Bead-ID trailer present when bead-tied.
-		out2, err := exec.Command("git", "-C", integPath, "log", "-1",
+		out2, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Bead-ID,valueonly)").Output()
 		if err != nil {
 			t.Fatalf("WM-019: git log Harmonik-Bead-ID: %v", err)
@@ -156,12 +156,12 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		t.Parallel()
 
 		runID := "0196b100-0000-7000-8000-00000000019d"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{"checkpoint: non-bead"})
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{"checkpoint: non-bead"})
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-019-nobead")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-nobead")
 		taskBranch := "run/" + runID
 
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: merge for no-bead-id test: %v\n%s", err, out)
@@ -169,14 +169,14 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 
 		// Non-bead-tied run: only Harmonik-Run-ID, no Harmonik-Bead-ID.
 		commitMsg := "squash: run " + runID + "\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: commit without bead-id: %v\n%s", err, out)
 		}
 
 		// Assert Harmonik-Bead-ID trailer is absent.
-		out, err := exec.Command("git", "-C", integPath, "log", "-1",
+		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%(trailers:key=Harmonik-Bead-ID,valueonly)").Output()
 		if err != nil {
 			t.Fatalf("WM-019: git log Harmonik-Bead-ID: %v", err)
@@ -190,12 +190,12 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		t.Parallel()
 
 		runID := "0196b100-0000-7000-8000-00000000019e"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{"checkpoint: identity test"})
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{"checkpoint: identity test"})
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-019-identity")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-019-identity")
 		taskBranch := "run/" + runID
 
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-019: merge for identity test: %v\n%s", err, out)
@@ -207,7 +207,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		daemonEmail := "no-reply@harmonik.local"
 
 		commitMsg := "squash: identity test\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		commitCmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME="+agentName,
@@ -219,7 +219,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 			t.Fatalf("WM-019: commit with identity split: %v\n%s", err, out)
 		}
 
-		out, err := exec.Command("git", "-C", integPath, "log", "-1",
+		out, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
 			t.Fatalf("WM-019: git log identity: %v", err)
@@ -239,7 +239,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 
 		gitRun := func(dir string, args ...string) {
 			t.Helper()
-			cmd := exec.Command("git", args...)
+			cmd := exec.CommandContext(t.Context(), "git", args...)
 			cmd.Dir = dir
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -273,7 +273,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		gitRun(pathB, "commit", "-m", "checkpoint: branch B edit")
 
 		// Try to squash-merge B into A — expect conflict.
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", branchB)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", branchB)
 		mergeCmd.Dir = pathA
 		out, mergeErr := mergeCmd.CombinedOutput()
 
@@ -283,7 +283,7 @@ func TestWM019_SquashMergeOrtStrategyTrailersAuthorCommitter(t *testing.T) {
 		}
 
 		// Assert: git status --porcelain shows UU README (both-modified conflict).
-		statusOut, err := exec.Command("git", "-C", pathA, "status", "--porcelain").Output()
+		statusOut, err := exec.CommandContext(t.Context(), "git", "-C", pathA, "status", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-019 conflict-detection: git status --porcelain: %v", err)
 		}

@@ -25,16 +25,16 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	t.Parallel()
 
 	runID := "0196b100-0000-7000-8000-000000000020"
-	repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{
+	repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 		"checkpoint: node one",
 		"checkpoint: node two",
 	})
 
 	taskBranch := "run/" + runID
-	integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-020-nonff")
+	integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-020-nonff")
 
 	// Record task branch tip before merge (task branch has 2 checkpoint commits above sha).
-	taskTipBefore, err := exec.Command("git", "-C", repo, "rev-parse", taskBranch).Output()
+	taskTipBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse task branch before merge: %v", err)
 	}
@@ -46,8 +46,8 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Record integration branch tip before merge (starts at sha = integration-branch origin).
-	integBranch := mergeBackFixture_integBranchName("integ-020-nonff")
-	integTipBefore, err := exec.Command("git", "-C", repo, "rev-parse", integBranch).Output()
+	integBranch := mergeBackFixtureIntegBranchName("integ-020-nonff")
+	integTipBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse integration before merge: %v", err)
 	}
@@ -59,21 +59,21 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Perform squash-merge.
-	mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = integPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-020: git merge --squash: %v\n%s", err, out)
 	}
 
 	commitMsg := "squash: non-ff test\n\nHarmonik-Run-ID: " + runID
-	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+	commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = integPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-020: git commit: %v\n%s", err, out)
 	}
 
 	// Assert: task branch tip is UNCHANGED after squash.
-	taskTipAfter, err := exec.Command("git", "-C", repo, "rev-parse", taskBranch).Output()
+	taskTipAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse task branch after merge: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Assert: integration tip ADVANCED to a new commit (not sha).
-	integTipAfter, err := exec.Command("git", "-C", repo, "rev-parse", integBranch).Output()
+	integTipAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: rev-parse integration after merge: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	// Assert: task branch tip is NOT an ancestor of integration tip.
 	// git merge-base --is-ancestor <commit> <branch> exits 0 if it IS an ancestor.
 	// We expect it to exit non-zero (task tip is not an ancestor of new integ tip).
-	ancestorCmd := exec.Command("git", "-C", repo, "merge-base", "--is-ancestor",
+	ancestorCmd := exec.CommandContext(t.Context(), "git", "-C", repo, "merge-base", "--is-ancestor",
 		taskTip, integBranch)
 	if err := ancestorCmd.Run(); err == nil {
 		t.Errorf("WM-020: task branch tip %q is an ancestor of integration %q — "+
@@ -109,7 +109,7 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 
 	// Assert: integration tip has exactly one parent = sha (the pre-merge integ tip).
-	parentOut, err := exec.Command("git", "-C", repo, "log", "-1",
+	parentOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "log", "-1",
 		"--format=%P", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-020: git log parent of integration tip: %v", err)
@@ -125,16 +125,16 @@ func TestWM020_SquashMergeIsNonFastForwardByConstruction(t *testing.T) {
 	}
 }
 
-// mergeBackFixture_integBranchName returns the integration branch name for a given suffix,
-// matching the naming used by mergeBackFixture_makeIntegWorktree.
-// Prefixed mergeBackFixture_ per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixture_integBranchName(suffix string) string {
+// mergeBackFixtureIntegBranchName returns the integration branch name for a given suffix,
+// matching the naming used by mergeBackFixtureMakeIntegWorktree.
+// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
+func mergeBackFixtureIntegBranchName(suffix string) string {
 	return "harmonik/integration/" + suffix
 }
 
-// mergeBackFixture_makeWorktreePath returns the worktree path for a given repo and suffix,
-// matching the path used by mergeBackFixture_makeIntegWorktree.
-// Prefixed mergeBackFixture_ per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixture_makeWorktreePath(repo, suffix string) string {
+// mergeBackFixtureMakeWorktreePath returns the worktree path for a given repo and suffix,
+// matching the path used by mergeBackFixtureMakeIntegWorktree.
+// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
+func mergeBackFixtureMakeWorktreePath(repo, suffix string) string {
 	return filepath.Join(repo, ".harmonik", "worktrees", suffix)
 }

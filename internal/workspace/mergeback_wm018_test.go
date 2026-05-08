@@ -34,7 +34,7 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	// Create the task worktree (same worktree that nodes execute inside).
 	gitCmd := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -44,16 +44,16 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	gitCmd(repo, "worktree", "add", "-b", taskBranch, taskPath, sha)
 
 	// Simulate node work: add 2 checkpoint commits in the task worktree.
-	mergeBackFixture_writeFile(t, taskPath, "nodeA.txt", "node-A work\n")
+	mergeBackFixtureWriteFile(t, taskPath, "nodeA.txt", "node-A work\n")
 	gitCmd(taskPath, "add", "nodeA.txt")
 	gitCmd(taskPath, "commit", "-m", "checkpoint: node A work")
 
-	mergeBackFixture_writeFile(t, taskPath, "nodeB.txt", "node-B work\n")
+	mergeBackFixtureWriteFile(t, taskPath, "nodeB.txt", "node-B work\n")
 	gitCmd(taskPath, "add", "nodeB.txt")
 	gitCmd(taskPath, "commit", "-m", "checkpoint: node B work")
 
 	// Assert the task branch now has 2 additional commits beyond the initial.
-	out, err := exec.Command("git", "-C", taskPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", taskPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
 	if err != nil {
 		t.Fatalf("rev-list --count: %v", err)
 	}
@@ -73,21 +73,21 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 
 	// Perform the squash-merge from the integration worktree (same repo, same lease
 	// group). This mirrors the merge-back node executing inside the existing lease.
-	mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = integPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-018: git merge --squash: %v\n%s", err, out)
 	}
 
 	commitMsg := "squash: run " + runID + "\n\nHarmonik-Run-ID: " + runID
-	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+	commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = integPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-018: git commit: %v\n%s", err, out)
 	}
 
 	// Assert: integration branch has exactly ONE new commit relative to sha.
-	out2, err := exec.Command("git", "-C", integPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
+	out2, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-list", "--count", "HEAD", "^"+sha).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-list integration: %v", err)
 	}
@@ -97,11 +97,11 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 
 	// Assert: task branch tip is UNCHANGED (squash does not advance it).
-	taskTip, err := exec.Command("git", "-C", repo, "rev-parse", taskBranch).Output()
+	taskTip, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", taskBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-parse task branch: %v", err)
 	}
-	integTip, err := exec.Command("git", "-C", repo, "rev-parse", integBranch).Output()
+	integTip, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", integBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-018: rev-parse integration branch: %v", err)
 	}
@@ -110,11 +110,11 @@ func TestWM018_MergeBackNodeInSameWorktree(t *testing.T) {
 	}
 }
 
-// mergeBackFixture_writeFile writes content to a file in dir, fataling the test on error.
-// Prefixed mergeBackFixture_ per the same-package shared-symbol discipline documented
+// mergeBackFixtureWriteFile writes content to a file in dir, fataling the test on error.
+// Prefixed mergeBackFixture per the same-package shared-symbol discipline documented
 // in hk-8mwo.68: each bead's new helpers carry a bead-specific prefix to avoid
 // post-merge `redeclared in this block` collisions with sibling implementers.
-func mergeBackFixture_writeFile(t *testing.T, dir, name, content string) {
+func mergeBackFixtureWriteFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile %s: %v", name, err)

@@ -7,24 +7,6 @@ import (
 	"time"
 )
 
-// workspaceMergeStatusPayload mirrors the data shape of the workspace_merge_status
-// event payload for status=merged per workspace-model.md §4.5 WM-021 and
-// event-model.md §8.5.3 (payload schema is EV's to own; this fixture verifies
-// that the fields required by WM-021 can be populated from the merge result).
-//
-// This is a fixture-level struct — not a production type. The production emitter
-// and EV-owned schema live in the event-model subsystem (deferred).
-type workspaceMergeStatusPayload struct {
-	EventType       string    // "workspace_merge_status"
-	Status          string    // "pending" or "merged"
-	WorkspaceID     string    // "ws-" + run_id
-	RunID           string    // the run's run_id
-	MergeCommitHash string    // SHA of the squash commit on integration branch
-	SourceBranch    string    // task branch (run/<run_id>)
-	TargetBranch    string    // integration branch (harmonik/integration)
-	MergedAt        time.Time // RFC 3339 timestamp of commit
-}
-
 // TestWM021_MergeStatusPayloadShape verifies that on successful squash-merge the
 // workspace manager can populate a workspace_merge_status event payload with
 // status=merged and the required fields:
@@ -46,34 +28,53 @@ type workspaceMergeStatusPayload struct {
 func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 	t.Parallel()
 
+	// mergeBackFixtureMergeStatusPayload mirrors the data shape of the
+	// workspace_merge_status event payload for status=merged per workspace-model.md §4.5
+	// WM-021 and event-model.md §8.5.3 (payload schema is EV's to own; this fixture
+	// verifies that the fields required by WM-021 can be populated from the merge
+	// result).
+	//
+	// This is a fixture-level struct — not a production type. The production emitter
+	// and EV-owned schema live in the event-model subsystem (deferred).
+	type mergeBackFixtureMergeStatusPayload struct {
+		EventType       string    // "workspace_merge_status"
+		Status          string    // "pending" or "merged"
+		WorkspaceID     string    // "ws-" + run_id
+		RunID           string    // the run's run_id
+		MergeCommitHash string    // SHA of the squash commit on integration branch
+		SourceBranch    string    // task branch (run/<run_id>)
+		TargetBranch    string    // integration branch (harmonik/integration)
+		MergedAt        time.Time // RFC 3339 timestamp of commit
+	}
+
 	t.Run("status=merged/payload-fields", func(t *testing.T) {
 		t.Parallel()
 
 		runID := "0196b100-0000-7000-8000-000000000021"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 			"checkpoint: payload test node",
 		})
 
 		taskBranch := "run/" + runID
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-021-shape")
-		integBranch := mergeBackFixture_integBranchName("integ-021-shape")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-021-shape")
+		integBranch := mergeBackFixtureIntegBranchName("integ-021-shape")
 
 		// Perform squash-merge.
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-021: git merge --squash: %v\n%s", err, out)
 		}
 
 		commitMsg := "squash: payload shape test\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-021: git commit: %v\n%s", err, out)
 		}
 
 		// Derive the merge commit hash from git log.
-		mergeHashOut, err := exec.Command("git", "-C", integPath,
+		mergeHashOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath,
 			"rev-parse", "HEAD").Output()
 		if err != nil {
 			t.Fatalf("WM-021: rev-parse HEAD: %v", err)
@@ -81,7 +82,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		mergeHash := strings.TrimSpace(string(mergeHashOut))
 
 		// Derive merged_at from commit timestamp.
-		tsOut, err := exec.Command("git", "-C", integPath,
+		tsOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath,
 			"log", "-1", "--format=%cI").Output()
 		if err != nil {
 			t.Fatalf("WM-021: git log timestamp: %v", err)
@@ -93,7 +94,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 
 		// Construct the payload as the workspace manager would before emitting.
 		workspaceID := "ws-" + runID // WM-004 derivation: workspace_id = "ws-" + run_id
-		payload := workspaceMergeStatusPayload{
+		payload := mergeBackFixtureMergeStatusPayload{
 			EventType:       "workspace_merge_status",
 			Status:          "merged",
 			WorkspaceID:     workspaceID,
@@ -146,7 +147,7 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		workspaceID := "ws-" + runID
 
 		// Before merge executes, the pending payload has no merge_commit_hash yet.
-		pendingPayload := workspaceMergeStatusPayload{
+		pendingPayload := mergeBackFixtureMergeStatusPayload{
 			EventType:       "workspace_merge_status",
 			Status:          "pending",
 			WorkspaceID:     workspaceID,
@@ -182,21 +183,21 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		t.Parallel()
 
 		runID := "0196b100-0000-7000-8000-00000000021c"
-		repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{
+		repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 			"checkpoint: hash-match node",
 		})
 
 		taskBranch := "run/" + runID
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-021c-hash")
-		integBranch := mergeBackFixture_integBranchName("integ-021c-hash")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-021c-hash")
+		integBranch := mergeBackFixtureIntegBranchName("integ-021c-hash")
 
-		mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeCmd.Dir = integPath
 		if out, err := mergeCmd.CombinedOutput(); err != nil {
 			t.Fatalf("WM-021: merge: %v\n%s", err, out)
 		}
 
-		commitCmd := exec.Command("git", "commit", "-m",
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m",
 			"squash: hash match test\n\nHarmonik-Run-ID: "+runID)
 		commitCmd.Dir = integPath
 		if out, err := commitCmd.CombinedOutput(); err != nil {
@@ -204,14 +205,14 @@ func TestWM021_MergeStatusPayloadShape(t *testing.T) {
 		}
 
 		// The merge_commit_hash in the payload MUST equal the integration branch tip.
-		mergeHashOut, err := exec.Command("git", "-C", repo,
+		mergeHashOut, err := exec.CommandContext(t.Context(), "git", "-C", repo,
 			"rev-parse", integBranch).Output()
 		if err != nil {
 			t.Fatalf("WM-021: rev-parse integration: %v", err)
 		}
 		integTip := strings.TrimSpace(string(mergeHashOut))
 
-		headOut, err := exec.Command("git", "-C", integPath, "rev-parse", "HEAD").Output()
+		headOut, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "rev-parse", "HEAD").Output()
 		if err != nil {
 			t.Fatalf("WM-021: rev-parse HEAD: %v", err)
 		}

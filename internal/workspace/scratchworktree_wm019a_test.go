@@ -30,14 +30,14 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	t.Parallel()
 
 	runID := "0196b100-0000-7000-8000-00000000019a"
-	repo, sha := mergeBackFixture_setupTaskBranch(t, runID, []string{
+	repo, sha := mergeBackFixtureSetupTaskBranch(t, runID, []string{
 		"checkpoint: task node one",
 		"checkpoint: task node two",
 	})
 
 	gitRun := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -67,7 +67,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Assert scratch worktree appears in git worktree list before removal.
-	listBefore, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+	listBefore, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		t.Fatalf("WM-019a: git worktree list (before): %v", err)
 	}
@@ -83,7 +83,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// (ii) Execute squash-merge inside scratch worktree.
-	mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+	mergeCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 	mergeCmd.Dir = scratchPath
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		t.Fatalf("WM-019a: git merge --squash in scratch: %v\n%s", err, out)
@@ -93,7 +93,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	commitMsg := "squash: scratch merge\n\nHarmonik-Run-ID: " + runID
 	daemonName := "Harmonik Daemon"
 	daemonEmail := "no-reply@harmonik.local"
-	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+	commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = scratchPath
 	commitCmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME="+daemonName,
@@ -107,7 +107,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 
 	// (v) Update the integration branch ref to point to the scratch branch tip
 	// (equivalent ref-update: fast-forward integration to scratch commit).
-	scratchTipOut, err := exec.Command("git", "-C", repo, "rev-parse", scratchBranch).Output()
+	scratchTipOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", scratchBranch).Output()
 	if err != nil {
 		t.Fatalf("WM-019a: rev-parse scratch branch: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Assert git worktree list --porcelain no longer lists the scratch path.
-	listAfter, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+	listAfter, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		t.Fatalf("WM-019a: git worktree list (after): %v", err)
 	}
@@ -137,13 +137,13 @@ func TestWM019a_ScratchMergeWorktreeLifecycle(t *testing.T) {
 	gitRun(repo, "branch", "-D", scratchBranch)
 
 	// Assert scratch branch is gone.
-	out2, _ := exec.Command("git", "-C", repo, "rev-parse", "--verify", scratchBranch).Output()
+	out2, _ := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "--verify", scratchBranch).Output()
 	if strings.TrimSpace(string(out2)) != "" {
 		t.Errorf("WM-019a: transient branch %q still exists after deletion", scratchBranch)
 	}
 
 	// Assert integration branch now has exactly ONE new commit relative to sha.
-	countOut, err := exec.Command("git", "-C", repo, "rev-list", "--count",
+	countOut, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-list", "--count",
 		integBranch, "^"+sha).Output()
 	if err != nil {
 		t.Fatalf("WM-019a: rev-list count on integration: %v", err)

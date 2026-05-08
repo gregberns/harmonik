@@ -28,7 +28,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 	t.Run("non-agentic/author=daemon-identity", func(t *testing.T) {
 		t.Parallel()
 
-		repo, sha := mergeBackFixture_setupTaskBranch(t,
+		repo, sha := mergeBackFixtureSetupTaskBranch(t,
 			"0196b100-0000-7000-8000-00000018a001",
 			[]string{"checkpoint: mechanical node"},
 		)
@@ -39,17 +39,17 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		daemonName := "Harmonik Daemon"
 		daemonEmail := "no-reply@harmonik.local"
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-18a-nonagentic")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-18a-nonagentic")
 		taskBranch := "run/" + runID
 
-		mergeSquashCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeSquashCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeSquashCmd.Dir = integPath
 		if out, err := mergeSquashCmd.CombinedOutput(); err != nil {
 			t.Fatalf("git merge --squash (non-agentic): %v\n%s", err, out)
 		}
 
 		commitMsg := "squash: non-agentic merge\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		commitCmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME="+daemonName,
@@ -62,7 +62,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = daemon, committer = daemon (both same for non-agentic).
-		identity, err := exec.Command("git", "-C", integPath, "log", "-1",
+		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
 			t.Fatalf("git log identity: %v", err)
@@ -79,7 +79,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 	t.Run("agentic/author=launchspec-identity", func(t *testing.T) {
 		t.Parallel()
 
-		repo, sha := mergeBackFixture_setupTaskBranch(t,
+		repo, sha := mergeBackFixtureSetupTaskBranch(t,
 			"0196b100-0000-7000-8000-00000018a002",
 			[]string{"checkpoint: agentic node"},
 		)
@@ -93,17 +93,17 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		daemonName := "Harmonik Daemon"
 		daemonEmail := "no-reply@harmonik.local"
 
-		integPath := mergeBackFixture_makeIntegWorktree(t, repo, sha, "integ-18a-agentic")
+		integPath := mergeBackFixtureMakeIntegWorktree(t, repo, sha, "integ-18a-agentic")
 		taskBranch := "run/" + runID
 
-		mergeSquashCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch)
+		mergeSquashCmd := exec.CommandContext(t.Context(), "git", "merge", "--squash", "--strategy=ort", taskBranch)
 		mergeSquashCmd.Dir = integPath
 		if out, err := mergeSquashCmd.CombinedOutput(); err != nil {
 			t.Fatalf("git merge --squash (agentic): %v\n%s", err, out)
 		}
 
 		commitMsg := "squash: agentic merge\n\nHarmonik-Run-ID: " + runID
-		commitCmd := exec.Command("git", "commit", "-m", commitMsg)
+		commitCmd := exec.CommandContext(t.Context(), "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = integPath
 		commitCmd.Env = append(os.Environ(),
 			// Author = agentic handler identity (LaunchSpec identity).
@@ -118,7 +118,7 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 		}
 
 		// Assert author = agent, committer = daemon.
-		identity, err := exec.Command("git", "-C", integPath, "log", "-1",
+		identity, err := exec.CommandContext(t.Context(), "git", "-C", integPath, "log", "-1",
 			"--format=%an <%ae> | %cn <%ce>").Output()
 		if err != nil {
 			t.Fatalf("git log identity: %v", err)
@@ -133,10 +133,10 @@ func TestWM018a_MergeNodeDispatchContract(t *testing.T) {
 	})
 }
 
-// mergeBackFixture_setupTaskBranch creates a tempRepo, adds a task worktree for the
+// mergeBackFixtureSetupTaskBranch creates a tempRepo, adds a task worktree for the
 // given runID, and writes one commit per subject string. Returns (repo, initialSHA).
-// Prefixed mergeBackFixture_ per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixture_setupTaskBranch(t *testing.T, runID string, subjects []string) (string, string) {
+// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
+func mergeBackFixtureSetupTaskBranch(t *testing.T, runID string, subjects []string) (string, string) {
 	t.Helper()
 
 	repo, sha := tempRepo(t)
@@ -144,12 +144,12 @@ func mergeBackFixture_setupTaskBranch(t *testing.T, runID string, subjects []str
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 
 	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
-		t.Fatalf("mergeBackFixture_setupTaskBranch MkdirAll: %v", err)
+		t.Fatalf("mergeBackFixtureSetupTaskBranch MkdirAll: %v", err)
 	}
 
 	gitRun := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -171,23 +171,23 @@ func mergeBackFixture_setupTaskBranch(t *testing.T, runID string, subjects []str
 	return repo, sha
 }
 
-// mergeBackFixture_makeIntegWorktree creates a integration-branch worktree at a
+// mergeBackFixtureMakeIntegWorktree creates a integration-branch worktree at a
 // unique sub-path within the repo's .harmonik/worktrees directory.
-// Prefixed mergeBackFixture_ per same-package shared-symbol discipline (hk-8mwo.68).
-func mergeBackFixture_makeIntegWorktree(t *testing.T, repo, sha, suffix string) string {
+// Prefixed mergeBackFixture per same-package shared-symbol discipline (hk-8mwo.68).
+func mergeBackFixtureMakeIntegWorktree(t *testing.T, repo, sha, suffix string) string {
 	t.Helper()
 
 	branch := "harmonik/integration/" + suffix
 	path := filepath.Join(repo, ".harmonik", "worktrees", suffix)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mergeBackFixture_makeIntegWorktree MkdirAll: %v", err)
+		t.Fatalf("mergeBackFixtureMakeIntegWorktree MkdirAll: %v", err)
 	}
 
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, path, sha)
+	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, path, sha)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("mergeBackFixture_makeIntegWorktree worktree add: %v\n%s", err, out)
+		t.Fatalf("mergeBackFixtureMakeIntegWorktree worktree add: %v\n%s", err, out)
 	}
 
 	return path

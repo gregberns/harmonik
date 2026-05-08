@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v11 2026-05-08 main (afternoon refresh after 13-bead typed-alias completion session) -->
+<!-- PP-TRIAL:v12 2026-05-08 main (afternoon — Wave-4 EM-NNN contract beads completion) -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -48,6 +48,17 @@ substitution pass. This session's typed-alias wave avoided rebase friction
 by accident (Bundles A, C went type-defs-only; Bundle B substituted 3
 fields without conflict). Make it intentional next time.
 
+**Subsumption signal in implementer briefs (v12 — high leverage).** When
+orchestrator's pre-flight read shows a bead's record / field / variant
+already exists, surface it explicitly in the brief: "PRE-FLIGHT SIGNAL:
+<file:line citation>. The bead may be largely or entirely subsumed. Your
+first job is to verify, NOT to invent work." Wave-4 (this session) hit this
+3-of-8 times: hk-b3f.5 fully subsumed → SUBSUMED verdict in 48 s with no
+commit; hk-b3f.57 type-only partial → counter-only delta, no record edits;
+hk-b3f.60 variant-only → godoc-only delta. Without the signal, implementers
+default to scaffolding parallel structures and waste cycles. With it, they
+verify and scope to the gap.
+
 Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
 to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain.
 
@@ -64,15 +75,18 @@ verifiable by reading**. **Read the worktree file BEFORE Edit** — Edit
 requires Read in the same conversation, and bash `git commit` returns 0 on
 "nothing to commit" so a missed Edit can sneak through a chained merge.
 (Hit on hk-b3f.87; recovered with a post-merge follow-up commit.)
-Re-review may be skipped after a metadata-only or pure-deletion fix.
+Re-review may be skipped after a metadata-only or pure-deletion fix, OR
+after a trivial idiom swap with tests passing (v12 — hk-b3f.57 fmt.Errorf
+→ errors.New + import add: 1 file, 2 edits, tests re-run, merged without
+re-review).
 
 **Inline-amend ceiling (v9.5 — observed this session).** Inline-amend
 worked clean for ≤3 mechanical edits across 1 file (hk-872.4 single-line
 delete; hk-872.42 three nolint-directive additions; hk-zs0.13 single-line
-delete; hk-hqwn.27 dead-field + dead-return removal). Above that bar (e.g.
-hk-872.30: 4 lint fixes including signature change at multiple call sites),
-spawn a fix-agent — the verification cost climbs faster than the dispatch
-cost.
+delete; hk-hqwn.27 dead-field + dead-return removal; **hk-b3f.57 fmt→errors
+2-edit swap, v12**). Above that bar (e.g. hk-872.30: 4 lint fixes including
+signature change at multiple call sites), spawn a fix-agent — the
+verification cost climbs faster than the dispatch cost.
 
 Path-discrepancy resolution: bead body wins over docs. EXCEPTION — for spec
 content (enum values, regex shapes, RECORD field-types, **enumerated
@@ -82,7 +96,10 @@ fix-agent correctly OMITTED `agent_log` because HC-007 doesn't enumerate it,
 even though the bead body listed it. Reviewer cleared. Reinforced again
 v11: hk-b3f.99 PolicyRef bead-title cited control-points.md §6.3 but
 execution-model.md §6.1 cites §6.4 — implementer correctly chose §6.4 and
-surfaced the discrepancy. Reviewer cleared.)
+surfaced the discrepancy. Reviewer cleared. **Reinforced v12: hk-b3f.25
+implementer found stale `EM-036` citation in pre-existing godoc — EM-036
+does not exist in spec; EM-028 is the correct anchor. Implementer fixed
+in-place as additive correction; reviewer verified and cleared.**)
 
 Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
 meets bead acceptance, you may merge with a closure note explaining the
@@ -159,121 +176,145 @@ and stop.
 # Session Handoff
 
 ## State
-Clean. Main at `3fe300f`, pushed to origin. **13 beads landed this session**
-across 3 pipelined merge waves with **0 rebase conflicts and 0 fix-iterations**.
-All worktrees cleaned. 3 orphan branches from a prior session deleted
-(`worktree-agent-{a81fc0155348f648a, ab0d5be116be801d9, ae62858e28981ec72}` —
-all were fully merged into main).
+Clean. Main at `a202085`, pushed. **9 beads landed this session** across one
+7-implementer parallel wave + 1 refill, two pipelined merge waves. **0
+rebase conflicts, 0 fix-iterations, 1 orchestrator inline-amend.** All
+worktrees cleaned (verified `git worktree list` shows main only). `.claire/`
+untracked dir still here from prior sessions (typo of `.claude/`, leave
+alone).
 
 ## What landed this session
 
-**Wave 1 (5 beads):** hk-b3f.94 SnapshotToken (extracted from verdictevent.go
-to its own file with Valid()), hk-b3f.97 AxisTags (struct with 4 sub-enums:
-LLMFreedom/IODeterminism/ReplaySafety/AxisIdempotency + BaselineAxisTags),
-hk-b3f.101 FreedomProfileRef, hk-b3f.102 BudgetRef, hk-b3f.103 SubWorkflowRef.
+**Wave 4 — EM-NNN execution-model contract beads (8 dispatches: 7
+parallel + 1 refill):**
 
-**Wave 2 (5 beads):** hk-b3f.95 Evidence (typed map[string]any wrapper with
-EvidenceKeySubWorkflowPin/SynthesizedOutcome reserved-key constants),
-hk-b3f.96 VerifierMetrics (typed wrapper, permissive Valid), hk-b3f.98
-ModeTag (closed enum {mechanism, cognition}), hk-b3f.99 PolicyRef, hk-b3f.100
-GateRef. Bundle B also substituted ModeTag/PolicyRef/GateRef into Node;
-Bundle D substituted Evidence/VerifierMetrics into Transition.
+- **hk-b3f.5 SUBSUMED** (Outcome record + EM-005/EM-005a): existing
+  internal/core/outcome.go:34-105 + outcomekind.go fully satisfy the
+  contract (Kind/Payload discriminator, Cat 6a routing reference, full
+  test coverage). No commit; closed-with-citation.
+- **hk-b3f.1** (EM-001 Workflow well-formed-graph invariant) — `fb4797c`:
+  Workflow.Valid() now enforces edge endpoints in Nodes; +13 LOC + 3 tests.
+- **hk-b3f.19** (EM-016 Checkpoint atomicity contract) — `3f291d8`: godoc
+  on write-tree → commit-tree → update-ref sequence; new path-coherence
+  invariant in Valid() (TransitionRecordPath == TransitionRecordPath(RunID,
+  TransitionID)); side-fix to gitwins_b3f65_test.go fixture path mismatch.
+- **hk-b3f.23** (EM-018a TransitionIDGenerator) — `2d595f1`: daemon-local
+  UUIDv7 mirroring eventidgen pattern; +IsUUIDv7 method on TransitionID; 6
+  unit + 6 stress tests.
+- **hk-b3f.25** (EM-020 immutability contract) — `44d01b1`: godoc on
+  write-once + audit-tool dep + EM-036 → EM-028 stale-citation fix in
+  pre-existing godoc.
+- **hk-b3f.36** (EM-028 canonical durable form vs projection) — `8dfcc3c`:
+  new TransitionEventPayload type with exactly the 3 EM-028 fields,
+  EM-029 no-duplication observed structurally.
+- **hk-b3f.57** (EM-043 + EM-043a cycle counter) — `b2568a1` + `a202085`
+  (orchestrator idiom fix): new CycleCounter with per-(run_id, edge) map,
+  ReconcileFromTransitions for restart-recovery, ErrCompilationLoop
+  sentinel; 10 tests including race-detector.
+- **hk-b3f.60** (EM-046 context-restore behavioral contract) — `452b1b4`:
+  godoc citation in Transition.Valid() (existing needsRollback guard
+  already enforced the constraint; pre-existing tests cover both
+  directions); 2 follow-up beads filed (`hk-b3f.107`, `hk-b3f.108`) for
+  daemon-side rules.
+- **hk-hqwn.9** (EV-006 wall-clock advisory) [REFILL] — `73ea7d5`:
+  TimestampWall godoc citing EV-006 + new wallclock_hqwn9_test.go sensor
+  pattern (264 LOC paralleling monotsmono_hqwn6_test.go).
 
-**Wave 3 (3 beads, all follow-ups I filed mid-session):** hk-b3f.104
-substituted the remaining 4 typed aliases into Node fields (Axes string→
-AxisTags, +3 *Ref fields), hk-b3f.105 substituted PolicyRef into Workflow.
-Policies, hk-b3f.106 wired SnapshotToken.Valid() into VerdictEvent.Valid()
-delegation (closes a pre-existing latent bug surfaced by the Wave-1
-reviewer).
+Net effect: Workflow / Checkpoint / TransitionID / Transition record /
+Edge cycle-counter / Event TimestampWall — all carry their EM- / EV- spec
+citations and structural invariants in code.
 
-Net effect: `Node`, `Workflow`, `Transition`, and `VerdictEvent` records
-are now fully migrated to typed aliases. No `TODO(hk-b3f.NN)` markers
-remain in core for these field-substitution beads.
+Follow-up beads filed mid-wave: **hk-b3f.107** (daemon-initiated
+context-restore initiation-source enforcement) and **hk-b3f.108** (daemon
+Outcome synthesis for context-restore). Both blocked on daemon subsystem
+scaffold.
 
 ## Process scars to internalize (NEW this session)
 
-1. **Pre-dispatch TODO grep (codified in directives v11).** I dispatched
-   3 implementers in parallel before realizing all three beads had
-   `TODO(hk-b3f.NN)` markers in `node.go` from a prior session. The wave
-   landed clean only because Bundles A and C chose conservatively (type-
-   def files only, no substitution). Future agent: grep `TODO(<bead-id>)`
-   pre-dispatch and explicitly scope substitution as separate beads if
-   3+ markers share a file.
+1. **Subsumption signals in briefs are high-leverage (codified as
+   directive v12).** 3 of 8 wave-4 dispatches had pre-existing partial
+   implementations that orchestrator pre-flight read caught: hk-b3f.5
+   (fully subsumed → 48-second SUBSUMED verdict, no commit), hk-b3f.57
+   (Edge.TraversalCap field present; counter store missing → counter-only
+   delta, no record edits), hk-b3f.60 (TransitionKindContextRestore
+   variant present; godoc citation missing → 7-line godoc-only delta).
+   Surfacing these in the brief — "PRE-FLIGHT SIGNAL: <file:line>. The
+   bead may be subsumed. Your first job is to verify, NOT to invent
+   work." — got tight scope-to-the-gap deltas every time. Without the
+   signal, implementers default to scaffolding parallel structures.
 
-2. **Empty bead bodies are normal for follow-up beads.** All 13 beads in
-   this session had empty `description` fields — title + spec citation
-   were the entire spec. Implementers handled this fine when the brief
-   provided spec section pointers + a canonical sibling pointer
-   (outcomekind.go for closed enums, actiondescriptor.go for non-empty
-   string aliases). Don't re-investigate body-emptiness.
+2. **Bundle decision: same-record-territory only.** hk-b3f.25 + .36
+   bundled into ONE implementer with TWO sequential commits (same prefix,
+   both bead IDs in commit messages, instructed not to squash) — clean.
+   Bundling worked because both beads concern transition-record semantics
+   (transition.go / transitionrecord.go). hk-b3f.60 was kept solo despite
+   "transition" in its name because its only edit was transitionkind.go-
+   adjacent godoc, which would have collided line-wise with E's
+   transitionrecord.go work; the file-territory check held.
 
-3. **Pipelined merges scale to 3 waves cleanly.** 5+5+3 beads merged
-   over 3 waves with zero rebase conflicts. The trick: each implementer's
-   diff was non-overlapping by line distance within shared files (e.g.
-   Bundle F's Axes lines 19/26/150/313 vs Bundle G's Policies lines
-   37/261 in workflow_test.go).
+3. **Inline-amend bar held; codified as v12.** F's idiom fix (fmt.Errorf
+   → errors.New) was 1 file, 2 edits (import line + sentinel line), one
+   re-test, one new commit, no fix-agent, no re-review. The "trivial
+   idiom swap with tests passing" generalization to the v9.5 bar is now
+   in the directives.
 
-4. **Implementer scope-extension is the right pattern.** Bundle F's brief
-   only mentioned node.go and node_test.go; the implementer correctly
-   extended to workflow_test.go (which embeds Node literals and broke
-   compilation when Axes type changed) and surfaced the deviation in
-   their report. Trust this pattern; don't over-specify mechanical scope.
-
-5. **`.claire/` untracked dir is still here.** Pre-existing typo'd
-   directory at repo root with a `worktrees` subdir — not from this
-   session. Leave alone unless asked.
+4. **`.claire/` untracked dir is STILL here.** Pre-existing typo'd dir
+   from a prior session. Has a `worktrees/` subdir. Leave alone unless
+   asked.
 
 ## Suggested first move
 
 1. **Verify state**: `git status` shows only `.claire/` untracked;
-   `git log --oneline -3` top is `3fe300f feat(core): substitute 4
-   typed aliases into Node fields (hk-b3f.104)`.
+   `git log --oneline -6` top is `a202085 fix(core): use errors.New for
+   ErrCompilationLoop sentinel (idiom parity)`.
 
-2. **The next obvious wave is the EM-NNN contract beads** in the ready
-   queue (all `tag:mechanism`, all dispatchable):
-   - hk-b3f.1 (EM-001 Workflow is named/versioned/directed-graph)
-   - hk-b3f.5 (EM-005/EM-005a Outcome record + kind discriminator —
-     **(coalesce) tag — pre-flight subsumption check**: OutcomeKind enum
-     and Outcome.kind/payload fields may already be present from earlier
-     work)
-   - hk-b3f.19 (EM-016 Checkpoint = git commit + sibling-file pattern)
-   - hk-b3f.23 (EM-018a Transition ID generation contract — daemon-local
-     UUIDv7, may already be in transitionid.go)
-   - hk-b3f.25 (EM-020 Transition records are immutable)
-   - hk-b3f.36 (EM-028 Transition record canonical durable form vs event)
-   - hk-b3f.57 (EM-043/EM-043a Cycle traversal cap — **(coalesce) tag,
-     check subsumption against edge.go TraversalCap**)
-   - hk-b3f.60 (EM-046 Context restore is agent-scoped)
+2. **Next obvious wave: event-model continuation + remaining hk-b3f
+   contract beads.** Pre-flight `br ready --label tag:mechanism --limit
+   30`. Strong candidates:
+   - **hk-hqwn.34** (EV-025 — each event type has exactly one owning
+     spec for payload shape) and **hk-hqwn.35** (EV-026 — subsystems MAY
+     emit internal events not on this list). Both look like spec-text +
+     sensor-test beads similar in shape to hk-hqwn.9 (use the
+     wallclock_hqwn9_test.go pattern). **Bundle both into one
+     implementer** with 2 sequential commits.
+   - Remaining hk-b3f beads from the parent epic — run `br show hk-b3f
+     --format json` to see open children. Several may be subsumed
+     already; surface subsumption signals per directive v12 when
+     dispatching.
 
-   These are bigger than typed-alias work — each likely 50-150 LOC
-   implementation + tests. Bundle 1-2 per implementer; pre-grep for any
-   pre-existing partial implementation before dispatching.
+3. **Daemon scaffold is the next cross-cutting unlock.** hk-b3f.107,
+   hk-b3f.108, the cycle-counter git-history adapter, and the EM-016
+   git-plumbing all defer to "daemon subsystem when scaffolded." Worth a
+   conversation with the user before dispatching — this is bigger than a
+   single-implementer bead and may need a kerf work first.
 
-3. **Event-model wave** (hk-hqwn.9 EV-006, .34 EV-025, .35 EV-026) is
-   smaller and parallel-safe; could go alongside.
+4. **Cognition-tagged spec-fix beads STILL need user pair-on**:
+   hk-zs0.58, .59, .60, .62, hk-hqwn.67, .68. Don't dispatch as
+   implementer briefs.
 
-4. **Cognition-tagged spec-fix beads STILL need user pair-on**: hk-zs0.58,
-   .59, .60, .62, hk-hqwn.67, .68. Don't dispatch as implementer briefs.
-
-5. **Deferred until subsystems exist**: hk-hqwn.70 (BusFlusher / EventBus.
-   Flush — needs event-bus subsystem), hk-872.57 (divergence_inconclusive
-   event emission — same).
+5. **Deferred until subsystems exist**: hk-hqwn.70 (BusFlusher /
+   EventBus.Flush — needs event-bus subsystem), hk-872.57
+   (divergence_inconclusive event emission — same), hk-b3f.107 / .108
+   (daemon-side context-restore rules).
 
 ## Files to open first
 
-1. `git log --oneline -13` — this session's commits.
+1. `git log --oneline -10` — this session's commits.
 2. `.claude/implementer-protocol.md` — standing rules; no structural
    change this session.
-3. `internal/core/{node.go,workflow.go,transition.go,verdictevent.go}` —
-   four records now fully typed. Verify zero `TODO(hk-b3f.NN)` markers
-   for the closed beads (`grep -n 'TODO(hk-b3f' internal/core/*.go`
-   should return nothing relevant to closed beads).
-4. New typed alias files: `internal/core/{axistags.go, modetag.go,
-   policyref.go, gateref.go, freedomprofileref.go, budgetref.go,
-   subworkflowref.go, evidence.go, verifiermetrics.go, snapshottoken.go}`.
+3. Files touched this session (verify EM-/EV- citations are intact):
+   `internal/core/{workflow.go, checkpoint.go, transition.go,
+   transitionidgen.go, transitioneventpayload.go, cyclecounter.go,
+   event.go}`.
+4. New files this session:
+   `internal/core/{transitionidgen.go, transitionidgen_test.go,
+   transitionidgen_stress_test.go, transitioneventpayload.go,
+   transitioneventpayload_test.go, cyclecounter.go, cyclecounter_test.go,
+   wallclock_hqwn9_test.go}`.
 
 ## Blocking question for user
 
 None. The 6 cognition-tagged spec-fix beads still need pair-on; everything
-else (EM-NNN contract beads, EV-NNN event-model beads) is freely
-dispatchable.
+else (remaining hk-b3f / hk-hqwn / hk-872 mechanism beads) is
+freely dispatchable. Daemon scaffold is the next strategic question
+worth raising before the next big wave.

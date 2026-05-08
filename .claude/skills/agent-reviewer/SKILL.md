@@ -235,9 +235,9 @@ unwanted-abstraction detection, bead/codename match) and emit the JSON verdict.
 
 ## Liveness and currency (must not rot)
 
-Per `docs/foundation/project-level/quality-checks.md §Agent-enforceability` item 5:
+Per `docs/foundation/project-level/build-practices.md`:
 
-> "The reviewer skill is load-bearing and must not rot."
+> "⚑ `agent-reviewer` skill is load-bearing and must not rot."
 
 `agent-config-reviewer` (Tier 2 cadence) explicitly checks the currency of this skill
 at every kerf pass advance and on changes to `build-practices.md`, `quality-checks.md`,
@@ -245,10 +245,15 @@ or `subsystem-organization.md`. If a check category is added to the build-practi
 and this skill has not been updated, `agent-config-reviewer` flags it as a config
 violation.
 
+**Schema source-of-truth:** the canonical schema definition lives in this skill's
+frontmatter (top of SKILL.md). `build-practices.md §Commit conventions` references the
+schema but is not normative for its shape — if the two diverge, this file wins.
+
 **Schema evolution:** when the JSON-verdict schema changes (new required field, new
-flag vocabulary item, verdict enum expansion), bump `schema_version` in this file and
-in `build-practices.md §Commit conventions`. Old-schema verdicts in `git log` remain
-valid for their version; only new commits must use the current schema.
+flag vocabulary item, verdict enum expansion), bump `schema_version` in this file's
+frontmatter, then refresh the example in `build-practices.md §Commit conventions` to
+match. Old-schema verdicts in `git log` remain valid for their version; only new
+commits must use the current schema.
 
 Sources: `build-practices.md §Agent review on every commit`; `build-practices.md
 §Commit conventions`; `quality-checks.md §Agent-enforceability`; `phase-1-readiness-gap-analysis.md §A4, §B4, §C2`.

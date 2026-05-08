@@ -2,23 +2,26 @@
 // Code handler. The daemon's handler subsystem subprocess-launches this
 // binary in scenario tests and CI in place of a real Claude Code session.
 //
-// # Scope (hk-ahvq.48.1)
+// # Scope (hk-ahvq.48.1, hk-ahvq.48.4)
 //
 // This scaffold covers:
-//   - Flag parsing: --socket-path (LaunchSpec.SocketPath per §6.1) and
-//     --launch-spec (file-path form of LaunchSpec delivery per HC-005).
+//   - Flag parsing: --socket-path (LaunchSpec.SocketPath per §6.1),
+//     --launch-spec (file-path form of LaunchSpec delivery per HC-005), and
+//     --version (prints the build-time commit-hash stamp per HC-043).
 //   - Unix-domain-socket dial-back to the daemon per §4.10.HC-044 /
 //     §4.10.HC-045.
 //   - Clean exit (exit code 1) when the socket path is missing or the dial
 //     fails — precondition for all downstream binary-behaviour beads.
+//   - Build-time commit-hash stamp via -ldflags (hk-ahvq.48.4); the
+//     commitHash variable is declared in version.go.
 //
 // # Out of scope (deferred to sibling beads)
 //
-// The wire-protocol parity loop (hk-ahvq.48.2), the script-driver loop
-// (hk-ahvq.48.3), the commit-hash stamp via ldflags (hk-ahvq.48.4), and the
-// Makefile target (hk-ahvq.48.5) are all handled by separate beads.
+// The wire-protocol parity loop (hk-ahvq.48.2) and script-driver loop
+// (hk-ahvq.48.3) are handled by separate beads. The Makefile build target
+// wiring up the ldflags stamp is tracked in hk-ahvq.48.5.
 //
-// Cite: specs/handler-contract.md §4.10.HC-044, §4.10.HC-045, §6.1.
+// Cite: specs/handler-contract.md §4.10.HC-043, §4.10.HC-044, §4.10.HC-045, §6.1.
 package main
 
 import (
@@ -44,6 +47,14 @@ func main() {
 func run() int {
 	fs := flag.NewFlagSet("harmonik-twin-claude", flag.ContinueOnError)
 
+	// --version: print the build-time commit-hash stamp and exit 0.
+	// The stamp is injected via -ldflags "-X main.commitHash=<sha>" at build
+	// time (see version.go). Per HC-043: in-repo handler binaries MUST embed
+	// a commit hash; the daemon's VerifyCommitHash gate checks this before
+	// launch. --version provides the human-readable complement.
+	// Cite: specs/handler-contract.md §4.10.HC-043.
+	showVersion := fs.Bool("version", false, "print the build-time commit hash and exit (HC-043)")
+
 	// --socket-path: the Unix-domain socket path supplied by the daemon at
 	// launch time. Per §4.10.HC-044/HC-007 the production daemon listens at
 	// .harmonik/daemon.sock; this flag is the launch-time delivery vehicle
@@ -60,6 +71,12 @@ func run() int {
 		// flag.ContinueOnError: parse errors are already printed to stderr by
 		// the flag package; just exit with a non-zero code.
 		return 1
+	}
+
+	// Handle --version before any further validation.
+	if *showVersion {
+		writeVersion(os.Stdout)
+		return 0
 	}
 
 	// Validate precondition: socket-path is required. Exit cleanly without a

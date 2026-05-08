@@ -23,7 +23,7 @@ func b3f73NodeValid(t *testing.T) Node {
 		BudgetRef:         nil,
 		IdempotencyClass:  IdempotencyClassIdempotent,
 		Axes:              "llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent",
-		ModeTag:           "mechanism",
+		ModeTag:           ModeTagMechanism,
 		SubWorkflowRef:    nil,
 	}
 }
@@ -252,7 +252,7 @@ func TestNodeValid_EmptyModeTag(t *testing.T) {
 	t.Parallel()
 
 	n := b3f73NodeValid(t)
-	n.ModeTag = ""
+	n.ModeTag = ModeTag("")
 	if n.Valid() {
 		t.Error("Valid() = true with empty ModeTag, want false")
 	}

@@ -79,11 +79,7 @@ type Node struct {
 
 	// ModeTag is the mechanism/cognition classification for this node
 	// per [architecture.md §4.2 AR-005]. One of: "mechanism", "cognition".
-	// Bead hk-b3f.98 tracks the typed-alias upgrade from string once ModeTag
-	// is defined in core.
-	//
-	// TODO(hk-b3f.98): replace string with ModeTag typed alias.
-	ModeTag string
+	ModeTag ModeTag
 
 	// SubWorkflowRef is the reference to the sub-workflow definition for
 	// sub-workflow nodes. Required when Type == NodeTypeSubWorkflow; forbidden
@@ -103,7 +99,7 @@ type Node struct {
 //   - Timeout, when non-nil, is positive (> 0)
 //   - IdempotencyClass is one of the three declared values
 //   - Axes is non-empty
-//   - ModeTag is non-empty
+//   - ModeTag is one of the two declared ModeTag values
 //   - SubWorkflowRef is non-nil iff Type == NodeTypeSubWorkflow
 func (n Node) Valid() bool {
 	if n.NodeID == "" {
@@ -129,7 +125,7 @@ func (n Node) Valid() bool {
 	if n.Axes == "" {
 		return false
 	}
-	if n.ModeTag == "" {
+	if !n.ModeTag.Valid() {
 		return false
 	}
 	// SubWorkflowRef: required iff sub-workflow; forbidden otherwise.

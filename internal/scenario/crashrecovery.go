@@ -145,7 +145,7 @@ const (
 	InvariantStateReconstructableFromGitAndBeads CrashRecoveryInvariant = "state_reconstructable_from_git_and_beads"
 )
 
-// Valid reports whether v is one of the five declared CrashRecoveryInvariant
+// Valid reports whether v is one of the six declared CrashRecoveryInvariant
 // constants.
 func (v CrashRecoveryInvariant) Valid() bool {
 	switch v {
@@ -171,7 +171,7 @@ func (v CrashRecoveryInvariant) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler. It rejects any value that
-// is not one of the five declared constants.
+// is not one of the six declared constants.
 func (v *CrashRecoveryInvariant) UnmarshalText(text []byte) error {
 	candidate := CrashRecoveryInvariant(text)
 	if !candidate.Valid() {

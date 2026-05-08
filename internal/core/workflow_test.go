@@ -34,7 +34,7 @@ func b3f72WorkflowValid(t *testing.T) Workflow {
 		Edges:           []Edge{},
 		StartNodeID:     NodeID("start"),
 		TerminalNodeIDs: []NodeID{NodeID("done")},
-		Policies:        []string{},
+		Policies:        []PolicyRef{},
 		Metadata:        map[string]string{},
 		WorkflowClass:   nil,
 		SchemaVersion:   1,
@@ -258,7 +258,7 @@ func TestWorkflowValid_PopulatedPolicies(t *testing.T) {
 	t.Parallel()
 
 	wf := b3f72WorkflowValid(t)
-	wf.Policies = []string{"policies/default", "policies/budget"}
+	wf.Policies = []PolicyRef{"policies/default", "policies/budget"}
 	if !wf.Valid() {
 		t.Error("Valid() = false with populated Policies, want true")
 	}

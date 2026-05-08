@@ -68,12 +68,9 @@ type Workflow struct {
 	TerminalNodeIDs []NodeID
 
 	// Policies is the ordered list of resolved policy references for this workflow,
-	// loaded at workflow-load time (see control-points.md §6.3).
-	//
-	// TODO(hk-b3f.99): replace []string with []PolicyRef typed alias once
-	// PolicyRef is defined in core (execution-model.md §6.1 Workflow.policies,
+	// loaded at workflow-load time (execution-model.md §6.1 Workflow.policies,
 	// control-points.md §6.4).
-	Policies []string
+	Policies []PolicyRef
 
 	// Metadata is the free-form key/value annotation map for this workflow.
 	// A nil map is equivalent to an empty map; both are valid.

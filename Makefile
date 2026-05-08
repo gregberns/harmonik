@@ -15,6 +15,12 @@ MODULE := github.com/gregberns/harmonik
 # Twin-binary output directory (SH-009 in-tree default: <repo-root>/twins/).
 TWINS_DIR := $(PWD)/twins
 
+# Commit hash stamped into twin binaries at build time (HC-043).
+# Uses the shell form so the value is resolved at recipe execution time, not
+# at Makefile parse time, which correctly reflects uncommitted state during
+# incremental development.
+COMMIT_HASH := $(shell git rev-parse HEAD)
+
 # ---------------------------------------------------------------------------
 # Core build / test
 # ---------------------------------------------------------------------------
@@ -37,9 +43,9 @@ test:  ## go test ./... (no race; quick smoke)
 # Cite: specs/scenario-harness.md §4.3.SH-009;
 #       specs/handler-contract.md §4.8.HC-036(c).
 .PHONY: build-twin-claude
-build-twin-claude:  ## Build cmd/harmonik-twin-claude → twins/claude-twin (SH-009 / HC-036)
+build-twin-claude:  ## Build cmd/harmonik-twin-claude → twins/claude-twin (SH-009 / HC-036 / HC-043)
 	@mkdir -p $(TWINS_DIR)
-	go build -o $(TWINS_DIR)/claude-twin ./cmd/harmonik-twin-claude
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/claude-twin ./cmd/harmonik-twin-claude
 
 # twins: build all twin binaries into twins/.
 # Add further per-twin prerequisites here as new twin packages land.

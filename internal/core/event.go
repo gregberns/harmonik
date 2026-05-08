@@ -50,6 +50,14 @@ type Event struct {
 	// The emitter MUST perform exactly one wall-clock read per emission and reuse
 	// that reading for both TimestampWall and UUIDv7 generation so the envelope is
 	// self-consistent.
+	//
+	// Advisory only for cross-process ordering (EV-006, event-model.md §4.2 EV-006):
+	// TimestampWall MUST NOT be used for ordering decisions across processes; NTP
+	// skew, clock adjustments, and container-host time sync make it unreliable.
+	// Consumers that need cross-process ordering MUST use EventID (UUIDv7) per
+	// EV-002. TimestampWall is for audit, human-readable display, and external
+	// correlation only.
+	//
 	// Required (non-zero).
 	TimestampWall time.Time
 

@@ -25,7 +25,7 @@ func subscriptionMinimal(t *testing.T) Subscription {
 	t.Helper()
 	return Subscription{
 		ConsumerID:              "consumer-a",
-		ConsumerClass:           "asynchronous",
+		ConsumerClass:           ConsumerClassAsynchronous,
 		EventPattern:            EventPattern{Wildcard: true, Types: map[string]struct{}{}},
 		Since:                   nil,
 		OffsetCheckpointEventID: nil,
@@ -48,9 +48,9 @@ func TestSubscriptionValid_Minimal(t *testing.T) {
 func TestSubscriptionValid_AllConsumerClasses(t *testing.T) {
 	t.Parallel()
 
-	for _, cls := range []string{"synchronous", "asynchronous", "observer"} {
+	for _, cls := range []ConsumerClass{ConsumerClassSynchronous, ConsumerClassAsynchronous, ConsumerClassObserver} {
 		cls := cls
-		t.Run(cls, func(t *testing.T) {
+		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			s := subscriptionMinimal(t)
 			s.ConsumerClass = cls
@@ -141,7 +141,7 @@ func TestSubscriptionValid_EmptyConsumerClass(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	s.ConsumerClass = ""
+	s.ConsumerClass = ConsumerClass("")
 	if s.Valid() {
 		t.Error("Valid() = true with empty ConsumerClass, want false")
 	}
@@ -151,7 +151,7 @@ func TestSubscriptionValid_InvalidConsumerClass(t *testing.T) {
 	t.Parallel()
 
 	s := subscriptionMinimal(t)
-	s.ConsumerClass = "unknown_class"
+	s.ConsumerClass = ConsumerClass("unknown_class")
 	if s.Valid() {
 		t.Error("Valid() = true with unknown ConsumerClass, want false")
 	}

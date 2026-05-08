@@ -17,8 +17,7 @@ import (
 //
 // ConsumerClass controls how the bus dispatches events to this consumer.
 // The three classes (synchronous / asynchronous / observer) are specified by
-// EV-010 / EV-011 / EV-012. The field uses string as a typed-alias-deferral
-// placeholder; see TODO(hk-hqwn.65) on the field.
+// EV-010 / EV-011 / EV-012.
 //
 // # Replay
 //
@@ -32,21 +31,16 @@ import (
 //
 // OnPanic controls what the bus does when the consumer's goroutine panics.
 // The three policies (recover_and_log / quarantine_consumer / fail_daemon)
-// are specified by OQ-EV-007. The field uses string as a typed-alias-deferral
-// placeholder; see TODO(hk-hqwn.66) on the field.
+// are specified by OQ-EV-007.
 type Subscription struct {
 	// ConsumerID is the opaque identifier for this consumer, unique per bus.
 	// The bus enforces uniqueness at Subscribe() time. Required (non-empty).
 	ConsumerID string
 
 	// ConsumerClass is the dispatch class for this consumer.
-	// Must be one of: "synchronous", "asynchronous", "observer"
-	// per EV-010 / EV-011 / EV-012.
-	//
-	// TODO(hk-hqwn.65): replace string placeholder with core.ConsumerClass
-	// once the typed enum is defined (event-model.md §6.1 Enum
-	// synchronous|asynchronous|observer, EV-010/011/012).
-	ConsumerClass string
+	// Must be one of: ConsumerClassSynchronous, ConsumerClassAsynchronous,
+	// ConsumerClassObserver per EV-010 / EV-011 / EV-012.
+	ConsumerClass ConsumerClass
 
 	// EventPattern specifies which event types this consumer receives.
 	// Wildcard ("*") or an explicit set of EventType strings per §6.1.
@@ -77,14 +71,6 @@ type Subscription struct {
 	Handler func(context.Context, Event) error
 }
 
-// validConsumerClasses is the closed set of allowed ConsumerClass values per
-// event-model.md §6.1 EV-010/011/012.
-var validConsumerClasses = map[string]struct{}{
-	"synchronous":  {},
-	"asynchronous": {},
-	"observer":     {},
-}
-
 // validOnPanicPolicies is the closed set of allowed OnPanic values per
 // event-model.md §6.1 OQ-EV-007.
 var validOnPanicPolicies = map[string]struct{}{
@@ -93,12 +79,11 @@ var validOnPanicPolicies = map[string]struct{}{
 	"fail_daemon":         {},
 }
 
-// Valid reports whether all required fields carry valid values and all
-// enum placeholders hold a declared value.
+// Valid reports whether all required fields carry valid values.
 //
 // Rules:
 //   - ConsumerID is non-empty
-//   - ConsumerClass is one of: "synchronous", "asynchronous", "observer"
+//   - ConsumerClass.Valid() is true
 //   - EventPattern satisfies EventPattern.Validate()
 //   - Since, when non-nil, must not be EventID(uuid.Nil)
 //   - OffsetCheckpointEventID, when non-nil, must not be EventID(uuid.Nil)
@@ -108,7 +93,7 @@ func (s Subscription) Valid() bool {
 	if s.ConsumerID == "" {
 		return false
 	}
-	if _, ok := validConsumerClasses[s.ConsumerClass]; !ok {
+	if !s.ConsumerClass.Valid() {
 		return false
 	}
 	if err := s.EventPattern.Validate(); err != nil {

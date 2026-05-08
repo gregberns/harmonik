@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -10,12 +11,6 @@ import (
 	"syscall"
 	"time"
 )
-
-// OrphanBrProcess represents a `br` process re-parented to init (PPID==1)
-// that was found during the orphan sweep.
-type OrphanBrProcess struct {
-	PID int
-}
 
 // ProcessLister is the interface that SweepOrphanBr uses to enumerate candidate
 // orphan `br` processes. Implementations query the OS process table; tests
@@ -32,9 +27,9 @@ type ProcessLister interface {
 }
 
 // OSProcessLister is the production ProcessLister. It enumerates processes via
-// `ps -eo ppid,comm` and filters for name=="br" with PPID==1.
+// `ps -eo pid,ppid,comm` and filters for name=="br" with PPID==1.
 //
-// On both Linux and macOS, `ps -eo ppid,comm` is available and outputs one
+// On both Linux and macOS, `ps -eo pid,ppid,comm` is available and outputs one
 // line per process with parent PID and command basename. The comm field is
 // limited to 15 characters on Linux (sufficient for "br"); on macOS it is the
 // full basename.
@@ -87,14 +82,15 @@ func (OSProcessLister) ListOrphanBrPIDs(ctx context.Context) ([]int, error) {
 }
 
 // orphanSweepGracePeriod is the time the sweep waits after SIGTERM before
-// escalating to SIGKILL.
+// escalating to SIGKILL. Declared as a var so tests can shorten it without
+// changing the production call-site signature.
 //
 // Spec ref: beads-integration.md §4.5 BI-014a — "wait up to 5s, then SIGKILL."
-const orphanSweepGracePeriod = 5 * time.Second
+var orphanSweepGracePeriod = 5 * time.Second
 
 // orphanSweepPollInterval is how often the sweep polls for process exit during
 // the grace period.
-const orphanSweepPollInterval = 100 * time.Millisecond
+var orphanSweepPollInterval = 100 * time.Millisecond
 
 // SweepOrphanBr enumerates `br` processes re-parented to init (PPID==1),
 // sends SIGTERM to each, waits up to 5 s, then sends SIGKILL to those still
@@ -194,7 +190,7 @@ func orphanSweepIsPidLive(pid int) bool {
 	if err == nil {
 		return true
 	}
-	if err == syscall.ESRCH { //nolint:errorlint // syscall.Errno comparison is idiomatic
+	if errors.Is(err, syscall.ESRCH) {
 		return false
 	}
 	// EPERM: process exists but we cannot signal it — treat as alive.

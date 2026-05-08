@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"syscall"
 	"testing"
@@ -259,6 +260,91 @@ func TestBI014a_OSProcessLister_ParsesOutput(t *testing.T) {
 	// without asserting a specific count — this is a smoke test of the parsing
 	// path.
 	t.Logf("BI-014a os-lister: found %d orphan br processes with PPID==1: %v", len(pids), pids)
+}
+
+// TestBI014a_SweepOrphanBr_GracePollPath verifies that SweepOrphanBr exercises
+// the bounded-poll loop in its real grace-period path. A child process is
+// spawned that explicitly traps and ignores SIGTERM; the sweep must send
+// SIGTERM, observe the child still alive through the grace poll, then send
+// SIGKILL and confirm death. The context is NOT cancelled during the grace
+// period — only the production-default deadline path is exercised.
+//
+// The grace period is shortened to 600ms via the package-private knob so the
+// test completes in well under 10s.
+//
+// Spec ref: beads-integration.md §4.5 BI-014a — "wait up to 5s, then SIGKILL."
+func TestBI014a_SweepOrphanBr_GracePollPath(t *testing.T) {
+	t.Parallel()
+
+	// Sentinel: child body — install a SIGTERM handler that does nothing, then
+	// sleep indefinitely so SIGTERM cannot terminate it.
+	const sentinelEnv = "GO_BI014A_GRACEPOLL_CHILD"
+	if os.Getenv(sentinelEnv) == "1" {
+		// Child: ignore SIGTERM, block forever.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM)
+		select {}
+	}
+
+	// Spawn a child that explicitly ignores SIGTERM.
+	testBin := os.Args[0]
+	//nolint:gosec // G204: testBin is os.Args[0] — the test binary itself
+	cmd := exec.CommandContext(t.Context(), testBin, "-test.run=^TestBI014a_SweepOrphanBr_GracePollPath$")
+	cmd.Env = append(os.Environ(), sentinelEnv+"=1")
+	// Give child a new process group so signals target only it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("BI-014a grace-poll: cmd.Start: %v", err)
+	}
+	childPID := cmd.Process.Pid
+
+	// Cleanup: ensure the child is reaped regardless of how the test ends.
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill() //nolint:errcheck // cleanup error unactionable
+		_ = cmd.Wait()         //nolint:errcheck // cleanup error unactionable
+	})
+
+	// Give child time to settle and install its signal handler.
+	time.Sleep(80 * time.Millisecond)
+
+	if !plFixtureIsPidLive(childPID) {
+		t.Fatalf("BI-014a grace-poll: child PID %d not live after Start", childPID)
+	}
+
+	// Shorten the grace period and poll interval so the test completes quickly
+	// without using context cancellation (the point is to exercise the real
+	// deadline-based poll loop, not the ctx.Done() fast path).
+	origGrace := orphanSweepGracePeriod
+	origPoll := orphanSweepPollInterval
+	orphanSweepGracePeriod = 600 * time.Millisecond
+	orphanSweepPollInterval = 50 * time.Millisecond
+	t.Cleanup(func() {
+		orphanSweepGracePeriod = origGrace
+		orphanSweepPollInterval = origPoll
+	})
+
+	// Use a long-lived context — must NOT fire during the grace period.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	lister := orphanSweepFixtureFakeLister(childPID)
+	_, sweepErr := SweepOrphanBr(ctx, lister, orphanSweepFixtureNopLogger())
+	if sweepErr != nil {
+		t.Fatalf("BI-014a grace-poll: unexpected error: %v", sweepErr)
+	}
+
+	// Reap the child so plFixtureIsPidLive gives the true post-reap state.
+	// (SweepOrphanBr sends SIGKILL; the child may linger as a zombie in the
+	// process table until the parent calls Wait.)
+	_ = cmd.Wait() //nolint:errcheck // we expect a signal-killed exit
+
+	// After reap: child must be dead. This confirms that SIGKILL was issued
+	// (if only SIGTERM had been sent and the grace poll had been skipped, the
+	// SIGTERM-ignoring child would still be alive here).
+	if plFixtureIsPidLive(childPID) {
+		t.Errorf("BI-014a grace-poll: child PID %d still live after sweep and reap; want dead", childPID)
+	}
 }
 
 // TestBI014a_SweepOrphanBr_MultiplePIDs verifies that when the lister returns

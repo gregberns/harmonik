@@ -1,19 +1,66 @@
-// Package handler — launch-path resolution discipline (HC-042).
+// Package handler — launch-path resolution discipline (HC-042, SH-009).
 //
 // This file provides named, requirement-traceable sensors for the
 // handler-launch path-resolution discipline defined in
-// specs/handler-contract.md HC-042.  It is intentionally a pure helper:
-// no filesystem I/O, no process management.  All policy is captured here so
-// that the actual launch site (a future bead) can delegate entirely to
-// ResolveLaunchPath and trust that HC-042 is satisfied.
+// specs/handler-contract.md HC-042 and the twin-binary search-path
+// discipline defined in specs/scenario-harness.md SH-009.  It is
+// intentionally a pure helper: no filesystem I/O, no process management.
+// All policy is captured here so that the actual launch site (a future bead)
+// can delegate entirely to ResolveLaunchPath / ResolveTwinSearchPath and
+// trust that HC-042 / SH-009 are satisfied.
 package handler
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// EnvTwinSearchPath is the environment variable name that overrides the
+// default twin-binary search-path prefix per SH-009 precedence tier (ii).
+//
+// Cite: specs/scenario-harness.md §4.3.SH-009.
+const EnvTwinSearchPath = "HARMONIK_TWIN_SEARCH_PATH"
+
+// DefaultTwinDirName is the repo-relative subdirectory that holds built twin
+// binaries.  The in-tree default per SH-009 precedence tier (iii) is
+// <repo-root>/twins/.
+//
+// Cite: specs/scenario-harness.md §4.3.SH-009.
+const DefaultTwinDirName = "twins"
+
+// ResolveTwinSearchPath returns the absolute directory that MUST be used as
+// the twin-binary search-path prefix per scenario-harness.md SH-009.
+//
+//	cliOverride : the value of the harness --twin-search-path flag (may be "")
+//	repoRoot    : the daemon's repo-root absolute path (configured at startup)
+//
+// Precedence per SH-009:
+//
+//	(i)   cliOverride if non-empty
+//	(ii)  HARMONIK_TWIN_SEARCH_PATH env var if set and non-empty
+//	(iii) <repoRoot>/twins/ (in-tree default)
+//
+// The returned path is the directory; callers must join it with the binary
+// name (e.g., "claude-twin") to obtain a resolvable absolute path.  This
+// function performs no filesystem checks — existence verification is a
+// launch-time concern per HC-INV-005.
+func ResolveTwinSearchPath(cliOverride, repoRoot string) string {
+	// (i) CLI flag wins.
+	if cliOverride != "" {
+		return cliOverride
+	}
+
+	// (ii) Environment variable override.
+	if envVal := os.Getenv(EnvTwinSearchPath); envVal != "" {
+		return envVal
+	}
+
+	// (iii) In-tree default: <repo-root>/twins/.
+	return filepath.Join(repoRoot, DefaultTwinDirName)
+}
 
 // ErrLaunchPathMissing is returned by ResolveLaunchPath when binaryRef is
 // empty and systemHandler is false (or when binaryRef is empty for any

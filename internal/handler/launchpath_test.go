@@ -1,8 +1,9 @@
-// Tests for ResolveLaunchPath — handler-contract.md HC-042.
+// Tests for ResolveLaunchPath (HC-042) and ResolveTwinSearchPath (SH-009).
 //
 // This file provides requirement-traceable test coverage for the
-// handler-launch path-resolution discipline.  Every test name contains
-// "HC042" so that CI can grep for coverage of the specific requirement.
+// handler-launch path-resolution discipline.  Every ResolveLaunchPath test
+// name contains "HC042" and every ResolveTwinSearchPath test name contains
+// "SH009" so that CI can grep for coverage of the specific requirements.
 package handler
 
 import (
@@ -141,5 +142,65 @@ func TestResolveLaunchPath_HC042_SystemRelativePathWithSeparator(t *testing.T) {
 	want := repoRoot + "/vendor/claude/claude"
 	if got != want {
 		t.Errorf("ResolveLaunchPath = %q, want %q", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ResolveTwinSearchPath — scenario-harness.md SH-009
+// ---------------------------------------------------------------------------
+
+// TestResolveTwinSearchPath_SH009_CLIOverrideWins verifies that a non-empty
+// cliOverride is returned as-is, taking precedence over both the environment
+// variable and the in-tree default per SH-009 precedence tier (i).
+//
+// Note: t.Setenv requires no t.Parallel — env mutation is not goroutine-safe.
+func TestResolveTwinSearchPath_SH009_CLIOverrideWins(t *testing.T) {
+	t.Setenv(EnvTwinSearchPath, "/env/twins")
+
+	const cliPath = "/cli/twins"
+	got := ResolveTwinSearchPath(cliPath, "/repo")
+	if got != cliPath {
+		t.Errorf("ResolveTwinSearchPath = %q, want CLI override %q", got, cliPath)
+	}
+}
+
+// TestResolveTwinSearchPath_SH009_EnvVarOverrideWins verifies that when
+// cliOverride is empty, the HARMONIK_TWIN_SEARCH_PATH env var is returned per
+// SH-009 precedence tier (ii).
+func TestResolveTwinSearchPath_SH009_EnvVarOverrideWins(t *testing.T) {
+	const envPath = "/env/twins"
+	t.Setenv(EnvTwinSearchPath, envPath)
+
+	got := ResolveTwinSearchPath("", "/repo")
+	if got != envPath {
+		t.Errorf("ResolveTwinSearchPath = %q, want env-var override %q", got, envPath)
+	}
+}
+
+// TestResolveTwinSearchPath_SH009_InTreeDefaultApplied verifies that when
+// both cliOverride and the env var are empty, the function returns
+// <repoRoot>/twins/ per SH-009 precedence tier (iii).
+func TestResolveTwinSearchPath_SH009_InTreeDefaultApplied(t *testing.T) {
+	t.Setenv(EnvTwinSearchPath, "") // ensure env is absent
+
+	const repoRoot = "/repo"
+	got := ResolveTwinSearchPath("", repoRoot)
+	want := repoRoot + "/" + DefaultTwinDirName
+	if got != want {
+		t.Errorf("ResolveTwinSearchPath = %q, want in-tree default %q", got, want)
+	}
+}
+
+// TestResolveTwinSearchPath_SH009_EmptyEnvFallsThrough verifies that an
+// explicitly-set-but-empty env var is treated as unset, falling through to the
+// in-tree default per SH-009 ("non-empty" requirement).
+func TestResolveTwinSearchPath_SH009_EmptyEnvFallsThrough(t *testing.T) {
+	t.Setenv(EnvTwinSearchPath, "") // empty string must not win
+
+	const repoRoot = "/repo"
+	got := ResolveTwinSearchPath("", repoRoot)
+	want := repoRoot + "/" + DefaultTwinDirName
+	if got != want {
+		t.Errorf("ResolveTwinSearchPath with empty env: got %q, want in-tree default %q", got, want)
 	}
 }

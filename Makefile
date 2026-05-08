@@ -12,6 +12,9 @@ GOBIN_TOOLS := GOBIN=$(TOOLS_DIR)
 # Module path (matches go.mod).
 MODULE := github.com/gregberns/harmonik
 
+# Twin-binary output directory (SH-009 in-tree default: <repo-root>/twins/).
+TWINS_DIR := $(PWD)/twins
+
 # ---------------------------------------------------------------------------
 # Core build / test
 # ---------------------------------------------------------------------------
@@ -23,6 +26,30 @@ build:  ## go build ./... (no-op until first package lands; target must exist)
 .PHONY: test
 test:  ## go test ./... (no race; quick smoke)
 	go test ./...
+
+# ---------------------------------------------------------------------------
+# Twin-binary targets
+# ---------------------------------------------------------------------------
+
+# build-twin-claude: compile cmd/harmonik-twin-claude/ into twins/claude-twin.
+# Output path satisfies SH-009 in-tree default (<repo-root>/twins/) and
+# HC-036(c) binary-name convention (<real>-twin = claude-twin).
+# Cite: specs/scenario-harness.md §4.3.SH-009;
+#       specs/handler-contract.md §4.8.HC-036(c).
+.PHONY: build-twin-claude
+build-twin-claude:  ## Build cmd/harmonik-twin-claude → twins/claude-twin (SH-009 / HC-036)
+	@mkdir -p $(TWINS_DIR)
+	go build -o $(TWINS_DIR)/claude-twin ./cmd/harmonik-twin-claude
+
+# twins: build all twin binaries into twins/.
+# Add further per-twin prerequisites here as new twin packages land.
+.PHONY: twins
+twins: build-twin-claude  ## Build all twin binaries into twins/ (SH-009 search-path default)
+
+# build-all: build the module + all twin binaries.
+# Suitable as a pre-scenario-test warmup target.
+.PHONY: build-all
+build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
 # Tier 1 — check-fast (<15s target)

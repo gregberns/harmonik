@@ -26,6 +26,22 @@ When adding tests to an existing Go package, package-level test helpers MUST use
 8. **`err != io.EOF`** must be `errors.Is(err, io.EOF)` (errorlint).
 9. **gofmt-clean** struct field alignment — when a struct has columns of varying-length types, ALL columns must align uniformly. Run `gofmt -d <files>` before committing; output must be empty.
 
+## Worktree discipline (CRITICAL — read first)
+
+The orchestrator creates an isolated git worktree for you at a path like `/Users/gb/github/harmonik/.claude/worktrees/agent-<id>` on a branch named `worktree-agent-<id>`. **You commit on that branch, in that path. Never on `main`. Never in `/Users/gb/github/harmonik` directly.**
+
+Before EVERY `git commit`, verify:
+
+```
+pwd                                    # MUST be your worktree path, not /Users/gb/github/harmonik
+git branch --show-current              # MUST start with "worktree-agent-", NOT be "main"
+git rev-parse --show-toplevel          # MUST equal your worktree path
+```
+
+If `git branch --show-current` returns `main`, you have escaped your worktree. STOP. Do not commit. Report the escape in your final summary so the orchestrator can recover.
+
+The directives in `HANDOFF.md` describe a "merge dance" run from the main repo dir — that is the **orchestrator's** job after your review, NOT yours. You stay in the worktree for the entire dispatch. Read-only inspection of files under `/Users/gb/github/harmonik` is fine; ANY git write operation (commit, branch, reset, checkout) MUST happen from the worktree path.
+
 ## Commit format (REQUIRED — verbatim HEREDOC pattern with quoted EOF)
 
 ```
@@ -59,7 +75,7 @@ EXCEPTION — for **spec content** (enum values, regex shapes, RECORD field-type
 ## Reporting format
 
 At the end of every dispatch, report:
-- Worktree path and branch name
+- Worktree path and branch name (branch MUST start with `worktree-agent-`; flag if `main`)
 - Commit SHA
 - Files added/modified with brief descriptions
 - Test output summary (PASS counts; failure modes if any)

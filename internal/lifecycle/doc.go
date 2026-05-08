@@ -6,10 +6,12 @@
 // socket at .harmonik/daemon.sock (PL-003, PL-003a, PL-003b), stale-pidfile
 // detection (PL-024), and invariants PL-INV-001 and PL-INV-004.
 //
-// The daemon TYPE itself is owned by internal/daemon (not yet shipped). This
-// package currently contains only test files: the only non-test Go file is
-// this doc.go. Helpers, types, and placeholder primitives used exclusively by
-// tests are declared in *_test.go files in this package.
+// Production API: [AcquirePidfile] and [ReadPidfile] implement the PL-002b
+// pidfile write and read discipline; [Pidfile.Release] releases the flock fd.
+//
+// The daemon TYPE itself is owned by internal/daemon (not yet shipped).
+// Helpers, types, and placeholder primitives used exclusively by tests are
+// declared in *_test.go files in this package.
 //
 // See [specs/process-lifecycle.md] §10.2 for the full test-surface obligations.
 package lifecycle

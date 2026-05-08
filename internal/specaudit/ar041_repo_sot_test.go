@@ -103,9 +103,15 @@ var ar041FixtureExternalURL = regexp.MustCompile("(https?://[^\\s`>\\)\\]]+)")
 // names searched by the Option C audit.  A match inside a normative body is
 // a candidate AR-041 violation.
 //
-// "Slack" and "Linear" are concrete tool names; the remaining entries cover
-// the categories listed in AR-041 ("External wikis", "out-of-band knowledge
-// bases", "tribal-knowledge channels").
+// The vocabulary is restricted to the four AR-041-prohibited *category* names
+// ("external wikis", "out-of-band knowledge bases", "tribal-knowledge
+// channels"). Concrete tool names (Slack, Linear, Notion, Confluence, Jira,
+// etc.) are deliberately omitted: when such names appear in the spec corpus,
+// they typically sit in operator-discretion parentheticals (e.g., ON-005a
+// lists Slack as one possible source for an operator-supplied hash) rather
+// than as conformance dependencies. Adding them as audit terms would over-fire
+// on legitimate operator-guidance prose. A future bead may revisit this if
+// false-negative coverage becomes a real concern.
 //
 // Note: "out-of-band" on its own is a common technical phrase in protocol
 // specs (e.g. "out-of-band replay", "out-of-band signal") and is NOT included

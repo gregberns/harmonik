@@ -34,11 +34,9 @@ type Node struct {
 	RequiredSkills []string
 
 	// PolicyRef is an optional reference to the policy governing this node.
-	// See [control-points.md §6.3]. Bead hk-b3f.99 tracks the typed-alias
-	// upgrade from *string once PolicyRef is defined in core.
-	//
-	// TODO(hk-b3f.99): replace *string with PolicyRef typed alias.
-	PolicyRef *string
+	// See [control-points.md §6.4] (authoritative); also cited at §6.3 in some
+	// prior contexts — §6.4 is the correct anchor per execution-model.md §6.1.
+	PolicyRef *PolicyRef
 
 	// GateRef is an optional reference to the gate governing this node.
 	// See [control-points.md §6.2]. Bead hk-b3f.100 tracks the typed-alias

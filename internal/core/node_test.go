@@ -329,7 +329,7 @@ func TestNodeValid_OptionalRefsNil(t *testing.T) {
 func TestNodeValid_OptionalRefsSet(t *testing.T) {
 	t.Parallel()
 
-	pRef := "policies/p001"
+	pRef := PolicyRef("policies/p001")
 	gRef := "gates/g001"
 	fRef := "freedom-profiles/fp001"
 	bRef := "budgets/b001"

@@ -17,6 +17,7 @@ import "github.com/google/uuid"
 //   - TargetRunID is not uuid.Nil.
 //   - Context is non-empty iff Verdict == VerdictResumeWithContext (RC-022a).
 //   - CheckpointRef is non-nil iff Verdict == VerdictResetToCheckpoint.
+//   - SnapshotToken.Valid() returns true.
 //   - SchemaVersion is > 0.
 //
 // # Schema compatibility
@@ -77,6 +78,7 @@ type VerdictEvent struct {
 //   - TargetRunID is not uuid.Nil.
 //   - Context is non-empty iff Verdict == VerdictResumeWithContext (RC-022a).
 //   - CheckpointRef is non-nil iff Verdict == VerdictResetToCheckpoint.
+//   - SnapshotToken.Valid() returns true.
 //   - SchemaVersion is > 0.
 func (e VerdictEvent) Valid() bool {
 	if !e.Verdict.Valid() {
@@ -106,6 +108,9 @@ func (e VerdictEvent) Valid() bool {
 		return false
 	}
 
+	if !e.SnapshotToken.Valid() {
+		return false
+	}
 	if e.SchemaVersion <= 0 {
 		return false
 	}

@@ -283,6 +283,60 @@ func TestVerdictEventValid_NegativeSchemaVersion(t *testing.T) {
 	}
 }
 
+// --- SnapshotToken delegation (hk-b3f.106) ---
+
+// TestVerdictEventValid_EmptySnapshotToken verifies that VerdictEvent.Valid()
+// returns false when SnapshotToken has any of its three required fields empty.
+// A zero-value SnapshotToken must also be rejected.
+func TestVerdictEventValid_EmptySnapshotToken(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		token SnapshotToken
+	}{
+		{
+			name:  "zero-value",
+			token: SnapshotToken{},
+		},
+		{
+			name: "empty-GitHeadHash",
+			token: SnapshotToken{
+				GitHeadHash:         "",
+				BeadsAuditEntryID:   "audit-001",
+				CapturedAtTimestamp: "2026-05-08T00:00:00Z",
+			},
+		},
+		{
+			name: "empty-BeadsAuditEntryID",
+			token: SnapshotToken{
+				GitHeadHash:         "abc123",
+				BeadsAuditEntryID:   "",
+				CapturedAtTimestamp: "2026-05-08T00:00:00Z",
+			},
+		},
+		{
+			name: "empty-CapturedAtTimestamp",
+			token: SnapshotToken{
+				GitHeadHash:         "abc123",
+				BeadsAuditEntryID:   "audit-001",
+				CapturedAtTimestamp: "",
+			},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := b3f93VerdictEventValid(t)
+			e.SnapshotToken = tc.token
+			if e.Valid() {
+				t.Errorf("Valid() = true with SnapshotToken{%+v}, want false (SnapshotToken.Valid() must be checked)", tc.token)
+			}
+		})
+	}
+}
+
 // --- EvidenceRef is optional ---
 
 func TestVerdictEventValid_EvidenceRefNil(t *testing.T) {

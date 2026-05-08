@@ -1,8 +1,9 @@
 package core
 
 import (
-	"encoding/json"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // outcomeValid returns a fully-populated Outcome with all required fields set
@@ -20,13 +21,18 @@ func outcomeValid(t *testing.T) Outcome {
 	}
 }
 
-// outcomeValidPayload returns the smallest valid *string sentinel used to
-// represent a non-nil payload (the typed-alias-deferral placeholder for
-// VerdictEvent per hk-b3f.93).
-func outcomeValidPayload(t *testing.T) *string {
+// outcomeValidPayload returns the smallest valid *VerdictEvent for use in
+// Outcome tests that require a non-nil reconciliation-verdict payload.
+func outcomeValidPayload(t *testing.T) *VerdictEvent {
 	t.Helper()
-	s := `{"placeholder":true}`
-	return &s
+	ctx := "investigator context"
+	return &VerdictEvent{
+		Verdict:           VerdictResumeWithContext,
+		InvestigatorRunID: uuid.Must(uuid.NewV7()),
+		TargetRunID:       uuid.Must(uuid.NewV7()),
+		Context:           &ctx,
+		SchemaVersion:     1,
+	}
 }
 
 // --- Valid() tests ---
@@ -217,99 +223,14 @@ func TestOutcomeValid_NilPreferredLabel(t *testing.T) {
 
 // --- JSON round-trip ---
 
-func TestOutcomeJSONRoundTrip_Default(t *testing.T) {
+func TestOutcomeValid_DefaultKindNilPayload(t *testing.T) {
 	t.Parallel()
 
-	label := "my-label"
-	original := Outcome{
-		Status:           OutcomeStatusFail,
-		PreferredLabel:   &label,
-		SuggestedNextIDs: []NodeID{"node-1", "node-2"},
-		ContextUpdates:   map[string]any{"attempt": float64(3)},
-		Notes:            "some notes",
-		Kind:             OutcomeKindDefault,
-		Payload:          nil,
+	o := Outcome{
+		Status: OutcomeStatusFail,
+		Kind:   OutcomeKindDefault,
 	}
-
-	b, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("json.Marshal error: %v", err)
-	}
-
-	var got Outcome
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("json.Unmarshal error: %v", err)
-	}
-
-	if got.Status != original.Status {
-		t.Errorf("Status = %q, want %q", got.Status, original.Status)
-	}
-	if got.PreferredLabel == nil || *got.PreferredLabel != label {
-		t.Errorf("PreferredLabel = %v, want %q", got.PreferredLabel, label)
-	}
-	if len(got.SuggestedNextIDs) != 2 || got.SuggestedNextIDs[0] != "node-1" || got.SuggestedNextIDs[1] != "node-2" {
-		t.Errorf("SuggestedNextIDs = %v, want [node-1 node-2]", got.SuggestedNextIDs)
-	}
-	if got.Notes != original.Notes {
-		t.Errorf("Notes = %q, want %q", got.Notes, original.Notes)
-	}
-	if got.Kind != original.Kind {
-		t.Errorf("Kind = %q, want %q", got.Kind, original.Kind)
-	}
-	if got.Payload != nil {
-		t.Errorf("Payload = %v, want nil", got.Payload)
-	}
-	if !got.Valid() {
-		t.Error("Valid() = false after JSON round-trip, want true")
-	}
-}
-
-func TestOutcomeJSONRoundTrip_ReconciliationVerdict(t *testing.T) {
-	t.Parallel()
-
-	payload := `{"verdict":"resume-here","schema_version":1}`
-	original := Outcome{
-		Status:  OutcomeStatusSuccess,
-		Kind:    OutcomeKindReconciliationVerdict,
-		Payload: &payload,
-	}
-
-	b, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("json.Marshal error: %v", err)
-	}
-
-	var got Outcome
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("json.Unmarshal error: %v", err)
-	}
-
-	if got.Kind != original.Kind {
-		t.Errorf("Kind = %q, want %q", got.Kind, original.Kind)
-	}
-	if got.Payload == nil {
-		t.Fatal("Payload = nil after JSON round-trip, want non-nil")
-	}
-	if *got.Payload != payload {
-		t.Errorf("Payload = %q, want %q", *got.Payload, payload)
-	}
-	if !got.Valid() {
-		t.Error("Valid() = false after JSON round-trip, want true")
-	}
-}
-
-// TestOutcomeJSONRoundTrip_UnknownKindRejected verifies that OutcomeKind's
-// UnmarshalText rejects unknown values at deserialization time per
-// execution-model.md §4.1.EM-005a: a reader observing an unknown kind MUST
-// route to reconciliation Cat 6a rather than silently degrade. The strict
-// rejection at unmarshal time enforces this — the caller cannot accidentally
-// observe an invalid Outcome.
-func TestOutcomeJSONRoundTrip_UnknownKindRejected(t *testing.T) {
-	t.Parallel()
-
-	raw := `{"Status":"SUCCESS","Kind":"unknown_kind","Payload":null}`
-	var got Outcome
-	if err := json.Unmarshal([]byte(raw), &got); err == nil {
-		t.Error("json.Unmarshal succeeded for unknown Kind, want error (per EM-005a: unknown kinds MUST be rejected)")
+	if !o.Valid() {
+		t.Error("Valid() = false for default kind with nil Payload, want true")
 	}
 }

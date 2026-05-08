@@ -14,10 +14,7 @@ package core
 //   - Kind == OutcomeKindDefault: Payload MUST be nil. The cascade and durability
 //     decision operate on the remaining fields unchanged.
 //   - Kind == OutcomeKindReconciliationVerdict: Payload MUST be a *VerdictEvent
-//     per [reconciliation/schemas.md §6.1]. At MVH VerdictEvent is not yet
-//     declared in internal/core/; the Payload field uses *string as a
-//     typed-alias-deferral placeholder (see TODO below). Follow-up bead:
-//     hk-b3f.93 — "Define VerdictEvent record in internal/core".
+//     per [reconciliation/schemas.md §6.1] (RC-022a).
 //
 // Unknown Kind values route to reconciliation Cat 6a per
 // [reconciliation/spec.md §8.11]; callers MUST NOT silently fall back to
@@ -73,13 +70,7 @@ type Outcome struct {
 	// the cascade (§4.10) and the durability decision (§4.5.EM-023a); it is
 	// consumed exclusively by the RC-025a verdict-executor on the reconciliation
 	// outcome-spine path.
-	//
-	// TODO(hk-b3f.93): replace *string placeholder with *VerdictEvent once
-	// internal/core/verdictevent.go lands (reconciliation/schemas.md §6.1
-	// VerdictEvent, 8-field RECORD). Until then this field holds a raw JSON
-	// blob or nil; callers that need to consume the verdict MUST assert
-	// Kind == OutcomeKindReconciliationVerdict and decode the blob themselves.
-	Payload *string
+	Payload *VerdictEvent
 }
 
 // Valid reports whether the Outcome satisfies its structural invariants.

@@ -3,6 +3,8 @@ package scenario
 import (
 	"fmt"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // SuiteVerdict is the top-level outcome of a suite execution.
@@ -62,12 +64,8 @@ func (v *SuiteVerdict) UnmarshalText(text []byte) error {
 // Spec ref: specs/scenario-harness.md §6.1 RECORD SuiteResult.
 type SuiteResult struct {
 	// SuiteID is the UUIDv7 identifier generated at suite invocation.
-	//
-	// TODO(hk-i0tw.54): this field uses a string placeholder pending the typed
-	// core.SuiteID alias (specs/scenario-harness.md §6.1 field suite_id UUID).
-	// When hk-i0tw.54 lands, change this field to core.SuiteID (non-breaking:
-	// string-constant assignment is assignable to the typed alias).
-	SuiteID string `json:"suite_id" yaml:"suite_id"`
+	// Spec ref: specs/scenario-harness.md §6.1 RECORD SuiteResult — field suite_id UUID.
+	SuiteID core.SuiteID `json:"suite_id" yaml:"suite_id"`
 
 	// StartedAt is the RFC 3339 UTC wall-clock timestamp at suite invocation
 	// (millisecond precision).
@@ -100,7 +98,7 @@ type SuiteResult struct {
 // Valid reports whether the SuiteResult is structurally well-formed per
 // specs/scenario-harness.md §6.1 RECORD SuiteResult:
 //
-//   - SuiteID is non-empty.
+//   - SuiteID is non-zero.
 //   - StartedAt is non-zero.
 //   - CompletedAt is non-zero and not before StartedAt.
 //   - FixtureRoot is non-empty.
@@ -110,7 +108,7 @@ type SuiteResult struct {
 //   - Suite-verdict invariant (§6.1 / SH-034): SuiteVerdict MUST be pass iff
 //     every Results element has Verdict=pass (including the empty-list case).
 func (s SuiteResult) Valid() bool {
-	if s.SuiteID == "" {
+	if s.SuiteID == (core.SuiteID{}) {
 		return false
 	}
 	if s.StartedAt.IsZero() {

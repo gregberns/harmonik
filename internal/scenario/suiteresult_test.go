@@ -5,7 +5,21 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
+
+// mustParseSuiteID constructs a core.SuiteID from a UUID string, failing the test on error.
+func mustParseSuiteID(t *testing.T, s string) core.SuiteID {
+	t.Helper()
+
+	var id core.SuiteID
+	if err := id.UnmarshalText([]byte(s)); err != nil {
+		t.Fatalf("SuiteID UnmarshalText(%q): %v", s, err)
+	}
+
+	return id
+}
 
 // suiteResultFixtureStartedAt is a stable non-zero timestamp used by suite fixtures.
 var suiteResultFixtureStartedAt = time.Date(2026, 5, 7, 9, 0, 0, 0, time.UTC)
@@ -18,7 +32,7 @@ var suiteResultFixtureCompletedAt = time.Date(2026, 5, 7, 9, 1, 0, 0, time.UTC)
 func suiteResultFixtureValid(t *testing.T) SuiteResult {
 	t.Helper()
 	return SuiteResult{
-		SuiteID:       "018f5e1a-0000-7000-8000-000000000001",
+		SuiteID:       mustParseSuiteID(t, "018f5e1a-0000-7000-8000-000000000001"),
 		StartedAt:     suiteResultFixtureStartedAt,
 		CompletedAt:   suiteResultFixtureCompletedAt,
 		FixtureRoot:   "/tmp/harmonik-harness-abc123",
@@ -33,7 +47,7 @@ func suiteResultFixtureValid(t *testing.T) SuiteResult {
 func suiteResultFixtureEmpty(t *testing.T) SuiteResult {
 	t.Helper()
 	return SuiteResult{
-		SuiteID:       "018f5e1a-0000-7000-8000-000000000002",
+		SuiteID:       mustParseSuiteID(t, "018f5e1a-0000-7000-8000-000000000002"),
 		StartedAt:     suiteResultFixtureStartedAt,
 		CompletedAt:   suiteResultFixtureCompletedAt,
 		FixtureRoot:   "/tmp/harmonik-harness-empty",
@@ -199,11 +213,11 @@ func TestSuiteResultValid(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "invalid: empty SuiteID",
+			name: "invalid: zero SuiteID",
 			build: func(t *testing.T) SuiteResult {
 				t.Helper()
 				r := suiteResultFixtureValid(t)
-				r.SuiteID = ""
+				r.SuiteID = core.SuiteID{}
 				return r
 			},
 			want: false,
@@ -335,7 +349,7 @@ func TestSuiteResultJSONRoundTrip(t *testing.T) {
 	completed := time.Date(2026, 5, 7, 8, 5, 0, 0, time.UTC)
 
 	input := SuiteResult{
-		SuiteID:       "018f5e1a-0000-7000-8000-000000000003",
+		SuiteID:       mustParseSuiteID(t, "018f5e1a-0000-7000-8000-000000000003"),
 		StartedAt:     started,
 		CompletedAt:   completed,
 		FixtureRoot:   "/tmp/harmonik-harness-roundtrip",

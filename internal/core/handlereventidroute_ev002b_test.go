@@ -35,32 +35,11 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-// repoRoot walks up from the test file's directory until it finds a go.mod,
-// then returns that directory as the repository root. This avoids hard-coding
-// absolute paths and works in any checkout location.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("EV-002b: runtime.Caller(0) failed; cannot locate repo root")
-	}
-	dir := filepath.Dir(thisFile)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("EV-002b: could not locate go.mod walking up from " + thisFile)
-		}
-		dir = parent
-	}
-}
+// repoRoot is defined in beadsadoption_bi001_test.go (same package); reused here.
 
 // ── Shape A: surface-area sensor ──────────────────────────────────────────────
 

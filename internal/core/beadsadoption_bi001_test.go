@@ -46,7 +46,7 @@ func TestBI001_GoModHasNoBeadsLibraryDep(t *testing.T) {
 	root := repoRoot(t)
 	goMod := filepath.Join(root, "go.mod")
 
-	data, err := os.ReadFile(goMod)
+	data, err := os.ReadFile(goMod) //nolint:gosec // G304: path is constructed from runtime.Caller + known relative segments, not user input
 	if err != nil {
 		t.Fatalf("os.ReadFile(%q): %v", goMod, err)
 	}
@@ -110,7 +110,7 @@ func TestBI001_SpecContainsSQLiteAndDoltDeclaration(t *testing.T) {
 	root := repoRoot(t)
 	specFile := filepath.Join(root, "specs", "beads-integration.md")
 
-	data, err := os.ReadFile(specFile)
+	data, err := os.ReadFile(specFile) //nolint:gosec // G304: path is constructed from runtime.Caller + known relative segments, not user input
 	if err != nil {
 		t.Fatalf("os.ReadFile(%q): %v", specFile, err)
 	}

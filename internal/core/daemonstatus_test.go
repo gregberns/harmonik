@@ -29,8 +29,8 @@ func TestDaemonStatusValid(t *testing.T) {
 		"made_up",
 		"Starting",
 		"READY",
-		"stopped_",        // trailing underscore
-		"drain",           // prefix of draining
+		"stopped_", // trailing underscore
+		"drain",    // prefix of draining
 		"unknown",
 	}
 	for _, s := range invalid {

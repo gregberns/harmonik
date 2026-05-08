@@ -273,9 +273,13 @@ func TestBI014a_OSProcessLister_ParsesOutput(t *testing.T) {
 // test completes in well under 10s.
 //
 // Spec ref: beads-integration.md §4.5 BI-014a — "wait up to 5s, then SIGKILL."
+//
+// NOT t.Parallel(): this test mutates package-level vars
+// (orphanSweepGracePeriod, orphanSweepPollInterval) and would race with
+// concurrent readers in other parallel tests. Running serially before the
+// parallel block is safe — t.Cleanup restores the originals before any
+// parallel test starts.
 func TestBI014a_SweepOrphanBr_GracePollPath(t *testing.T) {
-	t.Parallel()
-
 	// Sentinel: child body — install a SIGTERM handler that does nothing, then
 	// sleep indefinitely so SIGTERM cannot terminate it.
 	const sentinelEnv = "GO_BI014A_GRACEPOLL_CHILD"

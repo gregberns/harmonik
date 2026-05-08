@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // pidfileLockFixtureWritePidfile writes a three-line pidfile at the canonical
@@ -226,6 +227,16 @@ func TestProbePidfileLock_ReleaseThenProbeNotHeld(t *testing.T) {
 	if err := pf.Release(); err != nil {
 		t.Fatalf("TestProbePidfileLock_ReleaseThenProbeNotHeld: Release: %v", err)
 	}
+
+	// macOS fd recycling / goroutine fd-table sharing can cause the flock to
+	// appear still held immediately after Release() closes the fd. Force a GC
+	// cycle to flush any finalizer-held references, then yield to the scheduler
+	// so the kernel can propagate the flock release before the probe opens the
+	// file. Without this guard the test fails ~1/20 runs under -count=1 -p 1
+	// on macOS.
+	runtime.GC()
+	runtime.Gosched()
+	time.Sleep(time.Millisecond)
 
 	status, probedPID, probeErr := ProbePidfileLock(projectDir)
 

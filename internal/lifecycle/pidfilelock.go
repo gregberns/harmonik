@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -116,15 +117,32 @@ func ProbePidfileLock(projectDir string) (PidfileLockStatus, int, error) {
 
 	// Step 4a: kill(pid, 0) succeeded (or EPERM — process exists).
 	// The flock was acquirable but the PID is alive. Attempt optional
-	// platform-specific corroboration.
+	// platform-specific corroboration to distinguish two sub-cases:
+	//
+	//   a) PID was recycled after an OS reboot and now belongs to a non-harmonik
+	//      process: corroboration returns a cmdline with no "harmonik" substring.
+	//      Since the flock is not held and the process is unrelated, the pidfile
+	//      is stale → return PidfileLockStatusStale.
+	//
+	//   b) PID belongs to a harmonik process that somehow lost its flock (e.g.
+	//      force-closed fd without cleanup): corroboration returns a cmdline
+	//      containing "harmonik". This is the ambiguous case — we cannot safely
+	//      take over the pidfile without risking two daemons → return
+	//      PidfileLockStatusAmbiguous.
+	//
+	// When corroboration is unavailable (darwin stub, unreadable /proc entry),
+	// ok=false and we fall through to the conservative Ambiguous path.
+	//
+	// Spec ref: process-lifecycle.md §4.1 PL-002a — "corroboration distinguishes
+	// recycled-PID (non-harmonik cmdline ⇒ Stale) from a live harmonik daemon
+	// that lost its flock (harmonik cmdline ⇒ Ambiguous)."
 	cmdline, ok := probePidCmdline(pid)
 	if ok && len(cmdline) > 0 {
-		// Corroboration available: we can distinguish a recycled PID from a
-		// harmonik daemon that somehow lost its lock. Since the flock is not
-		// held, this is not a live harmonik daemon (a live harmonik daemon
-		// would hold the flock). The recorded PID belongs to a different
-		// process. Treat as stale: the recycled-PID process is unrelated.
-		_ = cmdline // corroboration data available for structured logging by caller
+		if strings.Contains(cmdline, "harmonik") {
+			// A harmonik process holds this PID but not the flock: ambiguous.
+			return PidfileLockStatusAmbiguous, pid, ErrPidfileAmbiguous
+		}
+		// Non-harmonik process: recycled PID, unrelated to the recorded daemon.
 		return PidfileLockStatusStale, pid, nil
 	}
 

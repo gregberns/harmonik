@@ -14,7 +14,6 @@ package core
 // Several fields use placeholder types pending typed-alias beads:
 //   - CandidateActions / ChosenAction → TODO(hk-zs0.56): hoist to []core.ActionDescriptor /
 //     core.ActionDescriptor once that bead lands.
-//   - PolicyVersion → TODO(hk-zs0.57): hoist to core.PolicyVersion once that bead lands.
 type Trace struct {
 	// PriorState is the run state immediately before the transition (AR-012 field 1).
 	// Required (all subfields must be non-zero per State.Valid()).
@@ -44,10 +43,8 @@ type Trace struct {
 
 	// PolicyVersion identifies the policy snapshot under which the decision was
 	// made (AR-012 field 5; execution-model.md §6.1 policy_version).
-	// Required (non-empty).
-	//
-	// TODO(hk-zs0.57): hoist to core.PolicyVersion once the typed alias lands.
-	PolicyVersion string
+	// Required (must satisfy PolicyVersion.Valid()).
+	PolicyVersion PolicyVersion
 
 	// ParameterVector holds the agent's parameter state at decision time
 	// (AR-012 field 6). Structured; key-value map. MAY be nil when the actor
@@ -90,7 +87,7 @@ type Trace struct {
 //   - ActorRole satisfies ActorRole.Valid()
 //   - CandidateActions is non-nil (may be empty slice)
 //   - ChosenAction is non-empty
-//   - PolicyVersion is non-empty
+//   - PolicyVersion satisfies PolicyVersion.Valid()
 //   - Outcome satisfies OutcomeStatus.Valid()
 //   - NextState satisfies State.Valid()
 //   - Confidence, when non-nil, is in [0.0, 1.0]
@@ -111,7 +108,7 @@ func (tr Trace) Valid() bool {
 	if tr.ChosenAction == "" {
 		return false
 	}
-	if tr.PolicyVersion == "" {
+	if !tr.PolicyVersion.Valid() {
 		return false
 	}
 	if !tr.Outcome.Valid() {

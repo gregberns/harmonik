@@ -35,7 +35,7 @@ func traceFixture(t *testing.T) Trace {
 		ActorRole:        ActorRoleBuilder,
 		CandidateActions: []string{"action-a", "action-b", "action-c"},
 		ChosenAction:     "action-a",
-		PolicyVersion:    "v1.0.0",
+		PolicyVersion:    PolicyVersion("v1.0.0"),
 		ParameterVector:  map[string]any{"temperature": 0.7, "max_tokens": 4096},
 		Evidence:         map[string]any{"lint_passed": true, "test_count": 42},
 		Outcome:          OutcomeStatusSuccess,
@@ -131,11 +131,12 @@ func TestTraceValid_EmptyChosenAction(t *testing.T) {
 }
 
 // TestTraceValid_EmptyPolicyVersion verifies that an empty PolicyVersion fails Valid().
+// (Kept for regression coverage; see policyversion_test.go for full PolicyVersion test suite.)
 func TestTraceValid_EmptyPolicyVersion(t *testing.T) {
 	t.Parallel()
 
 	tr := traceFixture(t)
-	tr.PolicyVersion = ""
+	tr.PolicyVersion = PolicyVersion("")
 	if tr.Valid() {
 		t.Error("Valid() = true with empty PolicyVersion, want false")
 	}
@@ -267,7 +268,7 @@ func TestTraceJSONRoundTrip(t *testing.T) {
 		t.Errorf("ChosenAction: got %q, want %q", decoded.ChosenAction, original.ChosenAction)
 	}
 	if decoded.PolicyVersion != original.PolicyVersion {
-		t.Errorf("PolicyVersion: got %q, want %q", decoded.PolicyVersion, original.PolicyVersion)
+		t.Errorf("PolicyVersion: got %q, want %q", string(decoded.PolicyVersion), string(original.PolicyVersion))
 	}
 	if decoded.Outcome != original.Outcome {
 		t.Errorf("Outcome: got %q, want %q", decoded.Outcome, original.Outcome)

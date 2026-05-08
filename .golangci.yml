@@ -66,6 +66,28 @@ linters:
       # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.
       # Full matrix is in subsystem-organization.md. Example stub:
       rules:
+        # BI-002: All Beads interactions MUST route through internal/brcli (the sole adapter).
+        # No other harmonik package may access Beads's SQLite file directly or link against
+        # a SQLite driver for Beads access. internal/brcli and internal/testhelpers are exempt.
+        #
+        # The ban covers database/sql (the stdlib SQL interface) and the four most common
+        # pure-Go and cgo SQLite drivers. Additional drivers should be added here if they
+        # appear in go.sum. The fixture in testdata/depguard/beads_direct_access_fixture.go
+        # (//go:build ignore) exists to verify this rule fires when golangci-lint is run against it.
+        #
+        # Rationale: specs/beads-integration.md §4.2 BI-002.
+        beads-direct-access-ban:
+          files:
+            - "**/*.go"
+            - "!**/internal/brcli/**"
+            - "!**/internal/testhelpers/**"
+          deny:
+            - { pkg: "database/sql", desc: "BI-002: Beads access must route through internal/brcli; direct SQL access is forbidden (specs/beads-integration.md §4.2)" }
+            - { pkg: "github.com/mattn/go-sqlite3", desc: "BI-002: Beads SQLite driver must not be linked outside internal/brcli (specs/beads-integration.md §4.2)" }
+            - { pkg: "modernc.org/sqlite", desc: "BI-002: Beads SQLite driver must not be linked outside internal/brcli (specs/beads-integration.md §4.2)" }
+            - { pkg: "crawshaw.io/sqlite", desc: "BI-002: Beads SQLite driver must not be linked outside internal/brcli (specs/beads-integration.md §4.2)" }
+            - { pkg: "zombiezen.com/go/sqlite", desc: "BI-002: Beads SQLite driver must not be linked outside internal/brcli (specs/beads-integration.md §4.2)" }
+
         # PL-INV-002: the daemon binary MUST NOT import any LLM SDK in its transitive closure.
         # At MVH no packages exist yet, so this is encoded as a global deny rule covering all source files.
         # When cmd/harmonik/ and internal/daemon/ land, narrow this rule to those file trees

@@ -3,6 +3,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -156,4 +157,4 @@ func (c *CycleCounter) ReconcileFromTransitions(runID RunID, transitions []Trans
 // triggers that class assignment. The handler is never consulted at cap-hit
 // per §8.6 and OQ-EM-006 (daemon-observed only; ErrCompilationLoop is NOT
 // one of the five handler-contract sentinels in handler-contract.md §4.5).
-var ErrCompilationLoop = fmt.Errorf("failure class %s", FailureClassCompilationLoop)
+var ErrCompilationLoop = errors.New("failure class " + string(FailureClassCompilationLoop))

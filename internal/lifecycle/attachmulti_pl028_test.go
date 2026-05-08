@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
 )
 
 // cliFixtureAttachState tracks simulated daemon state for multi-attach tests.
-// The daemon is considered "running" as long as activeAttaches + totalDetached
-// reflects that no detach triggered a shutdown.
+// All counter fields are guarded by mu; readers MUST use the accessor methods.
 type cliFixtureAttachState struct {
 	mu             sync.Mutex
 	activeAttaches int32 // current number of live attach connections
@@ -31,9 +29,9 @@ func (s *cliFixtureAttachState) Attach() int32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	atomic.AddInt32(&s.activeAttaches, 1)
-	id := atomic.AddInt32(&s.totalAttached, 1)
-	return id
+	s.activeAttaches++
+	s.totalAttached++
+	return s.totalAttached
 }
 
 // Detach records a detach. The daemon remains running.
@@ -42,8 +40,8 @@ func (s *cliFixtureAttachState) Detach() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	atomic.AddInt32(&s.activeAttaches, -1)
-	atomic.AddInt32(&s.totalDetached, 1)
+	s.activeAttaches--
+	s.totalDetached++
 	// Detach does NOT change daemonRunning.
 }
 
@@ -54,6 +52,30 @@ func (s *cliFixtureAttachState) DaemonRunning() bool {
 	defer s.mu.Unlock()
 
 	return s.daemonRunning
+}
+
+// ActiveAttaches returns the current number of live attach connections.
+func (s *cliFixtureAttachState) ActiveAttaches() int32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.activeAttaches
+}
+
+// TotalAttached returns the cumulative attach count.
+func (s *cliFixtureAttachState) TotalAttached() int32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.totalAttached
+}
+
+// TotalDetached returns the cumulative detach count.
+func (s *cliFixtureAttachState) TotalDetached() int32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.totalDetached
 }
 
 // cliFixtureMultiAttachServer is a Unix socket server that accepts N concurrent
@@ -236,17 +258,17 @@ func TestPL028_AttachMultipleSimultaneous(t *testing.T) {
 	}
 
 	// Total attached must equal numAttachers.
-	if got := atomic.LoadInt32(&srv.state.totalAttached); int(got) != numAttachers {
+	if got := srv.state.TotalAttached(); int(got) != numAttachers {
 		t.Errorf("PL-028 multi-attach: totalAttached = %d, want %d", got, numAttachers)
 	}
 
 	// Total detached must equal numAttachers.
-	if got := atomic.LoadInt32(&srv.state.totalDetached); int(got) != numAttachers {
+	if got := srv.state.TotalDetached(); int(got) != numAttachers {
 		t.Errorf("PL-028 multi-attach: totalDetached = %d, want %d", got, numAttachers)
 	}
 
 	// activeAttaches must be zero (all sessions have ended).
-	if got := atomic.LoadInt32(&srv.state.activeAttaches); got != 0 {
+	if got := srv.state.ActiveAttaches(); got != 0 {
 		t.Errorf("PL-028 multi-attach: activeAttaches = %d after all detaches, want 0", got)
 	}
 }
@@ -321,7 +343,7 @@ func TestPL028_AttachSessionIndependence(t *testing.T) {
 	}
 
 	// Verify all are active.
-	if got := atomic.LoadInt32(&state.activeAttaches); int(got) != numSessions {
+	if got := state.ActiveAttaches(); int(got) != numSessions {
 		t.Fatalf("PL-028 session-independence: activeAttaches = %d after attaching %d, want %d",
 			got, numSessions, numSessions)
 	}
@@ -336,7 +358,7 @@ func TestPL028_AttachSessionIndependence(t *testing.T) {
 
 	// Remaining sessions must still be counted as active.
 	wantActive := numSessions - 1
-	if got := atomic.LoadInt32(&state.activeAttaches); int(got) != wantActive {
+	if got := state.ActiveAttaches(); int(got) != wantActive {
 		t.Errorf("PL-028 session-independence: activeAttaches = %d after one detach, want %d",
 			got, wantActive)
 	}
@@ -352,7 +374,7 @@ func TestPL028_AttachSessionIndependence(t *testing.T) {
 	}
 
 	// All sessions detached.
-	if got := atomic.LoadInt32(&state.activeAttaches); got != 0 {
+	if got := state.ActiveAttaches(); got != 0 {
 		t.Errorf("PL-028 session-independence: activeAttaches = %d after all detaches, want 0", got)
 	}
 }

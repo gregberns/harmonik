@@ -35,8 +35,8 @@ type cliFixtureCommand struct {
 // tests elsewhere.
 //
 // "harmonik resume" and "harmonik list" are part of the ON §4.10 ON-041
-// surface; they share the socket but are not listed in the eight PL-028
-// entry-point bullets. They are included here for completeness.
+// surface and share the socket; they are intentionally OUT OF SCOPE for
+// this PL-028 fixture, which covers only the eight entry-point bullets.
 var cliFixtureCommands = []cliFixtureCommand{
 	{
 		name:          "daemon",

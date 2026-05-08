@@ -2,30 +2,6 @@ package core
 
 import "github.com/google/uuid"
 
-// SnapshotToken bounds the investigator's view of the system state at dispatch
-// time (reconciliation/schemas.md §6.1 RECORD SnapshotToken).
-//
-// All three fields are required (non-empty / non-zero). The token is consumed
-// by the staleness check at verdict-execution time per RC-024.
-//
-// TODO(hk-b3f.94): SnapshotToken is currently a plain struct; a dedicated
-// typed wrapper may be introduced in follow-up bead hk-b3f.94
-// "Define SnapshotToken typed alias (reconciliation/schemas.md §6.1)".
-type SnapshotToken struct {
-	// GitHeadHash is the SHA of the project HEAD (or the reference the
-	// investigator reads from) at snapshot time. Required (non-empty).
-	GitHeadHash string
-
-	// BeadsAuditEntryID is the ID of the most recent Beads audit-log entry at
-	// capture time. Required (non-empty).
-	BeadsAuditEntryID string
-
-	// CapturedAtTimestamp is the RFC 3339 wall-clock time at which the token
-	// was captured. Advisory display only per [event-model.md §4.3].
-	// Required (non-zero).
-	CapturedAtTimestamp string
-}
-
 // VerdictEvent is the payload type for Outcome.Payload when
 // Outcome.Kind == OutcomeKindReconciliationVerdict
 // (reconciliation/schemas.md §6.1 RECORD VerdictEvent, RC-022a).

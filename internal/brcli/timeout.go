@@ -109,7 +109,7 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 	// automatic-SIGKILL-on-cancel behaviour does not fire; we implement the
 	// SIGTERM-then-SIGKILL sequence ourselves per HC-018.
 	//
-	//nolint:gosec // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input.
+	//nolint:gosec,contextcheck // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input. context.Background() is intentional: prevents Go's auto-SIGKILL-on-cancel so the HC-018 manual SIGTERM→SIGKILL grace path (BI-025c) owns termination.
 	cmd := exec.CommandContext(context.Background(), a.brPath, args...)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -136,11 +136,11 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 		return classifyWaitResult(waitErr, stdoutBuf.Bytes(), stderrBuf.Bytes())
 
 	case <-budgetTimer.C:
-		return terminateAndClassify(cmd, waitCh, stdoutBuf.Bytes(), stderrBuf.Bytes(),
+		return terminateAndClassify(cmd, waitCh,
 			fmt.Errorf("brcli: br subprocess wall-clock timeout (%s): %w", budget, ErrBrTimeout))
 
 	case <-ctx.Done():
-		return terminateAndClassify(cmd, waitCh, stdoutBuf.Bytes(), stderrBuf.Bytes(),
+		return terminateAndClassify(cmd, waitCh,
 			fmt.Errorf("brcli: br subprocess killed by context cancellation: %w", ErrBrTimeout))
 	}
 }
@@ -153,9 +153,10 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 //
 // The returned error is always baseErr (ErrBrTimeout-wrapped), regardless of
 // what the subprocess exited with after being signalled.
-func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, stdout, stderr []byte, baseErr error) (Result, error) {
+func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, baseErr error) (Result, error) {
 	// Step 1: SIGTERM.
 	if cmd.Process != nil {
+		//nolint:errcheck // SIGTERM on already-exited process returns syscall.ESRCH; intentionally discarded per HC-018 grace handling.
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}
 
@@ -169,6 +170,7 @@ func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, stdout, stderr []b
 	case <-graceTimer.C:
 		// Step 3: SIGKILL — subprocess did not exit within the grace period.
 		if cmd.Process != nil {
+			//nolint:errcheck // SIGKILL on already-exited process returns syscall.ESRCH; intentionally discarded per HC-018 grace handling.
 			_ = cmd.Process.Signal(os.Kill)
 		}
 		// Step 4: reap per PL-014.

@@ -36,17 +36,33 @@ func New(brPath string) (*Adapter, error) {
 
 // Result carries the captured outputs of a single `br` invocation.
 //
-// The fields are the raw subprocess outcome; classification of ExitCode into
-// the BrError taxonomy (BI-025a) is NOT performed here — that is the
-// responsibility of hk-872.28. Callers receiving a Result MUST consume both
-// Stdout and ExitCode in tandem when interpreting outcome.
+// BrErr is the BI-025a classification of ExitCode into the harmonik-internal
+// BrError taxonomy. It is populated by Run and RunWithTimeout for every
+// subprocess outcome (both zero and non-zero exits). BrErr is NOT set when the
+// subprocess could not be launched (exec error); in that case Run/RunWithTimeout
+// return a non-nil error instead.
 //
-// TODO(hk-872.28): BrError enum classification of ExitCode goes here.
+// Callers MUST check the returned error first. When error is nil, BrErr carries
+// the authoritative classification; callers MUST NOT re-invoke BrErrorFromExitCode
+// on ExitCode — BrErr is the canonical result.
+//
+// When BrErr == BrOther, the caller MUST emit divergence_inconclusive per
+// [event-model.md §8.6.10] with reason=authority_unavailable (BI-025a). The
+// event bus required for that emission is tracked by a follow-up bead; callers
+// observing BrOther MUST record a structured-log entry at level=warn per
+// [operator-nfr.md §4.9 ON-035] with subsystem=beads-adapter until the event
+// bus is available.
+//
 // TODO(hk-872.31): stderr 1 MiB cap + truncation marker attaches to this type.
 type Result struct {
 	Stdout   []byte
 	Stderr   []byte
 	ExitCode int
+	// BrErr is the BI-025a taxonomy classification of ExitCode.
+	// Populated on every subprocess outcome (zero or non-zero exit).
+	// Zero value (empty string) indicates the subprocess was not launched
+	// (exec error); callers check the returned error in that case.
+	BrErr BrError
 }
 
 // Run invokes `<brPath> <args...>` with the supplied context. It blocks until
@@ -56,13 +72,15 @@ type Result struct {
 // the underlying error.
 //
 // Run is the LOW-LEVEL PRIMITIVE; it does not implement:
-//   - BI-025a exit-code taxonomy → hk-872.28
 //   - BI-025b --format json flag → hk-872.29
 //   - BI-025c timeout discipline → implemented in RunWithTimeout (timeout.go)
 //   - BI-025d stderr cap + classification → hk-872.31
 //   - BI-025e concurrency discipline → hk-872.32
 //
-// Higher-level methods built on Run will add those layers.
+// BI-025a exit-code taxonomy IS implemented here: Result.BrErr is populated
+// via BrErrorFromExitCode on every subprocess outcome (zero and non-zero exits).
+//
+// Higher-level methods built on Run will add the remaining layers.
 func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// TODO(hk-872.29): prepend --format json to args.
 	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
@@ -93,25 +111,27 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 				return Result{}, fmt.Errorf("brcli: subprocess killed by context: %w", ctx.Err())
 			}
 			// Non-zero exit (>0) is a normal subprocess outcome, not an exec
-			// failure. Return the captured output with the exit code; err is nil
-			// so the caller can inspect Result.ExitCode and defer to BI-025a
-			// taxonomy (hk-872.28).
+			// failure. Classify per BI-025a and return with BrErr populated.
+			code := exitErr.ExitCode()
 			return Result{
 				Stdout:   stdoutBuf.Bytes(),
 				Stderr:   stderrBuf.Bytes(),
-				ExitCode: exitErr.ExitCode(),
+				ExitCode: code,
+				BrErr:    BrErrorFromExitCode(code),
 			}, nil
 		}
 		// Exec failure: binary not found, fork failed, context canceled before
 		// start, etc. Return zero-value Result + the original error so the
 		// caller can distinguish "br ran and failed" from "br could not be
-		// launched".
+		// launched". BrErr is not set (zero value) because no subprocess ran.
 		return Result{}, fmt.Errorf("brcli: exec failed: %w", err)
 	}
 
+	// Exit code 0 — success.
 	return Result{
 		Stdout:   stdoutBuf.Bytes(),
 		Stderr:   stderrBuf.Bytes(),
 		ExitCode: 0,
+		BrErr:    BrOK,
 	}, nil
 }

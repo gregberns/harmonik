@@ -173,18 +173,21 @@ func terminateAndClassify(cmd *exec.Cmd, waitCh <-chan error, baseErr error) (Re
 
 // classifyWaitResult converts a cmd.Wait() result into a (Result, error) pair
 // using the same semantics as Adapter.Run: non-zero exit is a Result (not an
-// error); exec failure is an error.
+// error); exec failure is an error. Result.BrErr is populated via
+// BrErrorFromExitCode per BI-025a for every subprocess outcome.
 func classifyWaitResult(waitErr error, stdout, stderr []byte) (Result, error) {
 	if waitErr == nil {
-		return Result{Stdout: stdout, Stderr: stderr, ExitCode: 0}, nil
+		return Result{Stdout: stdout, Stderr: stderr, ExitCode: 0, BrErr: BrOK}, nil
 	}
 
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
+		code := exitErr.ExitCode()
 		return Result{
 			Stdout:   stdout,
 			Stderr:   stderr,
-			ExitCode: exitErr.ExitCode(),
+			ExitCode: code,
+			BrErr:    BrErrorFromExitCode(code),
 		}, nil
 	}
 

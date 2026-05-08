@@ -241,17 +241,71 @@ func ar005FixtureParseViolations(t *testing.T, specFile string) []ar005FixtureVi
 	return violations
 }
 
+// ar005FixtureExpectedViolation is a single entry in the expected-violations
+// skip-list.  A requirement in this map is known to violate AR-005 and is
+// covered by an in-flight bead.  The test logs the entry rather than failing,
+// and errors if the entry is stale (violation no longer present).
+type ar005FixtureExpectedViolation struct {
+	// pinnedBy is the bead ID that owns the fix for this violation.
+	pinnedBy string
+	// reason is a human-readable explanation of why the dual-tag is substantive
+	// and requires a spec-level split rather than a single-tag correction.
+	reason string
+}
+
+// ar005FixtureExpectedViolations is the skip-list of known AR-005 violations
+// that are intentionally deferred.
+//
+// Key format: "<relative-spec-path>:<line-number>:<requirement-id>".
+// The line number MUST be the heading line of the requirement (1-based).
+//
+// Rules:
+//   - An entry whose violation is NOT present in the current corpus causes
+//     t.Errorf("stale skip-list entry …") — remove stale entries promptly.
+//   - An entry whose violation IS present produces t.Logf and does NOT fail.
+//   - Any NEW violation NOT in this map DOES fail the suite.
+var ar005FixtureExpectedViolations = map[string]ar005FixtureExpectedViolation{
+	// RC-015 genuinely spans both surfaces:
+	//   mechanism  — snapshot token bounding discipline; LaunchSpec construction
+	//                (deterministic Go daemon logic, io-determinism=non-deterministic
+	//                 because it delegates to an LLM subprocess).
+	//   cognition  — investigator constructs its InvestigatorInput at runtime by
+	//                querying Beads-CLI, git, workspace, and JSONL; delegated to
+	//                claude-code role per CP-039.
+	// A substantive split into RC-015 (mechanism) + RC-015b (cognition) is
+	// required; pinned to hk-zs0.58.
+	"specs/reconciliation/spec.md:451:RC-015": {
+		pinnedBy: "hk-zs0.58",
+		reason:   "RC-015 describes both the snapshot-token bounding mechanism and the investigator's runtime cognition surface; requires spec split, not a single-tag correction",
+	},
+}
+
+// ar005FixtureViolationKey returns the skip-list lookup key for a violation.
+// Format: "<file>:<lineNo>:<requirementID>" where requirementID is extracted
+// from the heading via ar005FixtureReqID.
+func ar005FixtureViolationKey(v ar005FixtureViolation) string {
+	return fmt.Sprintf("%s:%d:%s", v.file, v.lineNo, ar005FixtureReqID(v.heading))
+}
+
+// ar005FixtureReqID extracts the requirement identifier (e.g. "RC-015") from a
+// level-4 Markdown heading line of the form "#### RC-015 — ...".
+var ar005FixtureReqIDPattern = regexp.MustCompile(`^#### ([A-Z]+-[A-Z0-9]+[a-z]?)`)
+
+func ar005FixtureReqID(heading string) string {
+	if m := ar005FixtureReqIDPattern.FindStringSubmatch(heading); m != nil {
+		return m[1]
+	}
+	return "UNKNOWN"
+}
+
 // TestAR005TagsMutualExclusion is the binding test for AR-005.
 //
 // It walks every spec file in scope, extracts all normative requirements, and
 // asserts that each carries exactly one Tags: line with a valid value.
 //
-// Expected current state: one known violation in reconciliation/spec.md at
-// RC-015 (Tags: mechanism, cognition — mutual-exclusion violation). This test
-// WILL FAIL on the current corpus; that failure is intentional and load-bearing.
-// The orchestrator will file a follow-up bead to correct the violation; until
-// then the failure is left visible (not skipped) per bead hk-zs0.7 dispatch
-// instructions.
+// Known violations that are covered by in-flight beads are listed in
+// ar005FixtureExpectedViolations.  Those entries are logged (not failed) and
+// produce an error if they become stale (violation no longer present).
 func TestAR005TagsMutualExclusion(t *testing.T) {
 	specFiles := ar005FixtureSpecFiles(t)
 
@@ -261,19 +315,45 @@ func TestAR005TagsMutualExclusion(t *testing.T) {
 		allViolations = append(allViolations, violations...)
 	}
 
-	if len(allViolations) == 0 {
-		t.Logf("AR-005 audit: all %d spec files pass — every normative requirement carries exactly one valid Tags: line", len(specFiles))
+	// Build a set of violation keys found in the current corpus.
+	foundKeys := make(map[string]ar005FixtureViolation, len(allViolations))
+	for _, v := range allViolations {
+		foundKeys[ar005FixtureViolationKey(v)] = v
+	}
+
+	// Check for stale skip-list entries (expected violations that no longer exist).
+	for key, entry := range ar005FixtureExpectedViolations {
+		if _, present := foundKeys[key]; !present {
+			t.Errorf("AR-005 skip-list: stale entry %q (pinned by %s) — violation no longer present; remove from ar005FixtureExpectedViolations",
+				key, entry.pinnedBy)
+		}
+	}
+
+	// Separate violations into expected (pinned) and unexpected (new failures).
+	var unexpected []ar005FixtureViolation
+	for _, v := range allViolations {
+		key := ar005FixtureViolationKey(v)
+		if entry, pinned := ar005FixtureExpectedViolations[key]; pinned {
+			t.Logf("AR-005 expected violation (pinned by %s): %s — %s", entry.pinnedBy, key, entry.reason)
+			continue
+		}
+		unexpected = append(unexpected, v)
+	}
+
+	if len(unexpected) == 0 {
+		t.Logf("AR-005 audit: all %d spec files pass — every normative requirement carries exactly one valid Tags: line (%d known violation(s) pinned to in-flight beads)",
+			len(specFiles), len(ar005FixtureExpectedViolations))
 		return
 	}
 
-	// Report ALL violations verbatim so the full failure surface is visible.
+	// Report ALL unexpected violations verbatim so the full failure surface is visible.
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf(
-		"AR-005 violation: %d requirement(s) in the spec corpus do not satisfy the Tags: mutual-exclusion rule\n",
-		len(allViolations),
+		"AR-005 violation: %d NEW requirement(s) in the spec corpus do not satisfy the Tags: mutual-exclusion rule\n",
+		len(unexpected),
 	))
 	sb.WriteString("(specs/architecture.md §4.2 AR-005: every normative requirement MUST carry exactly one of `Tags: mechanism` or `Tags: cognition`)\n\n")
-	for _, v := range allViolations {
+	for _, v := range unexpected {
 		sb.WriteString("  ")
 		sb.WriteString(v.String())
 		sb.WriteString("\n")

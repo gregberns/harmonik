@@ -32,7 +32,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -69,13 +69,13 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
-		leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
-		leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 
 		// Reconstruct the lease-lock path from run_id alone.
 		reconstructedLeasePath := filepath.Join(repo, ".harmonik", "worktrees", runID, ".harmonik", "lease.lock")
@@ -88,7 +88,7 @@ func TestWM013_WorkspaceIDDiscoverableFromRunID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WM-013: ReadFile via reconstructed path: %v", err)
 		}
-		if !findSubstring(string(data), runID) {
+		if !leaseFixtureFindSubstring(string(data), runID) {
 			t.Errorf("WM-013: lease-lock content at reconstructed path does not contain run_id %q", runID)
 		}
 	})

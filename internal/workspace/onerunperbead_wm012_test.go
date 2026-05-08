@@ -46,13 +46,13 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branchA, worktreePathA, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
-		leaseLockPathA := leaseFixture_leaseLockPath(worktreePathA)
-		leaseFixture_writeLockAtomic(t, leaseLockPathA, leaseFixture_makeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
 
 		// While run A's lease is live, a second run B for the same bead MUST NOT start.
 		// The check: the lease-lock file for run A exists → block.
@@ -80,16 +80,16 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathA), 0o755); err != nil {
 			t.Fatalf("MkdirAll A: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branchA, worktreePathA, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchA, worktreePathA, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add A: %v\n%s", err, out)
 		}
-		leaseLockPathA := leaseFixture_leaseLockPath(worktreePathA)
-		leaseFixture_writeLockAtomic(t, leaseLockPathA, leaseFixture_makeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
+		leaseLockPathA := leaseFixtureLeaseLockPath(worktreePathA)
+		leaseFixtureWriteLockAtomic(t, leaseLockPathA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
 
 		// Run A reaches terminal — lease released.
-		leaseFixture_releaseLock(t, leaseLockPathA)
+		leaseFixtureReleaseLock(t, leaseLockPathA)
 		if _, err := os.Stat(leaseLockPathA); !os.IsNotExist(err) {
 			t.Fatalf("WM-012: run A lease-lock still present after terminal; want absent")
 		}
@@ -105,13 +105,13 @@ func TestWM012_OneRunPerBeadAtATime(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePathB), 0o755); err != nil {
 			t.Fatalf("MkdirAll B: %v", err)
 		}
-		cmd2 := exec.Command("git", "worktree", "add", "-b", branchB, worktreePathB, sha)
+		cmd2 := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branchB, worktreePathB, sha)
 		cmd2.Dir = repo
 		if out, err := cmd2.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add B: %v\n%s", err, out)
 		}
-		leaseLockPathB := leaseFixture_leaseLockPath(worktreePathB)
-		leaseFixture_writeLockAtomic(t, leaseLockPathB, leaseFixture_makeLockJSON(runIDB, os.Getpid(), time.Now(), 3600))
+		leaseLockPathB := leaseFixtureLeaseLockPath(worktreePathB)
+		leaseFixtureWriteLockAtomic(t, leaseLockPathB, leaseFixtureMakeLockJSON(runIDB, os.Getpid(), time.Now(), 3600))
 
 		// Run B's lease is live, run A's is absent.
 		if _, err := os.Stat(leaseLockPathB); err != nil {

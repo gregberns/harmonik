@@ -43,13 +43,13 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 				t.Fatalf("MkdirAll %q: %v", worktreePath, err)
 			}
-			cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git worktree add %q: %v\n%s", runID, err, out)
 			}
-			lp := leaseFixture_leaseLockPath(worktreePath)
-			leaseFixture_writeLockAtomic(t, lp, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			lp := leaseFixtureLeaseLockPath(worktreePath)
+			leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 		}
 
 		// --- Step (a): enumerate subdirectories of <repo>/.harmonik/worktrees/ ---
@@ -73,7 +73,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		}
 
 		// --- Step (b): validate via `git worktree list --porcelain` ---
-		out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+		out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-013c: git worktree list --porcelain: %v", err)
 		}
@@ -82,7 +82,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		for _, runID := range foundRunIDs {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			// The worktree path must appear in the porcelain output.
-			if !findSubstring(porcelainOutput, worktreePath) {
+			if !leaseFixtureFindSubstring(porcelainOutput, worktreePath) {
 				t.Errorf("WM-013c: worktree path %q not found in porcelain output", worktreePath)
 			}
 		}
@@ -90,8 +90,9 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		// --- Step (c): read lease-lock to recover run_id, pid, created_at ---
 		for _, runID := range foundRunIDs {
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-			leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
+			leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 
+			//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 			data, err := os.ReadFile(leaseLockPath)
 			if err != nil {
 				t.Fatalf("WM-013c: ReadFile lease-lock for %q: %v", runID, err)
@@ -147,11 +148,11 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		}
 
 		// git worktree list --porcelain must NOT list the orphan directory.
-		out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+		out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-013c: git worktree list --porcelain: %v", err)
 		}
-		if findSubstring(string(out), orphanPath) {
+		if leaseFixtureFindSubstring(string(out), orphanPath) {
 			t.Errorf("WM-013c: orphan path %q unexpectedly listed in porcelain output", orphanPath)
 		}
 	})
@@ -169,7 +170,7 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -177,10 +178,11 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 
 		wantPID := os.Getpid()
 		wantCreatedAt := time.Now().UTC()
-		lp := leaseFixture_leaseLockPath(worktreePath)
-		leaseFixture_writeLockAtomic(t, lp, leaseFixture_makeLockJSON(runID, wantPID, wantCreatedAt, 3600))
+		lp := leaseFixtureLeaseLockPath(worktreePath)
+		leaseFixtureWriteLockAtomic(t, lp, leaseFixtureMakeLockJSON(runID, wantPID, wantCreatedAt, 3600))
 
 		// Simulate discovery: parse the lock file.
+		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 		data, err := os.ReadFile(lp)
 		if err != nil {
 			t.Fatalf("WM-013c: ReadFile: %v", err)
@@ -197,12 +199,12 @@ func TestWM013c_LeaseDiscoveryMechanismOnStartup(t *testing.T) {
 		}
 
 		// Verify the porcelain output lists this worktree.
-		out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+		out, err := exec.CommandContext(t.Context(), "git", "-C", repo, "worktree", "list", "--porcelain").Output()
 		if err != nil {
 			t.Fatalf("WM-013c: git worktree list --porcelain: %v", err)
 		}
 		// Each worktree block starts with "worktree <path>".
-		if !findSubstring(string(out), worktreePath) {
+		if !leaseFixtureFindSubstring(string(out), worktreePath) {
 			t.Errorf("WM-013c: worktree path %q not in porcelain:\n%s", worktreePath, strings.TrimSpace(string(out)))
 		}
 	})

@@ -39,14 +39,14 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
 		wantPath := filepath.Join(worktreePath, ".harmonik", "lease.lock")
-		gotPath := leaseFixture_leaseLockPath(worktreePath)
+		gotPath := leaseFixtureLeaseLockPath(worktreePath)
 		if gotPath != wantPath {
 			t.Errorf("WM-013a: canonical path = %q, want %q", gotPath, wantPath)
 		}
@@ -70,7 +70,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -80,8 +80,8 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		now := time.Now().UTC()
 		ttlSec := 3600
 
-		leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
-		leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, pid, now, ttlSec))
+		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, pid, now, ttlSec))
 
 		// Parse the written lock content and validate required fields.
 		data, err := os.ReadFile(leaseLockPath)
@@ -131,14 +131,14 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
-		leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 
 		// Enumerate the .harmonik directory and assert:
 		// - exactly one file: lease.lock
@@ -186,7 +186,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
@@ -194,14 +194,14 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 
 		// After workspace_created (git worktree add complete) but BEFORE
 		// workspace_leased, the lease-lock MUST NOT exist.
-		leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
+		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
 		if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 			t.Errorf("WM-013a: lease-lock present before leased state; want absent at workspace_created")
 		}
 
 		// Now simulate the workspace_leased sequence (steps a-d of WM-016):
 		// (d) write lease-lock → then workspace_leased emits.
-		leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Errorf("WM-013a: lease-lock absent after leased state; want present: %v", err)
 		}

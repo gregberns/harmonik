@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// requiredGitignoreEntries are the four harmonik control-plane patterns that MUST
+// leaseFixtureRequiredGitignoreEntries are the four harmonik control-plane patterns that MUST
 // appear in the repository's root .gitignore per WM-013e.
 //
 // Spec ref: workspace-model.md §4.3 WM-013e — "Required ignore entries (patterns
 // relative to repo root; order preserved): .harmonik/lease.lock,
 // .harmonik/sessions/, .harmonik/worktrees/, .harmonik/events/"
-var requiredGitignoreEntries = []string{
+var leaseFixtureRequiredGitignoreEntries = []string{
 	".harmonik/lease.lock",
 	".harmonik/sessions/",
 	".harmonik/worktrees/",
@@ -42,7 +42,7 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		repo, _ := tempRepo(t)
 		gitignorePath := filepath.Join(repo, ".gitignore")
 
-		entries := strings.Join(requiredGitignoreEntries, "\n") + "\n"
+		entries := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
 		if err := os.WriteFile(gitignorePath, []byte(entries), 0o644); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
@@ -54,8 +54,8 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 		content := string(data)
 
-		for _, entry := range requiredGitignoreEntries {
-			if !findSubstring(content, entry) {
+		for _, entry := range leaseFixtureRequiredGitignoreEntries {
+			if !leaseFixtureFindSubstring(content, entry) {
 				t.Errorf("WM-013e: .gitignore missing required entry %q", entry)
 			}
 		}
@@ -82,8 +82,8 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		existing := string(data)
 
 		var missing []string
-		for _, entry := range requiredGitignoreEntries {
-			if !findSubstring(existing, entry) {
+		for _, entry := range leaseFixtureRequiredGitignoreEntries {
+			if !leaseFixtureFindSubstring(existing, entry) {
 				missing = append(missing, entry)
 			}
 		}
@@ -116,8 +116,8 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 			t.Fatalf("WM-013e: ReadFile .gitignore after write: %v", err)
 		}
 		updated := string(data2)
-		for _, entry := range requiredGitignoreEntries {
-			if !findSubstring(updated, entry) {
+		for _, entry := range leaseFixtureRequiredGitignoreEntries {
+			if !leaseFixtureFindSubstring(updated, entry) {
 				t.Errorf("WM-013e: .gitignore still missing %q after adding missing entries", entry)
 			}
 		}
@@ -136,7 +136,7 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		}
 
 		// Simulate: create .gitignore with required entries.
-		content := strings.Join(requiredGitignoreEntries, "\n") + "\n"
+		content := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
 		if err := os.WriteFile(gitignorePath, []byte(content), 0o644); err != nil {
 			t.Fatalf("WM-013e: WriteFile .gitignore: %v", err)
 		}
@@ -146,8 +146,8 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
 		}
-		for _, entry := range requiredGitignoreEntries {
-			if !findSubstring(string(data), entry) {
+		for _, entry := range leaseFixtureRequiredGitignoreEntries {
+			if !leaseFixtureFindSubstring(string(data), entry) {
 				t.Errorf("WM-013e: newly created .gitignore missing %q", entry)
 			}
 		}
@@ -197,7 +197,7 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		})
 
 		// Attempt to write .gitignore — MUST fail with a permission error.
-		content := strings.Join(requiredGitignoreEntries, "\n") + "\n"
+		content := strings.Join(leaseFixtureRequiredGitignoreEntries, "\n") + "\n"
 		writeErr := os.WriteFile(gitignorePath, []byte(content), 0o644)
 		if writeErr == nil {
 			t.Fatal("WM-013e: expected write to fail with permission denied, but it succeeded")
@@ -215,7 +215,7 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		// The error message MUST convey the forbidden-write context so that the
 		// operator can diagnose the startup failure.
 		errMsg := writeErr.Error()
-		if !findSubstring(errMsg, "permission denied") && !findSubstring(errMsg, "operation not permitted") {
+		if !leaseFixtureFindSubstring(errMsg, "permission denied") && !leaseFixtureFindSubstring(errMsg, "operation not permitted") {
 			t.Errorf("WM-013e: error %q does not contain 'permission denied' or 'operation not permitted'; want GitignoreWriteForbidden-class message", errMsg)
 		}
 	})
@@ -227,14 +227,14 @@ func TestWM013e_GitignoreHygieneForControlPlanePaths(t *testing.T) {
 		// workspace-local durability JSONL file introduced by WM-013b."
 		// Verify the entry is in the required set.
 		found := false
-		for _, entry := range requiredGitignoreEntries {
+		for _, entry := range leaseFixtureRequiredGitignoreEntries {
 			if entry == ".harmonik/events/" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("WM-013e: .harmonik/events/ not in requiredGitignoreEntries; required to cover WM-013b JSONL")
+			t.Errorf("WM-013e: .harmonik/events/ not in leaseFixtureRequiredGitignoreEntries; required to cover WM-013b JSONL")
 		}
 	})
 }

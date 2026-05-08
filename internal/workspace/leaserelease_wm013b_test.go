@@ -53,7 +53,6 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -64,7 +63,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			for len(reasonPad) < 8 {
 				reasonPad += "0"
 			}
-			runID := "0196a1b2-c3d4-713b-8a1b-" + sanitizeRunID(reasonPad[:8]) + "0000"
+			runID := "0196a1b2-c3d4-713b-8a1b-" + leaseFixtureSanitizeRunID(reasonPad[:8]) + "0000"
 			branch := "run/" + runID
 			worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 			workspaceID := "ws-" + runID
@@ -72,15 +71,15 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
-			cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+			cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 			cmd.Dir = repo
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("git worktree add: %v\n%s", err, out)
 			}
 
 			// Write the lease-lock (simulating workspace in leased state).
-			leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
-			leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+			leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+			leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 
 			// Verify lease-lock exists before terminal transition.
 			if _, err := os.Stat(leaseLockPath); err != nil {
@@ -96,10 +95,10 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			//
 			// WM-013b: "Across all terminal paths, the workspace-local lease_released
 			// JSONL marker MUST be written before the lease-lock file is removed."
-			leaseFixture_writeReleaseMarker(t, worktreePath, runID, workspaceID, tc.reason)
+			leaseFixtureWriteReleaseMarker(t, worktreePath, runID, workspaceID, tc.reason)
 
 			// Assert marker file exists and has valid content BEFORE unlink.
-			eventsFile := leaseFixture_workspaceLocalEventsFile(worktreePath, workspaceID)
+			eventsFile := leaseFixtureWorkspaceLocalEventsFile(worktreePath, workspaceID)
 			markerData, err := os.ReadFile(eventsFile)
 			if err != nil {
 				t.Fatalf("WM-013b[%s]: ReadFile events JSONL: %v", tc.name, err)
@@ -137,7 +136,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			}
 
 			// Now remove the lease-lock (release step — after marker is durable).
-			leaseFixture_releaseLock(t, leaseLockPath)
+			leaseFixtureReleaseLock(t, leaseLockPath)
 
 			// Assert: lease-lock is absent after release.
 			if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
@@ -150,7 +149,7 @@ func TestWM013b_LeaseReleaseOnTerminalTransitions(t *testing.T) {
 			}
 
 			// Idempotent release: a second release call MUST succeed without error.
-			leaseFixture_releaseLock(t, leaseLockPath)
+			leaseFixtureReleaseLock(t, leaseLockPath)
 		})
 	}
 }
@@ -172,7 +171,7 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713b-8a1b-crashrecover1"
-		runID = sanitizeRunID(runID)
+		runID = leaseFixtureSanitizeRunID(runID)
 		branch := "run/" + runID
 		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
 		workspaceID := "ws-" + runID
@@ -180,31 +179,31 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 			t.Fatalf("MkdirAll: %v", err)
 		}
-		cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		leaseLockPath := leaseFixture_leaseLockPath(worktreePath)
-		leaseFixture_writeLockAtomic(t, leaseLockPath, leaseFixture_makeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 
 		// Simulate crash: write marker, but DON'T remove the lock yet.
-		leaseFixture_writeReleaseMarker(t, worktreePath, runID, workspaceID, "post_escalation")
+		leaseFixtureWriteReleaseMarker(t, worktreePath, runID, workspaceID, "post_escalation")
 
 		// Crash state: both marker and lock-file exist simultaneously.
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Fatalf("WM-013b: crash state: lease-lock absent; want present: %v", err)
 		}
-		eventsFile := leaseFixture_workspaceLocalEventsFile(worktreePath, workspaceID)
+		eventsFile := leaseFixtureWorkspaceLocalEventsFile(worktreePath, workspaceID)
 		if _, err := os.Stat(eventsFile); err != nil {
 			t.Fatalf("WM-013b: crash state: events JSONL absent; want present: %v", err)
 		}
 
 		// Startup reconciliation detects this state and completes the release
-		// (idempotent replay: unlink the lock). The leaseFixture_releaseLock
+		// (idempotent replay: unlink the lock). The leaseFixtureReleaseLock
 		// helper simulates the idempotent unlink.
-		leaseFixture_releaseLock(t, leaseLockPath)
+		leaseFixtureReleaseLock(t, leaseLockPath)
 
 		// After idempotent replay: lock absent, marker still present.
 		if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
@@ -216,9 +215,9 @@ func TestWM013b_MarkerWrittenBeforeUnlink(t *testing.T) {
 	})
 }
 
-// sanitizeRunID replaces characters not in [A-Za-z0-9-] with hyphens.
+// leaseFixtureSanitizeRunID replaces characters not in [A-Za-z0-9-] with hyphens.
 // Used to produce valid run_ids from test case names.
-func sanitizeRunID(s string) string {
+func leaseFixtureSanitizeRunID(s string) string {
 	result := make([]byte, len(s))
 	for i := 0; i < len(s); i++ {
 		c := s[i]

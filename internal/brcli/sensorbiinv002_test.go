@@ -137,11 +137,11 @@ func sensorBeadIDFixtureSidecarWriteAndRead(t *testing.T, sidecarJSON []byte) ma
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: open tmp: %v", err)
 	}
 	if _, err := f.Write(sidecarJSON); err != nil {
-		_ = f.Close()
+		_ = f.Close() //nolint:errcheck // best-effort close before fatal
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: write: %v", err)
 	}
 	if err := f.Sync(); err != nil {
-		_ = f.Close()
+		_ = f.Close() //nolint:errcheck // best-effort close before fatal
 		t.Fatalf("sensorBeadIDFixtureSidecarWriteAndRead: sync: %v", err)
 	}
 	if err := f.Close(); err != nil {
@@ -381,7 +381,7 @@ func TestBIINV002_ReviewerScanNoMintAlternateID(t *testing.T) {
 		f, parseErr := parser.ParseFile(fset, path, nil, 0)
 		if parseErr != nil {
 			// Skip unparseable files (generated, syntax errors, etc.).
-			return nil
+			return nil //nolint:nilerr // nil signals "no walk error; skip this file"
 		}
 		for _, decl := range f.Decls {
 			fn, isFn := decl.(*ast.FuncDecl)

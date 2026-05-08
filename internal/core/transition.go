@@ -17,9 +17,8 @@ import "github.com/google/uuid"
 // keys EvidenceKeySubWorkflowPin (EM-034c) and EvidenceKeySynthesizedOutcome
 // (EM-023a) are declared as constants on the Evidence type.
 //
-// VerifierMetrics is Map[string]any per the spec. A future revision may
-// introduce a typed VerifierMetrics wrapper; see follow-up bead hk-b3f.96
-// (Define VerifierMetrics typed wrapper, execution-model.md §6.1).
+// VerifierMetrics is the typed VerifierMetrics wrapper (execution-model.md
+// §6.1). No reserved keys are cited by the spec at this version.
 //
 // # Schema compatibility
 //
@@ -73,11 +72,8 @@ type Transition struct {
 	Evidence Evidence
 
 	// VerifierMetrics carries structured verifier metrics for this transition.
-	//
-	// TODO(hk-b3f.96): replace map[string]any with a typed VerifierMetrics
-	// wrapper once Define VerifierMetrics typed wrapper (execution-model.md
-	// §6.1) is resolved.
-	VerifierMetrics map[string]any
+	// No reserved keys are cited by the spec at this version.
+	VerifierMetrics VerifierMetrics
 
 	// Confidence is the confidence score associated with this transition.
 	// nil means unset (the spec declares Float | None).

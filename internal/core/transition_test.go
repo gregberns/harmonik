@@ -48,7 +48,7 @@ func b3f77ValidTransition(t *testing.T) Transition {
 		ChosenAction:      ActionDescriptor("action-a"),
 		PolicyVersion:     PolicyVersion("v1.0.0"),
 		Evidence:          Evidence{"key": "value"},
-		VerifierMetrics:   map[string]any{"score": 0.95},
+		VerifierMetrics:   VerifierMetrics{"score": 0.95},
 		Confidence:        b3f77Confidence(0.9),
 		OutcomeStatus:     OutcomeStatusSuccess,
 		TransitionKind:    TransitionKindForward,

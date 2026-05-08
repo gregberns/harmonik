@@ -48,7 +48,7 @@ func New(brPath string) (*Adapter, error) {
 //
 // When BrErr == BrOther, the caller MUST emit divergence_inconclusive per
 // [event-model.md §8.6.10] with reason=authority_unavailable (BI-025a). The
-// event bus required for that emission is tracked by a follow-up bead; callers
+// event bus required for that emission is tracked by hk-872.57; callers
 // observing BrOther MUST record a structured-log entry at level=warn per
 // [operator-nfr.md §4.9 ON-035] with subsystem=beads-adapter until the event
 // bus is available.

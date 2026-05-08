@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// sessionLogFixture_detectGitignoreMisconfiguration checks the given gitignore
+// sessionLogFixtureDetectGitignoreMisconfiguration checks the given gitignore
 // content for patterns that would exclude .harmonik/sessions/ from the git
 // index, which would silently break the preserve-in-merged-branch contract.
 //
 // Returns a non-nil error describing the misconfiguration if a problematic
 // pattern is detected.
-func sessionLogFixture_detectGitignoreMisconfiguration(gitignoreContent string) error {
+func sessionLogFixtureDetectGitignoreMisconfiguration(gitignoreContent string) error {
 	// Patterns that would accidentally exclude .harmonik/sessions/ from commits.
 	// This is an operator-observable misconfiguration per WM-030 and operator-nfr.md §4.9.
 	problematic := []string{
@@ -75,8 +75,8 @@ func TestWM030_PostMergeSessionLogRetention(t *testing.T) {
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixture_makeMetaJSON(runID, sessionID, "node-01", "agentic", "wf-01", "")
-	if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-030: sidecar write: %v", err)
 	}
 
@@ -162,11 +162,10 @@ func TestWM030_GitignoreMisconfigurationDetected(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
 			t.Parallel()
 
-			err := sessionLogFixture_detectGitignoreMisconfiguration(tc.content)
+			err := sessionLogFixtureDetectGitignoreMisconfiguration(tc.content)
 			if tc.wantErr && err == nil {
 				t.Errorf("WM-030: expected misconfiguration error for gitignore %q, got nil", tc.content)
 			}
@@ -191,7 +190,7 @@ func TestWM030_GitignoreMisconfigurationDetected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile .gitignore: %v", err)
 		}
-		if err := sessionLogFixture_detectGitignoreMisconfiguration(string(content)); err == nil {
+		if err := sessionLogFixtureDetectGitignoreMisconfiguration(string(content)); err == nil {
 			t.Errorf("WM-030: expected misconfiguration error for bad .gitignore, got nil")
 		}
 	})

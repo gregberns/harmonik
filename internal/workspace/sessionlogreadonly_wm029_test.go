@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,8 +37,8 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 
 	// Write the sidecar (S06 action — write side).
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixture_makeMetaJSON(runID, sessionID, "node-01", "agentic", "wf-01", "")
-	if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
+	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-029: sidecar write: %v", err)
 	}
 
@@ -75,7 +76,10 @@ func TestWM029_SessionLogDirReadOnlyConsumptionByS08(t *testing.T) {
 
 	// Assert: we can read from the log.
 	buf := make([]byte, 256)
-	n, _ := logF.Read(buf)
+	n, err := logF.Read(buf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("WM-029: logF.Read: %v", err)
+	}
 	if n == 0 {
 		t.Errorf("WM-029: session.log is empty; expected handler output")
 	}

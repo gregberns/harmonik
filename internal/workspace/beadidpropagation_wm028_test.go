@@ -36,13 +36,14 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixture_makeMetaJSON(runID, sessionID, "node-01", "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", beadID)
 
-		if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
 		// Parse and assert bead_id round-trips correctly.
+		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 		raw, err := os.ReadFile(sidecarPath)
 		if err != nil {
 			t.Fatalf("WM-028: ReadFile: %v", err)
@@ -85,13 +86,14 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		// Empty beadID → sessionLogFixture_makeMetaJSON omits the field.
-		content := sessionLogFixture_makeMetaJSON(runID, sessionID, "node-01", "agentic", "wf-01", "")
+		// Empty beadID → sessionLogFixtureMakeMetaJSON omits the field.
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
 
-		if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
+		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 		raw, err := os.ReadFile(sidecarPath)
 		if err != nil {
 			t.Fatalf("WM-028: ReadFile: %v", err)
@@ -127,12 +129,13 @@ func TestWM028_BeadIDPropagatesIntoSessionMetadata(t *testing.T) {
 		}
 
 		sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-		content := sessionLogFixture_makeMetaJSON(runID, sessionID, namespacedNodeID, "agentic", "wf-01", beadID)
+		content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, namespacedNodeID, "agentic", "wf-01", beadID)
 
-		if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+		if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 			t.Fatalf("WM-028: atomic write: %v", err)
 		}
 
+		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 		raw, err := os.ReadFile(sidecarPath)
 		if err != nil {
 			t.Fatalf("WM-028: ReadFile: %v", err)

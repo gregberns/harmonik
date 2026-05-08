@@ -10,9 +10,10 @@ import (
 	"time"
 )
 
-// sessionLogFixture_makeMetaJSON builds a minimal harmonik.meta.json payload
+// sessionLogFixtureMakeMetaJSON builds a minimal harmonik.meta.json payload
 // with all required WM-026 fields. beadID may be empty to omit bead_id.
-func sessionLogFixture_makeMetaJSON(runID, sessionID, nodeID, agentType, workflowID, beadID string) []byte {
+func sessionLogFixtureMakeMetaJSON(t *testing.T, runID, sessionID, nodeID, agentType, workflowID, beadID string) []byte {
+	t.Helper()
 	type meta struct {
 		RunID         string  `json:"run_id"`
 		SessionID     string  `json:"session_id"`
@@ -37,12 +38,12 @@ func sessionLogFixture_makeMetaJSON(runID, sessionID, nodeID, agentType, workflo
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		panic(fmt.Sprintf("sessionLogFixture_makeMetaJSON: %v", err))
+		t.Fatalf("sessionLogFixtureMakeMetaJSON: %v", err)
 	}
 	return b
 }
 
-// sessionLogFixture_writeSidecarAtomic implements the WM-026 atomic discipline:
+// sessionLogFixtureWriteSidecarAtomic implements the WM-026 atomic discipline:
 //
 //	(i)   write JSON to <sidecar-path>.tmp-<pid>
 //	(ii)  fsync the temp file
@@ -50,7 +51,7 @@ func sessionLogFixture_makeMetaJSON(runID, sessionID, nodeID, agentType, workflo
 //	(iv)  fsync the parent directory
 //
 // Returns nil on success.
-func sessionLogFixture_writeSidecarAtomic(sidecarPath string, content []byte) error {
+func sessionLogFixtureWriteSidecarAtomic(sidecarPath string, content []byte) error {
 	pid := os.Getpid()
 	tmpPath := fmt.Sprintf("%s.tmp-%d", sidecarPath, pid)
 
@@ -90,9 +91,9 @@ func sessionLogFixture_writeSidecarAtomic(sidecarPath string, content []byte) er
 	return d.Close()
 }
 
-// sessionLogFixture_sweepOrphans removes .tmp-<pid> orphan files from sessionDir.
+// sessionLogFixtureSweepOrphans removes .tmp-<pid> orphan files from sessionDir.
 // Per WM-026: "The startup sweep MUST tolerate orphan .tmp-<pid> files by removing them."
-func sessionLogFixture_sweepOrphans(sessionDir string) error {
+func sessionLogFixtureSweepOrphans(sessionDir string) error {
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return fmt.Errorf("readDir: %w", err)
@@ -139,9 +140,9 @@ func TestWM026_SidecarAtomicWrite(t *testing.T) {
 	}
 
 	sidecarPath := filepath.Join(sessionDir, "harmonik.meta.json")
-	content := sessionLogFixture_makeMetaJSON(runID, sessionID, "node-01", "agentic", "wf-01", "")
+	content := sessionLogFixtureMakeMetaJSON(t, runID, sessionID, "node-01", "agentic", "wf-01", "")
 
-	if err := sessionLogFixture_writeSidecarAtomic(sidecarPath, content); err != nil {
+	if err := sessionLogFixtureWriteSidecarAtomic(sidecarPath, content); err != nil {
 		t.Fatalf("WM-026: atomic write failed: %v", err)
 	}
 
@@ -211,7 +212,7 @@ func TestWM026_OrphanTmpSweep(t *testing.T) {
 	}
 
 	// Run the startup sweep.
-	if err := sessionLogFixture_sweepOrphans(sessionDir); err != nil {
+	if err := sessionLogFixtureSweepOrphans(sessionDir); err != nil {
 		t.Fatalf("WM-026: sweepOrphans: %v", err)
 	}
 

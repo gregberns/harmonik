@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v10 2026-05-08 main (evening refresh after 18-bead session) -->
+<!-- PP-TRIAL:v11 2026-05-08 main (afternoon refresh after 13-bead typed-alias completion session) -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
 Act as the orchestrator. Delegate substantively; keep main thread small.
@@ -39,6 +39,15 @@ hk-i0tw.31 collision (both defined CadenceFilter) cost a fix-agent round.
 For wide-impact siblings (RECORDs, enums) consider serializing or naming
 the canonical-source bead in the later brief.
 
+**Pre-dispatch TODO grep (v11 — high leverage).** Before dispatching a
+typed-alias / RECORD bead, grep `internal/core/*.go` for `TODO(<bead-id>)`
+markers. If multiple in-flight beads each have a marker on the same file
+(e.g. node.go), serialize the substitutions OR scope each implementer to
+type-definition-files-only and file ONE serial follow-up bead for the
+substitution pass. This session's typed-alias wave avoided rebase friction
+by accident (Bundles A, C went type-defs-only; Bundle B substituted 3
+fields without conflict). Make it intentional next time.
+
 Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
 to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain.
 
@@ -70,7 +79,10 @@ content (enum values, regex shapes, RECORD field-types, **enumerated
 message-type sets**), the spec wins per CLAUDE.md ("specs are normative");
 bead body gets the follow-up note. (Reinforced this session: hk-ahvq.48.2
 fix-agent correctly OMITTED `agent_log` because HC-007 doesn't enumerate it,
-even though the bead body listed it. Reviewer cleared.)
+even though the bead body listed it. Reviewer cleared. Reinforced again
+v11: hk-b3f.99 PolicyRef bead-title cited control-points.md §6.3 but
+execution-model.md §6.1 cites §6.4 — implementer correctly chose §6.4 and
+surfaced the discrepancy. Reviewer cleared.)
 
 Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
 meets bead acceptance, you may merge with a closure note explaining the
@@ -147,140 +159,121 @@ and stop.
 # Session Handoff
 
 ## State
-Clean. Main at `05d7249`, pushed to origin. **18 beads landed this session**
-(16 implementations + 2 closed-as-subsumed) across 4 packages
-(brcli, core, lifecycle, specaudit, testhelpers). All my worktrees cleaned.
-**13 follow-up beads filed**: hk-b3f.94 (SnapshotToken), .95 (Evidence),
-.96 (VerifierMetrics), .97-.103 (7 deferred typed aliases — AxisTags,
-ModeTag, PolicyRef, GateRef, FreedomProfileRef, BudgetRef, SubWorkflowRef),
-hk-hqwn.70 (BusFlusher / EventBus.Flush), hk-872.57 (divergence_inconclusive
-event-bus wiring).
+Clean. Main at `3fe300f`, pushed to origin. **13 beads landed this session**
+across 3 pipelined merge waves with **0 rebase conflicts and 0 fix-iterations**.
+All worktrees cleaned. 3 orphan branches from a prior session deleted
+(`worktree-agent-{a81fc0155348f648a, ab0d5be116be801d9, ae62858e28981ec72}` —
+all were fully merged into main).
 
 ## What landed this session
 
-RECORD family (5): VerdictEvent (hk-b3f.93), Transition 15-field
-(hk-b3f.77), Node 13-field (hk-b3f.73, with round-2 Timeout *int fix),
-Workflow 11-field (hk-b3f.72), TransitionRecord marshal + schema_version
-cross-check (hk-b3f.22).
-Typed enums (2): ConsumerClass (hk-hqwn.65), OnPanic (hk-hqwn.66) — both
-substituted string placeholders in subscription.go.
-Specaudit family (5): AR-002 baseline-axis (hk-zs0.4, 5 violations pinned
-to existing hk-zs0.59/.60), HC-014 channel closure (hk-8i31.17), EV-007
-monotonic time (hk-hqwn.10), HC-029 agent_started no-env (hk-8i31.36),
-BI-028 Beads-CLI skill launch-context (hk-872.35).
-Lifecycle / process (2): EV-019a panic-flush bus extension (hk-hqwn.28
-adds BusFlusher arg to RecoverWithLogFlush), HC-044 SpawnChildSysProcAttr
-cross-platform Linux/darwin (hk-8i31.51).
-brcli (1): BI-025a br exit-code → BrError classification on Result.BrErr
-(hk-872.28).
-testhelpers (1): BI-029..BI-032 crash-injection harness (hk-872.54,
-8 tests, atomic write + startup scan + mock-br factory).
-Closed-as-subsumed (2): hk-hqwn.40 (axes+durability — fully covered by
-hk-hqwn.63 §8 taxonomy lint); hk-b3f.58 (backtracking — fully covered by
-hk-b3f.77 Transition.Valid() EM-044 + 9 EM-044 tests).
+**Wave 1 (5 beads):** hk-b3f.94 SnapshotToken (extracted from verdictevent.go
+to its own file with Valid()), hk-b3f.97 AxisTags (struct with 4 sub-enums:
+LLMFreedom/IODeterminism/ReplaySafety/AxisIdempotency + BaselineAxisTags),
+hk-b3f.101 FreedomProfileRef, hk-b3f.102 BudgetRef, hk-b3f.103 SubWorkflowRef.
+
+**Wave 2 (5 beads):** hk-b3f.95 Evidence (typed map[string]any wrapper with
+EvidenceKeySubWorkflowPin/SynthesizedOutcome reserved-key constants),
+hk-b3f.96 VerifierMetrics (typed wrapper, permissive Valid), hk-b3f.98
+ModeTag (closed enum {mechanism, cognition}), hk-b3f.99 PolicyRef, hk-b3f.100
+GateRef. Bundle B also substituted ModeTag/PolicyRef/GateRef into Node;
+Bundle D substituted Evidence/VerifierMetrics into Transition.
+
+**Wave 3 (3 beads, all follow-ups I filed mid-session):** hk-b3f.104
+substituted the remaining 4 typed aliases into Node fields (Axes string→
+AxisTags, +3 *Ref fields), hk-b3f.105 substituted PolicyRef into Workflow.
+Policies, hk-b3f.106 wired SnapshotToken.Valid() into VerdictEvent.Valid()
+delegation (closes a pre-existing latent bug surfaced by the Wave-1
+reviewer).
+
+Net effect: `Node`, `Workflow`, `Transition`, and `VerdictEvent` records
+are now fully migrated to typed aliases. No `TODO(hk-b3f.NN)` markers
+remain in core for these field-substitution beads.
 
 ## Process scars to internalize (NEW this session)
 
-1. **Subsumption pre-check is high-leverage.** Two beads correctly
-   identified as SUBSUMED this session (hk-hqwn.40, hk-b3f.58) by
-   pre-flighting the implementer with explicit "if subsumed: print
-   'SUBSUMED — cite which closed bead covers it' and do NOT commit"
-   instructions. The "(coalesce)" tag in bead title is a strong subsumption
-   hint; "all blocker deps closed and the work has structurally landed
-   elsewhere" is the trigger. Worth the 60s implementer round-trip.
+1. **Pre-dispatch TODO grep (codified in directives v11).** I dispatched
+   3 implementers in parallel before realizing all three beads had
+   `TODO(hk-b3f.NN)` markers in `node.go` from a prior session. The wave
+   landed clean only because Bundles A and C chose conservatively (type-
+   def files only, no substitution). Future agent: grep `TODO(<bead-id>)`
+   pre-dispatch and explicitly scope substitution as separate beads if
+   3+ markers share a file.
 
-2. **Wire-format pattern: separate wire structs over annotating in-memory
-   shape.** hk-b3f.22 followed `eventPatternJSON` precedent: defined
-   `transitionWire` / `transitionWireState` / `transitionWireCommitRange`
-   structs with snake_case tags rather than annotating `Transition`
-   directly. Keeps in-memory shape clean and the wire-format constraints
-   localized to the marshaler. Use this pattern for any future RECORD that
-   needs JSON wire shape.
+2. **Empty bead bodies are normal for follow-up beads.** All 13 beads in
+   this session had empty `description` fields — title + spec citation
+   were the entire spec. Implementers handled this fine when the brief
+   provided spec section pointers + a canonical sibling pointer
+   (outcomekind.go for closed enums, actiondescriptor.go for non-empty
+   string aliases). Don't re-investigate body-emptiness.
 
-3. **Spec "Integer | None — positive seconds" → `*int`, NOT
-   `*time.Duration`.** hk-b3f.73 round-1 review caught Node.Timeout
-   emitting nanoseconds. Round-2 fix matched `Edge.TraversalCap *int`
-   precedent. Default for any spec-typed numeric field with positive-
-   integer wire shape: `*int` with godoc citing spec section, not Duration.
+3. **Pipelined merges scale to 3 waves cleanly.** 5+5+3 beads merged
+   over 3 waves with zero rebase conflicts. The trick: each implementer's
+   diff was non-overlapping by line distance within shared files (e.g.
+   Bundle F's Axes lines 19/26/150/313 vs Bundle G's Policies lines
+   37/261 in workflow_test.go).
 
-4. **Brief errors must surface, not be papered over.** hk-b3f.73 brief
-   incorrectly claimed `AxisTags` and `ModeTag` already existed in core —
-   they didn't. Implementer correctly deferred via follow-up beads
-   (hk-b3f.97, .98) and reported the discrepancy in their summary. This
-   is the right pattern: implementer flags brief vs reality, doesn't
-   silently fabricate.
+4. **Implementer scope-extension is the right pattern.** Bundle F's brief
+   only mentioned node.go and node_test.go; the implementer correctly
+   extended to workflow_test.go (which embeds Node literals and broke
+   compilation when Axes type changed) and surfaced the deviation in
+   their report. Trust this pattern; don't over-specify mechanical scope.
 
-5. **Inline-amend ceiling held cleanly twice.** hk-872.28 (single-line
-   godoc bead-id citation: "tracked by a follow-up bead" → "tracked by
-   hk-872.57") and hk-b3f.22 (single test-key addition: `confidence` to
-   requiredKeys). Both ≤3 mechanical edits in 1 file. Re-review skipped
-   on the godoc fix; re-review skipped on the test-key fix because the
-   `go test -run` confirmation was cheap.
-
-6. **`.claire/` untracked dir is not mine.** Pre-existing directory at
-   repo root with a `worktrees` subdir — likely typo'd `.claude/` from
-   another session/tool. Don't clean it without asking.
+5. **`.claire/` untracked dir is still here.** Pre-existing typo'd
+   directory at repo root with a `worktrees` subdir — not from this
+   session. Leave alone unless asked.
 
 ## Suggested first move
 
-1. **Verify state**: `git status` clean (only `.claire/` untracked);
-   `git log --oneline -3` shows `05d7249 fix(core): add confidence to
-   snake_case sensor requiredKeys (hk-b3f.22)` on top.
+1. **Verify state**: `git status` shows only `.claire/` untracked;
+   `git log --oneline -3` top is `3fe300f feat(core): substitute 4
+   typed aliases into Node fields (hk-b3f.104)`.
 
-2. **Three leftover branches need investigation before delete**:
-   `worktree-agent-a81fc0155348f648a`, `ab0d5be116be801d9`,
-   `ae62858e28981ec72`. They have no worktree paths attached (orphaned
-   from a prior session). Run `git log <branch> --oneline -5` on each
-   to see if they have unmerged commits before `git branch -D`.
+2. **The next obvious wave is the EM-NNN contract beads** in the ready
+   queue (all `tag:mechanism`, all dispatchable):
+   - hk-b3f.1 (EM-001 Workflow is named/versioned/directed-graph)
+   - hk-b3f.5 (EM-005/EM-005a Outcome record + kind discriminator —
+     **(coalesce) tag — pre-flight subsumption check**: OutcomeKind enum
+     and Outcome.kind/payload fields may already be present from earlier
+     work)
+   - hk-b3f.19 (EM-016 Checkpoint = git commit + sibling-file pattern)
+   - hk-b3f.23 (EM-018a Transition ID generation contract — daemon-local
+     UUIDv7, may already be in transitionid.go)
+   - hk-b3f.25 (EM-020 Transition records are immutable)
+   - hk-b3f.36 (EM-028 Transition record canonical durable form vs event)
+   - hk-b3f.57 (EM-043/EM-043a Cycle traversal cap — **(coalesce) tag,
+     check subsumption against edge.go TraversalCap**)
+   - hk-b3f.60 (EM-046 Context restore is agent-scoped)
 
-3. **Open with parallel-safe RECORD/Ref work** — there are still 7
-   deferred typed aliases from this session waiting (hk-b3f.97-.103
-   AxisTags, ModeTag, PolicyRef, GateRef, FreedomProfileRef, BudgetRef,
-   SubWorkflowRef). All bundle naturally — bundle 2-3 per implementer in
-   the same worktree (sequential commits per bead). Each is a string-
-   alias enum or typed wrapper following the `outcomekind.go` /
-   `actiondescriptor.go` precedent.
+   These are bigger than typed-alias work — each likely 50-150 LOC
+   implementation + tests. Bundle 1-2 per implementer; pre-grep for any
+   pre-existing partial implementation before dispatching.
 
-4. **Other open follow-ups** (more substantive):
-   - hk-b3f.94 SnapshotToken — typed alias citing reconciliation/schemas.md
-   - hk-b3f.95 Evidence — typed wrapper for transition.Evidence (currently
-     `map[string]any`)
-   - hk-b3f.96 VerifierMetrics — typed wrapper, same pattern
-   - hk-hqwn.70 BusFlusher / EventBus.Flush — depends on EventBus actually
-     existing; defer until event-bus subsystem exists
-   - hk-872.57 divergence_inconclusive event emission — same as above,
-     defer until event bus exists
+3. **Event-model wave** (hk-hqwn.9 EV-006, .34 EV-025, .35 EV-026) is
+   smaller and parallel-safe; could go alongside.
 
-5. **Cognition-tagged spec-fix beads remain undispatched** (handoff rule
-   from prior sessions): hk-zs0.58 (RC-015 split), hk-zs0.59 (BI-025a/b/c
-   idempotency=safe), hk-zs0.60 (RC-015 invalid axis vocabulary),
-   hk-zs0.62 (investigator role), hk-hqwn.67 (§8 table per-row Axes:
-   slot — substantive spec format change), hk-hqwn.68 (6 events lacking
-   sibling citation). **Don't dispatch as implementer briefs.** Need user
-   pair-on or kerf jig.
+4. **Cognition-tagged spec-fix beads STILL need user pair-on**: hk-zs0.58,
+   .59, .60, .62, hk-hqwn.67, .68. Don't dispatch as implementer briefs.
+
+5. **Deferred until subsystems exist**: hk-hqwn.70 (BusFlusher / EventBus.
+   Flush — needs event-bus subsystem), hk-872.57 (divergence_inconclusive
+   event emission — same).
 
 ## Files to open first
 
-1. `git log --oneline -22` — this session's commits.
+1. `git log --oneline -13` — this session's commits.
 2. `.claude/implementer-protocol.md` — standing rules; no structural
    change this session.
-3. `internal/core/{verdict.go,verdictevent.go,consumerclass.go,onpanic.go,
-   transition.go,transitionrecord.go,node.go,workflow.go,
-   monotsmono_hqwn10_test.go}` — this session's 9 core landings.
-4. `internal/specaudit/{zs04_baseline_axis_test.go,
-   hc014_channel_closure_test.go,hc029_agent_started_no_env_test.go,
-   bi028_skill_launch_context_test.go}` — 4 new audit-style binding tests
-   (5 with last session's = audit family is now ~10 tests; the
-   `expectedViolations` skip-list pattern is the canonical reuse target).
-5. `internal/lifecycle/{panicrecovery.go,spawndaemonchild_*}` — EV-019a
-   panic-flush extension and HC-044 SpawnChildSysProcAttr.
-6. `internal/brcli/{adapter.go,classifyexitcode_test.go,timeout.go}` —
-   Result.BrErr wire-up via BrErrorFromExitCode.
-7. `internal/testhelpers/crashharness.go` — BI-029..BI-032 shared test
-   infrastructure (8 B87254-prefixed exports).
+3. `internal/core/{node.go,workflow.go,transition.go,verdictevent.go}` —
+   four records now fully typed. Verify zero `TODO(hk-b3f.NN)` markers
+   for the closed beads (`grep -n 'TODO(hk-b3f' internal/core/*.go`
+   should return nothing relevant to closed beads).
+4. New typed alias files: `internal/core/{axistags.go, modetag.go,
+   policyref.go, gateref.go, freedomprofileref.go, budgetref.go,
+   subworkflowref.go, evidence.go, verifiermetrics.go, snapshottoken.go}`.
 
 ## Blocking question for user
 
 None. The 6 cognition-tagged spec-fix beads still need pair-on; everything
-else (typed-alias follow-ups, RECORD/binding-test work) is freely
+else (EM-NNN contract beads, EV-NNN event-model beads) is freely
 dispatchable.

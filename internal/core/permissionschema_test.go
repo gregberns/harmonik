@@ -18,7 +18,7 @@ func permissionSchemaFixture(t *testing.T) PermissionSchema {
 		ModelTier:     &tier,
 		DefaultSkills: []SkillName{"beads-cli"},
 		AllowedHooks:  []HookName{"pre-node-entry"},
-		InvocableBy:   []string{"orchestrator"},
+		InvocableBy:   []RoleName{"orchestrator"},
 	}
 }
 

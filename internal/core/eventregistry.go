@@ -16,7 +16,7 @@ import (
 // plus Payload json.RawMessage; a per-type constructor registry
 // map[EventType]func() EventPayload decodes Payload keyed by Event.type."
 //
-// EV-026 (event-model.md §4.3 EV-026) — internal-event carve-out: internal
+// EV-026 (event-model.md §4.6 EV-026) — internal-event carve-out: internal
 // events (within a subsystem's own Go package, never dispatched to the bus) MUST
 // NOT cross the bus and do not require §8 registration. Internal payload types
 // MAY implement EventPayload for local type-safety, but they MUST NOT be passed
@@ -60,7 +60,7 @@ var globalEventRegistry = &eventRegistry{
 // The constructor is called by DecodePayload to obtain a fresh zero-value
 // target for JSON unmarshaling.
 //
-// EV-025 (event-model.md §4.3 EV-025) — each event type has exactly one owning
+// EV-025 (event-model.md §4.6 EV-025) — each event type has exactly one owning
 // spec for payload shape: event-model.md §6.3 is normative for the SHAPE; the
 // emitting subsystem spec is normative for the WHEN (timing and preconditions).
 // RegisterEventType is the in-Go enforcement of the one-constructor-per-type-name

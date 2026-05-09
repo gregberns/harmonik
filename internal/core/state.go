@@ -9,7 +9,16 @@ import (
 )
 
 // State records the position and accumulated context of a Run at a node
-// (execution-model.md §6.1).
+// (execution-model.md §4.1.EM-003, §6.1).
+//
+// # Observability invariant (EM-003)
+//
+// A new State MUST NOT be observable outside the run until its checkpoint
+// commit has landed (execution-model.md §4.1.EM-003). The observability
+// boundary is the update-ref step of the checkpoint commit sequence
+// (write-tree → commit-tree → update-ref); before update-ref completes the
+// state is invisible to all subsystems. See Checkpoint godoc (EM-016) for the
+// atomicity contract that enforces this boundary.
 type State struct {
 	// StateID uniquely identifies this run-state.
 	StateID StateID

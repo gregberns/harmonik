@@ -23,7 +23,6 @@ package core
 //
 // The following fields use string as a placeholder pending typed-alias
 // implementation:
-//   - AllowedHooks  []string  — TODO hk-a8bg.89 (HookName)
 //   - InvocableBy   []string  — TODO hk-a8bg.91 (RoleName)
 type PermissionSchema struct {
 	// AllowedTools is the closed list of tool names this role may invoke.
@@ -55,8 +54,8 @@ type PermissionSchema struct {
 
 	// AllowedHooks is the list of Hook names that may modify this role's
 	// behavior. An empty slice means no hooks may modify behavior.
-	// TODO hk-a8bg.89: replace string with HookName typed alias.
-	AllowedHooks []string `json:"allowed_hooks"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field allowed_hooks.
+	AllowedHooks []HookName `json:"allowed_hooks"`
 
 	// InvocableBy is the list of role names permitted to spawn this role.
 	// An empty slice means no role may spawn this role directly.
@@ -75,7 +74,7 @@ func NewPermissionSchema() PermissionSchema {
 		WritablePaths: []PathGlob{},
 		ReadablePaths: []PathGlob{"**"},
 		DefaultSkills: []SkillName{},
-		AllowedHooks:  []string{},
+		AllowedHooks:  []HookName{},
 		InvocableBy:   []string{},
 	}
 }

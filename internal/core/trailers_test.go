@@ -21,7 +21,7 @@ var expectedTrailerEntries = []struct {
 	{"Harmonik-Target-Run-ID", TrailerTypeUUID, TrailerConditional, "reconciliation"},
 	{"Harmonik-Transition-ID", TrailerTypeUUID, TrailerRequired, "execution-model"},
 	{"Harmonik-Workflow-Class", TrailerTypeEnum, TrailerConditional, "reconciliation"},
-	{"Harmonik-Verdict-Executed", TrailerTypeString, TrailerKnownExtension, "reconciliation"},
+	{"Harmonik-Verdict-Executed", TrailerTypeEnum, TrailerKnownExtension, "reconciliation"},
 }
 
 // TestLookupTrailer_AllEntries verifies that each of the 8 registry entries can be
@@ -182,7 +182,9 @@ func TestConditionalRows(t *testing.T) {
 }
 
 // TestKnownExtension_VerdictExecuted verifies that Harmonik-Verdict-Executed is
-// classified as TrailerKnownExtension and owned by "reconciliation".
+// classified as TrailerKnownExtension, typed as TrailerTypeEnum, and owned by
+// "reconciliation". Per schemas.md §6.4, the value is a fixed literal "true";
+// we encode this as a 1-value enum so existing enum-validation machinery applies.
 func TestKnownExtension_VerdictExecuted(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +198,54 @@ func TestKnownExtension_VerdictExecuted(t *testing.T) {
 	if spec.OwnerSpec != "reconciliation" {
 		t.Errorf("OwnerSpec = %q, want \"reconciliation\"", spec.OwnerSpec)
 	}
+	if spec.Type != TrailerTypeEnum {
+		t.Errorf("Type = %v, want TrailerTypeEnum", spec.Type)
+	}
+}
+
+// verdictExecutedFixtureLookup is a test helper that looks up Harmonik-Verdict-Executed
+// and fatals if the key is absent from the registry.
+func verdictExecutedFixtureLookup(t *testing.T) TrailerSpec {
+	t.Helper()
+	spec, ok := LookupTrailer("Harmonik-Verdict-Executed")
+	if !ok {
+		t.Fatal("LookupTrailer(\"Harmonik-Verdict-Executed\") returned ok=false")
+	}
+	return spec
+}
+
+// TestVerdictExecuted_EnumValues verifies that Harmonik-Verdict-Executed carries
+// exactly {"true"} as its EnumValues, encoding the fixed-literal contract of
+// schemas.md §6.4 (RC-023: any other value is malformed).
+func TestVerdictExecuted_EnumValues(t *testing.T) {
+	t.Parallel()
+
+	spec := verdictExecutedFixtureLookup(t)
+	want := []string{"true"}
+	if !reflect.DeepEqual(spec.EnumValues, want) {
+		t.Errorf("EnumValues = %v, want %v (schemas.md §6.4: value is fixed literal \"true\")", spec.EnumValues, want)
+	}
+}
+
+// TestVerdictExecuted_NonTrueValueFailsEnum documents that a value other than "true"
+// is malformed per RC-023. The registry encodes this as a 1-value enum; enum
+// validation is the responsibility of the trailer-lint layer (no generic
+// ValidateTrailerValue helper exists in this package at MVH). This test asserts the
+// registry shape that makes future lint enforcement possible.
+//
+// Gap: a generic enum-validation helper (e.g. ValidateTrailerValue(spec, value) bool)
+// does not yet exist in internal/core. When added, this test should be extended to
+// call it with value="false" and assert it returns an error.
+func TestVerdictExecuted_NonTrueValueFailsEnum(t *testing.T) {
+	t.Parallel()
+
+	spec := verdictExecutedFixtureLookup(t)
+	// Assert registry shape: exactly one permitted value.
+	if len(spec.EnumValues) != 1 || spec.EnumValues[0] != "true" {
+		t.Errorf("expected EnumValues=[\"true\"], got %v; registry shape is the enforcement hook for RC-023", spec.EnumValues)
+	}
+	// Note: no ValidateTrailerValue helper exists yet; lint enforcement of the
+	// 1-value enum is deferred to the trailer-lint layer that reads EnumValues.
 }
 
 // TestRequiredRows verifies that the four unconditionally required trailers carry

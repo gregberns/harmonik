@@ -148,15 +148,22 @@ var trailerRegistry = []TrailerSpec{
 		Description: "Workflow class; MUST be present on reconciliation-workflow checkpoint commits. Enum values at MVH: {reconciliation}.",
 	},
 	{
-		// Known extension owned by the reconciliation spec.
-		// Type is TrailerTypeString: no canonical value structure is defined by the
-		// registry; the reconciliation spec governs value semantics.
-		// Included so trailer-lint does not flag it as an unknown trailer.
+		// Known extension owned by the reconciliation spec (schemas.md §6.4; RC-023; RC-026).
+		// Type is TrailerTypeEnum with a single permitted value "true": the spec defines a
+		// fixed literal (schemas.md §6.4: "value: \"true\" — fixed literal; any other value
+		// is malformed per RC-023"). A 1-value enum reuses existing validation machinery
+		// without adding a new TrailerValueType (option (a) per hk-63oh.59 design decision).
+		// Placement and emission rules are runtime-enforced (not registry-enforced):
+		//   - MUST appear on a descendant of the verdict commit on the same investigator branch.
+		//   - MUST NOT appear on the verdict commit itself.
+		//   - Emitted exactly once per executed reconciliation verdict; Cat 3b re-execution
+		//     (RC-026) appends a new commit rather than rewriting the prior one.
 		Key:         "Harmonik-Verdict-Executed",
-		Type:        TrailerTypeString,
+		Type:        TrailerTypeEnum,
 		Requirement: TrailerKnownExtension,
 		OwnerSpec:   "reconciliation",
-		Description: "Reconciliation verdict execution marker; present on verdict commits per the reconciliation spec.",
+		EnumValues:  []string{"true"},
+		Description: "Reconciliation verdict execution marker; value is the fixed literal \"true\" (RC-023); presence marks execution (marker-only semantics per schemas.md §6.4).",
 	},
 }
 

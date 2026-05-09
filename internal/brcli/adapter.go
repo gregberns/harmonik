@@ -13,6 +13,16 @@ import (
 //
 // Spec ref: specs/beads-integration.md §4.8 BI-025.
 //
+// BI-005 — no parallel authoritative cache: Beads is the source of truth for
+// bead content (title, description, type). Adapter MUST NOT maintain an
+// in-memory or on-disk cache of bead content that could be treated as
+// authoritative. Every call to ShowBead invokes `br show` unconditionally;
+// there is no memoisation layer. If a caller detects disagreement between a
+// previously observed value and a fresh ShowBead result during a §4.5 read,
+// the fresh `br` output is authoritative and the stale value MUST be
+// discarded before any harmonik decision consumes it.
+// Spec ref: specs/beads-integration.md §4.3 BI-005.
+//
 // Production callers MUST NOT inject a custom binary path; they MUST resolve
 // `br` from PATH at startup and pass that resolved path to New. The
 // constructor parameter is for testability only — unit tests MAY substitute

@@ -109,6 +109,12 @@ type Transition struct {
 	// and policy-rollback transitions (EM-044). MUST be non-nil iff
 	// TransitionKind ∈ {architectural-rollback, policy-rollback}. MUST be nil
 	// for forward, local-patchback, and context-restore kinds.
+	//
+	// EM-045: a rollback MUST be represented as a new transition (new
+	// TransitionID, new checkpoint commit); the earlier state's checkpoint commit
+	// MUST NOT be altered or removed. Git history is append-only per EM-020.
+	// This field pointing at the earlier state is structural evidence that the
+	// rollback is recorded as forward-append, not as a history-rewrite.
 	RollbackToStateID *StateID
 
 	// SchemaVersion is the schema version of this record under the N-1

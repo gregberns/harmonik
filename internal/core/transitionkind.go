@@ -9,11 +9,25 @@ type TransitionKind string
 
 // TransitionKind values per execution-model.md §6.1 ENUM declaration.
 const (
-	TransitionKindForward               TransitionKind = "forward"
-	TransitionKindLocalPatchback        TransitionKind = "local-patchback"
+	TransitionKindForward        TransitionKind = "forward"
+	TransitionKindLocalPatchback TransitionKind = "local-patchback"
+
+	// TransitionKindArchitecturalRollback records a daemon-initiated rollback to
+	// a prior state due to an architectural constraint (EM-044).
+	//
+	// EM-045: this rollback MUST be represented as a new transition (new
+	// transition_id, new checkpoint commit); the earlier state's checkpoint MUST
+	// NOT be altered. RollbackToStateID MUST be non-nil per EM-044.
 	TransitionKindArchitecturalRollback TransitionKind = "architectural-rollback"
-	TransitionKindPolicyRollback        TransitionKind = "policy-rollback"
-	TransitionKindContextRestore        TransitionKind = "context-restore"
+
+	// TransitionKindPolicyRollback records a policy-driven rollback to a prior
+	// state (EM-044).
+	//
+	// EM-045: this rollback MUST be represented as a new transition (new
+	// transition_id, new checkpoint commit); the earlier state's checkpoint MUST
+	// NOT be altered. RollbackToStateID MUST be non-nil per EM-044.
+	TransitionKindPolicyRollback TransitionKind = "policy-rollback"
+	TransitionKindContextRestore TransitionKind = "context-restore"
 )
 
 // Valid reports whether k is one of the five declared TransitionKind constants.

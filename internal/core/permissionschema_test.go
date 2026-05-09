@@ -12,7 +12,7 @@ func permissionSchemaFixture(t *testing.T) PermissionSchema {
 
 	tier := "standard"
 	return PermissionSchema{
-		AllowedTools:  []string{"bash", "read"},
+		AllowedTools:  []ToolName{"bash", "read"},
 		WritablePaths: []string{"output/**"},
 		ReadablePaths: []string{"**"},
 		ModelTier:     &tier,

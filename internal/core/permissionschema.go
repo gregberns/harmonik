@@ -18,13 +18,12 @@ package core
 // DefaultSkills MUST include "beads-cli" for any role that is designated
 // mvh-required (specs/control-points.md §4.6.CP-031). Enforcement lives in
 // the policy validator, not at the type level. Typed alias: TODO hk-a8bg.88
-// (SkillName).
+// (SkillName — pending implementation).
 //
 // # Typed-alias deferral
 //
 // The following fields use string as a placeholder pending typed-alias
 // implementation:
-//   - AllowedTools  []string  — TODO hk-a8bg.86 (ToolName)
 //   - WritablePaths []string  — TODO hk-a8bg.87 (PathGlob)
 //   - ReadablePaths []string  — TODO hk-a8bg.87 (PathGlob)
 //   - DefaultSkills []string  — TODO hk-a8bg.88 (SkillName)
@@ -33,8 +32,8 @@ package core
 type PermissionSchema struct {
 	// AllowedTools is the closed list of tool names this role may invoke.
 	// An empty slice means no tools are permitted.
-	// TODO hk-a8bg.86: replace string with ToolName typed alias.
-	AllowedTools []string `json:"allowed_tools"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field allowed_tools.
+	AllowedTools []ToolName `json:"allowed_tools"`
 
 	// WritablePaths is the list of workspace-relative globs this role may
 	// write. An empty slice means no paths are writable.
@@ -76,7 +75,7 @@ type PermissionSchema struct {
 // can append without a nil-slice check.
 func NewPermissionSchema() PermissionSchema {
 	return PermissionSchema{
-		AllowedTools:  []string{},
+		AllowedTools:  []ToolName{},
 		WritablePaths: []string{},
 		ReadablePaths: []string{"**"},
 		DefaultSkills: []string{},

@@ -13,6 +13,15 @@ import (
 // multi-input runs are not permitted per EM-012. Transition records for the run are
 // discoverable via the task-branch commit range whose commits carry the run's
 // Harmonik-Run-ID trailer; no separate transitions field is required here.
+//
+// EM-015 invariant (execution-model.md §4.3.EM-015): a workflow edge routing back
+// to an earlier node is a run-internal loop, NOT a new run. RunID is stable across
+// all loop traversals within a single run; the task branch continues to accumulate
+// checkpoint commits (one per durable transition per §4.5). A new run with a fresh
+// RunID is spawned ONLY after fundamental failure per §4.3.EM-014 (crash,
+// unrecoverable error, or reopen-bead verdict). Callers MUST NOT mint a new RunID
+// on loop-back; the RunID field here is set once at dispatch and is immutable for
+// the lifetime of the run.
 type Run struct {
 	// RunID is the stable UUIDv7 run identifier (execution-model.md §6.1; unique across project).
 	RunID RunID

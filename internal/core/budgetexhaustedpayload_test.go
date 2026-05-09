@@ -12,8 +12,8 @@ import (
 func budgetExhaustedPayloadFixture(t *testing.T) BudgetExhaustedPayload {
 	t.Helper()
 	return BudgetExhaustedPayload{
-		RunID:          uuid.Must(uuid.NewV7()),
-		WorkflowID:     uuid.Must(uuid.NewV7()),
+		RunID:          RunID(uuid.Must(uuid.NewV7())),
+		WorkflowID:     WorkflowID(uuid.Must(uuid.NewV7())),
 		BudgetSeconds:  300,
 		ElapsedSeconds: 301,
 	}
@@ -36,7 +36,7 @@ func TestBudgetExhaustedPayloadValid_ZeroRunID(t *testing.T) {
 	t.Parallel()
 
 	p := budgetExhaustedPayloadFixture(t)
-	p.RunID = uuid.Nil
+	p.RunID = RunID(uuid.Nil)
 	if p.Valid() {
 		t.Error("Valid() = true with zero RunID, want false")
 	}
@@ -48,7 +48,7 @@ func TestBudgetExhaustedPayloadValid_ZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	p := budgetExhaustedPayloadFixture(t)
-	p.WorkflowID = uuid.Nil
+	p.WorkflowID = WorkflowID(uuid.Nil)
 	if p.Valid() {
 		t.Error("Valid() = true with zero WorkflowID, want false")
 	}

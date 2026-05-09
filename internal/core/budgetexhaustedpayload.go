@@ -12,17 +12,17 @@ import "github.com/google/uuid"
 //
 // # Structural invariants (enforced by Valid)
 //
-//   - RunID is not uuid.Nil (the reconciliation workflow's run_id).
-//   - WorkflowID is not uuid.Nil (the workflow definition id).
+//   - RunID is not the zero RunID (the reconciliation workflow's run_id).
+//   - WorkflowID is not the zero WorkflowID (the workflow definition id).
 //   - BudgetSeconds is >= 0 (declared wall-clock budget ceiling in seconds).
 //   - ElapsedSeconds is >= 0 (actual elapsed when terminated, in seconds).
 type BudgetExhaustedPayload struct {
 	// RunID is the run_id of the reconciliation workflow whose budget was
-	// exhausted. Must not be uuid.Nil.
-	RunID uuid.UUID
+	// exhausted. Must not be the zero RunID.
+	RunID RunID
 
-	// WorkflowID is the workflow definition id. Must not be uuid.Nil.
-	WorkflowID uuid.UUID
+	// WorkflowID is the workflow definition id. Must not be the zero WorkflowID.
+	WorkflowID WorkflowID
 
 	// BudgetSeconds is the declared wall-clock budget ceiling in seconds
 	// (reconciliation/schemas.md §6.1 budget_seconds). Must be >= 0.
@@ -38,15 +38,15 @@ type BudgetExhaustedPayload struct {
 // are satisfied.
 //
 // Rules per reconciliation/schemas.md §6.1:
-//   - RunID is not uuid.Nil.
-//   - WorkflowID is not uuid.Nil.
+//   - RunID is not the zero RunID.
+//   - WorkflowID is not the zero WorkflowID.
 //   - BudgetSeconds is >= 0.
 //   - ElapsedSeconds is >= 0.
 func (b BudgetExhaustedPayload) Valid() bool {
-	if b.RunID == uuid.Nil {
+	if b.RunID == RunID(uuid.Nil) {
 		return false
 	}
-	if b.WorkflowID == uuid.Nil {
+	if b.WorkflowID == WorkflowID(uuid.Nil) {
 		return false
 	}
 	if b.BudgetSeconds < 0 {

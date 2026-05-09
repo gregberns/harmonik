@@ -13,8 +13,18 @@ package core
 //   - EvidenceKeySynthesizedOutcome (§4.5.EM-023a): set to true for
 //     daemon/reconciliation synthesized outcomes.
 //
-// Large payloads MUST be externalised per EM-021 and referenced by relative
-// path from this map.
+// # EM-021 externalization
+//
+// Large payloads MUST be externalized as sibling files under the canonical
+// evidence directory:
+//
+//	.harmonik/transitions/<run_id>/<transition_id>/evidence/*
+//
+// Use EvidenceExternalDir to construct this path. Externalized files are part
+// of the commit's tree and inherit the atomicity boundary of §4.4.EM-016.
+// Writing them outside the tree is non-conforming. The primary
+// <transition_id>.json SHOULD remain single-digit KB; externalized files are
+// referenced from this map by relative path (execution-model.md §4.4.EM-021).
 type Evidence map[string]any
 
 const (

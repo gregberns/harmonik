@@ -193,7 +193,13 @@ var intentLogSyncDir = func(f *os.File) error { return f.Sync() }
 // fsync, or close), it returns a non-nil error wrapped with the brcli-package
 // prefix and the directory path.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 step 4; hk-872.37.4.
+// BI-030 step 5 ordering invariant: the caller MUST invoke `br` (step 5) only
+// after FsyncIntentLogParentDir returns nil. Invoking `br` before step 4
+// completes risks a power-loss window in which the intent file is absent from
+// the directory on remount, defeating crash-recovery (BI-031).
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 4–5; hk-872.37.4,
+// hk-872.37.5.
 func FsyncIntentLogParentDir(dir string) error {
 	//nolint:gosec // G304: dir is the adapter-owned intent-log directory (.harmonik/beads-intents/), not user input
 	f, err := os.Open(dir)

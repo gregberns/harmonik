@@ -35,6 +35,15 @@ func reconciliationFixtureListInFlightMissingIssueTypeJSON() string {
 		`]}`
 }
 
+// reconciliationFixtureListInFlightMissingTitleJSON returns a br list
+// response where one issue has an empty title field. The adapter must
+// reject this because Title would be empty and BeadRecord.Valid() fails.
+func reconciliationFixtureListInFlightMissingTitleJSON() string {
+	return `{"issues":[` +
+		`{"id":"hk-8mup.5","title":"","description":"","status":"in_progress","priority":2,"issue_type":"task","labels":[],"dependency_count":0,"dependent_count":0}` +
+		`]}`
+}
+
 // reconciliationFixtureListInFlightUnknownStatusJSON returns a br list
 // response where one issue has a status value not in the declared CoarseStatus
 // constants. The adapter MUST reject this via CoarseStatus.UnmarshalText.
@@ -180,6 +189,7 @@ func TestListInFlightBeadsMalformedJSON(t *testing.T) {
 
 func TestListInFlightBeadsMissingIssueType(t *testing.T) {
 	// Defensive: issue_type is empty → BeadType would be empty → Valid() fails.
+	// Per BI-025b: missing required field is a schema-level invariant; must wrap BrSchemaMismatch.
 	jsonStr := reconciliationFixtureListInFlightMissingIssueTypeJSON()
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
@@ -191,6 +201,31 @@ func TestListInFlightBeadsMissingIssueType(t *testing.T) {
 	_, err = adapter.ListInFlightBeads(context.Background())
 	if err == nil {
 		t.Fatal("expected error for missing issue_type, got nil")
+	}
+	// Per BI-025b: missing required field is a schema-level invariant violation.
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false per BI-025b; got %v", err)
+	}
+}
+
+func TestListInFlightBeadsMissingTitle(t *testing.T) {
+	// Defensive: title is empty → Valid() fails.
+	// Per BI-025b: missing required field is a schema-level invariant; must wrap BrSchemaMismatch.
+	jsonStr := reconciliationFixtureListInFlightMissingTitleJSON()
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = adapter.ListInFlightBeads(context.Background())
+	if err == nil {
+		t.Fatal("expected error for missing title, got nil")
+	}
+	// Per BI-025b: missing required field is a schema-level invariant violation.
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false per BI-025b; got %v", err)
 	}
 }
 

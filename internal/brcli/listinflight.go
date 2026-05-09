@@ -96,18 +96,24 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 	records := make([]core.BeadRecord, 0, len(envelope.Issues))
 	for _, item := range envelope.Issues {
 		// issue_type is required for a valid BeadRecord.
+		// Per BI-025b: missing required field is a schema-level invariant violation;
+		// classify as BrSchemaMismatch (mirrors ShowBead lines 124–129).
 		if item.IssueType == "" {
 			return nil, fmt.Errorf(
-				"brcli.ListInFlightBeads: malformed br list output: missing issue_type field for bead %q",
+				"brcli.ListInFlightBeads: malformed br list output: missing issue_type field for bead %q: %w",
 				item.ID,
+				BrSchemaMismatch,
 			)
 		}
 
 		// title is required for a valid BeadRecord.
+		// Per BI-025b: missing required field is a schema-level invariant violation;
+		// classify as BrSchemaMismatch (mirrors ShowBead pattern).
 		if item.Title == "" {
 			return nil, fmt.Errorf(
-				"brcli.ListInFlightBeads: malformed br list output: missing title field for bead %q",
+				"brcli.ListInFlightBeads: malformed br list output: missing title field for bead %q: %w",
 				item.ID,
+				BrSchemaMismatch,
 			)
 		}
 

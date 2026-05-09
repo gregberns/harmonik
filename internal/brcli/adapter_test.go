@@ -2,6 +2,7 @@ package brcli_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,34 +186,64 @@ func TestRunPropagatesContextCancellation(t *testing.T) {
 	}
 }
 
+// brcliFixtureEchoArgsToFileBinary writes a shell script that records all
+// received arguments (space-separated) to argsFile and exits 0. Used to spy
+// on the exact argument list forwarded to the mock binary by higher-level
+// adapter methods, without going through the methods' JSON-parsing layer.
+func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "br")
+	// Write all positional args to argsFile; print nothing to stdout so that
+	// higher-level callers (ShowBead) receive empty output and produce a
+	// parse error — which is expected and asserted in the test.
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' \"$*\" > %q\nexit 0\n", argsFile)
+	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("brcliFixtureEchoArgsToFileBinary: write mock: %v", err)
+	}
+	return path
+}
+
 // TestRunFormatJSONAppendsFlag verifies that the BI-025b JSON-mode discipline
 // is wired end-to-end: commands routed through runFormatJSON (ShowBead,
 // ListDependencies) receive --format json as the last two arguments to `br`.
 //
-// The test uses brcliFixtureEchoArgsBinary to capture the argument list passed
-// to the mock binary and asserts that "--format json" appears in it.
+// The test calls ShowBead with a spy binary that records its argument list to a
+// temp file. ShowBead returns a BrSchemaMismatch parse error (expected, because
+// the spy writes nothing to stdout). The test then reads the temp file and
+// asserts "--format json" was present in the forwarded args. A regression that
+// removes runFormatJSON routing from ShowBead would omit "--format json" and
+// cause the args-file assertion to fail.
 //
 // Spec ref: specs/beads-integration.md §4.8a BI-025b.
 func TestRunFormatJSONAppendsFlag(t *testing.T) {
-	// brcliFixtureEchoArgsBinary echoes all args to stdout and exits 0.
-	// ShowBead normally parses JSON from stdout; since the echo binary returns
-	// the arg list (not JSON), the call will fail with a parse error. That is
-	// expected — we inspect the error to confirm "--format json" was sent.
-	path := brcliFixtureEchoArgsBinary(t)
+	argsFile := filepath.Join(t.TempDir(), "spy-args.txt")
+	path := brcliFixtureEchoArgsToFileBinary(t, argsFile)
 	adapter, err := brcli.New(path)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Run directly to capture args without going through JSON parsing.
-	result, runErr := adapter.Run(context.Background(), "show", "hk-test", "--format", "json")
-	if runErr != nil {
-		t.Fatalf("Run echo: unexpected exec error: %v", runErr)
+	// ShowBead internally calls runFormatJSON, which must append --format json.
+	// The spy binary writes empty stdout, so ShowBead will return a
+	// BrSchemaMismatch error — that is expected and asserted below.
+	_, showErr := adapter.ShowBead(context.Background(), "hk-test")
+	if showErr == nil {
+		t.Fatal("expected parse error from ShowBead with spy binary, got nil")
+	}
+	if !errors.Is(showErr, brcli.BrSchemaMismatch) {
+		t.Errorf("expected BrSchemaMismatch parse error; got %v", showErr)
 	}
 
-	// Verify the echo binary received --format json in the argument list.
-	got := string(result.Stdout)
+	// Read the spy file and confirm --format json was forwarded.
+	//nolint:gosec // G304: argsFile path is constructed from t.TempDir() — test-controlled
+	raw, readErr := os.ReadFile(argsFile)
+	if readErr != nil {
+		t.Fatalf("reading spy args file: %v", readErr)
+	}
+	got := string(raw)
 	if !strings.Contains(got, "--format json") {
-		t.Errorf("expected args to contain \"--format json\"; got args: %q", got)
+		t.Errorf("ShowBead did not forward --format json to br; spy args: %q", got)
 	}
 }

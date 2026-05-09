@@ -77,7 +77,7 @@ type Result struct {
 //     call Run directly; see BI-025b carve-out notes in audit.go and version.go.
 //   - BI-025c timeout discipline → implemented in RunWithTimeout (timeout.go)
 //   - BI-025d stderr cap + classification → hk-872.31
-//   - BI-025e concurrency discipline → hk-872.32
+//   - BI-025e concurrency discipline → RunWithDBLockedRetry (dblockretry.go, hk-872.32)
 //
 // BI-025a exit-code taxonomy IS implemented here: Result.BrErr is populated
 // via BrErrorFromExitCode on every subprocess outcome (zero and non-zero exits).
@@ -87,7 +87,9 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
 	// low-level primitive used by higher-level methods that add their own timeout wrapping.
 	// TODO(hk-872.31): enforce 1 MiB stderr cap and classify captured stderr.
-	// TODO(hk-872.32): no adapter-side mutex; SQLite WAL handles concurrent writes.
+	// NOTE(hk-872.32): no adapter-side mutex — Adapter has no sync.Mutex field; SQLite WAL
+	// serializes concurrent writes per BI-025e. On BrDbLocked, callers MUST use
+	// RunWithDBLockedRetry (dblockretry.go) which implements the BI-025c retry policy.
 
 	//nolint:gosec // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input.
 	cmd := exec.CommandContext(ctx, a.brPath, args...)

@@ -38,6 +38,32 @@ import "github.com/google/uuid"
 // for the improvement loop) is an additive change and does not alter this
 // contract (execution-model.md §4.5.EM-025 additive note, §10.2).
 //
+// # EM-025a — emission ordering: update-ref MUST precede transition_event
+//
+// When a checkpoint write succeeds, the daemon MUST emit events in the
+// following order (execution-model.md §4.5.EM-025a, §7.2):
+//
+//  1. git update-ref returns success (the commit becomes observable)
+//  2. transition_event emitted to the event bus (execution-model.md §4.6.EM-028)
+//  3. checkpoint_written event emitted
+//  4. state-entered event emitted
+//
+// A pre-commit transition_event — emitted before update-ref completes — would
+// leave observers with a transition reference whose commit is never durable if
+// the reference advance fails (e.g., ENOSPC between commit-tree and update-ref),
+// producing divergence-evidence false positives in reconciliation detectors.
+//
+// ENOSPC or EIO during the checkpoint sequence MUST be classified as transient
+// (execution-model.md §8.1) with a bounded retry cap; on cap exhaustion the
+// class reclassifies to structural (execution-model.md §8.2). On retry, a new
+// transition_id MUST be generated (execution-model.md §4.4.EM-018a; daemon-local
+// UUIDv7 per TransitionIDGenerator); evidence files written under
+// .harmonik/transitions/<run_id>/<failed_transition_id>/evidence/* by the failed
+// attempt MUST be removed before the retry, or MAY be reclaimed by a periodic
+// sweeper of unreferenced <transition_id> sub-directories (i.e., those whose
+// transition_id is not referenced by any trailer on any commit reachable from
+// the task branch).
+//
 // # Path coherence
 //
 // TransitionRecordPath MUST equal

@@ -23,6 +23,21 @@ import "github.com/google/uuid"
 // The task branch MUST exist before any checkpoint is attempted; branch-creation
 // lifecycle is owned by workspace-model.md §4.2.
 //
+// # EM-025 — failed transitions MUST NOT create checkpoint commits (Core MVH)
+//
+// A Checkpoint is created ONLY for a successful, durable state transition
+// (outcome.status ∈ {SUCCESS, PARTIAL_SUCCESS} per §4.5.EM-023a). A failed
+// transition — i.e., outcome.status = FAIL, or a classifier verdict of
+// transient|structural|deterministic|canceled|budget_exhausted|compilation_loop
+// per §8 — MUST emit a failure event (execution-model.md §4.5.EM-025, §8) but
+// MUST NOT create a Checkpoint or advance the task branch. The failure event
+// MUST carry the last successful checkpoint's commit SHA in its last_checkpoint
+// correlation field, providing an anchor to the git trail.
+//
+// Post-MVH introduction of failure commits (to support git bisect over failures
+// for the improvement loop) is an additive change and does not alter this
+// contract (execution-model.md §4.5.EM-025 additive note, §10.2).
+//
 // # Path coherence
 //
 // TransitionRecordPath MUST equal

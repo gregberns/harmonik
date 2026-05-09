@@ -1,9 +1,9 @@
 package brcli
 
-// intentlogwrite.go — BI-030 steps 1–3: write IntentLogEntry to a temp file,
-// fsync(temp_fd), and rename(2) to canonical <key>.json.
+// intentlogwrite.go — BI-030 steps 1–4: write IntentLogEntry to a temp file,
+// fsync(temp_fd), rename(2) to canonical <key>.json, and fsync(parent_dir_fd).
 //
-// This file implements Steps 1–3 of the BI-030 multi-step atomic write
+// This file implements Steps 1–4 of the BI-030 multi-step atomic write
 // protocol:
 //   - Step 1: encode the IntentLogEntry as JSON and write it to a temp file
 //     named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
@@ -11,12 +11,14 @@ package brcli
 //     the file descriptor is closed (BI-030 step 2; hk-872.37.2).
 //   - Step 3: rename(2) the temp file to the canonical "<encoded_key>.json"
 //     path in the same directory (BI-030 step 3; hk-872.37.3).
+//   - Step 4: fsync(parent_directory_fd) — ensure the directory entry for the
+//     renamed file is durable on APFS / ext4-data=ordered (BI-030 step 4;
+//     hk-872.37.4).
 //
-// Steps 4–6 (fsync(parent_dir) on create, br invocation,
-// unlink + fsync(parent_dir) on delete) are addressed by follow-up beads
-// hk-872.37.4 through hk-872.37.6.
+// Steps 5–6 (br invocation, unlink + fsync(parent_dir) on delete) are
+// addressed by follow-up beads hk-872.37.5 through hk-872.37.6.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–3; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–4; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -167,6 +169,44 @@ func intentLogRandHex(n int) (string, error) {
 // (BI-030 step 3). Tests may replace this with an injected stub to simulate
 // rename failures; production code always uses os.Rename.
 var intentLogRenameFile = func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
+
+// intentLogSyncDir is the fsync hook called on the open directory fd in
+// FsyncIntentLogParentDir (BI-030 step 4). Tests may replace this with a
+// counting stub to assert the call was made; production code always uses the
+// real (*os.File).Sync path.
+var intentLogSyncDir = func(f *os.File) error { return f.Sync() }
+
+// FsyncIntentLogParentDir opens the intent-log directory at dir read-only,
+// calls fsync(2) on the directory file descriptor, and closes it — implementing
+// BI-030 step 4.
+//
+// This step is REQUIRED to ensure that the directory entry created by the
+// preceding rename(2) (step 3) is durable on APFS and ext4-data=ordered
+// filesystems. Without this fsync, a power-loss after step 3 can lose the
+// rename, leaving the intent file absent from the directory on remount.
+//
+// The directory is opened read-only (os.O_RDONLY) because fsync on a directory
+// does not write data — it only flushes the directory's metadata (entry list)
+// to stable storage.
+//
+// On success, FsyncIntentLogParentDir returns nil. On any failure (open,
+// fsync, or close), it returns a non-nil error wrapped with the brcli-package
+// prefix and the directory path.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 step 4; hk-872.37.4.
+func FsyncIntentLogParentDir(dir string) error {
+	//nolint:gosec // G304: dir is the adapter-owned intent-log directory (.harmonik/beads-intents/), not user input
+	f, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("brcli.FsyncIntentLogParentDir: open dir %q: %w", dir, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := intentLogSyncDir(f); err != nil {
+		return fmt.Errorf("brcli.FsyncIntentLogParentDir: fsync dir %q: %w", dir, err)
+	}
+	return nil
+}
 
 // RenameIntentLogTmpToFinal atomically renames the fsynced temp file at
 // tmpPath to the canonical intent-log filename "<encoded_key>.json" in dir —

@@ -1,12 +1,13 @@
 package brcli
 
-// intentlogwrite_test.go — BI-030 steps 1–3: write IntentLogEntry to temp
-// file, fsync(temp_fd), and rename(2) to canonical path.
+// intentlogwrite_test.go — BI-030 steps 1–4: write IntentLogEntry to temp
+// file, fsync(temp_fd), rename(2) to canonical path, and fsync(parent_dir_fd).
 //
 // Tests are in package brcli (white-box) to access intentLogEntryWire,
-// intentLogRandHex, intentLogSyncFile, and intentLogRenameFile directly.
+// intentLogRandHex, intentLogSyncFile, intentLogRenameFile, and
+// intentLogSyncDir directly.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–3; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–4; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -522,5 +523,79 @@ func TestRenameIntentLogTmpToFinalErrorLeavesTmpFile(t *testing.T) {
 	// Error message must identify the rename operation.
 	if !strings.Contains(err.Error(), "rename") {
 		t.Errorf("error %q does not mention 'rename'", err.Error())
+	}
+}
+
+// --- BI-030 step 4: fsync(parent_directory_fd) tests (hk-872.37.4) ---
+
+// TestFsyncIntentLogParentDirHappyPath verifies that FsyncIntentLogParentDir
+// succeeds on a real directory and calls intentLogSyncDir exactly once
+// (BI-030 step 4).
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogSyncDir.
+func TestFsyncIntentLogParentDirHappyPath(t *testing.T) {
+	dir := t.TempDir()
+
+	var syncDirCallCount atomic.Int64
+	orig := intentLogSyncDir
+	t.Cleanup(func() { intentLogSyncDir = orig })
+	intentLogSyncDir = func(f *os.File) error {
+		syncDirCallCount.Add(1)
+		return f.Sync() // still perform the real fsync
+	}
+
+	if err := FsyncIntentLogParentDir(dir); err != nil {
+		t.Fatalf("FsyncIntentLogParentDir: unexpected error: %v", err)
+	}
+
+	if n := syncDirCallCount.Load(); n != 1 {
+		t.Errorf("intentLogSyncDir called %d times; want exactly 1", n)
+	}
+}
+
+// TestFsyncIntentLogParentDirDirNotExist verifies that FsyncIntentLogParentDir
+// returns a non-nil error when the directory does not exist (open fails).
+func TestFsyncIntentLogParentDirDirNotExist(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nonexistent-subdir")
+
+	err := FsyncIntentLogParentDir(dir)
+	if err == nil {
+		t.Fatal("FsyncIntentLogParentDir: expected error for nonexistent dir, got nil")
+	}
+
+	// Error message must identify the directory and mention the open failure.
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("error %q does not contain dir path %q", err.Error(), dir)
+	}
+}
+
+// TestFsyncIntentLogParentDirSyncError verifies that when intentLogSyncDir
+// returns an error (BI-030 step 4 fsync failure), FsyncIntentLogParentDir
+// returns a non-nil error mentioning the directory path.
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogSyncDir.
+func TestFsyncIntentLogParentDirSyncError(t *testing.T) {
+	dir := t.TempDir()
+
+	orig := intentLogSyncDir
+	t.Cleanup(func() { intentLogSyncDir = orig })
+	intentLogSyncDir = func(_ *os.File) error {
+		return errors.New("injected dir fsync error")
+	}
+
+	err := FsyncIntentLogParentDir(dir)
+	if err == nil {
+		t.Fatal("FsyncIntentLogParentDir: expected error on dir fsync failure, got nil")
+	}
+
+	// Error message must contain "fsync" and the directory path.
+	if !strings.Contains(err.Error(), "fsync") {
+		t.Errorf("error %q does not mention 'fsync'", err.Error())
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("error %q does not contain dir path %q", err.Error(), dir)
 	}
 }

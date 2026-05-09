@@ -1,20 +1,22 @@
 package brcli
 
-// intentlogwrite.go — BI-030 steps 1–2: write IntentLogEntry to a temp file
-// and fsync(temp_fd) before close.
+// intentlogwrite.go — BI-030 steps 1–3: write IntentLogEntry to a temp file,
+// fsync(temp_fd), and rename(2) to canonical <key>.json.
 //
-// This file implements Steps 1 and 2 of the BI-030 multi-step atomic write
+// This file implements Steps 1–3 of the BI-030 multi-step atomic write
 // protocol:
 //   - Step 1: encode the IntentLogEntry as JSON and write it to a temp file
 //     named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
 //   - Step 2: fsync(temp_fd) — flush the file data to durable storage before
 //     the file descriptor is closed (BI-030 step 2; hk-872.37.2).
+//   - Step 3: rename(2) the temp file to the canonical "<encoded_key>.json"
+//     path in the same directory (BI-030 step 3; hk-872.37.3).
 //
-// Steps 3–6 (rename, fsync(parent_dir), br invocation,
-// unlink + fsync(parent_dir)) are addressed by follow-up beads
-// hk-872.37.3 through hk-872.37.6.
+// Steps 4–6 (fsync(parent_dir) on create, br invocation,
+// unlink + fsync(parent_dir) on delete) are addressed by follow-up beads
+// hk-872.37.4 through hk-872.37.6.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–2; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–3; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -159,4 +161,50 @@ func intentLogRandHex(n int) (string, error) {
 		out[i] = hexChars[idx.Int64()]
 	}
 	return string(out), nil
+}
+
+// intentLogRenameFile is the rename hook used by RenameIntentLogTmpToFinal
+// (BI-030 step 3). Tests may replace this with an injected stub to simulate
+// rename failures; production code always uses os.Rename.
+var intentLogRenameFile = func(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
+
+// RenameIntentLogTmpToFinal atomically renames the fsynced temp file at
+// tmpPath to the canonical intent-log filename "<encoded_key>.json" in dir —
+// implementing BI-030 step 3.
+//
+// The canonical filename is constructed as:
+//
+//	<encoded_key>.json
+//
+// where <encoded_key> is idempotencyKey with colons replaced by underscores
+// (same encoding as WriteIntentLogTmp; filesystem-portability per §6.2
+// OQ-BI-003 — colons are forbidden on macOS HFS+).
+//
+// The rename is performed via os.Rename, which maps to POSIX rename(2). On
+// POSIX systems, rename(2) is atomic at the filesystem layer when source and
+// destination share the same parent directory — which is guaranteed here since
+// both tmpPath and the final path are constructed under dir.
+//
+// If the canonical file already exists (e.g., a retry after a crash between
+// step 3 and step 4), os.Rename overwrites it. Overwrite is structurally safe
+// because the canonical filename is derived from a deterministic idempotency
+// key, so any pre-existing file at that path encodes the same intent.
+//
+// On success, RenameIntentLogTmpToFinal returns the final (canonical) path and
+// a nil error. The temp file at tmpPath no longer exists.
+//
+// On failure, the rename is not applied and tmpPath remains on disk. The error
+// is wrapped with context identifying the source and destination paths. The
+// caller (BI-030 step 4 onwards) MUST NOT proceed if this step returns an
+// error.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 step 3; §6.2 on-disk layout.
+func RenameIntentLogTmpToFinal(tmpPath string, dir string, idempotencyKey string) (finalPath string, err error) {
+	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
+	finalPath = filepath.Join(dir, encodedKey+".json")
+
+	if err := intentLogRenameFile(tmpPath, finalPath); err != nil {
+		return "", fmt.Errorf("brcli.RenameIntentLogTmpToFinal: rename %q -> %q: %w", tmpPath, finalPath, err)
+	}
+	return finalPath, nil
 }

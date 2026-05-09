@@ -1,12 +1,12 @@
 package brcli
 
-// intentlogwrite_test.go — BI-030 steps 1–2: write IntentLogEntry to temp
-// file and fsync(temp_fd) before close.
+// intentlogwrite_test.go — BI-030 steps 1–3: write IntentLogEntry to temp
+// file, fsync(temp_fd), and rename(2) to canonical path.
 //
 // Tests are in package brcli (white-box) to access intentLogEntryWire,
-// intentLogRandHex, and intentLogSyncFile directly.
+// intentLogRandHex, intentLogSyncFile, and intentLogRenameFile directly.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–2; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–3; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -364,5 +364,163 @@ func TestWriteIntentLogTmpFsyncErrorRemovesTmpFile(t *testing.T) {
 	// Error message must mention fsync.
 	if !strings.Contains(err.Error(), "fsync") {
 		t.Errorf("error %q does not mention 'fsync'", err.Error())
+	}
+}
+
+// --- BI-030 step 3: rename(2) to canonical <key>.json tests (hk-872.37.3) ---
+
+// intentLogRenameFixture creates a temp file in dir with a .json.tmp-<rand>
+// suffix and returns its path, simulating the output of WriteIntentLogTmp.
+func intentLogRenameFixture(t *testing.T, dir string) string {
+	t.Helper()
+	suffix, err := intentLogRandHex(8)
+	if err != nil {
+		t.Fatalf("intentLogRandHex: %v", err)
+	}
+	name := "hk_123_abc_claim.json.tmp-" + suffix
+	path := filepath.Join(dir, name)
+	//nolint:gosec // G304: path is a test temp file, not user input
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("create fixture tmp file %q: %v", path, err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close fixture tmp file %q: %v", path, err)
+	}
+	return path
+}
+
+// TestRenameIntentLogTmpToFinalHappyPath verifies that RenameIntentLogTmpToFinal
+// renames the temp file to the canonical <encoded_key>.json path, returns the
+// final path, and removes the temp file.
+func TestRenameIntentLogTmpToFinalHappyPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+	tmpPath := intentLogRenameFixture(t, dir)
+
+	finalPath, err := RenameIntentLogTmpToFinal(tmpPath, dir, entry.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("RenameIntentLogTmpToFinal: unexpected error: %v", err)
+	}
+
+	// Final file must exist.
+	if _, statErr := os.Stat(finalPath); statErr != nil {
+		t.Errorf("final file %q does not exist: %v", finalPath, statErr)
+	}
+
+	// Temp file must be gone.
+	if _, statErr := os.Stat(tmpPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("tmp file %q still exists after rename; want removed", tmpPath)
+	}
+
+	// Final filename must be <encoded_key>.json (colons encoded as underscores).
+	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
+	wantName := encodedKey + ".json"
+	if filepath.Base(finalPath) != wantName {
+		t.Errorf("final filename = %q; want %q", filepath.Base(finalPath), wantName)
+	}
+
+	// Final path must live in dir.
+	if filepath.Dir(finalPath) != dir {
+		t.Errorf("finalPath dir = %q; want %q", filepath.Dir(finalPath), dir)
+	}
+}
+
+// TestRenameIntentLogTmpToFinalColonEncoding verifies that colons in the
+// idempotency key are encoded as underscores in the canonical filename,
+// matching the encoding used in WriteIntentLogTmp (§6.2 OQ-BI-003).
+func TestRenameIntentLogTmpToFinalColonEncoding(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tmpPath := intentLogRenameFixture(t, dir)
+	keyWithColons := "run-abc:trans-xyz:claim"
+
+	finalPath, err := RenameIntentLogTmpToFinal(tmpPath, dir, keyWithColons)
+	if err != nil {
+		t.Fatalf("RenameIntentLogTmpToFinal: %v", err)
+	}
+
+	name := filepath.Base(finalPath)
+	if strings.Contains(name, ":") {
+		t.Errorf("canonical filename %q contains colon; want underscores", name)
+	}
+	wantName := "run-abc_trans-xyz_claim.json"
+	if name != wantName {
+		t.Errorf("canonical filename = %q; want %q", name, wantName)
+	}
+}
+
+// TestRenameIntentLogTmpToFinalOverwriteExisting verifies that
+// RenameIntentLogTmpToFinal succeeds when the canonical path already exists
+// (idempotent retry on crash between step 3 and step 4 — overwrite is safe
+// because the key is deterministic).
+func TestRenameIntentLogTmpToFinalOverwriteExisting(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+	encodedKey := strings.ReplaceAll(entry.IdempotencyKey, ":", "_")
+	existingFinal := filepath.Join(dir, encodedKey+".json")
+
+	// Pre-create the canonical file to simulate a prior partial write.
+	//nolint:gosec // G304: existingFinal is a test temp path, not user input
+	if err := os.WriteFile(existingFinal, []byte(`{"schema_version":1}`), 0o600); err != nil {
+		t.Fatalf("pre-create canonical file: %v", err)
+	}
+
+	tmpPath := intentLogRenameFixture(t, dir)
+
+	finalPath, err := RenameIntentLogTmpToFinal(tmpPath, dir, entry.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("RenameIntentLogTmpToFinal: unexpected error on overwrite: %v", err)
+	}
+	if finalPath != existingFinal {
+		t.Errorf("finalPath = %q; want %q", finalPath, existingFinal)
+	}
+
+	// Canonical file must still exist.
+	if _, statErr := os.Stat(finalPath); statErr != nil {
+		t.Errorf("final file %q does not exist after overwrite rename: %v", finalPath, statErr)
+	}
+
+	// Temp file must be gone.
+	if _, statErr := os.Stat(tmpPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("tmp file %q still exists after overwrite rename", tmpPath)
+	}
+}
+
+// TestRenameIntentLogTmpToFinalErrorLeavesTompFile verifies that when the
+// rename fails (injected error), the original temp file is left on disk and
+// RenameIntentLogTmpToFinal returns a non-nil error with an empty finalPath.
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogRenameFile.
+func TestRenameIntentLogTmpToFinalErrorLeavesTmpFile(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+	tmpPath := intentLogRenameFixture(t, dir)
+
+	orig := intentLogRenameFile
+	t.Cleanup(func() { intentLogRenameFile = orig })
+	intentLogRenameFile = func(_, _ string) error {
+		return errors.New("injected rename error")
+	}
+
+	finalPath, err := RenameIntentLogTmpToFinal(tmpPath, dir, entry.IdempotencyKey)
+	if err == nil {
+		t.Fatal("RenameIntentLogTmpToFinal: expected error on rename failure, got nil")
+	}
+	if finalPath != "" {
+		t.Errorf("RenameIntentLogTmpToFinal: expected empty finalPath on error, got %q", finalPath)
+	}
+
+	// Temp file must still be present (caller can retry or recover it).
+	if _, statErr := os.Stat(tmpPath); statErr != nil {
+		t.Errorf("tmp file %q missing after rename failure; want retained for recovery: %v", tmpPath, statErr)
+	}
+
+	// Error message must identify the rename operation.
+	if !strings.Contains(err.Error(), "rename") {
+		t.Errorf("error %q does not mention 'rename'", err.Error())
 	}
 }

@@ -95,12 +95,12 @@ var trailerRegistry = []TrailerSpec{
 		Description: "Bead identifier; MUST be present when the run is tied to a bead per EM-014, absent otherwise.",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer)
+		// execution-model.md §6.2; EM-017 (required trailer); EM-013 (join-key invariant)
 		Key:         "Harmonik-Run-ID",
 		Type:        TrailerTypeUUID,
 		Requirement: TrailerRequired,
 		OwnerSpec:   "execution-model",
-		Description: "UUIDv7 identifying the run; present on every checkpoint commit.",
+		Description: "UUIDv7 identifying the run; present on every checkpoint commit (EM-013 join key across git, Beads, and JSONL).",
 	},
 	{
 		// execution-model.md §6.2; EM-017 (required trailer)

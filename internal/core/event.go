@@ -70,7 +70,9 @@ type Event struct {
 	// When non-nil must be > 0.
 	TimestampMonoNsec *int64
 
-	// RunID is present when the event is scoped to a run (EV-001).
+	// RunID is present when the event is scoped to a run (EV-001; EM-013).
+	// EM-013 requires run_id on every run-scoped event as the join key across
+	// git (Harmonik-Run-ID trailer), Beads, and JSONL.
 	// Optional; when non-nil must not be uuid.Nil.
 	RunID *RunID
 

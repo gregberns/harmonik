@@ -11,8 +11,11 @@ import "github.com/google/uuid"
 // RunID is a named type (not a Go alias) so that RunID and other ID types
 // (StateID, TransitionID, etc.) are not interchangeable at compile time.
 // The underlying UUID MUST be UUIDv7 per event-model.md §4.1 EV-002.
-// The value is carried as the Harmonik-Run-ID git trailer on every checkpoint
-// commit for a run, and as the run_id field on every run-scoped event.
+//
+// EM-013 invariant (execution-model.md §4.3.EM-013): the run_id of a run MUST
+// appear as the Harmonik-Run-ID trailer on every checkpoint commit for that run
+// (per §4.4) and as the run_id field on every run-scoped event (per
+// event-model.md §4.1). The run_id is the join key across git, Beads, and JSONL.
 type RunID uuid.UUID
 
 // String returns the canonical hyphenated UUID string representation.

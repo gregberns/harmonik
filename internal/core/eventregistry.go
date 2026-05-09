@@ -15,6 +15,13 @@ import (
 // as a tagged-union: a top-level Event envelope struct carrying common fields
 // plus Payload json.RawMessage; a per-type constructor registry
 // map[EventType]func() EventPayload decodes Payload keyed by Event.type."
+//
+// EV-026 (event-model.md §4.3 EV-026) — internal-event carve-out: internal
+// events (within a subsystem's own Go package, never dispatched to the bus) MUST
+// NOT cross the bus and do not require §8 registration. Internal payload types
+// MAY implement EventPayload for local type-safety, but they MUST NOT be passed
+// to RegisterEventType. Only §8-declared event types are registered in this
+// package's global registry.
 type EventPayload interface{}
 
 // ErrUnknownEventType is returned by DecodePayload when Event.Type has no

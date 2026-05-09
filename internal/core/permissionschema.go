@@ -17,14 +17,12 @@ package core
 //
 // DefaultSkills MUST include "beads-cli" for any role that is designated
 // mvh-required (specs/control-points.md §4.6.CP-031). Enforcement lives in
-// the policy validator, not at the type level. Typed alias: TODO hk-a8bg.88
-// (SkillName — pending implementation).
+// the policy validator, not at the type level.
 //
 // # Typed-alias deferral
 //
 // The following fields use string as a placeholder pending typed-alias
 // implementation:
-//   - DefaultSkills []string  — TODO hk-a8bg.88 (SkillName)
 //   - AllowedHooks  []string  — TODO hk-a8bg.89 (HookName)
 //   - InvocableBy   []string  — TODO hk-a8bg.91 (RoleName)
 type PermissionSchema struct {
@@ -52,8 +50,8 @@ type PermissionSchema struct {
 	// DefaultSkills is the list of skill names injected into every handler
 	// session running under this role. MUST include "beads-cli" for any
 	// mvh-required role per CP-031.
-	// TODO hk-a8bg.88: replace string with SkillName typed alias.
-	DefaultSkills []string `json:"default_skills"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field default_skills.
+	DefaultSkills []SkillName `json:"default_skills"`
 
 	// AllowedHooks is the list of Hook names that may modify this role's
 	// behavior. An empty slice means no hooks may modify behavior.
@@ -76,7 +74,7 @@ func NewPermissionSchema() PermissionSchema {
 		AllowedTools:  []ToolName{},
 		WritablePaths: []PathGlob{},
 		ReadablePaths: []PathGlob{"**"},
-		DefaultSkills: []string{},
+		DefaultSkills: []SkillName{},
 		AllowedHooks:  []string{},
 		InvocableBy:   []string{},
 	}

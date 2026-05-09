@@ -20,17 +20,17 @@ func TestGuardPayloadValid(t *testing.T) {
 		},
 		{
 			name:  "non-empty node_id is valid",
-			p:     GuardPayload{AppliesToNode: ptr("node-001")},
+			p:     GuardPayload{AppliesToNode: ptr(NodeID("node-001"))},
 			valid: true,
 		},
 		{
-			name:  "arbitrary non-empty string is valid",
-			p:     GuardPayload{AppliesToNode: ptr("n")},
+			name:  "arbitrary non-empty NodeID is valid",
+			p:     GuardPayload{AppliesToNode: ptr(NodeID("n"))},
 			valid: true,
 		},
 		{
-			name:  "empty string pointer is invalid",
-			p:     GuardPayload{AppliesToNode: ptr("")},
+			name:  "empty NodeID pointer is invalid",
+			p:     GuardPayload{AppliesToNode: ptr(NodeID(""))},
 			valid: false,
 		},
 	}
@@ -67,7 +67,7 @@ func TestGuardPayloadJSONRoundTrip(t *testing.T) {
 		{
 			name:  "node_id present",
 			input: `{"applies_to_node":"node-001"}`,
-			want:  GuardPayload{AppliesToNode: ptr("node-001")},
+			want:  GuardPayload{AppliesToNode: ptr(NodeID("node-001"))},
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestGuardPayloadJSONMarshal(t *testing.T) {
 	t.Run("non-nil node_id present in output", func(t *testing.T) {
 		t.Parallel()
 
-		p := GuardPayload{AppliesToNode: ptr("node-001")}
+		p := GuardPayload{AppliesToNode: ptr(NodeID("node-001"))}
 		data, err := json.Marshal(p)
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)

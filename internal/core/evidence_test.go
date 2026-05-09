@@ -65,4 +65,16 @@ func TestEvidenceKeyConstants(t *testing.T) {
 	if EvidenceKeySynthesizedOutcome != "synthesized_outcome" {
 		t.Errorf("EvidenceKeySynthesizedOutcome = %q, want %q", EvidenceKeySynthesizedOutcome, "synthesized_outcome")
 	}
+	if EvidenceKeyPartialSuccess != "partial_success" {
+		t.Errorf("EvidenceKeyPartialSuccess = %q, want %q", EvidenceKeyPartialSuccess, "partial_success")
+	}
+}
+
+func TestEvidenceValid_ReservedKeyPartialSuccess(t *testing.T) {
+	t.Parallel()
+
+	e := Evidence{EvidenceKeyPartialSuccess: true}
+	if !e.Valid() {
+		t.Error("Valid() = false for Evidence with partial_success key, want true")
+	}
 }

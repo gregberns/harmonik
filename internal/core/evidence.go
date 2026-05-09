@@ -8,10 +8,13 @@ package core
 //
 // # Reserved keys
 //
-// Two keys are reserved by the spec:
+// Three keys are reserved by the spec:
 //   - EvidenceKeySubWorkflowPin (§4.8.EM-034c): sub-workflow expansion pin.
 //   - EvidenceKeySynthesizedOutcome (§4.5.EM-023a): set to true for
 //     daemon/reconciliation synthesized outcomes.
+//   - EvidenceKeyPartialSuccess (§4.5.EM-023a): set to true when outcome
+//     status is PARTIAL_SUCCESS, so downstream consumers distinguish partial
+//     from full success.
 //
 // # EM-021 externalization
 //
@@ -36,6 +39,13 @@ const (
 	// for daemon/reconciliation synthesized outcomes per
 	// execution-model.md §4.5.EM-023a.
 	EvidenceKeySynthesizedOutcome = "synthesized_outcome"
+
+	// EvidenceKeyPartialSuccess is the reserved evidence key set to true on
+	// Transition records whose associated outcome has status PARTIAL_SUCCESS.
+	// Required by execution-model.md §4.5.EM-023a: "the Transition record MUST
+	// carry a partial_success=true evidence flag so downstream consumers can
+	// distinguish partial from full success."
+	EvidenceKeyPartialSuccess = "partial_success"
 )
 
 // Valid reports whether the Evidence map is structurally valid.

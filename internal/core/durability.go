@@ -25,7 +25,7 @@ package core
 //     reconciliation-run — the verdict commit.
 //   - It MUST NOT emit intermediate checkpoint commits, even for transitions
 //     that IsDurable() classifies as durable.
-//   - The exception is keyed on Workflow.WorkflowClass == "reconciliation";
+//   - The exception is keyed on Workflow.WorkflowClass == WorkflowClassReconciliation;
 //     absence of the field (nil) means an ordinary workflow that obeys EM-023.
 //
 // IsDurable() itself is workflow-class-agnostic: it returns the same answer
@@ -33,9 +33,6 @@ package core
 // the EM-026 exception independently — suppress intermediate checkpoints and
 // emit exactly one verdict commit for reconciliation-class runs. IsDurable() is
 // a necessary but not sufficient condition for checkpoint emission on those runs.
-//
-// TODO(hk-63oh.60): when WorkflowClass becomes a typed field (hk-63oh.60), the
-// EM-026 guard should use the typed constant rather than a raw string comparison.
 //
 // The caller is responsible for ensuring kind and status are valid
 // (kind.Valid() == true, status.Valid() == true) before calling IsDurable.

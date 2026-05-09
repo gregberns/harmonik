@@ -18,14 +18,6 @@ func hookPayloadFixture(t *testing.T) HookPayload {
 		SideEffectKind:     SideEffectKindEmitEvent,
 		HaltOnFailure:      false,
 		SubsystemPriority:  10,
-		SideEffects: []SideEffect{
-			{
-				Kind:             SideEffectKindEmitEvent,
-				Target:           "node.completed",
-				Payload:          map[string]any{"run_id": "r-001"},
-				IdempotencyClass: IdempotencyClassIdempotent,
-			},
-		},
 	}
 }
 
@@ -41,8 +33,8 @@ func TestNewHookPayload_HaltOnFailureDefault(t *testing.T) {
 }
 
 // TestNewHookPayload_ZeroValueOtherFields verifies that NewHookPayload leaves
-// TriggerEvent, SideEffectKind, SubsystemPriority, SideEffects, and
-// SubscriptionFilter at their zero values so callers know they must set them.
+// TriggerEvent, SideEffectKind, SubsystemPriority, and SubscriptionFilter at
+// their zero values so callers know they must set them.
 func TestNewHookPayload_ZeroValueOtherFields(t *testing.T) {
 	t.Parallel()
 
@@ -58,9 +50,6 @@ func TestNewHookPayload_ZeroValueOtherFields(t *testing.T) {
 	}
 	if hp.SubsystemPriority != 0 {
 		t.Errorf("NewHookPayload().SubsystemPriority = %d, want 0", hp.SubsystemPriority)
-	}
-	if len(hp.SideEffects) != 0 {
-		t.Errorf("NewHookPayload().SideEffects len = %d, want 0", len(hp.SideEffects))
 	}
 }
 
@@ -197,49 +186,6 @@ func TestHookPayloadValid_ZeroSubsystemPriority(t *testing.T) {
 	}
 }
 
-// TestHookPayloadValid_NilSideEffects verifies that nil SideEffects is valid
-// (no side effects declared).
-func TestHookPayloadValid_NilSideEffects(t *testing.T) {
-	t.Parallel()
-
-	hp := hookPayloadFixture(t)
-	hp.SideEffects = nil
-	if !hp.Valid() {
-		t.Error("HookPayload with nil SideEffects should be valid")
-	}
-}
-
-// TestHookPayloadValid_EmptySideEffects verifies that an empty (non-nil)
-// SideEffects slice is valid.
-func TestHookPayloadValid_EmptySideEffects(t *testing.T) {
-	t.Parallel()
-
-	hp := hookPayloadFixture(t)
-	hp.SideEffects = []SideEffect{}
-	if !hp.Valid() {
-		t.Error("HookPayload with empty SideEffects slice should be valid")
-	}
-}
-
-// TestHookPayloadValid_InvalidSideEffect verifies that a SideEffects slice
-// containing an invalid SideEffect makes the payload invalid.
-func TestHookPayloadValid_InvalidSideEffect(t *testing.T) {
-	t.Parallel()
-
-	hp := hookPayloadFixture(t)
-	// Corrupt one SideEffect by clearing its required Target field.
-	hp.SideEffects = []SideEffect{
-		{
-			Kind:             SideEffectKindEmitEvent,
-			Target:           "", // invalid: must be non-empty
-			IdempotencyClass: IdempotencyClassIdempotent,
-		},
-	}
-	if hp.Valid() {
-		t.Error("HookPayload with invalid SideEffect in SideEffects should be invalid")
-	}
-}
-
 // TestHookPayloadValid_ZeroValue verifies that a zero-value HookPayload is
 // invalid (TriggerEvent is empty, SideEffectKind is empty).
 func TestHookPayloadValid_ZeroValue(t *testing.T) {
@@ -289,9 +235,6 @@ func TestHookPayloadJSONRoundTrip(t *testing.T) {
 		if *got.SubscriptionFilter != *orig.SubscriptionFilter {
 			t.Errorf("SubscriptionFilter: got %q, want %q", *got.SubscriptionFilter, *orig.SubscriptionFilter)
 		}
-	}
-	if len(got.SideEffects) != len(orig.SideEffects) {
-		t.Errorf("SideEffects length: got %d, want %d", len(got.SideEffects), len(orig.SideEffects))
 	}
 	if !got.Valid() {
 		t.Error("round-tripped HookPayload.Valid() = false, want true")
@@ -364,27 +307,5 @@ func TestHookPayloadJSONSubscriptionFilterPresent(t *testing.T) {
 
 	if _, ok := m["subscription_filter"]; !ok {
 		t.Error("JSON output should include subscription_filter when non-nil")
-	}
-}
-
-// TestHookPayloadJSONSideEffectsOmitEmpty verifies that a nil SideEffects
-// slice is omitted from the JSON output (omitempty).
-func TestHookPayloadJSONSideEffectsOmitEmpty(t *testing.T) {
-	t.Parallel()
-
-	hp := hookPayloadFixture(t)
-	hp.SideEffects = nil
-	data, err := json.Marshal(hp)
-	if err != nil {
-		t.Fatalf("json.Marshal: %v", err)
-	}
-
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatalf("json.Unmarshal to map: %v", err)
-	}
-
-	if _, ok := m["side_effects"]; ok {
-		t.Error("JSON output should omit side_effects when nil")
 	}
 }

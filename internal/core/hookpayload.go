@@ -30,12 +30,6 @@ package core
 // TODO hk-a8bg.92: replace *string with PolicyExpression typed alias once the
 // typed wrapper is implemented (specs/control-points.md §6.1.2
 // subscription_filter : PolicyExpression | None).
-//
-// # SideEffects
-//
-// SideEffects is the list of side effects produced by the hook evaluator
-// (specs/control-points.md §6.1.2 side_effects : List<SideEffect>). A nil or
-// empty slice means the hook declares no side effects.
 type HookPayload struct {
 	// TriggerEvent is the event name from the registered lifecycle set that
 	// triggers this hook (specs/control-points.md §6.1.2, CP-013). Must be
@@ -77,13 +71,6 @@ type HookPayload struct {
 	//
 	// Wire field name: subsystem_priority.
 	SubsystemPriority int `json:"subsystem_priority"`
-
-	// SideEffects is the list of side effects produced by the hook evaluator.
-	// A nil or empty slice means no side effects are declared.
-	// Each element must satisfy [SideEffect.Valid].
-	//
-	// Wire field name: side_effects.
-	SideEffects []SideEffect `json:"side_effects,omitempty"`
 }
 
 // NewHookPayload returns a HookPayload with the spec-mandated default applied:
@@ -104,7 +91,6 @@ func NewHookPayload() HookPayload {
 //
 //   - TriggerEvent must be non-empty.
 //   - SideEffectKind must be a recognised constant per [SideEffectKind.Valid].
-//   - Each element of SideEffects must satisfy [SideEffect.Valid].
 //
 // SubscriptionFilter contents are not validated here; the evaluator interprets
 // the expression per §6.1.2. HaltOnFailure and SubsystemPriority are always
@@ -115,11 +101,6 @@ func (p HookPayload) Valid() bool {
 	}
 	if !p.SideEffectKind.Valid() {
 		return false
-	}
-	for _, se := range p.SideEffects {
-		if !se.Valid() {
-			return false
-		}
 	}
 	return true
 }

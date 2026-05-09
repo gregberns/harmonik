@@ -53,6 +53,16 @@ var globalEventRegistry = &eventRegistry{
 // The constructor is called by DecodePayload to obtain a fresh zero-value
 // target for JSON unmarshaling.
 //
+// EV-025 (event-model.md §4.3 EV-025) — each event type has exactly one owning
+// spec for payload shape: event-model.md §6.3 is normative for the SHAPE; the
+// emitting subsystem spec is normative for the WHEN (timing and preconditions).
+// RegisterEventType is the in-Go enforcement of the one-constructor-per-type-name
+// half of EV-025: calling it twice with the same typeName returns
+// ErrDuplicateEventType, preventing any second shape-owner from silently
+// overwriting the canonical constructor. The typeName MUST correspond to a
+// §8-declared event type; types not in §8 MUST NOT be registered here (see
+// EV-026 for internal-only events that are out of scope for this registry).
+//
 // Returns ErrDuplicateEventType if typeName has already been registered.
 // Thread-safe.
 func RegisterEventType(typeName string, constructor func() EventPayload) error {

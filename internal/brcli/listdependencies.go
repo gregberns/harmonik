@@ -2,8 +2,6 @@ package brcli
 
 // TODO(hk-872.28): When BrError enum lands, classify Run's exit codes via that
 // taxonomy; ErrBrDepListFailed will either be subsumed or aliased.
-// TODO(hk-872.29): When --format json is auto-prepended by Run, drop the explicit
-// --format json argument passed from ListDependencies.
 // TODO(hk-872.30): When read-timeout discipline lands, the 5s read timeout will
 // wrap ctx automatically; no explicit timeout needed here.
 // TODO(hk-872.55): When EdgeKind extends to tolerate Beads's broader dep-type
@@ -63,7 +61,7 @@ type brDepListErrorEnvelope struct {
 // Every returned edge satisfies edge.Valid(). An empty slice is returned when
 // the bead exists but has no dependency edges.
 func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.DependencyEdge, error) {
-	result, err := a.Run(ctx, "dep", "list", string(id), "--direction", "both", "--format", "json")
+	result, err := a.runFormatJSON(ctx, "dep", "list", string(id), "--direction", "both")
 	if err != nil {
 		return nil, fmt.Errorf("brcli.ListDependencies: exec failed: %w", err)
 	}
@@ -97,9 +95,10 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 	}
 
 	// Success path: parse the flat JSON array.
+	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var items []brDepListItem
 	if jsonErr := json.Unmarshal(result.Stdout, &items); jsonErr != nil {
-		return nil, fmt.Errorf("brcli.ListDependencies: malformed br dep list output: %w", jsonErr)
+		return nil, fmt.Errorf("brcli.ListDependencies: malformed br dep list output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
 	edges := make([]core.DependencyEdge, 0, len(items))

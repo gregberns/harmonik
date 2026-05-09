@@ -172,6 +172,10 @@ func TestListInFlightBeadsMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
+	// Per BI-025b: parse failures MUST classify as BrSchemaMismatch.
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("errors.Is(err, BrSchemaMismatch) = false per BI-025b; got %v", err)
+	}
 }
 
 func TestListInFlightBeadsMissingIssueType(t *testing.T) {

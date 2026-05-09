@@ -72,7 +72,9 @@ type Result struct {
 // the underlying error.
 //
 // Run is the LOW-LEVEL PRIMITIVE; it does not implement:
-//   - BI-025b --format json flag → hk-872.29
+//   - BI-025b --format json flag → use runFormatJSON for commands that support --format json.
+//     Commands that use the global --json flag (br audit log) or lack JSON support (br --version)
+//     call Run directly; see BI-025b carve-out notes in audit.go and version.go.
 //   - BI-025c timeout discipline → implemented in RunWithTimeout (timeout.go)
 //   - BI-025d stderr cap + classification → hk-872.31
 //   - BI-025e concurrency discipline → hk-872.32
@@ -82,7 +84,6 @@ type Result struct {
 //
 // Higher-level methods built on Run will add the remaining layers.
 func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
-	// TODO(hk-872.29): prepend --format json to args.
 	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
 	// low-level primitive used by higher-level methods that add their own timeout wrapping.
 	// TODO(hk-872.31): enforce 1 MiB stderr cap and classify captured stderr.
@@ -134,4 +135,22 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 		ExitCode: 0,
 		BrErr:    BrOK,
 	}, nil
+}
+
+// runFormatJSON invokes `<brPath> <args...> --format json` and returns the
+// subprocess result. It is the BI-025b JSON-mode wrapper for commands that
+// expose a --format flag (br show, br dep list). Callers that use the global
+// --json flag (br audit log) or that require text parsing (br --version) MUST
+// call Run directly; see BI-025b carve-out notes in audit.go and version.go.
+//
+// Parse failures of the structured output returned by runFormatJSON callers
+// MUST classify as BrSchemaMismatch per BI-025b. Enforcement is in each
+// higher-level method (ShowBead, ListDependencies).
+//
+// Spec ref: specs/beads-integration.md §4.8a BI-025b.
+func (a *Adapter) runFormatJSON(ctx context.Context, args ...string) (Result, error) {
+	jsonArgs := make([]string, 0, len(args)+2)
+	jsonArgs = append(jsonArgs, args...)
+	jsonArgs = append(jsonArgs, "--format", "json")
+	return a.Run(ctx, jsonArgs...)
 }

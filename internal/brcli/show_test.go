@@ -9,6 +9,15 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// showBeadFixtureVerifyBrSchemaMismatch is a helper that asserts err wraps
+// BrSchemaMismatch per BI-025b (parse failure classification).
+func showBeadFixtureVerifyBrSchemaMismatch(t *testing.T, err error, context string) {
+	t.Helper()
+	if !errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("%s: errors.Is(err, BrSchemaMismatch) = false; got %v", context, err)
+	}
+}
+
 // showBeadFixtureValidJSON returns canonical JSON for a br show response
 // with the given bead ID. The JSON includes:
 //   - one outgoing dependency (parent-child to hk-872)
@@ -235,6 +244,7 @@ func TestShowBeadEmptyArray(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty JSON array, got nil")
 	}
+	showBeadFixtureVerifyBrSchemaMismatch(t, err, "TestShowBeadEmptyArray")
 }
 
 func TestShowBeadMultiElementArray(t *testing.T) {
@@ -254,6 +264,7 @@ func TestShowBeadMultiElementArray(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for multi-element JSON array, got nil")
 	}
+	showBeadFixtureVerifyBrSchemaMismatch(t, err, "TestShowBeadMultiElementArray")
 }
 
 func TestShowBeadMalformedJSON(t *testing.T) {
@@ -268,6 +279,8 @@ func TestShowBeadMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
+	// Per BI-025b: parse failures MUST classify as BrSchemaMismatch.
+	showBeadFixtureVerifyBrSchemaMismatch(t, err, "TestShowBeadMalformedJSON")
 }
 
 func TestShowBeadUnknownCoarseStatus(t *testing.T) {

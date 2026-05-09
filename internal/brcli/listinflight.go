@@ -4,6 +4,9 @@ package brcli
 // taxonomy; ErrBrListFailed will either be subsumed or aliased.
 // TODO(hk-872.30): When read-timeout discipline lands, the 5s read timeout will
 // wrap ctx automatically; no explicit timeout needed here.
+// BI-025b note: br list uses --json (global flag) rather than --format json;
+// this is the pinned Beads version's structured-output flag for this subcommand.
+// Run is called directly (not runFormatJSON) per the BI-025b carve-out.
 
 import (
 	"context"
@@ -78,9 +81,10 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 	}
 
 	// Success path: parse {issues: [...]} envelope.
+	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var envelope brListEnvelope
 	if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr != nil {
-		return nil, fmt.Errorf("brcli.ListInFlightBeads: malformed br list output: %w", jsonErr)
+		return nil, fmt.Errorf("brcli.ListInFlightBeads: malformed br list output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
 	// Return empty slice (not nil) when the issues array is empty, so callers

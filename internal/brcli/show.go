@@ -2,8 +2,6 @@ package brcli
 
 // TODO(hk-872.28): When BrError enum lands, classify Run's exit codes via that
 // taxonomy; ErrBeadNotFound and ErrBrShowFailed will either be subsumed or aliased.
-// TODO(hk-872.29): When --format json is auto-prepended by Run, drop the explicit
-// --format json argument passed from ShowBead.
 // TODO(hk-872.30): When read-timeout discipline lands, the 5s read timeout will
 // wrap ctx automatically; no explicit timeout needed here.
 
@@ -73,7 +71,7 @@ type brShowErrorEnvelope struct {
 //   - parent         → IGNORED (already present in dependencies)
 //   - AuditTrailRef  → string(id), per BI-031 step 3
 func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
-	result, err := a.Run(ctx, "show", string(id), "--format", "json")
+	result, err := a.runFormatJSON(ctx, "show", string(id))
 	if err != nil {
 		return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: exec failed: %w", err)
 	}
@@ -106,15 +104,17 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 	}
 
 	// Success path: parse JSON array.
+	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var items []brShowItem
 	if jsonErr := json.Unmarshal(result.Stdout, &items); jsonErr != nil {
-		return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: malformed br show output: %w", jsonErr)
+		return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: malformed br show output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
 	if len(items) != 1 {
 		return core.BeadRecord{}, fmt.Errorf(
-			"brcli.ShowBead: malformed br show output: expected exactly 1 element in array, got %d",
+			"brcli.ShowBead: malformed br show output: expected exactly 1 element in array, got %d: %w",
 			len(items),
+			BrSchemaMismatch,
 		)
 	}
 
@@ -123,8 +123,9 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 	// issue_type is required for a valid BeadRecord.
 	if item.IssueType == "" {
 		return core.BeadRecord{}, fmt.Errorf(
-			"brcli.ShowBead: malformed br show output: missing issue_type field for bead %q",
+			"brcli.ShowBead: malformed br show output: missing issue_type field for bead %q: %w",
 			item.ID,
+			BrSchemaMismatch,
 		)
 	}
 

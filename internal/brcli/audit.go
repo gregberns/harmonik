@@ -118,9 +118,10 @@ func (a *Adapter) AuditLog(ctx context.Context, id core.BeadID) ([]AuditEvent, e
 	}
 
 	// Success path: parse {issue_id, events: [...]} envelope.
+	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
 	var envelope brAuditLogEnvelope
 	if jsonErr := json.Unmarshal(result.Stdout, &envelope); jsonErr != nil {
-		return nil, fmt.Errorf("brcli.AuditLog: malformed br audit log output: %w", jsonErr)
+		return nil, fmt.Errorf("brcli.AuditLog: malformed br audit log output: %w; %w", jsonErr, BrSchemaMismatch)
 	}
 
 	// Return empty slice (not nil) when the events array is empty, so callers

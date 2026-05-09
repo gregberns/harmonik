@@ -1,13 +1,14 @@
 package brcli
 
-// intentlogwrite_test.go — BI-030 steps 1–4: write IntentLogEntry to temp
-// file, fsync(temp_fd), rename(2) to canonical path, and fsync(parent_dir_fd).
+// intentlogwrite_test.go — BI-030 steps 1–4 and step 6: write IntentLogEntry
+// to temp file, fsync(temp_fd), rename(2) to canonical path,
+// fsync(parent_dir_fd) on create, and unlink + fsync(parent_dir_fd) on delete.
 //
 // Tests are in package brcli (white-box) to access intentLogEntryWire,
-// intentLogRandHex, intentLogSyncFile, intentLogRenameFile, and
-// intentLogSyncDir directly.
+// intentLogRandHex, intentLogSyncFile, intentLogRenameFile, intentLogSyncDir,
+// and intentLogUnlinkFile directly.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–4; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–6; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -597,5 +598,152 @@ func TestFsyncIntentLogParentDirSyncError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), dir) {
 		t.Errorf("error %q does not contain dir path %q", err.Error(), dir)
+	}
+}
+
+// --- BI-030 step 6: unlink + fsync(parent_directory_fd) tests (hk-872.37.6) ---
+
+// intentLogDeleteFixture creates the canonical intent-log file for
+// idempotencyKey in dir and returns the file path, simulating the state after
+// a successful rename (steps 3–4) and `br` invocation (step 5).
+func intentLogDeleteFixture(t *testing.T, dir, idempotencyKey string) string {
+	t.Helper()
+	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
+	path := filepath.Join(dir, encodedKey+".json")
+	//nolint:gosec // G304: path is a test temp file, not user input
+	if err := os.WriteFile(path, []byte(`{"schema_version":1}`), 0o600); err != nil {
+		t.Fatalf("intentLogDeleteFixture: create canonical file %q: %v", path, err)
+	}
+	return path
+}
+
+// TestDeleteIntentLogAndSyncParentHappyPath verifies that
+// DeleteIntentLogAndSyncParent removes the canonical intent-log file, calls
+// the parent-dir fsync exactly once, and returns nil (BI-030 step 6).
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogSyncDir.
+func TestDeleteIntentLogAndSyncParentHappyPath(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+
+	canonicalPath := intentLogDeleteFixture(t, dir, entry.IdempotencyKey)
+
+	var syncDirCallCount atomic.Int64
+	origSync := intentLogSyncDir
+	t.Cleanup(func() { intentLogSyncDir = origSync })
+	intentLogSyncDir = func(f *os.File) error {
+		syncDirCallCount.Add(1)
+		return f.Sync() // still perform the real fsync
+	}
+
+	if err := DeleteIntentLogAndSyncParent(dir, entry.IdempotencyKey); err != nil {
+		t.Fatalf("DeleteIntentLogAndSyncParent: unexpected error: %v", err)
+	}
+
+	// Intent file must be gone.
+	if _, statErr := os.Stat(canonicalPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("intent file %q still exists after delete; want removed", canonicalPath)
+	}
+
+	// Parent-dir fsync must be called exactly once.
+	if n := syncDirCallCount.Load(); n != 1 {
+		t.Errorf("intentLogSyncDir called %d times; want exactly 1", n)
+	}
+}
+
+// TestDeleteIntentLogAndSyncParentColonEncoding verifies that colons in the
+// idempotency key are encoded as underscores when constructing the canonical
+// filename to unlink (§6.2 OQ-BI-003 portability; mirrors WriteIntentLogTmp
+// and RenameIntentLogTmpToFinal encoding).
+func TestDeleteIntentLogAndSyncParentColonEncoding(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyWithColons := "run-abc:trans-xyz:claim"
+
+	// Create the file using the encoded name so unlink can find it.
+	canonicalPath := intentLogDeleteFixture(t, dir, keyWithColons)
+
+	if err := DeleteIntentLogAndSyncParent(dir, keyWithColons); err != nil {
+		t.Fatalf("DeleteIntentLogAndSyncParent: unexpected error: %v", err)
+	}
+
+	// Canonical (encoded) file must be gone.
+	if _, statErr := os.Stat(canonicalPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("encoded intent file %q still exists after delete", canonicalPath)
+	}
+}
+
+// TestDeleteIntentLogAndSyncParentUnlinkError verifies that when
+// intentLogUnlinkFile returns an error, DeleteIntentLogAndSyncParent returns a
+// non-nil error mentioning "unlink" and does NOT proceed to fsync the parent
+// directory.
+//
+// NOTE: this test mutates package-level variables and MUST NOT run in parallel
+// with other tests that replace intentLogUnlinkFile or intentLogSyncDir.
+func TestDeleteIntentLogAndSyncParentUnlinkError(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+
+	origUnlink := intentLogUnlinkFile
+	t.Cleanup(func() { intentLogUnlinkFile = origUnlink })
+	intentLogUnlinkFile = func(_ string) error {
+		return errors.New("injected unlink error")
+	}
+
+	var syncDirCallCount atomic.Int64
+	origSync := intentLogSyncDir
+	t.Cleanup(func() { intentLogSyncDir = origSync })
+	intentLogSyncDir = func(f *os.File) error {
+		syncDirCallCount.Add(1)
+		return f.Sync()
+	}
+
+	err := DeleteIntentLogAndSyncParent(dir, entry.IdempotencyKey)
+	if err == nil {
+		t.Fatal("DeleteIntentLogAndSyncParent: expected error on unlink failure, got nil")
+	}
+
+	// Error message must identify the unlink operation.
+	if !strings.Contains(err.Error(), "unlink") {
+		t.Errorf("error %q does not mention 'unlink'", err.Error())
+	}
+
+	// Parent-dir fsync must NOT be called when unlink fails.
+	if n := syncDirCallCount.Load(); n != 0 {
+		t.Errorf("intentLogSyncDir called %d times on unlink failure; want 0", n)
+	}
+}
+
+// TestDeleteIntentLogAndSyncParentFsyncError verifies that when the parent-dir
+// fsync fails after a successful unlink, DeleteIntentLogAndSyncParent returns a
+// non-nil error mentioning "fsync".
+//
+// NOTE: this test mutates package-level variables and MUST NOT run in parallel
+// with other tests that replace intentLogUnlinkFile or intentLogSyncDir.
+func TestDeleteIntentLogAndSyncParentFsyncError(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+
+	// Stub unlink to succeed without touching the filesystem.
+	origUnlink := intentLogUnlinkFile
+	t.Cleanup(func() { intentLogUnlinkFile = origUnlink })
+	intentLogUnlinkFile = func(_ string) error { return nil }
+
+	// Stub parent-dir fsync to fail.
+	origSync := intentLogSyncDir
+	t.Cleanup(func() { intentLogSyncDir = origSync })
+	intentLogSyncDir = func(_ *os.File) error {
+		return errors.New("injected dir fsync error")
+	}
+
+	err := DeleteIntentLogAndSyncParent(dir, entry.IdempotencyKey)
+	if err == nil {
+		t.Fatal("DeleteIntentLogAndSyncParent: expected error on parent-dir fsync failure, got nil")
+	}
+
+	// Error message must mention "fsync".
+	if !strings.Contains(err.Error(), "fsync") {
+		t.Errorf("error %q does not mention 'fsync'", err.Error())
 	}
 }

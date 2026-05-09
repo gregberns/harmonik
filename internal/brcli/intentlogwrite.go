@@ -1,10 +1,12 @@
 package brcli
 
-// intentlogwrite.go — BI-030 steps 1–4: write IntentLogEntry to a temp file,
-// fsync(temp_fd), rename(2) to canonical <key>.json, and fsync(parent_dir_fd).
+// intentlogwrite.go — BI-030 steps 1–4 and step 6: write IntentLogEntry to a
+// temp file, fsync(temp_fd), rename(2) to canonical <key>.json,
+// fsync(parent_dir_fd) on create, and unlink + fsync(parent_dir_fd) on delete.
 //
-// This file implements Steps 1–4 of the BI-030 multi-step atomic write
-// protocol:
+// This file implements the full helper surface for BI-030 on both the create
+// side (steps 1–4) and the delete side (step 6):
+//
 //   - Step 1: encode the IntentLogEntry as JSON and write it to a temp file
 //     named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
 //   - Step 2: fsync(temp_fd) — flush the file data to durable storage before
@@ -14,11 +16,18 @@ package brcli
 //   - Step 4: fsync(parent_directory_fd) — ensure the directory entry for the
 //     renamed file is durable on APFS / ext4-data=ordered (BI-030 step 4;
 //     hk-872.37.4).
+//   - Step 5: invoke `br` — handled by the adapter layer (not in this file).
+//   - Step 6: on successful `br` return, unlink(intent_file) then
+//     fsync(parent_directory_fd) — ensures the deletion is durable so that a
+//     power-loss after unlink cannot leave the file visible on remount and
+//     trigger a false-positive Cat 3a in BI-031 crash-recovery (hk-872.37.6).
 //
-// Steps 5–6 (br invocation, unlink + fsync(parent_dir) on delete) are
-// addressed by follow-up beads hk-872.37.5 through hk-872.37.6.
+// The BI-030 atomic-write + delete protocol is now complete on the
+// helper-surface side. Steps 1–4 are exposed via WriteIntentLogTmp,
+// RenameIntentLogTmpToFinal, and FsyncIntentLogParentDir; step 6 is exposed
+// via DeleteIntentLogAndSyncParent.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–4; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–6; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -253,4 +262,58 @@ func RenameIntentLogTmpToFinal(tmpPath string, dir string, idempotencyKey string
 		return "", fmt.Errorf("brcli.RenameIntentLogTmpToFinal: rename %q -> %q: %w", tmpPath, finalPath, err)
 	}
 	return finalPath, nil
+}
+
+// intentLogUnlinkFile is the unlink hook used by DeleteIntentLogAndSyncParent
+// (BI-030 step 6). Tests may replace this with an injected stub to simulate
+// unlink failures; production code always uses os.Remove.
+var intentLogUnlinkFile = func(path string) error { return os.Remove(path) }
+
+// DeleteIntentLogAndSyncParent unlinks the canonical intent-log file for
+// idempotencyKey in dir, then calls FsyncIntentLogParentDir to flush the
+// parent directory's metadata to durable storage — implementing BI-030 step 6.
+//
+// The canonical filename is constructed as:
+//
+//	<encoded_key>.json
+//
+// where <encoded_key> is idempotencyKey with colons replaced by underscores
+// (same encoding as WriteIntentLogTmp and RenameIntentLogTmpToFinal;
+// filesystem-portability per §6.2 OQ-BI-003 — colons are forbidden on macOS
+// HFS+). Accepting (dir, idempotencyKey) rather than a pre-built path keeps
+// the colon-encoding rule in one place and matches the (dir, idempotencyKey)
+// signature already established by RenameIntentLogTmpToFinal.
+//
+// This function MUST be called only after `br` returns successfully (BI-030
+// step 5 ordering invariant). Calling it before step 5 would delete the intent
+// file that crash-recovery (BI-031) relies on.
+//
+// The two-step delete sequence is REQUIRED per BI-030:
+//  1. unlink(intent_file) — removes the directory entry.
+//  2. fsync(parent_directory_fd) — ensures the removal is durable. Without
+//     this fsync, a power-loss after unlink can leave the intent file visible
+//     on remount, causing the BI-031 crash-recovery scan to misclassify the
+//     already-completed transition as a Cat 3a torn-write (false positive).
+//
+// FsyncIntentLogParentDir is reused for step 2; the intentLogSyncDir hook
+// applies, making the parent-dir fsync stubable in tests.
+//
+// On success, DeleteIntentLogAndSyncParent returns nil. On any failure (unlink
+// or parent-dir fsync), it returns a non-nil error wrapped with the brcli-
+// package prefix, the file path, and the failed operation.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 delete sequence steps 1–2;
+// hk-872.37.6.
+func DeleteIntentLogAndSyncParent(dir, idempotencyKey string) error {
+	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
+	intentPath := filepath.Join(dir, encodedKey+".json")
+
+	if err := intentLogUnlinkFile(intentPath); err != nil {
+		return fmt.Errorf("brcli.DeleteIntentLogAndSyncParent: unlink %q: %w", intentPath, err)
+	}
+
+	if err := FsyncIntentLogParentDir(dir); err != nil {
+		return fmt.Errorf("brcli.DeleteIntentLogAndSyncParent: %w", err)
+	}
+	return nil
 }

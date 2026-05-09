@@ -45,8 +45,8 @@ func TestGateVerdictRecord_Valid_Allow(t *testing.T) {
 	t.Parallel()
 
 	r := gateVerdictRecordAllowFixture(t)
-	if err := r.Valid(); err != nil {
-		t.Errorf("expected nil error for allow record, got: %v", err)
+	if !r.Valid() {
+		t.Error("expected Valid() == true for allow record, got false")
 	}
 }
 
@@ -58,8 +58,8 @@ func TestGateVerdictRecord_Valid_AllowWithReason(t *testing.T) {
 	r := gateVerdictRecordAllowFixture(t)
 	reason := "explicit allow note"
 	r.Reason = &reason
-	if err := r.Valid(); err != nil {
-		t.Errorf("expected nil error for allow record with reason, got: %v", err)
+	if !r.Valid() {
+		t.Error("expected Valid() == true for allow record with reason, got false")
 	}
 }
 
@@ -69,8 +69,8 @@ func TestGateVerdictRecord_Valid_Deny(t *testing.T) {
 	t.Parallel()
 
 	r := gateVerdictRecordFixture(t)
-	if err := r.Valid(); err != nil {
-		t.Errorf("expected nil error for deny record with reason, got: %v", err)
+	if !r.Valid() {
+		t.Error("expected Valid() == true for deny record with reason, got false")
 	}
 }
 
@@ -88,8 +88,8 @@ func TestGateVerdictRecord_Valid_EscalateToHuman(t *testing.T) {
 		InputEnvelopeHash: hash,
 		ProducedAt:        "2026-05-08T01:00:00Z",
 	}
-	if err := r.Valid(); err != nil {
-		t.Errorf("expected nil error for escalate-to-human record, got: %v", err)
+	if !r.Valid() {
+		t.Error("expected Valid() == true for escalate-to-human record, got false")
 	}
 }
 
@@ -100,8 +100,8 @@ func TestGateVerdictRecord_Valid_DenyReasonNil(t *testing.T) {
 
 	r := gateVerdictRecordFixture(t)
 	r.Reason = nil
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for deny record with nil Reason, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for deny record with nil Reason, got true")
 	}
 }
 
@@ -113,8 +113,8 @@ func TestGateVerdictRecord_Valid_DenyReasonEmpty(t *testing.T) {
 	r := gateVerdictRecordFixture(t)
 	empty := ""
 	r.Reason = &empty
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for deny record with empty Reason, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for deny record with empty Reason, got true")
 	}
 }
 
@@ -131,8 +131,8 @@ func TestGateVerdictRecord_Valid_EscalateReasonNil(t *testing.T) {
 		InputEnvelopeHash: hash,
 		ProducedAt:        "2026-05-08T01:00:00Z",
 	}
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for escalate-to-human record with nil Reason, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for escalate-to-human record with nil Reason, got true")
 	}
 }
 
@@ -143,8 +143,8 @@ func TestGateVerdictRecord_Valid_EmptyGateName(t *testing.T) {
 
 	r := gateVerdictRecordAllowFixture(t)
 	r.GateName = ""
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for empty GateName, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for empty GateName, got true")
 	}
 }
 
@@ -155,8 +155,8 @@ func TestGateVerdictRecord_Valid_UnknownAction(t *testing.T) {
 
 	r := gateVerdictRecordAllowFixture(t)
 	r.Action = GateAction("unknown")
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for unknown action, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for unknown action, got true")
 	}
 }
 
@@ -167,8 +167,8 @@ func TestGateVerdictRecord_Valid_EmptyInputEnvelopeHash(t *testing.T) {
 
 	r := gateVerdictRecordAllowFixture(t)
 	r.InputEnvelopeHash = ""
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for empty InputEnvelopeHash, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for empty InputEnvelopeHash, got true")
 	}
 }
 
@@ -179,8 +179,8 @@ func TestGateVerdictRecord_Valid_EmptyProducedAt(t *testing.T) {
 
 	r := gateVerdictRecordAllowFixture(t)
 	r.ProducedAt = ""
-	if err := r.Valid(); err == nil {
-		t.Error("expected error for empty ProducedAt, got nil")
+	if r.Valid() {
+		t.Error("expected Valid() == false for empty ProducedAt, got true")
 	}
 }
 

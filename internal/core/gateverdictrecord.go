@@ -1,7 +1,5 @@
 package core
 
-import "fmt"
-
 // GateVerdictRecord is the persisted verdict produced by a Gate evaluator
 // (specs/control-points.md §6.1.6 RECORD GateVerdictRecord).
 //
@@ -76,26 +74,23 @@ type GateVerdictRecord struct {
 //   - Reason must be non-nil and non-empty when Action != GateActionAllow.
 //   - InputEnvelopeHash must be non-empty.
 //   - ProducedAt must be non-empty.
-func (r GateVerdictRecord) Valid() error {
+func (r GateVerdictRecord) Valid() bool {
 	if r.GateName == "" {
-		return fmt.Errorf("gateverdictrecord: gate_name must be non-empty")
+		return false
 	}
 	if !r.Action.Valid() {
-		return fmt.Errorf("gateverdictrecord: unknown action %q", string(r.Action))
+		return false
 	}
 	if r.Action != GateActionAllow {
 		if r.Reason == nil || *r.Reason == "" {
-			return fmt.Errorf(
-				"gateverdictrecord: reason is required when action is %q",
-				string(r.Action),
-			)
+			return false
 		}
 	}
 	if r.InputEnvelopeHash == "" {
-		return fmt.Errorf("gateverdictrecord: input_envelope_hash must be non-empty")
+		return false
 	}
 	if r.ProducedAt == "" {
-		return fmt.Errorf("gateverdictrecord: produced_at must be non-empty")
+		return false
 	}
-	return nil
+	return true
 }

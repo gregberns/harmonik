@@ -78,32 +78,26 @@ type Workflow struct {
 	// A nil map is equivalent to an empty map; both are valid.
 	Metadata map[string]string
 
-	// WorkflowClass is an optional class tag for this workflow. At MVH the only
-	// accepted value is "reconciliation", which flags the §4.5.EM-026 checkpoint
-	// exception and the §6.2 Harmonik-Workflow-Class trailer. Absence means an
-	// ordinary (unclassed) workflow. Valid() rejects any non-nil value other than
-	// "reconciliation" per §4.9.EM-038.
+	// WorkflowClass is an optional class tag for this workflow
+	// (reconciliation/schemas.md §6.5). At MVH the only accepted value is
+	// WorkflowClassReconciliation, which flags the §4.5.EM-026 checkpoint
+	// exception and the §6.2 Harmonik-Workflow-Class trailer. Absence (nil)
+	// means an ordinary (unclassed) workflow. Valid() rejects any non-nil value
+	// other than WorkflowClassReconciliation per §4.9.EM-038.
 	//
 	// EM-026 exception (execution-model.md §4.5.EM-026): when WorkflowClass ==
-	// "reconciliation", the run MUST emit exactly one checkpoint commit per
-	// reconciliation-run (the verdict commit) and MUST NOT emit intermediate
-	// checkpoints. This overrides the one-commit-per-durable-transition rule of
-	// EM-023 for that run. Absence of the field (nil) means an ordinary workflow
-	// that obeys EM-023 unchanged.
-	//
-	// TODO(hk-63oh.60): replace *string with a typed WorkflowClass alias once
-	// hk-63oh.60 lands.
-	WorkflowClass *string
+	// WorkflowClassReconciliation, the run MUST emit exactly one checkpoint
+	// commit per reconciliation-run (the verdict commit) and MUST NOT emit
+	// intermediate checkpoints. This overrides the one-commit-per-durable-
+	// transition rule of EM-023 for that run. Absence of the field (nil) means
+	// an ordinary workflow that obeys EM-023 unchanged.
+	WorkflowClass *WorkflowClass
 
 	// SchemaVersion is the schema version of this record under the N-1
 	// readability contract of operator-nfr.md §4.5 ON-018. The current version
 	// is 1. Must be > 0.
 	SchemaVersion int
 }
-
-// workflowClassReconciliation is the only accepted WorkflowClass value at MVH
-// (execution-model.md §6.1 Workflow.workflow_class, §4.9.EM-038).
-const workflowClassReconciliation = "reconciliation"
 
 // Valid reports whether w satisfies all structural invariants declared in
 // execution-model.md §6.1 and §4.1.EM-001:
@@ -158,8 +152,9 @@ func (w Workflow) Valid() bool {
 			return false
 		}
 	}
-	// WorkflowClass: when set, must be "reconciliation" (MVH only value; EM-038).
-	if w.WorkflowClass != nil && *w.WorkflowClass != workflowClassReconciliation {
+	// WorkflowClass: when set, must be a valid WorkflowClass (MVH only value;
+	// EM-038, reconciliation/schemas.md §6.5).
+	if w.WorkflowClass != nil && !w.WorkflowClass.Valid() {
 		return false
 	}
 	if w.SchemaVersion <= 0 {

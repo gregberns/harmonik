@@ -45,7 +45,7 @@ func b3f72WorkflowValid(t *testing.T) Workflow {
 func b3f72WorkflowReconciliation(t *testing.T) Workflow {
 	t.Helper()
 	wf := b3f72WorkflowValid(t)
-	cls := "reconciliation"
+	cls := WorkflowClassReconciliation
 	wf.WorkflowClass = &cls
 	return wf
 }
@@ -224,7 +224,7 @@ func TestWorkflowValid_ReconciliationClass(t *testing.T) {
 func TestWorkflowValid_InvalidWorkflowClass(t *testing.T) {
 	t.Parallel()
 
-	cases := []string{
+	cases := []WorkflowClass{
 		"improvement-loop",
 		"unknown",
 		"",
@@ -232,7 +232,7 @@ func TestWorkflowValid_InvalidWorkflowClass(t *testing.T) {
 	}
 	for _, cls := range cases {
 		cls := cls
-		t.Run(cls, func(t *testing.T) {
+		t.Run(string(cls), func(t *testing.T) {
 			t.Parallel()
 			wf := b3f72WorkflowValid(t)
 			wf.WorkflowClass = &cls

@@ -220,7 +220,7 @@ func TestAssertionResultJSONRoundTrip(t *testing.T) {
 			},
 		},
 		{
-			name: "string values",
+			name:  "string values",
 			input: assertionResultFixtureWorkspaceState(t),
 		},
 		{

@@ -33,8 +33,8 @@ func eventExpectationFixtureAbsent(t *testing.T) EventExpectation {
 func eventExpectationFixtureWithPayloadMatch(t *testing.T) EventExpectation {
 	t.Helper()
 	return EventExpectation{
-		Kind:        EventExpectationKindPresent,
-		Type:        "node_completed",
+		Kind: EventExpectationKindPresent,
+		Type: "node_completed",
 		PayloadMatch: map[string]any{
 			"outcome.status": "SUCCESS",
 		},

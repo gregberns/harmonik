@@ -1,18 +1,21 @@
 package brcli
 
-// intentlogwrite_test.go — BI-030 step 1: write IntentLogEntry to temp file.
+// intentlogwrite_test.go — BI-030 steps 1–2: write IntentLogEntry to temp
+// file and fsync(temp_fd) before close.
 //
-// Tests are in package brcli (white-box) to access intentLogEntryWire and
-// intentLogRandHex directly.
+// Tests are in package brcli (white-box) to access intentLogEntryWire,
+// intentLogRandHex, and intentLogSyncFile directly.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 step 1; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–2; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,5 +290,79 @@ func TestIntentLogRandHexNotConstant(t *testing.T) {
 	}
 	if a == b {
 		t.Errorf("two calls returned the same value %q; collision probability is ~6e-10", a)
+	}
+}
+
+// --- BI-030 step 2: fsync(temp_fd) tests (hk-872.37.2) ---
+
+// TestWriteIntentLogTmpFsyncCalled verifies that WriteIntentLogTmp calls
+// intentLogSyncFile (fsync(2)) on the temp file fd before closing it
+// (BI-030 step 2).  Uses the package-level intentLogSyncFile hook to count
+// invocations without requiring OS-level fsync introspection.
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogSyncFile.
+func TestWriteIntentLogTmpFsyncCalled(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+
+	var syncCallCount atomic.Int64
+	orig := intentLogSyncFile
+	t.Cleanup(func() { intentLogSyncFile = orig })
+	intentLogSyncFile = func(f *os.File) error {
+		syncCallCount.Add(1)
+		return f.Sync() // still perform the real fsync
+	}
+
+	tmpPath, err := WriteIntentLogTmp(dir, entry)
+	if err != nil {
+		t.Fatalf("WriteIntentLogTmp: unexpected error: %v", err)
+	}
+	if tmpPath == "" {
+		t.Fatal("WriteIntentLogTmp: returned empty path on success")
+	}
+
+	if n := syncCallCount.Load(); n != 1 {
+		t.Errorf("intentLogSyncFile called %d times; want exactly 1", n)
+	}
+}
+
+// TestWriteIntentLogTmpFsyncErrorRemovesTmpFile verifies that when
+// intentLogSyncFile returns an error (BI-030 step 2 failure), the temp file
+// is removed and WriteIntentLogTmp returns a non-nil error with an empty path.
+//
+// NOTE: this test mutates a package-level variable and MUST NOT run in
+// parallel with other tests that also replace intentLogSyncFile.
+func TestWriteIntentLogTmpFsyncErrorRemovesTmpFile(t *testing.T) {
+	dir := t.TempDir()
+	entry := intentLogWriteFixtureEntry(t)
+
+	var capturedPath string
+	orig := intentLogSyncFile
+	t.Cleanup(func() { intentLogSyncFile = orig })
+	intentLogSyncFile = func(f *os.File) error {
+		capturedPath = f.Name()
+		return errors.New("injected fsync error")
+	}
+
+	tmpPath, err := WriteIntentLogTmp(dir, entry)
+	if err == nil {
+		t.Fatal("WriteIntentLogTmp: expected error on fsync failure, got nil")
+	}
+	if tmpPath != "" {
+		t.Errorf("WriteIntentLogTmp: expected empty tmpPath on error, got %q", tmpPath)
+	}
+
+	// Temp file must be cleaned up on sync failure.
+	if capturedPath == "" {
+		t.Fatal("sync hook was not called (capturedPath empty)")
+	}
+	if _, statErr := os.Stat(capturedPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("temp file %q still exists after fsync failure; want removed", capturedPath)
+	}
+
+	// Error message must mention fsync.
+	if !strings.Contains(err.Error(), "fsync") {
+		t.Errorf("error %q does not mention 'fsync'", err.Error())
 	}
 }

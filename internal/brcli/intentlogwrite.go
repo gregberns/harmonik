@@ -1,16 +1,20 @@
 package brcli
 
-// intentlogwrite.go — BI-030 step 1: write IntentLogEntry to a temp file.
+// intentlogwrite.go — BI-030 steps 1–2: write IntentLogEntry to a temp file
+// and fsync(temp_fd) before close.
 //
-// This file implements only Step 1 of the BI-030 multi-step atomic write
-// protocol: encode the IntentLogEntry as JSON and write it to a temp file
-// named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
+// This file implements Steps 1 and 2 of the BI-030 multi-step atomic write
+// protocol:
+//   - Step 1: encode the IntentLogEntry as JSON and write it to a temp file
+//     named "<encoded_key>.json.tmp-<rand>" in the intent-log directory.
+//   - Step 2: fsync(temp_fd) — flush the file data to durable storage before
+//     the file descriptor is closed (BI-030 step 2; hk-872.37.2).
 //
-// Steps 2–6 (fsync(temp_fd), rename, fsync(parent_dir), br invocation,
+// Steps 3–6 (rename, fsync(parent_dir), br invocation,
 // unlink + fsync(parent_dir)) are addressed by follow-up beads
-// hk-872.37.2 through hk-872.37.6.
+// hk-872.37.3 through hk-872.37.6.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 step 1; §6.1 RECORD
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–2; §6.1 RECORD
 // IntentLogEntry; §6.2 on-disk layout.
 
 import (
@@ -44,8 +48,14 @@ type intentLogEntryWire struct {
 	SchemaVersion     int       `json:"schema_version"`
 }
 
-// WriteIntentLogTmp encodes entry as JSON and writes it to a temp file in dir
-// following BI-030 step 1.
+// intentLogSyncFile is the fsync hook called on the open temp-file fd in
+// WriteIntentLogTmp (BI-030 step 2).  Tests may replace this with a counting
+// stub to assert the call was made; production code always uses the real
+// (*os.File).Sync path.
+var intentLogSyncFile = func(f *os.File) error { return f.Sync() }
+
+// WriteIntentLogTmp encodes entry as JSON, writes it to a temp file in dir,
+// and fsyncs the file fd before close — implementing BI-030 steps 1 and 2.
 //
 // The temp file is named:
 //
@@ -59,15 +69,21 @@ type intentLogEntryWire struct {
 // The temp file is created with mode 0600 via O_CREATE|O_EXCL; the exclusive
 // flag guards against accidental collision on the random suffix.
 //
-// On success, WriteIntentLogTmp returns the absolute path of the written temp
-// file. The file is NOT fsynced and NOT renamed here — those are BI-030
-// steps 2 and 3, addressed by hk-872.37.2 and hk-872.37.3 respectively.
+// After the data is written, WriteIntentLogTmp calls f.Sync() (fsync(2)) on
+// the open file descriptor before closing it (BI-030 step 2). This ensures
+// the file contents are durable on disk before the caller proceeds to rename
+// (step 3). A Sync failure is treated the same as a write failure: the temp
+// file is removed and a non-nil error is returned with an empty tmpPath.
+//
+// On success, WriteIntentLogTmp returns the absolute path of the fsynced temp
+// file. The file is NOT yet renamed to its final path — that is BI-030 step 3,
+// addressed by hk-872.37.3.
 //
 // Returns an error (non-nil tmpPath = "") on any of: invalid entry, random
-// suffix generation failure, JSON encoding failure, O_EXCL open failure, or
-// write failure.
+// suffix generation failure, JSON encoding failure, O_EXCL open failure,
+// write failure, or fsync failure.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-030 step 1; §6.2.
+// Spec ref: specs/beads-integration.md §4.10 BI-030 steps 1–2; §6.2.
 func WriteIntentLogTmp(dir string, entry core.IntentLogEntry) (tmpPath string, err error) {
 	if !entry.Valid() {
 		return "", fmt.Errorf("brcli.WriteIntentLogTmp: entry is invalid: %+v", entry)
@@ -108,10 +124,21 @@ func WriteIntentLogTmp(dir string, entry core.IntentLogEntry) (tmpPath string, e
 	}
 
 	if _, err := f.Write(data); err != nil {
-		defer func() { _ = f.Close() }()
+		_ = f.Close()
+		_ = os.Remove(path)
 		return "", fmt.Errorf("brcli.WriteIntentLogTmp: write temp file %q: %w", path, err)
 	}
+	// BI-030 step 2: fsync(temp_fd) — ensure data is durable before the
+	// caller proceeds to rename(2) in step 3.  A Sync failure means the data
+	// may not have reached stable storage; treat it the same as a write
+	// failure: remove the partial temp file and return an error.
+	if err := intentLogSyncFile(f); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("brcli.WriteIntentLogTmp: fsync temp file %q: %w", path, err)
+	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return "", fmt.Errorf("brcli.WriteIntentLogTmp: close temp file %q: %w", path, err)
 	}
 

@@ -8,30 +8,30 @@ package core
 // the optional node-scoping field that constrains which node the guard applies
 // to; all ordering decisions belong to the evaluator, not the record.
 //
-// AppliestoNode is a *string (String | None per §6.1.3): a nil value means
+// AppliesToNode is a *string (String | None per §6.1.3): a nil value means
 // the guard applies to all nodes; a non-nil value must be a non-empty node_id
 // string that scopes the guard to a single node.
 //
-// TODO(hk-a8bg.65-followup): replace *string with NodeID typed alias once a
+// TODO(hk-a8bg.90): replace *string with NodeID typed alias once a
 // dedicated bead upgrades the node_id field to the NodeID type per
 // specs/control-points.md §6.1.3.
 type GuardPayload struct {
-	// AppliestoNode is the node_id that scopes this guard to a single node.
+	// AppliesToNode is the node_id that scopes this guard to a single node.
 	// None (nil) means the guard applies to all nodes.
 	// When non-nil, the value MUST be a non-empty string.
 	//
 	// Wire field name: applies_to_node (specs/control-points.md §6.1.3).
-	AppliestoNode *string `json:"applies_to_node,omitempty"`
+	AppliesToNode *string `json:"applies_to_node,omitempty"`
 }
 
 // Valid reports whether p satisfies the structural invariant declared in
 // specs/control-points.md §6.1.3:
 //
-//   - AppliestoNode, when non-nil, must dereference to a non-empty string.
+//   - AppliesToNode, when non-nil, must dereference to a non-empty string.
 //     A nil pointer (None) is always valid — it means the guard applies to all
 //     nodes.
 func (p GuardPayload) Valid() bool {
-	if p.AppliestoNode != nil && *p.AppliestoNode == "" {
+	if p.AppliesToNode != nil && *p.AppliesToNode == "" {
 		return false
 	}
 	return true

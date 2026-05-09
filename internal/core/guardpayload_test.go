@@ -15,22 +15,22 @@ func TestGuardPayloadValid(t *testing.T) {
 	}{
 		{
 			name:  "nil applies_to_node is valid (all nodes)",
-			p:     GuardPayload{AppliestoNode: nil},
+			p:     GuardPayload{AppliesToNode: nil},
 			valid: true,
 		},
 		{
 			name:  "non-empty node_id is valid",
-			p:     GuardPayload{AppliestoNode: ptr("node-001")},
+			p:     GuardPayload{AppliesToNode: ptr("node-001")},
 			valid: true,
 		},
 		{
 			name:  "arbitrary non-empty string is valid",
-			p:     GuardPayload{AppliestoNode: ptr("n")},
+			p:     GuardPayload{AppliesToNode: ptr("n")},
 			valid: true,
 		},
 		{
 			name:  "empty string pointer is invalid",
-			p:     GuardPayload{AppliestoNode: ptr("")},
+			p:     GuardPayload{AppliesToNode: ptr("")},
 			valid: false,
 		},
 	}
@@ -57,17 +57,17 @@ func TestGuardPayloadJSONRoundTrip(t *testing.T) {
 		{
 			name:  "absent field decodes to nil",
 			input: `{}`,
-			want:  GuardPayload{AppliestoNode: nil},
+			want:  GuardPayload{AppliesToNode: nil},
 		},
 		{
 			name:  "null field decodes to nil",
 			input: `{"applies_to_node":null}`,
-			want:  GuardPayload{AppliestoNode: nil},
+			want:  GuardPayload{AppliesToNode: nil},
 		},
 		{
 			name:  "node_id present",
 			input: `{"applies_to_node":"node-001"}`,
-			want:  GuardPayload{AppliestoNode: ptr("node-001")},
+			want:  GuardPayload{AppliesToNode: ptr("node-001")},
 		},
 	}
 
@@ -81,15 +81,15 @@ func TestGuardPayloadJSONRoundTrip(t *testing.T) {
 			}
 
 			switch {
-			case tc.want.AppliestoNode == nil && got.AppliestoNode == nil:
+			case tc.want.AppliesToNode == nil && got.AppliesToNode == nil:
 				// both nil — OK
-			case tc.want.AppliestoNode == nil && got.AppliestoNode != nil:
-				t.Errorf("AppliestoNode: want nil, got %q", *got.AppliestoNode)
-			case tc.want.AppliestoNode != nil && got.AppliestoNode == nil:
-				t.Errorf("AppliestoNode: want %q, got nil", *tc.want.AppliestoNode)
+			case tc.want.AppliesToNode == nil && got.AppliesToNode != nil:
+				t.Errorf("AppliesToNode: want nil, got %q", *got.AppliesToNode)
+			case tc.want.AppliesToNode != nil && got.AppliesToNode == nil:
+				t.Errorf("AppliesToNode: want %q, got nil", *tc.want.AppliesToNode)
 			default:
-				if *got.AppliestoNode != *tc.want.AppliestoNode {
-					t.Errorf("AppliestoNode: got %q, want %q", *got.AppliestoNode, *tc.want.AppliestoNode)
+				if *got.AppliesToNode != *tc.want.AppliesToNode {
+					t.Errorf("AppliesToNode: got %q, want %q", *got.AppliesToNode, *tc.want.AppliesToNode)
 				}
 			}
 
@@ -106,7 +106,7 @@ func TestGuardPayloadJSONMarshal(t *testing.T) {
 	t.Run("nil omitted from output", func(t *testing.T) {
 		t.Parallel()
 
-		p := GuardPayload{AppliestoNode: nil}
+		p := GuardPayload{AppliesToNode: nil}
 		data, err := json.Marshal(p)
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)
@@ -119,7 +119,7 @@ func TestGuardPayloadJSONMarshal(t *testing.T) {
 	t.Run("non-nil node_id present in output", func(t *testing.T) {
 		t.Parallel()
 
-		p := GuardPayload{AppliestoNode: ptr("node-001")}
+		p := GuardPayload{AppliesToNode: ptr("node-001")}
 		data, err := json.Marshal(p)
 		if err != nil {
 			t.Fatalf("json.Marshal: %v", err)

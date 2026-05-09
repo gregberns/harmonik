@@ -27,7 +27,10 @@ type transitionWireState struct {
 // transitionWire is the JSON wire shape for a Transition sibling file.
 // Field names follow the snake_case convention of execution-model.md §6.1 RECORD Transition.
 // schema_version is included per §4.4.EM-018 and MUST match the commit's
-// Harmonik-Schema-Version trailer.
+// Harmonik-Schema-Version trailer. The field is the N-1-readable sentinel per
+// §4.4.EM-022: readers MUST accept the immediately prior schema version (N-1);
+// breaking changes (rename or removal of fields) require a migration release
+// and MUST increment schema_version.
 type transitionWire struct {
 	TransitionID      TransitionID        `json:"transition_id"`
 	RunID             RunID               `json:"run_id"`
@@ -69,6 +72,7 @@ func stateToWire(s State) transitionWireState {
 // schema_version field in the output equals tr.SchemaVersion and MUST equal the
 // commit's Harmonik-Schema-Version trailer per §4.4.EM-018; callers MUST call
 // ValidateTransitionSchemaVersion before writing the commit to enforce this.
+// The schema_version value is the N-1-readable version sentinel per §4.4.EM-022.
 //
 // MarshalTransitionRecord does not validate the Transition; callers SHOULD
 // ensure tr.Valid() == true before marshaling.
@@ -98,11 +102,13 @@ func MarshalTransitionRecord(tr Transition) ([]byte, error) {
 }
 
 // ValidateTransitionSchemaVersion checks that tr.SchemaVersion equals
-// commitSchemaVersion (execution-model.md §4.4.EM-018).
+// commitSchemaVersion (execution-model.md §4.4.EM-018, §4.4.EM-022).
 //
 // The sibling file's schema_version field MUST match the commit's
-// Harmonik-Schema-Version trailer value. A mismatch is an integrity violation
-// that prevents the checkpoint commit from being assembled.
+// Harmonik-Schema-Version trailer value (EM-018). Both values are the N-1-readable
+// version sentinel per EM-022: readers MUST accept the immediately prior schema
+// version (N-1). A mismatch between the sibling file and the trailer is an integrity
+// violation that prevents the checkpoint commit from being assembled.
 //
 // Returns nil when the versions agree, or an error with both values when they
 // disagree.

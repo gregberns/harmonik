@@ -103,12 +103,12 @@ var trailerRegistry = []TrailerSpec{
 		Description: "UUIDv7 identifying the run; present on every checkpoint commit (EM-013 join key across git, Beads, and JSONL).",
 	},
 	{
-		// execution-model.md §6.2; EM-017 (required trailer)
+		// execution-model.md §6.2; EM-017 (required trailer); EM-022 (N-1 readable)
 		Key:         "Harmonik-Schema-Version",
 		Type:        TrailerTypeInteger,
 		Requirement: TrailerRequired,
 		OwnerSpec:   "execution-model",
-		Description: "Integer version of the transition-record sibling file schema; must match sibling file's schema_version field per EM-018.",
+		Description: "Integer version of the transition-record sibling file schema; must match sibling file's schema_version field per EM-018; N-1 readable per EM-022.",
 	},
 	{
 		// execution-model.md §6.2; EM-017 (required trailer)

@@ -36,13 +36,14 @@ import "github.com/google/uuid"
 // VerifierMetrics is the typed VerifierMetrics wrapper (execution-model.md
 // §6.1). No reserved keys are cited by the spec at this version.
 //
-// # Schema compatibility
+// # Schema compatibility (EM-022)
 //
 // Transition carries SchemaVersion under the N-1 readability contract of
-// operator-nfr.md §4.5 (ON-018). A reader at version N-1 MUST successfully
-// parse and interpret artifacts written at version N, treating additive fields
-// as unknown but non-fatal. Breaking changes (rename or removal) require a
-// migration release and must increment SchemaVersion. The current version is 1.
+// execution-model.md §4.4.EM-022 and operator-nfr.md §4.5 (ON-018). A reader
+// at version N-1 MUST successfully parse and interpret artifacts written at
+// version N, treating additive fields as unknown but non-fatal. Breaking changes
+// (rename or removal) require a migration release and must increment SchemaVersion.
+// The current version is 1.
 type Transition struct {
 	// TransitionID is the UUIDv7 identifier for this transition.
 	// Generated in the daemon process per EM-018a; unique within a run.
@@ -111,8 +112,8 @@ type Transition struct {
 	RollbackToStateID *StateID
 
 	// SchemaVersion is the schema version of this record under the N-1
-	// readability contract of operator-nfr.md §4.5 ON-018. The current
-	// version is 1. Must be > 0.
+	// readability contract of execution-model.md §4.4.EM-022 and
+	// operator-nfr.md §4.5 ON-018. The current version is 1. Must be > 0.
 	SchemaVersion int
 }
 

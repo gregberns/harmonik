@@ -24,8 +24,6 @@ package core
 //
 // The following fields use string as a placeholder pending typed-alias
 // implementation:
-//   - WritablePaths []string  — TODO hk-a8bg.87 (PathGlob)
-//   - ReadablePaths []string  — TODO hk-a8bg.87 (PathGlob)
 //   - DefaultSkills []string  — TODO hk-a8bg.88 (SkillName)
 //   - AllowedHooks  []string  — TODO hk-a8bg.89 (HookName)
 //   - InvocableBy   []string  — TODO hk-a8bg.91 (RoleName)
@@ -37,14 +35,14 @@ type PermissionSchema struct {
 
 	// WritablePaths is the list of workspace-relative globs this role may
 	// write. An empty slice means no paths are writable.
-	// TODO hk-a8bg.87: replace string with PathGlob typed alias.
-	WritablePaths []string `json:"writable_paths"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field writable_paths.
+	WritablePaths []PathGlob `json:"writable_paths"`
 
 	// ReadablePaths is the list of workspace-relative globs this role may
 	// read. Defaults to ["**"] (all paths readable) per §6.2; use
 	// [NewPermissionSchema] to get the correct default.
-	// TODO hk-a8bg.87: replace string with PathGlob typed alias.
-	ReadablePaths []string `json:"readable_paths"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field readable_paths.
+	ReadablePaths []PathGlob `json:"readable_paths"`
 
 	// ModelTier is the optional model tier name allocated to this role.
 	// When nil, no tier constraint applies.
@@ -76,8 +74,8 @@ type PermissionSchema struct {
 func NewPermissionSchema() PermissionSchema {
 	return PermissionSchema{
 		AllowedTools:  []ToolName{},
-		WritablePaths: []string{},
-		ReadablePaths: []string{"**"},
+		WritablePaths: []PathGlob{},
+		ReadablePaths: []PathGlob{"**"},
 		DefaultSkills: []string{},
 		AllowedHooks:  []string{},
 		InvocableBy:   []string{},

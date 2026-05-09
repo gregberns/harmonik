@@ -13,8 +13,8 @@ func permissionSchemaFixture(t *testing.T) PermissionSchema {
 	tier := "standard"
 	return PermissionSchema{
 		AllowedTools:  []ToolName{"bash", "read"},
-		WritablePaths: []string{"output/**"},
-		ReadablePaths: []string{"**"},
+		WritablePaths: []PathGlob{"output/**"},
+		ReadablePaths: []PathGlob{"**"},
 		ModelTier:     &tier,
 		DefaultSkills: []string{"beads-cli"},
 		AllowedHooks:  []string{"pre-node-entry"},

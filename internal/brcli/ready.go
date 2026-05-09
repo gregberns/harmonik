@@ -1,0 +1,100 @@
+package brcli
+
+// TODO(hk-872.28): When BrError enum lands, classify Run's exit codes via that
+// taxonomy; ErrBrReadyFailed will either be subsumed or aliased.
+// TODO(hk-872.30): When read-timeout discipline lands, the 5s read timeout will
+// wrap ctx automatically; no explicit timeout needed here.
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// ErrBrReadyFailed is returned by Ready when br exits non-zero for any reason.
+// Unlike ShowBead / ListDependencies, `br ready` does not have an
+// ISSUE_NOT_FOUND semantic — it always succeeds with an empty array when there
+// are no ready beads.
+//
+// TODO(hk-872.28): Full BrError integration will absorb this sentinel.
+var ErrBrReadyFailed = errors.New("brcli: br ready failed")
+
+// brReadyItem is the per-element JSON shape returned by
+// `br ready --format json`. Only the id field is required; the remaining
+// fields are parsed but not mapped to the return type.
+type brReadyItem struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Priority  int    `json:"priority"`
+	IssueType string `json:"issue_type"`
+	Status    string `json:"status"`
+}
+
+// Ready invokes `br ready --format json` and returns the BeadID slice for
+// every bead whose dependencies are satisfied and whose status is `open`.
+//
+// Spec ref: specs/beads-integration.md §4.5 BI-013.
+//
+// The ready-work query is the input to the daemon dispatch loop. `br ready`
+// natively excludes `draft`-status beads (the harmonik-side readiness
+// mechanism for loaded-but-not-yet-dispatchable beads) and beads in
+// `deferred` or `tombstone` status, so no post-filtering is required.
+//
+// An empty slice is a valid result (no ready beads) and is NOT an error.
+//
+// Error semantics:
+//   - Non-zero br exit (any reason) → wrapped ErrBrReadyFailed
+//   - Exec failure                  → wrapped error (no sentinel)
+//   - JSON parse failure            → wrapped BrSchemaMismatch (per BI-025b)
+//   - Missing id field per element  → wrapped BrSchemaMismatch (per BI-025b)
+func (a *Adapter) Ready(ctx context.Context) ([]core.BeadID, error) {
+	result, err := a.runFormatJSON(ctx, "ready")
+	if err != nil {
+		return nil, fmt.Errorf("brcli.Ready: exec failed: %w", err)
+	}
+
+	if result.ExitCode != 0 {
+		truncated := result.Stdout
+		if len(truncated) > 200 {
+			truncated = truncated[:200]
+		}
+		return nil, fmt.Errorf(
+			"brcli.Ready: br exit %d: %s: %w",
+			result.ExitCode,
+			string(truncated),
+			ErrBrReadyFailed,
+		)
+	}
+
+	// Success path: parse flat JSON array.
+	// Per BI-025b: parse failures of structured output MUST classify as BrSchemaMismatch.
+	var items []brReadyItem
+	if jsonErr := json.Unmarshal(result.Stdout, &items); jsonErr != nil {
+		return nil, fmt.Errorf("brcli.Ready: malformed br ready output: %w; %w", jsonErr, BrSchemaMismatch)
+	}
+
+	// Return empty slice (not nil) when the array is empty, so callers can
+	// distinguish "no ready beads" from "not queried".
+	if len(items) == 0 {
+		return []core.BeadID{}, nil
+	}
+
+	ids := make([]core.BeadID, 0, len(items))
+	for _, item := range items {
+		// id is required — a missing id cannot produce a valid BeadID.
+		// Per BI-025b: missing required field is a schema-level invariant
+		// violation; classify as BrSchemaMismatch.
+		if item.ID == "" {
+			return nil, fmt.Errorf(
+				"brcli.Ready: malformed br ready output: missing id field in element: %w",
+				BrSchemaMismatch,
+			)
+		}
+		ids = append(ids, core.BeadID(item.ID))
+	}
+
+	return ids, nil
+}

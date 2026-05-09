@@ -18,12 +18,6 @@ package core
 // DefaultSkills MUST include "beads-cli" for any role that is designated
 // mvh-required (specs/control-points.md §4.6.CP-031). Enforcement lives in
 // the policy validator, not at the type level.
-//
-// # Typed-alias deferral
-//
-// The following fields use string as a placeholder pending typed-alias
-// implementation:
-//   - InvocableBy   []string  — TODO hk-a8bg.91 (RoleName)
 type PermissionSchema struct {
 	// AllowedTools is the closed list of tool names this role may invoke.
 	// An empty slice means no tools are permitted.
@@ -59,8 +53,8 @@ type PermissionSchema struct {
 
 	// InvocableBy is the list of role names permitted to spawn this role.
 	// An empty slice means no role may spawn this role directly.
-	// TODO hk-a8bg.91: replace string with RoleName typed alias.
-	InvocableBy []string `json:"invocable_by"`
+	// Spec: specs/control-points.md §6.2 RECORD PermissionSchema field invocable_by.
+	InvocableBy []RoleName `json:"invocable_by"`
 }
 
 // NewPermissionSchema returns a PermissionSchema with the spec-mandated default
@@ -75,6 +69,6 @@ func NewPermissionSchema() PermissionSchema {
 		ReadablePaths: []PathGlob{"**"},
 		DefaultSkills: []SkillName{},
 		AllowedHooks:  []HookName{},
-		InvocableBy:   []string{},
+		InvocableBy:   []RoleName{},
 	}
 }

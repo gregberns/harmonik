@@ -33,6 +33,29 @@ type Evidence map[string]any
 const (
 	// EvidenceKeySubWorkflowPin is the reserved evidence key for the
 	// sub-workflow expansion pin per execution-model.md §4.8.EM-034c.
+	//
+	// Value shape: SubWorkflowExpansionPin (a struct with sub_workflow_ref,
+	// sub_workflow_version, resolved_workflow_id).
+	//
+	// # Durability protocol (EM-034c)
+	//
+	// This key MUST appear in the Evidence map of the Transition record written
+	// on the sub-workflow entry checkpoint commit — the checkpoint whose state
+	// transitions the run from the sub-workflow node to its expanded
+	// start_node_id. The entry checkpoint is a sub_workflow_entered transition
+	// record. The pin inherits the atomicity boundary of §4.4.EM-016: the
+	// Transition record file and the checkpoint commit are written as a single
+	// git write-tree / commit-tree / update-ref unit.
+	//
+	// On restart, the daemon MUST reconstruct the pinned expansion by reading
+	// this key from the most recent sub_workflow_entered transition record on
+	// the run's task branch. The daemon MUST NOT re-consult the sub-workflow
+	// registry. Registry updates between crash and restart cannot alter the
+	// run's expansion.
+	//
+	// For nested expansions, each sub-workflow entry checkpoint carries its own
+	// sub_workflow_pin; the outer expansion is reconstructed by walking the
+	// checkpoint trail in commit order.
 	EvidenceKeySubWorkflowPin = "sub_workflow_pin"
 
 	// EvidenceKeySynthesizedOutcome is the reserved evidence key set to true

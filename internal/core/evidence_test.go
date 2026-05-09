@@ -1,6 +1,10 @@
 package core
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 // evidenceFixture returns a populated Evidence map for use in tests.
 func evidenceFixture() Evidence {
@@ -8,6 +12,16 @@ func evidenceFixture() Evidence {
 		"key":  "value",
 		"num":  42,
 		"flag": true,
+	}
+}
+
+// evidenceSubWorkflowPinFixture returns a valid SubWorkflowExpansionPin for
+// use in Evidence map tests. Uses the canonical value shape per EM-034c.
+func evidenceSubWorkflowPinFixture() SubWorkflowExpansionPin {
+	return SubWorkflowExpansionPin{
+		SubWorkflowRef:     "reconciliation-v1",
+		SubWorkflowVersion: "1.2.3",
+		ResolvedWorkflowID: WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000000001")),
 	}
 }
 
@@ -41,7 +55,9 @@ func TestEvidenceValid_ArbitraryKeys(t *testing.T) {
 func TestEvidenceValid_ReservedKeySubWorkflowPin(t *testing.T) {
 	t.Parallel()
 
-	e := Evidence{EvidenceKeySubWorkflowPin: "sha256:abc123"}
+	// Value shape per EM-034c: SubWorkflowExpansionPin struct.
+	pin := evidenceSubWorkflowPinFixture()
+	e := Evidence{EvidenceKeySubWorkflowPin: pin}
 	if !e.Valid() {
 		t.Error("Valid() = false for Evidence with sub_workflow_pin key, want true")
 	}

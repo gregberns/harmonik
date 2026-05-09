@@ -83,6 +83,16 @@ type Workflow struct {
 	// exception and the §6.2 Harmonik-Workflow-Class trailer. Absence means an
 	// ordinary (unclassed) workflow. Valid() rejects any non-nil value other than
 	// "reconciliation" per §4.9.EM-038.
+	//
+	// EM-026 exception (execution-model.md §4.5.EM-026): when WorkflowClass ==
+	// "reconciliation", the run MUST emit exactly one checkpoint commit per
+	// reconciliation-run (the verdict commit) and MUST NOT emit intermediate
+	// checkpoints. This overrides the one-commit-per-durable-transition rule of
+	// EM-023 for that run. Absence of the field (nil) means an ordinary workflow
+	// that obeys EM-023 unchanged.
+	//
+	// TODO(hk-63oh.60): replace *string with a typed WorkflowClass alias once
+	// hk-63oh.60 lands.
 	WorkflowClass *string
 
 	// SchemaVersion is the schema version of this record under the N-1

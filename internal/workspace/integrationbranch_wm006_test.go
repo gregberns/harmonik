@@ -554,4 +554,3 @@ func integrationBranchFixtureAssertRefSafe(t *testing.T, wmClause, branch string
 			wmClause, branch)
 	}
 }
-

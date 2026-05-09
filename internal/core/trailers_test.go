@@ -224,6 +224,60 @@ func TestRequiredRows(t *testing.T) {
 	}
 }
 
+// TestEM017_RequiredSetConformance is a structural-conformance test that asserts
+// the registry contains exactly the four unconditionally required trailers named
+// by EM-017 — no more, no fewer — and exactly one EM-017 conditional trailer
+// (Harmonik-Bead-ID).
+//
+// This test will fail if a future edit adds a new TrailerRequired row without
+// a corresponding EM-017 amendment, preventing silent registry drift.
+//
+// Cites: execution-model.md §4.4.EM-017; §6.2.
+func TestEM017_RequiredSetConformance(t *testing.T) {
+	t.Parallel()
+
+	// EM-017 names exactly these four Required trailers.
+	wantRequired := map[string]bool{
+		"Harmonik-Run-ID":         true,
+		"Harmonik-State-ID":       true,
+		"Harmonik-Transition-ID":  true,
+		"Harmonik-Schema-Version": true,
+	}
+	// EM-017 names exactly one Conditional trailer from the execution-model set.
+	wantEM017Conditional := map[string]bool{
+		"Harmonik-Bead-ID": true,
+	}
+
+	var gotRequired []string
+	var gotEM017Conditional []string
+
+	for _, spec := range RegistryEntries() {
+		switch spec.Requirement {
+		case TrailerRequired:
+			gotRequired = append(gotRequired, spec.Key)
+			if !wantRequired[spec.Key] {
+				t.Errorf("unexpected TrailerRequired entry %q: not listed in EM-017", spec.Key)
+			}
+		case TrailerConditional:
+			if spec.OwnerSpec == "execution-model" {
+				gotEM017Conditional = append(gotEM017Conditional, spec.Key)
+				if !wantEM017Conditional[spec.Key] {
+					t.Errorf("unexpected EM-017 TrailerConditional entry %q: not listed in EM-017", spec.Key)
+				}
+			}
+		}
+	}
+
+	if len(gotRequired) != len(wantRequired) {
+		t.Errorf("TrailerRequired count = %d, want %d (EM-017 names exactly 4 required trailers); got %v",
+			len(gotRequired), len(wantRequired), gotRequired)
+	}
+	if len(gotEM017Conditional) != len(wantEM017Conditional) {
+		t.Errorf("EM-017 TrailerConditional count = %d, want %d; got %v",
+			len(gotEM017Conditional), len(wantEM017Conditional), gotEM017Conditional)
+	}
+}
+
 // TestAllEntriesHaveNonEmptyDescription verifies that every registry entry
 // carries a non-empty Description field.
 func TestAllEntriesHaveNonEmptyDescription(t *testing.T) {

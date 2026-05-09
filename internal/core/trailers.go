@@ -79,6 +79,12 @@ type TrailerSpec struct {
 // The seven primary registry rows are defined by execution-model §6.2.
 // Harmonik-Verdict-Executed is a known extension owned by the reconciliation spec;
 // its inclusion here ensures trailer-lint never rejects it as unknown.
+//
+// Role of trailers (EM-017): trailers are a cheap index for git-log scanning.
+// They are NOT the authoritative source of truth for transition data; authoritative
+// fields live in the transition-record sibling file per §4.4.EM-018
+// (`.harmonik/transitions/<run_id>/<transition_id>.json`). Readers that need
+// complete field data MUST retrieve the sibling file, not parse trailers.
 var trailerRegistry = []TrailerSpec{
 	{
 		// execution-model.md §6.2; EM-017 (required trailer)

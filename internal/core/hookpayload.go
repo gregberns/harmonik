@@ -20,16 +20,13 @@ package core
 // (false), but MUST still set TriggerEvent and SideEffectKind explicitly before
 // the payload is valid.
 //
-// # Typed-alias deferral: SubscriptionFilter
+// # SubscriptionFilter
 //
-// SubscriptionFilter uses *string as a placeholder for PolicyExpression, which
-// is not yet a Go type. A nil value means no filter applies (the hook fires on
-// all occurrences of the trigger event). A non-nil value is a raw
-// policy-expression string that the evaluator interprets per §6.1.2.
-//
-// TODO hk-a8bg.92: replace *string with PolicyExpression typed alias once the
-// typed wrapper is implemented (specs/control-points.md §6.1.2
-// subscription_filter : PolicyExpression | None).
+// SubscriptionFilter is typed as *PolicyExpression. A nil value means no
+// filter applies (the hook fires on all occurrences of the trigger event). A
+// non-nil value is a policy expression evaluated by the Hook evaluator against
+// the event payload per §6.1.2 and §6.4. See [PolicyExpression] for the
+// adopted grammar and validation semantics.
 type HookPayload struct {
 	// TriggerEvent is the event name from the registered lifecycle set that
 	// triggers this hook (specs/control-points.md §6.1.2, CP-013). Must be
@@ -40,14 +37,11 @@ type HookPayload struct {
 
 	// SubscriptionFilter is an optional filter over the event payload. When
 	// nil (None), the hook fires on every occurrence of TriggerEvent. When
-	// non-nil, the evaluator applies the expression and fires only when it
-	// evaluates to true.
-	//
-	// TODO hk-a8bg.92: replace *string with PolicyExpression typed alias
-	// (specs/control-points.md §6.1.2 subscription_filter : PolicyExpression | None).
+	// non-nil, the evaluator applies the PolicyExpression and fires only when it
+	// evaluates to true (specs/control-points.md §6.1.2, §6.4.2).
 	//
 	// Wire field name: subscription_filter.
-	SubscriptionFilter *string `json:"subscription_filter,omitempty"`
+	SubscriptionFilter *PolicyExpression `json:"subscription_filter,omitempty"`
 
 	// SideEffectKind discriminates how the hook evaluator's side effects are
 	// dispatched by S05. Must be one of the three declared SideEffectKind

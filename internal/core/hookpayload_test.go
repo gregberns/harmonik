@@ -11,7 +11,7 @@ import (
 func hookPayloadFixture(t *testing.T) HookPayload {
 	t.Helper()
 
-	filter := "event.payload.status == \"ready\""
+	filter := PolicyExpression(`event.payload.status == "ready"`)
 	return HookPayload{
 		TriggerEvent:       "node.completed",
 		SubscriptionFilter: &filter,
@@ -142,7 +142,7 @@ func TestHookPayloadValid_NonNilSubscriptionFilter(t *testing.T) {
 	t.Parallel()
 
 	hp := hookPayloadFixture(t)
-	filter := "some.filter.expression"
+	filter := PolicyExpression("some.filter.expression")
 	hp.SubscriptionFilter = &filter
 	if !hp.Valid() {
 		t.Error("HookPayload with non-nil SubscriptionFilter should be valid")
@@ -292,7 +292,7 @@ func TestHookPayloadJSONSubscriptionFilterOmitEmpty(t *testing.T) {
 func TestHookPayloadJSONSubscriptionFilterPresent(t *testing.T) {
 	t.Parallel()
 
-	filter := "event.status == \"done\""
+	filter := PolicyExpression(`event.status == "done"`)
 	hp := hookPayloadFixture(t)
 	hp.SubscriptionFilter = &filter
 	data, err := json.Marshal(hp)

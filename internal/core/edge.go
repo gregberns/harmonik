@@ -10,10 +10,10 @@ type Edge struct {
 	// ToNode is the destination node of this edge (required).
 	ToNode NodeID
 
-	// Condition is an optional guard expression in PolicyExpression syntax.
-	// When non-nil the cascade evaluator parses and tests this expression
-	// before traversing the edge. See control-points.md §6.4 for the grammar.
-	Condition *string
+	// Condition is an optional guard [PolicyExpression] evaluated by the
+	// cascade evaluator before traversing the edge (control-points.md §6.4).
+	// When nil the edge is traversed unconditionally.
+	Condition *PolicyExpression
 
 	// Label is an optional routing label used during cascade resolution.
 	Label *string

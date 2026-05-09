@@ -26,7 +26,7 @@ func TestEdgeValid(t *testing.T) {
 			edge: Edge{
 				FromNode:       "node-a",
 				ToNode:         "node-b",
-				Condition:      ptr("outcome == 'success'"),
+				Condition:      ptr(PolicyExpression("outcome == 'success'")),
 				Label:          ptr("success"),
 				PreferredLabel: ptr("preferred-success"),
 				Weight:         5,

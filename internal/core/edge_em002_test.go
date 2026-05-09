@@ -31,7 +31,7 @@ var requiredEM002Fields = []struct {
 }{
 	{"FromNode", "core.NodeID"},
 	{"ToNode", "core.NodeID"},
-	{"Condition", "*string"},
+	{"Condition", "*core.PolicyExpression"},
 	{"PreferredLabel", "*string"},
 	{"Weight", "int"},
 	{"OrderingKey", "string"},
@@ -83,7 +83,7 @@ func TestEdgeEM002_FieldsSufficeForCascade(t *testing.T) {
 func TestEdgeEM002_NoExternalStoreNeededForSelection(t *testing.T) {
 	t.Parallel()
 
-	cond := "outcome == 'success'"
+	cond := PolicyExpression("outcome == 'success'")
 	label := "preferred-success"
 	e := Edge{
 		FromNode:       "node-a",

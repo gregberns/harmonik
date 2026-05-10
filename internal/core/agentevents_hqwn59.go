@@ -327,8 +327,8 @@ type ProvisionedSkill struct {
 
 	// Version is the optional version string for this skill. Nil when the skill
 	// source does not declare a version.
-	// TODO(hk-placeholder): promote to typed SkillVersion alias when the skill
-	// versioning scheme is formalized; see follow-up bead for typed wrapper.
+	// TODO(hk-tyjfi): promote to typed SkillVersion alias when the skill
+	// versioning scheme is formalized per §8.3.8.
 	Version *string `json:"version,omitempty"`
 }
 

@@ -95,3 +95,60 @@ func (f *FailureClass) UnmarshalText(text []byte) error {
 	*f = v
 	return nil
 }
+
+// Precedence returns the ordinal precedence rank of f per the §8.0 table
+// (specs/scenario-harness.md §8.0).  Lower numeric values indicate HIGHER
+// precedence (rank 1 wins over rank 8).  The zero value (empty string) is not
+// a valid FailureClass; callers SHOULD call Valid() before Precedence.
+//
+// Precedence table (highest first):
+//
+//	1 — harness-internal-error
+//	2 — orchestration-internal-error
+//	3 — scenario-load-failure
+//	4 — twin-binary-not-found
+//	5 — fixture-setup-failed
+//	6 — scenario-timeout
+//	7 — assertion-failed
+//	8 — cleanup-failed
+//
+// Returns 0 for an unknown (invalid) FailureClass.
+func (f FailureClass) Precedence() int {
+	switch f {
+	case FailureClassHarnessInternalError:
+		return 1
+	case FailureClassOrchestrationInternalError:
+		return 2
+	case FailureClassScenarioLoadFailure:
+		return 3
+	case FailureClassTwinBinaryNotFound:
+		return 4
+	case FailureClassFixtureSetupFailed:
+		return 5
+	case FailureClassScenarioTimeout:
+		return 6
+	case FailureClassAssertionFailed:
+		return 7
+	case FailureClassCleanupFailed:
+		return 8
+	default:
+		return 0
+	}
+}
+
+// HigherPrecedenceThan reports whether f has strictly higher precedence than
+// other per the §8.0 table.  When two failure classes co-occur on a single
+// scenario, the higher-precedence class determines the recorded failure_class;
+// the lower-precedence class is appended to error_detail only.
+//
+// Returns false if either f or other is invalid (zero-value or unknown), and
+// returns false when f == other (equal precedence, not strictly higher).
+func (f FailureClass) HigherPrecedenceThan(other FailureClass) bool {
+	fp := f.Precedence()
+	op := other.Precedence()
+	if fp == 0 || op == 0 {
+		return false
+	}
+	// Lower numeric rank = higher precedence.
+	return fp < op
+}

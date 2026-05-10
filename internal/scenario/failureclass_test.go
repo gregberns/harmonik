@@ -215,3 +215,163 @@ func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestFailureClassPrecedenceNonZero(t *testing.T) {
+	t.Parallel()
+
+	// Every valid FailureClass must return a non-zero precedence rank.
+	valid := []FailureClass{
+		FailureClassHarnessInternalError,
+		FailureClassOrchestrationInternalError,
+		FailureClassScenarioLoadFailure,
+		FailureClassTwinBinaryNotFound,
+		FailureClassFixtureSetupFailed,
+		FailureClassScenarioTimeout,
+		FailureClassAssertionFailed,
+		FailureClassCleanupFailed,
+	}
+	for _, f := range valid {
+		if got := f.Precedence(); got == 0 {
+			t.Errorf("Precedence(%q) = 0; want non-zero for a valid FailureClass", f)
+		}
+	}
+}
+
+func TestFailureClassPrecedenceInvalidReturnsZero(t *testing.T) {
+	t.Parallel()
+
+	// An unknown FailureClass must return 0 from Precedence.
+	if got := FailureClass("").Precedence(); got != 0 {
+		t.Errorf("Precedence(%q) = %d; want 0 for invalid value", "", got)
+	}
+	if got := FailureClass("made_up").Precedence(); got != 0 {
+		t.Errorf("Precedence(%q) = %d; want 0 for invalid value", "made_up", got)
+	}
+}
+
+func TestFailureClassPrecedenceOrder(t *testing.T) {
+	t.Parallel()
+
+	// §8.0 precedence table (highest first).  Rank 1 = highest.
+	// Verify the ordinal assignment matches the spec order.
+	table := []struct {
+		class FailureClass
+		rank  int
+	}{
+		{FailureClassHarnessInternalError, 1},
+		{FailureClassOrchestrationInternalError, 2},
+		{FailureClassScenarioLoadFailure, 3},
+		{FailureClassTwinBinaryNotFound, 4},
+		{FailureClassFixtureSetupFailed, 5},
+		{FailureClassScenarioTimeout, 6},
+		{FailureClassAssertionFailed, 7},
+		{FailureClassCleanupFailed, 8},
+	}
+	for _, tc := range table {
+		if got := tc.class.Precedence(); got != tc.rank {
+			t.Errorf("Precedence(%q) = %d; want %d", tc.class, got, tc.rank)
+		}
+	}
+}
+
+func TestFailureClassPrecedenceStrictOrdering(t *testing.T) {
+	t.Parallel()
+
+	// Verify that each class has strictly lower rank (higher precedence) than
+	// the next class in the table — i.e., the ranks form a strict total order.
+	ordered := []FailureClass{
+		FailureClassHarnessInternalError,
+		FailureClassOrchestrationInternalError,
+		FailureClassScenarioLoadFailure,
+		FailureClassTwinBinaryNotFound,
+		FailureClassFixtureSetupFailed,
+		FailureClassScenarioTimeout,
+		FailureClassAssertionFailed,
+		FailureClassCleanupFailed,
+	}
+	for i := 0; i < len(ordered)-1; i++ {
+		hi := ordered[i]
+		lo := ordered[i+1]
+		if hi.Precedence() >= lo.Precedence() {
+			t.Errorf("Precedence(%q)=%d must be < Precedence(%q)=%d",
+				hi, hi.Precedence(), lo, lo.Precedence())
+		}
+	}
+}
+
+func TestFailureClassHigherPrecedenceThan(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		a     FailureClass
+		b     FailureClass
+		wantA bool // a.HigherPrecedenceThan(b)
+		wantB bool // b.HigherPrecedenceThan(a)
+	}{
+		{
+			name:  "harness-internal-error beats cleanup-failed",
+			a:     FailureClassHarnessInternalError,
+			b:     FailureClassCleanupFailed,
+			wantA: true,
+			wantB: false,
+		},
+		{
+			name:  "orchestration-internal-error beats assertion-failed",
+			a:     FailureClassOrchestrationInternalError,
+			b:     FailureClassAssertionFailed,
+			wantA: true,
+			wantB: false,
+		},
+		{
+			name:  "scenario-timeout beats assertion-failed",
+			a:     FailureClassScenarioTimeout,
+			b:     FailureClassAssertionFailed,
+			wantA: true,
+			wantB: false,
+		},
+		{
+			name:  "harness-internal-error beats orchestration-internal-error",
+			a:     FailureClassHarnessInternalError,
+			b:     FailureClassOrchestrationInternalError,
+			wantA: true,
+			wantB: false,
+		},
+		{
+			name:  "equal classes return false for both directions",
+			a:     FailureClassAssertionFailed,
+			b:     FailureClassAssertionFailed,
+			wantA: false,
+			wantB: false,
+		},
+		{
+			name:  "invalid vs valid returns false",
+			a:     FailureClass(""),
+			b:     FailureClassAssertionFailed,
+			wantA: false,
+			wantB: false,
+		},
+		{
+			name:  "valid vs invalid returns false",
+			a:     FailureClassAssertionFailed,
+			b:     FailureClass("unknown"),
+			wantA: false,
+			wantB: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.a.HigherPrecedenceThan(tc.b); got != tc.wantA {
+				t.Errorf("%q.HigherPrecedenceThan(%q) = %v; want %v",
+					tc.a, tc.b, got, tc.wantA)
+			}
+			if got := tc.b.HigherPrecedenceThan(tc.a); got != tc.wantB {
+				t.Errorf("%q.HigherPrecedenceThan(%q) = %v; want %v",
+					tc.b, tc.a, got, tc.wantB)
+			}
+		})
+	}
+}

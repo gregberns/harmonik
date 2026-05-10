@@ -53,9 +53,9 @@ import (
 //   - other error — I/O failure reading the file; treat as ErrStructural at
 //     the call site (the launch cannot safely proceed without a verified hash).
 //
-// Follow-up bead: an integration test that exercises VerifyCommitHash against
-// a real ldflags-stamped binary built from cmd/harmonik-twin-claude/ is tracked
-// as hk-uwie — see commithash_test.go.
+// Integration test: TestVerifyCommitHash_HC043_RealBinary in commithash_test.go
+// exercises this function against a real harmonik-twin-claude binary built with
+// the production ldflags stamp (hk-uwie).
 //
 // Cite: specs/handler-contract.md §4.10.HC-043.
 func VerifyCommitHash(binaryPath, expected string) error {

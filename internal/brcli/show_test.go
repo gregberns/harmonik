@@ -300,8 +300,12 @@ func TestShowBeadUnknownCoarseStatus(t *testing.T) {
 }
 
 func TestShowBeadUnknownEdgeKind(t *testing.T) {
-	// An edge with an unknown dependency_type value.
-	jsonStr := `[{"id":"hk-872.15","title":"Some bead","description":"","status":"open","issue_type":"task","dependencies":[{"id":"hk-872","title":"Parent","status":"open","priority":2,"dependency_type":"unknown-edge-kind"}],"dependents":[],"parent":"hk-872"}]`
+	// Read-surface tolerance (hk-872.55): ShowBead MUST NOT error on edge kinds
+	// that Beads exposes but harmonik's spec has not yet declared.  The unknown
+	// kind is stored verbatim; Valid() returns false for it, guarding the write
+	// surface.  Concrete Beads value "related" is used here — it appears in
+	// orchestrator dep graphs and was the original motivator for this bead.
+	jsonStr := `[{"id":"hk-872.15","title":"Some bead","description":"","status":"open","issue_type":"task","dependencies":[{"id":"hk-872","title":"Parent","status":"open","priority":2,"dependency_type":"related"}],"dependents":[],"parent":"hk-872"}]`
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
 	adapter, err := brcli.New(path)
@@ -309,9 +313,19 @@ func TestShowBeadUnknownEdgeKind(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = adapter.ShowBead(context.Background(), core.BeadID("hk-872.15"))
-	if err == nil {
-		t.Fatal("expected error for unknown EdgeKind, got nil")
+	record, err := adapter.ShowBead(context.Background(), core.BeadID("hk-872.15"))
+	if err != nil {
+		t.Fatalf("ShowBead: expected no error for unknown EdgeKind on read surface, got: %v", err)
+	}
+	if len(record.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(record.Edges))
+	}
+	edge := record.Edges[0]
+	if string(edge.EdgeKind) != "related" {
+		t.Errorf("EdgeKind stored = %q, want %q", edge.EdgeKind, "related")
+	}
+	if edge.EdgeKind.Valid() {
+		t.Errorf("EdgeKind.Valid() = true for pass-through value %q; write surface must stay locked", edge.EdgeKind)
 	}
 }
 

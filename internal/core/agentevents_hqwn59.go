@@ -268,7 +268,7 @@ type AgentRateLimitStatusPayload struct {
 	// RateLimitSource is the optional provider-reported source string identifying
 	// which rate limit was hit (e.g., "anthropic-api-tier-1"). Nil when not
 	// reported or when status=cleared. Non-nil must be non-empty.
-	// TODO(hk-placeholder): promote to typed alias when §6.3 defines the full
+	// TODO(hk-1hoxo): promote to typed alias when §6.3 defines the full
 	// rate_limit_source vocabulary.
 	RateLimitSource *string `json:"rate_limit_source,omitempty"`
 

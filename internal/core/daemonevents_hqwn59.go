@@ -704,22 +704,39 @@ func (p DispatchDeferredPayload) Valid() bool {
 //
 // # Payload fields (event-model.md §8.7.14)
 //
-//   - tmux_sessions_killed   — number of orphan tmux sessions killed
-//   - locks_cleared          — number of stale locks cleared
-//   - subprocesses_killed    — number of orphan subprocesses killed
-//   - swept_at               — RFC 3339 wall-clock timestamp at sweep completion
+//   - tmux_sessions_killed         — number of orphan tmux sessions killed
+//   - locks_cleared                — number of stale worktree lease-locks cleared
+//   - subprocesses_killed          — number of orphan handler subprocesses killed
+//   - br_subprocesses_killed       — number of orphan br subprocesses killed (OQ-BI-010)
+//   - reconciliation_locks_removed — number of stale reconciliation lock files removed
+//   - stale_intents_observed       — count of stale intent files left for RC Cat 3a
+//   - swept_at                     — RFC 3339 wall-clock timestamp at sweep completion
 type DaemonOrphanSweepCompletedPayload struct {
 	// TmuxSessionsKilled is the number of orphan tmux sessions killed during the
 	// sweep. Required (must be >= 0).
 	TmuxSessionsKilled int `json:"tmux_sessions_killed"`
 
-	// LocksCleared is the number of stale lock files cleared during the sweep.
-	// Required (must be >= 0).
+	// LocksCleared is the number of stale worktree lease-lock files cleared
+	// during the sweep. Required (must be >= 0).
 	LocksCleared int `json:"locks_cleared"`
 
-	// SubprocessesKilled is the number of orphan subprocesses killed during the
-	// sweep. Required (must be >= 0).
+	// SubprocessesKilled is the number of orphan handler subprocesses killed
+	// during the sweep. Required (must be >= 0).
 	SubprocessesKilled int `json:"subprocesses_killed"`
+
+	// BrSubprocessesKilled is the number of orphan br (Beads CLI) subprocesses
+	// killed during the sweep per BI-029 / OQ-BI-010. Required (must be >= 0).
+	BrSubprocessesKilled int `json:"br_subprocesses_killed"`
+
+	// ReconciliationLocksRemoved is the number of stale reconciliation lock
+	// files removed from .harmonik/reconciliation-locks/ during the sweep.
+	// Required (must be >= 0).
+	ReconciliationLocksRemoved int `json:"reconciliation_locks_removed"`
+
+	// StaleIntentsObserved is the count of stale intent files enumerated under
+	// .harmonik/beads-intents/ but left on disk for the reconciliation Cat 3a
+	// detector (RC-013). Required (must be >= 0).
+	StaleIntentsObserved int `json:"stale_intents_observed"`
 
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
@@ -732,6 +749,9 @@ type DaemonOrphanSweepCompletedPayload struct {
 //   - TmuxSessionsKilled must be >= 0.
 //   - LocksCleared must be >= 0.
 //   - SubprocessesKilled must be >= 0.
+//   - BrSubprocessesKilled must be >= 0.
+//   - ReconciliationLocksRemoved must be >= 0.
+//   - StaleIntentsObserved must be >= 0.
 //   - SweptAt must be non-empty.
 func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 	if p.TmuxSessionsKilled < 0 {
@@ -741,6 +761,15 @@ func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.SubprocessesKilled < 0 {
+		return false
+	}
+	if p.BrSubprocessesKilled < 0 {
+		return false
+	}
+	if p.ReconciliationLocksRemoved < 0 {
+		return false
+	}
+	if p.StaleIntentsObserved < 0 {
 		return false
 	}
 	if p.SweptAt == "" {

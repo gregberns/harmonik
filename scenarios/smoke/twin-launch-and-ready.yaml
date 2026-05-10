@@ -1,0 +1,89 @@
+name: smoke.twin-launch-and-ready
+description: >
+  Minimal one-node conformance scenario (specs/scenario-harness.md §10.1).
+  Launches a single claude-twin, observes agent_ready (HC-039), emits
+  agent_completed, and reaches a clean terminal state. Asserts
+  event_present(agent_ready), event_present(agent_completed),
+  and exit_code(SUCCESS).
+
+# Shared workflow: a single agentic node that runs claude-twin.
+# Resolved as <repo-root>/scenarios/_workflows/smoke-one-node.dot per
+# specs/scenario-harness.md §6.1 workflow_path resolution rule (ii).
+workflow_path: smoke-one-node.dot
+
+# agent_overrides: substitute the real claude handler with the twin binary.
+# binary "claude-twin" is resolved via the twin-search-path prefix (SH-009
+# tier (iii): <repo-root>/twins/claude-twin) unless overridden by
+# --twin-search-path / HARMONIK_TWIN_SEARCH_PATH at harness startup.
+# args: pass --script-path so the twin runs the scripted message stream
+# instead of wall-clock heartbeat mode (HC-026a scripted-mode carve-out).
+agent_overrides:
+  agent_node:
+    binary: claude-twin
+    args:
+      - --script-path=twin-scripts/claude.yaml
+
+# fixture_setup: seed the synthetic project root with the twin script file.
+# The script is placed at twin-scripts/claude.yaml so --script-path resolves
+# relative to the daemon's working directory (the synthetic project root per
+# SH-016a). The script emits the minimal progress-stream sequence needed to
+# satisfy HC-039 (agent_ready) and HC-008 (outcome_emitted → agent_completed):
+#   1. handler_capabilities  — capability declaration (HC-007 handshake step 1)
+#   2. agent_ready           — signals handler is ready (HC-039)
+#   3. agent_output_chunk    — representative output chunk
+#   4. outcome_emitted       — terminal outcome (SUCCESS) per HC-008
+#
+# heartbeat_mode: scripted — enables relative-timestamp replay per HC-026a
+# so scenario verdicts are byte-reproducible (SH-027 determinism contract).
+fixture_setup:
+  files:
+    twin-scripts/claude.yaml:
+      encoding: utf8
+      contents: |
+        heartbeat_mode: scripted
+        messages:
+          - type: handler_capabilities
+            payload:
+              capabilities: []
+            relative_timestamp_ms: 0
+          - type: agent_ready
+            payload:
+              node_id: agent_node
+            relative_timestamp_ms: 10
+          - type: agent_output_chunk
+            payload:
+              chunk: "smoke test output"
+            relative_timestamp_ms: 10
+          - type: outcome_emitted
+            payload:
+              outcome_status: SUCCESS
+              notes: "smoke scenario completed"
+            relative_timestamp_ms: 10
+
+# expected_events: assert the three events required by SH §10.1.
+expected_events:
+  - kind: event_present
+    type: agent_ready
+    description: >
+      Twin must emit agent_ready per specs/handler-contract.md §4.9.HC-039
+      before producing any output.
+  - kind: event_present
+    type: agent_completed
+    description: >
+      Daemon must emit agent_completed when the twin subprocess exits cleanly
+      after outcome_emitted (HC-008 outcome-delivery contract).
+
+# expected_outcome: run must reach terminal state with outcome SUCCESS.
+# Matches run_completed.payload.outcome_status per event-model.md §8.1.8.
+expected_outcome:
+  outcome_status: SUCCESS
+  description: >
+    Run must complete with outcome_status=SUCCESS (specs/scenario-harness.md
+    §10.1 exit_code(SUCCESS) assertion).
+
+# timeout_secs: generous budget for subprocess launch + handshake.
+# The scripted twin completes in <1 s; 30 s covers slow CI environments.
+timeout_secs: 30
+
+# cadence_tag: smoke — runs in the fastest CI lane (SH-029).
+cadence_tag: smoke

@@ -1,0 +1,21 @@
+digraph workflow {
+    graph [
+        workflow_id       = "018f2b00-0000-7000-8000-000000000001"
+        name              = "smoke-one-node"
+        version           = "0.1.0"
+        start_node_id     = "agent_node"
+        terminal_node_ids = "agent_node"
+    ]
+
+    agent_node [
+        type               = "agentic"
+        handler_ref        = "twins/claude-twin"
+        agent_type         = "claude-twin"
+        idempotency_class  = "non-idempotent"
+        "llm-freedom"      = "unbounded"
+        "io-determinism"   = "nondeterministic"
+        "replay-safety"    = "unsafe"
+        idempotency        = "non-idempotent"
+        mode               = "cognition"
+    ]
+}

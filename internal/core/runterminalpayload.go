@@ -108,8 +108,8 @@ type RunFailedPayload struct {
 	// handler-contract.md §4.5. Absent (nil) for orchestrator-originated
 	// failures (e.g., compilation_loop, no_outgoing_edge_matches) that have no
 	// handler-origin sentinel.
-	// TODO: replace *string with *ErrorCategory once the ErrorCategory typed
-	// alias is defined (hk-b3f.17 follow-up: no separate bead yet).
+	// TODO(hk-b3f.109): replace *string with *ErrorCategory once the typed
+	// alias is defined.
 	ErrorCategory *string `json:"error_category,omitempty"`
 
 	// EndedAt is the RFC 3339 wall-clock timestamp at which the run failed.

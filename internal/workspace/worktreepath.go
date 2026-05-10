@@ -4,10 +4,48 @@ import "path/filepath"
 
 // DefaultWorktreeRoot is the default worktree-root directory relative to the
 // repo root, per workspace-model.md §4.1 WM-002 and §6.2.
-//
-// The operator-configurable override is tracked in specs/control-points.md
-// §4.7 CP-037; a typed config surface is deferred to a follow-up bead.
 const DefaultWorktreeRoot = ".harmonik/worktrees"
+
+// WorktreeRootConfig carries the worktree-root override configuration per
+// specs/control-points.md §4.7 CP-037.
+//
+// CP-037 defines four precedence layers (highest first):
+//
+//  1. RuntimeOverride  — runtime operator CLI flags
+//  2. OperatorPolicy   — operator-policy YAML file
+//  3. WorkflowDef      — per-workflow overrides
+//  4. DefaultConfig    — harmonik built-in default (DefaultWorktreeRoot)
+//
+// At MVH only the RuntimeOverride slot is populated; the remaining layers are
+// deferred until the full control-points config surface lands. The struct shape
+// deliberately leaves room for those layers without exposing "single string"
+// as the permanent public contract.
+//
+// Construct via [NoWorktreeRootOverride] (use default) or
+// [WithWorktreeRootOverride] (set the runtime override slot).
+type WorktreeRootConfig struct {
+	// runtimeOverride is the highest-precedence slot per CP-037 §layer-1.
+	// A nil or empty value means "no runtime override; fall through to default".
+	// The override MUST be an absolute path or a path relative to repoRoot.
+	runtimeOverride *string
+}
+
+// NoWorktreeRootOverride returns a WorktreeRootConfig with no override set;
+// [WorktreeRootPath] will use [DefaultWorktreeRoot].
+func NoWorktreeRootOverride() WorktreeRootConfig {
+	return WorktreeRootConfig{}
+}
+
+// WithWorktreeRootOverride returns a WorktreeRootConfig whose runtime-override
+// slot (CP-037 layer 1) is set to override. An empty string is treated as "no
+// override" by [WorktreeRootPath] (equivalent to [NoWorktreeRootOverride]).
+//
+// The override MUST be an absolute path or a path relative to the repo root;
+// callers sourcing it from operator config MUST resolve it against repoRoot
+// before passing when a relative path is intended.
+func WithWorktreeRootOverride(override string) WorktreeRootConfig {
+	return WorktreeRootConfig{runtimeOverride: &override}
+}
 
 // WorktreeRootPath returns the absolute path to the worktree root directory.
 //
@@ -16,23 +54,20 @@ const DefaultWorktreeRoot = ".harmonik/worktrees"
 //	<repo>/.harmonik/worktrees/
 //
 // The worktree root MAY be overridden by operator configuration per
-// [control-points.md §4.7 CP-037]; pass the operator-supplied override as
-// worktreeRootOverride. When worktreeRootOverride is empty, the default
-// [DefaultWorktreeRoot] is used. The override MUST be an absolute path or a
-// path relative to repoRoot when non-empty; callers sourcing it from
-// operator config MUST resolve it against repoRoot before passing.
+// [control-points.md §4.7 CP-037]. Supply the override via [WithWorktreeRootOverride];
+// when the config carries no override (see [NoWorktreeRootOverride]), the
+// default [DefaultWorktreeRoot] is used.
 //
-// TODO(hk-ml3rw): replace the *string placeholder with a typed config
-// surface once the CP-037 control-point schema is defined in
-// internal/operatornfr/ or wherever the control-points config typed surface
-// lands. Bead hk-ml3rw tracks "CP-037 worktree-root override config typed
-// surface".
-func WorktreeRootPath(repoRoot string, worktreeRootOverride *string) string {
-	if worktreeRootOverride != nil && *worktreeRootOverride != "" {
-		if filepath.IsAbs(*worktreeRootOverride) {
-			return *worktreeRootOverride
+// Spec refs:
+//   - workspace-model.md §4.1 WM-002 — canonical worktree path convention.
+//   - workspace-model.md §6.2 — on-disk path table.
+//   - control-points.md §4.7 CP-037 — worktree-root operator override.
+func WorktreeRootPath(repoRoot string, cfg WorktreeRootConfig) string {
+	if cfg.runtimeOverride != nil && *cfg.runtimeOverride != "" {
+		if filepath.IsAbs(*cfg.runtimeOverride) {
+			return *cfg.runtimeOverride
 		}
-		return filepath.Join(repoRoot, *worktreeRootOverride)
+		return filepath.Join(repoRoot, *cfg.runtimeOverride)
 	}
 	return filepath.Join(repoRoot, DefaultWorktreeRoot)
 }
@@ -47,11 +82,9 @@ func WorktreeRootPath(repoRoot string, worktreeRootOverride *string) string {
 // repository and `<run_id>` is the run's stable identifier.
 //
 // The worktree root MAY be overridden by operator configuration per
-// [control-points.md §4.7 CP-037]. Pass the operator-supplied override as
-// worktreeRootOverride (a *string placeholder; see
-// [WorktreeRootPath] godoc for the typed-alias deferral note). When
-// worktreeRootOverride is nil or empty, the default
-// `<repo>/.harmonik/worktrees/` is used.
+// [control-points.md §4.7 CP-037]. Supply the override via
+// [WithWorktreeRootOverride]; when the config carries no override (see
+// [NoWorktreeRootOverride]), the default `<repo>/.harmonik/worktrees/` is used.
 //
 // WorktreePath does NOT validate runID against the [A-Za-z0-9-]+ regex
 // mandated by WM-002 — validation is the caller's responsibility at
@@ -62,6 +95,6 @@ func WorktreeRootPath(repoRoot string, worktreeRootOverride *string) string {
 //   - workspace-model.md §4.1 WM-002 — canonical worktree path convention.
 //   - workspace-model.md §6.2 — on-disk path table.
 //   - control-points.md §4.7 CP-037 — worktree-root operator override.
-func WorktreePath(repoRoot, runID string, worktreeRootOverride *string) string {
-	return filepath.Join(WorktreeRootPath(repoRoot, worktreeRootOverride), runID)
+func WorktreePath(repoRoot, runID string, cfg WorktreeRootConfig) string {
+	return filepath.Join(WorktreeRootPath(repoRoot, cfg), runID)
 }

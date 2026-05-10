@@ -23,10 +23,10 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7033-8a1b-2c3d4e5f0033"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 
 		// Write a lock file with a bogus (dead) PID.
@@ -42,7 +42,7 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 			t.Fatalf("WM-033: lease-lock not present before sweep: %v", err)
 		}
 
-		result, err := SweepStaleLeaseLocks(t.Context(), repo, nil)
+		result, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-033: SweepStaleLeaseLocks: %v", err)
 		}
@@ -76,17 +76,17 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7033-8a1b-2c3d4e5f0034"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 
 		// Write a lock file with the CURRENT process PID (live).
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
 			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
 
-		_, err := SweepStaleLeaseLocks(t.Context(), repo, nil)
+		_, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-033: SweepStaleLeaseLocks: %v", err)
 		}
@@ -105,12 +105,12 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7033-8a1b-2c3d4e5f0035"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: CreateWorktree: %v", err)
 		}
 		// No lease-lock written.
 
-		result, err := SweepStaleLeaseLocks(t.Context(), repo, nil)
+		result, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-033: SweepStaleLeaseLocks: %v", err)
 		}
@@ -123,10 +123,10 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 	t.Run("empty-worktree-root-succeeds", func(t *testing.T) {
 		t.Parallel()
 
-		// When the worktree root does not exist, the sweep must return (nil, nil)
+		// When the worktree root does not exist, the sweep must return (nil, NoWorktreeRootOverride())
 		// — no error, no removed entries.
 		repo, _ := tempRepo(t)
-		result, err := SweepStaleLeaseLocks(t.Context(), repo, nil)
+		result, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Errorf("WM-033: SweepStaleLeaseLocks on absent root: %v", err)
 		}
@@ -161,16 +161,16 @@ func TestWM033_SweepStaleLeaseLocks(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7033-8a1b-2c3d4e5f0036"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
 			leaseFixtureMakeLockJSON(runID, 99999998, time.Now(), 3600))
 
-		if _, err := SweepStaleLeaseLocks(t.Context(), repo, nil); err != nil {
+		if _, err := SweepStaleLeaseLocks(t.Context(), repo, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-033: SweepStaleLeaseLocks: %v", err)
 		}
 

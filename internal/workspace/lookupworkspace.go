@@ -49,8 +49,9 @@ type WorkspaceRef struct {
 // the worktree directory is present on disk (filesystem stat; does NOT confirm
 // git registration — use [DiscoverWorktrees] for the full WM-013c discovery).
 //
-// worktreeRootOverride is the operator-configurable worktree root per
-// [control-points.md §4.7 CP-037]; nil uses the default per WM-002.
+// cfg carries the operator-configurable worktree root per
+// [control-points.md §4.7 CP-037]; use [NoWorktreeRootOverride] for the
+// default per WM-002.
 //
 // LookupWorkspace does NOT validate runID — validation is the caller's
 // responsibility at run-create time (WM-002: [A-Za-z0-9-]+).
@@ -64,9 +65,9 @@ type WorkspaceRef struct {
 //   - workspace-model.md §4.1 WM-002 — canonical path convention.
 //   - workspace-model.md §4.1 WM-004 — workspace_id derivation.
 //   - workspace-model.md §4.2 WM-005 — task branch naming.
-//   - control-points.md §4.7 CP-037 — worktree-root operator override (hk-ml3rw).
-func LookupWorkspace(repoRoot, runID string, worktreeRootOverride *string) (WorkspaceRef, error) {
-	path := WorktreePath(repoRoot, runID, worktreeRootOverride)
+//   - control-points.md §4.7 CP-037 — worktree-root operator override.
+func LookupWorkspace(repoRoot, runID string, cfg WorktreeRootConfig) (WorkspaceRef, error) {
+	path := WorktreePath(repoRoot, runID, cfg)
 	wsID := WorkspaceIDFromRunID(runID)
 	branch := TaskBranchName(runID)
 

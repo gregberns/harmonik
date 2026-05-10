@@ -23,7 +23,7 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f0018"
 
-		ref, err := LookupWorkspace(repoRoot, runID, nil)
+		ref, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -40,7 +40,7 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f0019"
 
-		ref, err := LookupWorkspace(repoRoot, runID, nil)
+		ref, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001a"
 
-		ref, err := LookupWorkspace(repoRoot, runID, nil)
+		ref, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -75,7 +75,7 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repo, _ := tempRepo(t)
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001b"
 
-		ref, err := LookupWorkspace(repo, runID, nil)
+		ref, err := LookupWorkspace(repo, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -91,11 +91,11 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001c"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("CreateWorktree: %v", err)
 		}
 
-		ref, err := LookupWorkspace(repo, runID, nil)
+		ref, err := LookupWorkspace(repo, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -110,7 +110,7 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001d"
 
-		ref, err := LookupWorkspace(repoRoot, runID, nil)
+		ref, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: LookupWorkspace: %v", err)
 		}
@@ -127,11 +127,11 @@ func TestWM013_LookupWorkspace(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7013-8a1b-2c3d4e5f001e"
 
-		ref1, err := LookupWorkspace(repoRoot, runID, nil)
+		ref1, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: first LookupWorkspace: %v", err)
 		}
-		ref2, err := LookupWorkspace(repoRoot, runID, nil)
+		ref2, err := LookupWorkspace(repoRoot, runID, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013: second LookupWorkspace: %v", err)
 		}

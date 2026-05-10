@@ -57,8 +57,8 @@ type SweepResult struct {
 //   - workspace-model.md §4.8 WM-033 — startup orphan sweep mandate.
 //   - workspace-model.md §4.3 WM-013c — discovery mechanism (used in step 1).
 //   - workspace-model.md §4.3 WM-013a — lease-lock file format.
-func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, worktreeRootOverride *string) (SweepResult, error) {
-	discovered, err := DiscoverWorktrees(ctx, repoRoot, worktreeRootOverride)
+func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRootConfig) (SweepResult, error) {
+	discovered, err := DiscoverWorktrees(ctx, repoRoot, cfg)
 	if err != nil {
 		return SweepResult{}, fmt.Errorf("workspace: SweepStaleLeaseLocks: discover: %w", err)
 	}

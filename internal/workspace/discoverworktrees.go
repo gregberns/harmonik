@@ -92,9 +92,9 @@ type discoveredLeaseLock struct {
 // recorded pid is NOT the current daemon is subject to WM-033 orphan-sweep; the
 // caller performs that classification using [DiscoveredWorktree.LeaseLock.PID].
 //
-// worktreeRootOverride is the operator-configurable worktree root per
-// [control-points.md §4.7 CP-037]; nil uses the default
-// `<repo>/.harmonik/worktrees/` per WM-002.
+// cfg carries the operator-configurable worktree root per
+// [control-points.md §4.7 CP-037]; use [NoWorktreeRootOverride] for the
+// default `<repo>/.harmonik/worktrees/` per WM-002.
 //
 // DiscoverWorktrees returns a nil-error empty slice when the worktree root does
 // not exist (no workspaces have ever been created). Returns an error only for
@@ -108,8 +108,8 @@ type discoveredLeaseLock struct {
 //   - workspace-model.md §4.3 WM-013c — startup lease discovery mechanism.
 //   - workspace-model.md §4.1 WM-002 — run_id regex + canonical path.
 //   - workspace-model.md §4.3 WM-013a — lease-lock file location and format.
-func DiscoverWorktrees(ctx context.Context, repoRoot string, worktreeRootOverride *string) ([]DiscoveredWorktree, error) {
-	worktreeRoot := WorktreeRootPath(repoRoot, worktreeRootOverride)
+func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootConfig) ([]DiscoveredWorktree, error) {
+	worktreeRoot := WorktreeRootPath(repoRoot, cfg)
 
 	// Step (a): enumerate subdirectories of the worktree root.
 	entries, err := os.ReadDir(worktreeRoot)
@@ -140,7 +140,7 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, worktreeRootOverrid
 			continue
 		}
 
-		worktreePath := WorktreePath(repoRoot, name, worktreeRootOverride)
+		worktreePath := WorktreePath(repoRoot, name, cfg)
 
 		// Resolve symlinks before checking the git-registered set: on macOS,
 		// t.TempDir() paths under /var/folders are symlinks to /private/var/folders,

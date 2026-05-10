@@ -24,10 +24,10 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0001"
 		branch := TaskBranchName(runID)
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
 		// Create the worktree and write a lease lock.
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("CreateWorktree: %v", err)
 		}
 		leaseLockPath := LeaseLockPath(worktreePath)
@@ -36,7 +36,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 
 		_ = branch // TaskBranchName is exercised by CreateWorktree
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -80,11 +80,11 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0002"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("CreateWorktree: %v", err)
 		}
 
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
 		// Pre-create the sessions root (simulating session start).
 		sessionsRoot := SessionLogRootPath(worktreePath)
@@ -92,7 +92,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			t.Fatalf("MkdirAll sessions root: %v", err)
 		}
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			t.Fatalf("MkdirAll orphan: %v", err)
 		}
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -140,7 +140,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		repo, _ := tempRepo(t)
 
 		// Do NOT create .harmonik/worktrees/.
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Errorf("WM-013c: DiscoverWorktrees on absent root: want nil error, got %v", err)
 		}
@@ -163,7 +163,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			}
 		}
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -185,12 +185,12 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 		}
 
 		for _, runID := range runIDs {
-			if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+			if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 				t.Fatalf("CreateWorktree %q: %v", runID, err)
 			}
 		}
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -242,15 +242,15 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 	t.Run("worktree-path-matches-canonical-construction", func(t *testing.T) {
 		t.Parallel()
 
-		// WorktreePath in DiscoveredWorktree must equal WorktreePath(repo, runID, nil).
+		// WorktreePath in DiscoveredWorktree must equal WorktreePath(repo, runID, NoWorktreeRootOverride()).
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0006"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("CreateWorktree: %v", err)
 		}
 
-		discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+		discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 		if err != nil {
 			t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 		}
@@ -258,7 +258,7 @@ func TestWM013c_DiscoverWorktrees(t *testing.T) {
 			t.Fatalf("WM-013c: discovered %d worktrees, want 1", len(discovered))
 		}
 
-		wantPath := WorktreePath(repo, runID, nil)
+		wantPath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		if discovered[0].WorktreePath != wantPath {
 			t.Errorf("WM-013c: WorktreePath = %q, want %q", discovered[0].WorktreePath, wantPath)
 		}
@@ -275,10 +275,10 @@ func TestWM013c_DiscoverWorktreesBranchConvention(t *testing.T) {
 	repo, sha := tempRepo(t)
 	runID := "0196a1b2-c3d4-713c-8a1b-2c3d4e5f0007"
 
-	if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+	if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
-	worktreePath := WorktreePath(repo, runID, nil)
+	worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 	leaseLockPath := LeaseLockPath(worktreePath)
 	leaseFixtureWriteLockAtomic(t, leaseLockPath,
 		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
@@ -290,7 +290,7 @@ func TestWM013c_DiscoverWorktreesBranchConvention(t *testing.T) {
 		t.Fatalf("WM-013c: task branch %q not found: %v", TaskBranchName(runID), err)
 	}
 
-	discovered, err := DiscoverWorktrees(t.Context(), repo, nil)
+	discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
 	if err != nil {
 		t.Fatalf("WM-013c: DiscoverWorktrees: %v", err)
 	}

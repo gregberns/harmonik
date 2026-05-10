@@ -57,8 +57,8 @@ import (
 //   - workspace-model.md §4.1 WM-002 — canonical path convention.
 //   - workspace-model.md §4.2 WM-005 — task branch naming.
 //   - workspace-model.md §4.a WM-ENV-002 — git minimum version.
-func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, worktreeRootOverride *string) error {
-	worktreePath := WorktreePath(repoRoot, runID, worktreeRootOverride)
+func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, cfg WorktreeRootConfig) error {
+	worktreePath := WorktreePath(repoRoot, runID, cfg)
 	branch := TaskBranchName(runID)
 
 	// Create the parent directory (worktree root) if absent.

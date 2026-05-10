@@ -26,10 +26,10 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0020"
 
 		// Create the worktree via the production helper (registered with git).
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
 		// No lease-lock, no sessions dir — bare-worktree-no-lease state.
 		evidenceType, err := ClassifyCrashEvidence(worktreePath)
@@ -50,10 +50,10 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		sessionID := "sess-0196a1b2-c3d4-7ef0-8a1b-000000000021"
 
 		// Create the worktree (registered with git).
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
 		// Synthesize a session sidecar to simulate crash after sidecar write
 		// but before lease-lock fsync (between steps c and d of WM-016).
@@ -86,10 +86,10 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0022"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 		leaseLockPath := LeaseLockPath(worktreePath)
 		leaseFixtureWriteLockAtomic(t, leaseLockPath,
 			leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
@@ -123,10 +123,10 @@ func TestWM003a_ClassifyCrashEvidence(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0023"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003a: CreateWorktree: %v", err)
 		}
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
 		// Create sessions dir but no sidecar inside.
 		sessionsRoot := SessionLogRootPath(worktreePath)

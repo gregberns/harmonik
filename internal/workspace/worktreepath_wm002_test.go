@@ -23,7 +23,7 @@ func TestWM002_WorktreePath(t *testing.T) {
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0002"
 
 		wantPath := filepath.Join(repoRoot, ".harmonik", "worktrees", runID)
-		gotPath := WorktreePath(repoRoot, runID, nil)
+		gotPath := WorktreePath(repoRoot, runID, NoWorktreeRootOverride())
 
 		if gotPath != wantPath {
 			t.Errorf("WM-002: WorktreePath(default) = %q, want %q", gotPath, wantPath)
@@ -39,7 +39,7 @@ func TestWM002_WorktreePath(t *testing.T) {
 		override := "/mnt/fast-ssd/harmonik-worktrees"
 
 		wantPath := filepath.Join(override, runID)
-		gotPath := WorktreePath(repoRoot, runID, &override)
+		gotPath := WorktreePath(repoRoot, runID, WithWorktreeRootOverride(override))
 
 		if gotPath != wantPath {
 			t.Errorf("WM-002: WorktreePath(abs override) = %q, want %q", gotPath, wantPath)
@@ -56,23 +56,22 @@ func TestWM002_WorktreePath(t *testing.T) {
 		override := "scratch/worktrees"
 
 		wantPath := filepath.Join(repoRoot, override, runID)
-		gotPath := WorktreePath(repoRoot, runID, &override)
+		gotPath := WorktreePath(repoRoot, runID, WithWorktreeRootOverride(override))
 
 		if gotPath != wantPath {
 			t.Errorf("WM-002: WorktreePath(rel override) = %q, want %q", gotPath, wantPath)
 		}
 	})
 
-	t.Run("empty-override-is-treated-as-nil", func(t *testing.T) {
+	t.Run("empty-override-is-treated-as-no-override", func(t *testing.T) {
 		t.Parallel()
 
 		// An empty string override falls through to the default.
 		repoRoot := "/home/op/repos/myproject"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0005"
-		empty := ""
 
 		wantPath := filepath.Join(repoRoot, ".harmonik", "worktrees", runID)
-		gotPath := WorktreePath(repoRoot, runID, &empty)
+		gotPath := WorktreePath(repoRoot, runID, WithWorktreeRootOverride(""))
 
 		if gotPath != wantPath {
 			t.Errorf("WM-002: WorktreePath(empty override) = %q, want %q", gotPath, wantPath)
@@ -86,7 +85,7 @@ func TestWM002_WorktreePath(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0006"
 
-		gotPath := WorktreePath(repoRoot, runID, nil)
+		gotPath := WorktreePath(repoRoot, runID, NoWorktreeRootOverride())
 		gotBase := filepath.Base(gotPath)
 
 		if gotBase != runID {
@@ -102,14 +101,14 @@ func TestWM002_WorktreePath(t *testing.T) {
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0007"
 
 		wantRoot := filepath.Join(repoRoot, ".harmonik", "worktrees")
-		gotRoot := WorktreeRootPath(repoRoot, nil)
+		gotRoot := WorktreeRootPath(repoRoot, NoWorktreeRootOverride())
 
 		if gotRoot != wantRoot {
 			t.Errorf("WM-002: WorktreeRootPath(default) = %q, want %q", gotRoot, wantRoot)
 		}
 
 		// WorktreePath must start with the default root.
-		gotPath := WorktreePath(repoRoot, runID, nil)
+		gotPath := WorktreePath(repoRoot, runID, NoWorktreeRootOverride())
 		if filepath.Dir(gotPath) != wantRoot {
 			t.Errorf("WM-002: WorktreePath parent dir = %q, want %q", filepath.Dir(gotPath), wantRoot)
 		}
@@ -123,7 +122,7 @@ func TestWM002_WorktreePath(t *testing.T) {
 		repoRoot := "/srv/harmonik"
 		runID := "0196a1b2-c3d4-7001-8a1b-2c3d4e5f0008"
 
-		worktreePath := WorktreePath(repoRoot, runID, nil)
+		worktreePath := WorktreePath(repoRoot, runID, NoWorktreeRootOverride())
 		leasePath := LeaseLockPath(worktreePath)
 
 		wantLeasePath := filepath.Join(repoRoot, ".harmonik", "worktrees", runID, ".harmonik", "lease.lock")

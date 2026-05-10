@@ -26,7 +26,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0003"
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003: CreateWorktree: %v", err)
 		}
 
@@ -52,7 +52,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0004"
 		branch := TaskBranchName(runID)
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003: CreateWorktree: %v", err)
 		}
 
@@ -80,7 +80,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 			t.Skip("worktree root already exists; cannot exercise MkdirAll branch")
 		}
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003: CreateWorktree with absent parent: %v", err)
 		}
 
@@ -95,9 +95,9 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		// git worktree list --porcelain must show the new worktree as registered.
 		repo, sha := tempRepo(t)
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0006"
-		worktreePath := WorktreePath(repo, runID, nil)
+		worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 
-		if err := CreateWorktree(t.Context(), repo, runID, sha, nil); err != nil {
+		if err := CreateWorktree(t.Context(), repo, runID, sha, NoWorktreeRootOverride()); err != nil {
 			t.Fatalf("WM-003: CreateWorktree: %v", err)
 		}
 
@@ -120,7 +120,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		runID := "0196a1b2-c3d4-7003-8a1b-2c3d4e5f0007"
 		bogusCommit := "0000000000000000000000000000000000000000"
 
-		err := CreateWorktree(t.Context(), repo, runID, bogusCommit, nil)
+		err := CreateWorktree(t.Context(), repo, runID, bogusCommit, NoWorktreeRootOverride())
 		if err == nil {
 			t.Fatal("WM-003: expected error for bogus parentCommit, got nil")
 		}
@@ -139,7 +139,7 @@ func TestWM003_CreateWorktree(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // cancel immediately
 
-		err := CreateWorktree(ctx, repo, runID, sha, nil)
+		err := CreateWorktree(ctx, repo, runID, sha, NoWorktreeRootOverride())
 		if err == nil {
 			t.Fatal("WM-003: expected error on cancelled context, got nil")
 		}

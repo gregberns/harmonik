@@ -13,7 +13,7 @@ package scenario
 // verdict=pass" is an integration-test obligation that requires a built harness.
 //
 // Helper prefix: conformanceCorpusFixture (per implementer-protocol.md
-// §Helper-prefix discipline; hk-ahvq.48.6).
+// §Helper-prefix discipline; hk-ahvq.48.6, hk-ahvq.48.7, hk-ahvq.48.8).
 //
 // Spec ref: specs/scenario-harness.md §10.1, §10.2 (SH-001–SH-007 obligation).
 // Tags: mechanism
@@ -40,12 +40,12 @@ func conformanceCorpusFixtureRepoRoot(t *testing.T) string {
 	return root
 }
 
-// TestConformanceCorpus_SmokeScenariosParse verifies that every §10.1 smoke
-// conformance scenario file passes ParseScenarioFile and is structurally valid.
+// TestConformanceCorpus_SH101ScenariosParse verifies that every §10.1 conformance
+// scenario file passes ParseScenarioFile and is structurally valid.
 //
 // Spec ref: specs/scenario-harness.md §10.1 (conformance scenario set),
 // §10.2 SH-001–SH-007 corpus obligation.
-func TestConformanceCorpus_SmokeScenariosParse(t *testing.T) {
+func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 	t.Parallel()
 
 	root := conformanceCorpusFixtureRepoRoot(t)
@@ -55,14 +55,27 @@ func TestConformanceCorpus_SmokeScenariosParse(t *testing.T) {
 		path string
 		// wantCadence is the expected cadence_tag value.
 		wantCadence CadenceTag
-		// wantMinEvents is the minimum number of expected_events or
+		// wantMinAssertions is the minimum number of expected_events +
 		// expected_outcome assertions declared (as a sanity guard).
 		wantMinAssertions int
 	}{
 		{
+			// hk-ahvq.48.6: first conformance scenario.
 			path:              filepath.Join("scenarios", "smoke", "twin-launch-and-ready.yaml"),
 			wantCadence:       CadenceTagSmoke,
-			wantMinAssertions: 2, // event_present(agent_ready) + event_present(agent_completed)
+			wantMinAssertions: 2, // event_present(agent_ready) + event_present(agent_completed) + outcome
+		},
+		{
+			// hk-ahvq.48.7: second conformance scenario.
+			path:              filepath.Join("scenarios", "smoke", "checkpoint-and-merge.yaml"),
+			wantCadence:       CadenceTagSmoke,
+			wantMinAssertions: 3, // checkpoint_written + 2x workspace_merge_status + outcome + workspace_state
+		},
+		{
+			// hk-ahvq.48.8: third conformance scenario.
+			path:              filepath.Join("scenarios", "regression", "twin-failure-classification.yaml"),
+			wantCadence:       CadenceTagRegression,
+			wantMinAssertions: 2, // agent_failed + event_absent(outcome_emitted) + outcome
 		},
 	}
 
@@ -87,6 +100,7 @@ func TestConformanceCorpus_SmokeScenariosParse(t *testing.T) {
 			if sf.ExpectedOutcome != nil {
 				totalAssertions++
 			}
+			totalAssertions += len(sf.ExpectedWorkspace)
 			if totalAssertions < tc.wantMinAssertions {
 				t.Errorf("total assertions = %d, want >= %d", totalAssertions, tc.wantMinAssertions)
 			}
@@ -108,10 +122,10 @@ func TestConformanceCorpus_SmokeScenariosParse(t *testing.T) {
 				t.Errorf("TimeoutSecs = %d, want [1, 7200]", sf.TimeoutSecs)
 			}
 
-			t.Logf("OK: name=%q cadence=%q timeout=%ds agents=%d events=%d outcome=%v",
+			t.Logf("OK: name=%q cadence=%q timeout=%ds agents=%d events=%d workspace=%d outcome=%v",
 				sf.Name, sf.CadenceTag, sf.TimeoutSecs,
 				len(sf.AgentOverrides), len(sf.ExpectedEvents),
-				sf.ExpectedOutcome != nil)
+				len(sf.ExpectedWorkspace), sf.ExpectedOutcome != nil)
 		})
 	}
 }

@@ -1,0 +1,91 @@
+name: regression.twin-failure-classification
+description: >
+  Third §10.1 conformance scenario (specs/scenario-harness.md §10.1).
+  A scenario where the twin is scripted to crash without outcome_emitted,
+  exercising the ErrStructural classification per handler-contract.md
+  §4.6.HC-024 and the exactly-one-terminal-event invariant of
+  handler-contract.md §5 HC-INV-006.
+  Asserts event_present(agent_failed{error_category=ErrStructural}),
+  event_absent(outcome_emitted), exit_code(FAIL).
+
+# Shared workflow: same one-node agentic workflow as the smoke scenarios.
+# Resolved as <repo-root>/scenarios/_workflows/smoke-one-node.dot per
+# specs/scenario-harness.md §6.1 workflow_path resolution rule (ii).
+workflow_path: smoke-one-node.dot
+
+# agent_overrides: substitute the real claude handler with the twin binary.
+# The twin runs the failure script embedded in fixture_setup.files.
+agent_overrides:
+  agent_node:
+    binary: claude-twin
+    args:
+      - --script-path=twin-scripts/claude-crash.yaml
+
+# fixture_setup: seed the synthetic project root with the crash twin script.
+#
+# The crash script emits partial output then exits without outcome_emitted,
+# simulating an abrupt handler crash. The daemon's watcher detects the
+# subprocess exit without a terminal outcome and classifies it as ErrStructural
+# per HC-024 (incomplete session: exit without outcome_emitted).
+#
+# Script sequence:
+#   1. handler_capabilities — HC-007 handshake step 1
+#   2. agent_ready          — HC-039 ready signal (partially started)
+#   3. (implicit exit)      — twin process exits; no outcome_emitted emitted
+#
+# The twin binary exits 0 after emitting the last scripted message (no more
+# messages = end of script = normal process exit). The watcher observes a clean
+# subprocess exit without a preceding outcome_emitted and MUST classify this as
+# ErrStructural per HC-024: "any session that terminates (EOF on the wire
+# without outcome_emitted) MUST be classified as ErrStructural."
+#
+# heartbeat_mode: scripted — deterministic timing (SH-027, HC-026a).
+fixture_setup:
+  files:
+    twin-scripts/claude-crash.yaml:
+      encoding: utf8
+      contents: |
+        heartbeat_mode: scripted
+        messages:
+          - type: handler_capabilities
+            payload:
+              capabilities: []
+            relative_timestamp_ms: 0
+          - type: agent_ready
+            payload:
+              node_id: agent_node
+            relative_timestamp_ms: 10
+
+# expected_events: assert the two events required by SH §10.1 for this scenario.
+expected_events:
+  - kind: event_present
+    type: agent_failed
+    payload_match:
+      error_category: ErrStructural
+    description: >
+      Daemon must emit agent_failed with error_category=ErrStructural when the
+      twin subprocess exits without outcome_emitted (handler-contract.md
+      §4.6.HC-024 ErrStructural classification rule).
+  - kind: event_absent
+    type: outcome_emitted
+    description: >
+      No outcome_emitted event must appear in the captured log; the twin
+      crashed before emitting a terminal outcome. This verifies the
+      exactly-one-terminal-event invariant HC-INV-006: if outcome_emitted were
+      present alongside agent_failed, the invariant would be violated.
+
+# expected_outcome: run must reach terminal state with outcome FAIL.
+# The daemon routes an ErrStructural agent_failed through the cascade to a
+# run_failed terminal emission with outcome_status=FAIL per
+# execution-model.md §8 failure taxonomy.
+expected_outcome:
+  outcome_status: FAIL
+  description: >
+    Run must complete with outcome_status=FAIL (specs/scenario-harness.md
+    §10.1 exit_code(FAIL) assertion for the failure-classification scenario).
+
+# timeout_secs: 30 s is sufficient; the twin exits almost immediately.
+timeout_secs: 30
+
+# cadence_tag: regression — runs in the smoke+regression CI lane (SH-029).
+cadence_tag: regression

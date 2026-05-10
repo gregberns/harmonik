@@ -1,0 +1,123 @@
+name: smoke.checkpoint-and-merge
+description: >
+  Second §10.1 conformance scenario (specs/scenario-harness.md §10.1).
+  A workflow that drives one node to terminal success, emits a checkpoint per
+  execution-model.md §4.4.EM-016, and merges the task branch per
+  workspace-model.md §4.5.WM-019 (squash-merge contract) emitting
+  workspace_merge_status per workspace-model.md §4.5.WM-021.
+  Asserts event_present(checkpoint_written), event_present(workspace_merge_status
+  {status=pending}), event_present(workspace_merge_status{status=merged}),
+  workspace_state(commit_trailer_present, Harmonik-Run-ID).
+
+# Shared workflow: same one-node agentic workflow as twin-launch-and-ready.
+# Resolved as <repo-root>/scenarios/_workflows/smoke-one-node.dot per
+# specs/scenario-harness.md §6.1 workflow_path resolution rule (ii).
+workflow_path: smoke-one-node.dot
+
+# agent_overrides: substitute the real claude handler with the twin binary.
+# The twin runs the scripted stream embedded in fixture_setup.files.
+agent_overrides:
+  agent_node:
+    binary: claude-twin
+    args:
+      - --script-path=twin-scripts/claude-checkpoint.yaml
+
+# fixture_setup: seed the synthetic project root with:
+#   (a) an initial git commit — required so the daemon's workspace model has a
+#       base branch to create the task branch from (WM-001 requires an initial
+#       commit on the default branch before a task branch can be created).
+#   (b) the twin script that produces the progress-stream sequence expected by
+#       the daemon's checkpoint-and-merge path.
+#
+# The twin script emits the minimal sequence for a checkpoint-and-merge run:
+#   1. handler_capabilities — HC-007 handshake step 1
+#   2. agent_ready          — HC-039 ready signal
+#   3. agent_output_chunk   — representative output
+#   4. outcome_emitted      — SUCCESS outcome per HC-008
+#
+# The daemon emits checkpoint_written (EM-016) after a durable state transition
+# and workspace_merge_status events (WM-021) during the squash-merge of the
+# task branch back to the integration branch. These are daemon-side events; the
+# twin script does not produce them. The scenario asserts their presence in the
+# captured event log after orchestration completes.
+#
+# heartbeat_mode: scripted — enables relative-timestamp replay per HC-026a
+# so scenario verdicts are byte-reproducible (SH-027 determinism contract).
+fixture_setup:
+  git_seed:
+    - op: commit
+      args:
+        message: "init: seed commit for checkpoint-and-merge scenario"
+  files:
+    twin-scripts/claude-checkpoint.yaml:
+      encoding: utf8
+      contents: |
+        heartbeat_mode: scripted
+        messages:
+          - type: handler_capabilities
+            payload:
+              capabilities: []
+            relative_timestamp_ms: 0
+          - type: agent_ready
+            payload:
+              node_id: agent_node
+            relative_timestamp_ms: 10
+          - type: agent_output_chunk
+            payload:
+              chunk: "checkpoint-and-merge scenario output"
+            relative_timestamp_ms: 10
+          - type: outcome_emitted
+            payload:
+              outcome_status: SUCCESS
+              notes: "checkpoint-and-merge scenario completed"
+            relative_timestamp_ms: 10
+
+# expected_events: assert the four events required by SH §10.1 for this scenario.
+expected_events:
+  - kind: event_present
+    type: checkpoint_written
+    description: >
+      Daemon must emit checkpoint_written (execution-model.md §4.4.EM-016) when
+      it commits a durable state transition to the task branch in git.
+  - kind: event_present
+    type: workspace_merge_status
+    payload_match:
+      status: pending
+    description: >
+      Daemon must emit workspace_merge_status{status=pending}
+      (workspace-model.md §4.5.WM-021) when the squash-merge of the task branch
+      onto the integration branch is initiated.
+  - kind: event_present
+    type: workspace_merge_status
+    payload_match:
+      status: merged
+    description: >
+      Daemon must emit workspace_merge_status{status=merged}
+      (workspace-model.md §4.5.WM-021) when the squash-merge completes
+      successfully.
+
+# expected_workspace: assert that the integration branch HEAD carries the
+# Harmonik-Run-ID git trailer after the squash-merge (WM-019 commit-trailer
+# requirement). Path "refs/heads/main" is the integration branch in the
+# seeded synthetic project root (default branch name from git_seed commit).
+expected_workspace:
+  - kind: commit_trailer_present
+    path: refs/heads/main
+    expected: Harmonik-Run-ID
+    description: >
+      Integration branch HEAD must carry Harmonik-Run-ID trailer after the
+      squash-merge (workspace-model.md §4.5.WM-019 commit-trailer requirement).
+
+# expected_outcome: run must reach terminal state with outcome SUCCESS.
+expected_outcome:
+  outcome_status: SUCCESS
+  description: >
+    Run must complete with outcome_status=SUCCESS (specs/scenario-harness.md
+    §10.1 exit_code(SUCCESS) assertion).
+
+# timeout_secs: larger budget than twin-launch-and-ready because the
+# checkpoint + squash-merge git operations add wall-clock overhead.
+timeout_secs: 60
+
+# cadence_tag: smoke — runs in the fastest CI lane (SH-029).
+cadence_tag: smoke

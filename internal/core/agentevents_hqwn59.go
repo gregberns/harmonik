@@ -7,10 +7,12 @@ import "github.com/google/uuid"
 //   - agent_ready              (§8.3.1)
 //   - agent_output_chunk       (§8.3.3)
 //   - agent_failed             (§8.3.5)
+//   - agent_rate_limit_status  (§8.3.6)
+//   - skills_provisioned       (§8.3.8)
 //   - handler_capabilities     (§8.3.9)
 //
 // Spec ref: specs/event-model.md §8.3.
-// Bead refs: hk-hqwn.59.21, hk-hqwn.59.23, hk-hqwn.59.25, hk-hqwn.59.29.
+// Bead refs: hk-hqwn.59.21, hk-hqwn.59.23, hk-hqwn.59.25, hk-hqwn.59.26, hk-hqwn.59.28, hk-hqwn.59.29.
 
 // AgentReadyPayload is the typed event payload for the agent_ready event
 // (event-model.md §8.3.1).
@@ -197,6 +199,200 @@ func (p AgentFailedPayload) Valid() bool {
 	}
 	if p.Reason == "" {
 		return false
+	}
+	return true
+}
+
+// AgentRateLimitStatus is the typed discriminator for the status field of an
+// agent_rate_limit_status event (event-model.md §8.3.6 §6.3).
+//
+// This is a paired-phase lifecycle type per §8.9(h): emitters MUST emit only
+// on status transitions; successive emissions with identical status for the
+// same session are forbidden. The changed_at field MUST carry millisecond
+// resolution per §8.9(h).
+type AgentRateLimitStatus string
+
+const (
+	// AgentRateLimitStatusActive indicates a rate limit is currently in effect.
+	AgentRateLimitStatusActive AgentRateLimitStatus = "active"
+
+	// AgentRateLimitStatusCleared indicates a previously active rate limit has cleared.
+	AgentRateLimitStatusCleared AgentRateLimitStatus = "cleared"
+)
+
+// Valid reports whether s is one of the two declared AgentRateLimitStatus constants.
+func (s AgentRateLimitStatus) Valid() bool {
+	switch s {
+	case AgentRateLimitStatusActive, AgentRateLimitStatusCleared:
+		return true
+	default:
+		return false
+	}
+}
+
+// AgentRateLimitStatusPayload is the typed event payload for the
+// agent_rate_limit_status event (event-model.md §8.3.6 §6.3).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — rate-limit lifecycle observability; the
+// orchestrator uses this event to track when rate-limiting is active and when
+// it has cleared, enabling dispatch throttling per §8.3.6 §8.9(h)).
+//
+// Emitted by the handler subprocess via the daemon watcher on rate-limit
+// transitions. This is a paired-phase lifecycle event (§8.9(h)); emitters
+// MUST emit only on transitions. rate_limit_source and retry_after_seconds
+// are null when status=cleared.
+//
+// # Payload fields (event-model.md §8.3.6 §6.3)
+//
+//   - run_id              — the run in whose context the rate limit applies
+//   - session_id          — handler-assigned session identifier
+//   - status              — rate-limit phase (active / cleared)
+//   - rate_limit_source   — optional provider-reported source of the rate limit
+//   - retry_after_seconds — optional provider-reported retry delay in seconds
+//   - changed_at          — RFC 3339 wall-clock timestamp at this phase transition (millisecond resolution)
+type AgentRateLimitStatusPayload struct {
+	// RunID is the run in whose context the rate limit applies.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// SessionID is the handler-assigned session identifier. Required (non-empty).
+	// UUIDv7 per handler-contract.md §4.1; opaque to non-handler consumers.
+	SessionID SessionID `json:"session_id"`
+
+	// Status is the rate-limit phase at this transition. Required; must be a valid
+	// AgentRateLimitStatus constant. Emitters MUST emit only on transitions per §8.9(h).
+	Status AgentRateLimitStatus `json:"status"`
+
+	// RateLimitSource is the optional provider-reported source string identifying
+	// which rate limit was hit (e.g., "anthropic-api-tier-1"). Nil when not
+	// reported or when status=cleared. Non-nil must be non-empty.
+	// TODO(hk-placeholder): promote to typed alias when §6.3 defines the full
+	// rate_limit_source vocabulary.
+	RateLimitSource *string `json:"rate_limit_source,omitempty"`
+
+	// RetryAfterSeconds is the optional provider-reported retry delay. Nil when
+	// not reported or when status=cleared. Non-nil must be >= 0.
+	RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
+
+	// ChangedAt is the RFC 3339 wall-clock timestamp at this phase transition.
+	// Required (non-empty). MUST carry millisecond resolution per §8.9(h).
+	ChangedAt string `json:"changed_at"`
+}
+
+// Valid reports whether p is a well-formed AgentRateLimitStatusPayload.
+//
+// Rules per event-model.md §8.3.6 §6.3:
+//   - RunID must not be uuid.Nil.
+//   - SessionID must be non-empty.
+//   - Status must be a valid AgentRateLimitStatus constant.
+//   - RateLimitSource, when non-nil, must be non-empty.
+//   - RetryAfterSeconds, when non-nil, must be >= 0.
+//   - ChangedAt must be non-empty.
+func (p AgentRateLimitStatusPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.SessionID == "" {
+		return false
+	}
+	if !p.Status.Valid() {
+		return false
+	}
+	if p.RateLimitSource != nil && *p.RateLimitSource == "" {
+		return false
+	}
+	if p.RetryAfterSeconds != nil && *p.RetryAfterSeconds < 0 {
+		return false
+	}
+	if p.ChangedAt == "" {
+		return false
+	}
+	return true
+}
+
+// ProvisionedSkill is the per-skill element in the skills[] list of a
+// skills_provisioned event (event-model.md §8.3.8).
+//
+// Each element describes one skill injected into the agent session.
+type ProvisionedSkill struct {
+	// Name is the skill identifier as declared in the agent's skill registry.
+	// Required (non-empty).
+	Name string `json:"name"`
+
+	// SourcePath is the filesystem path from which the skill was loaded.
+	// Required (non-empty).
+	SourcePath string `json:"source_path"`
+
+	// Version is the optional version string for this skill. Nil when the skill
+	// source does not declare a version.
+	// TODO(hk-placeholder): promote to typed SkillVersion alias when the skill
+	// versioning scheme is formalized; see follow-up bead for typed wrapper.
+	Version *string `json:"version,omitempty"`
+}
+
+// SkillsProvisionedPayload is the typed event payload for the skills_provisioned
+// event (event-model.md §8.3.8).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — skill-injection audit and observability; the
+// audit subsystem uses this event to record which skills were active during a
+// session, enabling policy-compliance verification per §8.3.8).
+//
+// Emitted by the handler subprocess via the daemon watcher immediately before
+// agent_ready, advertising the effective set of skills injected into the agent
+// session per handler-contract.md §4.1 and hk-8i31.58.
+//
+// # Payload fields (event-model.md §8.3.8)
+//
+//   - run_id     — the run in whose context the skills were provisioned
+//   - session_id — handler-assigned session identifier
+//   - skills     — list of provisioned skill descriptors (each: name, source_path, version?)
+type SkillsProvisionedPayload struct {
+	// RunID is the run in whose context the skills were provisioned.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// SessionID is the handler-assigned session identifier. Required (non-empty).
+	// UUIDv7 per handler-contract.md §4.1; opaque to non-handler consumers.
+	SessionID SessionID `json:"session_id"`
+
+	// Skills is the list of provisioned skill descriptors. Required (non-nil;
+	// may be empty slice when no skills are injected).
+	Skills []ProvisionedSkill `json:"skills"`
+}
+
+// Valid reports whether p is a well-formed SkillsProvisionedPayload.
+//
+// Rules per event-model.md §8.3.8:
+//   - RunID must not be uuid.Nil.
+//   - SessionID must be non-empty.
+//   - Skills must be non-nil.
+//   - Each skill's Name must be non-empty.
+//   - Each skill's SourcePath must be non-empty.
+//   - Each skill's Version, when non-nil, must be non-empty.
+func (p SkillsProvisionedPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.SessionID == "" {
+		return false
+	}
+	if p.Skills == nil {
+		return false
+	}
+	for _, s := range p.Skills {
+		if s.Name == "" {
+			return false
+		}
+		if s.SourcePath == "" {
+			return false
+		}
+		if s.Version != nil && *s.Version == "" {
+			return false
+		}
 	}
 	return true
 }

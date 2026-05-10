@@ -35,7 +35,7 @@ RECORD InvestigatorInput:                                        -- LOGICAL VIEW
     last_checkpoint        : Checkpoint                         -- tip of target run's task branch at snapshot
     last_transition        : Transition                         -- record at last_checkpoint; per [execution-model.md §6.1]
     jsonl_tail             : List<EventEnvelope>                -- events since last checkpoint; observational only (RC-014)
-    workspace_state        : WorkspaceState                     -- path exists, branch state, WIP files
+    workspace_observation  : WorkspaceObservation               -- path exists, branch state, WIP files
     session_log_ref        : String | None                      -- CASS handle per [workspace-model.md §4.7] when present
     category               : ReconciliationCategory             -- classification that dispatched this investigator
     playbook_ref           : String                             -- per-category playbook per RC-016
@@ -45,7 +45,7 @@ RECORD InvestigatorInput:                                        -- LOGICAL VIEW
 > INFORMATIVE: `InvestigatorInput` documents the logical fields the investigator MUST be able to retrieve via its skills bounded by the snapshot token; the daemon does NOT assemble a single record carrying these fields. Per RC-015, the investigator self-assembles by querying Beads-CLI, git-inspection, workspace-inspection, and the bounded JSONL reader, all bounded by `snapshot_token`.
 
 ```
-RECORD WorkspaceState:
+RECORD WorkspaceObservation:                                    -- read-only point-in-time observation; renamed from WorkspaceState 2026-05-09 (hk-63oh.80) to avoid cross-spec collision with workspace-model.md §6.1 ENUM
     path                : String          -- absolute path to the run's worktree
     path_exists         : Bool            -- filesystem probe result
     branch_tip_hash     : String | None   -- current task-branch tip; null if worktree missing

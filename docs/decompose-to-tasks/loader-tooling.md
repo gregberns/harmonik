@@ -133,9 +133,9 @@ edges:
 # These maps are produced by prior pilot loads. The loader reads each as a string→string
 # lookup table for cross-spec edge resolution.
 cross_specs:
-  ar: /tmp/ar-mnem-map.csv
-  em: /tmp/em-mnem-map.csv
-  ev: /tmp/ev-mnem-map.csv
+  ar: docs/decompose-to-tasks/mnem-maps/ar-mnem-map.csv
+  em: docs/decompose-to-tasks/mnem-maps/em-mnem-map.csv
+  ev: docs/decompose-to-tasks/mnem-maps/ev-mnem-map.csv
 ```
 
 ### Label expansion rules
@@ -181,8 +181,8 @@ python3 scripts/load-pilot.py docs/decompose-to-tasks/hc-pilot-data.yaml
 # Dry-run: print intended br calls; do not execute.
 python3 scripts/load-pilot.py <data.yaml> --dry-run
 
-# Override mnem-map path (default: /tmp/<prefix>-mnem-map.csv).
-python3 scripts/load-pilot.py <data.yaml> --map /tmp/hc-mnem-map.csv
+# Override mnem-map path (default: docs/decompose-to-tasks/mnem-maps/<prefix>-mnem-map.csv).
+python3 scripts/load-pilot.py <data.yaml> --map docs/decompose-to-tasks/mnem-maps/hc-mnem-map.csv
 
 # Edges-only (assume beads already loaded).
 python3 scripts/load-pilot.py <data.yaml> --skip-beads

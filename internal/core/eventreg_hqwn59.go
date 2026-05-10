@@ -1,6 +1,6 @@
 package core
 
-// eventreg_hqwn59.go — startup-time registration of §8.1.* through §8.6.*
+// eventreg_hqwn59.go — startup-time registration of §8.1.* through §8.8.*
 // payload types into the global event registry per EV-032 / EV-034.
 //
 // Spec ref: specs/event-model.md §6.3 EV-032, §4.9 EV-034.
@@ -18,8 +18,10 @@ package core
 // §8.4 Budget lifecycle event registrations are in registerBudgetEvents().
 // §8.5 Workspace lifecycle event registrations are in registerWorkspaceEvents().
 // §8.6 Reconciliation lifecycle event registrations are in registerReconciliationEvents().
+// §8.7 Daemon/operator lifecycle event registrations are in registerDaemonLifecycleEvents().
+// §8.8 Bus/observability event registrations are in registerBusEvents().
 //
-// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.56.
+// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.77.
 
 func init() {
 	registerRunLifecycle()
@@ -28,6 +30,8 @@ func init() {
 	registerBudgetEvents()
 	registerWorkspaceEvents()
 	registerReconciliationEvents()
+	registerDaemonLifecycleEvents()
+	registerBusEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors.
@@ -169,6 +173,65 @@ func registerReconciliationEvents() {
 	mustRegister("reconciliation_detector_panic", func() EventPayload { return &ReconciliationDetectorPanicPayload{} })
 	mustRegister("reconciliation_verdict_execution_retry", func() EventPayload { return &ReconciliationVerdictExecutionRetryPayload{} })
 	mustRegister("bead_terminal_transition_recovered", func() EventPayload { return &BeadTerminalTransitionRecoveredPayload{} })
+}
+
+// registerDaemonLifecycleEvents registers all §8.7 operator-control and daemon
+// lifecycle event payload constructors.
+//
+// Durability classes per §8.7 table:
+//   - daemon_started (§8.7.1):                    F (fsync-boundary, startup landmark)
+//   - daemon_ready (§8.7.2):                      F (fsync-boundary, RTO measurement endpoint)
+//   - daemon_shutdown (§8.7.3):                   F (fsync-boundary, SIGTERM landmark for ON-033)
+//   - daemon_startup_failed (§8.7.4):             F (fsync-boundary, operator-observability)
+//   - daemon_degraded (§8.7.5):                   O (ordinary, operator-observability)
+//   - operator_pause_status (§8.7.6):             O (ordinary, paired-phase lifecycle)
+//   - operator_resuming (§8.7.7):                 O (ordinary)
+//   - operator_stopped (§8.7.8):                  O (ordinary)
+//   - operator_upgrading (§8.7.9):                O (ordinary)
+//   - operator_upgrade_completed (§8.7.10):       F (fsync-boundary, version-boundary landmark)
+//   - operator_upgrade_rejected (§8.7.11):        O (ordinary, operator-observability)
+//   - operator_command_rejected (§8.7.12):        O (ordinary, operator-observability)
+//   - dispatch_deferred (§8.7.13):                O (ordinary)
+//   - daemon_orphan_sweep_completed (§8.7.14):    O (ordinary)
+//   - infrastructure_unavailable (§8.7.15):       O (ordinary, operator-observability)
+//   - operator_command_failed (§8.7.16):          O (ordinary, ON-013a panic-barrier emission)
+//   - operator_escalation_cleared (§8.7.17):      O (ordinary, ON-emission-owned companion to §8.6.9)
+func registerDaemonLifecycleEvents() {
+	mustRegister("daemon_started", func() EventPayload { return &DaemonStartedPayload{} })
+	mustRegister("daemon_ready", func() EventPayload { return &DaemonReadyPayload{} })
+	mustRegister("daemon_shutdown", func() EventPayload { return &DaemonShutdownPayload{} })
+	mustRegister("daemon_startup_failed", func() EventPayload { return &DaemonStartupFailedPayload{} })
+	mustRegister("daemon_degraded", func() EventPayload { return &DaemonDegradedPayload{} })
+	mustRegister("operator_pause_status", func() EventPayload { return &OperatorPauseStatusPayload{} })
+	mustRegister("operator_resuming", func() EventPayload { return &OperatorResumingPayload{} })
+	mustRegister("operator_stopped", func() EventPayload { return &OperatorStoppedPayload{} })
+	mustRegister("operator_upgrading", func() EventPayload { return &OperatorUpgradingPayload{} })
+	mustRegister("operator_upgrade_completed", func() EventPayload { return &OperatorUpgradeCompletedPayload{} })
+	mustRegister("operator_upgrade_rejected", func() EventPayload { return &OperatorUpgradeRejectedPayload{} })
+	mustRegister("operator_command_rejected", func() EventPayload { return &OperatorCommandRejectedPayload{} })
+	mustRegister("dispatch_deferred", func() EventPayload { return &DispatchDeferredPayload{} })
+	mustRegister("daemon_orphan_sweep_completed", func() EventPayload { return &DaemonOrphanSweepCompletedPayload{} })
+	mustRegister("infrastructure_unavailable", func() EventPayload { return &InfrastructureUnavailablePayload{} })
+	mustRegister("operator_command_failed", func() EventPayload { return &OperatorCommandFailedPayload{} })
+	mustRegister("operator_escalation_cleared", func() EventPayload { return &OperatorEscalationClearedPayload{} })
+}
+
+// registerBusEvents registers all §8.8 observability and bus-internal event
+// payload constructors that are currently unblocked.
+//
+// NOTE: consumer_failed (§8.8.2) is blocked on hk-hqwn.14 (Asynchronous consumer
+// class). redaction_failed (§8.8.5) is blocked on hk-hqwn.45 (Redaction registry).
+// Both will be registered when their blocking beads are closed.
+//
+// Durability classes per §8.8 table:
+//   - metric (§8.8.1):               L (lossy-tail-ok, §8.9(g) escape-hatch exception)
+//   - dead_letter_enqueued (§8.8.3): O (ordinary, bus-internal)
+//   - bus_overflow (§8.8.4):         O (ordinary; promoted to F via direct-JSONL-append
+//     fallback when reservation slot is exhausted per EV-011a)
+func registerBusEvents() {
+	mustRegister("metric", func() EventPayload { return &MetricPayload{} })
+	mustRegister("dead_letter_enqueued", func() EventPayload { return &DeadLetterEnqueuedPayload{} })
+	mustRegister("bus_overflow", func() EventPayload { return &BusOverflowPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

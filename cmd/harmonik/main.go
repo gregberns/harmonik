@@ -12,6 +12,13 @@
 //     calls PolicyEngine.Evaluate on every gate and guard without branching on
 //     the concrete type, satisfying [specs/scenario-harness.md §4.3.SH-018].
 //
+//   - BusFlusher: nil for MVH. The [lifecycle.BusFlusher] interface is declared;
+//     its real implementation ([lifecycle.BusFlusher] on the EventBus type) lands
+//     when the EventBus bead (hk-hqwn.57) merges. Until then the bus-flush step
+//     in [lifecycle.RecoverWithLogFlush] is skipped (nil-safe per EV-019a).
+//     Wiring site (hk-hqwn.70): substitute nil with the real EventBus once
+//     hk-hqwn.57 lands.
+//
 // When the control-points subsystem (hk-a8bg) lands post-MVH, the composition
 // root substitutes the real PolicyEngine evaluator. No dispatcher changes are
 // required.
@@ -26,6 +33,7 @@ import (
 	"os"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 func main() {
@@ -39,6 +47,20 @@ func main() {
 // daemon logic so that the wiring can be inspected and replaced at this single
 // site.
 func run() int {
+	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
+	//
+	// logFlusher and busFlusher are both nil for MVH:
+	//   - logFlusher:  the structured-log channel does not exist yet; the flush
+	//     step is nil-safe and skipped (lifecycle.RecoverWithLogFlush nil-safety).
+	//   - busFlusher:  the EventBus (hk-hqwn.57) is not yet implemented; the
+	//     bus-flush step is nil-safe per EV-019a. Substitute with the real
+	//     EventBus once hk-hqwn.57 lands (wiring site: hk-hqwn.70).
+	//
+	// Spec refs:
+	//   - event-model.md §4.4 EV-019  — log flush MUST precede exit on panic.
+	//   - event-model.md §4.4 EV-019a — bus flush SHOULD follow log flush (nil-safe).
+	defer lifecycle.RecoverWithLogFlush(nil, nil, nil)
+
 	// PolicyEngine binding for MVH.
 	//
 	// NoOpPolicyEngine is the production interface — not a nil check, not a

@@ -25,9 +25,10 @@ type LogFlusher interface {
 // If Flush returns an error the error is discarded (best-effort) and the panic
 // continues to re-propagate.
 //
-// TODO(hk-hqwn.70/EV-019a): The real EventBus type must satisfy this interface
-// once it is implemented. Until then callers pass nil and the bus-flush step is
-// skipped silently.
+// The real EventBus type must satisfy this interface once hk-hqwn.57 (Define
+// EventBus interface) lands. Until then callers pass nil and the bus-flush step
+// is skipped silently. The daemon entrypoint (cmd/harmonik/main.go) carries the
+// wiring site; substitute nil with the real EventBus per hk-hqwn.70.
 //
 // Spec ref: event-model.md §4.4 EV-019a — "the daemon's top-level recovery
 // handler SHOULD additionally make a best-effort flush of the event bus after

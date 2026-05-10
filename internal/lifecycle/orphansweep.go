@@ -638,7 +638,7 @@ func RunOrphanSweep(
 	result.TmuxSessionsKilled = tmuxKilled
 
 	// (b) Worktree lease-lock files.
-	sweepResult, err := workspace.SweepStaleLeaseLocks(ctx, projectDir, nil)
+	sweepResult, err := workspace.SweepStaleLeaseLocks(ctx, projectDir, workspace.NoWorktreeRootOverride())
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("lease-locks: %v", err))
 	}

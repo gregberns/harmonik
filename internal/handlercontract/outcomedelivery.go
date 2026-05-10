@@ -97,6 +97,87 @@ const (
 	OutcomeDelivered OutcomeDeliveryState = true
 )
 
+// CrashWithoutOutcomeSubReason is the sub_reason field value the watcher MUST
+// include in the agent_failed payload when a subprocess exits (any exit code)
+// without having delivered outcome_emitted per HC-024.
+//
+// The sub-reason covers both "crashed" (non-zero exit) and "clean-exit-without-
+// outcome" (exit 0) cases; the distinction is carried in the exit_code payload
+// field for operator observability.  The spec's §8.2 sub_reason list is
+// non-exhaustive; this value is implementation-specific to HC-024.
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §8.2.
+const CrashWithoutOutcomeSubReason = "crash_without_outcome"
+
+// CrashAgentFailedPayload is the structured agent_failed payload descriptor
+// for the subprocess-crash-without-outcome case.
+//
+// The watcher uses these three strings to populate the agent_failed progress-
+// stream message that it emits to the bus when ClassifyExit returns a non-nil
+// error (specs/handler-contract.md §4.6.HC-024, §4.5, §8.2):
+//
+//   - ErrorCategory maps to the `error_category` wire field; it is the string
+//     form of the sentinel returned by ClassifyExit, obtained via Class().
+//   - Reason is the human-readable event kind; "crash_without_outcome" for this
+//     case.
+//   - SubReason equals CrashWithoutOutcomeSubReason for the crash case; empty
+//     string when the struct is zero (no failure).
+//
+// Zero value (all fields empty) means no failure — callers MUST NOT emit
+// agent_failed when ErrorCategory is empty.
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, §8.2.
+type CrashAgentFailedPayload struct {
+	// ErrorCategory is the mapped sentinel class string per §4.5 / §8.
+	// One of: "transient", "structural", "deterministic", "canceled", "budget".
+	ErrorCategory string
+
+	// Reason is the primary reason code placed in the agent_failed payload.
+	Reason string
+
+	// SubReason is the optional sub-reason code; empty when not applicable.
+	SubReason string
+}
+
+// ClassifyCrash combines ClassifyExit with the agent_failed payload mapping
+// required by HC-024.
+//
+// It returns a non-zero CrashAgentFailedPayload when exitCode/state indicates a
+// failure that requires the watcher to emit agent_failed, and a zero
+// CrashAgentFailedPayload (ErrorCategory == "") when no failure event is needed
+// (clean shutdown after outcome delivery, or dirty-exit inside the shutdown
+// window where HC-008a applies).
+//
+// Classification table (specs/handler-contract.md §4.2.HC-008, §4.6.HC-024):
+//
+//   - exitCode == 0 AND state == OutcomeDelivered   → zero payload (clean shutdown)
+//   - exitCode != 0 AND state == OutcomeDelivered   → zero payload (HC-008a governs)
+//   - exitCode == 0 AND state == OutcomeNotYetDelivered → {structural, crash_without_outcome}
+//   - exitCode != 0 AND state == OutcomeNotYetDelivered → {structural, crash_without_outcome}
+//
+// The watcher MUST:
+//  1. Call ClassifyCrash after subprocess Wait() returns.
+//  2. If payload.ErrorCategory != "", emit agent_failed carrying payload fields.
+//  3. If payload.ErrorCategory == "", emit agent_completed (carrying exit_code
+//     when exitCode != 0, per HC-008a).
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, §8.2.
+func ClassifyCrash(exitCode int, state OutcomeDeliveryState) CrashAgentFailedPayload {
+	err := ClassifyExit(exitCode, state)
+	if err == nil {
+		// Clean shutdown or dirty-exit inside the shutdown window (HC-008a).
+		// Caller emits agent_completed; no agent_failed needed.
+		return CrashAgentFailedPayload{}
+	}
+	// outcome_emitted was never published. Both exit-0 (handler bug) and
+	// exit-nonzero (crash) map to ErrStructural per ClassifyExit.
+	return CrashAgentFailedPayload{
+		ErrorCategory: Class(err),
+		Reason:        CrashWithoutOutcomeSubReason,
+		SubReason:     CrashWithoutOutcomeSubReason,
+	}
+}
+
 // ClassifyExit applies HC-008's exit-classification rule.
 //
 // It returns nil when the exit is expected (clean shutdown after outcome
@@ -114,15 +195,8 @@ const (
 //   - exitCode != 0 AND state == OutcomeNotYetDelivered → ErrStructural
 //     (crash without outcome; watcher emits agent_failed per HC-024)
 //
-// Callers MUST check the returned error and emit the appropriate bus event:
-//   - nil + OutcomeDelivered   → emit agent_completed (optionally carrying
-//     shutdown_exit_code when exitCode != 0, per HC-008a)
-//   - ErrStructural            → emit agent_failed{class="structural",
-//     sub_reason="crash_without_outcome"} per HC-024
-//
-// The sub-reason "crash_without_outcome" covers both the clean-exit-without-
-// outcome and crash-without-outcome cases; the distinction is recorded in the
-// exit_code payload field for operator observability.
+// Callers that need the full agent_failed payload should use ClassifyCrash
+// instead, which returns the structured CrashAgentFailedPayload directly.
 //
 // Cite: specs/handler-contract.md §4.2.HC-008, §4.6.HC-024.
 func ClassifyExit(exitCode int, state OutcomeDeliveryState) error {

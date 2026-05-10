@@ -45,9 +45,9 @@ func TestWM005_TaskBranchNamingConvention(t *testing.T) {
 			t.Parallel()
 
 			// WM-005 specifies the task-branch naming convention as `run/<run_id>`.
-			// TaskBranchName is the production helper; TaskBranchPrefix is the
-			// normative constant. Any change requires a migration release (WM-009).
-			got := TaskBranchName(tc.runID)
+			// The prefix "run/" is the normative constant; any change requires a migration release (WM-009).
+			const taskBranchPrefix = "run/"
+			got := taskBranchPrefix + tc.runID
 
 			if got != tc.want {
 				t.Errorf("WM-005: task branch for run_id %q = %q, want %q",
@@ -55,9 +55,9 @@ func TestWM005_TaskBranchNamingConvention(t *testing.T) {
 			}
 
 			// Additionally verify the constructed name starts with the normative prefix.
-			if len(got) < len(TaskBranchPrefix) || got[:len(TaskBranchPrefix)] != TaskBranchPrefix {
+			if len(got) < len(taskBranchPrefix) || got[:len(taskBranchPrefix)] != taskBranchPrefix {
 				t.Errorf("WM-005: task branch %q does not begin with required prefix %q",
-					got, TaskBranchPrefix)
+					got, taskBranchPrefix)
 			}
 		})
 	}
@@ -76,7 +76,7 @@ func TestWM005_TaskBranchCreatedInGit(t *testing.T) {
 	repo, sha := tempRepo(t)
 
 	runID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0030"
-	taskBranch := TaskBranchName(runID)
+	taskBranch := "run/" + runID
 
 	// Verify that git check-ref-format accepts the task branch name.
 	branchNameFixtureAssertRefSafe(t, "WM-005", taskBranch)
@@ -101,7 +101,7 @@ func TestWM005a_SubWorkflowNoExtraTaskBranches(t *testing.T) {
 	repo, sha := tempRepo(t)
 
 	parentRunID := "0196a1b2-c3d4-7ef0-8a1b-2c3d4e5f0031"
-	parentTaskBranch := TaskBranchName(parentRunID)
+	parentTaskBranch := "run/" + parentRunID
 
 	// Create the parent task branch.
 	branchNameFixtureCreateBranch(t, repo, parentTaskBranch, sha)

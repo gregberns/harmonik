@@ -68,22 +68,16 @@ func sensorBeadIDFixtureMakeRun(t *testing.T, id core.BeadID) core.Run {
 // sensorBeadIDFixtureMakeCheckpoint constructs a minimal valid core.Checkpoint
 // whose BeadID is set to id. This is the Go carrier for the Harmonik-Bead-ID
 // checkpoint trailer per execution-model.md §4.4 EM-017.
-//
-// TransitionRecordPath is derived from the generated RunID and TransitionID via
-// core.TransitionRecordPath so that Checkpoint.Valid() passes the EM-018
-// path-coherence invariant.
 func sensorBeadIDFixtureMakeCheckpoint(t *testing.T, id core.BeadID) core.Checkpoint {
 	t.Helper()
-	runID := core.RunID(uuid.Must(uuid.NewV7()))
-	transitionID := core.TransitionID(uuid.Must(uuid.NewV7()))
 	return core.Checkpoint{
 		CommitHash:           "aabbcc0011223344556677889900aabbcc001122",
-		RunID:                runID,
+		RunID:                core.RunID(uuid.Must(uuid.NewV7())),
 		StateID:              core.StateID(uuid.Must(uuid.NewV7())),
-		TransitionID:         transitionID,
+		TransitionID:         core.TransitionID(uuid.Must(uuid.NewV7())),
 		BeadID:               &id,
 		SchemaVersion:        1,
-		TransitionRecordPath: core.TransitionRecordPath(runID, transitionID),
+		TransitionRecordPath: ".harmonik/transitions/run-001/trans-001.json",
 	}
 }
 

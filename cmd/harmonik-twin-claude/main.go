@@ -2,36 +2,26 @@
 // Code handler. The daemon's handler subsystem subprocess-launches this
 // binary in scenario tests and CI in place of a real Claude Code session.
 //
-// # Scope (hk-ahvq.48.1, hk-ahvq.48.3, hk-ahvq.48.4)
+// # Scope (hk-ahvq.48.1, hk-ahvq.48.4)
 //
 // This scaffold covers:
 //   - Flag parsing: --socket-path (LaunchSpec.SocketPath per §6.1),
-//     --launch-spec (file-path form of LaunchSpec delivery per HC-005),
-//     --script-path (YAML script file for scenario-mode per §4.6.HC-026a /
-//     §4.8.HC-036; schema documented in scriptdriver.go), and --version
-//     (prints the build-time commit-hash stamp per HC-043).
+//     --launch-spec (file-path form of LaunchSpec delivery per HC-005), and
+//     --version (prints the build-time commit-hash stamp per HC-043).
 //   - Unix-domain-socket dial-back to the daemon per §4.10.HC-044 /
 //     §4.10.HC-045.
 //   - Clean exit (exit code 1) when the socket path is missing or the dial
 //     fails — precondition for all downstream binary-behaviour beads.
 //   - Build-time commit-hash stamp via -ldflags (hk-ahvq.48.4); the
 //     commitHash variable is declared in version.go.
-//   - Script-driver loop: reads --script-path YAML and emits the declared
-//     message stream on the wire-protocol path (hk-ahvq.48.3).
-//
-// # Script-file schema (de-facto; hk-ahvq.48.3)
-//
-// When --script-path is supplied the twin reads a YAML file whose schema is
-// documented in scriptdriver.go. The normative spec section is tracked in
-// follow-up bead hk-ahvq.48.11.
 //
 // # Out of scope (deferred to sibling beads)
 //
-// The Makefile build target wiring up the ldflags stamp is tracked in
-// hk-ahvq.48.5.
+// The wire-protocol parity loop (hk-ahvq.48.2) and script-driver loop
+// (hk-ahvq.48.3) are handled by separate beads. The Makefile build target
+// wiring up the ldflags stamp is tracked in hk-ahvq.48.5.
 //
-// Cite: specs/handler-contract.md §4.6.HC-026a, §4.8.HC-036,
-// §4.10.HC-043, §4.10.HC-044, §4.10.HC-045, §6.1.
+// Cite: specs/handler-contract.md §4.10.HC-043, §4.10.HC-044, §4.10.HC-045, §6.1.
 package main
 
 import (
@@ -77,15 +67,6 @@ func run() int {
 	// TODO(hk-ahvq.48.2): parse the LaunchSpec file in the wire-protocol bead.
 	launchSpecPath := fs.String("launch-spec", "", "path to a JSON file containing the LaunchSpec (HC-005 file-path form; optional)")
 
-	// --script-path: YAML script file for scenario-mode (hk-ahvq.48.3).
-	// When supplied, the twin reads the script and emits the declared message
-	// stream on the wire-protocol path, implementing the HC-026a scripted-mode
-	// carve-out and HC-036 twin-parity requirement.
-	// Schema: <fixture-root>/<scenario>/twin-scripts/<role>.yaml.
-	// Normative spec section: follow-up bead hk-ahvq.48.11.
-	// Cite: specs/handler-contract.md §4.6.HC-026a, §4.8.HC-036.
-	scriptPath := fs.String("script-path", "", "path to the YAML script file for scenario-mode (HC-026a; optional)")
-
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// flag.ContinueOnError: parse errors are already printed to stderr by
 		// the flag package; just exit with a non-zero code.
@@ -115,19 +96,6 @@ func run() int {
 		}
 	}
 
-	// Load the script file when --script-path is supplied.  Loading happens
-	// before dialling so that a bad script file path returns a clear error
-	// without opening a socket (fail-fast precondition check).
-	var scriptFile *ScriptFile
-	if *scriptPath != "" {
-		var err error
-		scriptFile, err = loadScriptFile(*scriptPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: --script-path: %v\n", err)
-			return 1
-		}
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -138,18 +106,9 @@ func run() int {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Script-driver loop (hk-ahvq.48.3): when a script file is loaded, run the
-	// declared message stream on the wire-protocol path.  This satisfies HC-036
-	// (subprocess script drives output instead of an LLM) and the HC-026a
-	// scripted-mode carve-out for scenario-reproducible heartbeats.
-	if scriptFile != nil {
-		emitter := newWireEmitter(conn)
-		if err := runScript(ctx, emitter, scriptFile); err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: script-driver: %v\n", err)
-			return 1
-		}
-	}
-
+	// Scaffold only: the parity loop (hk-ahvq.48.2) and script-driver loop
+	// (hk-ahvq.48.3) will extend this point. For now, close immediately so
+	// that the binary exits cleanly once the connection is established.
 	return 0
 }
 

@@ -362,7 +362,7 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 			Path:                  "/tmp/harmonik-test-repo/.harmonik/worktrees/0196b200-0000-7000-8000-000000024001",
 			State:                 core.WorkspaceStateConflictResolving,
 			InterruptState:        core.InterruptStateNone,
-			ImplementerHandlerRef: strPtr("agentic-claude"),
+			ImplementerHandlerRef: handlerRefPtr("agentic-claude"),
 			Metadata: map[string]string{
 				"created_at":           "2026-05-07T00:00:00Z",
 				"operator_fingerprint": "test-operator",
@@ -372,7 +372,7 @@ func TestWM024_ThreeAttemptDefaultCap(t *testing.T) {
 
 		// Simulate: 3 attempts exhausted — resolve attempts all failed.
 		attemptsRecorded := 3
-		cap := conflictResFixtureAttemptCapForRef(*ws.ImplementerHandlerRef)
+		cap := conflictResFixtureAttemptCapForRef(string(*ws.ImplementerHandlerRef))
 		if cap != 3 {
 			t.Fatalf("WM-024: cap = %d, want 3", cap)
 		}
@@ -487,7 +487,7 @@ func TestWM023_UnresolvableConflictEscalates(t *testing.T) {
 			Path:                  "/tmp/harmonik-test-repo/.harmonik/worktrees/0196b200-0000-7000-8000-000000023001",
 			State:                 core.WorkspaceStateConflictResolving,
 			InterruptState:        core.InterruptStateNone,
-			ImplementerHandlerRef: strPtr("agentic-claude"),
+			ImplementerHandlerRef: handlerRefPtr("agentic-claude"),
 			Metadata: map[string]string{
 				"created_at":           "2026-05-07T00:00:00Z",
 				"operator_fingerprint": "test-operator",
@@ -582,7 +582,7 @@ func TestWM024_HandlerClassRetirementRoutesToEscalation(t *testing.T) {
 		Path:                  "/tmp/harmonik-test-repo/.harmonik/worktrees/0196b200-0000-7000-8000-000000024002",
 		State:                 core.WorkspaceStateConflictResolving,
 		InterruptState:        core.InterruptStateNone,
-		ImplementerHandlerRef: strPtr(retiredClass),
+		ImplementerHandlerRef: handlerRefPtr(retiredClass),
 		Metadata: map[string]string{
 			"created_at":           "2026-05-07T00:00:00Z",
 			"operator_fingerprint": "test-operator",
@@ -609,7 +609,9 @@ func conflictResFixtureIsHandlerClassRetired(handlerClass string) bool {
 	return handlerClass == "agentic-v1-retired"
 }
 
-// strPtr returns a pointer to s. Used to set ImplementerHandlerRef in test fixtures.
-func strPtr(s string) *string {
-	return &s
+// handlerRefPtr returns a pointer to a core.HandlerRef constructed from s.
+// Used to set ImplementerHandlerRef in test fixtures.
+func handlerRefPtr(s string) *core.HandlerRef {
+	h := core.HandlerRef(s)
+	return &h
 }

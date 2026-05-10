@@ -54,12 +54,15 @@ type Workspace struct {
 	BeadID *core.BeadID
 
 	// ImplementerHandlerRef is set at merge-pending entry per WM-022; nil iff
-	// the task branch has no agentic commits.
+	// the task branch has no agentic commits. Carries the handler_ref of the
+	// most-recent agentic session sidecar (identified by the sidecar walk per
+	// WM-022) and serves as the re-dispatch key for merge-conflict resolution
+	// per §4.6.WM-024.
 	//
-	// TODO(hk-8mwo.72): replace *string with core.HandlerRef when that named
-	// type is defined per handler-contract.md §6.1. See WM §6.1 ImplementerHandlerRef
-	// field definition.
-	ImplementerHandlerRef *string
+	// The type is *core.HandlerRef (defined per handler-contract.md §6.1 and
+	// workspace-model.md §6.1). A nil pointer represents null (no agentic
+	// commits on the task branch per WM-022a).
+	ImplementerHandlerRef *core.HandlerRef
 
 	// Metadata is a closed map of string metadata fields.
 	// Declared keys: "created_at" (RFC 3339) and "operator_fingerprint".

@@ -10,7 +10,7 @@ import (
 // Bead prefix: b3f73 (per implementer-protocol.md helper-prefix discipline).
 func b3f73NodeValid(t *testing.T) Node {
 	t.Helper()
-	handlerRef := "handlers/my-handler"
+	handlerRef := HandlerRef("handlers/my-handler")
 	return Node{
 		NodeID:            NodeID("node-001"),
 		Type:              NodeTypeAgentic,
@@ -142,7 +142,7 @@ func TestNodeValid_AgenticMissingHandlerRef(t *testing.T) {
 func TestNodeValid_NonAgenticWithHandlerRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "handlers/foo"
+	ref := HandlerRef("handlers/foo")
 	n := b3f73NodeNonAgentic(t)
 	n.HandlerRef = &ref
 	if n.Valid() {
@@ -153,7 +153,7 @@ func TestNodeValid_NonAgenticWithHandlerRef(t *testing.T) {
 func TestNodeValid_GateWithHandlerRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "handlers/foo"
+	ref := HandlerRef("handlers/foo")
 	n := b3f73NodeNonAgentic(t)
 	n.Type = NodeTypeGate
 	n.HandlerRef = &ref
@@ -165,7 +165,7 @@ func TestNodeValid_GateWithHandlerRef(t *testing.T) {
 func TestNodeValid_ControlPointWithHandlerRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "handlers/foo"
+	ref := HandlerRef("handlers/foo")
 	n := b3f73NodeNonAgentic(t)
 	n.Type = NodeTypeControlPoint
 	n.HandlerRef = &ref
@@ -354,7 +354,7 @@ func TestNodeValid_OptionalRefsSet(t *testing.T) {
 func TestNodeValid_SubWorkflowWithHandlerRef(t *testing.T) {
 	t.Parallel()
 
-	ref := "handlers/foo"
+	ref := HandlerRef("handlers/foo")
 	n := b3f73NodeSubWorkflow(t)
 	n.HandlerRef = &ref
 	if n.Valid() {

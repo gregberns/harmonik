@@ -17,11 +17,13 @@ type Node struct {
 
 	// HandlerRef is the handler reference for agentic nodes.
 	// Required when Type == NodeTypeAgentic; forbidden otherwise.
-	// See [handler-contract.md §4.1]. Bead hk-8mwo.72 tracks the typed-alias
-	// upgrade from *string once HandlerRef is defined in core.
+	// See [handler-contract.md §4.1] and the HandlerRef type declaration
+	// in this package (core/handlerref.go).
 	//
-	// TODO(hk-8mwo.72): replace *string with HandlerRef typed alias.
-	HandlerRef *string
+	// A nil pointer represents the absent case (node is not agentic).
+	// Non-agentic, gate, and control-point nodes MUST carry nil; agentic
+	// nodes MUST carry a non-nil, non-empty HandlerRef per Valid().
+	HandlerRef *HandlerRef
 
 	// Timeout is the optional execution deadline for this node in integer seconds.
 	// When set, must be positive (> 0). The wire shape is Integer | None per

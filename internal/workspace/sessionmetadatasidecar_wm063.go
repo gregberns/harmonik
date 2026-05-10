@@ -1,7 +1,9 @@
 package workspace
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -98,4 +100,107 @@ func (s SessionMetadataSidecar) Valid() error {
 // session_id as a non-empty string. Path construction is deterministic.
 func SessionMetadataSidecarPath(workspacePath, sessionID string) string {
 	return filepath.Join(workspacePath, ".harmonik", "sessions", sessionID, "harmonik.meta.json")
+}
+
+// WriteSessionMetadataSidecarAtomic writes sidecar to the canonical path target
+// using the atomic-write discipline mandated by workspace-model.md §4.7.WM-026:
+//
+//  1. Validate sidecar (s.Valid()).
+//  2. Write JSON to a sibling temp file (harmonik.meta.json.tmp-<pid>).
+//  3. fsync the temp file so data is durable before rename.
+//  4. rename(2) the temp file to target (POSIX rename is atomic within one fs).
+//  5. fsync the parent directory to durably record the rename.
+//
+// The caller MUST call WriteSessionMetadataSidecarAtomic BEFORE the handler
+// subprocess is launched and BEFORE workspace_leased is emitted (WM-016's
+// 4-step ordering gate). The sidecar MUST be durable before either event.
+//
+// Use SessionMetadataSidecarPath to construct target from workspacePath and sessionID.
+//
+// Step 5 (parent-dir fsync) is best-effort on macOS/APFS per spec but MUST be
+// attempted for spec compliance.
+//
+// Returns an error if s.Valid() fails, or if any I/O step fails.
+func WriteSessionMetadataSidecarAtomic(target string, s *SessionMetadataSidecar) error {
+	if err := s.Valid(); err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: invalid sidecar: %w", err)
+	}
+
+	content, err := json.Marshal(s)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: marshal: %w", err)
+	}
+
+	dir := filepath.Dir(target)
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: MkdirAll %q: %w", dir, err)
+	}
+
+	tmpPath := fmt.Sprintf("%s.tmp-%d", target, os.Getpid())
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments + session_id; not user input
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: OpenFile %q: %w", tmpPath, err)
+	}
+
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Write: %w", err)
+	}
+
+	// Step 3: fsync temp file before rename.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Sync (pre-rename): %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Close (pre-rename): %w", err)
+	}
+
+	// Step 4: atomic rename.
+	if err := os.Rename(tmpPath, target); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Rename %q → %q: %w", tmpPath, target, err)
+	}
+
+	// Step 5: parent-dir fsync — best-effort on macOS/APFS per spec.
+	dirFD, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Open dir %q for fsync: %w", dir, err)
+	}
+	_ = dirFD.Sync() // best-effort on APFS per WM-026 / WM-013a precedent
+	if err := dirFD.Close(); err != nil {
+		return fmt.Errorf("workspace: WriteSessionMetadataSidecarAtomic: Close dir fd: %w", err)
+	}
+
+	return nil
+}
+
+// ReadSessionMetadataSidecar reads and parses the sidecar file at target.
+//
+// Returns (nil, nil) when target does not exist — the caller interprets
+// absence as "no sidecar yet" per WM-026. Returns an error for I/O or parse
+// failures other than os.IsNotExist.
+func ReadSessionMetadataSidecar(target string) (*SessionMetadataSidecar, error) {
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments + session_id; not user input
+	data, err := os.ReadFile(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil //nolint:nilnil // caller interprets nil as "no sidecar" per WM-026
+		}
+		return nil, fmt.Errorf("workspace: ReadSessionMetadataSidecar: ReadFile %q: %w", target, err)
+	}
+
+	var s SessionMetadataSidecar
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("workspace: ReadSessionMetadataSidecar: Unmarshal %q: %w", target, err)
+	}
+	if err := s.Valid(); err != nil {
+		return nil, fmt.Errorf("workspace: ReadSessionMetadataSidecar: parsed sidecar at %q is not valid: %w", target, err)
+	}
+	return &s, nil
 }

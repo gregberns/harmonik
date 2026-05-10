@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -296,5 +297,117 @@ func TestWM063_AgentTypeIsAuthoritative(t *testing.T) {
 	// The agent_type field must survive Valid() — it's a required field.
 	if err := s.Valid(); err != nil {
 		t.Errorf("WM-063: sidecar with AgentType %q: Valid() = %v; want nil", s.AgentType, err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WriteSessionMetadataSidecarAtomic / ReadSessionMetadataSidecar
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_WriteAtomicCreatesFile verifies that WriteSessionMetadataSidecarAtomic
+// creates the sidecar file at the canonical path.
+func TestWM063_WriteAtomicCreatesFile(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	sessionID := "sess-0196e300-0000-7000-8000-000000000002"
+	target := SessionMetadataSidecarPath(workspacePath, sessionID)
+
+	s := sidecarRecordFixtureValid(t)
+	if err := WriteSessionMetadataSidecarAtomic(target, &s); err != nil {
+		t.Fatalf("WM-026: WriteSessionMetadataSidecarAtomic: %v", err)
+	}
+
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("WM-026: sidecar file absent after write: %v", err)
+	}
+}
+
+// TestWM063_WriteAtomicNoTempFileAfterSuccess verifies that no .tmp-<pid> file
+// remains after a successful atomic write (rename cleans it up).
+func TestWM063_WriteAtomicNoTempFileAfterSuccess(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	sessionID := "sess-0196e300-0000-7000-8000-000000000003"
+	target := SessionMetadataSidecarPath(workspacePath, sessionID)
+
+	s := sidecarRecordFixtureValid(t)
+	if err := WriteSessionMetadataSidecarAtomic(target, &s); err != nil {
+		t.Fatalf("WM-026: WriteSessionMetadataSidecarAtomic: %v", err)
+	}
+
+	// No .tmp-* file should remain in the session directory.
+	dir := filepath.Dir(target)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "harmonik.meta.json" {
+			t.Errorf("WM-026: unexpected file in session dir after write: %q (want only harmonik.meta.json)", e.Name())
+		}
+	}
+}
+
+// TestWM063_WriteAtomicRoundTrip verifies that a sidecar written by
+// WriteSessionMetadataSidecarAtomic can be read back by ReadSessionMetadataSidecar
+// with all fields intact.
+func TestWM063_WriteAtomicRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	sessionID := "sess-0196e300-0000-7000-8000-000000000004"
+	target := SessionMetadataSidecarPath(workspacePath, sessionID)
+
+	original := sidecarRecordFixtureValid(t)
+	if err := WriteSessionMetadataSidecarAtomic(target, &original); err != nil {
+		t.Fatalf("WM-026: WriteSessionMetadataSidecarAtomic: %v", err)
+	}
+
+	decoded, err := ReadSessionMetadataSidecar(target)
+	if err != nil {
+		t.Fatalf("WM-026: ReadSessionMetadataSidecar: %v", err)
+	}
+	if decoded == nil {
+		t.Fatal("WM-026: ReadSessionMetadataSidecar returned nil; want non-nil")
+	}
+
+	if decoded.RunID != original.RunID {
+		t.Errorf("WM-026: RunID mismatch: got %v, want %v", decoded.RunID, original.RunID)
+	}
+	if decoded.AgentType != original.AgentType {
+		t.Errorf("WM-026: AgentType mismatch: got %q, want %q", decoded.AgentType, original.AgentType)
+	}
+	if decoded.SchemaVersion != original.SchemaVersion {
+		t.Errorf("WM-026: SchemaVersion mismatch: got %d, want %d", decoded.SchemaVersion, original.SchemaVersion)
+	}
+}
+
+// TestWM063_ReadAbsentSidecarReturnsNil verifies that ReadSessionMetadataSidecar
+// returns (nil, nil) when the sidecar file does not exist.
+func TestWM063_ReadAbsentSidecarReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "nonexistent", "harmonik.meta.json")
+	s, err := ReadSessionMetadataSidecar(target)
+	if err != nil {
+		t.Errorf("WM-026: ReadSessionMetadataSidecar(absent) error = %v; want nil", err)
+	}
+	if s != nil {
+		t.Errorf("WM-026: ReadSessionMetadataSidecar(absent) returned non-nil sidecar; want nil")
+	}
+}
+
+// TestWM063_WriteAtomicRejectsInvalidSidecar verifies that
+// WriteSessionMetadataSidecarAtomic returns an error for an invalid sidecar.
+func TestWM063_WriteAtomicRejectsInvalidSidecar(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "harmonik.meta.json")
+	s := &SessionMetadataSidecar{} // zero value: all required fields empty
+
+	if err := WriteSessionMetadataSidecarAtomic(target, s); err == nil {
+		t.Error("WM-026: WriteSessionMetadataSidecarAtomic with invalid sidecar = nil; want error")
 	}
 }

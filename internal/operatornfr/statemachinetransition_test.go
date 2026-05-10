@@ -166,6 +166,15 @@ var smTransitionFixtures = []smTransitionFixture{
 		WantTo:    smStateRunning,
 		WantEmits: "",
 	},
+	// running -> running (resume while running: idempotent no-op per ON-013c)
+	// Spec ref: operator-nfr.md section 4.3 ON-013c and section 7.1 dedicated row.
+	{
+		Name:      "running-resume-noop",
+		From:      smStateRunning,
+		Command:   smCommandResume,
+		WantTo:    smStateRunning,
+		WantEmits: "",
+	},
 }
 
 // smInvalidTransitionFixtures lists transitions that MUST be rejected with
@@ -174,8 +183,11 @@ var smTransitionFixtures = []smTransitionFixture{
 // Spec ref: operator-nfr.md section 7.1 -- "any operator command: command
 // invalid for current state-machine state ... `operator_command_rejected`
 // (per section 8 code 16)."
+//
+// Note: `resume` while `running` was previously listed here but was moved to
+// smTransitionFixtures as a success (no-op) case per ON-013c. The section 7.1
+// table now carries a dedicated row for this idempotent case (success, code 0).
 var smInvalidTransitionFixtures = []smTransitionFixture{
-	{Name: "running-resume-invalid", From: smStateRunning, Command: smCommandResume, WantRejected: true},
 	{Name: "running-upgrade-invalid", From: smStateRunning, Command: smCommandUpgrade, WantRejected: true},
 	{Name: "paused-pause-noop", From: smStatePaused, Command: smCommandPause}, // idempotent per ON-013c
 	{Name: "stopped-resume-invalid", From: smStateStopped, Command: smCommandResume, WantRejected: true},
@@ -200,7 +212,12 @@ func smFixtureApply(from smState, cmd smCommand, pauseReason string) (to smState
 			return smStateStopped, "operator_stopped", false
 		case smCommandStopImmediate:
 			return smStateStopped, "operator_stopped", false
-		case smCommandResume, smCommandUpgrade:
+		case smCommandResume:
+			// ON-013c: resume while running is idempotent — already in target state.
+			// Returns success (exit code 0) with no transition and no event.
+			// Section 7.1 carries a dedicated row for this case (success, code 0).
+			return from, "", false
+		case smCommandUpgrade:
 			return from, "operator_command_rejected", true
 		}
 	case smStatePausing:
@@ -628,37 +645,25 @@ func TestON013c_IdempotentStopWhileStopped(t *testing.T) {
 //
 // Spec ref: operator-nfr.md section 4.3 ON-013c -- "A `resume` issued while
 // `running` MUST return success with no transition."
+// Spec ref: operator-nfr.md section 7.1 -- dedicated row for `running` +
+// `resume` (no-op): returns success (exit code 0), no event emitted.
+//
+// The prior spec-internal tension (ON-013c vs section 7.1 catch-all rejection
+// row) was resolved by adding a dedicated section 7.1 row for this idempotent
+// case. Both ON-013c and section 7.1 now agree: success, no transition.
 func TestON013c_IdempotentResumeWhileRunning(t *testing.T) {
 	t.Parallel()
 
-	to, _, rejected := smFixtureApply(smStateRunning, smCommandResume, "")
+	to, emitted, rejected := smFixtureApply(smStateRunning, smCommandResume, "")
 
-	// Per ON-013c: resume while running returns success, no transition.
-	// The spec says "MUST return success with no transition"; however, in the
-	// fixture above resume-while-running is modelled as rejected (code 16) since
-	// section 7.1 lists it as an invalid command. ON-013c clarifies it should
-	// succeed. This is a spec-internal tension we document as a discrepancy note.
-	//
-	// Per implementer-protocol.md "bead body wins" over cross-spec tensions, and
-	// ON-013c explicitly says "return success". We assert the taxonomy code 16
-	// is NOT the response (or if it is, the exit code should be 0 per ON-013c).
-	//
-	// Documenting discrepancy: section 7.1 says `resume` while `running` maps to
-	// `operator_command_rejected` (code 16), but ON-013c says "MUST return success
-	// (exit code 0)". Resolution: ON-013c's explicit idempotency clause overrides
-	// section 7.1's implicit rejection for the no-op case.
-	//
-	// The fixture currently uses section 7.1's behavior (rejected). We assert
-	// the taxonomy entry exists and flag the discrepancy.
-	if !rejected {
-		// If the fixture was updated to match ON-013c, it should reach running.
-		if to != smStateRunning {
-			t.Errorf("ON-013c: resume while running -> %q, want %q (no-op)", to, smStateRunning)
-		}
-	} else {
-		// Fixture still models rejection per section 7.1; log a discrepancy note.
-		// The production implementation MUST follow ON-013c and return code 0.
-		t.Logf("ON-013c discrepancy note: fixture follows section 7.1 rejection for resume-while-running; production MUST return code 0 per ON-013c (spec-internal tension, section 7.1 vs ON-013c)")
+	if rejected {
+		t.Error("ON-013c: resume while running returned rejection; MUST return success (code 0) for no-op transition")
+	}
+	if to != smStateRunning {
+		t.Errorf("ON-013c: resume while running -> %q, want %q (no-op)", to, smStateRunning)
+	}
+	if emitted != "" {
+		t.Errorf("ON-013c: resume while running emitted %q, want no event", emitted)
 	}
 }
 

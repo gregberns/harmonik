@@ -682,7 +682,8 @@ States: `running`, `pausing`, `paused`, `resuming`, `stopped`, `upgrading`. Impr
 | `upgrading` | exec-replace succeeds | new-binary schema ≥ current N-1 per §4.5.ON-018 | `running` (new binary) | `operator_upgrade_completed` |
 | `running` | `stop --graceful` | none | drain → `stopped` | `operator_stopped` (`stop_mode=graceful`) |
 | any | `stop --immediate` | none | `stopped` | `operator_stopped` (`stop_mode=immediate`) |
-| any operator command | command invalid for current state | e.g., `resume` while `running`; `upgrade` while `running` | (unchanged) | `operator_command_rejected` (per §8 code 16) |
+| `running` | `resume` | already in target state (no-op per ON-013c) | `running` (unchanged) | — (success, exit code 0; no event emitted) |
+| any operator command | command invalid for current state | e.g., `upgrade` while `running`; truly invalid (not a no-op idempotency case) | (unchanged) | `operator_command_rejected` (per §8 code 16) |
 | `stopped` | `start` | none | `running` (after normal startup per [process-lifecycle.md §4.2]) | startup events per process-lifecycle |
 
 > INFORMATIVE: The state machine above is the operator-control half. The daemon-startup status progression (`starting` → optional `degraded` → `reconciling` → `ready`) is owned by [process-lifecycle.md §4.2, §4.3]; operator-control entry (`running`) occurs only at `ready`.
@@ -691,7 +692,7 @@ States: `running`, `pausing`, `paused`, `resuming`, `stopped`, `upgrading`. Impr
 
 ```
 FUNCTION drain_graceful(timeout):
-    -- §4.7.ON-027 steps 1-7 (plus step 3a intent-log drain)
+    -- §4.7.ON-027 eight drain steps (1, 2, 3, 3a, 4, 5, 6, 7)
     stop_dispatch_loop()                                 -- step 1
     wait_for_runs_to_checkpoint(timeout.step_2)          -- step 2
     wait_for_handler_subprocess_exit(timeout.step_3)     -- step 3
@@ -699,13 +700,13 @@ FUNCTION drain_graceful(timeout):
     flush_event_bus()                                    -- step 4; fsync per event-model
     flush_memory_indexing()                              -- step 5
     unlock_leased_workspaces()                           -- step 6; per workspace-model
-    IF any_step_exceeded_its_bound:
-        RETURN exit_code("drain-timeout-escalated")
+    IF any_step_exceeded_its_bound:                      -- step 7
+        RETURN exit_code("drain-timeout-escalated")      -- step 7: exit or enter paused (pause/upgrade path)
     ELSE:
-        RETURN exit_code("success")
+        RETURN exit_code("success")                      -- step 7: exit or enter paused (pause/upgrade path)
 ```
 
-Every branch corresponds to a normative requirement: steps 1–7 (and 3a) to ON-027; timeout escalation to ON-029; stop-immediate skip-steps to ON-028; step-atomicity and crash-recovery to ON-027a.
+Every branch corresponds to a normative requirement: steps 1–7 (and 3a, enumerated as eight steps) to ON-027; timeout escalation to ON-029; stop-immediate skip-steps to ON-028; step-atomicity and crash-recovery to ON-027a.
 
 ### 7.3 Upgrade protocol pseudocode
 

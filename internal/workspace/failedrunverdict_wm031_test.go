@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
 )
 
@@ -60,13 +61,25 @@ func TestWM031_FailedRunWorktreePersists(t *testing.T) {
 	}
 
 	// Write the lease-lock (simulates a live run).
-	leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
-	leaseFixtureWriteLockAtomic(t, leaseLockPath,
-		leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+	// LeaseLockPath and WriteLeaseLockAtomic are production functions (WM-013a).
+	u := uuid.MustParse(runID)
+	lock := &core.LeaseLockFile{
+		RunID:     core.RunID(u),
+		PID:       os.Getpid(),
+		CreatedAt: time.Now().UTC(),
+		TTLSec:    3600,
+	}
+	leaseLockPath := LeaseLockPath(worktreePath)
+	if err := WriteLeaseLockAtomic(leaseLockPath, lock); err != nil {
+		t.Fatalf("WM-031: WriteLeaseLockAtomic: %v", err)
+	}
 
 	// Run reaches terminal failure → lease released (lock removed), but
 	// worktree directory and branch MUST remain per WM-031.
-	leaseFixtureReleaseLock(t, leaseLockPath)
+	// ReleaseLeaseLock is the production function (WM-013b).
+	if err := ReleaseLeaseLock(leaseLockPath); err != nil {
+		t.Fatalf("WM-031: ReleaseLeaseLock: %v", err)
+	}
 
 	// Lease-lock MUST be absent.
 	if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
@@ -380,9 +393,21 @@ func TestWM034_ReopenBeadFreshRunID(t *testing.T) {
 	if out, err := addA.CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add A: %v\n%s", err, out)
 	}
-	leaseLockA := leaseFixtureLeaseLockPath(worktreePathA)
-	leaseFixtureWriteLockAtomic(t, leaseLockA, leaseFixtureMakeLockJSON(runIDA, os.Getpid(), time.Now(), 3600))
-	leaseFixtureReleaseLock(t, leaseLockA) // run A reaches terminal failure
+	// Use production functions for run A's lease lifecycle (WM-013a, WM-013b).
+	uA := uuid.MustParse(runIDA)
+	lockA := &core.LeaseLockFile{
+		RunID:     core.RunID(uA),
+		PID:       os.Getpid(),
+		CreatedAt: time.Now().UTC(),
+		TTLSec:    3600,
+	}
+	leaseLockA := LeaseLockPath(worktreePathA)
+	if err := WriteLeaseLockAtomic(leaseLockA, lockA); err != nil {
+		t.Fatalf("WM-034: WriteLeaseLockAtomic A: %v", err)
+	}
+	if err := ReleaseLeaseLock(leaseLockA); err != nil { // run A reaches terminal failure
+		t.Fatalf("WM-034: ReleaseLeaseLock A: %v", err)
+	}
 
 	// Run B: reopen-bead verdict produces a FRESH run_id (distinct from A).
 	runIDB := "0196b300-0000-7000-8000-000000034002"
@@ -728,7 +753,8 @@ func TestWM038a_InterruptStateChangedMarkerWritten(t *testing.T) {
 	marker := failedRunFixtureBuildInterruptStateMarker(
 		workspaceID, runID, priorInterruptState, newInterruptState, cause,
 	)
-	eventsFile := leaseFixtureWorkspaceLocalEventsFile(dir, workspaceID)
+	// WorkspaceLocalEventsPath is the production function (WM-013b / §6.2).
+	eventsFile := WorkspaceLocalEventsPath(dir, workspaceID)
 	failedRunFixtureAppendJSONLMarker(t, eventsFile, marker)
 
 	// Read back and verify the marker fields.

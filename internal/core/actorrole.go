@@ -65,6 +65,28 @@ func (r ActorRole) Valid() bool {
 	}
 }
 
+// AllActorRoles returns the complete slice of declared ActorRole constants,
+// including daemon-synthesised roles (ActorRoleDaemon, ActorRoleReconciliation).
+//
+// The slice is fixed at compile time; callers MUST NOT mutate it.
+// Used by WorkQueueSet (handler-contract HC-016) to assert that one queue
+// exists per declared role at daemon init.
+//
+// Spec: specs/handler-contract.md §4.3.HC-016; [architecture.md §4.8 AR-032].
+func AllActorRoles() []ActorRole {
+	return []ActorRole{
+		ActorRolePlanner,
+		ActorRoleResearcher,
+		ActorRoleBuilder,
+		ActorRoleReviewer,
+		ActorRoleVerifier,
+		ActorRoleScheduler,
+		ActorRoleGovernor,
+		ActorRoleDaemon,
+		ActorRoleReconciliation,
+	}
+}
+
 // MarshalText implements encoding.TextMarshaler so ActorRole serialises
 // correctly in JSON and YAML.
 // It rejects any value that is not one of the declared constants.

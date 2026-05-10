@@ -15,6 +15,11 @@ MODULE := github.com/gregberns/harmonik
 # Twin-binary output directory (SH-009 in-tree default: <repo-root>/twins/).
 TWINS_DIR := $(PWD)/twins
 
+# Wall-clock budget for the agent-review pre-commit target (hk-pvcs.10).
+# The pre-commit Tier 1 budget is <15s total; agent-review is an LLM call and
+# gets its own hard cap. Override via: make agent-review AGENT_REVIEW_TIMEOUT=120
+AGENT_REVIEW_TIMEOUT ?= 60
+
 # Commit hash stamped into twin binaries at build time (HC-043).
 # Uses the shell form so the value is resolved at recipe execution time, not
 # at Makefile parse time, which correctly reflects uncommitted state during
@@ -133,7 +138,13 @@ lint:  ## golangci-lint run (shorthand)
 agent-review:  ## Run agent-reviewer skill against diff vs last commit (local only; stubs gracefully if skill absent)
 	@SKILL=".claude/skills/agent-reviewer/run"; \
 	if [ -x "$$SKILL" ]; then \
-		"$$SKILL" --diff HEAD~1; \
+		timeout $(AGENT_REVIEW_TIMEOUT) "$$SKILL" --diff HEAD~1; \
+		EXIT=$$?; \
+		if [ $$EXIT -eq 124 ]; then \
+			echo "agent-review: timed out after $(AGENT_REVIEW_TIMEOUT)s; retry manually or add Trivial: true for trivial commits."; \
+			exit 1; \
+		fi; \
+		exit $$EXIT; \
 	else \
 		echo "agent-reviewer skill not yet installed (filed under hk-jhob.1)."; \
 		echo "Install it to enable structured pre-commit review; skipping for now."; \

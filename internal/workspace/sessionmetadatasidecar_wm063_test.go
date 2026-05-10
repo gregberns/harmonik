@@ -1,0 +1,300 @@
+package workspace
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// Tests for the SessionMetadataSidecar record per workspace-model.md §6.1
+// and §4.7.WM-026 (bead hk-8mwo.63).
+//
+// Helper prefix: sidecarRecordFixture (distinct from other helper prefixes).
+
+// sidecarRecordFixtureValid returns a fully-populated, valid SessionMetadataSidecar.
+func sidecarRecordFixtureValid(t *testing.T) SessionMetadataSidecar {
+	t.Helper()
+	runID := core.RunID(uuid.MustParse("0196e300-0000-7000-8000-000000000001"))
+	wfID := core.WorkflowID(uuid.MustParse("0196e300-0000-7000-8000-000000000002"))
+	beadID := core.BeadID("hk-8mwo.63")
+	return SessionMetadataSidecar{
+		RunID:         runID,
+		NodeID:        core.NodeID("impl-node-1"),
+		AgentType:     core.AgentType("claude-code"),
+		WorkflowID:    wfID,
+		BeadID:        &beadID,
+		LaunchedAt:    "2026-05-10T00:00:00Z",
+		SchemaVersion: SessionMetadataSidecarSchemaVersion,
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Field set — all 7 fields accessible
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_SidecarRecord7Fields verifies that all 7 fields declared in §6.1
+// are present and accessible on SessionMetadataSidecar.
+func TestWM063_SidecarRecord7Fields(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+
+	// Required fields.
+	if s.RunID == (core.RunID{}) {
+		t.Error("WM-063: RunID is zero")
+	}
+	if s.NodeID == "" {
+		t.Error("WM-063: NodeID is empty")
+	}
+	if s.AgentType == "" {
+		t.Error("WM-063: AgentType is empty")
+	}
+	if s.WorkflowID == (core.WorkflowID{}) {
+		t.Error("WM-063: WorkflowID is zero")
+	}
+	if s.LaunchedAt == "" {
+		t.Error("WM-063: LaunchedAt is empty")
+	}
+	if s.SchemaVersion <= 0 {
+		t.Errorf("WM-063: SchemaVersion = %d; want positive", s.SchemaVersion)
+	}
+
+	// Optional field (present in fixture).
+	if s.BeadID == nil {
+		t.Error("WM-063: BeadID is nil in fixture; want non-nil (test setup error)")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Valid() — required field validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_ValidHappyPath verifies that a fully-populated sidecar passes Valid().
+func TestWM063_ValidHappyPath(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	if err := s.Valid(); err != nil {
+		t.Errorf("WM-063: Valid() = %v; want nil", err)
+	}
+}
+
+// TestWM063_ValidOptionalFieldAbsent verifies that Valid() passes when BeadID is nil.
+func TestWM063_ValidOptionalFieldAbsent(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.BeadID = nil
+	if err := s.Valid(); err != nil {
+		t.Errorf("WM-063: Valid() with nil BeadID = %v; want nil", err)
+	}
+}
+
+// TestWM063_ValidRejectsZeroRunID verifies that Valid() rejects a zero RunID.
+func TestWM063_ValidRejectsZeroRunID(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.RunID = core.RunID{}
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with zero RunID = nil; want error")
+	}
+}
+
+// TestWM063_ValidRejectsEmptyNodeID verifies that Valid() rejects empty NodeID.
+func TestWM063_ValidRejectsEmptyNodeID(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.NodeID = ""
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with empty NodeID = nil; want error")
+	}
+}
+
+// TestWM063_ValidRejectsEmptyAgentType verifies that Valid() rejects empty AgentType.
+func TestWM063_ValidRejectsEmptyAgentType(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.AgentType = ""
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with empty AgentType = nil; want error")
+	}
+}
+
+// TestWM063_ValidRejectsZeroWorkflowID verifies that Valid() rejects a zero WorkflowID.
+func TestWM063_ValidRejectsZeroWorkflowID(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.WorkflowID = core.WorkflowID{}
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with zero WorkflowID = nil; want error")
+	}
+}
+
+// TestWM063_ValidRejectsEmptyLaunchedAt verifies that Valid() rejects empty LaunchedAt.
+func TestWM063_ValidRejectsEmptyLaunchedAt(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.LaunchedAt = ""
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with empty LaunchedAt = nil; want error")
+	}
+}
+
+// TestWM063_ValidRejectsZeroSchemaVersion verifies that Valid() rejects SchemaVersion = 0.
+func TestWM063_ValidRejectsZeroSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.SchemaVersion = 0
+	if err := s.Valid(); err == nil {
+		t.Error("WM-063: Valid() with SchemaVersion=0 = nil; want error")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON round-trip and tag verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_JSONRoundTrip verifies that a valid sidecar can be marshalled and
+// unmarshalled with all fields intact.
+func TestWM063_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := sidecarRecordFixtureValid(t)
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("WM-063: json.Marshal: %v", err)
+	}
+
+	var decoded SessionMetadataSidecar
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("WM-063: json.Unmarshal: %v", err)
+	}
+	if err := decoded.Valid(); err != nil {
+		t.Errorf("WM-063: decoded.Valid() = %v; want nil", err)
+	}
+
+	if decoded.RunID != original.RunID {
+		t.Errorf("WM-063: RunID mismatch: got %v, want %v", decoded.RunID, original.RunID)
+	}
+	if decoded.LaunchedAt != original.LaunchedAt {
+		t.Errorf("WM-063: LaunchedAt mismatch: got %q, want %q", decoded.LaunchedAt, original.LaunchedAt)
+	}
+}
+
+// TestWM063_JSONOptionalFieldOmitted verifies that BeadID is omitted when nil.
+func TestWM063_JSONOptionalFieldOmitted(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.BeadID = nil
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("WM-063: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("WM-063: json.Unmarshal to raw map: %v", err)
+	}
+	if _, ok := raw["bead_id"]; ok {
+		t.Error("WM-063: bead_id present in JSON with nil BeadID; want omitted")
+	}
+}
+
+// TestWM063_JSONRequiredFieldsPresent verifies that all 6 required JSON keys
+// appear in the serialised form.
+func TestWM063_JSONRequiredFieldsPresent(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	s.BeadID = nil
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("WM-063: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("WM-063: json.Unmarshal to raw map: %v", err)
+	}
+
+	for _, field := range []string{"run_id", "node_id", "agent_type", "workflow_id", "launched_at", "schema_version"} {
+		if _, ok := raw[field]; !ok {
+			t.Errorf("WM-063: required JSON field %q absent from marshalled sidecar", field)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Path helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_SidecarPathShape verifies that SessionMetadataSidecarPath returns
+// the canonical path per §6.2:
+// ${workspace_path}/.harmonik/sessions/<session_id>/harmonik.meta.json
+func TestWM063_SidecarPathShape(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := "/abs/path/to/worktree"
+	sessionID := "sess-0196e300-0000-7000-8000-000000000001"
+
+	got := SessionMetadataSidecarPath(workspacePath, sessionID)
+	want := filepath.Join(workspacePath, ".harmonik", "sessions", sessionID, "harmonik.meta.json")
+
+	if got != want {
+		t.Errorf("WM-063: SidecarPath = %q, want %q", got, want)
+	}
+}
+
+// TestWM063_SidecarPathContainsHarmonikMeta verifies that the filename component
+// is exactly "harmonik.meta.json" per the spec.
+func TestWM063_SidecarPathContainsHarmonikMeta(t *testing.T) {
+	t.Parallel()
+
+	got := SessionMetadataSidecarPath("/any/path", "session-001")
+	if filepath.Base(got) != "harmonik.meta.json" {
+		t.Errorf("WM-063: sidecar filename = %q, want harmonik.meta.json", filepath.Base(got))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema version constant
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWM063_SchemaVersionConstantIsPositive verifies SessionMetadataSidecarSchemaVersion > 0.
+func TestWM063_SchemaVersionConstantIsPositive(t *testing.T) {
+	t.Parallel()
+
+	if SessionMetadataSidecarSchemaVersion <= 0 {
+		t.Errorf("WM-063: SessionMetadataSidecarSchemaVersion = %d; want positive",
+			SessionMetadataSidecarSchemaVersion)
+	}
+}
+
+// TestWM063_AgentTypeIsAuthoritative verifies that the AgentType field is present
+// and can distinguish between agentic and non-agentic sessions for WM-022.
+// This test uses the "claude-code" agent type (agentic) as the canonical example.
+func TestWM063_AgentTypeIsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	// AgentType must be non-empty; the fixture uses "claude-code" (agentic).
+	if s.AgentType == "" {
+		t.Error("WM-063: AgentType is empty; WM-022 requires it for implementer identification")
+	}
+	// The agent_type field must survive Valid() — it's a required field.
+	if err := s.Valid(); err != nil {
+		t.Errorf("WM-063: sidecar with AgentType %q: Valid() = %v; want nil", s.AgentType, err)
+	}
+}

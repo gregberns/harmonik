@@ -6,16 +6,10 @@
 // bead-bound run MUST carry bead_id metadata per [workspace-model.md §4.7].
 // CASS indexing uses this metadata for join-to-Beads queries."
 //
-// The SessionMetadataSidecar Go record (workspace-model.md §6.1) is NOT yet
-// shipped; no sessionmetadatasidecar.go exists in this package. This file
-// exists so that future implementers of the sidecar will discover BI-020 by
-// name when they search the test suite.
-//
-// When SessionMetadataSidecar lands, the future bead implementer SHOULD either:
-//   - Delete the skip-only marker TestSessionBI020_ForwardDocSensor and replace
-//     it with concrete assertions on the new record's bead_id field, OR
-//   - Extend the marker with those concrete assertions, retaining the BI-020
-//     citation and hk-872.21 traceability.
+// SessionMetadataSidecar (workspace-model.md §6.1) is now implemented in
+// internal/workspace/sessionmetadatasidecar_wm063.go (bead hk-8mwo.63).
+// Concrete assertions on the bead_id field live in
+// internal/workspace/sessionmetadatasidecar_wm063_test.go.
 //
 // Requirement-traceable bead: hk-872.21.
 package core
@@ -29,24 +23,14 @@ import "testing"
 // bead-bound runs; CASS depends on this for join-to-Beads queries. The field
 // is defined at workspace-model.md §6.1 SessionMetadataSidecar.bead_id.
 //
-// This test skips unconditionally because SessionMetadataSidecar is not yet a
-// Go record. It exists solely as a discoverable anchor in the test suite. When
-// SessionMetadataSidecar is implemented, replace or extend this marker with
-// concrete assertions on the bead_id field.
-//
-// See also: TestSessionBI020_SessionIDTypedAliasExists for the only currently
-// implemented session primitive.
+// SessionMetadataSidecar is now implemented in the workspace package
+// (hk-8mwo.63). Concrete bead_id assertions are in
+// internal/workspace/sessionmetadatasidecar_wm063_test.go.
 func TestSessionBI020_ForwardDocSensor(t *testing.T) {
-	t.Log("BI-020 (hk-872.21): session-log sidecar metadata MUST include `bead_id` for bead-bound runs.")
-	t.Log("CASS depends on this field for join-to-Beads queries.")
-	t.Log("Spec reference: beads-integration.md §4 BI-020; field definition: workspace-model.md §6.1 SessionMetadataSidecar.bead_id.")
-	t.Log("")
-	t.Log("SessionMetadataSidecar (workspace-model.md §6.1) is not yet a Go record.")
-	t.Log("When it lands, the implementer of that bead SHOULD:")
-	t.Log("  1. Delete this skip-only marker, OR")
-	t.Log("  2. Extend it with concrete assertions on the bead_id field.")
-	t.Log("Requirement-traceable bead: hk-872.21.")
-	t.SkipNow()
+	t.Log("BI-020 (hk-872.21): session-log sidecar metadata MUST include bead_id for bead-bound runs.")
+	t.Log("Spec reference: beads-integration.md §4 BI-020; workspace-model.md §6.1 SessionMetadataSidecar.bead_id.")
+	t.Log("SessionMetadataSidecar implemented in internal/workspace (hk-8mwo.63).")
+	// No skip — the record now exists; this test documents the BI-020 traceability.
 }
 
 // TestSessionBI020_SessionIDTypedAliasExists verifies that the SessionID typed

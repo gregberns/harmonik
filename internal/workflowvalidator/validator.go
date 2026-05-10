@@ -77,6 +77,7 @@ const (
 	codeFreedomProfileUnresolved = "em038_freedom_profile_unresolved"
 	codeBudgetRefUnresolved      = "em038_budget_ref_unresolved"
 	codeSkillUnresolved          = "em038_skill_unresolved"
+	codeSkillNameBadShape        = "cp049_skill_name_bad_shape"
 	codeBadNodeType              = "em038_bad_node_type"
 	codeMissingHandlerRef        = "em038_missing_handler_ref"
 	codeForbiddenHandlerRef      = "em038_forbidden_handler_ref"
@@ -468,8 +469,16 @@ func (v *PreRunValidator) validateRefs(g *rawGraph) []error {
 		}
 
 		// required_skills: space-separated list.
+		// CP-049: check shape first (syntactic validity), then registry resolution.
 		if rs, ok := attrs["required_skills"]; ok {
 			for _, skill := range parseSpaceSeparatedIDs(rs) {
+				// CP-049 ingest-time syntactic validity: skill name MUST match the
+				// lowercase-hyphenated identifier shape, optionally with @<version>.
+				if !core.SkillName(skill).ValidShape() {
+					errs = append(errs, vErr(codeSkillNameBadShape,
+						"node %q: required_skill %q does not match skill-name shape (lowercase-hyphenated, optional @version)", nodeID, skill))
+					continue // do not attempt registry resolution for malformed names
+				}
 				if !v.registry.HasSkill(skill) {
 					errs = append(errs, vErr(codeSkillUnresolved,
 						"node %q: required_skill %q not registered", nodeID, skill))

@@ -112,6 +112,43 @@ Net new IDs added: PL (none — extensions only), EV (none — new event-type id
 - Three-tier `make check-fast` / `check` / `check-full`.
 - Spec-template structure locked.
 
+### MVH scope: daemonization deferred (2026-05-08)
+
+**MVH ships as a foreground binary.** `harmonik run <workflow>` is a real binary you run in a terminal. Its lifecycle = the shell session. It logs to stdout, holds state in memory while alive, owns a real in-process event bus, runs workflow goroutines, exits when the workflow completes (or on SIGINT/SIGTERM). The "centralized controller" architectural thesis is unchanged; we are deferring **daemonization**, not the architecture.
+
+**What's deferred to post-MVH (the daemonized version):**
+- Detached / backgrounded execution (fork-and-detach; pidfile)
+- Listening socket + JSON-RPC operator-control surface (queue pause/stop *while running*)
+- Long-lived coordinator that survives between invocations
+- Restart-recovery semantics that assume a daemon process to recover into
+- The full process-lifecycle (PL) spec startup sequence, marker-files, fd-passing on exec-upgrade, etc.
+
+**What MVH operator control looks like (without daemonization):**
+- SIGINT / SIGTERM = stop (graceful shutdown handler)
+- SIGSTOP / SIGCONT = pause (kernel-level)
+- Workflow completion = clean exit
+- No socket-RPC needed for MVH
+
+**Concurrency-readiness is non-negotiable.** Concurrent workflow runs is the **first post-MVH unlock**. All MVH code MUST be:
+- `run_id`-keyed (no globals representing "the current run")
+- free of shared mutable state across runs
+- safe for per-invocation reconciliation (no in-memory cache assumptions that depend on a long-lived process)
+- locks/leases scoped to `run_id`, not process
+
+The foreground-process shape supports concurrent runs naturally — the binary just needs to manage multiple `run_id`-keyed workflow goroutines in its goroutine pool. That's the post-MVH expansion, not a re-architecture.
+
+**Beads parked behind daemonization (do not dispatch as implementer briefs until post-MVH; some may need a process-lifecycle spec amendment when reopened):**
+- `hk-b3f.107` — daemon-initiated context-restore initiation-source enforcement (EM-046)
+- `hk-b3f.108` — daemon Outcome synthesis for context-restore (EM-046)
+- Cycle-counter git-history adapter (restart-recovery — rendered moot at MVH because there is no detached daemon to restart into)
+- Operator pause/stop RPCs (PL/ON cross-spec — replaced at MVH by signal handling)
+- Pidfile + socket + JSON-RPC startup sequence (PL §3a, §8a)
+- The full process-lifecycle spec startup sequence
+
+**What is NOT deferred:** EM-016 git-plumbing (`write-tree → commit-tree → update-ref`), checkpoint-write functions, event-bus in-process implementation, workflow runner, reconciliation logic. All of these are foreground-process MVH code, not daemon-only code.
+
+**Decision rationale:** Daemonization adds substantial complexity (process-lifecycle spec ownership, IPC, operator-control RPC, startup/restart-recovery semantics) without unlocking any MVH capability. Bootstrap-subset is single-workflow trivial-slice. User wants minimum path to a running system in a terminal, then add concurrent runs as the first post-MVH unlock, then add daemonization later when there is a real reason to detach (long-lived multi-tenant service shape).
+
 ## Spec corpus inventory — current state (2026-04-25)
 
 | Spec | File(s) | Version | Status | §4 req IDs |

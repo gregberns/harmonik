@@ -392,20 +392,7 @@ type ar001FixtureExpectedViolation struct {
 //   - An entry whose violation is NOT present causes t.Errorf("stale skip-list entry …").
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
-var ar001FixtureExpectedViolations = map[string]ar001FixtureExpectedViolation{
-	// RC-015: `llm-freedom=delegated` is not a valid llm-freedom value (valid: none, bounded, unbounded).
-	// RC-015 is also covered by the AR-005 skip-list (hk-zs0.58) for a Tags: dual-tag violation.
-	// The Axes: defects are distinct from the Tags: defect and tracked separately.
-	"specs/reconciliation/spec.md:465:RC-015:invalid-value:llm-freedom": {
-		pinnedBy: "hk-zs0.60",
-		reason:   "RC-015 Axes: has `llm-freedom=delegated`; `delegated` is not a valid llm-freedom value (valid: none, bounded, unbounded); requires spec correction",
-	},
-	// RC-015: `io-determinism=non-deterministic` uses a hyphenated form; the canonical token is `nondeterministic` (no hyphen).
-	"specs/reconciliation/spec.md:465:RC-015:invalid-value:io-determinism": {
-		pinnedBy: "hk-zs0.60",
-		reason:   "RC-015 Axes: has `io-determinism=non-deterministic`; the canonical token is `nondeterministic` (no hyphen); requires spec correction",
-	},
-}
+var ar001FixtureExpectedViolations = map[string]ar001FixtureExpectedViolation{}
 
 // ar001FixtureViolationKey returns the skip-list lookup key for a violation.
 // Format: "<file>:<axesLineNo>:<reqID>:<kind>:<subject>".

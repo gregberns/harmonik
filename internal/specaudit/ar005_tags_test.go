@@ -264,21 +264,7 @@ type ar005FixtureExpectedViolation struct {
 //     t.Errorf("stale skip-list entry …") — remove stale entries promptly.
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
-var ar005FixtureExpectedViolations = map[string]ar005FixtureExpectedViolation{
-	// RC-015 genuinely spans both surfaces:
-	//   mechanism  — snapshot token bounding discipline; LaunchSpec construction
-	//                (deterministic Go daemon logic, io-determinism=non-deterministic
-	//                 because it delegates to an LLM subprocess).
-	//   cognition  — investigator constructs its InvestigatorInput at runtime by
-	//                querying Beads-CLI, git, workspace, and JSONL; delegated to
-	//                claude-code role per CP-039.
-	// A substantive split into RC-015 (mechanism) + RC-015b (cognition) is
-	// required; pinned to hk-zs0.58.
-	"specs/reconciliation/spec.md:451:RC-015": {
-		pinnedBy: "hk-zs0.58",
-		reason:   "RC-015 describes both the snapshot-token bounding mechanism and the investigator's runtime cognition surface; requires spec split, not a single-tag correction",
-	},
-}
+var ar005FixtureExpectedViolations = map[string]ar005FixtureExpectedViolation{}
 
 // ar005FixtureViolationKey returns the skip-list lookup key for a violation.
 // Format: "<file>:<lineNo>:<requirementID>" where requirementID is extracted

@@ -480,23 +480,7 @@ type zs04FixtureExpectedViolationEntry struct {
 // ar001FixtureExpectedViolations (AR-001 catches grammar AND completeness;
 // AR-002 catches deviation-completeness specifically).  Keeping the skip-lists
 // in sync ensures both tests stay current with the spec corpus.
-var zs04FixtureExpectedViolations = map[string]zs04FixtureExpectedViolationEntry{
-	// RC-015: Axes: has `llm-freedom=delegated` (invalid value) and
-	// `io-determinism=non-deterministic` (hyphenated form instead of
-	// `nondeterministic`).  Both appear in a non-baseline deviation tuple.
-	// The tuple is incomplete/invalid due to these malformed axis values.
-	// Spec fix tracked in hk-zs0.60.
-	"specs/reconciliation/spec.md:465:RC-015:deviation-invalid-axis:llm-freedom": {
-		pinnedBy: "hk-zs0.60",
-		reason: "RC-015 Axes: has `llm-freedom=delegated`; `delegated` is not a valid llm-freedom value " +
-			"(valid: none, bounded, unbounded); non-baseline deviation tuple with invalid axis value — spec fix required",
-	},
-	"specs/reconciliation/spec.md:465:RC-015:deviation-invalid-axis:io-determinism": {
-		pinnedBy: "hk-zs0.60",
-		reason: "RC-015 Axes: has `io-determinism=non-deterministic`; the canonical token is `nondeterministic` " +
-			"(no hyphen); non-baseline deviation tuple with invalid axis value — spec fix required",
-	},
-}
+var zs04FixtureExpectedViolations = map[string]zs04FixtureExpectedViolationEntry{}
 
 // zs04FixtureViolationKey returns the skip-list lookup key for a violation.
 // Format: "<file>:<axesLineNo>:<reqID>:<kind>:<subject>".

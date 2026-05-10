@@ -83,13 +83,33 @@ At the end of every dispatch, report:
 - Any follow-up beads you created (with their IDs)
 - Any deviations from the bead body or brief, with reasoning
 
+## Bead-close ownership (CLARIFIED — agent owns)
+
+Per HANDOFF v20 directives + memory `feedback_br_ownership`, **the agent (you) owns `br close`**. After your commit lands and tests are green, run `br close <bead-id> -r "<one-line>"` yourself. Earlier protocol drafts said the orchestrator owned closes — that was wrong; not closing your own beads forces the orchestrator into per-bead cleanup passes that waste throughput. Close as you go.
+
+For SUBSUMED beads where no commit is made, still close: `br close <id> -r "SUBSUMED: <file:line ref>"`.
+
+## Continue claiming until 250k (HARD RULE)
+
+The dispatch budget is **~250k tokens**, not "your initial bundle." After closing each bead:
+
+1. Run `br ready --limit 0` (or filtered to your package: `br ready --limit 0 | grep <prefix>`).
+2. If ready beads remain that match your dispatch scope (or any in-scope package per HANDOFF if your brief was open), claim and work the next one.
+3. Stop ONLY when: (a) your context exceeds ~250k tokens, (b) the ready queue is empty of in-scope beads, OR (c) you hit a hard blocker that needs orchestrator intervention.
+
+Implementers stopping at 80–160k tokens with ready queue still populated is **wasted dispatch budget**. The HANDOFF directive "implementer keeps claiming and working ready beads until its context exceeds ~250k tokens" is non-negotiable.
+
+When you do hit ~250k, run the `/session-handoff` skill before exiting.
+
+## Don't ask questions back
+
+You will not get an answer — the orchestrator dispatches you and moves on. **Make the judgment call yourself** and document the reasoning in your commit body. Path discrepancies, ambiguous spec wording, type-naming choices, scope edges — decide. If you genuinely cannot proceed (hard blocker, e.g. a required upstream bead is missing code), surface it in the stopping report and stop on that bead, but keep working other in-scope beads first.
+
 ## Constraints
 
 - Do NOT push.
 - Do NOT merge.
-- Do NOT close the bead.
-- Do NOT update the bead's status (the orchestrator owns claim/close transitions).
-- The orchestrator handles merge dance, push, worktree cleanup, and bead closure after review.
+- The orchestrator handles merge dance, push, and worktree cleanup after your dispatch returns.
 
 ## Run before committing
 

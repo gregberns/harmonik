@@ -450,7 +450,7 @@ Tags: mechanism
 
 #### RC-015 — Investigator inputs are bound by snapshot token
 
-The investigator subprocess receives a standard LaunchSpec per [handler-contract.md §6.1] (`agent_type = claude-code`, `role = investigator`). The `LaunchSpec.snapshot_token` field, declared as `String | None` in HC-006, MUST carry the JSON-serialized form of the SnapshotToken record per [schemas.md §6.1] (`{git_head_hash, beads_audit_entry_id, captured_at_timestamp}`).
+The investigator subprocess receives a standard LaunchSpec per [handler-contract.md §6.1] (`agent_type = claude-code`, `role = Researcher`). The `LaunchSpec.snapshot_token` field, declared as `String | None` in HC-006, MUST carry the JSON-serialized form of the SnapshotToken record per [schemas.md §6.1] (`{git_head_hash, beads_audit_entry_id, captured_at_timestamp}`).
 
 The investigator does NOT receive a pre-assembled `InvestigatorInput` payload. The `InvestigatorInput` shape declared in [schemas.md §6.1] is a documented LOGICAL VIEW the investigator constructs at runtime by querying:
 
@@ -461,17 +461,16 @@ The investigator does NOT receive a pre-assembled `InvestigatorInput` payload. T
 
 The snapshot token IS the bounding discipline: any read whose authority precedes `git_head_hash` or `beads_audit_entry_id` is in-scope; reads beyond MUST be classified as out-of-scope per RC-014 forbidden-uses. The investigator's playbook (per RC-016) declares which of the listed inputs the investigator reads; the daemon does NOT pre-assemble an `InvestigatorInput.json` file.
 
-Tags: mechanism, cognition
-Axes: llm-freedom=delegated; io-determinism=non-deterministic; replay-safety=safe; idempotency=non-idempotent
-Delegation-path: investigator role per CP-039.
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### RC-015a — Investigator is an HC handler
 
-The investigator subprocess is a handler-contract handler per [handler-contract.md §4.1]. Its launch follows the standard handler-launch sequence: dispatcher constructs LaunchSpec per HC-006, calls the launch primitive, watches via HC-011 for outcome emission. The `agent_type` value `claude-code` and `role` value `investigator` are the canonical pair (see also CP-039). Reconciliation-specific behavior beyond the standard launch is captured in the investigator playbook (RC-016).
+The investigator subprocess is a handler-contract handler per [handler-contract.md §4.1]. Its launch follows the standard handler-launch sequence: dispatcher constructs LaunchSpec per HC-006, calls the launch primitive, watches via HC-011 for outcome emission. The `agent_type` value `claude-code` and `role` value `Researcher` are the canonical pair for the investigator function (see also CP-039). Reconciliation-specific behavior beyond the standard launch is captured in the investigator playbook (RC-016).
 
 Tags: mechanism
 
-> INFORMATIVE: The investigator delegates to a Claude Code agent (role: `investigator`), model-class per the YAML policy attached to the reconciliation workflow (S01-shipped per RC-004). Input is bounded by SnapshotToken (RC-015); output is the `VerdictEvent` in [schemas.md §6.1] emitted via the standard outcome envelope (RC-022a).
+> INFORMATIVE: The investigator delegates to a Claude Code agent (role: `Researcher`), model-class per the YAML policy attached to the reconciliation workflow (S01-shipped per RC-004). Input is bounded by SnapshotToken (RC-015); output is the `VerdictEvent` in [schemas.md §6.1] emitted via the standard outcome envelope (RC-022a).
 
 #### RC-016 — Investigator playbook per category
 

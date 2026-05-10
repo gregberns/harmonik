@@ -384,26 +384,7 @@ func ar032FixtureViolationKey(v ar032FixtureViolation) string {
 //   - An entry whose violation is NOT present causes t.Errorf("stale skip-list entry …").
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
-var ar032FixtureExpectedViolations = map[string]ar032FixtureExpectedViolation{
-	// RC-015 (line 453): `role = investigator` in LaunchSpec field-value pair.
-	// The reconciliation investigator is named "investigator" in its LaunchSpec
-	// `role` field, which is not one of the seven canonical AR-032 role names.
-	// This is a spec-level vocabulary violation requiring either a rename of the
-	// investigator to a canonical role (e.g., Reviewer) or an AR-032 amendment
-	// to accommodate synthesized workflow-specific role identifiers.
-	// Spec fix tracked in the follow-up bead filed below.
-	"specs/reconciliation/spec.md:453:RC-015:role=:investigator": {
-		pinnedBy: "hk-zs0.62",
-		reason:   "RC-015 uses `role = investigator` in the LaunchSpec pair; `investigator` is not a canonical AR-032 role name; requires spec-level rename or AR-032 amendment",
-	},
-	// RC-015a (line 470): `role` value `investigator` in normative body.
-	// Same root cause as RC-015: the reconciliation investigator is identified
-	// by a non-canonical role name in the requirement text.
-	"specs/reconciliation/spec.md:470:RC-015a:role-value:investigator": {
-		pinnedBy: "hk-zs0.62",
-		reason:   "RC-015a declares `role` value `investigator` as canonical; `investigator` is not an AR-032 role name; requires spec-level rename or AR-032 amendment",
-	},
-}
+var ar032FixtureExpectedViolations = map[string]ar032FixtureExpectedViolation{}
 
 // TestAR032RolesVocabulary is the binding test for AR-032 role-vocabulary
 // enforcement.

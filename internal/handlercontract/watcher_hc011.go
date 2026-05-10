@@ -16,27 +16,36 @@ import (
 // (implementer-protocol.md §Helper-prefix discipline; bead hk-8i31.12).
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HC-011 — Typed-alias deferred interface for the event bus
+// HC-011 — Narrow emitter interface for the event bus
 // ─────────────────────────────────────────────────────────────────────────────
 
-// EventPublisher is the minimal interface the watcher requires from the
-// in-process event bus.
+// EventEmitter is the single-method interface the watcher requires from the
+// in-process event bus.  It matches the Emit method of eventbus.EventBus
+// (specs/event-model.md §6.1 INTERFACE EventBus) exactly, so any
+// eventbus.EventBus implementation satisfies EventEmitter without an adapter.
 //
-// TODO(hk-8i31.82): substitute the real EventBus type (hk-hqwn.57) for this
-// interface once that bead lands.  The substitution is non-breaking because
-// EventPublisher is defined in terms of the EventBus surface that hk-hqwn.57
-// will expose; no caller is required to change.
+// A narrow interface is used rather than eventbus.EventBus directly for two
+// reasons:
+//   - The watcher needs only Emit; requiring 6 methods couples it to the full
+//     lifecycle surface (Seal, Drain, etc.) that is irrelevant here.
+//   - Keeping the handlercontract package free of an import on internal/eventbus
+//     avoids a circular-dependency risk as both packages grow.
 //
-// Spec: specs/handler-contract.md §4.3.HC-011, [event-model.md §4.3].
-type EventPublisher interface {
-	// Publish enqueues ev to the in-process event bus.
+// The EventBus stamps event_id, source_subsystem, and envelope timestamps at
+// enqueue time per EV-002b; the watcher supplies only eventType and payload.
+//
+// Spec: specs/handler-contract.md §4.3.HC-011, specs/event-model.md §6.1.
+type EventEmitter interface {
+	// Emit redacts secret-prefixed payload fields, appends the event to the
+	// durable JSONL file, and dispatches to all matching consumers.
 	//
-	// The call MUST be non-blocking: implementations MUST NOT block the caller
-	// when the internal queue is full. On queue saturation the implementation
-	// MUST route to the dead-letter per [event-model.md §4.3 HC-027].
-	// Returns a non-nil error only on hard publish failures (not queue-full,
-	// which is handled by dead-letter routing inside the implementation).
-	Publish(ev core.Event) error
+	// The call MUST NOT block asynchronous/observer consumer delivery on the
+	// caller's goroutine; those dispatches are off-critical-path per EV-014a.
+	// Returns a non-nil error only on hard failures (redaction fault, JSONL
+	// append fault, or synchronous-consumer fault).
+	//
+	// Spec: specs/event-model.md §6.1, §7.1.
+	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
 
 // DeadLetterSink is the interface the watcher uses to route events that cannot
@@ -45,14 +54,18 @@ type EventPublisher interface {
 // The watcher MUST NOT drop events silently; per HC-027 they MUST reach the
 // dead-letter destination declared by [event-model.md §4.3].
 //
+// eventType and payload mirror the arguments the watcher would have passed to
+// EventEmitter.Emit; since the bus has not yet stamped the envelope (emission
+// failed), the dead-letter sink receives the pre-envelope form.
+//
 // Spec: specs/handler-contract.md §4.6.HC-027.
 type DeadLetterSink interface {
-	// Append records ev in the dead-letter store.
+	// Append records the (eventType, payload) pair in the dead-letter store.
 	//
 	// Implementations MUST be non-blocking or use a bounded-retry policy.
 	// A nil return indicates durable receipt; a non-nil error means the event
 	// was not durably stored (the watcher logs the failure but cannot recover).
-	Append(ev core.Event, reason string) error
+	Append(eventType core.EventType, payload []byte, reason string) error
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,12 +122,13 @@ type SpawnWatcherConfig struct {
 	// Required (non-nil).
 	ProgressStream io.Reader
 
-	// Publisher is the in-process event bus to which the watcher publishes
+	// Publisher is the in-process event bus to which the watcher emits
 	// translated handler-lifecycle events.  Must be non-blocking per HC-011.
 	// Required (non-nil).
 	//
-	// TODO(hk-8i31.82): substitute real EventBus (hk-hqwn.57) here.
-	Publisher EventPublisher
+	// Any eventbus.EventBus implementation satisfies EventEmitter; no adapter
+	// is needed (hk-8i31.82 substitution from EventPublisher placeholder).
+	Publisher EventEmitter
 
 	// DeadLetter is the sink for events that could not be delivered to Publisher
 	// (buffer-full, subscriber panic).  The watcher MUST NOT silently drop
@@ -288,10 +302,10 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 		panicErr := fmt.Errorf("handlercontract: watcher panic: %v: %w", r, ErrStructural)
 		w.setTermErr(panicErr)
 
-		// Publish agent_failed{structural, watcher_panic} to the bus; route to
-		// dead-letter if the publish fails.
-		ev := buildWatcherFailedEvent(w.sessionID, WatcherPanicSubReason, panicErr)
-		w.publishOrDeadLetter(ev, cfg.Publisher, cfg.DeadLetter)
+		// Emit agent_failed{structural, watcher_panic} to the bus; route to
+		// dead-letter if the emit fails.
+		eventType, payload := buildWatcherFailedPayload(w.sessionID, WatcherPanicSubReason, panicErr)
+		w.publishOrDeadLetter(ctx, eventType, payload, cfg.Publisher, cfg.DeadLetter)
 	}()
 
 	w.readLoop(ctx, cfg, bufSize)
@@ -333,15 +347,15 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 				if isLineTooLong(scanErr) {
 					termErr := fmt.Errorf("handlercontract: ndjson line too long: %w", ErrProtocolMismatch)
 					w.setTermErr(termErr)
-					ev := buildWatcherFailedEvent(w.sessionID, NDJSONLineTooLongSubReason, termErr)
-					w.publishOrDeadLetter(ev, cfg.Publisher, cfg.DeadLetter)
+					et, pl := buildWatcherFailedPayload(w.sessionID, NDJSONLineTooLongSubReason, termErr)
+					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 					return
 				}
 				// Other I/O errors: structural framing failure.
 				termErr := fmt.Errorf("handlercontract: progress stream read error: %v: %w", scanErr, ErrStructural)
 				w.setTermErr(termErr)
-				ev := buildWatcherFailedEvent(w.sessionID, PartialMessageSubReason, termErr)
-				w.publishOrDeadLetter(ev, cfg.Publisher, cfg.DeadLetter)
+				et, pl := buildWatcherFailedPayload(w.sessionID, PartialMessageSubReason, termErr)
+				w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 				return
 			}
 			// EOF with no error: progress stream closed cleanly.
@@ -364,8 +378,8 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			// HC-007b: malformed JSON on a live socket → close session, emit agent_failed.
 			termErr := fmt.Errorf("handlercontract: malformed NDJSON line: %v: %w", err, ErrStructural)
 			w.setTermErr(termErr)
-			ev := buildWatcherFailedEvent(w.sessionID, MalformedProgressMessageSubReason, termErr)
-			w.publishOrDeadLetter(ev, cfg.Publisher, cfg.DeadLetter)
+			et, pl := buildWatcherFailedPayload(w.sessionID, MalformedProgressMessageSubReason, termErr)
+			w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 			return
 		}
 
@@ -377,23 +391,31 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			continue
 		}
 
-		// Build a core.Event envelope for the decoded progress-stream message.
-		// The daemon watcher stamps event_id, timestamps, and source_subsystem at
-		// enqueue time per EV-002b; the handler-side message supplies the payload.
-		ev := buildProgressEvent(w.sessionID, typeOnly.Type, json.RawMessage(line))
-		w.publishOrDeadLetter(ev, cfg.Publisher, cfg.DeadLetter)
+		// Emit the progress-stream message to the bus.
+		// The bus (EventBus.Emit) stamps event_id, source_subsystem, and envelope
+		// timestamps at enqueue time per EV-002b; the watcher supplies only the
+		// type and the raw NDJSON line as payload.
+		w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
 	}
 }
 
-// publishOrDeadLetter attempts to publish ev to pub.  If Publish returns a
-// non-nil error the event is routed to the dead-letter sink per HC-027.
+// publishOrDeadLetter attempts to emit (eventType, payload) to pub.  If Emit
+// returns a non-nil error the raw event is routed to the dead-letter sink per
+// HC-027.  ctx is the watcher's enclosing context; it is passed through to
+// Emit so the bus can honour cancellation on the critical path.
 //
 // The watcher MUST NOT drop events silently.
-func (w *Watcher) publishOrDeadLetter(ev core.Event, pub EventPublisher, dl DeadLetterSink) {
-	if err := pub.Publish(ev); err != nil {
+func (w *Watcher) publishOrDeadLetter(
+	ctx context.Context,
+	eventType core.EventType,
+	payload []byte,
+	pub EventEmitter,
+	dl DeadLetterSink,
+) {
+	if err := pub.Emit(ctx, eventType, payload); err != nil {
 		// Route to dead-letter; best-effort (errors from Append are not actionable
 		// from inside the watcher goroutine).
-		_ = dl.Append(ev, fmt.Sprintf("publish failed: %v", err))
+		_ = dl.Append(eventType, payload, fmt.Sprintf("emit failed: %v", err))
 	}
 }
 
@@ -409,48 +431,28 @@ func (w *Watcher) setTermErr(err error) {
 // Internal event-building helpers (unexported; tested via SpawnWatcher)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// buildProgressEvent constructs a minimal core.Event envelope for a decoded
-// progress-stream message.  The daemon watcher stamps event_id and
-// TimestampWall at publication time per EV-002b.
-//
-// msgType is the progress-stream "type" field value (e.g., "agent_ready").
-// payload is the full NDJSON line as a raw JSON message; it is passed through
-// unchanged so the watcher does not re-encode handler-side content.
-func buildProgressEvent(sessionID core.SessionID, msgType string, payload json.RawMessage) core.Event {
-	now := time.Now()
-	monoNs := now.UnixNano()
-	return core.Event{
-		// EventID is zero here; the real EventBus (hk-hqwn.57) stamps UUIDv7 per
-		// EV-002b at enqueue time.  Until then the zero UUID signals "needs stamp".
-		SchemaVersion:     1,
-		Type:              msgType,
-		TimestampWall:     now,
-		TimestampMonoNsec: &monoNs,
-		Payload:           payload,
-	}
-}
-
-// buildWatcherFailedEvent constructs the core.Event for a watcher-synthesized
-// agent_failed event (panic, line-too-long, malformed, etc.).
+// buildWatcherFailedPayload constructs the (eventType, payload) pair for a
+// watcher-synthesized agent_failed event (panic, line-too-long, malformed,
+// etc.).
 //
 // sub is one of the WatcherPanicSubReason, NDJSONLineTooLongSubReason, etc.
 // constants.  cause is the wrapped error; its Class() string populates the
 // error_category field of the payload.
-func buildWatcherFailedEvent(sessionID core.SessionID, sub string, cause error) core.Event {
-	now := time.Now()
-	monoNs := now.UnixNano()
+//
+// The caller passes the returned values directly to EventEmitter.Emit or
+// DeadLetterSink.Append; envelope stamping (event_id, timestamps,
+// source_subsystem) is the bus's responsibility per EV-002b.
+//
+// sessionID is accepted for future use (sub-reason may encode it in payload);
+// it is intentionally retained in the signature so callers are self-documenting.
+func buildWatcherFailedPayload(sessionID core.SessionID, sub string, cause error) (core.EventType, []byte) {
+	_ = sessionID                                 // reserved for payload enrichment when event-model.md §8 rows land
 	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck // static map, never fails
 		"type":           ProgressMsgTypeAgentFailed,
 		"error_category": Class(cause),
 		"sub_reason":     sub,
 	})
-	return core.Event{
-		SchemaVersion:     1,
-		Type:              ProgressMsgTypeAgentFailed,
-		TimestampWall:     now,
-		TimestampMonoNsec: &monoNs,
-		Payload:           payload,
-	}
+	return core.EventType(ProgressMsgTypeAgentFailed), payload
 }
 
 // isLineTooLong reports whether err from bufio.Scanner.Err() signals that

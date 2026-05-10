@@ -26,58 +26,55 @@ func watcherFixtureSessionID(_ *testing.T) core.SessionID {
 	return core.SessionID("test-session-hk-8i31.12")
 }
 
-// watcherFixturePublisher is a minimal EventPublisher that collects published events.
+// watcherFixturePublisher is a minimal EventEmitter that collects emitted events.
+//
+// It satisfies handlercontract.EventEmitter: the single Emit method matches
+// EventBus.Emit's signature exactly (hk-8i31.82 substitution).
 type watcherFixturePublisher struct {
-	mu     sync.Mutex
-	events []core.Event
-	errOn  string // if non-empty, return error when event.Type == errOn
+	mu         sync.Mutex
+	eventTypes []string
+	errOn      string // if non-empty, return error when eventType == errOn
 }
 
-func (p *watcherFixturePublisher) Publish(ev core.Event) error {
+func (p *watcherFixturePublisher) Emit(_ context.Context, eventType core.EventType, _ []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.errOn != "" && ev.Type == p.errOn {
+	if p.errOn != "" && string(eventType) == p.errOn {
 		return errors.New("watcherFixturePublisher: forced error")
 	}
-	p.events = append(p.events, ev)
+	p.eventTypes = append(p.eventTypes, string(eventType))
 	return nil
-}
-
-func (p *watcherFixturePublisher) Events() []core.Event {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]core.Event, len(p.events))
-	copy(out, p.events)
-	return out
 }
 
 func (p *watcherFixturePublisher) EventTypes() []string {
-	evs := p.Events()
-	types := make([]string, len(evs))
-	for i, ev := range evs {
-		types[i] = ev.Type
-	}
-	return types
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, len(p.eventTypes))
+	copy(out, p.eventTypes)
+	return out
 }
 
 // watcherFixtureDeadLetter is a minimal DeadLetterSink that collects spilled events.
+//
+// Append stores eventType strings; payload is ignored in tests (content is
+// covered by the publisher fixture and the production payload-builder tests).
 type watcherFixtureDeadLetter struct {
-	mu     sync.Mutex
-	events []core.Event
+	mu         sync.Mutex
+	eventTypes []string
 }
 
-func (d *watcherFixtureDeadLetter) Append(ev core.Event, _ string) error {
+func (d *watcherFixtureDeadLetter) Append(eventType core.EventType, _ []byte, _ string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.events = append(d.events, ev)
+	d.eventTypes = append(d.eventTypes, string(eventType))
 	return nil
 }
 
-func (d *watcherFixtureDeadLetter) Events() []core.Event {
+func (d *watcherFixtureDeadLetter) Events() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	out := make([]core.Event, len(d.events))
-	copy(out, d.events)
+	out := make([]string, len(d.eventTypes))
+	copy(out, d.eventTypes)
 	return out
 }
 
@@ -630,10 +627,10 @@ func TestWatcher_SpawnWatcher_PanicsOnEmptySessionID(t *testing.T) {
 // HC-011 — EventPublisher interface satisfiable without handler import
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Compile-time check: watcherFixturePublisher satisfies EventPublisher.
+// Compile-time check: watcherFixturePublisher satisfies EventEmitter.
 // This file imports no execution-shape package (internal/handler), proving the
-// interface is satisfiable from daemon-side code only.
-var _ handlercontract.EventPublisher = (*watcherFixturePublisher)(nil)
+// interface is satisfiable from daemon-side code only (hk-8i31.82).
+var _ handlercontract.EventEmitter = (*watcherFixturePublisher)(nil)
 
 // Compile-time check: watcherFixtureDeadLetter satisfies DeadLetterSink.
 var _ handlercontract.DeadLetterSink = (*watcherFixtureDeadLetter)(nil)

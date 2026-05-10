@@ -392,6 +392,8 @@ Tags: mechanism
 
 #### HC-036a — Twin script-file format
 
+Tags: mechanism
+
 A twin subprocess (per HC-035) that operates in scenario mode MUST read its output from a YAML script file. The script-file format is normatively defined here; implementors MUST NOT deviate from this schema.
 
 **File location.** The script file MUST reside at:

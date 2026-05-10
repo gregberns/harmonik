@@ -266,6 +266,8 @@ Per the `spec-shape: taxonomy-first` declaration in front matter, §8 (category 
 
 Reconciliation MUST run as a normal harmonik workflow: DOT-defined per [execution-model.md §4.1], dispatched deterministically by the daemon, and event-logged per [event-model.md §4.1] and the per-event subsections under [event-model.md §8]. There MUST NOT be a separate reconciliation subsystem. Each investigator-required category (see §8) has its own reconciliation workflow in the S01-shipped library (see RC-004).
 
+> INFORMATIVE: The daemon emits a `reconciliation_started` event (class O per [event-model.md §8.6.1]) at the boundary where each reconciliation workflow is dispatched; the `trigger` field discriminates startup-scan, on-demand, and scheduled-hourly invocations (RC-020a).
+
 Tags: mechanism
 
 #### RC-002 — Reconciliation workflows emit exactly one checkpoint commit

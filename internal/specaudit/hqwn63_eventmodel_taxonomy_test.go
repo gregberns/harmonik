@@ -231,36 +231,6 @@ var hqwn63FixtureExpectedViolations = map[string]hqwn63FixtureExpectedViolationE
 	"b-axes:8.8.3:dead_letter_enqueued":                    {pinnedBy: "hk-hqwn.67", reason: "§8 table format carries no Axes: lines; spec amendment required per EV-INV-005"},
 	"b-axes:8.8.4:bus_overflow":                            {pinnedBy: "hk-hqwn.67", reason: "§8 table format carries no Axes: lines; spec amendment required per EV-INV-005"},
 	"b-axes:8.8.5:redaction_failed":                        {pinnedBy: "hk-hqwn.67", reason: "§8 table format carries no Axes: lines; spec amendment required per EV-INV-005"},
-
-	// ── Check (c): no backtick-quoted consumer citation in sibling specs ───────
-	// Per §8.9(g) each non-exempt §8 event MUST appear by backtick-quoted name
-	// in at least one sibling spec. Six events are missing that citation.
-	// (state_entered is cited at specs/reconciliation/schemas.md:162 — not pinned.)
-	// Consumer citations will be added by hk-hqwn.68.
-	"c-consumer:8.1.5:state_exited": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "state_exited cited only in emit_event() pseudocode in execution-model.md without backtick quoting; backtick consumer citation required per §8.9(g)",
-	},
-	"c-consumer:8.1.10:sub_workflow_exited": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "sub_workflow_exited has no backtick-quoted citation in any sibling spec; consumer citation required per §8.9(g)",
-	},
-	"c-consumer:8.3.6:agent_rate_limit_status": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "agent_rate_limit_status has no backtick-quoted citation in any sibling spec; consumer citation required per §8.9(g)",
-	},
-	"c-consumer:8.6.1:reconciliation_started": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "reconciliation_started has no backtick-quoted citation in any sibling spec; consumer citation required per §8.9(g)",
-	},
-	"c-consumer:8.8.2:consumer_failed": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "consumer_failed has no backtick-quoted citation in any sibling spec; consumer citation required per §8.9(g)",
-	},
-	"c-consumer:8.8.3:dead_letter_enqueued": {
-		pinnedBy: "hk-hqwn.68",
-		reason:   "dead_letter_enqueued has no backtick-quoted citation in any sibling spec; consumer citation required per §8.9(g)",
-	},
 }
 
 // hqwn63FixtureRepoRoot returns the repository root directory by walking up

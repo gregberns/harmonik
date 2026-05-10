@@ -786,10 +786,10 @@ All schemas in this spec carry a `schema_version` integer. The compatibility con
 This spec's requirements drive emission of the following events whose names and payload schemas are declared in [event-model.md §8]:
 
 - Run lifecycle — `run_started` (on dispatch against a bead or standalone input), `run_completed` (on success terminal state), `run_failed` (on failure terminal state; payload includes the failure class per §8).
-- State lifecycle — a state-entered event (on entry to a new state) and a state-exited event (on exit from a state, prior to transition selection).
+- State lifecycle — a `state_entered` event (on entry to a new state) and a `state_exited` event (on exit from a state, prior to transition selection).
 - Transition projection — a transition event (projection of the `Transition` record per §4.6.EM-028).
 - Checkpoint lifecycle — a checkpoint-written event emitted after every checkpoint commit lands; payload includes `run_id`, `state_id`, `transition_id`, optional `bead_id`.
-- Sub-workflow lifecycle — a sub-workflow-entered event on expansion entry and a sub-workflow-exited event on expansion exit, per §4.8.EM-036.
+- Sub-workflow lifecycle — a `sub_workflow_entered` event on expansion entry and a `sub_workflow_exited` event on expansion exit, per §4.8.EM-036.
 
 This spec is normative for WHEN each event fires; [event-model.md §8] is normative for names, payload shapes, and any rename.
 

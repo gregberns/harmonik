@@ -779,7 +779,7 @@ Additional codes may be added within the N-1 window as long as existing code-to-
 - **[event-model.md §8.7]** — operator-control event row-entries; §4.3.ON-013 and §6.5 cite here.
 - **[event-model.md §8.9(h)]** — paired-phase rule for `operator_pause_status`; §4.3.ON-013 and §7.1 depend here.
 - **[event-model.md §4.4, §4.7]** — fsync policy and schema compat; §4.5.ON-018 and §4.7.ON-027 step 4 depend here.
-- **[event-model.md §4.3]** — dead-letter routing and consumer taxonomy; §4.7.ON-022 secret-redaction applies to dead-letter paths.
+- **[event-model.md §4.3]** — dead-letter routing and consumer taxonomy; §4.7.ON-022 secret-redaction applies to dead-letter paths. Bus-internal events `consumer_failed` (§8.8.2) and `dead_letter_enqueued` (§8.8.3) are the operator-observable signals for consumer errors and dead-letter activity.
 - **[event-model.md §4.9]** EV-034a — `source_subsystem` registration; §4.9.ON-035 structured-log wire format references.
 - **[event-model.md §4.5]** — replay semantics; §4.8.ON-030 depends here for the "no JSONL replay on restart" rule.
 - **[execution-model.md §4.3]** — run definition; §4.3.ON-007 maps operator "task" to `run`.

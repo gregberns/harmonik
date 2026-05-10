@@ -296,6 +296,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 When the adapter's `DetectRateLimit` returns `limited=true`, the watcher MUST emit `agent_rate_limited` (NOT `agent_failed`) carrying `retry_after`. On the adapter's detection of rate-limit clearance (the session resumes producing output), the watcher MUST emit `agent_rate_limit_cleared`. Rate-limited sessions are NOT failures; the daemon's policy for rate-limit handling is exponential backoff within wall-clock budget.
 
+> INFORMATIVE: Per [event-model.md §8.9(h)], `agent_rate_limited` and `agent_rate_limit_cleared` are a paired-phase lifecycle and are published to the bus as the merged `agent_rate_limit_status` event (§8.3.6) with a `status` field discriminating `active` / `cleared`. Consumers subscribe to `agent_rate_limit_status`, not to the progress-stream message names.
+
 Tags: mechanism
 
 #### HC-026 — Silent-hang detection state machine

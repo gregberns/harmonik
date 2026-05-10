@@ -115,6 +115,18 @@ var obligationsFixtureConfigInventory = []obligationsFixtureConfigKnob{
 		ChangeEffective: "next-daemon-start",
 		SpecRef:         "reconciliation/spec.md §4.4",
 	},
+	{
+		Name:            "heartbeat_cadence",
+		PrecedenceLayer: "operator-policy",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.9 ON-037",
+	},
+	{
+		Name:            "heartbeat_miss_tolerance",
+		PrecedenceLayer: "operator-policy",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.9 ON-037",
+	},
 }
 
 // TestON003_StartupCatalogCoverageAgainstTaxonomy verifies that every entry in

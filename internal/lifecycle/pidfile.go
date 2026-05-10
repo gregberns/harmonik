@@ -222,3 +222,38 @@ func ReadPidfile(projectDir string) (pid int, pgid int, instanceID string, err e
 
 	return pid, pgid, instanceID, nil
 }
+
+// RemoveStalePidfile removes the stale pidfile at <projectDir>/.harmonik/daemon.pid
+// and fsyncs the parent directory to make the removal durable. This is the
+// recovery step that follows a PL-024 stale-pidfile detection (ProbePidfileLock
+// returning PidfileLockStatusStale).
+//
+// A stale pidfile is one left on disk by a crashed daemon instance — the prior
+// instance terminated without executing the clean-shutdown remove step (PL-011
+// §4.4 step 8). The caller SHOULD call ProbePidfileLock first to confirm the
+// stale condition; RemoveStalePidfile does not re-probe. If the file is absent,
+// os.ErrNotExist is returned (wrapped) so the caller can distinguish
+// "already removed" from other I/O errors.
+//
+// Spec ref: process-lifecycle.md §4.8 PL-024 — "The next harmonik daemon
+// invocation MUST detect a stale pidfile … remove the stale pidfile, and
+// proceed with startup per §PL-005."
+func RemoveStalePidfile(projectDir string) error {
+	pidfilePath := filepath.Join(projectDir, ".harmonik", "daemon.pid")
+
+	if err := os.Remove(pidfilePath); err != nil {
+		return fmt.Errorf("lifecycle: RemoveStalePidfile: remove %q: %w", pidfilePath, err)
+	}
+
+	// fsync the parent directory so the unlink is durable.
+	parentDir := filepath.Dir(pidfilePath)
+	//nolint:gosec // G304: parentDir is derived from projectDir + .harmonik/, not user input
+	dirFd, err := os.Open(parentDir)
+	if err != nil {
+		// Non-fatal: file is already removed; dir-open failure is best-effort.
+		return nil
+	}
+	defer func() { _ = dirFd.Close() }() //nolint:errcheck // cleanup error unactionable
+	_ = dirFd.Sync()                     //nolint:errcheck // fsync failure is non-fatal for unlink durability
+	return nil
+}

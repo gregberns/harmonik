@@ -52,17 +52,14 @@ func TestON001_CommandExitCodeSets_AllCommandsPresent(t *testing.T) {
 func TestON001_CommandExitCodeSets_NamesAreDistinct(t *testing.T) {
 	t.Parallel()
 
+	// Distinctness check must be serial: the `seen` map is shared across all
+	// entries and cannot be accessed concurrently without a data race.
 	seen := make(map[operatornfr.CommandName]bool)
 	for _, set := range operatornfr.CommandExitCodeSets {
-		set := set
-		t.Run(string(set.Command), func(t *testing.T) {
-			t.Parallel()
-
-			if seen[set.Command] {
-				t.Errorf("ON-001: command %q appears more than once in CommandExitCodeSets; command names must be distinct", set.Command)
-			}
-			seen[set.Command] = true
-		})
+		if seen[set.Command] {
+			t.Errorf("ON-001: command %q appears more than once in CommandExitCodeSets; command names must be distinct", set.Command)
+		}
+		seen[set.Command] = true
 	}
 }
 

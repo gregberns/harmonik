@@ -119,3 +119,25 @@ You will not get an answer — the orchestrator dispatches you and moves on. **M
 - Optional: `golangci-lint run ./<target-package>/...` if available locally
 
 If any of the above fails, fix before committing. Do not commit broken code expecting the reviewer to flag it.
+
+## Appendix — Brief template (orchestrator-facing)
+
+The orchestrator composes briefs as a parameter-fill against this template. The implementer reads the bead body via `br show`; the brief should NOT paraphrase it. Target ≤15 lines.
+
+```
+WORKTREE: /Users/gb/github/harmonik/.claude/worktrees/agent-<id>
+BRANCH:   worktree-agent-<id>
+SCOPE:    <starting bead-id> + any in-scope ready beads in <package-path>
+SIBLING:  <file:path>:<line> — pattern for <acronym-id> from prior wave (omit only when no prior sibling exists)
+DEFERRAL: <one-line shape for follow-up `br create` if the bead requires typed-alias deferral; omit otherwise>
+PROTOCOL: read .claude/implementer-protocol.md — it is authoritative; do not re-state rules in this brief.
+```
+
+Rules for filling the template:
+
+1. **Do NOT paraphrase the bead body.** Implementer fetches via `br show <id> --format json`.
+2. **SIBLING line is required when a prior sibling exists** — empirical SUBSUMED-detection rate jumps from ~5% to ~30% when present (L-008).
+3. **DEFERRAL line names the exact `br create` shape** — flags, labels, parent — so the implementer doesn't invent its own placeholder scheme (see "Typed-alias-deferral pattern" above).
+4. **No reporting-format reminder, no no-ask reminder, no commit-format reminder.** All in this protocol; the brief points, doesn't repeat.
+
+Brief composition is structurally deterministic (bead → package → sibling-pattern → worktree-name). When harmonik's daemon ships, the daemon composes briefs; the orchestrator-agent's job collapses to dispatch decisions, not template-filling. See L-005 in `docs/orchestration-learnings.md`.

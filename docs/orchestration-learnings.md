@@ -23,12 +23,13 @@ This is **dual-purpose**:
 - [L-002 — Implementer bead-close ownership ambiguity](#l-002) — `process-fix-applied`
 - [L-003 — Implementers stop short of the context budget](#l-003) — `process-fix-applied` · `product-input`
 - [L-004 — Main-thread narrative overhead per cycle](#l-004) — `process-improvement-pending` · `product-input`
-- [L-005 — Brief composition is per-bundle, not templated](#l-005) — `process-improvement-pending` · `product-input`
+- [L-005 — Brief composition is per-bundle, not templated](#l-005) — `process-fix-applied` · `product-input`
 - [L-006 — Queue structural drain is not surfaced proactively](#l-006) — `product-input`
 - [L-007 — Sub-agents ask questions when they should decide](#l-007) — `process-fix-applied` · `product-input`
 - [L-008 — SUBSUMED-detection improves dramatically with sibling pointers in the brief](#l-008) — `process-fix-applied` · `product-input`
 - [L-009 — Spec discrepancies surface late (during implementation, not during spec review)](#l-009) — `open` · `product-input`
 - [L-010 — Cherry-pick is the reliable merge fallback under worktree churn](#l-010) — `process-fix-applied`
+- [L-011 — Beads parent-child edges gridlocked the dispatchable surface](#l-011) — `process-fix-applied` · `product-input`
 
 ---
 
@@ -90,7 +91,7 @@ The summaries have value (the user uses them to sanity-check), but they're per-r
 
 **Hypothesis.** Brief inflation comes from re-stating protocol every time, against the (correct) instinct that an under-briefed implementer fails. Protocol consolidation removes that pressure.
 
-**Fix proposed (not yet applied).** Define a brief template in `.claude/implementer-protocol.md`'s appendix; orchestrator briefs become parameter-fills against the template.
+**Fix applied 2026-05-10.** Brief template landed as the appendix of `.claude/implementer-protocol.md` ("Appendix — Brief template"). Orchestrator briefs are now parameter-fills against the template; the template forbids paraphrasing the bead body and codifies the SIBLING line as required when a prior sibling exists (per L-008).
 
 **Product input.** Brief composition is structurally a deterministic operation: bead → package → sibling-pattern → worktree-name. The daemon should compose briefs; the orchestrator-agent shouldn't be a template engine.
 
@@ -145,6 +146,22 @@ A separate one (`HandlerRef RECORD` not defined in handler-contract.md) surfaced
 **Fix applied.** HANDOFF directives carry the cherry-pick fallback; this session validated it five additional times.
 
 **Process note for future.** When this happens, do NOT use `git reset --soft main` from the worktree — it preserves the worktree's stale tree and stages deletions of files landed in other waves. Recovery cost is high (30+ min, possibly closed beads requiring re-implementation). This is documented in HANDOFF directives but worth re-stating here as it's a sharp edge that recurs.
+
+---
+
+### L-011 — Beads parent-child edges gridlocked the dispatchable surface <a name="l-011"></a>
+
+**Observed 2026-05-10 (this session).** `br ready` returned only 2 beads (both epics) despite 487 open beads in the corpus. Multiple sessions in a row (v19, v20, v21) had reported "queue drained, only zs0 cognition spec drafts remain" — but that read was an artifact of the dep model, not the corpus.
+
+**Root cause.** Beads' `idx_dependencies_blocking` SQL index treats `parent-child` edges as blocking, equivalent to `blocks`/`conditional-blocks`/`waits-for`. The corpus had 992 parent-child edges (sub-bead → parent epic). Every sub-bead was therefore "blocked by" its open parent epic, and every parent epic was open until its sub-beads closed → full DAG gridlock. 913 of 487 open beads were blocked solely by their open parent.
+
+The orchestrator's gridlock-detection heuristic ("queue is drained") trusted `br ready` as authoritative. It was authoritative for "what `br ready` returns" but NOT for "what work is dispatchable" — those diverged hard.
+
+**Fix applied.** `UPDATE dependencies SET type='related' WHERE type='parent-child'` — converted all 992 parent-child edges to `related` (non-blocking). Cache rebuilt. `br ready` jumped from 2 → 487. Trade-off: `br epic status` now reports 0/0 children for every epic (epic-progress tracking lost). For an MVH-stage corpus the flow gain dominates — epic-progress can be reconstructed from labels (`spec:event-model` etc.) when needed.
+
+**Process change.** Future orchestrators MUST NOT trust `br ready` count as proof the corpus is drained. Cross-check against `br stats` Open count and `br blocked --json` blocker-distribution. If most blocked beads have a single blocker that is an open parent epic, the gridlock is structural not work-driven.
+
+**Product input.** harmonik's bead model (or its choice of underlying ledger) MUST distinguish *structural* parent-child relationships (taxonomy / rollup, non-blocking) from *blocking* dependencies. Beads-CLI's choice to fold them into one index is an upstream design decision we should not silently inherit. Two options for harmonik's daemon: (a) use Beads but only emit `blocks`/`related` edges (encode hierarchy via labels or external `epic` table); (b) fork or replace the ledger to give parent-child its own non-blocking semantics. Either way, the daemon should never accept "queue drained" as ground truth without checking the structural-vs-blocking distinction itself.
 
 ---
 

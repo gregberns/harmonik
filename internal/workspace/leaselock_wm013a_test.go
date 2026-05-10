@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestWM013a_LeaseLockCanonicalPathAndContent verifies that the lease-lock file
@@ -46,16 +49,18 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		}
 
 		wantPath := filepath.Join(worktreePath, ".harmonik", "lease.lock")
-		gotPath := leaseFixtureLeaseLockPath(worktreePath)
+
+		// LeaseLockPath is the production function under test.
+		gotPath := LeaseLockPath(worktreePath)
 		if gotPath != wantPath {
-			t.Errorf("WM-013a: canonical path = %q, want %q", gotPath, wantPath)
+			t.Errorf("WM-013a: LeaseLockPath = %q, want %q", gotPath, wantPath)
 		}
 
 		// The canonical path must NOT be the HC-044a path.
 		// HC-044a path would be: ${workspace_path}/.lock (i.e., <worktree>/.lock)
 		hcPath := filepath.Join(worktreePath, ".lock")
 		if gotPath == hcPath {
-			t.Errorf("WM-013a: lease-lock path %q matches HC-044a path; WM's path is authoritative per OQ-WM-005", gotPath)
+			t.Errorf("WM-013a: LeaseLockPath %q matches HC-044a path; WM's path is authoritative per OQ-WM-005", gotPath)
 		}
 	})
 
@@ -80,40 +85,52 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 		now := time.Now().UTC()
 		ttlSec := 3600
 
-		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, pid, now, ttlSec))
+		u := uuid.MustParse(runID)
+		lock := &core.LeaseLockFile{
+			RunID:     core.RunID(u),
+			PID:       pid,
+			CreatedAt: now,
+			TTLSec:    ttlSec,
+		}
+
+		// WriteLeaseLockAtomic is the production function under test.
+		leaseLockPath := LeaseLockPath(worktreePath)
+		if err := WriteLeaseLockAtomic(leaseLockPath, lock); err != nil {
+			t.Fatalf("WM-013a: WriteLeaseLockAtomic: %v", err)
+		}
 
 		// Parse the written lock content and validate required fields.
+		//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
 		data, err := os.ReadFile(leaseLockPath)
 		if err != nil {
 			t.Fatalf("WM-013a: ReadFile lease-lock: %v", err)
 		}
 
-		var lock struct {
+		var parsed struct {
 			RunID     string `json:"run_id"`
 			PID       int    `json:"pid"`
 			CreatedAt string `json:"created_at"`
 			TTLSec    int    `json:"ttl_sec"`
 		}
-		if err := json.Unmarshal(data, &lock); err != nil {
+		if err := json.Unmarshal(data, &parsed); err != nil {
 			t.Fatalf("WM-013a: json.Unmarshal lease-lock: %v\ncontent: %s", err, data)
 		}
 
 		// run_id: must match the owning run.
-		if lock.RunID != runID {
-			t.Errorf("WM-013a: lock.run_id = %q, want %q", lock.RunID, runID)
+		if parsed.RunID != runID {
+			t.Errorf("WM-013a: lock.run_id = %q, want %q", parsed.RunID, runID)
 		}
 		// pid: must be the daemon's PID.
-		if lock.PID != pid {
-			t.Errorf("WM-013a: lock.pid = %d, want %d", lock.PID, pid)
+		if parsed.PID != pid {
+			t.Errorf("WM-013a: lock.pid = %d, want %d", parsed.PID, pid)
 		}
 		// created_at: must be parseable as RFC 3339.
-		if _, err := time.Parse(time.RFC3339, lock.CreatedAt); err != nil {
-			t.Errorf("WM-013a: lock.created_at %q is not RFC 3339: %v", lock.CreatedAt, err)
+		if _, err := time.Parse(time.RFC3339, parsed.CreatedAt); err != nil {
+			t.Errorf("WM-013a: lock.created_at %q is not RFC 3339: %v", parsed.CreatedAt, err)
 		}
 		// ttl_sec: must be present and positive.
-		if lock.TTLSec <= 0 {
-			t.Errorf("WM-013a: lock.ttl_sec = %d, want > 0", lock.TTLSec)
+		if parsed.TTLSec <= 0 {
+			t.Errorf("WM-013a: lock.ttl_sec = %d, want > 0", parsed.TTLSec)
 		}
 	})
 
@@ -137,8 +154,18 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 			t.Fatalf("git worktree add: %v\n%s", err, out)
 		}
 
-		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		u := uuid.MustParse(runID)
+		lock := &core.LeaseLockFile{
+			RunID:     core.RunID(u),
+			PID:       os.Getpid(),
+			CreatedAt: time.Now().UTC(),
+			TTLSec:    3600,
+		}
+
+		leaseLockPath := LeaseLockPath(worktreePath)
+		if err := WriteLeaseLockAtomic(leaseLockPath, lock); err != nil {
+			t.Fatalf("WM-013a: WriteLeaseLockAtomic: %v", err)
+		}
 
 		// Enumerate the .harmonik directory and assert:
 		// - exactly one file: lease.lock
@@ -165,8 +192,7 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 
 		// No .tmp-* orphans.
 		for _, name := range files {
-			if strings.HasPrefix(name, ".tmp-") || strings.HasSuffix(name, ".tmp-"+string(rune('0'+os.Getpid()%10))) ||
-				strings.Contains(name, ".tmp-") {
+			if strings.Contains(name, ".tmp-") {
 				t.Errorf("WM-013a: orphan temp file %q found in .harmonik after atomic write", name)
 			}
 		}
@@ -194,16 +220,95 @@ func TestWM013a_LeaseLockCanonicalPathAndContent(t *testing.T) {
 
 		// After workspace_created (git worktree add complete) but BEFORE
 		// workspace_leased, the lease-lock MUST NOT exist.
-		leaseLockPath := leaseFixtureLeaseLockPath(worktreePath)
+		leaseLockPath := LeaseLockPath(worktreePath)
 		if _, err := os.Stat(leaseLockPath); !os.IsNotExist(err) {
 			t.Errorf("WM-013a: lease-lock present before leased state; want absent at workspace_created")
 		}
 
 		// Now simulate the workspace_leased sequence (steps a-d of WM-016):
 		// (d) write lease-lock → then workspace_leased emits.
-		leaseFixtureWriteLockAtomic(t, leaseLockPath, leaseFixtureMakeLockJSON(runID, os.Getpid(), time.Now(), 3600))
+		u := uuid.MustParse(runID)
+		lock := &core.LeaseLockFile{
+			RunID:     core.RunID(u),
+			PID:       os.Getpid(),
+			CreatedAt: time.Now().UTC(),
+			TTLSec:    3600,
+		}
+		if err := WriteLeaseLockAtomic(leaseLockPath, lock); err != nil {
+			t.Fatalf("WM-013a: WriteLeaseLockAtomic: %v", err)
+		}
 		if _, err := os.Stat(leaseLockPath); err != nil {
 			t.Errorf("WM-013a: lease-lock absent after leased state; want present: %v", err)
+		}
+	})
+
+	t.Run("read-roundtrip", func(t *testing.T) {
+		t.Parallel()
+
+		// WriteLeaseLockAtomic + ReadLeaseLock form an idempotent write/read pair:
+		// the parsed LeaseLockFile MUST carry the same field values as the written one.
+		// Truncate to second precision to match RFC 3339 round-trip fidelity.
+		repo, sha := tempRepo(t)
+		runID := "0196a1b2-c3d4-713a-8a1b-2c3d4e5f013e"
+		branch := "run/" + runID
+		worktreePath := filepath.Join(repo, ".harmonik", "worktrees", runID)
+
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "-b", branch, worktreePath, sha)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git worktree add: %v\n%s", err, out)
+		}
+
+		u := uuid.MustParse(runID)
+		now := time.Now().UTC().Truncate(time.Second)
+		written := &core.LeaseLockFile{
+			RunID:     core.RunID(u),
+			PID:       os.Getpid(),
+			CreatedAt: now,
+			TTLSec:    7200,
+		}
+
+		leaseLockPath := LeaseLockPath(worktreePath)
+		if err := WriteLeaseLockAtomic(leaseLockPath, written); err != nil {
+			t.Fatalf("WM-013a: WriteLeaseLockAtomic: %v", err)
+		}
+
+		read, err := ReadLeaseLock(leaseLockPath)
+		if err != nil {
+			t.Fatalf("WM-013a: ReadLeaseLock: %v", err)
+		}
+		if read == nil {
+			t.Fatal("WM-013a: ReadLeaseLock returned nil for existing lock")
+		}
+
+		if read.RunID.String() != written.RunID.String() {
+			t.Errorf("WM-013a: roundtrip run_id = %q, want %q", read.RunID, written.RunID)
+		}
+		if read.PID != written.PID {
+			t.Errorf("WM-013a: roundtrip pid = %d, want %d", read.PID, written.PID)
+		}
+		if !read.CreatedAt.Equal(written.CreatedAt) {
+			t.Errorf("WM-013a: roundtrip created_at = %v, want %v", read.CreatedAt, written.CreatedAt)
+		}
+		if read.TTLSec != written.TTLSec {
+			t.Errorf("WM-013a: roundtrip ttl_sec = %d, want %d", read.TTLSec, written.TTLSec)
+		}
+	})
+
+	t.Run("read-absent-returns-nil", func(t *testing.T) {
+		t.Parallel()
+
+		// ReadLeaseLock on a non-existent path MUST return (nil, nil) —
+		// caller interprets absence as "not leased" per WM-013a.
+		lock, err := ReadLeaseLock("/nonexistent/workspace/.harmonik/lease.lock")
+		if err != nil {
+			t.Errorf("WM-013a: ReadLeaseLock absent path: want nil error, got %v", err)
+		}
+		if lock != nil {
+			t.Errorf("WM-013a: ReadLeaseLock absent path: want nil lock, got %+v", lock)
 		}
 	})
 }

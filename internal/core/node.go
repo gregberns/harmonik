@@ -82,6 +82,7 @@ type Node struct {
 //   - Timeout, when non-nil, is positive (> 0)
 //   - IdempotencyClass is one of the three declared values
 //   - Axes is a valid AxisTags tuple
+//   - Axes.Idempotency matches IdempotencyClass (EM-011 cross-field constraint)
 //   - ModeTag is one of the two declared ModeTag values
 //   - SubWorkflowRef is non-nil iff Type == NodeTypeSubWorkflow
 func (n Node) Valid() bool {
@@ -108,6 +109,10 @@ func (n Node) Valid() bool {
 	if !n.Axes.Valid() {
 		return false
 	}
+	// EM-011: Axes.Idempotency MUST match IdempotencyClass.
+	if !idempotencyAxisMatchesClass(n.Axes.Idempotency, n.IdempotencyClass) {
+		return false
+	}
 	if !n.ModeTag.Valid() {
 		return false
 	}
@@ -119,4 +124,23 @@ func (n Node) Valid() bool {
 		return false
 	}
 	return true
+}
+
+// idempotencyAxisMatchesClass reports whether the AxisIdempotency value from
+// Axes.Idempotency is consistent with the node's IdempotencyClass per
+// execution-model.md §4.2.EM-011.
+//
+// The mapping is one-to-one for the three shared values; AxisIdempotencyNA has
+// no corresponding IdempotencyClass and always returns false.
+func idempotencyAxisMatchesClass(axis AxisIdempotency, class IdempotencyClass) bool {
+	switch class {
+	case IdempotencyClassIdempotent:
+		return axis == AxisIdempotencyIdempotent
+	case IdempotencyClassNonIdempotent:
+		return axis == AxisIdempotencyNonIdempotent
+	case IdempotencyClassRecoverableNonIdempotent:
+		return axis == AxisIdempotencyRecoverableNonIdempotent
+	default:
+		return false
+	}
 }

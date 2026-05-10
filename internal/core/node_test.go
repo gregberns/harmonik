@@ -220,19 +220,24 @@ func TestNodeValid_InvalidIdempotencyClass(t *testing.T) {
 func TestNodeValid_AllIdempotencyClasses(t *testing.T) {
 	t.Parallel()
 
-	classes := []IdempotencyClass{
-		IdempotencyClassIdempotent,
-		IdempotencyClassNonIdempotent,
-		IdempotencyClassRecoverableNonIdempotent,
+	cases := []struct {
+		class IdempotencyClass
+		axis  AxisIdempotency
+	}{
+		{IdempotencyClassIdempotent, AxisIdempotencyIdempotent},
+		{IdempotencyClassNonIdempotent, AxisIdempotencyNonIdempotent},
+		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyRecoverableNonIdempotent},
 	}
-	for _, c := range classes {
-		c := c
-		t.Run(string(c), func(t *testing.T) {
+	for _, tc := range cases {
+		tc := tc
+		t.Run(string(tc.class), func(t *testing.T) {
 			t.Parallel()
 			n := b3f73NodeValid(t)
-			n.IdempotencyClass = c
+			n.IdempotencyClass = tc.class
+			// EM-011: Axes.Idempotency MUST match IdempotencyClass.
+			n.Axes.Idempotency = tc.axis
 			if !n.Valid() {
-				t.Errorf("Valid() = false for idempotency_class=%q, want true", c)
+				t.Errorf("Valid() = false for idempotency_class=%q, want true", tc.class)
 			}
 		})
 	}
@@ -441,5 +446,97 @@ func TestNodeTimeoutNilJSON(t *testing.T) {
 	}
 	if rawTimeout != nil {
 		t.Errorf("Timeout JSON value = %v, want null for nil Timeout", rawTimeout)
+	}
+}
+
+// axisTagsNodeFixtureMatchedPairs returns the set of (IdempotencyClass, AxisIdempotency)
+// pairs that satisfy EM-011's cross-field constraint.
+// Helper prefix: axisTagsNodeFixture (bead hk-b3f.11).
+func axisTagsNodeFixtureMatchedPairs() []struct {
+	class IdempotencyClass
+	axis  AxisIdempotency
+} {
+	return []struct {
+		class IdempotencyClass
+		axis  AxisIdempotency
+	}{
+		{IdempotencyClassIdempotent, AxisIdempotencyIdempotent},
+		{IdempotencyClassNonIdempotent, AxisIdempotencyNonIdempotent},
+		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyRecoverableNonIdempotent},
+	}
+}
+
+// axisTagsNodeFixtureMismatchedPairs returns (IdempotencyClass, AxisIdempotency)
+// pairs that MUST fail EM-011's cross-field constraint.
+func axisTagsNodeFixtureMismatchedPairs() []struct {
+	class IdempotencyClass
+	axis  AxisIdempotency
+} {
+	return []struct {
+		class IdempotencyClass
+		axis  AxisIdempotency
+	}{
+		// idempotent class vs non-idempotent axis
+		{IdempotencyClassIdempotent, AxisIdempotencyNonIdempotent},
+		// idempotent class vs recoverable-non-idempotent axis
+		{IdempotencyClassIdempotent, AxisIdempotencyRecoverableNonIdempotent},
+		// non-idempotent class vs idempotent axis
+		{IdempotencyClassNonIdempotent, AxisIdempotencyIdempotent},
+		// non-idempotent class vs recoverable-non-idempotent axis
+		{IdempotencyClassNonIdempotent, AxisIdempotencyRecoverableNonIdempotent},
+		// recoverable-non-idempotent class vs idempotent axis
+		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyIdempotent},
+		// recoverable-non-idempotent class vs non-idempotent axis
+		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyNonIdempotent},
+		// any class vs n/a axis
+		{IdempotencyClassIdempotent, AxisIdempotencyNA},
+		{IdempotencyClassNonIdempotent, AxisIdempotencyNA},
+		{IdempotencyClassRecoverableNonIdempotent, AxisIdempotencyNA},
+	}
+}
+
+// TestNodeValid_EM011_AxisIdempotencyMatchesClass verifies that Valid() accepts
+// every matched (IdempotencyClass, AxisIdempotency) pair per EM-011.
+func TestNodeValid_EM011_AxisIdempotencyMatchesClass(t *testing.T) {
+	t.Parallel()
+
+	for _, pair := range axisTagsNodeFixtureMatchedPairs() {
+		pair := pair
+		t.Run(string(pair.class), func(t *testing.T) {
+			t.Parallel()
+			n := b3f73NodeValid(t)
+			n.IdempotencyClass = pair.class
+			n.Axes.Idempotency = pair.axis
+			if !n.Valid() {
+				t.Errorf("Valid() = false for matched (class=%q, axis=%q), want true (EM-011)",
+					pair.class, pair.axis)
+			}
+		})
+	}
+}
+
+// TestNodeValid_EM011_AxisIdempotencyMismatchRejected verifies that Valid() rejects
+// every mismatched (IdempotencyClass, AxisIdempotency) pair per EM-011.
+func TestNodeValid_EM011_AxisIdempotencyMismatchRejected(t *testing.T) {
+	t.Parallel()
+
+	for _, pair := range axisTagsNodeFixtureMismatchedPairs() {
+		pair := pair
+		name := string(pair.class) + "/" + string(pair.axis)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			n := b3f73NodeValid(t)
+			n.IdempotencyClass = pair.class
+			n.Axes = AxisTags{
+				LLMFreedom:    LLMFreedomNone,
+				IODeterminism: IODeterminismDeterministic,
+				ReplaySafety:  ReplaySafetySafe,
+				Idempotency:   pair.axis,
+			}
+			if n.Valid() {
+				t.Errorf("Valid() = true for mismatched (class=%q, axis=%q), want false (EM-011)",
+					pair.class, pair.axis)
+			}
+		})
 	}
 }

@@ -150,6 +150,89 @@ func ReadLeaseLock(target string) (*core.LeaseLockFile, error) {
 	return lock, nil
 }
 
+// ReleaseLeaseLock removes the lease-lock file at target, implementing the
+// idempotent release contract of WM-013b:
+//
+// "Release itself is idempotent: a second release call against an already-released
+// workspace MUST succeed without error."
+//
+// The caller MUST have written a workspace-local lease_released JSONL marker (via
+// WriteLeaseReleasedMarker) and fsynced it BEFORE calling ReleaseLeaseLock — the
+// marker-before-unlink ordering ensures that a crash between the two steps is
+// recoverable via idempotent replay at startup (WM-013b).
+func ReleaseLeaseLock(target string) error {
+	err := os.Remove(target)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("workspace: ReleaseLeaseLock: Remove %q: %w", target, err)
+	}
+	return nil
+}
+
+// WorkspaceLocalEventsPath returns the workspace-local events JSONL file path
+// for the given workspace_id per workspace-model.md §6.2:
+//
+//	${workspace_path}/.harmonik/events/workspace-<workspace_id>.jsonl
+//
+// The file is append-only; it carries lease_released markers (WM-013b) and
+// interrupt_state_changed markers (WM-038a). Consumed by reconciliation on each
+// sweep.
+func WorkspaceLocalEventsPath(workspacePath, workspaceID string) string {
+	return filepath.Join(workspacePath, ".harmonik", "events",
+		"workspace-"+workspaceID+".jsonl")
+}
+
+// WriteLeaseReleasedMarker appends a lease_released JSONL line to the
+// workspace-local events file and fsyncs it before returning.
+//
+// This MUST be called before ReleaseLeaseLock on all terminal paths (merged,
+// run_failed, post_escalation, verdict_driven) per WM-013b:
+//
+// "Across all terminal paths, the workspace-local lease_released JSONL marker
+// MUST be written before the lease-lock file is removed."
+//
+// Marker shape (workspace-model.md §4.3 WM-013b):
+//
+//	{"event":"lease_released","run_id":"<run_id>","workspace_id":"<ws_id>","reason":"<reason>","released_at":"<rfc3339>"}
+//
+// The file is created if it does not exist. All fields are required;
+// the function returns an error if any I/O step fails.
+func WriteLeaseReleasedMarker(workspacePath, runID, workspaceID, reason string) error {
+	eventsPath := WorkspaceLocalEventsPath(workspacePath, workspaceID)
+	eventsDir := filepath.Dir(eventsPath)
+
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: MkdirAll %q: %w", eventsDir, err)
+	}
+
+	line := fmt.Sprintf(
+		`{"event":"lease_released","run_id":%q,"workspace_id":%q,"reason":%q,"released_at":%q}`,
+		runID,
+		workspaceID,
+		reason,
+		time.Now().UTC().Format(time.RFC3339),
+	) + "\n"
+
+	//nolint:gosec // G304: path is constructed from workspace_path + known relative segments, not user input
+	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: OpenFile %q: %w", eventsPath, err)
+	}
+
+	if _, err := f.Write([]byte(line)); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Write: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Sync: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: Close: %w", err)
+	}
+	return nil
+}
+
 // marshalLeaseLock encodes lock to JSON per WM-013a:
 //
 //	{"run_id":"<uuid>","pid":<int>,"created_at":"<rfc3339>","ttl_sec":<int>}

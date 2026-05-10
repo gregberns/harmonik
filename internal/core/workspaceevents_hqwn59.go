@@ -34,10 +34,8 @@ import "github.com/google/uuid"
 //   - parent_commit  — git commit SHA of the parent commit at creation time
 type WorkspaceCreatedPayload struct {
 	// WorkspaceID is the stable UUID identifier for this workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// Path is the absolute filesystem path to the git worktree.
 	// Required (non-empty).
@@ -60,7 +58,7 @@ type WorkspaceCreatedPayload struct {
 //   - BranchName must be non-empty.
 //   - ParentCommit must be non-empty.
 func (p WorkspaceCreatedPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if p.Path == "" {
@@ -93,10 +91,8 @@ func (p WorkspaceCreatedPayload) Valid() bool {
 //   - leased_at    — RFC 3339 wall-clock timestamp at lease grant
 type WorkspaceLeasedPayload struct {
 	// WorkspaceID is the stable UUID identifier for this workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// RunID is the run that was granted the workspace lease.
 	// Required (must not be uuid.Nil).
@@ -114,7 +110,7 @@ type WorkspaceLeasedPayload struct {
 //   - RunID must not be uuid.Nil.
 //   - LeasedAt must be non-empty.
 func (p WorkspaceLeasedPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if uuid.UUID(p.RunID) == uuid.Nil {
@@ -177,10 +173,8 @@ func (s WorkspaceMergeStatus) Valid() bool {
 //   - changed_at        — RFC 3339 wall-clock timestamp at this phase transition (millisecond resolution)
 type WorkspaceMergeStatusPayload struct {
 	// WorkspaceID is the stable UUID identifier for this workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// RunID is the run whose task branch is being merged.
 	// Required (must not be uuid.Nil).
@@ -216,7 +210,7 @@ type WorkspaceMergeStatusPayload struct {
 //   - MergeCommitHash must be nil when Status=pending; non-nil and non-empty when Status=merged.
 //   - ChangedAt must be non-empty.
 func (p WorkspaceMergeStatusPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if uuid.UUID(p.RunID) == uuid.Nil {
@@ -266,10 +260,8 @@ func (p WorkspaceMergeStatusPayload) Valid() bool {
 //   - reason       — human-readable reason for the discard
 type WorkspaceDiscardedPayload struct {
 	// WorkspaceID is the stable UUID identifier for this workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// RunID is the run associated with the discarded workspace.
 	// Required (must not be uuid.Nil).
@@ -283,11 +275,11 @@ type WorkspaceDiscardedPayload struct {
 // Valid reports whether p is a well-formed WorkspaceDiscardedPayload.
 //
 // Rules per event-model.md §8.5.4:
-//   - WorkspaceID must not be uuid.Nil.
+//   - WorkspaceID must not be zero.
 //   - RunID must not be uuid.Nil.
 //   - Reason must be non-empty.
 func (p WorkspaceDiscardedPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if uuid.UUID(p.RunID) == uuid.Nil {
@@ -319,10 +311,8 @@ func (p WorkspaceDiscardedPayload) Valid() bool {
 //   - category     — reconciliation category (Cat 6) per reconciliation/spec.md §8
 type WorkspaceInterruptedPayload struct {
 	// WorkspaceID is the stable UUID identifier for the interrupted workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// RunID is the run associated with the interrupted workspace.
 	// Required (must not be uuid.Nil).
@@ -340,12 +330,12 @@ type WorkspaceInterruptedPayload struct {
 // Valid reports whether p is a well-formed WorkspaceInterruptedPayload.
 //
 // Rules per event-model.md §8.5.5:
-//   - WorkspaceID must not be uuid.Nil.
+//   - WorkspaceID must not be zero.
 //   - RunID must not be uuid.Nil.
 //   - DetectedAt must be non-empty.
 //   - Category must be a valid ReconciliationCategory constant.
 func (p WorkspaceInterruptedPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if uuid.UUID(p.RunID) == uuid.Nil {
@@ -379,10 +369,8 @@ func (p WorkspaceInterruptedPayload) Valid() bool {
 //   - escalated_at   — RFC 3339 wall-clock timestamp at escalation
 type MergeConflictEscalationPayload struct {
 	// WorkspaceID is the stable UUID identifier for this workspace.
-	// Required (must not be uuid.Nil).
-	//
-	// TODO(hk-hqwn.74): hoist to typed WorkspaceID alias when that type lands.
-	WorkspaceID uuid.UUID `json:"workspace_id"`
+	// Required (must not be zero). See workspaceid.go (hk-hqwn.74).
+	WorkspaceID WorkspaceID `json:"workspace_id"`
 
 	// RunID is the run whose merge produced the conflict.
 	// Required (must not be uuid.Nil).
@@ -400,12 +388,12 @@ type MergeConflictEscalationPayload struct {
 // Valid reports whether p is a well-formed MergeConflictEscalationPayload.
 //
 // Rules per event-model.md §8.5.6:
-//   - WorkspaceID must not be uuid.Nil.
+//   - WorkspaceID must not be zero.
 //   - RunID must not be uuid.Nil.
 //   - ConflictPaths must be non-nil and non-empty.
 //   - EscalatedAt must be non-empty.
 func (p MergeConflictEscalationPayload) Valid() bool {
-	if p.WorkspaceID == uuid.Nil {
+	if uuid.UUID(p.WorkspaceID) == uuid.Nil {
 		return false
 	}
 	if uuid.UUID(p.RunID) == uuid.Nil {

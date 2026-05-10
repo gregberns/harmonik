@@ -114,10 +114,8 @@ type BudgetAccrualPayload struct {
 	CostUnits float64 `json:"cost_units"`
 
 	// CostBasis is the cost model identifier (e.g., "input_tokens", "output_tokens").
-	// Required (non-empty).
-	//
-	// TODO(hk-hqwn.73): hoist to typed CostBasis alias when that type lands.
-	CostBasis string `json:"cost_basis"`
+	// Required (non-empty). See costbasis.go (hk-hqwn.73).
+	CostBasis CostBasis `json:"cost_basis"`
 }
 
 // Valid reports whether p is a well-formed BudgetAccrualPayload.
@@ -137,7 +135,7 @@ func (p BudgetAccrualPayload) Valid() bool {
 	if p.CostUnits < 0 {
 		return false
 	}
-	if p.CostBasis == "" {
+	if p.CostBasis == CostBasis("") {
 		return false
 	}
 	return true

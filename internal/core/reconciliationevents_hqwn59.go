@@ -611,10 +611,8 @@ func (p ReconciliationDispatchDeduplicatedPayload) Valid() bool {
 //   - panicked_at    — RFC 3339 wall-clock timestamp at panic
 type ReconciliationDetectorPanicPayload struct {
 	// DetectorClass identifies which reconciliation detector class panicked.
-	// Required (non-empty).
-	//
-	// TODO(hk-hqwn.75): hoist to typed DetectorClass alias when that type lands.
-	DetectorClass string `json:"detector_class"`
+	// Required (non-empty). See detectorclass.go (hk-hqwn.75).
+	DetectorClass DetectorClass `json:"detector_class"`
 
 	// ErrorClass is the typed error class of the panic.
 	// Required; must be a valid ErrorCategory constant per §8.6.12 RC-020b.
@@ -632,7 +630,7 @@ type ReconciliationDetectorPanicPayload struct {
 //   - ErrorClass must be a valid ErrorCategory constant.
 //   - PanickedAt must be non-empty.
 func (p ReconciliationDetectorPanicPayload) Valid() bool {
-	if p.DetectorClass == "" {
+	if p.DetectorClass == DetectorClass("") {
 		return false
 	}
 	if !p.ErrorClass.Valid() {

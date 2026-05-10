@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-10 main — v24, 88 commits, ~143 beads closed, Open 353→210, L-015 protocol fix landed -->
+<!-- PP-TRIAL:v2 2026-05-10 main — v24, 93 commits, ~197 beads closed, Open 353→156, L-015 protocol fix landed (with addendum) -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -76,6 +76,8 @@ FALLBACK — cherry-pick when ff-merge fails (validated again this session — s
 
 REBASE-SKIP for duplicate-bead commits (added v24 from L-015 mass merge). When a long-running OLD-protocol implementer's branch carries a commit for a bead that was ALREADY closed by a newer-protocol dispatch in the same session, `git rebase main` will hit add/add or content conflicts on the same file. Use `git rebase --skip` to drop the duplicate — the newer-protocol dispatch's version is canonical. Two duplicates auto-resolved cleanly this session (i3152's hk-hqwn.59.75/.59.28). Cross-package signature mismatches DO NOT surface as text conflicts (e.g. mup11's `internal/lifecycle/orphansweep.go` calling `workspace.SweepStaleLeaseLocks(..., nil)` after ml3rw changed the param type to `WorktreeRootConfig`); always run `go build ./...` after the last merge of a session and inline-fix.
 
+**WORKTREE TEARDOWN DOES NOT KILL THE AGENT (added v24 from L-015 addendum).** Calling `git worktree remove --force --force` on an active sub-agent's worktree does NOT terminate the agent process. The agent keeps running, can recreate the worktree (its bash sessions still hold its old CWD or `cd` back), and continues making bash calls — `br close` writes hit the SQLite ledger directly; `git commit` calls land on the recreated branch. Both sx5860 and mup11 kept running ~90 min past my merge-and-teardown this session, accumulating ~55 free-claim bead closures (no commits, just `br close`) and 5 fresh commits on a resurrected mup11 worktree. The agent platform has no kill signal; you must wait for the agent to return naturally OR finish the session and accept that its late writes land in the next session's reconciliation. **At session end, before writing HANDOFF, check `br stats` Open count and `git worktree list` ONE MORE TIME** — if Open dropped further or worktrees reappeared, an OLD-protocol agent is still active and you need to merge its tail before the handoff is accurate.
+
 `br close` failures from `blocks` deps → flip to `related`:
     br dep remove <id> <other> ; br dep add <id> <other> --type related ; br close <id> -r "..."
 
@@ -89,7 +91,9 @@ CONTEXT BUDGET (orchestrator). ~700 k effective on this 1M-context model. At ~50
 
 # State
 
-Main at `ac4b86b`, working tree clean, NOT pushed. `go test ./internal/{core,specaudit,lifecycle,workspace,handlercontract,scenario,operatornfr}/...` green. No active worktrees, no in-flight implementers. Open=210, Closed=760, Ready=23.
+Main at `d727453`, working tree clean, NOT pushed. Full `go test ./internal/...` green (verified post-final-merge). No active worktrees, no in-flight implementers. **Open=156, Closed=815, Ready=11.**
+
+(Initial handoff at `220a16e` recorded Open=210 / Ready=23 — that was incomplete: sx5860 and mup11 kept running for ~90 min after I had supposedly merged-and-torn-down their worktrees, accumulating ~55 more bead closures and 5 fresh commits on a resurrected mup11 worktree. Final reconciliation merge committed those — see directives §"WORKTREE TEARDOWN DOES NOT KILL THE AGENT".)
 
 # What changed this session
 
@@ -103,13 +107,13 @@ Main at `ac4b86b`, working tree clean, NOT pushed. `go test ./internal/{core,spe
 
 # Lingering / next session
 
-**Verify ready=23 is genuine, then dispatch.** Open(210) ≫ Ready(23) is the L-011 smell signature; run the blocker-distribution recipe in directives §"TRUST `br ready` BUT VERIFY" before declaring drained. If genuine, top non-deferred candidates from session-end ready: `hk-8i31.*` lane (16/30/42/56/57 — handler-contract reqs, ~5 beads), `hk-sx9r.*` lane (29/31/40+ — operator-nfr post-mvh sensors), and any newly-unblocked `hk-8mwo.*` / `hk-8mup.*` from this session's massive workspace+lifecycle landings.
+**Verify ready=11 is genuine, then dispatch — but the ceiling may already be the cognition gate.** Open(156) is still ≫ Ready(11), so run the blocker-distribution recipe (directives §"TRUST `br ready` BUT VERIFY"). However, the runaway sx5860 cascade ended its session reporting that "all 11 ready items are epics" and that the remaining 156 are blocked behind three chains: (a) `hk-zs0.*` DEFERRED architecture beads (.38/.39/.41/.52 — deferred until 2027-01-01), (b) `hk-a8bg.*` Control Points subtree (Gates/Hooks/Guards/Budgets/Roles — needs zs0 to undefer), (c) `hk-sx9r.22/23/24` upgrade contract (needs hk-a8bg.39 → CP). If that's correct, this session's bootstrap-corpus drain is complete and the next move is the `harmonik-foundation` kerf work to unblock the zs0 cognition decisions. Verify the chain claim before committing to that pivot.
 
 **Open follow-up beads** filed this session: `hk-tyjfi` (typed `SkillVersion` alias for `skills_provisioned` `version?` field — already closed by mup11 in the merge wave), and an inline `TODO(hk-placeholder)` on `RateLimitSource` in `agentevents_hqwn59.go` that hqwn2628 left without a real follow-up bead — file one at session start: `br create -p high --labels "kind:schema,spec:event-model" -t "RateLimitSource typed enum or vocabulary"`.
 
 **Watch for**: new L-015-style cross-spec free-claims should NOT happen anymore, but if a returning implementer has commits for beads not in its brief, that's a regression — file an L-016 entry. The `mup11` orphan-sweep production code (`internal/lifecycle/orphansweep.go`) was authored against the pre-ml3rw API surface and only got a one-line patch to compile; a brief diff-review of that file vs the latest workspace package contracts is worth doing in a fresh dispatch.
 
-**Push.** Main is 88 commits ahead of `origin/main`. Run `git push origin main` at session start (or end-of-this-session if user wants).
+**Push.** Main is 93 commits ahead of `origin/main` (`3bcc684..d727453`). Run `git push origin main` at session start (or end-of-this-session if user wants).
 
 # Quick references
 

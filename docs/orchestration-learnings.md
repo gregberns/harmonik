@@ -33,6 +33,7 @@ This is **dual-purpose**:
 - [L-013 — Bead-claim race when sibling implementers share a vague scope](#l-013) — `process-fix-applied` · `product-input`
 - [L-014 — Sensor-to-sensor `blocks` edges are a structural smell](#l-014) — `open` · `product-input`
 - [L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers](#l-015) — `process-fix-applied` · `product-input`
+- [L-016 — `git worktree remove` does not kill the sub-agent process](#l-016) — `process-improvement-pending` · `product-input`
 
 ---
 
@@ -216,3 +217,17 @@ Kept terse on purpose — three-paragraph entries, not essays.
 **Why this is safe now.** When the continue-claim rule landed (L-003 era), the orchestrator was wave-batching dispatches with multi-minute idle gaps; implementers free-claiming filled those gaps. With STREAM-NOT-WAVES (L-001) now enforced, the orchestrator refills slots on every implementer return — fast enough that implementer-side free-claim is structurally redundant and only adds collision surface.
 
 **Product input.** The daemon's split-of-concerns should be unambiguous: orchestrator (main thread) owns the dispatch queue; implementers receive a scoped task and return. Atomic claim-on-dispatch at the daemon level eliminates the question entirely. Until then, "scope is what your brief says, not what `br ready` says" is the discipline.
+
+---
+
+### L-016 — `git worktree remove` does not kill the sub-agent process <a name="l-016"></a>
+
+**Observed 2026-05-10 (session v23→v24, end of session).** After all three OLD-protocol implementers (i3152, mup11, sx5860) returned, I ran the standard merge dance: `git rebase main` → `git merge --ff-only` → `git worktree remove --force --force` → `git branch -D`. Wrote and committed the HANDOFF (`220a16e`). 90 minutes later — well after I'd considered the session complete on my side — I received task-completion notifications from BOTH sx5860 AND mup11 reporting they'd done substantial additional work. `br stats` confirmed: Open had dropped from 210 to 156 (54 more closures via direct `br close` calls), and `git worktree list` showed `agent-mup11` had RESURRECTED with five new commits ahead of main. The agents kept running inside their bash sessions long after the worktree directory was removed; their CWD-stale bash calls succeeded because (a) `br close` writes to a project-level SQLite file shared across worktrees, and (b) `git checkout` calls re-materialised the worktree.
+
+**Why this matters more than L-013/L-015.** L-013 was scope-overlap; L-015 was a rule-drift in the implementer protocol. L-016 is a **platform-level escape hatch**: there's no kill signal an orchestrator can send to a runaway sub-agent. The agent runtime does not honour worktree-removal as a session boundary. Even if you write a perfect HANDOFF and consider the session closed, the sub-agent processes can continue accumulating writes against the project state for hours.
+
+**Mitigation applied.** Final merge of the resurrected mup11 worktree landed 5 fresh commits cleanly (`d727453..36fd4fa`). HANDOFF updated to reflect Open=156 / Ready=11 / Closed=815 — the true post-everything state. Added a directive paragraph to HANDOFF: at session end, **before writing the handoff**, re-check `br stats` and `git worktree list`; if Open drops further or worktrees reappear, an OLD-protocol agent is still active and you must merge its tail.
+
+**The only durable fix is the L-015 rule itself.** Once implementers stop free-claiming, this risk evaporates — a single-bead-and-exit implementer does its assigned work and reports back, and even if its bash sessions outlive the worktree, it has nothing to claim. The sx5860/mup11 cascades happened because they were dispatched *before* the L-015 fix landed mid-session; future sessions will not have OLD-protocol agents in flight.
+
+**Product input.** The harmonik daemon's dispatch lifecycle MUST encode terminal sub-agent boundaries: signal-on-merge, dispatch-id-scoped writes, and a session-level fence so an orphaned agent's late writes are rejected rather than silently absorbed. The bootstrap process can't easily kill agent processes; the daemon (which owns the sub-agent runtime) can.

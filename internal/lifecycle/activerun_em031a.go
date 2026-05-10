@@ -305,7 +305,12 @@ func parseGitBranchTipLine(line string) (BranchTip, bool) {
 // is read-only); enforcement of the caller's pre-dispatch behaviour is a contract
 // obligation on the caller, not a runtime check performed here.
 //
-// Spec ref: execution-model.md §4.7 EM-031a.
+// JSONL is explicitly NOT an input to this function. State reconstruction MUST
+// NOT walk the JSONL event log per EV-022 (event-model.md §4.5) and EM-031
+// (execution-model.md §4.7). The function signature enforces this structurally:
+// there is no JSONL reader parameter.
+//
+// Spec ref: execution-model.md §4.7 EM-031a; event-model.md §4.5 EV-022.
 func DiscoverActiveRuns(ctx context.Context, querier BeadsQuerier, reader BranchTipReader) (ActiveRunSet, error) {
 	// Step 1: query Beads for non-terminal beads. Beads-unreachable halts discovery.
 	beadEntries, terminalBeadIDs, err := queryNonTerminalBeads(ctx, querier)

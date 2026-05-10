@@ -175,3 +175,29 @@ func IsTerminal(s core.WorkspaceState) bool {
 func IsInFlight(s core.WorkspaceState) bool {
 	return s.Valid() && !IsTerminal(s)
 }
+
+// WorkspaceIDFromRunID derives the stable workspace_id from a run_id per
+// workspace-model.md §4.1 WM-004:
+//
+//	workspace_id = "ws-" + run_id
+//
+// The derivation is deterministic: a daemon restart can reconstruct the
+// workspace_id from the run_id alone without consulting a separate store.
+// State reconstruction uses git + Beads per [execution-model.md §4.7];
+// the workspace_id MUST be derivable from those sources.
+//
+// workspace_id MUST be treated as opaque by event consumers — downstream
+// subsystems MUST NOT parse the "ws-" prefix or the embedded run_id from
+// the returned string; the correlation field for joins is run_id, which is
+// carried explicitly in every event payload per [event-model.md §8.5].
+//
+// WorkspaceIDFromRunID does NOT validate runID — validation is the caller's
+// responsibility at run-create time. UUIDv7, the canonical run_id scheme,
+// satisfies the [A-Za-z0-9-]+ constraint of WM-002 by construction.
+//
+// Spec refs:
+//   - workspace-model.md §4.1 WM-004 — workspace_id derivation rule.
+//   - workspace-model.md §4.1 WM-002 — run_id filesystem-safety regex.
+func WorkspaceIDFromRunID(runID string) string {
+	return "ws-" + runID
+}

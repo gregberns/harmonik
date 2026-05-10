@@ -1,5 +1,7 @@
 package scenario
 
+import "github.com/gregberns/harmonik/internal/core"
+
 // EventExpectationKind is the assertion-direction discriminator for an
 // EventExpectation — whether the declared event type MUST appear (event_present)
 // or MUST NOT appear (event_absent) in the captured event log.
@@ -37,12 +39,11 @@ type EventExpectation struct {
 	// Required (must be one of the declared EventExpectationKind constants).
 	Kind EventExpectationKind `json:"kind" yaml:"kind"`
 
-	// Type is the event type per specs/event-model.md §8 taxonomy. This field
-	// is currently `string` pending the typed `EventType` enum (TODO: hk-szv5
-	// — see follow-up bead). When that lands, this field should hoist to
-	// `core.EventType` (non-breaking: string-constant assignment is assignable
-	// to typed-string).
-	Type string `json:"type" yaml:"type"`
+	// Type is the event type per specs/event-model.md §8 taxonomy.
+	// Uses core.EventType (typed string; enum values declared in hk-hqwn.59).
+	// Non-empty is the only structural constraint enforced here; registry-level
+	// validation enforces that the value is a declared §8 type.
+	Type core.EventType `json:"type" yaml:"type"`
 
 	// PayloadMatch holds optional dotted-path-keyed field-equals predicates
 	// applied against the actual event payload per SH-021 shallow-merge
@@ -57,12 +58,13 @@ type EventExpectation struct {
 
 // Valid reports whether the EventExpectation is structurally well-formed:
 //   - Kind is one of the declared EventExpectationKind constants.
-//   - Type is non-empty.
+//   - Type is non-empty (core.EventType.Valid()).
 //   - Description is non-empty.
 //   - PayloadMatch may be nil or non-nil; both are valid per the Map|None spec.
 //
-// Dotted-path key validation within PayloadMatch is an evaluator-side
-// responsibility (SH-021) and is NOT checked here.
+// Registry-level type validation (unknown §8 type) is an evaluator-side
+// responsibility. Dotted-path key validation within PayloadMatch is an
+// evaluator-side responsibility (SH-021) and is NOT checked here.
 func (e EventExpectation) Valid() bool {
 	switch e.Kind {
 	case EventExpectationKindPresent, EventExpectationKindAbsent:
@@ -70,5 +72,5 @@ func (e EventExpectation) Valid() bool {
 	default:
 		return false
 	}
-	return e.Type != "" && e.Description != ""
+	return e.Type.Valid() && e.Description != ""
 }

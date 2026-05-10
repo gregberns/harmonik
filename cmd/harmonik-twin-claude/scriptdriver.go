@@ -167,6 +167,15 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 		return nil, fmt.Errorf("loadScriptFile: %q: unknown heartbeat_mode %q (want %q or %q)",
 			path, sf.HeartbeatMode, heartbeatModeWallClock, heartbeatModeScripted)
 	}
+	// Validate each message: type is required and MUST be non-empty per HC-036a.
+	// The watcher validates message types on receipt; the driver rejects scripts
+	// with missing or empty type fields at load time so failures are fast and
+	// clear (spec: §4.8.HC-036a; test obligation: §10.2 HC-035..HC-038).
+	for i, msg := range sf.Messages {
+		if msg.Type == "" {
+			return nil, fmt.Errorf("loadScriptFile: %q: message %d has missing or empty type field (HC-036a)", path, i)
+		}
+	}
 	return &sf, nil
 }
 

@@ -139,6 +139,84 @@ messages:
 	}
 }
 
+// TestLoadScriptFileMissingMessageType verifies that loadScriptFile returns an
+// error when any ScriptMessage has a missing (absent) type field, satisfying
+// the §10.2 HC-036a obligation "rejection of missing or empty type in any
+// ScriptMessage".
+func TestLoadScriptFileMissingMessageType(t *testing.T) {
+	// A message with no type key at all (YAML omission → empty string in Go).
+	content := `
+messages:
+  - payload:
+      session_id: sess-001
+`
+	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+
+	_, err := loadScriptFile(p)
+	if err == nil {
+		t.Fatal("loadScriptFile: expected error for message with missing type field, got nil")
+	}
+}
+
+// TestLoadScriptFileEmptyMessageType verifies that loadScriptFile returns an
+// error when any ScriptMessage has an explicitly empty type field, satisfying
+// the §10.2 HC-036a obligation "rejection of missing or empty type in any
+// ScriptMessage".
+func TestLoadScriptFileEmptyMessageType(t *testing.T) {
+	content := `
+messages:
+  - type: ""
+    payload:
+      session_id: sess-001
+`
+	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+
+	_, err := loadScriptFile(p)
+	if err == nil {
+		t.Fatal("loadScriptFile: expected error for message with empty type field, got nil")
+	}
+}
+
+// TestLoadScriptFileMultipleMessagesSecondEmpty verifies that the empty-type
+// check fires on a non-first message (index > 0), not only on message 0.
+func TestLoadScriptFileMultipleMessagesSecondEmpty(t *testing.T) {
+	content := `
+messages:
+  - type: agent_started
+  - type: ""
+`
+	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+
+	_, err := loadScriptFile(p)
+	if err == nil {
+		t.Fatal("loadScriptFile: expected error for second message with empty type, got nil")
+	}
+}
+
+// TestLoadScriptFileValidMessages verifies that a script where all messages
+// have non-empty type fields loads without error (positive control for the
+// empty-type validation path).
+func TestLoadScriptFileValidMessages(t *testing.T) {
+	content := `
+messages:
+  - type: agent_started
+  - type: agent_heartbeat
+    payload:
+      session_id: sess-1
+      phase: reasoning
+  - type: outcome_emitted
+`
+	p := twinScriptFixtureWriteFile(t, "script.yaml", content)
+
+	sf, err := loadScriptFile(p)
+	if err != nil {
+		t.Fatalf("loadScriptFile: unexpected error for valid messages: %v", err)
+	}
+	if len(sf.Messages) != 3 {
+		t.Errorf("messages length = %d, want 3", len(sf.Messages))
+	}
+}
+
 // TestLoadScriptFileUnknownMode verifies that an unknown heartbeat_mode value
 // returns an error.
 func TestLoadScriptFileUnknownMode(t *testing.T) {

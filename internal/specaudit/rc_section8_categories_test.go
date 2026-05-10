@@ -11,6 +11,7 @@ package specaudit_test
 //   hk-63oh.69  Cat 4 — Recoverable known state      (§8.7)
 //   hk-63oh.70  Cat 5 — Clean restart                (§8.8)
 //   hk-63oh.71  Cat 6a — Integrity violation, LLM-triageable (§8.11)
+//   hk-63oh.72  Cat 6b — Integrity violation, mechanically unrecoverable (§8.11a)
 //
 // Spec ref: specs/reconciliation/spec.md §8.
 //
@@ -169,8 +170,8 @@ type rcCatSensorFixturePhrase struct {
 //
 //	specs/reconciliation/spec.md §8.2 – §8.11
 //
-// Ordered by section number.  §8.4a (Cat 3a) and §8.11a (Cat 6b) are NOT in
-// this batch; they are covered by their own beads.
+// Ordered by section number.  §8.4a (Cat 3a) is NOT in this batch; it is
+// covered by its own bead.
 var rcCatSensorFixtureCategorySections = []rcCatSensorFixtureCategorySection{
 	{
 		// hk-63oh.63  Cat 1 — Idempotent rerun (§8.2)
@@ -604,9 +605,65 @@ var rcCatSensorFixtureCategorySections = []rcCatSensorFixtureCategorySection{
 			},
 		},
 	},
+	{
+		// hk-63oh.72  Cat 6b — Integrity violation, mechanically unrecoverable (§8.11a)
+		sectionHeadingPattern: regexp.MustCompile(`^### 8\.11a Cat 6b`),
+		sectionLabel:          "§8.11a Cat 6b (Integrity violation, mechanically unrecoverable)",
+		beadRef:               "hk-63oh.72",
+		mandatoryPhrases: []rcCatSensorFixturePhrase{
+			{
+				needle: "Detection rule",
+				detail: "§8.11a must carry a 'Detection rule' bullet naming how Cat 6b is detected",
+			},
+			{
+				needle: "JSONL is corrupt",
+				detail: "§8.11a detection rule must name JSONL corruption as a Cat 6b detector",
+			},
+			{
+				needle: "git fsck",
+				detail: "§8.11a detection rule must name 'git fsck' failure as a Cat 6b detector",
+			},
+			{
+				needle: "object database",
+				detail: "§8.11a detection rule must reference the git object database missing-commit detector",
+			},
+			{
+				needle: "Default response",
+				detail: "§8.11a must carry a 'Default response' bullet",
+			},
+			{
+				needle: "Auto-escalate",
+				detail: "§8.11a default response must state auto-escalation to operator without investigator spawn",
+			},
+			{
+				needle: "operator_escalation_required",
+				detail: "§8.11a default response must name the 'operator_escalation_required' event",
+			},
+			{
+				needle: "Escalation path",
+				detail: "§8.11a must carry an 'Escalation path' bullet",
+			},
+			{
+				needle: "Emitted event",
+				detail: "§8.11a must carry an 'Emitted event' bullet",
+			},
+			{
+				needle: "reconciliation_category_assigned",
+				detail: "§8.11a must name the 'reconciliation_category_assigned' event",
+			},
+			{
+				needle: "Investigator?",
+				detail: "§8.11a must carry an 'Investigator?' indicator",
+			},
+			{
+				needle: "Auto-resolver?",
+				detail: "§8.11a must carry an 'Auto-resolver?' indicator",
+			},
+		},
+	},
 }
 
-// TestRCSection8CategoriesSpec is the binding test for reconciliation §8.2–§8.11
+// TestRCSection8CategoriesSpec is the binding test for reconciliation §8.2–§8.11a
 // category sections.
 //
 // For each category section it verifies:
@@ -619,7 +676,7 @@ var rcCatSensorFixtureCategorySections = []rcCatSensorFixtureCategorySection{
 //
 // Bead refs: hk-63oh.63, hk-63oh.64, hk-63oh.65, hk-63oh.67, hk-63oh.68,
 //
-//	hk-63oh.69, hk-63oh.70, hk-63oh.71.
+//	hk-63oh.69, hk-63oh.70, hk-63oh.71, hk-63oh.72.
 func TestRCSection8CategoriesSpec(t *testing.T) {
 	t.Parallel()
 

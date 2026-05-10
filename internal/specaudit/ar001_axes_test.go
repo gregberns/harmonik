@@ -393,23 +393,6 @@ type ar001FixtureExpectedViolation struct {
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
 var ar001FixtureExpectedViolations = map[string]ar001FixtureExpectedViolation{
-	// BI-025a: `idempotency=safe` is invalid; "safe" is a replay-safety value.
-	// Likely a copy-paste error where the replay-safety value was duplicated
-	// into the idempotency slot.  Spec fix tracked in hk-zs0.59.
-	"specs/beads-integration.md:335:BI-025a:invalid-value:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason:   "BI-025a Axes: has `idempotency=safe`; `safe` is not a valid idempotency value (valid: idempotent, non-idempotent, recoverable-non-idempotent, n/a); requires spec correction",
-	},
-	// BI-025b: same defect pattern as BI-025a.
-	"specs/beads-integration.md:342:BI-025b:invalid-value:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason:   "BI-025b Axes: has `idempotency=safe`; same defect as BI-025a; requires spec correction",
-	},
-	// BI-025c: same defect pattern as BI-025a.
-	"specs/beads-integration.md:351:BI-025c:invalid-value:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason:   "BI-025c Axes: has `idempotency=safe`; same defect as BI-025a; requires spec correction",
-	},
 	// RC-015: `llm-freedom=delegated` is not a valid llm-freedom value (valid: none, bounded, unbounded).
 	// RC-015 is also covered by the AR-005 skip-list (hk-zs0.58) for a Tags: dual-tag violation.
 	// The Axes: defects are distinct from the Tags: defect and tracked separately.

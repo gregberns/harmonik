@@ -481,25 +481,6 @@ type zs04FixtureExpectedViolationEntry struct {
 // AR-002 catches deviation-completeness specifically).  Keeping the skip-lists
 // in sync ensures both tests stay current with the spec corpus.
 var zs04FixtureExpectedViolations = map[string]zs04FixtureExpectedViolationEntry{
-	// BI-025a/b/c: `idempotency=safe` is invalid; "safe" is a replay-safety value.
-	// These deviation tuples use a replay-safety value in the idempotency slot —
-	// likely a copy-paste error.  Spec fix tracked in hk-zs0.59.
-	"specs/beads-integration.md:335:BI-025a:deviation-invalid-axis:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason: "BI-025a Axes: has `idempotency=safe`; `safe` is not a valid idempotency value " +
-			"(valid: idempotent, non-idempotent, recoverable-non-idempotent, n/a); " +
-			"non-baseline deviation tuple with invalid axis value — spec fix required",
-	},
-	"specs/beads-integration.md:342:BI-025b:deviation-invalid-axis:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason: "BI-025b Axes: has `idempotency=safe`; same defect as BI-025a; " +
-			"non-baseline deviation tuple with invalid axis value — spec fix required",
-	},
-	"specs/beads-integration.md:351:BI-025c:deviation-invalid-axis:idempotency": {
-		pinnedBy: "hk-zs0.59",
-		reason: "BI-025c Axes: has `idempotency=safe`; same defect as BI-025a; " +
-			"non-baseline deviation tuple with invalid axis value — spec fix required",
-	},
 	// RC-015: Axes: has `llm-freedom=delegated` (invalid value) and
 	// `io-determinism=non-deterministic` (hyphenated form instead of
 	// `nondeterministic`).  Both appear in a non-baseline deviation tuple.

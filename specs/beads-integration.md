@@ -332,14 +332,14 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 The adapter MUST classify every `br` invocation's exit code into the harmonik-internal `BrError` enum: `{BrOK=0, BrNotFound, BrConflict, BrDbLocked, BrSchemaMismatch, BrUnavailable, BrOther}`. The mapping rule is declared in §6.1a. An unrecognized exit code MUST produce `BrOther` AND MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` (the `br` exit code cannot be authoritatively classified) so reconciliation can observe adapter-vs-Beads drift via the inconclusive-evidence path of EV-023a.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=safe
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### BI-025b — JSON output mode mandatory
 
 The adapter MUST invoke every `br` command with `--format json` (or whatever flag the pinned Beads version exposes for structured output). The adapter MUST NOT parse `br` text output; commands lacking a JSON output mode MUST be fenced off (the adapter does not call them) until Beads adds JSON support. Parse failures of structured output MUST classify as `BrSchemaMismatch`.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=safe
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### BI-025c — `br` subprocess timeout discipline
 
@@ -348,7 +348,7 @@ Every adapter invocation of `br` MUST be bounded by a subprocess wall-clock time
 On timeout expiry, the adapter MUST terminate the `br` subprocess via the standard SIGTERM-then-SIGKILL discipline of [handler-contract.md §4.3 HC-018]: send SIGTERM, wait up to 5 seconds for the subprocess to exit, send SIGKILL if still running, then `cmd.Wait()` to reap. The watcher goroutine per [process-lifecycle.md §4.5 PL-014]'s `cmd.Wait()` reap discipline applies. A SIGTERM-then-SIGKILL'd subprocess MUST classify as `BrUnavailable` (NOT `BrOther`); the adapter's intent log retains the entry for crash-recovery per BI-031.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=safe
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### BI-025d — stderr capture
 

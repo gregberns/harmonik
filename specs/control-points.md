@@ -628,6 +628,8 @@ RECORD DelegationPath:
 
 #### 6.1.6 Verdict records and side-effect descriptor
 
+Tags: mechanism
+
 ```
 RECORD GateVerdictRecord:
     gate_name            : String                -- ControlPoint name
@@ -656,11 +658,16 @@ RECORD SideEffect:
     kind                 : SideEffectKind        -- {emit-event, state-mutation, external-action}
     target               : String                -- event name | state key | effector id
     payload              : Map<String, Any>      -- opaque to this spec; interpreted by the S05 dispatcher per §4.3.CP-016
-    idempotency_class    : IdempotencyClass      -- {idempotent, non-idempotent} per §4.3.CP-016
+    idempotency_class    : IdempotencyClass      -- per [execution-model.md §6.1]; CP-016 delivery rules apply to the {idempotent, non-idempotent} subset
 
-ENUM IdempotencyClass:
-    idempotent                                   -- S05 MAY deliver duplicates; handlers accept retry safely
-    non-idempotent                               -- S05 MUST bound delivery to at-most-once via persisted receipt
+-- IdempotencyClass is declared by [execution-model.md §6.1] with three values:
+--   idempotent, non-idempotent, recoverable-non-idempotent.
+-- CP-016 delivery semantics apply to two of those values at the SideEffect
+-- dispatch layer: idempotent (S05 MAY deliver duplicates; handlers retry-safe)
+-- and non-idempotent (S05 MUST bound to at-most-once via persisted receipt).
+-- recoverable-non-idempotent is a node-level concept; SideEffect descriptors
+-- carrying that value are treated as non-idempotent by the S05 dispatcher.
+-- This is a filter, not a redeclaration; IdempotencyClass is owned by EM §6.1.
 
 ENUM GateAction:
     allow

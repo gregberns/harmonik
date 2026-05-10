@@ -20,11 +20,13 @@ package core
 //
 // # IdempotencyClass note
 //
-// control-points.md §6.1.6 names two IdempotencyClass values (idempotent,
-// non-idempotent). The Go type tracks three values per execution-model.md §6.1
-// (see bead hk-8zeiw for the spec-fix work). Valid() accepts all three values
-// from the existing type without restriction; the CP-016 two-value subset is
-// enforced at the S05 dispatch layer, not here.
+// IdempotencyClass carries three values per execution-model.md §6.1 (canonical
+// owner): idempotent, non-idempotent, recoverable-non-idempotent. CP-016
+// delivery rules apply to the {idempotent, non-idempotent} subset; descriptors
+// carrying recoverable-non-idempotent are treated as non-idempotent by the S05
+// dispatcher. Valid() accepts all three values; the CP-016 subset is enforced
+// at the S05 dispatch layer, not here. See control-points.md §6.1.6 for the
+// clarifying note on the filter-vs-redeclaration distinction.
 type SideEffect struct {
 	// Kind discriminates how the S05 dispatcher interprets Target.
 	// Must be one of the three declared SideEffectKind constants.

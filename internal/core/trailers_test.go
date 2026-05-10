@@ -227,15 +227,11 @@ func TestVerdictExecuted_EnumValues(t *testing.T) {
 	}
 }
 
-// TestVerdictExecuted_NonTrueValueFailsEnum documents that a value other than "true"
-// is malformed per RC-023. The registry encodes this as a 1-value enum; enum
-// validation is the responsibility of the trailer-lint layer (no generic
-// ValidateTrailerValue helper exists in this package at MVH). This test asserts the
-// registry shape that makes future lint enforcement possible.
+// TestVerdictExecuted_NonTrueValueFailsEnum verifies that a value other than "true"
+// is malformed per RC-023. The registry encodes this as a 1-value enum; ValidateTrailerValue
+// enforces it at runtime.
 //
-// Gap: a generic enum-validation helper (e.g. ValidateTrailerValue(spec, value) bool)
-// does not yet exist in internal/core. When added, this test should be extended to
-// call it with value="false" and assert it returns an error.
+// Spec ref: schemas.md §6.4; RC-023.
 func TestVerdictExecuted_NonTrueValueFailsEnum(t *testing.T) {
 	t.Parallel()
 
@@ -244,8 +240,14 @@ func TestVerdictExecuted_NonTrueValueFailsEnum(t *testing.T) {
 	if len(spec.EnumValues) != 1 || spec.EnumValues[0] != "true" {
 		t.Errorf("expected EnumValues=[\"true\"], got %v; registry shape is the enforcement hook for RC-023", spec.EnumValues)
 	}
-	// Note: no ValidateTrailerValue helper exists yet; lint enforcement of the
-	// 1-value enum is deferred to the trailer-lint layer that reads EnumValues.
+	// ValidateTrailerValue now exists; verify "false" is rejected.
+	if err := ValidateTrailerValue(spec, "false"); err == nil {
+		t.Error("ValidateTrailerValue(Harmonik-Verdict-Executed, \"false\") = nil, want error (RC-023: only \"true\" is valid)")
+	}
+	// And "true" is accepted.
+	if err := ValidateTrailerValue(spec, "true"); err != nil {
+		t.Errorf("ValidateTrailerValue(Harmonik-Verdict-Executed, \"true\") = %v, want nil", err)
+	}
 }
 
 // TestRequiredRows verifies that the four unconditionally required trailers carry
@@ -337,5 +339,238 @@ func TestAllEntriesHaveNonEmptyDescription(t *testing.T) {
 		if spec.Description == "" {
 			t.Errorf("entry %q has empty Description", spec.Key)
 		}
+	}
+}
+
+// ---- ValidateTrailerValue tests (hk-63oh.81) ----
+
+// validateTrailerValueFixtureSpec returns a TrailerSpec for testing purposes.
+func validateTrailerValueFixtureSpec(typ TrailerValueType, enumValues []string) TrailerSpec {
+	return TrailerSpec{
+		Key:        "Test-Trailer",
+		Type:       typ,
+		EnumValues: enumValues,
+	}
+}
+
+// TestValidateTrailerValue_UUID_Valid verifies that a well-formed UUIDv7 passes
+// validation for TrailerTypeUUID.
+//
+// Spec ref: execution-model.md §4.4 EM-013 (UUIDv7 join-key invariant).
+func TestValidateTrailerValue_UUID_Valid(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeUUID, nil)
+	// UUIDv7: version nibble = 7 at position 14 of the hex string.
+	uuidv7 := "018f1e2a-0000-7000-8000-000000000001"
+	if err := ValidateTrailerValue(spec, uuidv7); err != nil {
+		t.Errorf("ValidateTrailerValue(UUID, %q) = %v, want nil", uuidv7, err)
+	}
+}
+
+// TestValidateTrailerValue_UUID_RejectsNonUUID verifies that a non-UUID string
+// fails TrailerTypeUUID validation.
+func TestValidateTrailerValue_UUID_RejectsNonUUID(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeUUID, nil)
+	if err := ValidateTrailerValue(spec, "not-a-uuid"); err == nil {
+		t.Error("ValidateTrailerValue(UUID, \"not-a-uuid\") = nil, want error")
+	}
+}
+
+// TestValidateTrailerValue_UUID_RejectsUUIDv4 verifies that a valid UUIDv4
+// fails TrailerTypeUUID validation because EM-013 requires UUIDv7.
+func TestValidateTrailerValue_UUID_RejectsUUIDv4(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeUUID, nil)
+	// UUIDv4: version nibble = 4.
+	uuidv4 := "550e8400-e29b-41d4-a716-446655440000"
+	if err := ValidateTrailerValue(spec, uuidv4); err == nil {
+		t.Errorf("ValidateTrailerValue(UUID, %q) = nil, want error (must require UUIDv7)", uuidv4)
+	}
+}
+
+// TestValidateTrailerValue_Integer_Valid verifies that a decimal integer string
+// passes TrailerTypeInteger validation.
+func TestValidateTrailerValue_Integer_Valid(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeInteger, nil)
+	for _, v := range []string{"0", "1", "42", "100", "-1"} {
+		v := v
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTrailerValue(spec, v); err != nil {
+				t.Errorf("ValidateTrailerValue(Integer, %q) = %v, want nil", v, err)
+			}
+		})
+	}
+}
+
+// TestValidateTrailerValue_Integer_RejectsNonInteger verifies that non-decimal
+// strings fail TrailerTypeInteger validation.
+func TestValidateTrailerValue_Integer_RejectsNonInteger(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeInteger, nil)
+	for _, v := range []string{"1.5", "abc", "0x10", "1e3", " 1"} {
+		v := v
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTrailerValue(spec, v); err == nil {
+				t.Errorf("ValidateTrailerValue(Integer, %q) = nil, want error", v)
+			}
+		})
+	}
+}
+
+// TestValidateTrailerValue_Enum_Valid verifies that a value in EnumValues
+// passes TrailerTypeEnum validation.
+func TestValidateTrailerValue_Enum_Valid(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeEnum, []string{"reconciliation", "other"})
+	if err := ValidateTrailerValue(spec, "reconciliation"); err != nil {
+		t.Errorf("ValidateTrailerValue(Enum, \"reconciliation\") = %v, want nil", err)
+	}
+	if err := ValidateTrailerValue(spec, "other"); err != nil {
+		t.Errorf("ValidateTrailerValue(Enum, \"other\") = %v, want nil", err)
+	}
+}
+
+// TestValidateTrailerValue_Enum_RejectsUnknownValue verifies that a value not
+// in EnumValues fails TrailerTypeEnum validation.
+func TestValidateTrailerValue_Enum_RejectsUnknownValue(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeEnum, []string{"reconciliation"})
+	if err := ValidateTrailerValue(spec, "unknown"); err == nil {
+		t.Error("ValidateTrailerValue(Enum, \"unknown\") = nil, want error")
+	}
+}
+
+// TestValidateTrailerValue_String_Valid verifies that any non-empty string
+// passes TrailerTypeString validation.
+func TestValidateTrailerValue_String_Valid(t *testing.T) {
+	t.Parallel()
+
+	spec := validateTrailerValueFixtureSpec(TrailerTypeString, nil)
+	for _, v := range []string{"abc", "hk-63oh", "any value", "123"} {
+		v := v
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTrailerValue(spec, v); err != nil {
+				t.Errorf("ValidateTrailerValue(String, %q) = %v, want nil", v, err)
+			}
+		})
+	}
+}
+
+// TestValidateTrailerValue_EmptyAlwaysErrors verifies that an empty value is
+// rejected for every trailer type.
+func TestValidateTrailerValue_EmptyAlwaysErrors(t *testing.T) {
+	t.Parallel()
+
+	types := []TrailerValueType{
+		TrailerTypeUUID,
+		TrailerTypeInteger,
+		TrailerTypeEnum,
+		TrailerTypeString,
+	}
+	for _, typ := range types {
+		typ := typ
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			spec := validateTrailerValueFixtureSpec(typ, []string{"true"})
+			if err := ValidateTrailerValue(spec, ""); err == nil {
+				t.Errorf("ValidateTrailerValue(type=%d, \"\") = nil, want error (empty value must be rejected)", typ)
+			}
+		})
+	}
+}
+
+// TestValidateTrailerValue_HarmonikRunID verifies that the Harmonik-Run-ID
+// registry entry passes validation against a well-formed UUIDv7.
+//
+// Spec ref: execution-model.md §6.2; EM-013 (UUIDv7 join-key invariant).
+func TestValidateTrailerValue_HarmonikRunID(t *testing.T) {
+	t.Parallel()
+
+	spec, ok := LookupTrailer("Harmonik-Run-ID")
+	if !ok {
+		t.Fatal("LookupTrailer(\"Harmonik-Run-ID\") returned ok=false")
+	}
+	uuidv7 := "018f1e2a-0000-7000-8000-000000000099"
+	if err := ValidateTrailerValue(spec, uuidv7); err != nil {
+		t.Errorf("ValidateTrailerValue(Harmonik-Run-ID, UUIDv7) = %v, want nil", err)
+	}
+}
+
+// TestValidateTrailerValue_HarmonikSchemaVersion verifies that the
+// Harmonik-Schema-Version registry entry accepts decimal integers.
+//
+// Spec ref: execution-model.md §6.2; EM-022 (N-1 readable).
+func TestValidateTrailerValue_HarmonikSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	spec, ok := LookupTrailer("Harmonik-Schema-Version")
+	if !ok {
+		t.Fatal("LookupTrailer(\"Harmonik-Schema-Version\") returned ok=false")
+	}
+	if err := ValidateTrailerValue(spec, "1"); err != nil {
+		t.Errorf("ValidateTrailerValue(Harmonik-Schema-Version, \"1\") = %v, want nil", err)
+	}
+	if err := ValidateTrailerValue(spec, "3.14"); err == nil {
+		t.Error("ValidateTrailerValue(Harmonik-Schema-Version, \"3.14\") = nil, want error")
+	}
+}
+
+// TestValidateTrailerValue_HarmonikWorkflowClass verifies that the
+// Harmonik-Workflow-Class registry entry accepts "reconciliation" and rejects
+// unknown values.
+//
+// Spec ref: reconciliation/schemas.md §6.5; RC-001.
+func TestValidateTrailerValue_HarmonikWorkflowClass(t *testing.T) {
+	t.Parallel()
+
+	spec, ok := LookupTrailer("Harmonik-Workflow-Class")
+	if !ok {
+		t.Fatal("LookupTrailer(\"Harmonik-Workflow-Class\") returned ok=false")
+	}
+	if err := ValidateTrailerValue(spec, "reconciliation"); err != nil {
+		t.Errorf("ValidateTrailerValue(Harmonik-Workflow-Class, \"reconciliation\") = %v, want nil", err)
+	}
+	if err := ValidateTrailerValue(spec, "ordinary"); err == nil {
+		t.Error("ValidateTrailerValue(Harmonik-Workflow-Class, \"ordinary\") = nil, want error")
+	}
+}
+
+// TestValidateTrailerValue_VerdictExecuted_RC023 verifies that ValidateTrailerValue
+// enforces the RC-023 malformed-value rule for Harmonik-Verdict-Executed:
+// only "true" is valid; any other value is malformed.
+//
+// Spec ref: reconciliation/schemas.md §6.4; RC-023.
+func TestValidateTrailerValue_VerdictExecuted_RC023(t *testing.T) {
+	t.Parallel()
+
+	spec, ok := LookupTrailer("Harmonik-Verdict-Executed")
+	if !ok {
+		t.Fatal("LookupTrailer(\"Harmonik-Verdict-Executed\") returned ok=false")
+	}
+	// "true" is the only valid value (RC-023, schemas.md §6.4 fixed literal).
+	if err := ValidateTrailerValue(spec, "true"); err != nil {
+		t.Errorf("ValidateTrailerValue(Harmonik-Verdict-Executed, \"true\") = %v, want nil (RC-023)", err)
+	}
+	// Any other value is malformed per RC-023.
+	for _, bad := range []string{"false", "1", "yes", "TRUE", "True"} {
+		bad := bad
+		t.Run(bad, func(t *testing.T) {
+			t.Parallel()
+			if err := ValidateTrailerValue(spec, bad); err == nil {
+				t.Errorf("ValidateTrailerValue(Harmonik-Verdict-Executed, %q) = nil, want error (RC-023: only \"true\" is valid)", bad)
+			}
+		})
 	}
 }

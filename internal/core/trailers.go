@@ -1,6 +1,14 @@
 // Package core holds shared types that cross subsystem boundaries.
 package core
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
 // TrailerValueType describes the semantic type of a checkpoint-commit trailer value.
 // Used by trailer-lint to validate the shape of each trailer's value.
 type TrailerValueType int
@@ -202,4 +210,57 @@ func RegistryEntries() []TrailerSpec {
 	out := make([]TrailerSpec, len(trailerRegistry))
 	copy(out, trailerRegistry)
 	return out
+}
+
+// ValidateTrailerValue enforces the trailer-value contract declared by spec at runtime.
+//
+// Rules per trailer type:
+//   - TrailerTypeUUID: value must parse as a UUID and be version 7
+//     (UUIDv7 per EM-013; execution-model.md §4.4 EM-013).
+//   - TrailerTypeInteger: value must parse as a decimal integer string
+//     (strconv.ParseInt base 10).
+//   - TrailerTypeEnum: value must be present in spec.EnumValues (exact match).
+//   - TrailerTypeString: any non-empty string is accepted.
+//
+// An empty value is always an error regardless of type, because an absent
+// trailer must be represented by omission, not by an empty-string value.
+//
+// This helper unblocks the trailer-lint layer and allows the registry's
+// EnumValues=["true"] declaration on Harmonik-Verdict-Executed to enforce the
+// RC-023 malformed-value rule (schemas.md §6.4).
+//
+// Spec ref: execution-model.md §6.2; reconciliation/schemas.md §6.4; RC-023.
+func ValidateTrailerValue(spec TrailerSpec, value string) error {
+	if value == "" {
+		return fmt.Errorf("trailer %q: value must not be empty", spec.Key)
+	}
+	switch spec.Type {
+	case TrailerTypeUUID:
+		u, err := uuid.Parse(value)
+		if err != nil {
+			return fmt.Errorf("trailer %q: value %q is not a valid UUID: %w", spec.Key, value, err)
+		}
+		if u.Version() != 7 {
+			return fmt.Errorf("trailer %q: value %q is UUID version %d, want version 7 (UUIDv7 per EM-013)", spec.Key, value, u.Version())
+		}
+		return nil
+	case TrailerTypeInteger:
+		if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+			return fmt.Errorf("trailer %q: value %q is not a decimal integer: %w", spec.Key, value, err)
+		}
+		return nil
+	case TrailerTypeEnum:
+		for _, permitted := range spec.EnumValues {
+			if value == permitted {
+				return nil
+			}
+		}
+		return fmt.Errorf("trailer %q: value %q not in permitted values [%s]",
+			spec.Key, value, strings.Join(spec.EnumValues, ", "))
+	case TrailerTypeString:
+		// Any non-empty string is valid; empty is rejected above.
+		return nil
+	default:
+		return fmt.Errorf("trailer %q: unknown TrailerValueType %d", spec.Key, spec.Type)
+	}
 }

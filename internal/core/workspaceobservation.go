@@ -34,7 +34,7 @@ type WorkspaceObservation struct {
 
 	// GitInProgressOp describes any Git operation currently in progress
 	// (none | rebase | merge | cherry-pick | bisect). A non-none value is a
-	// Cat 6a trigger per specs/reconciliation/schemas.md §8.11.
+	// Cat 6a trigger per specs/reconciliation/spec.md §8.11.
 	GitInProgressOp GitInProgressOp
 }
 

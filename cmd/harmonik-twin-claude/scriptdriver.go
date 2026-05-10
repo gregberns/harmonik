@@ -6,12 +6,13 @@
 // twin-parity surface of §4.8.HC-036 (subprocess script drives output instead
 // of an LLM).
 //
-// # De-facto script-file schema (hk-ahvq.48.3)
+// # Script-file schema
 //
-// Until the normative spec section lands (follow-up bead hk-ahvq.48.11 authors
-// the HC §4.8 / SH §4.3 section), the schema described here is the de-facto
-// contract. Any consumer of twin script files MUST treat this godoc as the
-// authoritative definition until hk-ahvq.48.11 is closed.
+// The normative definition of the script-file format lives in
+// specs/handler-contract.md §4.8.HC-036a (authored by bead hk-ahvq.48.11).
+// The types and constants below MUST match that spec exactly; any drift is a
+// twin-parity violation per §4.8.HC-036. The summary below is provided for
+// local reference only; the spec is authoritative in case of disagreement.
 //
 // File location:
 //
@@ -57,8 +58,7 @@
 // inferred). This allows scenario tests to produce byte-reproducible event
 // streams without depending on system clock jitter.
 //
-// Cite: specs/handler-contract.md §4.6.HC-026a, §4.8.HC-036.
-// Follow-up spec-edit bead: hk-ahvq.48.11 (normative HC/SH section).
+// Cite: specs/handler-contract.md §4.6.HC-026a, §4.8.HC-036, §4.8.HC-036a.
 package main
 
 import (
@@ -82,10 +82,9 @@ import (
 // heartbeatMode is the enum controlling how heartbeats are driven.
 //
 // Values: wall_clock (real-time T/2 timer) or scripted (relative timestamps
-// from the script).  The default is wall_clock per the de-facto schema.
+// from the script).  The default is wall_clock per §4.8.HC-036a.
 //
-// Cite: specs/handler-contract.md §4.6.HC-026a scripted-mode carve-out.
-// Follow-up spec-edit: hk-ahvq.48.11.
+// Cite: specs/handler-contract.md §4.6.HC-026a (carve-out), §4.8.HC-036a (schema).
 type heartbeatMode string
 
 const (
@@ -112,8 +111,8 @@ func (hm heartbeatMode) Valid() bool {
 
 // ScriptMessage is one entry in the script's messages list.
 //
-// All fields map directly to the de-facto schema; see package godoc.
-// Follow-up spec-edit: hk-ahvq.48.11.
+// All fields map directly to the normative schema at
+// specs/handler-contract.md §4.8.HC-036a.
 type ScriptMessage struct {
 	// Type is the progress-stream message type (e.g., "agent_heartbeat").
 	// Required; non-empty. The driver emits this value verbatim as the "type"
@@ -135,7 +134,7 @@ type ScriptMessage struct {
 // ScriptFile is the top-level type parsed from a twin script YAML file.
 //
 // File location: <fixture-root>/<scenario>/twin-scripts/<role>.yaml.
-// Follow-up spec-edit: hk-ahvq.48.11.
+// Normative schema: specs/handler-contract.md §4.8.HC-036a.
 type ScriptFile struct {
 	// HeartbeatMode controls how heartbeats are timed (see heartbeatMode).
 	// Defaults to "wall_clock" when absent or empty.

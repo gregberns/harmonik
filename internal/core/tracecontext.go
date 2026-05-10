@@ -18,17 +18,17 @@ type TraceContext struct {
 	// TraceID is an optional external correlation identifier (e.g. an OpenTelemetry
 	// trace-id or a request-id propagated from an upstream caller).
 	// When non-nil, the string must be non-empty.
-	TraceID *string
+	TraceID *string `json:"trace_id,omitempty"`
 
 	// ParentEventID is the UUID of the event that causally preceded this one.
 	// When non-nil, the value must not be uuid.Nil.
 	// Producers SHOULD populate this field when causal linkage is known (see
 	// partial-order contract in §6.1 and hidden assumption (4) in §7.x).
-	ParentEventID *uuid.UUID
+	ParentEventID *uuid.UUID `json:"parent_event_id,omitempty"`
 
 	// RootEventID is the UUID of the event that originated the causal chain.
 	// When non-nil, the value must not be uuid.Nil.
-	RootEventID *uuid.UUID
+	RootEventID *uuid.UUID `json:"root_event_id,omitempty"`
 }
 
 // Valid reports whether tc is structurally sound. The zero value is valid.

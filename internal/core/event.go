@@ -33,18 +33,18 @@ type Event struct {
 	// source_subsystem at the moment of enqueue. Monotonic non-decrease within the
 	// daemon process is enforced per EV-002a.
 	// Required (non-nil UUID).
-	EventID EventID
+	EventID EventID `json:"event_id"`
 
 	// SchemaVersion is the envelope schema version. Bump on envelope-level changes
 	// per EV-028. Non-zero; the per-type registry independently tracks per-payload
 	// versions. "N-1 readable" applies per EV-029.
-	SchemaVersion int
+	SchemaVersion int `json:"schema_version"`
 
 	// Type identifies the event type; MUST be one of the §8 rows (event-model.md §8).
 	// The EventType enum is declared in a separate bead (hk-hqwn.59); this field
 	// uses string until that enum lands (non-breaking hoist).
 	// Required (non-empty).
-	Type string
+	Type string `json:"type"`
 
 	// TimestampWall is the RFC 3339 wall-clock time at the emitter (EV-001).
 	// The emitter MUST perform exactly one wall-clock read per emission and reuse
@@ -59,7 +59,7 @@ type Event struct {
 	// correlation only.
 	//
 	// Required (non-zero).
-	TimestampWall time.Time
+	TimestampWall time.Time `json:"timestamp_wall"`
 
 	// TimestampMonoNsec is the optional monotonic nanoseconds from the emitter's
 	// process clock (event-model.md §6.1 EV-001, EV-003, EV-007). Process-scoped;
@@ -68,32 +68,32 @@ type Event struct {
 	// Within a single emitter process, TimestampMonoNsec (when present) MUST be
 	// non-decreasing across emissions in emission order (EV-007).
 	// When non-nil must be > 0.
-	TimestampMonoNsec *int64
+	TimestampMonoNsec *int64 `json:"timestamp_mono_nsec,omitempty"`
 
 	// RunID is present when the event is scoped to a run (EV-001; EM-013).
 	// EM-013 requires run_id on every run-scoped event as the join key across
 	// git (Harmonik-Run-ID trailer), Beads, and JSONL.
 	// Optional; when non-nil must not be uuid.Nil.
-	RunID *RunID
+	RunID *RunID `json:"run_id,omitempty"`
 
 	// StateID is present when the event is scoped to a run-state (EV-001).
 	// Optional; when non-nil must not be uuid.Nil.
-	StateID *StateID
+	StateID *StateID `json:"state_id,omitempty"`
 
 	// SourceSubsystem is the Go-package-identifier string of the emitting subsystem
 	// per EV-004 and architecture.md §4.5. Required (non-empty).
-	SourceSubsystem string
+	SourceSubsystem string `json:"source_subsystem"`
 
 	// TraceContext carries optional cross-subsystem correlation identifiers (§6.1).
 	// Optional; when non-nil must satisfy TraceContext.Valid().
-	TraceContext *TraceContext
+	TraceContext *TraceContext `json:"trace_context,omitempty"`
 
 	// Payload is the type-specific event body as raw JSON bytes (json.RawMessage).
 	// Decoded by the per-type registry keyed on Type per §6.3.
 	// Required (non-nil). A zero-length (but non-nil) json.RawMessage is valid for
 	// event types that carry no body (e.g., a heartbeat); decoding is the consumer's
 	// responsibility.
-	Payload json.RawMessage
+	Payload json.RawMessage `json:"payload"`
 }
 
 // Valid reports whether all required fields carry non-zero values and all

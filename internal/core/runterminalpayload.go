@@ -105,12 +105,10 @@ type RunFailedPayload struct {
 	FailureClass FailureClass `json:"failure_class"`
 
 	// ErrorCategory is the narrow handler-origin sentinel per
-	// handler-contract.md §4.5. Absent (nil) for orchestrator-originated
-	// failures (e.g., compilation_loop, no_outgoing_edge_matches) that have no
-	// handler-origin sentinel.
-	// TODO(hk-b3f.109): replace *string with *ErrorCategory once the typed
-	// alias is defined.
-	ErrorCategory *string `json:"error_category,omitempty"`
+	// handler-contract.md §4.5 (event-model.md §3 / §6.3). Absent (nil) for
+	// orchestrator-originated failures (e.g., compilation_loop,
+	// no_outgoing_edge_matches) that have no handler-origin sentinel.
+	ErrorCategory *ErrorCategory `json:"error_category,omitempty"`
 
 	// EndedAt is the RFC 3339 wall-clock timestamp at which the run failed.
 	// Caller MUST format as RFC 3339 per event-model.md §4.3.
@@ -136,7 +134,7 @@ type RunFailedPayload struct {
 //   - EndedAt must be non-empty.
 //   - Reason must be non-empty.
 //   - TerminalStateID, when non-nil, must not be uuid.Nil.
-//   - ErrorCategory, when non-nil, must be non-empty.
+//   - ErrorCategory, when non-nil, must be a declared ErrorCategory constant.
 //   - LastCheckpoint is permitted to be empty (no prior checkpoint).
 func (p RunFailedPayload) Valid() bool {
 	if uuid.UUID(p.RunID) == uuid.Nil {
@@ -154,7 +152,7 @@ func (p RunFailedPayload) Valid() bool {
 	if p.TerminalStateID != nil && uuid.UUID(*p.TerminalStateID) == uuid.Nil {
 		return false
 	}
-	if p.ErrorCategory != nil && *p.ErrorCategory == "" {
+	if p.ErrorCategory != nil && !p.ErrorCategory.Valid() {
 		return false
 	}
 	return true

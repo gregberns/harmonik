@@ -55,7 +55,7 @@ func runterminalFixtureCompletedNoSummary(t *testing.T) RunCompletedPayload {
 func runterminalFixtureFailed(t *testing.T) RunFailedPayload {
 	t.Helper()
 	stateID := StateID(uuid.MustParse("01942b3c-0000-7000-8000-000000000021"))
-	errCat := "ErrStructural"
+	errCat := ErrorCategoryStructural
 	return RunFailedPayload{
 		RunID:           RunID(uuid.MustParse("01942b3c-0000-7000-8000-000000000020")),
 		TerminalStateID: &stateID,
@@ -385,15 +385,15 @@ func TestRunFailedPayload_Valid_ZeroTerminalStateIDPointer(t *testing.T) {
 }
 
 // TestRunFailedPayload_Valid_EmptyErrorCategoryPointer verifies that Valid()
-// rejects a non-nil but empty ErrorCategory string.
+// rejects a non-nil but invalid ErrorCategory value.
 func TestRunFailedPayload_Valid_EmptyErrorCategoryPointer(t *testing.T) {
 	t.Parallel()
 
 	p := runterminalFixtureFailed(t)
-	empty := ""
-	p.ErrorCategory = &empty
+	invalid := ErrorCategory("")
+	p.ErrorCategory = &invalid
 	if p.Valid() {
-		t.Error("Valid() = true with non-nil empty ErrorCategory, want false")
+		t.Error("Valid() = true with non-nil invalid ErrorCategory, want false")
 	}
 }
 

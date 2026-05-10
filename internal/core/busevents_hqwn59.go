@@ -5,16 +5,16 @@ import "github.com/google/uuid"
 // busevents_hqwn59.go — event-bus payload types for §8.8 observability and
 // bus-internal events:
 //   - metric               (§8.8.1)
+//   - consumer_failed      (§8.8.2)
 //   - dead_letter_enqueued (§8.8.3)
 //   - bus_overflow         (§8.8.4)
 //
-// NOTE: consumer_failed (§8.8.2) is blocked on hk-hqwn.14 (Asynchronous consumer
-// class). redaction_failed (§8.8.5) is blocked on hk-hqwn.45 (Redaction registry).
-// Both are declared in separate beads (hk-hqwn.59.75, hk-hqwn.59.78) and will be
-// implemented once their blocker beads are closed.
+// NOTE: redaction_failed (§8.8.5) is blocked on hk-hqwn.45 (Redaction registry)
+// and is declared in a separate bead (hk-hqwn.59.78) to be implemented once that
+// blocker bead is closed.
 //
 // Spec ref: specs/event-model.md §8.8, §6.3.
-// Bead refs: hk-hqwn.59.74, hk-hqwn.59.76, hk-hqwn.59.77.
+// Bead refs: hk-hqwn.59.74, hk-hqwn.59.75, hk-hqwn.59.76, hk-hqwn.59.77.
 
 // ---------------------------------------------------------------------------
 // Enum types for §8.8 payload discriminators
@@ -72,6 +72,90 @@ type MetricPayload struct {
 //   - Name must be non-empty.
 func (p MetricPayload) Valid() bool {
 	return p.Name != ""
+}
+
+// ConsumerFailedPayload is the typed event payload for the consumer_failed event
+// (event-model.md §8.8.2).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — observability and audit; consumer failures are
+// bus-internal signals that do not require fsync-backed durability).
+//
+// Emitted by the bus (bus-internal) when a consumer fails to handle a dispatched
+// event. For synchronous consumers (§6.1) this accompanies run quarantine (EV-010).
+// For asynchronous consumers (§6.1) this accompanies retry-exhaustion and
+// dead-letter enqueue (§8.8.3). The error_category field records the bus-internal
+// failure class; values include the handler-contract sentinels plus bus-specific
+// categories: "overflow" (queue shed per EV-011a) and "panic" (on_panic recovery
+// per §6.1).
+//
+// TODO(hk-nptq0): Add "overflow" and "panic" values to ErrorCategory
+// (errorcategory.go) to model the bus-internal failure classes cited by §8.8.2
+// and §6.1 on_panic. Until that bead closes, consumers treating unknown
+// ErrorCategory values as reconciliation Cat 6a per reconciliation/spec.md
+// §8.11 will handle new values gracefully.
+//
+// Emission co-ownership: bus-internal per §6.5. Emission rules in the bus
+// implementation (§7.1 DispatchSync, §7.3 DispatchSync pseudo-code).
+//
+// # Payload fields (event-model.md §8.8.2)
+//
+//   - consumer_name  — the registered name of the consumer that failed
+//   - event_type     — the §8 event type string of the event that triggered failure
+//   - event_id       — the EventID of the event that triggered failure
+//   - error_category — the failure class sentinel; must be a valid ErrorCategory
+//   - failed_at      — RFC 3339 wall-clock timestamp at the moment of failure
+type ConsumerFailedPayload struct {
+	// ConsumerName is the registered name of the consumer that failed.
+	// Required (non-empty).
+	ConsumerName string `json:"consumer_name"`
+
+	// EventType is the §8 event type string of the event that triggered failure.
+	// Required (non-empty).
+	EventType EventType `json:"event_type"`
+
+	// EventID is the EventID of the event that triggered failure.
+	// Required (must not be uuid.Nil).
+	EventID EventID `json:"event_id"`
+
+	// ErrorCategory is the failure class sentinel per handler-contract.md §4.5
+	// and event-model.md §8.8.2. Bus-internal categories ("overflow", "panic")
+	// are not yet declared in ErrorCategory — see TODO above (hk-hqwn.59.79).
+	// Required (must be a valid ErrorCategory constant, or a recognised bus-internal
+	// string until hk-hqwn.59.79 extends the enum).
+	ErrorCategory ErrorCategory `json:"error_category"`
+
+	// FailedAt is the RFC 3339 wall-clock timestamp at the moment of consumer
+	// failure. Required (non-empty).
+	FailedAt string `json:"failed_at"`
+}
+
+// Valid reports whether p is a well-formed ConsumerFailedPayload.
+//
+// Rules per event-model.md §8.8.2:
+//   - ConsumerName must be non-empty.
+//   - EventType must be non-empty (Valid EventType).
+//   - EventID must not be uuid.Nil.
+//   - ErrorCategory must be a valid declared constant.
+//   - FailedAt must be non-empty.
+func (p ConsumerFailedPayload) Valid() bool {
+	if p.ConsumerName == "" {
+		return false
+	}
+	if !p.EventType.Valid() {
+		return false
+	}
+	if uuid.UUID(p.EventID) == uuid.Nil {
+		return false
+	}
+	if !p.ErrorCategory.Valid() {
+		return false
+	}
+	if p.FailedAt == "" {
+		return false
+	}
+	return true
 }
 
 // DeadLetterEnqueuedPayload is the typed event payload for the

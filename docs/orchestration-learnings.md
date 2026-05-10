@@ -32,6 +32,7 @@ This is **dual-purpose**:
 - [L-011 — Beads parent-child edges gridlocked the dispatchable surface](#l-011) — `process-fix-applied` · `product-input`
 - [L-013 — Bead-claim race when sibling implementers share a vague scope](#l-013) — `process-fix-applied` · `product-input`
 - [L-014 — Sensor-to-sensor `blocks` edges are a structural smell](#l-014) — `open` · `product-input`
+- [L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers](#l-015) — `process-fix-applied` · `product-input`
 
 ---
 
@@ -201,3 +202,17 @@ Kept terse on purpose — three-paragraph entries, not essays.
 **Possible automation.** Narrow analogue of L-011's parent-child→related conversion: scan sensor beads for `blocks` edges where both ends carry `kind:req` in the same `spec:*` namespace and convert to `related`. Scoped narrower than L-011 to avoid epic-progress collateral. Not yet pulled into a fix; opening as `open · product-input` so a future session can either apply the conversion or learn that the smell self-resolves as the corpus drains.
 
 **Product input.** The daemon's edge-typing should distinguish "this code must compile before that one can" from "these are siblings under the same parent goal." Beads' `blocks`/`related` is a binary; harmonik's typed-edge story (per the spec drafts) wants finer granularity.
+
+---
+
+### L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers <a name="l-015"></a>
+
+**Observed 2026-05-10 (mid-session).** Two collisions in one session: (a) sx5860, dispatched on `hk-sx9r.58/.60` with continue-claim authorized within `spec:operator-nfr`, jumped spec boundaries and grabbed `hk-hqwn.8` from `spec:event-model` — exactly while the orchestrator was simultaneously dispatching the hqwn8 worktree on the same bead; (b) the L-013 race itself, with two implementers free-claiming `hk-hqwn.11` under overlapping "continue claiming `kind:req`" rules. User flagged the structural cause: the "Continue claiming until 250k" HARD RULE in `.claude/implementer-protocol.md` was a **main-thread** budget rule (orchestrator keeps the slot floor saturated until its own context approaches 250k) that had been copy-pasted into the implementer surface, where sub-agents dutifully enacted it.
+
+**Why the drift happened.** The 250k budget exists at the orchestrator level — it's the orchestrator's job to drain `br ready` until it approaches its own context ceiling, then write a fresh HANDOFF. Sub-agents are dispatched on a specific scope. When the rule landed in implementer-protocol.md, sub-agents (correctly reading the rule as authoritative) did exactly what the doc said: continued claiming after their assigned scope drained. The mitigation L-013 added (explicit per-brief partition lines) only patched within-spec collisions; sx5860's cross-spec leap was beyond what any brief partition could anticipate.
+
+**Fix applied.** `.claude/implementer-protocol.md` rewritten: replaced the "Continue claiming until 250k" section with **"Do your assigned bead(s) and exit"** — implementer works the SCOPE line, then exits, regardless of remaining context budget. HANDOFF directives' IMPLEMENTER LIFECYCLE block updated: rule (b) now reads "DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming." Briefs MUST NOT include "after close, continue claiming X" lines.
+
+**Why this is safe now.** When the continue-claim rule landed (L-003 era), the orchestrator was wave-batching dispatches with multi-minute idle gaps; implementers free-claiming filled those gaps. With STREAM-NOT-WAVES (L-001) now enforced, the orchestrator refills slots on every implementer return — fast enough that implementer-side free-claim is structurally redundant and only adds collision surface.
+
+**Product input.** The daemon's split-of-concerns should be unambiguous: orchestrator (main thread) owns the dispatch queue; implementers receive a scoped task and return. Atomic claim-on-dispatch at the daemon level eliminates the question entirely. Until then, "scope is what your brief says, not what `br ready` says" is the discipline.

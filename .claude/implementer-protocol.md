@@ -89,21 +89,19 @@ Per HANDOFF v20 directives + memory `feedback_br_ownership`, **the agent (you) o
 
 For SUBSUMED beads where no commit is made, still close: `br close <id> -r "SUBSUMED: <file:line ref>"`.
 
-## Continue claiming until 250k (HARD RULE)
+## Do your assigned bead(s) and exit (HARD RULE — replaces "continue claiming until 250k", L-015)
 
-The dispatch budget is **~250k tokens**, not "your initial bundle." After closing each bead:
+**You work the beads named in your brief's SCOPE line. When those are closed, you exit.**
 
-1. Run `br ready --limit 0` (or filtered to your package: `br ready --limit 0 | grep <prefix>`).
-2. If ready beads remain that match your dispatch scope (or any in-scope package per HANDOFF if your brief was open), claim and work the next one.
-3. Stop ONLY when: (a) your context exceeds ~250k tokens, (b) the ready queue is empty of in-scope beads, OR (c) you hit a hard blocker that needs orchestrator intervention.
+Do NOT free-claim additional beads from `br ready` after your assigned scope is done — even if the queue still has work, even if you have lots of context budget left. The orchestrator (main thread) owns refill: when your dispatch returns, it will spawn a fresh implementer on the next bead. Free-claiming caused L-013 (two implementers grabbing the same bead via overlapping in-scope rules) and the L-015 collision (one implementer crossing spec boundaries to claim a bead the orchestrator was simultaneously dispatching to a sibling).
 
-Implementers stopping at 80–160k tokens with ready queue still populated is **wasted dispatch budget**. The HANDOFF directive "implementer keeps claiming and working ready beads until its context exceeds ~250k tokens" is non-negotiable.
+The "until 250k tokens" budget rule is for the **main orchestrator thread** (it keeps the slot floor saturated and writes a fresh HANDOFF when it approaches its own context ceiling). It is NOT for you. Earlier drafts of this doc copied that rule into the implementer surface — that was the drift that L-015 captures.
 
-When you do hit ~250k, run the `/session-handoff` skill before exiting.
+If your assigned scope drains very fast (e.g., everything was SUBSUMED), report and exit. The orchestrator will refill faster than you can free-claim safely.
 
 ## Don't ask questions back
 
-You will not get an answer — the orchestrator dispatches you and moves on. **Make the judgment call yourself** and document the reasoning in your commit body. Path discrepancies, ambiguous spec wording, type-naming choices, scope edges — decide. If you genuinely cannot proceed (hard blocker, e.g. a required upstream bead is missing code), surface it in the stopping report and stop on that bead, but keep working other in-scope beads first.
+You will not get an answer — the orchestrator dispatches you and moves on. **Make the judgment call yourself** and document the reasoning in your commit body. Path discrepancies, ambiguous spec wording, type-naming choices, scope edges — decide. If you genuinely cannot proceed (hard blocker, e.g. a required upstream bead is missing code), surface it in the stopping report and exit.
 
 ## Constraints
 

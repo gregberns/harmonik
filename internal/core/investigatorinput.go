@@ -68,11 +68,7 @@ type InvestigatorInput struct {
 	// purposes only (RC-014). The investigator MUST NOT treat JSONL-tail
 	// events as authoritative state; git and Beads are the authoritative
 	// stores. Nil and empty slices are both valid.
-	//
-	// TODO(hk-63oh.82): replace []string with []EventEnvelope once the
-	// EventEnvelope typed alias is defined (event-model.md §4.1). Using
-	// []string placeholder per typed-alias-deferral protocol.
-	JSONLTail []string
+	JSONLTail []EventEnvelope
 
 	// WorkspaceObservation is the point-in-time read-only observation of the
 	// run's worktree: path existence, branch tip, WIP status, and any

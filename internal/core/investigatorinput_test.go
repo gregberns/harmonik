@@ -43,7 +43,7 @@ func investigatorInputFixture(t *testing.T) InvestigatorInput {
 			TransitionRecordPath: TransitionRecordPath(runID, transitionID),
 		},
 		LastTransition:         b3f77ValidTransition(t),
-		JSONLTail:              []string{},
+		JSONLTail:              []EventEnvelope{},
 		WorkspaceObservation:   workspaceObsFixture(t),
 		SessionLogRef:          nil,
 		Category:               ReconciliationCategoryCat2,

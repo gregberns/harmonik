@@ -25,3 +25,9 @@
 
 # Dev tools installed locally (subsystem-organization.md §Decisions #10)
 /.tools/
+
+# Orchestrator-spawned implementer worktrees (HANDOFF v23 friction note)
+/.claude/worktrees/
+
+# Stray sub-agent scratch dirs
+/.claire/

@@ -30,6 +30,8 @@ This is **dual-purpose**:
 - [L-009 — Spec discrepancies surface late (during implementation, not during spec review)](#l-009) — `open` · `product-input`
 - [L-010 — Cherry-pick is the reliable merge fallback under worktree churn](#l-010) — `process-fix-applied`
 - [L-011 — Beads parent-child edges gridlocked the dispatchable surface](#l-011) — `process-fix-applied` · `product-input`
+- [L-013 — Bead-claim race when sibling implementers share a vague scope](#l-013) — `process-fix-applied` · `product-input`
+- [L-014 — Sensor-to-sensor `blocks` edges are a structural smell](#l-014) — `open` · `product-input`
 
 ---
 
@@ -175,3 +177,27 @@ When you (orchestrator agent or human collaborator) observe friction:
 4. Mark `product-input` if the friction would be absorbed by harmonik's daemon-side skeleton; the entry then becomes a candidate for a future kerf work.
 
 Kept terse on purpose — three-paragraph entries, not essays.
+
+---
+
+### L-013 — Bead-claim race when sibling implementers share a vague scope <a name="l-013"></a>
+
+**Observed 2026-05-10 (session v22→v23).** Two implementers (`hqwn57` and `hqwn11`) both claimed and produced spec-corpus sensors for `hk-hqwn.11` (EV-008). Each had been dispatched with a brief whose scope read "continue claiming `kind:req` in `spec:event-model`" and overlapping ranges weren't partitioned. Two distinct sensor files landed targeting the same req. Resolved by deleting the redundant later file in `b8e2d73`.
+
+**What worked vs. what didn't.** The same session also dispatched §8 payload-struct work as `hqwn59a` (§8.1+§8.2), `hqwn59b` (§8.3–§8.6), `hqwn59c` (§8.7+§8.8) — explicit, non-overlapping numeric section ranges. Zero collisions on that lane. The collision lane used the vague "continue claiming kind:req in spec:event-model" phrasing.
+
+**Fix applied.** When two implementers operate in the same package/spec, the orchestrator brief MUST partition by an explicit non-overlapping key (section range, file glob, or req-id range) — never by a free-text "continue claiming" rule. Updated dispatch convention; future briefs cite the partition explicitly in the SCOPE line.
+
+**Product input.** A daemon-side dispatcher would atomically claim the bead at dispatch time (status flip + assignee stamp) so that even with overlapping rules, the second implementer's claim would no-op. The bootstrap process can't easily atomically-claim from two LLM sessions; the explicit partition is the workaround until the daemon ships.
+
+---
+
+### L-014 — Sensor-to-sensor `blocks` edges are a structural smell <a name="l-014"></a>
+
+**Observed 2026-05-10.** Most `hk-hqwn.*` and `hk-i0tw.*` spec-corpus-sensor implementers had to use `br close --force` because the bead's declared `blocks` deps were themselves OPEN sensor beads. The pattern is sound on its face — the sensor is the deliverable, the blocker is design-level not code-level — but a sensor-to-sensor `blocks` edge encodes a phantom prerequisite.
+
+**Why it's a smell.** A sensor (specaudit corpus test) closes when its target req has a passing test. It does not depend on another sensor's test being green; sensors are siblings, not a chain. Encoding `sensor-A blocks sensor-B` is leftover from copy-pasting taxonomy edges out of the parent spec at bead-load time.
+
+**Possible automation.** Narrow analogue of L-011's parent-child→related conversion: scan sensor beads for `blocks` edges where both ends carry `kind:req` in the same `spec:*` namespace and convert to `related`. Scoped narrower than L-011 to avoid epic-progress collateral. Not yet pulled into a fix; opening as `open · product-input` so a future session can either apply the conversion or learn that the smell self-resolves as the corpus drains.
+
+**Product input.** The daemon's edge-typing should distinguish "this code must compile before that one can" from "these are siblings under the same parent goal." Beads' `blocks`/`related` is a binary; harmonik's typed-edge story (per the spec drafts) wants finer granularity.

@@ -47,6 +47,11 @@ var ErrJSONLMidFileCorruption = errors.New("lifecycle: JSONL mid-file or termina
 // permitted only to detect divergence (e.g., Cat 3 corroboration) and MUST be
 // discarded after the comparison step.
 //
+// EV-024 constraint: this function is an observational-replay tool. Its output
+// is non-authoritative and MUST NOT be used to re-establish live agent-process
+// state or re-invoke LLMs. Any tool that appears to do so is a debugging aid
+// only; callers MUST treat its output as advisory, never as ground truth.
+//
 // Spec ref: execution-model.md §4.7 EM-031 — "A consumer reading JSONL for
 // divergence-evidence purposes per this requirement MUST tolerate a torn last
 // line: if the final line of a JSONL file is unparseable AND is not terminated

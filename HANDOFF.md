@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-10 main — dep-model gridlock fixed; ready surface = 487 -->
+<!-- PP-TRIAL:v2 2026-05-10 main — first big stream session; 43 commits, ~80 beads closed, Open 487→353, Ready 487→26 -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -87,37 +87,67 @@ CONTEXT BUDGET (orchestrator). ~700 k effective on this 1M-context model. At ~50
 
 # State
 
-Main at `805bf16`, pushed clean. `go test ./...` last green at v21 (no code changes this session — only doc + local Beads DB). No active worktrees. No in-flight implementers.
+Main at `0ce48e4`, pushed clean. `go test ./internal/core/... ./internal/specaudit/...` green. No active worktrees. No in-flight implementers. Open=353, Blocked=327 (per `br stats`), Ready=26.
 
 # This session — what changed
 
-Two structural fixes, both targeting the "queue is drained" false-positive that had been blocking the last 3 sessions.
+First substantive stream session. Dispatched ~13 implementer waves over the course of the session, ran STREAM-NOT-WAVES merge-and-refill on every return, landed **43 commits** with ~80 bead closures across 7 spec areas. Highlights:
 
-1. **Deferred all 48 `hk-zs0.*` cognition spec drafts** until 2027-01-01 via `br defer`. They no longer appear in `br ready`. They are user-judgment work (foundation/architecture decisions); the kerf work `harmonik-foundation` (on the bench, jig=spec, status=research) is the right venue when the user is ready.
+1. **Spec-corpus sensors** in `internal/specaudit/` — SH-INV-001/002/003/005, EV-002c/008/009/012/014b/014d/016/017/034/036, RC categories §8.2–§8.11a, HC-007/009/010/015/033/039/052, ON-023, plus the §8 taxonomy umbrella and corpus tests for the §10.1 conformance scenarios. Pattern is now well-established: per-req file, body-window scan, `Tags: mechanism` check.
 
-2. **Fixed Beads dep-model gridlock (L-011).** Beads' SQL index `idx_dependencies_blocking` treats `parent-child` edges as blocking. The corpus had 992 parent-child edges; every sub-bead was "blocked" by its open parent epic → full DAG gridlock. `br ready` returned 2; the real dispatchable surface was hundreds of beads. Converted all parent-child → related in the local DB. **`br ready` went from 2 → 487.** Backup at `.beads/beads.db.bak-20260510-003338`. The change lives only in the local SQLite + flushed JSONL; `.beads/` is gitignored, so on a fresh clone the gridlock would return — see directives "TRUST `br ready` BUT VERIFY" for recovery.
+2. **§8 event-row payload structs** — three batched waves (§8.1+§8.2 / §8.3–§8.6 / §8.7+§8.8) landed all ~79 row beads (`hk-hqwn.59.*`) plus `eventreg_hqwn59.go` startup-time registry per EV-034 plus the `core.EventType` enum. Includes the deliberately-merged conflict in `eventreg_hqwn59.go init()` between sibling implementers — additive resolution kept all six `register*Events()` calls.
 
-   Trade-off: `br epic status` now reports 0/0 children for every epic. Acceptable for MVH; epic rollup can be derived from labels (`spec:event-model` etc.) when needed.
+3. **Handler-contract implementation lane** — wire-protocol structs (HC-007/009/010/039), `watcher_hc011.go` with NDJSON read-loop + recover barrier, `AdapterRegistry`, `RunLock` mutex discipline, `schemachecker_hc033`. Then the typed-alias-deferral closeout: `EventEmitter` narrow interface substituted for the `EventPublisher` placeholder in the watcher (avoids 6-method coupling and an import cycle).
 
-3. **Brief-template appendix landed** in `.claude/implementer-protocol.md` (L-005 fix). Orchestrator briefs collapse from ~25 lines to ≤15 parameter-fills. Commit `805bf16`.
+4. **Workspace lease-lock** — `LeaseLockPath`, `WriteLeaseLockAtomic`, `ReleaseLeaseLock`, `WriteLeaseReleasedMarker`, `WorkspaceLocalEventsPath` per WM-013a/b. Production functions wired into the existing WM-031/034/038a tests.
+
+5. **Lifecycle PL-005 startup-sequence sensor** — full 12-step ordering harness (steps 0–9 + 3a + 8a) including Cat 0 halt path and step-8a hash-mismatch refusal.
+
+6. **EventBus interface** in `internal/eventbus/eventbus.go` — 6-method `Emit/Subscribe/Seal/ReplayFrom/DeadLetterReplay/Drain` plus `TailTruncationCallback`, godoc-cited to specs/event-model.md §6.1. Interface-only (no impl yet).
+
+7. **§10.1 conformance scenarios** — three smoke/regression scenarios authored (`scenarios/smoke/twin-launch-and-ready.yaml`, `scenarios/smoke/checkpoint-and-merge.yaml`, `scenarios/regression/twin-failure-classification.yaml`) plus the shared `scenarios/_workflows/smoke-one-node.dot` and a `conformancecorpus_test.go` corpus test. Bootstrap §1 acceptance test floor is now reachable.
+
+8. **Reconciliation** — §8 category spec-corpus sensors for hk-63oh.63–.71 + .72 plus a shape-contract harness at `internal/core/reconciliationcategoryharness_rc003b_test.go`. Last implementer hit an API outage mid-dispatch; the 3 commits it had already made landed cleanly.
+
+# Friction observed (candidate L-013 / L-014)
+
+- **L-013 — Bead-claim race.** Two implementers (hqwn57 + hqwn11) both claimed and produced sensors for `hk-hqwn.11` (EV-008) because each had a "continue claiming `kind:req` in `spec:event-model`" rule. Two distinct test files landed with the same target req. Resolved by deleting the redundant later file in commit `b8e2d73`. **Mitigation pattern that worked**: when two scopes share a namespace, partition by section (e.g., hqwn59a §8.1+§8.2, hqwn59b §8.3–§8.6, hqwn59c §8.7+§8.8) — explicit, non-overlapping numeric ranges. **Mitigation pattern that didn't**: vague "continue claiming kind:req" — implementers picked the same beads.
+- **L-014 — `--force` bead-close pattern.** Most `hk-hqwn.*` and `hk-i0tw.*` sensor implementers used `br close --force` because the bead's declared `blocks` deps were themselves OPEN sensor beads (structural, not real prereq). Pattern is sound — the sensor is the deliverable, the blocker is design-level not code-level — but worth surfacing: a sensor-to-sensor `blocks` edge is a structural smell. Possible automation: convert sensor-to-sensor blocks edges to `related` (similar to the L-011 parent-child fix, scoped narrower).
+- **API outage during last dispatch.** Implementer made 3 commits before erroring out; bead-close was incomplete on its tail end. Pattern for resilience: after API errors, run `br stats` and check whether the bead was actually closed before retrying.
+- **`git add -A` swept embedded worktrees + `.claire/`.** Mid-session dedupe commit accidentally staged `.claude/worktrees/agent-*/` (embedded git repos) and a stray `.claire/agent-a27b...` test file. Recovered via `git reset --soft HEAD~1` and selective re-stage. **Action item: add `.claude/worktrees/` and `.claire/` to `.gitignore`.**
 
 # Current lane
 
-The dispatchable surface is now **487 beads deep**, spanning every implementation epic: `hk-872.*` (Beads Integration), `hk-hqwn.*` (Event Model — including the §8 row beads), `hk-8i31.*` (Handler Contract), `hk-63oh.*` (Reconciliation), `hk-sx9r.*` (Operator NFR), `hk-8mwo.*` (Workspace), `hk-8mup.*` (Process Lifecycle), `hk-a8bg.*` (Control Points), `hk-i0tw.*` (Scenario Harness), `hk-b3f.*` (Execution Model), `hk-872.*` (BI), `hk-ahvq.*` (twin-binary scaffolding).
+Ready=26. Top blockers (from `br blocked` analysis):
+- `hk-zs0.14` blocks 16 (DEFERRED to 2027-01-01)
+- `hk-8i31.74` blocks 15 (LaunchSpec record — itself blocked on hk-b3f.* and hk-zs0.54)
+- `hk-zs0.41` blocks 12 (DEFERRED)
+- `hk-8i31.55` blocks 11 (HC-046/047 — blocked on .74)
+- `hk-a8bg.21` blocks 10
+- `hk-zs0.21` blocks 10 (DEFERRED)
+- `hk-8mup.16` blocks 10
+- `hk-8mwo.4` blocks 10
 
-**Next session: dispatch a stream.** Pick a coherent slice (e.g., `hk-hqwn.*` event-row beads — many are blocked-by-1 on pre-existing closed beads, so they should fall straight into ready), pre-flight 3 reads per dispatch, spawn 6–10 implementers in parallel, then run STREAM-NOT-WAVES on returns. The brief template in the protocol appendix should make briefs cheap.
+Three of the top eight are deferred zs0 cognition beads. The remaining gridlock is the `hk-8i31.74 → .55` chain (LaunchSpec record needed) plus `hk-a8bg.21`, `hk-8mup.16`, `hk-8mwo.4`. Probably need to verify whether ready=26 is the genuine prereq topology or another structural artifact.
+
+**Next session priority order:**
+1. **Verify ready=26 is genuine.** Run `br stats` Open vs Ready check, then `br blocked` distribution. If Open ≫ Ready and a single non-deferred blocker dominates, consider the L-014 sensor-to-sensor blocks-edge conversion.
+2. **Pivot to top non-deferred blockers** if queue is genuinely thin: `hk-8i31.74` (LaunchSpec) is the highest-leverage; needs typed-alias deferral against hk-b3f.*. `hk-a8bg.*` (Control Points) and `hk-8mup.*` (Process Lifecycle) are the next two epics with cluster-blockers.
+3. **If queue stays drained**, the `harmonik-foundation` kerf work is the venue for the cognition decisions that unblock the zs0.* deferred set.
 
 # Open follow-up
 
+- **L-013 / L-014 entries** — append to `docs/orchestration-learnings.md` next session.
+- **`.gitignore` entries** — add `.claude/worktrees/` and `.claire/` to project `.gitignore`.
 - **L-009 fixture-first spec review** — still open; not session-blocking.
-- **154 unloaded bootstrap IDs** — kle6.2 audit (HC=46, BI=20, SH=54+); ingestion still optional.
-- **Epic-progress tooling** — `br epic status` is broken post-conversion. If the user wants epic rollup back, two paths: (a) restore parent-child edges and modify Beads' index to exclude parent-child from the blocking set, or (b) write a label-based rollup script.
-- **`harmonik-foundation` kerf work** — 16d idle on the bench; this is the venue for the deferred zs0 work when the user is ready to land cognition decisions.
+- **Epic-progress tooling** — `br epic status` still broken post-L-011 conversion.
+- **`harmonik-foundation` kerf work** — 16d idle on the bench; venue for the deferred zs0 cognition decisions.
+- **3 typed-alias follow-up beads** created this session: hk-hqwn.71/.72/.73/.74/.75 (payload-field aliases for §8.4/§8.5/§8.6/§8.7/§8.8 events).
 
 # Quick references
 
-- `docs/orchestration-learnings.md` — friction log; read on every resume (L-011 is new and important).
+- `docs/orchestration-learnings.md` — friction log; read on every resume.
 - `.claude/implementer-protocol.md` — implementer rules + brief-template appendix.
 - `br ready --limit 0 | grep -v "\[epic\]"` — true dispatchable queue (skip epic containers).
+- `br blocked --limit 0 --json | python3 -c "..."` — top-blocker distribution (recipe in directives).
 - `STATUS.md` — high-level project state.
-- `docs/decompose-to-tasks/bootstrap-subset.md` — 345-bead INCLUDE set.

@@ -628,3 +628,131 @@ func TestIdempCrashRecovery_CleanLogEmpty(t *testing.T) {
 		t.Errorf("scan returned %d entries for empty intent-log dir, want 0", len(surviving))
 	}
 }
+
+// cat3aEvidenceFixtureEntry returns a valid IntentLogEntry representing a
+// pending claim write, used to simulate the intent-log evidence consumed by the
+// Cat 3a detector per BI-032. The entry models the situation where the adapter
+// wrote the intent file, crashed, and the bead's status is now ambiguous.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-032 — "The intent log and
+// Beads's audit log MUST be the evidence sources consumed by the Cat 3a
+// torn-Beads-write detector."
+func cat3aEvidenceFixtureEntry(t *testing.T) IntentLogEntry {
+	t.Helper()
+	e := intentEntryValid(t)
+	e.Op = TerminalOpClaim
+	e.IntendedPostState = CoarseStatusInProgress
+	e.RequestedAt = e.RequestedAt.UTC().Truncate(time.Second)
+	return e
+}
+
+// TestCat3aEvidence_IntentLogEntryIsDetectorInput verifies that an
+// IntentLogEntry carries all the fields the Cat 3a detector needs to determine
+// whether a Beads write was torn:
+//
+//   - IdempotencyKey — uniquely identifies the write for audit-log correlation
+//   - Op — identifies what operation was in flight
+//   - BeadID — identifies the target bead for `br show <bead_id>`
+//   - IntendedPostState — the expected post-write status; deviation signals torn write
+//
+// A non-empty IdempotencyKey with a surviving intent file and a bead status that
+// is neither the pre-state nor the IntendedPostState is the Cat 3a signal per
+// specs/reconciliation/spec.md §8.4a / specs/beads-integration.md §4.10 BI-032.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-032; §6.1 RECORD IntentLogEntry.
+func TestCat3aEvidence_IntentLogEntryIsDetectorInput(t *testing.T) {
+	t.Parallel()
+
+	entry := cat3aEvidenceFixtureEntry(t)
+
+	// All four evidence fields required by the Cat 3a detector must be populated.
+	if entry.IdempotencyKey == "" {
+		t.Error("IdempotencyKey is empty — Cat 3a detector cannot correlate audit log")
+	}
+	if !entry.Op.Valid() {
+		t.Errorf("Op %q is not valid — detector cannot classify the write", entry.Op)
+	}
+	if entry.BeadID == "" {
+		t.Error("BeadID is empty — detector cannot query br show <bead_id>")
+	}
+	if !entry.IntendedPostState.Valid() {
+		t.Errorf("IntendedPostState %q is not valid — detector cannot check status deviation", entry.IntendedPostState)
+	}
+	if !entry.Valid() {
+		t.Error("Valid() = false — entry is not a valid Cat 3a evidence record")
+	}
+}
+
+// TestCat3aEvidence_ReconciliationCategoryLinkage verifies that
+// ReconciliationCategoryCat3a is a valid, distinct ReconciliationCategory value
+// and that it round-trips through JSON. The Cat 3a category is the classification
+// emitted when a surviving intent file is present and the bead's current status
+// is neither the pre-state nor the IntendedPostState.
+//
+// Spec ref: specs/reconciliation/schemas.md §6.1 ENUM ReconciliationCategory;
+// specs/beads-integration.md §4.10 BI-032.
+func TestCat3aEvidence_ReconciliationCategoryLinkage(t *testing.T) {
+	t.Parallel()
+
+	cat := ReconciliationCategoryCat3a
+
+	if !cat.Valid() {
+		t.Errorf("ReconciliationCategoryCat3a.Valid() = false, want true")
+	}
+	if string(cat) != "cat-3a" {
+		t.Errorf("string(ReconciliationCategoryCat3a) = %q, want %q", string(cat), "cat-3a")
+	}
+
+	// Round-trip through JSON (MarshalText / UnmarshalText paths).
+	data, err := json.Marshal(cat)
+	if err != nil {
+		t.Fatalf("json.Marshal(Cat3a): %v", err)
+	}
+	var got ReconciliationCategory
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal(Cat3a): %v", err)
+	}
+	if got != cat {
+		t.Errorf("round-trip: got %q, want %q", got, cat)
+	}
+}
+
+// TestCat3aEvidence_IntentFilePresenceSignalsTornWrite verifies that the
+// presence of an IntentLogEntry file in the intent-log directory after a crash
+// constitutes the evidence of a potentially torn write — the first condition the
+// Cat 3a detector checks per BI-032. An absent file means the write completed
+// and the adapter deleted it; a present file means the write outcome is unknown.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-032; §4.10 BI-030 (delete on
+// success means absence = completed).
+func TestCat3aEvidence_IntentFilePresenceSignalsTornWrite(t *testing.T) {
+	t.Parallel()
+
+	dir := idempCrashRecoveryFixtureDir(t)
+	entry := cat3aEvidenceFixtureEntry(t)
+
+	// Before any write: no surviving files = no torn write evidence.
+	before := idempCrashRecoveryFixtureScan(t, dir)
+	if len(before) != 0 {
+		t.Fatalf("pre-write scan: got %d entries, want 0", len(before))
+	}
+
+	// Write intent file (simulate adapter pre-write step).
+	intentReadFixtureWrite(t, dir, entry)
+
+	// After write + simulated crash: surviving file = torn write evidence.
+	after := idempCrashRecoveryFixtureScan(t, dir)
+	if len(after) != 1 {
+		t.Fatalf("post-crash scan: got %d entries, want 1", len(after))
+	}
+
+	surviving := after[0]
+	// The detector needs the IdempotencyKey to query the audit log.
+	if surviving.IdempotencyKey != entry.IdempotencyKey {
+		t.Errorf("IdempotencyKey = %q, want %q", surviving.IdempotencyKey, entry.IdempotencyKey)
+	}
+	// The detector needs IntendedPostState to classify the write outcome.
+	if surviving.IntendedPostState != entry.IntendedPostState {
+		t.Errorf("IntendedPostState = %q, want %q", surviving.IntendedPostState, entry.IntendedPostState)
+	}
+}

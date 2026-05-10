@@ -74,6 +74,49 @@ type Workspace struct {
 	SchemaVersion int
 }
 
+// WorkspaceSchemaVersion is the current schema version of the Workspace record.
+// N-1 readable per workspace-model.md §6.4: adding an optional field is
+// non-breaking; removing or renaming a field is breaking.
+// Set by the workspace manager (S06) on create.
+const WorkspaceSchemaVersion = 1
+
+// Valid reports whether ws is a well-formed Workspace ready for use by the
+// workspace manager. It checks all required fields for non-zero / non-empty
+// values. It does NOT check that the workspace exists on disk or that the
+// referenced run_id is live.
+//
+// Returns a non-nil error describing the first invalid field found.
+func (ws *Workspace) Valid() error {
+	if ws.WorkspaceID == "" {
+		return fmt.Errorf("workspace: Workspace.WorkspaceID must be non-empty")
+	}
+	if ws.RunID == (core.RunID{}) {
+		return fmt.Errorf("workspace: Workspace.RunID must be non-zero")
+	}
+	if ws.Repository == "" {
+		return fmt.Errorf("workspace: Workspace.Repository must be non-empty")
+	}
+	if ws.ParentCommit == "" {
+		return fmt.Errorf("workspace: Workspace.ParentCommit must be non-empty")
+	}
+	if ws.BranchName == "" {
+		return fmt.Errorf("workspace: Workspace.BranchName must be non-empty")
+	}
+	if ws.Path == "" {
+		return fmt.Errorf("workspace: Workspace.Path must be non-empty")
+	}
+	if !ws.State.Valid() {
+		return fmt.Errorf("workspace: Workspace.State %q is not a valid WorkspaceState", ws.State)
+	}
+	if !ws.InterruptState.Valid() {
+		return fmt.Errorf("workspace: Workspace.InterruptState %q is not a valid InterruptState", ws.InterruptState)
+	}
+	if ws.SchemaVersion <= 0 {
+		return fmt.Errorf("workspace: Workspace.SchemaVersion must be positive, got %d", ws.SchemaVersion)
+	}
+	return nil
+}
+
 // ErrInvalidTransition is returned by [Transition] when the requested
 // (from, to) state pair is not declared in the §7.1 transition table.
 var ErrInvalidTransition = errors.New("workspace: invalid lifecycle state transition")

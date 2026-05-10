@@ -438,3 +438,193 @@ func TestReadIntentLogEntry_SnakeCaseKeys(t *testing.T) {
 		t.Error("Valid() = false after decoding snake_case intent file, want true")
 	}
 }
+
+// idempCrashRecoveryFixtureDir creates a temp directory representing
+// .harmonik/beads-intents/ and returns its path. Used by umbrella
+// crash-recovery tests (hk-872.38).
+func idempCrashRecoveryFixtureDir(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
+
+// idempCrashRecoveryFixtureScan scans dir for *.json files (excluding *.tmp-*)
+// and returns all successfully decoded IntentLogEntry values. Mirrors the
+// scan logic described in BI-031: after a crash, surviving *.json files are the
+// set of writes whose completion is ambiguous.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 — surviving intent files
+// after crash.
+func idempCrashRecoveryFixtureScan(t *testing.T, dir string) []IntentLogEntry {
+	t.Helper()
+
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("idempCrashRecoveryFixtureScan: ReadDir %q: %v", dir, err)
+	}
+
+	var entries []IntentLogEntry
+	for _, de := range des {
+		if de.IsDir() {
+			continue
+		}
+		name := de.Name()
+		// Skip pre-rename temp files — these represent writes that crashed
+		// before rename completed; the write did not land.
+		if len(name) > 5 && name[len(name)-5:] != ".json" {
+			continue
+		}
+		// Explicitly skip .tmp- files per BI-031 scan discipline.
+		isTmp := false
+		for i := range name {
+			if i+5 <= len(name) && name[i:i+5] == ".tmp-" {
+				isTmp = true
+				break
+			}
+		}
+		if isTmp {
+			continue
+		}
+
+		path := filepath.Join(dir, name)
+		entry, err := ReadIntentLogEntry(path)
+		if err != nil {
+			continue // non-JSON or invalid files are skipped by the scanner
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// TestIdempCrashRecovery_SingleEntryPersistsAfterCrash verifies that an
+// IntentLogEntry written to the intent-log directory is recoverable via
+// ReadIntentLogEntry after a simulated crash (i.e., the adapter simply stops
+// without deleting the file). This is the core property of BI-031: fsynced
+// intent files survive crashes and describe ambiguous writes at restart.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 (write durability);
+// §4.10 BI-031 (recovery reads surviving files).
+func TestIdempCrashRecovery_SingleEntryPersistsAfterCrash(t *testing.T) {
+	t.Parallel()
+
+	dir := idempCrashRecoveryFixtureDir(t)
+	entry := intentEntryValid(t)
+	entry.RequestedAt = entry.RequestedAt.UTC().Truncate(time.Second)
+
+	// Simulate the adapter's pre-write step: write the intent file.
+	path := intentReadFixtureWrite(t, dir, entry)
+
+	// Simulate a crash: the adapter stops without deleting the file.
+	// On restart, scan the directory — the file must be discoverable.
+	surviving := idempCrashRecoveryFixtureScan(t, dir)
+
+	if len(surviving) != 1 {
+		t.Fatalf("scan found %d entries after crash, want 1 (path=%q)", len(surviving), path)
+	}
+	got := surviving[0]
+
+	if got.IdempotencyKey != entry.IdempotencyKey {
+		t.Errorf("recovered IdempotencyKey = %q, want %q", got.IdempotencyKey, entry.IdempotencyKey)
+	}
+	if got.Op != entry.Op {
+		t.Errorf("recovered Op = %q, want %q", got.Op, entry.Op)
+	}
+	if got.BeadID != entry.BeadID {
+		t.Errorf("recovered BeadID = %q, want %q", got.BeadID, entry.BeadID)
+	}
+	if got.IntendedPostState != entry.IntendedPostState {
+		t.Errorf("recovered IntendedPostState = %q, want %q", got.IntendedPostState, entry.IntendedPostState)
+	}
+	if !got.Valid() {
+		t.Error("Valid() = false on recovered entry, want true")
+	}
+}
+
+// TestIdempCrashRecovery_MultipleEntriesAllSurvive verifies that when multiple
+// intent files are written before a crash, all survive and are recovered by the
+// directory scan. Each distinct terminal-transition write is an independent
+// intent file keyed by its idempotency key.
+//
+// Spec ref: specs/beads-integration.md §6.2 on-disk layout (one file per pending
+// operation, keyed by idempotency_key).
+func TestIdempCrashRecovery_MultipleEntriesAllSurvive(t *testing.T) {
+	t.Parallel()
+
+	dir := idempCrashRecoveryFixtureDir(t)
+
+	// Write three distinct entries with different ops and bead IDs.
+	ops := []struct {
+		op        TerminalOp
+		postState CoarseStatus
+		beadID    BeadID
+	}{
+		{TerminalOpClaim, CoarseStatusInProgress, BeadID("hk-001")},
+		{TerminalOpClose, CoarseStatusClosed, BeadID("hk-002")},
+		{TerminalOpReopen, CoarseStatusOpen, BeadID("hk-003")},
+	}
+
+	for _, tc := range ops {
+		e := intentEntryValid(t)
+		e.Op = tc.op
+		e.IntendedPostState = tc.postState
+		e.BeadID = tc.beadID
+		e.IdempotencyKey = "run-abc:trans-xyz:" + string(tc.op)
+		e.RequestedAt = e.RequestedAt.UTC().Truncate(time.Second)
+		intentReadFixtureWrite(t, dir, e)
+	}
+
+	surviving := idempCrashRecoveryFixtureScan(t, dir)
+	if len(surviving) != len(ops) {
+		t.Fatalf("scan found %d entries, want %d", len(surviving), len(ops))
+	}
+}
+
+// TestIdempCrashRecovery_TmpFileSkipped verifies that a .tmp- file (representing
+// a write that crashed before the rename completed) is excluded from the
+// recovery scan. Per BI-030, only the post-rename *.json files represent writes
+// that landed atomically; a surviving .tmp- file is evidence of a crash during
+// the write step itself (before the intent was durably committed).
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 — "rename(2) to
+// .harmonik/beads-intents/<idempotency_key>.json. The rename is atomic."
+func TestIdempCrashRecovery_TmpFileSkipped(t *testing.T) {
+	t.Parallel()
+
+	dir := idempCrashRecoveryFixtureDir(t)
+
+	// Write a well-formed entry as a .tmp- file (simulate a crash before rename).
+	entry := intentEntryValid(t)
+	entry.RequestedAt = entry.RequestedAt.UTC().Truncate(time.Second)
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	tmpPath := filepath.Join(dir, "run-abc_trans-xyz_claim.json.tmp-deadbeef")
+	//nolint:gosec // G306: test temp dir
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// The scan must return zero entries: the .tmp- file is not a committed write.
+	surviving := idempCrashRecoveryFixtureScan(t, dir)
+	if len(surviving) != 0 {
+		t.Errorf("scan returned %d entries for .tmp- only directory, want 0", len(surviving))
+	}
+}
+
+// TestIdempCrashRecovery_CleanLogEmpty verifies that a clean intent-log directory
+// (no surviving files) produces an empty scan result. This represents the normal
+// steady state: all writes completed successfully and their intent files were
+// deleted.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-030 (delete on success).
+func TestIdempCrashRecovery_CleanLogEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir := idempCrashRecoveryFixtureDir(t)
+	surviving := idempCrashRecoveryFixtureScan(t, dir)
+	if len(surviving) != 0 {
+		t.Errorf("scan returned %d entries for empty intent-log dir, want 0", len(surviving))
+	}
+}

@@ -7,10 +7,10 @@ import "fmt"
 //
 // Tags: mechanism
 //
-// Values are the string names of the seven sentinel errors defined by the
-// handler contract. ErrorCategory is carried as the error_category field on
-// several event payloads (event-model.md §8.1.3, §8.2.2, §8.2.8, §8.3.5,
-// §8.8.2) to identify the handler-origin cause of a failure.
+// Values include the seven handler-contract sentinel names and two bus-internal
+// categories added by event-model.md §8.8.2 and §6.1. ErrorCategory is carried
+// as the error_category field on several event payloads (event-model.md §8.1.3,
+// §8.2.2, §8.2.8, §8.3.5, §8.8.2) to identify the cause of a failure.
 //
 // # Relationship to FailureClass
 //
@@ -23,13 +23,14 @@ import "fmt"
 //
 // # Closed enum
 //
-// The seven values are closed at MVH per handler-contract.md §4.5 (including two
-// structural sub-sentinels). Future additions follow the amendment protocol per
-// [architecture.md §4.6].
+// Nine values are closed at MVH: seven handler-contract sentinels (including two
+// structural sub-sentinels) and two bus-internal categories ("overflow", "panic").
+// Future additions follow the amendment protocol per [architecture.md §4.6].
 type ErrorCategory string
 
 // Declared ErrorCategory constants per event-model.md §3 / §6.3 and
-// handler-contract.md §4.5.
+// handler-contract.md §4.5, plus bus-internal values per event-model.md §8.8.2
+// and §6.1.
 const (
 	// ErrorCategoryTransient is the ErrTransient sentinel class.
 	// Detection per handler-contract.md §8.1; routed per execution-model.md §8.1.
@@ -59,9 +60,22 @@ const (
 	// ErrorCategoryProtocolMismatch is the ErrProtocolMismatch sub-sentinel.
 	// It wraps ErrStructural per handler-contract.md §4.5 HC-021.
 	ErrorCategoryProtocolMismatch ErrorCategory = "ErrProtocolMismatch"
+
+	// ErrorCategoryOverflow is the bus-internal category for events shed from a
+	// per-consumer queue when it is full (EV-011a). The bus emits consumer_failed
+	// (event-model.md §8.8.2) with error_category="overflow" for every shed event.
+	// This value is bus-internal and MUST NOT appear in handler return paths.
+	ErrorCategoryOverflow ErrorCategory = "overflow"
+
+	// ErrorCategoryPanic is the bus-internal category for consumer-goroutine panics
+	// recovered by the bus per the on_panic policy (event-model.md §6.1, OQ-EV-007).
+	// The bus emits consumer_failed (event-model.md §8.8.2) with
+	// error_category="panic" after recovering the panic. This value is bus-internal
+	// and MUST NOT appear in handler return paths.
+	ErrorCategoryPanic ErrorCategory = "panic"
 )
 
-// Valid reports whether c is one of the seven declared ErrorCategory constants.
+// Valid reports whether c is one of the nine declared ErrorCategory constants.
 // Unknown values are not tolerated; consumers observing an unknown ErrorCategory
 // MUST route to reconciliation Cat 6a per [reconciliation/spec.md §8.11].
 func (c ErrorCategory) Valid() bool {
@@ -72,7 +86,9 @@ func (c ErrorCategory) Valid() bool {
 		ErrorCategoryCanceled,
 		ErrorCategoryBudget,
 		ErrorCategorySkillProvisioningFailed,
-		ErrorCategoryProtocolMismatch:
+		ErrorCategoryProtocolMismatch,
+		ErrorCategoryOverflow,
+		ErrorCategoryPanic:
 		return true
 	default:
 		return false
@@ -89,12 +105,12 @@ func (c ErrorCategory) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value not in the seven declared constants.
+// It rejects any value not in the nine declared constants.
 func (c *ErrorCategory) UnmarshalText(text []byte) error {
 	v := ErrorCategory(text)
 	if !v.Valid() {
 		return fmt.Errorf(
-			"errorcategory: unknown value %q; must be one of ErrTransient, ErrStructural, ErrDeterministic, ErrCanceled, ErrBudget, ErrSkillProvisioningFailed, ErrProtocolMismatch",
+			"errorcategory: unknown value %q; must be one of ErrTransient, ErrStructural, ErrDeterministic, ErrCanceled, ErrBudget, ErrSkillProvisioningFailed, ErrProtocolMismatch, overflow, panic",
 			string(text),
 		)
 	}

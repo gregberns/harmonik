@@ -12,8 +12,9 @@ func errorCategoryFixture() ErrorCategory {
 }
 
 // TestErrorCategory_AllValuesValid verifies that every declared ErrorCategory
-// constant passes Valid(), covering the full seven-value set per
-// event-model.md §3 and handler-contract.md §4.5.
+// constant passes Valid(), covering the full nine-value set per
+// event-model.md §3, handler-contract.md §4.5, and the bus-internal values
+// added by event-model.md §8.8.2 and §6.1 (hk-nptq0).
 func TestErrorCategory_AllValuesValid(t *testing.T) {
 	t.Parallel()
 
@@ -25,6 +26,8 @@ func TestErrorCategory_AllValuesValid(t *testing.T) {
 		ErrorCategoryBudget,
 		ErrorCategorySkillProvisioningFailed,
 		ErrorCategoryProtocolMismatch,
+		ErrorCategoryOverflow,
+		ErrorCategoryPanic,
 	}
 	for _, c := range categories {
 		if !c.Valid() {
@@ -102,7 +105,8 @@ func TestErrorCategory_JSONMarshalRejectsInvalid(t *testing.T) {
 }
 
 // TestErrorCategory_StringValues verifies the wire-form string values of each
-// constant match the names declared in handler-contract.md §4.5 / event-model.md §3.
+// constant match the names declared in handler-contract.md §4.5 / event-model.md §3,
+// and that the bus-internal values use their lowercase wire forms per §8.8.2 / §6.1.
 func TestErrorCategory_StringValues(t *testing.T) {
 	t.Parallel()
 
@@ -117,11 +121,46 @@ func TestErrorCategory_StringValues(t *testing.T) {
 		{ErrorCategoryBudget, "ErrBudget"},
 		{ErrorCategorySkillProvisioningFailed, "ErrSkillProvisioningFailed"},
 		{ErrorCategoryProtocolMismatch, "ErrProtocolMismatch"},
+		{ErrorCategoryOverflow, "overflow"},
+		{ErrorCategoryPanic, "panic"},
 	}
 	for _, tc := range cases {
 		if string(tc.cat) != tc.want {
 			t.Errorf("ErrorCategory string value: got %q, want %q", string(tc.cat), tc.want)
 		}
+	}
+}
+
+// TestErrorCategory_BusInternalDistinctFromHandlerSentinels verifies that the
+// two bus-internal categories (overflow, panic) are distinct from all seven
+// handler-contract sentinel values and from each other, per event-model.md
+// §8.8.2 and §6.1 (hk-nptq0).
+func TestErrorCategory_BusInternalDistinctFromHandlerSentinels(t *testing.T) {
+	t.Parallel()
+
+	handlerSentinels := []ErrorCategory{
+		ErrorCategoryTransient,
+		ErrorCategoryStructural,
+		ErrorCategoryDeterministic,
+		ErrorCategoryCanceled,
+		ErrorCategoryBudget,
+		ErrorCategorySkillProvisioningFailed,
+		ErrorCategoryProtocolMismatch,
+	}
+	busInternal := []ErrorCategory{
+		ErrorCategoryOverflow,
+		ErrorCategoryPanic,
+	}
+
+	for _, bi := range busInternal {
+		for _, hs := range handlerSentinels {
+			if bi == hs {
+				t.Errorf("bus-internal %q must be distinct from handler sentinel %q", bi, hs)
+			}
+		}
+	}
+	if ErrorCategoryOverflow == ErrorCategoryPanic {
+		t.Error("ErrorCategoryOverflow and ErrorCategoryPanic must be distinct values")
 	}
 }
 

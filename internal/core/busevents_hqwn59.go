@@ -90,12 +90,6 @@ func (p MetricPayload) Valid() bool {
 // categories: "overflow" (queue shed per EV-011a) and "panic" (on_panic recovery
 // per §6.1).
 //
-// TODO(hk-nptq0): Add "overflow" and "panic" values to ErrorCategory
-// (errorcategory.go) to model the bus-internal failure classes cited by §8.8.2
-// and §6.1 on_panic. Until that bead closes, consumers treating unknown
-// ErrorCategory values as reconciliation Cat 6a per reconciliation/spec.md
-// §8.11 will handle new values gracefully.
-//
 // Emission co-ownership: bus-internal per §6.5. Emission rules in the bus
 // implementation (§7.1 DispatchSync, §7.3 DispatchSync pseudo-code).
 //
@@ -120,10 +114,9 @@ type ConsumerFailedPayload struct {
 	EventID EventID `json:"event_id"`
 
 	// ErrorCategory is the failure class sentinel per handler-contract.md §4.5
-	// and event-model.md §8.8.2. Bus-internal categories ("overflow", "panic")
-	// are not yet declared in ErrorCategory — see TODO above (hk-hqwn.59.79).
-	// Required (must be a valid ErrorCategory constant, or a recognised bus-internal
-	// string until hk-hqwn.59.79 extends the enum).
+	// and event-model.md §8.8.2. Includes bus-internal categories
+	// ErrorCategoryOverflow ("overflow") and ErrorCategoryPanic ("panic") declared
+	// in errorcategory.go (hk-nptq0). Required (must be a valid ErrorCategory).
 	ErrorCategory ErrorCategory `json:"error_category"`
 
 	// FailedAt is the RFC 3339 wall-clock timestamp at the moment of consumer

@@ -1,320 +1,187 @@
-<!-- PP-TRIAL:v12 2026-05-08 main (afternoon — Wave-4 EM-NNN contract beads completion) -->
+<!-- HANDOFF v20 2026-05-09 main — bootstrap drained + post-mvh wave landed -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT. Loaded every /session-resume. -->
-Act as the orchestrator. Delegate substantively; keep main thread small.
 
-**Implementer + reviewer agents read `.claude/implementer-protocol.md` for
-standing conventions** (commit format, lint rules, helper-prefix discipline,
-typed-alias-deferral, reporting format, gofmt-clean discipline, run-before-
-commit checks, pre-flight reading order, **and worktree discipline — added
-v8.5 after 4-of-5 wave-1 implementers committed directly to main**). Do NOT
-duplicate that content into briefs. Briefs orchestrate; the protocol doc
-instructs.
+ROLE. You are the orchestrator. Delegate substantively. Keep the main thread minimal. Stop closing responses with A/B questions when the lane is clear — execute.
 
-THROUGHPUT FLOOR. The bead body IS the work spec. Implementer briefs cap at
-~30 lines: bead-id, worktree pointer, helper prefix, canonical-sibling
-pointer (if useful), and any follow-up `br create` command for typed-alias-
-deferral. **Never paraphrase the bead body into the brief.** The implementer
-runs `br show <id> --format json` and the cited spec sections itself.
+PARALLEL FLOOR — HARD MINIMUM 10 ACTIVE IMPLEMENTERS.
+Past sessions ran 2–3. That is unacceptable. Always have ≥10 implementer agents in flight. Refill on review-dispatch, not review-return: when you spawn a reviewer, immediately spawn the next implementer if the ready queue has non-overlapping work. The orchestrator's job is throughput, not careful sequencing.
 
-Active-work floor: 4 concurrent agents. Target: 6–8 across non-overlapping
-packages. **Refill on review-dispatch, not review-return** — when you spawn
-a reviewer, immediately spawn the next implementer if the ready queue has
-non-conflicting work. Reviews and implementers run in parallel at the agent
-level; the orchestrator should layer them.
+IMPLEMENTER LIFECYCLE — WORK UNTIL ~250K, THEN HANDOFF.
+Each implementer keeps claiming and working ready beads (sequentially, multiple commits on the same worktree branch) until its context exceeds ~250k tokens. Then it stops and runs the `/session-handoff` skill before exiting. The orchestrator merges what landed and dispatches a fresh implementer. Single-bead-per-agent is wasteful — implementers should consume multiple package-scoped beads per session.
 
-Pre-flight investigation cap: orchestrator reads ≤3 files per dispatch (bead
-body via `br show`, the cited spec section, ONE canonical sibling).
+DISPATCH SHAPE.
+- Implementers: model=sonnet, effort=high, isolation=worktree, run_in_background=true.
+- Reviewers: model=sonnet, effort=high, no isolation.
+- Briefs ≤30 lines: bead-id(s), worktree pointer, helper prefix, sibling pointer, follow-up `br create` if needed.
+- NEVER paraphrase the bead body. Implementer fetches via `br show` and reads cited spec.
 
-Spawn implementers (model: sonnet, effort: high) with `isolation: worktree`,
-run_in_background. Reviewers same model/effort, no isolation.
+PRE-FLIGHT (orchestrator, ≤3 reads per dispatch).
+- Bead body via `br show <id> --format json`.
+- The cited spec section.
+- ONE canonical sibling for pattern conventions.
+- Pre-dispatch grep for the bead's primary type name in the target package — if it exists, the bead may be SUBSUMED.
 
-**Same-package-different-file is parallel-safe.** Same-file conflict (3+
-beads mutating one file) → combine into ONE implementer with sequential
-commits.
+BEAD PICKING.
+- Bootstrap-tagged queue is **structurally drained** as of v20. The dispatchable surface is now the broader `br ready` queue (140+ beads), MINUS the explicit out-of-scope set:
+  - `hk-zs0.*` cognition / mechanism beads (architecture spec drafts).
+  - `hk-hqwn.{67,68}` event-model spec-fix beads.
+- `kle6.2` audit (this session) labeled 445 untagged beads as `post-mvh` — that label is a coarse classifier, NOT a hard scope cap. Many post-mvh beads are core spec coverage and should be implemented.
+- Same-package-different-file = parallel-safe.
+- Same-file conflict (3+ beads on one file) → ONE implementer with sequential commits.
+- Bundle by package when possible: implementer claims one package's worth of ready beads and works them sequentially up to its 250k budget.
 
-**Sibling-overlap pre-check (v9).** Before dispatching, scan in-flight
-worktrees for *types* that the new bead may also define. The hk-i0tw.52 vs
-hk-i0tw.31 collision (both defined CadenceFilter) cost a fix-agent round.
-For wide-impact siblings (RECORDs, enums) consider serializing or naming
-the canonical-source bead in the later brief.
+OUT OF SCOPE FOR DISPATCH (do NOT dispatch even from broader queue):
+- `hk-zs0.*` cognition / mechanism beads (architecture spec drafts).
+- `hk-hqwn.{67,68}` event-model spec-fix beads.
 
-**Pre-dispatch TODO grep (v11 — high leverage).** Before dispatching a
-typed-alias / RECORD bead, grep `internal/core/*.go` for `TODO(<bead-id>)`
-markers. If multiple in-flight beads each have a marker on the same file
-(e.g. node.go), serialize the substitutions OR scope each implementer to
-type-definition-files-only and file ONE serial follow-up bead for the
-substitution pass. This session's typed-alias wave avoided rebase friction
-by accident (Bundles A, C went type-defs-only; Bundle B substituted 3
-fields without conflict). Make it intentional next time.
+STANDING CONVENTIONS (full version: `.claude/implementer-protocol.md`).
+- Bead body wins over docs; spec wins over bead body for normative content. Surface discrepancies.
+- Typed-alias deferral: real follow-up bead via `br create`, ID substituted into godoc BEFORE commit. Implementers have been omitting this — orchestrator MUST inline-amend if missed (see hk-b3f.109 amend in this session).
+- gofmt-clean struct alignment; lint clean; tests pass before commit.
+- Worktree discipline: implementer commits in their worktree, never main. Verify `git branch --show-current` before each commit.
+- Specaudit watchdog: every new normative requirement in `specs/*.md` MUST carry a `Tags: mechanism` or `Tags: cognition` line within 30 lines of its heading. Failures surface in `internal/specaudit/ar005_tags_test.go`.
 
-**Subsumption signal in implementer briefs (v12 — high leverage).** When
-orchestrator's pre-flight read shows a bead's record / field / variant
-already exists, surface it explicitly in the brief: "PRE-FLIGHT SIGNAL:
-<file:line citation>. The bead may be largely or entirely subsumed. Your
-first job is to verify, NOT to invent work." Wave-4 (this session) hit this
-3-of-8 times: hk-b3f.5 fully subsumed → SUBSUMED verdict in 48 s with no
-commit; hk-b3f.57 type-only partial → counter-only delta, no record edits;
-hk-b3f.60 variant-only → godoc-only delta. Without the signal, implementers
-default to scaffolding parallel structures and waste cycles. With it, they
-verify and scope to the gap.
+REVIEWER TIER DISCIPLINE.
+- MEDIUM = defect against THIS bead's acceptance criteria.
+- Cross-cutting / future-bead / spec-doc concerns = MINOR or follow-up.
+- Don't flag absent doc sections that aren't required here (## Why / ## Test plan / Reviewed-By trailer / Review-Verdict trailer).
 
-Each implementation gets reviewed (model: sonnet, effort: high). Iterate up
-to 4 rounds; stop when no BLOCKER/MAJOR/MEDIUM findings remain.
+INLINE-AMEND CEILING.
+Trivial single-line text fix, literal one-line code fix, mechanical multi-line refactor verifiable by reading → orchestrator inline-amends, no fix-agent. Above ~3 mechanical edits in 1 file → spawn fix-agent on existing worktree. Re-review can be skipped after pure-deletion or trivial idiom-swap.
 
-Reviewer brief MUST encode TIER DISCIPLINE: MEDIUM = defect against THIS
-bead's acceptance criteria. Cross-cutting / future-bead / spec-doc concerns
-= MINOR or follow-up note, not MEDIUM. Reviewer brief MUST also tell the
-reviewer NOT to flag absence of `## Why / ## What / ## Spec alignment / ##
-Test plan / ## Risk` sections or `Reviewed-By:` / `Review-Verdict:`
-trailers — those are not used in this project.
-
-Inline-amend by orchestrator (no fix-agent) for: trivial single-line text
-fixes; literal one-line code fixes; **mechanical multi-line refactors
-verifiable by reading**. **Read the worktree file BEFORE Edit** — Edit
-requires Read in the same conversation, and bash `git commit` returns 0 on
-"nothing to commit" so a missed Edit can sneak through a chained merge.
-(Hit on hk-b3f.87; recovered with a post-merge follow-up commit.)
-Re-review may be skipped after a metadata-only or pure-deletion fix, OR
-after a trivial idiom swap with tests passing (v12 — hk-b3f.57 fmt.Errorf
-→ errors.New + import add: 1 file, 2 edits, tests re-run, merged without
-re-review).
-
-**Inline-amend ceiling (v9.5 — observed this session).** Inline-amend
-worked clean for ≤3 mechanical edits across 1 file (hk-872.4 single-line
-delete; hk-872.42 three nolint-directive additions; hk-zs0.13 single-line
-delete; hk-hqwn.27 dead-field + dead-return removal; **hk-b3f.57 fmt→errors
-2-edit swap, v12**). Above that bar (e.g. hk-872.30: 4 lint fixes including
-signature change at multiple call sites), spawn a fix-agent — the
-verification cost climbs faster than the dispatch cost.
-
-Path-discrepancy resolution: bead body wins over docs. EXCEPTION — for spec
-content (enum values, regex shapes, RECORD field-types, **enumerated
-message-type sets**), the spec wins per CLAUDE.md ("specs are normative");
-bead body gets the follow-up note. (Reinforced this session: hk-ahvq.48.2
-fix-agent correctly OMITTED `agent_log` because HC-007 doesn't enumerate it,
-even though the bead body listed it. Reviewer cleared. Reinforced again
-v11: hk-b3f.99 PolicyRef bead-title cited control-points.md §6.3 but
-execution-model.md §6.1 cites §6.4 — implementer correctly chose §6.4 and
-surfaced the discrepancy. Reviewer cleared. **Reinforced v12: hk-b3f.25
-implementer found stale `EM-036` citation in pre-existing godoc — EM-036
-does not exist in spec; EM-028 is the correct anchor. Implementer fixed
-in-place as additive correction; reviewer verified and cleared.**)
-
-Orchestrator authority: if reviewer flags MEDIUM but implementation clearly
-meets bead acceptance, you may merge with a closure note explaining the
-tier-override and (optionally) filing a follow-up bead.
-
-Merge dance — RUN FROM THE MAIN REPO DIR, NOT THE WORKTREE. **Do NOT pipe
-git commands through `head`/`tail`** in chains — `| head -1` swallows the
-exit code and `&&` short-circuits don't catch upstream failures. Use raw
-`git` calls in chains, or `bash -c 'set -o pipefail; ...'`.
-
-For the actual merge dance use a for-loop pattern that worked well this
-session:
+MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
+Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift inside worktrees. **CWD-DRIFT WARNING** — when a worktree is removed via the merge-dance loop, the bash shell's CWD can become stale, causing subsequent commands to fail with "No such file or directory". Always prefix with `git -C /Users/gb/github/harmonik` or explicit `cd /Users/gb/github/harmonik &&` before each merge step.
 
     cd /Users/gb/github/harmonik
-    for id in <agent-id-1> <agent-id-2> <agent-id-3>; do
-      WTPATH=".claude/worktrees/agent-$id"
+    for id in <agent-id-1> <agent-id-2>; do
+      WTPATH="/Users/gb/github/harmonik/.claude/worktrees/agent-$id"
       BRANCH="worktree-agent-$id"
       git -C "$WTPATH" rebase main
-      git merge --ff-only "$BRANCH"
-      git worktree unlock "$WTPATH"
-      git worktree remove --force "$WTPATH"
-      git branch -d "$BRANCH"
+      git -C /Users/gb/github/harmonik merge --ff-only "$BRANCH"
+      git -C /Users/gb/github/harmonik worktree unlock "$WTPATH" 2>/dev/null || true
+      git -C /Users/gb/github/harmonik worktree remove --force --force "$WTPATH"
+      git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
-    git push origin main
+    git -C /Users/gb/github/harmonik push origin main
 
-Use `set -e` at the top of the bash script (NOT `| head` / `| tail`).
+**FALLBACK — cherry-pick when ff-merge fails.** Multiple times this session, `git merge --ff-only` reported "Already up to date" after rebase even though the new commit was clearly on the worktree branch (likely a cwd/index drift bug under heavy worktree churn). When this happens, **cherry-pick the worktree's tip commit directly onto main**: `git -C /Users/gb/github/harmonik cherry-pick <sha>`. Cleaner and reliable.
 
-**Post-merge close failures from `blocks` deps are common.** When
-`br close <id>` fails with "blocked by: <other-id>", convert the edge:
+`br close` failures from `blocks` deps → flip to `related`:
+    br dep remove <id> <other> ; br dep add <id> <other> --type related ; br close <id> -r "..."
+Use `|| true` after each `br close` in chained pipelines.
 
-    br dep remove <id> <other-id> && br dep add <id> <other-id> --type related && br close <id> -r "..."
+`br update -d` does NOT exist — use `--description` or `--body`. `--notes` adds without overwriting. `br create` flags: `-p` priority, `--labels "a,b,c"`, `--parent <id>`.
 
-**Dep direction quirk (v9.5).** `br dep remove A B` removes only the A→B
-edge; if children block the parent (B→A blocks), the remove call emits
-`Dependency not found` — that's normal, just continue. The subsequent
-`dep add A B --type related` + `close A` chain still resolves the close.
-Hit this when closing hk-jhob (4 children all closed, parent epic blocked
-by them).
+REBASE-CONFLICT ON `go.mod` — DO NOT USE `git reset --soft main`.
+If two beads both add the same `go.mod` dep and one rebases onto the other after merge, the rebase will conflict. **The fix is interactive rebase to drop the go.mod hunk, NOT `git reset --soft main`.** A worktree's working tree is frozen at its branch creation point — `reset --soft main` PRESERVES that stale tree and stages the (delta vs new main) as deletions of files that landed in other waves. The next commit would erase those files. Recovery cost: 30 min + closed bead requires re-implementation.
 
-Use `br close <id> -r "..."` for the closure note. `br update <id> -c "..."`
-does NOT exist.
+Correct go.mod conflict resolution:
+1. `git -C "$WT" rebase --abort` (clean state).
+2. `git -C "$WT" rebase -i main` and edit the offending commits to drop go.mod hunks (or use `--strategy-option theirs` for go.mod/go.sum specifically).
+3. Verify `git -C "$WT" diff main -- go.mod go.sum` is empty before continuing.
 
-Pipelined merges. When 3+ APPROVE reviews come back close together, chain
-the merges in one bash invocation and push once for the whole chain.
+RESUME RULE. On /session-resume with no hard blocker, EXECUTE — don't ask. Continue the current lane.
 
-Inline fix-iteration on existing worktrees (no new isolation): when a review
-returns REQUEST-CHANGES with mechanical findings, spawn a fix-agent WITHOUT
-`isolation: worktree` — point it at the existing worktree path. The agent
-cd's into the existing branch, applies fixes, creates a NEW commit (never
-amend pre-merge commits). Two-commit branches FF-merge cleanly.
+CONTEXT BUDGET (orchestrator). ~700k effective on this 1M model. At ~500k, finish in-flight wave cleanly, write fresh HANDOFF, stop.
 
-Typed-alias deferral (recurring decision). When a record references a type
-not yet in `core/`: default to `*string`/`string` placeholder + godoc citing
-the spec section + `br create` follow-up bead for the typed wrapper. The
-brief names the `br create` command; the implementer creates the bead,
-captures its ID, and substitutes it into godoc before committing.
-
-`br create` flag syntax (verified this session): use `-p N` for priority NOT
-`-P N`; use `--labels "a,b,c"` (comma-separated single arg) NOT repeated
-`-l a -l b`; use `--parent <id>` not `-P`. Run `br create --help` if unsure.
-
-`go test -C <dir>` quirk (v9.5). The `-C` flag must be the FIRST flag —
-`go test -run X -C dir` fails. Use `cd <wt> && go test -run X` instead.
-
-When ambiguity arises, spend real effort resolving without escalation. Bead
-acceptance criteria is authoritative.
-
-On resume: continue working unless the handoff body flags a real blocker.
-Context budget on this 1M-context model is generous (~700k effective). When
-you cross ~500k, finish in-flight batch cleanly, then write a fresh HANDOFF
-and stop.
 <!-- END DIRECTIVES -->
 
-# Session Handoff
+# State
 
-## State
-Clean. Main at `a202085`, pushed. **9 beads landed this session** across one
-7-implementer parallel wave + 1 refill, two pipelined merge waves. **0
-rebase conflicts, 0 fix-iterations, 1 orchestrator inline-amend.** All
-worktrees cleaned (verified `git worktree list` shows main only). `.claire/`
-untracked dir still here from prior sessions (typo of `.claude/`, leave
-alone).
+Main at `cf1d243`, pushed clean. `go test ./...` green across all packages (incl. internal/specaudit). No active worktrees. No in-flight implementers.
 
-## What landed this session
+# This session — closed beads
 
-**Wave 4 — EM-NNN execution-model contract beads (8 dispatches: 7
-parallel + 1 refill):**
+**~38 beads closed across 3 dispatch waves + 1 recovery + 1 inline amend.**
 
-- **hk-b3f.5 SUBSUMED** (Outcome record + EM-005/EM-005a): existing
-  internal/core/outcome.go:34-105 + outcomekind.go fully satisfy the
-  contract (Kind/Payload discriminator, Cat 6a routing reference, full
-  test coverage). No commit; closed-with-citation.
-- **hk-b3f.1** (EM-001 Workflow well-formed-graph invariant) — `fb4797c`:
-  Workflow.Valid() now enforces edge endpoints in Nodes; +13 LOC + 3 tests.
-- **hk-b3f.19** (EM-016 Checkpoint atomicity contract) — `3f291d8`: godoc
-  on write-tree → commit-tree → update-ref sequence; new path-coherence
-  invariant in Valid() (TransitionRecordPath == TransitionRecordPath(RunID,
-  TransitionID)); side-fix to gitwins_b3f65_test.go fixture path mismatch.
-- **hk-b3f.23** (EM-018a TransitionIDGenerator) — `2d595f1`: daemon-local
-  UUIDv7 mirroring eventidgen pattern; +IsUUIDv7 method on TransitionID; 6
-  unit + 6 stress tests.
-- **hk-b3f.25** (EM-020 immutability contract) — `44d01b1`: godoc on
-  write-once + audit-tool dep + EM-036 → EM-028 stale-citation fix in
-  pre-existing godoc.
-- **hk-b3f.36** (EM-028 canonical durable form vs projection) — `8dfcc3c`:
-  new TransitionEventPayload type with exactly the 3 EM-028 fields,
-  EM-029 no-duplication observed structurally.
-- **hk-b3f.57** (EM-043 + EM-043a cycle counter) — `b2568a1` + `a202085`
-  (orchestrator idiom fix): new CycleCounter with per-(run_id, edge) map,
-  ReconcileFromTransitions for restart-recovery, ErrCompilationLoop
-  sentinel; 10 tests including race-detector.
-- **hk-b3f.60** (EM-046 context-restore behavioral contract) — `452b1b4`:
-  godoc citation in Transition.Valid() (existing needsRollback guard
-  already enforced the constraint; pre-existing tests cover both
-  directions); 2 follow-up beads filed (`hk-b3f.107`, `hk-b3f.108`) for
-  daemon-side rules.
-- **hk-hqwn.9** (EV-006 wall-clock advisory) [REFILL] — `73ea7d5`:
-  TimestampWall godoc citing EV-006 + new wallclock_hqwn9_test.go sensor
-  pattern (264 LOC paralleling monotsmono_hqwn6_test.go).
+## Recovery (start of session)
 
-Net effect: Workflow / Checkpoint / TransitionID / Transition record /
-Edge cycle-counter / Event TimestampWall — all carry their EM- / EV- spec
-citations and structural invariants in code.
+- `hk-i0tw.1` — Scenario YAML loader (SH-001 + alias-bomb fix). Re-applied via cherry-pick of `e40ecab` + `b52662a` from prior-session reflog onto main as `9236b16`. Bead reopened then re-closed. **Recovery procedure proven**: cherry-pick onto main, drop go.mod-conflict hunk via `git checkout HEAD -- go.mod go.sum && go mod tidy`.
 
-Follow-up beads filed mid-wave: **hk-b3f.107** (daemon-initiated
-context-restore initiation-source enforcement) and **hk-b3f.108** (daemon
-Outcome synthesis for context-restore). Both blocked on daemon subsystem
-scaffold.
+## Wave 1 (initial dispatch — bootstrap-tagged surface)
 
-## Process scars to internalize (NEW this session)
+- `hk-b3f.7/.8/.9` — SUBSUMED (Node already carries HandlerRef/Timeout/RequiredSkills/PolicyRef/GateRef/FreedomProfileRef/BudgetRef/IdempotencyClass with Valid() invariants)
+- `hk-b3f.16` — RunStartedPayload typed record + 12 sensor tests (EM-015a)
+- `hk-b3f.17` — RunCompletedPayload + RunFailedPayload + 27 sensor tests (EM-015b/EM-025); follow-up bead hk-b3f.109 filed for ErrorCategory typed alias
+- `hk-b3f.30` — EM-024 branch-tip-equals-checkpoint sensor (4 tests)
+- `hk-8i31.3` — HC-003 static-grep sensor for daemon real/twin branching (sibling pattern for many later sensors)
+- `hk-8i31.77` — Twin binary §10.2 empty-type rejection in loadScriptFile
+- `hk-8mwo.29/.30/.31/.32` — SUBSUMED (test-spec files at squashmerge_wm019_test.go, scratchworktree_wm019a_test.go, squashnonff_wm020_test.go, mergestatus_wm021_test.go cover the contracts end-to-end)
+- `hk-kle6.2` — Corpus label reconciliation; 445 beads labeled `post-mvh`; audit at `docs/foundation/corpus-label-reconciliation-2026-05-09.md`
+- `hk-kle6` (epic closed)
+- `hk-8i31.78` — wire_ndjson_test.go with 6 wireFixture* tests covering well-formed sequence + 5 negative cases (HC-007a/b)
+- `hk-b3f.10` — DefaultIdempotencyClassForNodeRole + NodeRole enum
+- `hk-b3f.11` — EM-011 cross-field check Axes.Idempotency = IdempotencyClass in Node.Valid()
+- `hk-b3f.42` — EM-033 no-transactionality sensor (4 tests)
+- `hk-b3f.39` — EM-031 jsonldivergence_em031.go with torn-tail tolerance + 9 tests; ErrJSONLMidFileCorruption Cat-6b sentinel
 
-1. **Subsumption signals in briefs are high-leverage (codified as
-   directive v12).** 3 of 8 wave-4 dispatches had pre-existing partial
-   implementations that orchestrator pre-flight read caught: hk-b3f.5
-   (fully subsumed → 48-second SUBSUMED verdict, no commit), hk-b3f.57
-   (Edge.TraversalCap field present; counter store missing → counter-only
-   delta, no record edits), hk-b3f.60 (TransitionKindContextRestore
-   variant present; godoc citation missing → 7-line godoc-only delta).
-   Surfacing these in the brief — "PRE-FLIGHT SIGNAL: <file:line>. The
-   bead may be subsumed. Your first job is to verify, NOT to invent
-   work." — got tight scope-to-the-gap deltas every time. Without the
-   signal, implementers default to scaffolding parallel structures.
+## Wave 2 (post-mvh broader queue — after kle6.2 drain)
 
-2. **Bundle decision: same-record-territory only.** hk-b3f.25 + .36
-   bundled into ONE implementer with TWO sequential commits (same prefix,
-   both bead IDs in commit messages, instructed not to squash) — clean.
-   Bundling worked because both beads concern transition-record semantics
-   (transition.go / transitionrecord.go). hk-b3f.60 was kept solo despite
-   "transition" in its name because its only edit was transitionkind.go-
-   adjacent godoc, which would have collided line-wise with E's
-   transitionrecord.go work; the file-territory check held.
+- `hk-8i31.23` — HC-019 context-values business-data sensor
+- `hk-b3f.64` — EM-INV-004 no-transactionality static-grep sensor (17 patterns)
+- `hk-8i31.22` — HC-018 CancelGoSideBound=500ms + CancelSubprocessBound=5s
+- `hk-b3f.26` — EM-020a AuditViolationKind enum + AuditViolation record
+- `hk-8i31.61` — HC-051 seam-boundary sensor (go-list import-graph scan)
+- `hk-b3f.62` — EM-046b RetryCounter + 11 sensor tests
+- `hk-b3f.21` — EM-017a corrupted-checkpoint detector + 8 tests
+- `hk-b3f.55` — EM-042 Guards/Gates DispatchEdge pipeline + 13 tests
+- `hk-b3f.43` — EM-034 SubWorkflowExpansion typed record
+- `hk-8i31.81` — HC-028..034 + HC-INV-003 redaction-middleware fixture suite
+- `hk-b3f.31` — EM-024a branch-tip monotonicity detector (ErrBranchTipRewound, 12 tests)
+- `hk-hqwn.61` — Bus-overflow scenario harness (EV-011a + §8.8.4 bus_overflow payload sensors)
 
-3. **Inline-amend bar held; codified as v12.** F's idiom fix (fmt.Errorf
-   → errors.New) was 1 file, 2 edits (import line + sentinel line), one
-   re-test, one new commit, no fix-agent, no re-review. The "trivial
-   idiom swap with tests passing" generalization to the v9.5 bar is now
-   in the directives.
+## Wave 3 (continued post-mvh queue)
 
-4. **`.claire/` untracked dir is STILL here.** Pre-existing typo'd dir
-   from a prior session. Has a `worktrees/` subdir. Leave alone unless
-   asked.
+- `hk-b3f.41` — EM-032 deterministic-replay sensor (5 tests)
+- `hk-b3f.44` — EM-034a NamespaceNodeID concatenator
+- `hk-b3f.45` — EM-034b SubWorkflowRefGraph DFS cycle detection
+- `hk-hqwn.30` — EV-021 observational-replay advisory invariant sensor
+- `hk-hqwn.31` — EV-022 reconstruction-not-JSONL sensor + DiscoverActiveRuns godoc citation
+- `hk-b3f.56` — EM-042a GatePendingRecord + GateResolutionSignal enum (3 values)
+- `hk-b3f.47/.49/.50` — EM-035 nested checkpoint, EM-036a sub-workflow terminal outcome, EM-037 sub-workflow as ONLY composition (18 tests across 3 commits)
+- `hk-872.38.1/.38/.40` — BI-031 step 1 ReadIntentLogEntry + JSON tags + crash-recovery scan helpers + Cat 3a evidence sensor
 
-## Suggested first move
+## Inline orchestrator amends
 
-1. **Verify state**: `git status` shows only `.claire/` untracked;
-   `git log --oneline -6` top is `a202085 fix(core): use errors.New for
-   ErrCompilationLoop sentinel (idiom parity)`.
+- `f7e023b` — substitute hk-b3f.109 ID into RunFailedPayload.ErrorCategory godoc TODO (implementer for hk-b3f.17 omitted the typed-alias-deferral br create per protocol; orchestrator filed bead + amended godoc).
+- `cf1d243` — add `Tags: mechanism` line to HC-036a in specs/handler-contract.md to satisfy AR-005 mutual-exclusion sensor (specaudit was failing at end-of-session).
 
-2. **Next obvious wave: event-model continuation + remaining hk-b3f
-   contract beads.** Pre-flight `br ready --label tag:mechanism --limit
-   30`. Strong candidates:
-   - **hk-hqwn.34** (EV-025 — each event type has exactly one owning
-     spec for payload shape) and **hk-hqwn.35** (EV-026 — subsystems MAY
-     emit internal events not on this list). Both look like spec-text +
-     sensor-test beads similar in shape to hk-hqwn.9 (use the
-     wallclock_hqwn9_test.go pattern). **Bundle both into one
-     implementer** with 2 sequential commits.
-   - Remaining hk-b3f beads from the parent epic — run `br show hk-b3f
-     --format json` to see open children. Several may be subsumed
-     already; surface subsumption signals per directive v12 when
-     dispatching.
+## Lessons captured (also in directives)
 
-3. **Daemon scaffold is the next cross-cutting unlock.** hk-b3f.107,
-   hk-b3f.108, the cycle-counter git-history adapter, and the EM-016
-   git-plumbing all defer to "daemon subsystem when scaffolded." Worth a
-   conversation with the user before dispatching — this is bigger than a
-   single-implementer bead and may need a kerf work first.
+- **Bootstrap surface is structurally drained.** kle6.2's audit revealed only 191 of 345 bootstrap-INCLUDE-set IDs are loaded into the corpus (HC=46, BI=20, SH=54+ missing). Of the 198 currently-tagged bootstrap beads, ~50+ have closed cumulative; the bootstrap-tagged ready queue is now ~1–2 beads at any time. **Use the broader `br ready` queue (currently 140+) MINUS the explicit out-of-scope set.** Most post-mvh beads are still core spec coverage.
+- **CWD drift bug** under heavy worktree churn — see directives. When `git merge --ff-only` returns "Already up to date" but the worktree clearly has a new commit, fall back to `git cherry-pick <sha>`. Used ~5 times this session, never failed.
+- **Typed-alias-deferral compliance** — implementers have been omitting the protocol-required `br create` follow-up. Orchestrator MUST inline-amend (file the bead + substitute the ID into the godoc) BEFORE pushing the implementer's commit forward, or the merge wave creates a TODO with no tracking.
+- **Specaudit AR-005 watchdog** triggers on any new normative-requirement heading in `specs/*.md` without a nearby `Tags: mechanism` or `Tags: cognition` line. Implementers adding new spec sections must include the tag, or `internal/specaudit/ar005_tags_test.go` fails. Easy inline-amend if missed.
 
-4. **Cognition-tagged spec-fix beads STILL need user pair-on**:
-   hk-zs0.58, .59, .60, .62, hk-hqwn.67, .68. Don't dispatch as
-   implementer briefs.
+# Current lane
 
-5. **Deferred until subsystems exist**: hk-hqwn.70 (BusFlusher /
-   EventBus.Flush — needs event-bus subsystem), hk-872.57
-   (divergence_inconclusive event emission — same), hk-b3f.107 / .108
-   (daemon-side context-restore rules).
+**Phase 1 implementation: behavioral beads, broader post-mvh surface.** Of 658 bead corpus: 198 `scope:bootstrap` (~80+ closed), 450 `post-mvh` (~30 closed via path-2 dispatch this session), 10 unlabeled epics. **140+ ready beads** across `br ready --limit 0`; 25 listed at end of session — first 7 non-zs0:
 
-## Files to open first
+```
+hk-872.38.2  Step 2 — br show <bead_id> for current coarse_status (BI)
+hk-b3f.48    Sub-workflow entry/exit lifecycle events (continuation of .47/.49/.50 cluster)
+hk-b3f.63    Sensor: git is the state-reconstruction source (sibling: .39, .41)
+hk-hqwn.33   Replay cannot re-establish agent state or re-invoke LLMs
+hk-8i31.19   Work queue per agent role
+hk-8i31.38   Common prefix redaction rule (consumer of .81 fixture suite)
+hk-8i31.79   Silent-hang FSM + heartbeat scenario harness
+```
 
-1. `git log --oneline -10` — this session's commits.
-2. `.claude/implementer-protocol.md` — standing rules; no structural
-   change this session.
-3. Files touched this session (verify EM-/EV- citations are intact):
-   `internal/core/{workflow.go, checkpoint.go, transition.go,
-   transitionidgen.go, transitioneventpayload.go, cyclecounter.go,
-   event.go}`.
-4. New files this session:
-   `internal/core/{transitionidgen.go, transitionidgen_test.go,
-   transitionidgen_stress_test.go, transitioneventpayload.go,
-   transitioneventpayload_test.go, cyclecounter.go, cyclecounter_test.go,
-   wallclock_hqwn9_test.go}`.
+Plus zs0.* (out-of-scope) and hk-szv5 (still gated on hk-hqwn.59.82).
 
-## Blocking question for user
+Dispatch in waves of ≥10 across non-overlapping packages — see directive note re: post-mvh elevation.
 
-None. The 6 cognition-tagged spec-fix beads still need pair-on; everything
-else (remaining hk-b3f / hk-hqwn / hk-872 mechanism beads) is
-freely dispatchable. Daemon scaffold is the next strategic question
-worth raising before the next big wave.
+# Quick references
+
+- `br ready --limit 0` — full dispatchable queue (NOT `-l scope:bootstrap`; that filter is structurally drained).
+- `.claude/implementer-protocol.md` — full implementer rules.
+- `STATUS.md` — high-level project state (may lag the handoff).
+- `docs/decompose-to-tasks/bootstrap-subset.md` — 345-bead INCLUDE set (154 unloaded).
+- `docs/foundation/trivial-slice-walkthrough.md` — 25 atomic ops × 7 groups → 55 owning bootstrap beads.
+- `docs/foundation/corpus-label-reconciliation-2026-05-09.md` — kle6.2 audit; explains why bootstrap is drained.
+
+# Open follow-up
+
+- **hk-b3f.109** — typed-alias for `RunFailedPayload.ErrorCategory` (currently `*string` placeholder, godoc points to this bead). Filed this session.
+- **154 unloaded bootstrap IDs** (HC=46, BI=20, SH=54+). Surfaced by kle6.2; not yet ingested. Optional Phase 1 corpus-management task; expanding scope:bootstrap surface would unlock additional bootstrap-tagged dispatches.

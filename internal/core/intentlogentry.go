@@ -1,6 +1,9 @@
 package core
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,23 +32,23 @@ import (
 type IntentLogEntry struct {
 	// IdempotencyKey is the stable composite key "<run_id>:<transition_id>:<op>"
 	// per beads-integration.md §4.10 BI-029. Required (non-empty).
-	IdempotencyKey string
+	IdempotencyKey string `json:"idempotency_key"`
 
 	// RunID is the UUIDv7 identifier of the harmonik run driving this write.
 	// Must not be uuid.Nil.
-	RunID RunID
+	RunID RunID `json:"run_id"`
 
 	// TransitionID is the UUIDv7 identifier of the transition at which this
 	// write is emitted. Must not be uuid.Nil.
-	TransitionID TransitionID
+	TransitionID TransitionID `json:"transition_id"`
 
 	// Op is the terminal operation to be issued to Beads.
 	// One of: claim, close, reopen.
-	Op TerminalOp
+	Op TerminalOp `json:"op"`
 
 	// BeadID is the target bead identifier (opaque per BI-008a).
 	// Required (non-empty).
-	BeadID BeadID
+	BeadID BeadID `json:"bead_id"`
 
 	// IntendedPostState is the Beads status that harmonik expects after the
 	// write succeeds. Derived from (Op, current_pre_state):
@@ -53,11 +56,11 @@ type IntentLogEntry struct {
 	//   close  -> closed
 	//   reopen -> open
 	// Must be a valid CoarseStatus.
-	IntendedPostState CoarseStatus
+	IntendedPostState CoarseStatus `json:"intended_post_state"`
 
 	// RequestedAt is the RFC 3339 wall-clock time at which the intent was
 	// recorded. Must be non-zero.
-	RequestedAt time.Time
+	RequestedAt time.Time `json:"requested_at"`
 
 	// SchemaVersion is the schema version of this record. N-1 readable per
 	// operator-nfr.md §4.5 ON-018: a reader at version N-1 MUST tolerate
@@ -65,7 +68,39 @@ type IntentLogEntry struct {
 	// non-fatal. The current version is 1. Renaming or removing fields is a
 	// breaking change and requires incrementing this value.
 	// Must be > 0.
-	SchemaVersion int
+	SchemaVersion int `json:"schema_version"`
+}
+
+// ReadIntentLogEntry reads a single intent-log file from path and returns the
+// decoded IntentLogEntry. It is the production counterpart to the testhelpers
+// crash-harness reader and implements BI-031 step 1:
+//
+//	"Read the intent file's recorded transition fields: op, bead_id,
+//	idempotency_key, intended_post_state."
+//
+// The file at path must contain a JSON-encoded IntentLogEntry (snake_case keys
+// per §6.1 RECORD IntentLogEntry). Returns an error if the file cannot be
+// read, cannot be decoded, or the decoded entry fails Valid().
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step 1; §6.1 RECORD
+// IntentLogEntry; §6.2 on-disk layout.
+func ReadIntentLogEntry(path string) (IntentLogEntry, error) {
+	//nolint:gosec // G304: path is an adapter-controlled intent-log path under .harmonik/beads-intents/
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return IntentLogEntry{}, fmt.Errorf("ReadIntentLogEntry: read %q: %w", path, err)
+	}
+
+	var entry IntentLogEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return IntentLogEntry{}, fmt.Errorf("ReadIntentLogEntry: decode %q: %w", path, err)
+	}
+
+	if !entry.Valid() {
+		return IntentLogEntry{}, fmt.Errorf("ReadIntentLogEntry: entry at %q failed Valid()", path)
+	}
+
+	return entry, nil
 }
 
 // Valid reports whether all required fields carry valid values.

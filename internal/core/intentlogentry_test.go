@@ -2,6 +2,8 @@ package core
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -241,5 +243,198 @@ func TestIntentLogEntryJSONForwardCompat(t *testing.T) {
 	// SchemaVersion 2 is > 0 so Valid() must still return true.
 	if !got.Valid() {
 		t.Error("Valid() = false when parsing N+1 record with additive field, want true (N-1 compat)")
+	}
+}
+
+// intentReadFixtureWrite writes entry as JSON to a file under dir named
+// <idempotency_key_encoded>.json (colons encoded as underscores per OQ-BI-003)
+// and returns the file path. Used by ReadIntentLogEntry tests (hk-872.38.1).
+func intentReadFixtureWrite(t *testing.T, dir string, entry IntentLogEntry) string {
+	t.Helper()
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("intentReadFixtureWrite: json.Marshal: %v", err)
+	}
+
+	// Encode colons in key to underscores per OQ-BI-003 (filesystem portability).
+	encoded := ""
+	for _, ch := range entry.IdempotencyKey {
+		if ch == ':' {
+			encoded += "_"
+		} else {
+			encoded += string(ch)
+		}
+	}
+	name := encoded + ".json"
+	path := filepath.Join(dir, name)
+
+	//nolint:gosec // G306: intent files are readable by the daemon user only; 0o600 is correct
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("intentReadFixtureWrite: WriteFile %q: %v", path, err)
+	}
+	return path
+}
+
+// TestReadIntentLogEntry_RoundTrip verifies that ReadIntentLogEntry decodes a
+// file written by json.Marshal(IntentLogEntry) and returns an equal, valid entry.
+// Covers BI-031 step 1: read op, bead_id, idempotency_key, intended_post_state.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step 1; §6.1 IntentLogEntry.
+func TestReadIntentLogEntry_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	original := intentEntryValid(t)
+	original.RequestedAt = original.RequestedAt.UTC().Truncate(time.Second)
+
+	path := intentReadFixtureWrite(t, dir, original)
+
+	got, err := ReadIntentLogEntry(path)
+	if err != nil {
+		t.Fatalf("ReadIntentLogEntry error: %v", err)
+	}
+
+	if got.IdempotencyKey != original.IdempotencyKey {
+		t.Errorf("IdempotencyKey = %q, want %q", got.IdempotencyKey, original.IdempotencyKey)
+	}
+	if uuid.UUID(got.RunID) != uuid.UUID(original.RunID) {
+		t.Errorf("RunID = %v, want %v", got.RunID, original.RunID)
+	}
+	if uuid.UUID(got.TransitionID) != uuid.UUID(original.TransitionID) {
+		t.Errorf("TransitionID = %v, want %v", got.TransitionID, original.TransitionID)
+	}
+	if got.Op != original.Op {
+		t.Errorf("Op = %q, want %q", got.Op, original.Op)
+	}
+	if got.BeadID != original.BeadID {
+		t.Errorf("BeadID = %q, want %q", got.BeadID, original.BeadID)
+	}
+	if got.IntendedPostState != original.IntendedPostState {
+		t.Errorf("IntendedPostState = %q, want %q", got.IntendedPostState, original.IntendedPostState)
+	}
+	if !got.RequestedAt.Equal(original.RequestedAt) {
+		t.Errorf("RequestedAt = %v, want %v", got.RequestedAt, original.RequestedAt)
+	}
+	if got.SchemaVersion != original.SchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", got.SchemaVersion, original.SchemaVersion)
+	}
+	if !got.Valid() {
+		t.Error("Valid() = false after ReadIntentLogEntry, want true")
+	}
+}
+
+// TestReadIntentLogEntry_FileMissing verifies that ReadIntentLogEntry returns an
+// error when the file does not exist.
+func TestReadIntentLogEntry_FileMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "missing.json")
+
+	_, err := ReadIntentLogEntry(path)
+	if err == nil {
+		t.Error("ReadIntentLogEntry returned nil error for missing file, want error")
+	}
+}
+
+// TestReadIntentLogEntry_InvalidJSON verifies that ReadIntentLogEntry returns an
+// error when the file contains malformed JSON.
+func TestReadIntentLogEntry_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.json")
+	//nolint:gosec // G306: test file
+	if err := os.WriteFile(path, []byte("{not valid json}"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := ReadIntentLogEntry(path)
+	if err == nil {
+		t.Error("ReadIntentLogEntry returned nil error for invalid JSON, want error")
+	}
+}
+
+// TestReadIntentLogEntry_InvalidEntry verifies that ReadIntentLogEntry returns an
+// error when the JSON is valid but the decoded entry fails Valid() (e.g., empty
+// IdempotencyKey).
+func TestReadIntentLogEntry_InvalidEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	// Construct an entry with an empty IdempotencyKey — Valid() returns false.
+	entry := intentEntryValid(t)
+	entry.IdempotencyKey = ""
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	path := filepath.Join(dir, "invalid_entry.json")
+	//nolint:gosec // G306: test file
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err = ReadIntentLogEntry(path)
+	if err == nil {
+		t.Error("ReadIntentLogEntry returned nil error for invalid entry, want error")
+	}
+}
+
+// TestReadIntentLogEntry_SnakeCaseKeys verifies that ReadIntentLogEntry correctly
+// decodes intent files written with snake_case JSON keys (the on-disk format per
+// §6.1 RECORD IntentLogEntry). This ensures the production adapter's writer and
+// reader are compatible.
+//
+// Spec ref: specs/beads-integration.md §6.1 RECORD IntentLogEntry (field names).
+func TestReadIntentLogEntry_SnakeCaseKeys(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	original := intentEntryValid(t)
+	original.RequestedAt = original.RequestedAt.UTC().Truncate(time.Second)
+
+	// Write using explicit snake_case keys to simulate what the production
+	// adapter writer will produce.
+	snakeCaseJSON := `{
+		"idempotency_key":     "` + original.IdempotencyKey + `",
+		"run_id":              "` + original.RunID.String() + `",
+		"transition_id":       "` + original.TransitionID.String() + `",
+		"op":                  "` + string(original.Op) + `",
+		"bead_id":             "` + string(original.BeadID) + `",
+		"intended_post_state": "` + string(original.IntendedPostState) + `",
+		"requested_at":        "` + original.RequestedAt.Format(time.RFC3339) + `",
+		"schema_version":      1
+	}`
+
+	path := filepath.Join(dir, "snake_case.json")
+	//nolint:gosec // G306: test file
+	if err := os.WriteFile(path, []byte(snakeCaseJSON), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := ReadIntentLogEntry(path)
+	if err != nil {
+		t.Fatalf("ReadIntentLogEntry error: %v", err)
+	}
+
+	if got.IdempotencyKey != original.IdempotencyKey {
+		t.Errorf("IdempotencyKey = %q, want %q", got.IdempotencyKey, original.IdempotencyKey)
+	}
+	if got.Op != original.Op {
+		t.Errorf("Op = %q, want %q", got.Op, original.Op)
+	}
+	if got.BeadID != original.BeadID {
+		t.Errorf("BeadID = %q, want %q", got.BeadID, original.BeadID)
+	}
+	if got.IntendedPostState != original.IntendedPostState {
+		t.Errorf("IntendedPostState = %q, want %q", got.IntendedPostState, original.IntendedPostState)
+	}
+	if !got.Valid() {
+		t.Error("Valid() = false after decoding snake_case intent file, want true")
 	}
 }

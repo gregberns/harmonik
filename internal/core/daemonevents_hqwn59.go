@@ -55,55 +55,6 @@ func (m ShutdownMode) Valid() bool {
 	}
 }
 
-// DaemonDegradedReason is the exhaustive enum for the `reason` field of the
-// daemon_degraded event (§8.7.5; §6.3 daemon_degraded block).
-//
-// Per event-model.md §8.7.5 note: this enum is exhaustive. New variants require
-// an EV-027 amendment.
-type DaemonDegradedReason string
-
-const (
-	// DaemonDegradedReasonRTOBreach is emitted when the RTO measurement exceeds
-	// the configured threshold per operator-nfr.md §4.8 ON-033.
-	DaemonDegradedReasonRTOBreach DaemonDegradedReason = "rto_breach"
-
-	// DaemonDegradedReasonReconstructionNotify is emitted when the reconciliation
-	// subsystem notifies the daemon that reconstruction is required.
-	DaemonDegradedReasonReconstructionNotify DaemonDegradedReason = "reconstruction_notify"
-
-	// DaemonDegradedReasonClockRegression is emitted when the wall clock regresses
-	// behind the event-ID high-water-mark (HWM) by more than 1 second per EV-002c.
-	DaemonDegradedReasonClockRegression DaemonDegradedReason = "clock_regression"
-
-	// DaemonDegradedReasonCat0PostReady is emitted when a Cat 0 prerequisite fails
-	// after the daemon has already reached `ready`. Per reconciliation/spec.md §4.2
-	// RC-012a: MUST NOT transition the daemon-status enum from `ready` to `degraded`.
-	DaemonDegradedReasonCat0PostReady DaemonDegradedReason = "cat0_post_ready"
-
-	// DaemonDegradedReasonInfrastructureUnavailable is emitted when a required
-	// infrastructure prerequisite (br, git, filesystem) becomes unavailable.
-	DaemonDegradedReasonInfrastructureUnavailable DaemonDegradedReason = "infrastructure_unavailable"
-
-	// DaemonDegradedReasonSilentHangAggregate is the ON-040 silent-hang fan-out
-	// aggregator signal per operator-nfr.md §4.9 ON-040.
-	DaemonDegradedReasonSilentHangAggregate DaemonDegradedReason = "silent_hang_aggregate"
-)
-
-// Valid reports whether r is one of the six declared DaemonDegradedReason constants.
-func (r DaemonDegradedReason) Valid() bool {
-	switch r {
-	case DaemonDegradedReasonRTOBreach,
-		DaemonDegradedReasonReconstructionNotify,
-		DaemonDegradedReasonClockRegression,
-		DaemonDegradedReasonCat0PostReady,
-		DaemonDegradedReasonInfrastructureUnavailable,
-		DaemonDegradedReasonSilentHangAggregate:
-		return true
-	default:
-		return false
-	}
-}
-
 // OperatorPauseStatusValue is the typed discriminator for the `status` field of
 // operator_pause_status (§8.7.6).
 //
@@ -126,148 +77,6 @@ const (
 func (v OperatorPauseStatusValue) Valid() bool {
 	switch v {
 	case OperatorPauseStatusValuePausing, OperatorPauseStatusValuePaused:
-		return true
-	default:
-		return false
-	}
-}
-
-// OperatorUpgradeRejectedReason is the typed discriminator for the `reason` field
-// of operator_upgrade_rejected (§8.7.11).
-type OperatorUpgradeRejectedReason string
-
-const (
-	// OperatorUpgradeRejectedReasonHashMismatch is emitted when the binary's
-	// commit hash does not match the expected hash for the upgrade version.
-	OperatorUpgradeRejectedReasonHashMismatch OperatorUpgradeRejectedReason = "hash_mismatch"
-
-	// OperatorUpgradeRejectedReasonSchemaIncompatible is emitted when the upgrade
-	// binary's schema version is incompatible with the current on-disk schema.
-	OperatorUpgradeRejectedReasonSchemaIncompatible OperatorUpgradeRejectedReason = "schema_incompatible"
-
-	// OperatorUpgradeRejectedReasonNotPaused is emitted when an upgrade is
-	// attempted while the daemon is not in the `paused` state.
-	OperatorUpgradeRejectedReasonNotPaused OperatorUpgradeRejectedReason = "not_paused"
-)
-
-// Valid reports whether r is one of the three declared OperatorUpgradeRejectedReason constants.
-func (r OperatorUpgradeRejectedReason) Valid() bool {
-	switch r {
-	case OperatorUpgradeRejectedReasonHashMismatch,
-		OperatorUpgradeRejectedReasonSchemaIncompatible,
-		OperatorUpgradeRejectedReasonNotPaused:
-		return true
-	default:
-		return false
-	}
-}
-
-// OperatorCommandName is the typed discriminator for the `command` field of
-// operator_command_rejected (§8.7.12) and operator_command_failed (§8.7.16).
-//
-// TODO(hk-hqwn.71): hoist to a richer OperatorCommand typed alias when that
-// type lands; current string-alias is the typed-alias-deferral placeholder.
-type OperatorCommandName string
-
-const (
-	// OperatorCommandNamePause is the `pause` operator command.
-	OperatorCommandNamePause OperatorCommandName = "pause"
-
-	// OperatorCommandNameStop is the `stop` operator command.
-	OperatorCommandNameStop OperatorCommandName = "stop"
-
-	// OperatorCommandNameUpgrade is the `upgrade` operator command.
-	OperatorCommandNameUpgrade OperatorCommandName = "upgrade"
-
-	// OperatorCommandNameAttach is the `attach` operator command.
-	OperatorCommandNameAttach OperatorCommandName = "attach"
-
-	// OperatorCommandNameEnqueue is the `enqueue` operator command.
-	OperatorCommandNameEnqueue OperatorCommandName = "enqueue"
-)
-
-// Valid reports whether n is one of the five declared OperatorCommandName constants.
-func (n OperatorCommandName) Valid() bool {
-	switch n {
-	case OperatorCommandNamePause, OperatorCommandNameStop, OperatorCommandNameUpgrade,
-		OperatorCommandNameAttach, OperatorCommandNameEnqueue:
-		return true
-	default:
-		return false
-	}
-}
-
-// OperatorEscalationClearanceReason is the typed discriminator for the
-// `clearance_reason` field of operator_escalation_cleared (§8.7.17).
-type OperatorEscalationClearanceReason string
-
-const (
-	// OperatorEscalationClearanceReasonVerdictExecuted indicates the escalation
-	// was cleared because the pending verdict was successfully executed.
-	OperatorEscalationClearanceReasonVerdictExecuted OperatorEscalationClearanceReason = "verdict_executed"
-
-	// OperatorEscalationClearanceReasonManualClear indicates the operator
-	// manually cleared the escalation.
-	OperatorEscalationClearanceReasonManualClear OperatorEscalationClearanceReason = "manual_clear"
-
-	// OperatorEscalationClearanceReasonSuperseded indicates the escalation was
-	// cleared because a newer escalation superseded it.
-	OperatorEscalationClearanceReasonSuperseded OperatorEscalationClearanceReason = "superseded"
-)
-
-// Valid reports whether r is one of the three declared OperatorEscalationClearanceReason constants.
-func (r OperatorEscalationClearanceReason) Valid() bool {
-	switch r {
-	case OperatorEscalationClearanceReasonVerdictExecuted,
-		OperatorEscalationClearanceReasonManualClear,
-		OperatorEscalationClearanceReasonSuperseded:
-		return true
-	default:
-		return false
-	}
-}
-
-// InfrastructurePrerequisite is the typed discriminator for the
-// `failed_prerequisite` field of infrastructure_unavailable (§8.7.15; §6.3).
-type InfrastructurePrerequisite string
-
-const (
-	// InfrastructurePrerequisiteBrMissing indicates the `br` CLI binary is not
-	// found on PATH.
-	InfrastructurePrerequisiteBrMissing InfrastructurePrerequisite = "br_missing"
-
-	// InfrastructurePrerequisiteBrTimeout indicates a `br` invocation timed out.
-	InfrastructurePrerequisiteBrTimeout InfrastructurePrerequisite = "br_timeout"
-
-	// InfrastructurePrerequisiteBrVersionIncompatible indicates the `br` CLI
-	// version is not compatible with the expected version.
-	InfrastructurePrerequisiteBrVersionIncompatible InfrastructurePrerequisite = "br_version_incompatible"
-
-	// InfrastructurePrerequisiteBeadsSQLiteLocked indicates the Beads SQLite
-	// database is locked and unavailable.
-	InfrastructurePrerequisiteBeadsSQLiteLocked InfrastructurePrerequisite = "beads_sqlite_locked"
-
-	// InfrastructurePrerequisiteGitIndexLocked indicates the Git index is locked.
-	InfrastructurePrerequisiteGitIndexLocked InfrastructurePrerequisite = "git_index_locked"
-
-	// InfrastructurePrerequisiteHarmonikDirUnwritable indicates the .harmonik
-	// directory is not writable.
-	InfrastructurePrerequisiteHarmonikDirUnwritable InfrastructurePrerequisite = "harmonik_dir_unwritable"
-
-	// InfrastructurePrerequisiteFilesystemFull indicates the filesystem is full.
-	InfrastructurePrerequisiteFilesystemFull InfrastructurePrerequisite = "filesystem_full"
-)
-
-// Valid reports whether p is one of the seven declared InfrastructurePrerequisite constants.
-func (p InfrastructurePrerequisite) Valid() bool {
-	switch p {
-	case InfrastructurePrerequisiteBrMissing,
-		InfrastructurePrerequisiteBrTimeout,
-		InfrastructurePrerequisiteBrVersionIncompatible,
-		InfrastructurePrerequisiteBeadsSQLiteLocked,
-		InfrastructurePrerequisiteGitIndexLocked,
-		InfrastructurePrerequisiteHarmonikDirUnwritable,
-		InfrastructurePrerequisiteFilesystemFull:
 		return true
 	default:
 		return false
@@ -461,19 +270,17 @@ type DaemonStartupFailedPayload struct {
 	// for failures (0 is technically valid but unexpected for a startup failure).
 	ExitCode int `json:"exit_code"`
 
-	// FailureMode is the failure mode string per operator-nfr.md §8.
+	// FailureMode is the failure mode per operator-nfr.md §8.
 	// Required (non-empty).
-	//
-	// TODO(hk-hqwn.71): hoist to typed FailureMode alias when that type lands
-	// (operator-nfr.md §8 defines the failure mode enum).
-	FailureMode string `json:"failure_mode"`
+	FailureMode FailureMode `json:"failure_mode"`
 }
 
 // Valid reports whether p is a well-formed DaemonStartupFailedPayload.
 //
 // Rules per event-model.md §8.7.4:
 //   - FailedAt must be non-empty.
-//   - FailureMode must be non-empty.
+//   - FailureMode must be non-empty (any non-empty FailureMode string is valid;
+//     the set is open per operator-nfr.md §8).
 func (p DaemonStartupFailedPayload) Valid() bool {
 	if p.FailedAt == "" {
 		return false
@@ -792,8 +599,8 @@ func (p OperatorUpgradeRejectedPayload) Valid() bool {
 //   - rejected_at   — RFC 3339 wall-clock timestamp at rejection
 type OperatorCommandRejectedPayload struct {
 	// Command is the operator command that was rejected.
-	// Required; must be a valid OperatorCommandName constant.
-	Command OperatorCommandName `json:"command"`
+	// Required; must be a valid OperatorCommand constant.
+	Command OperatorCommand `json:"command"`
 
 	// CurrentState is the DaemonStatus at the time the command was rejected.
 	// Required; must be a valid DaemonStatus constant.
@@ -807,7 +614,7 @@ type OperatorCommandRejectedPayload struct {
 // Valid reports whether p is a well-formed OperatorCommandRejectedPayload.
 //
 // Rules per event-model.md §8.7.12:
-//   - Command must be a valid OperatorCommandName constant.
+//   - Command must be a valid OperatorCommand constant.
 //   - CurrentState must be a valid DaemonStatus constant.
 //   - RejectedAt must be non-empty.
 func (p OperatorCommandRejectedPayload) Valid() bool {
@@ -851,13 +658,10 @@ type DispatchDeferredPayload struct {
 	// Non-nil must be non-empty.
 	NodeID *NodeID `json:"node_id,omitempty"`
 
-	// Reason is the deferral reason string. Required (non-empty). The canonical
-	// value is "machine_ceiling_exhausted"; other strings are accepted per
-	// event-model.md §8.7.13 (`machine_ceiling_exhausted` / other).
-	//
-	// TODO(hk-hqwn.71): hoist to typed DispatchDeferredReason alias when that
-	// type lands.
-	Reason string `json:"reason"`
+	// Reason is the deferral reason. Required (non-empty). The canonical value is
+	// DispatchDeferredReasonMachineCeilingExhausted; other strings are accepted
+	// per event-model.md §8.7.13 (`machine_ceiling_exhausted` / other).
+	Reason DispatchDeferredReason `json:"reason"`
 
 	// DeferredAt is the RFC 3339 wall-clock timestamp at deferral.
 	// Required (non-empty).
@@ -868,7 +672,7 @@ type DispatchDeferredPayload struct {
 //
 // Rules per event-model.md §8.7.13:
 //   - RunID, when non-nil, must not be uuid.Nil.
-//   - NodeID, when non-nil, must not be uuid.Nil.
+//   - NodeID, when non-nil, must not be empty.
 //   - Reason must be non-empty.
 //   - DeferredAt must be non-empty.
 func (p DispatchDeferredPayload) Valid() bool {
@@ -1012,8 +816,8 @@ func (p InfrastructureUnavailablePayload) Valid() bool {
 //   - failed_at     — RFC 3339 wall-clock timestamp at failure
 type OperatorCommandFailedPayload struct {
 	// Command is the operator command that failed.
-	// Required; must be a valid OperatorCommandName constant.
-	Command OperatorCommandName `json:"command"`
+	// Required; must be a valid OperatorCommand constant.
+	Command OperatorCommand `json:"command"`
 
 	// FailureClass is the failure class per FailureClass enum (§6.3).
 	// Required; must be a valid FailureClass constant.
@@ -1032,7 +836,7 @@ type OperatorCommandFailedPayload struct {
 // Valid reports whether p is a well-formed OperatorCommandFailedPayload.
 //
 // Rules per event-model.md §8.7.16:
-//   - Command must be a valid OperatorCommandName constant.
+//   - Command must be a valid OperatorCommand constant.
 //   - FailureClass must be a valid FailureClass constant.
 //   - RunID, when non-nil, must not be uuid.Nil.
 //   - FailedAt must be non-empty.
@@ -1079,8 +883,8 @@ type OperatorEscalationClearedPayload struct {
 	ClearedAt string `json:"cleared_at"`
 
 	// ClearanceReason identifies why the escalation was cleared.
-	// Required; must be a valid OperatorEscalationClearanceReason constant.
-	ClearanceReason OperatorEscalationClearanceReason `json:"clearance_reason"`
+	// Required; must be a valid ClearanceReason constant.
+	ClearanceReason ClearanceReason `json:"clearance_reason"`
 }
 
 // Valid reports whether p is a well-formed OperatorEscalationClearedPayload.
@@ -1088,7 +892,7 @@ type OperatorEscalationClearedPayload struct {
 // Rules per event-model.md §8.7.17:
 //   - TargetRunID, when non-nil, must not be uuid.Nil.
 //   - ClearedAt must be non-empty.
-//   - ClearanceReason must be a valid OperatorEscalationClearanceReason constant.
+//   - ClearanceReason must be a valid ClearanceReason constant.
 func (p OperatorEscalationClearedPayload) Valid() bool {
 	if p.TargetRunID != nil && uuid.UUID(*p.TargetRunID) == uuid.Nil {
 		return false

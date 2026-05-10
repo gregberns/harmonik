@@ -20,47 +20,12 @@ import "github.com/google/uuid"
 // Enum types for §8.8 payload discriminators
 // ---------------------------------------------------------------------------
 
-// BusOverflowShedPolicy is the typed discriminator for the `shed_policy` field
-// of the bus_overflow event (event-model.md §8.8.4; EV-011a).
-//
-// The shed policy tells consumers why the event was shed without requiring
-// cross-reference to §8 for the event's durability class.
-//
-// TODO(hk-hqwn.72): hoist to a typed ShedPolicy alias in a dedicated type file
-// when that type lands; currently inline here per the typed-alias-deferral
-// pattern.
-type BusOverflowShedPolicy string
-
-const (
-	// BusOverflowShedPolicyFsyncSpilled indicates a fsync-boundary (F-class)
-	// event could not queue to the consumer; it was redirected to the spill file
-	// at .harmonik/events/spill-<consumer>.jsonl per EV-011a.
-	// Overflow handlers seeing this value SHOULD check the spill file for
-	// reconciliation.
-	BusOverflowShedPolicyFsyncSpilled BusOverflowShedPolicy = "fsync-spilled"
-
-	// BusOverflowShedPolicyOrdinaryDropped indicates an ordinary (O-class) event
-	// could not queue; the event was shed (dropped). Loss is accepted per
-	// EV-017 / EV-INV-002.
-	BusOverflowShedPolicyOrdinaryDropped BusOverflowShedPolicy = "ordinary-dropped"
-
-	// BusOverflowShedPolicyLossyDropped indicates a lossy-tail-ok (L-class) event
-	// could not queue to an observer; the event was shed (dropped). Loss is
-	// accepted per EV-017 / EV-INV-002.
-	BusOverflowShedPolicyLossyDropped BusOverflowShedPolicy = "lossy-dropped"
-)
-
-// Valid reports whether p is one of the three declared BusOverflowShedPolicy constants.
-func (p BusOverflowShedPolicy) Valid() bool {
-	switch p {
-	case BusOverflowShedPolicyFsyncSpilled,
-		BusOverflowShedPolicyOrdinaryDropped,
-		BusOverflowShedPolicyLossyDropped:
-		return true
-	default:
-		return false
-	}
-}
+// ShedPolicy and BusOverflowShedPolicy are declared in shedpolicy.go.
+// The ShedPolicy constants (ShedPolicyFsyncSpilled, ShedPolicyOrdinaryDropped,
+// ShedPolicyLossyDropped) are canonical; BusOverflowShedPolicy is a type alias
+// for backward compatibility. The BusOverflowShedPolicyFsyncSpilled /
+// BusOverflowShedPolicyOrdinaryDropped / BusOverflowShedPolicyLossyDropped
+// names are superseded by their ShedPolicy* equivalents declared in shedpolicy.go.
 
 // ---------------------------------------------------------------------------
 // Payload structs for §8.8 events
@@ -80,15 +45,13 @@ func (p BusOverflowShedPolicy) Valid() bool {
 //
 // # Payload fields (event-model.md §8.8.1)
 //
-//   - metric_name — the metric identifier string
+//   - metric_name — the metric identifier (MetricName)
 //   - value       — the metric value (float64)
-//   - unit        — optional unit string (e.g., "ms", "bytes", "count")
-//   - labels      — optional key-value label map for dimensionality
+//   - unit        — optional unit string (MetricUnit; e.g., "ms", "bytes", "count")
+//   - labels      — optional key-value label map for dimensionality (MetricLabels)
 type MetricPayload struct {
-	// MetricName is the metric identifier string. Required (non-empty).
-	//
-	// TODO(hk-hqwn.72): hoist to typed MetricName alias when that type lands.
-	MetricName string `json:"metric_name"`
+	// Name is the metric identifier string. Required (non-empty).
+	Name MetricName `json:"metric_name"`
 
 	// Value is the metric value. Required (any finite float64; NaN and Inf are
 	// not valid metric values).
@@ -96,23 +59,19 @@ type MetricPayload struct {
 
 	// Unit is the optional unit string for the metric value. Corresponds to
 	// unit? in event-model.md §8.8.1. Nil when no unit is declared.
-	//
-	// TODO(hk-hqwn.72): hoist to typed MetricUnit alias when that type lands.
-	Unit *string `json:"unit,omitempty"`
+	Unit *MetricUnit `json:"unit,omitempty"`
 
 	// Labels is the optional key-value label map for dimensionality. Corresponds
 	// to labels? in event-model.md §8.8.1. Nil when no labels are provided.
-	//
-	// TODO(hk-hqwn.72): hoist to typed MetricLabels alias when that type lands.
-	Labels map[string]string `json:"labels,omitempty"`
+	Labels MetricLabels `json:"labels,omitempty"`
 }
 
 // Valid reports whether p is a well-formed MetricPayload.
 //
 // Rules per event-model.md §8.8.1:
-//   - MetricName must be non-empty.
+//   - Name must be non-empty.
 func (p MetricPayload) Valid() bool {
-	return p.MetricName != ""
+	return p.Name != ""
 }
 
 // DeadLetterEnqueuedPayload is the typed event payload for the

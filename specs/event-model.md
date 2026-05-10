@@ -87,6 +87,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.1.10 | `sub_workflow_exited` | O | orchestrator-core | audit, observability | `run_id`, `parent_node_id`, `sub_workflow_name`, `sub_workflow_version`, `terminal_outcome_status` |
 | 8.1.11 | `node_dispatch_requested` | O | daemon-core | observability, audit | `run_id`, `node_id`, `requested_at`, `origin` (`workflow` / `reconciliation` / `operator`) |
 
+> Section Axes (§8.1 Run lifecycle): All §8.1 event emissions are mechanism-tagged. Class F entries (`run_started`, `run_completed`, `run_failed`, `transition_event`, `checkpoint_written`) are fsync-backed; class O entries are best-effort. Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`. Replay-safety is `safe` for all: the JSONL append is idempotent at the content level and consumers tolerate duplicate delivery per EV-014b.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ### 8.2 Control-point lifecycle
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
@@ -103,6 +107,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.2.10 | `control_points_registration_started` | O | control-points (S02) | audit, observability | `batch_id`, `started_at` |
 | 8.2.11 | `verdict_envelope_mismatch` | O | control-points (S02) | reconciliation, audit, observability | `run_id`, `control_point_name`, `transition_id?`, `event_id_ref?`, `stored_envelope_hash`, `current_envelope_hash`, `detected_at` |
 | 8.2.12 | `policy_expression_exceeded_cost` | F | control-points (S02) | reconciliation, audit, observability | `run_id?`, `control_point_name`, `bound_fired` (enum: `ast_steps` / `wall_clock`), `io_determinism` (enum: `deterministic` / `best-effort`), `aborted_at` |
+
+> Section Axes (§8.2 Control-point lifecycle): All §8.2 event emissions are mechanism-tagged. Class O entries use best-effort io-determinism; §8.2.12 (`policy_expression_exceeded_cost`) is class F (fsync-backed, deterministic). Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`. Exception — §8.2.12: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.3 Agent / handler lifecycle
 
@@ -122,6 +130,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.3.12 | `agent_soft_terminating` | O | handler (via daemon watcher) | orchestrator-core, audit | `run_id`, `session_id`, `threshold_seconds`, `started_at` |
 | 8.3.13 | `agent_hard_terminating` | O | handler (via daemon watcher) | orchestrator-core, audit | `run_id`, `session_id`, `threshold_seconds`, `started_at` |
 
+> Section Axes (§8.3 Agent / handler lifecycle): All §8.3 event emissions are mechanism-tagged. All entries are class O or L (best-effort). §8.3.3 (`agent_output_chunk`) is class L (lossy; observed only). Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ### 8.4 Budget lifecycle
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
@@ -129,6 +141,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.4.1 | `budget_warning` | O | agent-runner (S04) | orchestrator-core, observability | `run_id`, `session_id?`, `budget_ref`, `threshold_fraction`, `remaining` |
 | 8.4.2 | `budget_accrual` | L | handler (via daemon watcher) | improvement-loop, observability | `run_id`, `session_id`, `chunk_index?`, `cost_units`, `cost_basis` |
 | 8.4.3 | `budget_exhausted` | O | agent-runner (S04) | orchestrator-core, audit | `run_id`, `session_id?`, `budget_ref`, `attempted_dispatch_cost` |
+
+> Section Axes (§8.4 Budget lifecycle): All §8.4 event emissions are mechanism-tagged. §8.4.2 (`budget_accrual`) is class L (lossy); others are class O. Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.5 Workspace lifecycle
 
@@ -140,6 +156,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.5.4 | `workspace_discarded` | O | workspace-manager (S06) | audit, observability | `workspace_id`, `run_id`, `reason` |
 | 8.5.5 | `workspace_interrupted` | O | reconciliation detector (per [reconciliation/spec.md §8]) | reconciliation, audit, operator-observability | `workspace_id`, `run_id`, `detected_at`, `category` (Cat 6) |
 | 8.5.6 | `merge_conflict_escalation` | O | workspace-manager (S06) | operator-observability, audit | `workspace_id`, `run_id`, `conflict_paths[]`, `escalated_at` |
+
+> Section Axes (§8.5 Workspace lifecycle): All §8.5 event emissions are mechanism-tagged. §8.5.3 (`workspace_merge_status`) is class F (fsync-backed, deterministic); others are class O. Default per-entry — class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`. Exception — §8.5.3: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.6 Reconciliation lifecycle
 
@@ -161,6 +181,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.6.14 | `bead_terminal_transition_recovered` **(post-MVH)** | O | beads-adapter | observability, audit | `bead_id`, `op` (enum: `claim` / `close` / `reopen`), `idempotency_key`, `recovered_at` |
 
 > **(post-MVH)** §8.6.14 `bead_terminal_transition_recovered` is reserved for a future revision per OQ-BI-008. The MVH adapter emits a structured-log record per [operator-nfr.md §4.9 ON-035] for adapter-recovery observability rather than this event; the entry is reserved here so the type identifier is burned for future use by the BI adapter and not reused for any other purpose. No MVH conformance obligation attaches to §8.6.14.
+
+> Section Axes (§8.6 Reconciliation lifecycle): All §8.6 event emissions are mechanism-tagged. All entries are class O (best-effort). Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.7 Operator-control and daemon lifecycle
 
@@ -184,6 +208,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.7.16 | `operator_command_failed` | O | daemon-core | operator-observability, audit | `command` (enum: `pause` / `stop` / `upgrade` / `attach` / `enqueue`), `failure_class` (enum per §6.3), `run_id?`, `failed_at` |
 | 8.7.17 | `operator_escalation_cleared` | O | daemon-core | operator-observability, audit | `target_run_id?`, `cleared_at`, `clearance_reason` (enum: `verdict_executed` / `manual_clear` / `superseded`) |
 
+> Section Axes (§8.7 Operator-control and daemon lifecycle): All §8.7 event emissions are mechanism-tagged. §8.7.1 (`daemon_started`), §8.7.2 (`daemon_ready`), §8.7.3 (`daemon_shutdown`), §8.7.4 (`daemon_startup_failed`), and §8.7.10 (`operator_upgrade_completed`) are class F (fsync-backed, deterministic); all others are class O. Default per-entry — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ### 8.8 Observability and bus-internal
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
@@ -193,6 +221,10 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.8.3 | `dead_letter_enqueued` | O | bus-internal | observability, audit | `consumer_name`, `event_type`, `original_event_id`, `retries_attempted`, `enqueued_at` |
 | 8.8.4 | `bus_overflow` | O | bus-internal | observability, audit, operator-observability | `consumer_name`, `event_type`, `event_id`, `queue_depth`, `shed_at`, `shed_policy` (`fsync-spilled` / `ordinary-dropped` / `lossy-dropped`) |
 | 8.8.5 | `redaction_failed` | O | bus-internal | operator-observability, audit | `event_type`, `run_id?`, `error_class`, `failed_at` |
+
+> Section Axes (§8.8 Observability and bus-internal): All §8.8 event emissions are mechanism-tagged. §8.8.1 (`metric`) is class L (lossy); others are class O. All entries use best-effort io-determinism. Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.9 Acceptance criteria for candidate event types
 

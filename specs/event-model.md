@@ -194,7 +194,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 | 8.7.1 | `daemon_started` | F | daemon-core | observability, audit | `started_at`, `pid`, `binary_commit_hash` |
 | 8.7.2 | `daemon_ready` | F | daemon-core | observability, audit, operator-nfr | `ready_at`, `ready_at_ns_since_boot`, `investigator_run_ids[]` |
 | 8.7.3 | `daemon_shutdown` | F | daemon-core | observability, audit | `shutdown_at`, `shutdown_at_ns_since_boot`, `mode` (`graceful` / `immediate`) |
-| 8.7.4 | `daemon_startup_failed` | F | daemon-core | operator-observability, audit | `failed_at`, `exit_code`, `failure_mode` (per [operator-nfr.md §8]) |
+| 8.7.4 | `daemon_startup_failed` | F | daemon-core | operator-observability, audit | `failed_at`, `exit_code`, `failure_mode` (per [operator-nfr.md §8]), `required_migration_release?` (REQUIRED when `failure_mode = "queue-format-unsupported"` per ON-016, omitted otherwise) |
 | 8.7.5 | `daemon_degraded` | O | daemon-core | operator-observability, audit | `detected_at`, `reason` (enum per §6.3, exhaustive: `rto_breach` / `reconstruction_notify` / `clock_regression` / `cat0_post_ready` / `infrastructure_unavailable` / `silent_hang_aggregate`) |
 | 8.7.6 | `operator_pause_status` | O | daemon-core | observability, audit | `status` (`pausing` / `paused`), `changed_at`, `operator_id?` |
 | 8.7.7 | `operator_resuming` | O | daemon-core | observability, audit | `resumed_at` |

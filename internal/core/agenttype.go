@@ -21,9 +21,15 @@ const (
 	AgentTypePiTwin     AgentType = "pi-twin"
 )
 
-// agentTypeRegex enforces the AR-027 shape: lowercase alphanumeric + hyphen,
+// AgentTypeRegexPattern is the canonical regex string for the agent_type
+// identifier shape declared in architecture.md §6.1 (AR-025).
+// It is exported so that specaudit sensors can verify the spec-text regex
+// and the runtime regex stay byte-for-byte identical.
+const AgentTypeRegexPattern = `^[a-z][a-z0-9-]{1,62}$`
+
+// agentTypeRegex enforces the AR-025 shape: lowercase alphanumeric + hyphen,
 // must start with a letter, length 2..63 inclusive.
-var agentTypeRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
+var agentTypeRegex = regexp.MustCompile(AgentTypeRegexPattern)
 
 // Valid reports whether a matches the agent-type regex shape (AR-027).
 // It does NOT check membership in the reserved set — that is a separate concern.

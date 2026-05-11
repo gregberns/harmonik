@@ -135,25 +135,46 @@ Picked up v26's 5 MVH roots and stream-dispatched implementers; cascade unblocks
 
 # Next session — direction
 
-The MVH-root cohort is **drained.** Remaining `scope:bootstrap` ready beads are second-layer cascades:
+The MVH-root cohort is **drained.** What remains for MVH is **11 task-beads + 11 epic rollups + `hk-ahvq` Phase-0-completion meta-task.** Of the 11 task-beads, **3 are dispatchable right now**; the other 8 are chained behind them (almost entirely behind `hk-zs0.14`).
 
-| Bead | Status | Quick notes |
+## Dispatchable RIGHT NOW (3)
+
+| Bead | Spec | Notes |
 |---|---|---|
-| `hk-zs0.14` | ready | Subsystem envelope declaration (8 elements). Unblocked by zs0.1. AR-013 chain. |
-| `hk-hqwn.59.22` | ready | Event row: agent_started (§8.3.2). Event-model payload schema work. |
-| `hk-hqwn.59.27` | ready | Event row: session_log_location (§8.3.7). Event-model payload schema work. |
-| `hk-i0tw` epic deps | several | Scenario-harness sensor cohort continues. |
+| `hk-zs0.14` | architecture — AR-013 | Subsystem envelope declaration (8 elements). **Load-bearing root**: closing this unblocks 4 chained beads. Same corpus-search-sensor shape as v27. |
+| `hk-hqwn.59.22` | event-model — §8.3.2 | Event row: `agent_started`. Standalone; payload schema work. |
+| `hk-8mup.33` | process-lifecycle — PL-020a | Cross-subsystem registries reside in the composition root. Standalone; likely SUBSUMED candidate (sibling `pl020_composition_root_test.go` already covers PL-020/PL-020a per v27 hk-8mup.32 SUBSUMED finding). |
 
-Filter `post-mvh` first; ~7 non-post-mvh tasks visible per `br ready --limit 0 | grep -v "\[epic\]"`.
+## Chained MVH work (8) — unlocks as the 3 close
 
-**Recommended:** spawn 3 sonnet implementers on `hk-zs0.14`, `hk-hqwn.59.22`, `hk-hqwn.59.27` in parallel — cross-spec, parallel-safe. Pattern is the same corpus-search sensor as v27.
+| Bead | Blocked by | Title |
+|---|---|---|
+| `hk-zs0.2` | hk-zs0.14 | Envelope declaration section slot (§4.a) with reserved `<PREFIX>-ENV-NNN` |
+| `hk-8mup.1` | hk-zs0.2 | Subsystem envelope declaration (daemon-core / `internal/daemon`) |
+| `hk-8mwo.1` | hk-zs0.2 | Subsystem envelope declaration (S06 / workspace-model) |
+| `hk-8i31.39` | hk-zs0.14 | Per-handler redaction patterns |
+| `hk-8i31.37` | hk-8i31.39 | Redaction registry middleware |
+| `hk-hqwn.45` | hk-8i31.37 | Redaction registry applied before event emission |
+| `hk-hqwn.19` | hk-hqwn.45 | Dispatch semantics |
+| `hk-hqwn.7` | hk-zs0.14 | `source_subsystem` is layout-open |
 
-**Anti-recommendation:** do NOT spend cycles trying to find more MVH-root work in the existing corpus. The roots are drained. The next throughput wins come from (a) cascade through the sensor layer, (b) reviewing whether L-018-candidate "kerf should emit derives-from edges" lands as a real bead, or (c) starting on subsystem-skeleton work (`internal/daemon/` composition root, redaction registry, etc.) that has no dispatchable bead today.
+Dep-graph shape: `zs0.14` is the root of two chains (envelope and redaction); a third chain runs purely inside hqwn. **Recommended dispatch:** spawn the 3 ready beads in parallel; on `zs0.14` close, `zs0.2` + `8i31.39` + `hqwn.7` become ready (3 refills); on `zs0.2` close, `8mup.1` + `8mwo.1` become ready; the redaction chain (`8i31.39 → 8i31.37 → hqwn.45 → hqwn.19`) is sequential. Net: ~3-4 stream cycles drains the MVH task surface, half of which will likely close SUBSUMED (v27 pattern was 5 of 9).
+
+## After MVH tasks close
+
+- **10 spec-epic rollups** (`hk-872`, `hk-b3f`, `hk-hqwn`, `hk-8i31`, `hk-a8bg`, `hk-8mwo`, `hk-8mup`, `hk-sx9r`, `hk-63oh`, `hk-i0tw`) need manual close at MVH-cut time. Beads' parent-child auto-rollup is disabled in this corpus per L-011 conversion. Cleanup, not new work.
+- **`hk-ahvq` "Phase 0 completion — load remaining pilots and exit to code phase"** is a substantive meta-task, not a rollup. Belongs in next session's first triage.
+
+## Post-mvh filter is the real ergonomic gap (NOT a `br ready` bug — protocol note)
+
+`br ready` itself is sound; the v27 friction was that `post-mvh` labeling is checked manually per bead. Of 8 non-epic entries in `br ready --limit 0`, 5 are `post-mvh`-labeled and skipped. Candidate small fix: a `br ready --exclude-label post-mvh` flag, or a session helper script. Until then: always run the per-bead label check before dispatching. Beware: my v27 in-session attempts to write a one-liner filter using `br ready --json` failed because `br ready --json` omits the `labels` field — only `br show` or `br list` carry labels. Don't trust scripted filters without re-checking against `br show`.
+
+**Anti-recommendation:** do NOT spend cycles trying to find more MVH-root work in the existing corpus. The roots are drained. After the 11 tasks close, MVH throughput depends on either (a) reviewing the `hk-ahvq` Phase-0 pilot-ingestion path, or (b) starting on subsystem-skeleton work (`internal/daemon/` composition root, redaction registry implementation) that doesn't have a dispatchable bead today and may need a new kerf work.
 
 # Files to open first
 
 - This file (the directives — v27 BEAD PICKING block has updated post-mvh language).
-- `docs/orchestration-learnings.md` — no new L-### added this session; consider whether L-018 ("MVH-root beads are largely SUBSUMED-by-prior-sessions; product input = `kerf finalize` derives-from edges") is worth writing.
+- `docs/orchestration-learnings.md` — no new L-### added this session; **two candidate L-### entries** worth writing if next session reproduces the pattern: (a) "MVH-root beads are largely SUBSUMED-by-prior-sessions; product input = `kerf finalize` derives-from edges"; (b) "`br ready --json` omits labels — scripted post-mvh filters silently no-op unless they cross-check via `br show`."
 - `STATUS.md` — high-level state (unchanged this session).
 - `.claude/implementer-protocol.md` — implementer rules (unchanged this session, but always read).
 
@@ -165,3 +186,4 @@ Filter `post-mvh` first; ~7 non-post-mvh tasks visible per `br ready --limit 0 |
 - 40 deferred beads — legitimate cognition holds; do not un-defer without explicit audit (L-017 protocol).
 - `hk-e1kdc` filed and closed this session — only follow-up bead created.
 - No reviewer dispatches this session — sonnet implementer self-judgment + protocol discipline held; no rework needed.
+- **MVH remaining surface: 11 task-beads (3 ready, 8 chained) + `hk-ahvq` Phase-0 meta-task + 10 hollow spec-epic rollups for end-of-MVH cleanup.** Half of the 11 likely close SUBSUMED per v27 pattern.

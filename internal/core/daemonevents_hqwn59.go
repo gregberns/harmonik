@@ -258,9 +258,18 @@ func (p DaemonShutdownPayload) Valid() bool {
 //
 // # Payload fields (event-model.md §8.7.4)
 //
-//   - failed_at    — RFC 3339 wall-clock timestamp at failure
-//   - exit_code    — OS exit code the daemon will report on exit
-//   - failure_mode — failure mode string per operator-nfr.md §8
+//   - failed_at                  — RFC 3339 wall-clock timestamp at failure
+//   - exit_code                  — OS exit code the daemon will report on exit
+//   - failure_mode               — failure mode string per operator-nfr.md §8
+//   - required_migration_release — (optional) migration release the operator
+//     must install to resolve the failure; REQUIRED when failure_mode is
+//     "queue-format-unsupported" per operator-nfr.md §4.4.ON-016. Empty for
+//     failure modes that do not require a migration release.
+//
+// NOTE: event-model.md §8.7.4 does not yet list required_migration_release.
+// operator-nfr.md §4.4.ON-016 is normative for ON-016 ("naming the required
+// migration release in the failure event payload"); the event-model table is
+// stale and needs a cross-spec amendment. Follow-up: TODO(hk-sx9r.20-ev-patch).
 type DaemonStartupFailedPayload struct {
 	// FailedAt is the RFC 3339 wall-clock timestamp at startup failure.
 	// Required (non-empty).
@@ -273,6 +282,12 @@ type DaemonStartupFailedPayload struct {
 	// FailureMode is the failure mode per operator-nfr.md §8.
 	// Required (non-empty).
 	FailureMode FailureMode `json:"failure_mode"`
+
+	// RequiredMigrationRelease names the harmonik release the operator must
+	// install to resolve the version incompatibility. REQUIRED when
+	// FailureMode is "queue-format-unsupported" (operator-nfr.md §4.4.ON-016).
+	// Empty string for failure modes that do not require a migration release.
+	RequiredMigrationRelease string `json:"required_migration_release,omitempty"`
 }
 
 // Valid reports whether p is a well-formed DaemonStartupFailedPayload.

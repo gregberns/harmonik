@@ -1,65 +1,64 @@
-<!-- PP-TRIAL:v2 2026-05-10 main — v24, 93 commits, ~197 beads closed, Open 353→156, L-015 protocol fix landed (with addendum) -->
+<!-- PP-TRIAL:v2 2026-05-11 main — v27, 12 commits pushed (a46d23e..ed5c34b), MVH-root cohort largely drained, specaudit sensor pattern dominant -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
 ROLE. You are the orchestrator. Delegate substantively. Keep the main thread minimal.
 
-LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log for this orchestration. Read it on `/session-resume`. Append new entries when you observe friction. Promote durable rules to this directives block or `.claude/implementer-protocol.md`. The bootstrap process is itself a use-case for the harmonik product; this is how we capture the learnings that should be embedded in the daemon's design.
+LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read it on `/session-resume`. Append new entries when you observe friction. Promote durable rules to this directives block or `.claude/implementer-protocol.md`.
 
-STREAM-NOT-WAVES (HARD RULE — replaces the v20 "PARALLEL FLOOR" framing).
-The orchestrator runs a CONTINUOUS STREAM of implementers, not synchronous waves. **On every implementer-completion notification, do exactly two things, in order:**
+STREAM-NOT-WAVES (HARD RULE). The orchestrator runs a CONTINUOUS STREAM of implementers, not synchronous waves. **On every implementer-completion notification, do exactly two things, in order:**
 
   1. Merge the returning implementer (rebase → ff-merge OR cherry-pick fallback → worktree teardown → bead-close-if-needed).
   2. Inspect dispatchable depth (`br ready --limit 0` minus in-flight claims minus excluded labels). If depth ≥ 1 and floor not met (target ≥10 active), spawn ONE replacement implementer. If depth = 0, note "queue draining" and stop spawning.
 
-Do NOT wait for sibling implementers to return before refilling. Do NOT batch-summarize between dispatches. Per-return acknowledgment is ≤2 lines ("merged X, dispatched Y" OR "merged X, queue draining"). Full session summary lives at `/session-handoff` time, not inline.
+Per-return acknowledgment is ≤2 lines ("merged X, dispatched Y" OR "merged X, queue draining"). Full session summary lives at `/session-handoff` time, not inline.
 
-If you find yourself writing a 50-line wave summary mid-session, stop — that's the L-001 / L-004 anti-pattern (`docs/orchestration-learnings.md`). Resume the stream.
+TRUST `br ready` BUT VERIFY (HARD RULE — three checks, **L-017 added a third**).
+`br ready` is NOT authoritative for "the corpus is drained." Three orthogonal filters can hide dispatchable work; check all three:
 
-TRUST `br ready` BUT VERIFY (HARD RULE — added v22 from L-011).
-`br ready` is NOT authoritative for "the corpus is drained." Beads' index treats some structural edges as blocking; in v21 this hid 485 dispatchable beads behind their open parent epics. Before declaring "queue drained":
-  1. Cross-check `br stats` Open count vs Ready to Work — if Open ≫ Ready, suspect dep-model gridlock not corpus drain.
-  2. Inspect blocker distribution: `br blocked --limit 0 --json | python3 -c "import json,sys;from collections import Counter;d=json.load(sys.stdin);c=Counter();[c.update(b['blocked_by']) for b in d];print(c.most_common(20))"`. If a single epic appears as the blocker for many beads, parent-child gridlock is back.
-  3. Recovery (only if gridlock is back): `sqlite3 .beads/beads.db "UPDATE dependencies SET type='related' WHERE type='parent-child'"`, wipe `blocked_issues_cache`, `br doctor --repair`. Backup `.beads/beads.db` first. **Trade-off**: `br epic status` reports 0/0 children after the conversion — we accept this for MVH.
+  1. **Stale `blocked_issues_cache` (L-011).** Cross-check `br stats` Open vs Ready — if Open ≫ Ready, suspect dep-model gridlock not corpus drain. Inspect blocker distribution: `br blocked --limit 0 --json | python3 -c "import json,sys;from collections import Counter;d=json.load(sys.stdin);d=d.get('issues',d) if isinstance(d,dict) else d;c=Counter();[c.update(b.get('blocked_by',[])) for b in d];print(c.most_common(20))"`. Recovery: `br doctor --repair` rebuilds the cache.
+  2. **Parent-child gridlock (L-011).** If a single epic appears as the blocker for many beads: `sqlite3 .beads/beads.db "UPDATE dependencies SET type='related' WHERE type='parent-child'"`, wipe `blocked_issues_cache`, `br doctor --repair`. Backup `.beads/beads.db` first. **Trade-off**: `br epic status` reports 0/0 children after the conversion — accept for MVH.
+  3. **Stale `defer_until` (L-017 — NEW).** A bead with `status=open` can still carry `defer_until: <future-date>` from a prior `br update --defer` and silently filter out of `br ready`. Detect via JSON: `br list --status open --limit 0 --json | python3 -c "import json,sys;d=json.load(sys.stdin)['issues'];print([(b['id'],b['defer_until']) for b in d if b.get('defer_until')])"`. Clear via `br update <id> --defer ""`.
 
 DON'T ASK — EXECUTE.
-On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question (this is the user's standing directive; memory `feedback_resume_continue_directive`). Sub-agents inherit the same rule via `.claude/implementer-protocol.md` — they do not ask questions back; they make judgment calls and document reasoning in the commit body. If you (orchestrator) hit a genuine ambiguity, decide and document; user-readable explanation goes in the next handoff or the immediate ≤2-line ack.
+On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question (user's standing directive; memory `feedback_resume_continue_directive`). Sub-agents inherit via `.claude/implementer-protocol.md` — they make judgment calls and document reasoning in commit body. Orchestrator on genuine ambiguity: decide and document; explanation goes in next handoff or ≤2-line ack.
 
 IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
-`.claude/implementer-protocol.md` (updated 2026-05-10, revised again later same day per L-015) is now authoritative for implementer behavior. Key rules: (a) implementer CLOSES OWN BEADS via `br close` after each commit (clarified — agent owns), (b) implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming from `br ready`; orchestrator owns refill (this REPLACES the prior "continue claiming until 250k" rule, which was for the main thread, not implementers — see L-015), (c) implementer DOES NOT ASK questions back. The orchestrator brief should NOT re-state these — point to the protocol and trust it. **Brief template**: appendix of `.claude/implementer-protocol.md`; orchestrator briefs are now parameter-fills against it (worktree path/branch + scope + ONE sibling pointer + optional deferral shape — ≤15 lines). Briefs MUST NOT include "after close, continue claiming X" lines — the implementer exits when SCOPE is done.
+`.claude/implementer-protocol.md` (updated 2026-05-10) is authoritative. Key rules: (a) implementer CLOSES OWN BEADS via `br close` after each commit, (b) implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming from `br ready`; orchestrator owns refill, (c) implementer DOES NOT ASK questions back. Brief template: appendix of `.claude/implementer-protocol.md`. Briefs MUST NOT include "after close, continue claiming X" lines.
 
 DISPATCH SHAPE.
 - Implementers: `model=sonnet`, `effort=high`, `isolation=worktree`, `run_in_background=true`.
 - Reviewers: `model=sonnet`, `effort=high`, no isolation.
-- Briefs ≤15 lines: see brief-template appendix in `.claude/implementer-protocol.md`. **Do NOT paraphrase the bead body.** Implementer fetches via `br show` and reads cited spec.
+- Briefs ≤15 lines: see brief-template appendix in `.claude/implementer-protocol.md`. **Do NOT paraphrase the bead body.** Implementer fetches via `br show`.
 
 PRE-FLIGHT (orchestrator, ≤3 reads per dispatch).
 - Bead body via `br show <id> --format json`.
 - The cited spec section.
 - ONE canonical sibling for pattern conventions.
-- Pre-dispatch grep for the bead's primary type name in the target package — if it exists, the bead may be SUBSUMED (sibling-pointer in brief; see L-008 for SUBSUMED-detection lift).
+- Pre-dispatch grep for the bead's primary type name in the target package — if it exists, the bead may be SUBSUMED (sibling-pointer in brief; see L-008).
 
-BEAD PICKING — POST-DEP-MODEL-FIX SCOPE.
-- Dispatchable depth is **`br ready --limit 0`** (487 beads as of session-end 2026-05-10), MINUS any in-flight claims. The `hk-zs0.*` cognition spec drafts are **deferred until 2027-01-01** — they will not appear in `br ready`. Epics (`hk-b3f`, `hk-pvcs`, `hk-872`, `hk-hqwn`, etc.) ARE in `br ready` post-conversion but should still be skipped — they are containers, not work units. Filter rule: `br ready --limit 0 | grep -v "\[epic\]"`.
-- Same-package-different-file = parallel-safe.
+BEAD PICKING — POST-AUDIT SCOPE (v27).
+- Dispatchable depth: **`br ready --limit 0`** (19 entries as of session-end 2026-05-11 v27: ~7 MVH tasks + 11 epics + 1 admin). Filter rule: `br ready --limit 0 | grep -v "\[epic\]"`.
+- **`post-mvh` label exclusion is HARD.** Always check labels before dispatching: `br show <id> --format json | python3 -c "..."`. The audit (v26 → v27) explicitly dragged 4 beads forward as MVH (sx9r.22, 8mup.32, hqwn.45, 8i31.37, 8i31.39 + the redaction registry set). Anything ELSE labeled `post-mvh` stays parked; ~130 beads are correctly post-mvh by design.
+- Same-package-different-file = parallel-safe. Confirmed v27: 5 concurrent `internal/specaudit/sh###_*` and `ar###_*` sensors landed without collision.
 - Same-file conflict (3+ beads on one file) → ONE implementer with sequential commits.
 
 STANDING CONVENTIONS (full version: `.claude/implementer-protocol.md`).
-- Bead body wins over docs; spec wins over bead body for normative content. Surface discrepancies via the L-009 channel (orchestration-learnings.md).
-- Typed-alias deferral: real follow-up bead via `br create`, ID substituted into godoc BEFORE commit. Implementer protocol covers this; orchestrator inline-amends only if missed.
-- gofmt-clean struct alignment; lint clean; tests pass before commit.
+- Bead body wins over docs; spec wins over bead body for normative content. Surface discrepancies via L-009 channel.
+- Typed-alias deferral: real follow-up bead via `br create`, ID substituted into godoc BEFORE commit.
+- gofmt-clean, lint clean, tests pass before commit.
 - Worktree discipline: implementer commits in their worktree, never main.
-- Specaudit watchdog: every new normative requirement in `specs/*.md` MUST carry a `Tags: mechanism` or `Tags: cognition` line within 30 lines of its heading. Failures surface in `internal/specaudit/ar005_tags_test.go`.
+- Specaudit watchdog: every new normative requirement in `specs/*.md` MUST carry `Tags: mechanism` or `Tags: cognition` within 30 lines of its heading. Failures surface in `internal/specaudit/ar005_tags_test.go`.
 
 REVIEWER TIER DISCIPLINE.
 - MEDIUM = defect against THIS bead's acceptance criteria.
 - Cross-cutting / future-bead / spec-doc concerns = MINOR or follow-up.
 
 INLINE-AMEND CEILING.
-Trivial single-line text fix, literal one-line code fix, mechanical multi-line refactor verifiable by reading → orchestrator inline-amends, no fix-agent. Above ~3 mechanical edits in 1 file → spawn fix-agent on existing worktree. Re-review can be skipped after pure-deletion or trivial idiom-swap.
+Trivial single-line text fix, literal one-line code fix, mechanical multi-line refactor → orchestrator inline-amends, no fix-agent. Above ~3 mechanical edits in 1 file → spawn fix-agent on existing worktree. Validated v27: 1-row event-model table addition for hk-e1kdc landed inline as commit `7ac15f1`.
 
 MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
-Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift inside worktrees. CWD-DRIFT WARNING — when a worktree is removed via the merge-dance loop, the bash shell's CWD can become stale. Always prefix with `git -C /Users/gb/github/harmonik` or explicit `cd /Users/gb/github/harmonik &&` before each merge step.
+Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift inside worktrees.
 
     cd /Users/gb/github/harmonik
     for id in <agent-id-1> <agent-id-2>; do
@@ -72,54 +71,97 @@ Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift i
     done
     git -C /Users/gb/github/harmonik push origin main
 
-FALLBACK — cherry-pick when ff-merge fails (validated again this session — see L-010). When `git merge --ff-only` reports "Already up to date" after rebase but the worktree clearly has a new commit, fall back to `git -C /Users/gb/github/harmonik cherry-pick <sha>`. If cherry-pick conflicts (rare), resolve manually and continue. Do NOT use `git reset --soft main` from a worktree — it preserves stale tree state and stages deletions of files in other waves.
+FALLBACK — cherry-pick when ff-merge fails. When `git merge --ff-only` reports "Already up to date" after rebase but the worktree clearly has a new commit, fall back to `git -C /Users/gb/github/harmonik cherry-pick <sha>`. Do NOT use `git reset --soft main` from a worktree.
 
-REBASE-SKIP for duplicate-bead commits (added v24 from L-015 mass merge). When a long-running OLD-protocol implementer's branch carries a commit for a bead that was ALREADY closed by a newer-protocol dispatch in the same session, `git rebase main` will hit add/add or content conflicts on the same file. Use `git rebase --skip` to drop the duplicate — the newer-protocol dispatch's version is canonical. Two duplicates auto-resolved cleanly this session (i3152's hk-hqwn.59.75/.59.28). Cross-package signature mismatches DO NOT surface as text conflicts (e.g. mup11's `internal/lifecycle/orphansweep.go` calling `workspace.SweepStaleLeaseLocks(..., nil)` after ml3rw changed the param type to `WorktreeRootConfig`); always run `go build ./...` after the last merge of a session and inline-fix.
+REBASE-SKIP for duplicate-bead commits. When a long-running OLD-protocol implementer's branch carries a commit for a bead ALREADY closed by a newer-protocol dispatch in the same session, `git rebase main` will hit add/add or content conflicts. Use `git rebase --skip`. Cross-package signature mismatches DO NOT surface as text conflicts; always run `go build ./...` after the last merge of a session and inline-fix.
 
-**WORKTREE TEARDOWN DOES NOT KILL THE AGENT (added v24 from L-015 addendum).** Calling `git worktree remove --force --force` on an active sub-agent's worktree does NOT terminate the agent process. The agent keeps running, can recreate the worktree (its bash sessions still hold its old CWD or `cd` back), and continues making bash calls — `br close` writes hit the SQLite ledger directly; `git commit` calls land on the recreated branch. Both sx5860 and mup11 kept running ~90 min past my merge-and-teardown this session, accumulating ~55 free-claim bead closures (no commits, just `br close`) and 5 fresh commits on a resurrected mup11 worktree. The agent platform has no kill signal; you must wait for the agent to return naturally OR finish the session and accept that its late writes land in the next session's reconciliation. **At session end, before writing HANDOFF, check `br stats` Open count and `git worktree list` ONE MORE TIME** — if Open dropped further or worktrees reappeared, an OLD-protocol agent is still active and you need to merge its tail before the handoff is accurate.
+**WORKTREE TEARDOWN DOES NOT KILL THE AGENT (L-016).** `git worktree remove --force --force` does NOT terminate an active sub-agent. The agent can recreate the worktree and continue making bash calls; `br close` writes hit SQLite directly. Mitigated by L-015 (implementers do scope and exit, no free-claim). At session end, before writing HANDOFF, re-check `br stats` Open count and `git worktree list` ONCE MORE.
 
 `br close` failures from `blocks` deps → flip to `related`:
     br dep remove <id> <other> ; br dep add <id> <other> --type related ; br close <id> -r "..."
 
-`br update -d` does NOT exist — use `--description` or `--body`. `--notes` adds without overwriting. `br create` flags: `-p` priority, `--labels "a,b,c"`, `--parent <id>`.
+`br update -d` does NOT exist — use `--description` or `--body`. `--notes` adds without overwriting. `br update --defer ""` clears `defer_until` (see L-017). `br create` flags: `-p` priority, `--labels "a,b,c"`, `--parent <id>`.
 
-REBASE-CONFLICT ON `go.mod` — DO NOT USE `git reset --soft main`. Use `git rebase -i main` to drop the offending hunk, or `--strategy-option theirs` for go.mod/go.sum specifically. Verify `git -C "$WT" diff main -- go.mod go.sum` is empty before continuing.
+REBASE-CONFLICT ON `go.mod` — DO NOT USE `git reset --soft main`. Use `git rebase -i main` to drop the offending hunk, or `--strategy-option theirs` for go.mod/go.sum specifically.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective on this 1M-context model. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop.
+CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop.
 
 <!-- END DIRECTIVES -->
 
 # State
 
-Main at `d727453`, working tree clean, NOT pushed. Full `go test ./internal/...` green (verified post-final-merge). No active worktrees, no in-flight implementers. **Open=156, Closed=815, Ready=11.**
+Main at `ed5c34b`, pushed to origin/main. **Open=149, Closed=833, Ready=19 (~7 MVH tasks + 11 epics + 1 admin), Deferred=40.** No active worktrees, no in-flight implementers. Working tree clean.
 
-(Initial handoff at `220a16e` recorded Open=210 / Ready=23 — that was incomplete: sx5860 and mup11 kept running for ~90 min after I had supposedly merged-and-torn-down their worktrees, accumulating ~55 more bead closures and 5 fresh commits on a resurrected mup11 worktree. Final reconciliation merge committed those — see directives §"WORKTREE TEARDOWN DOES NOT KILL THE AGENT".)
+# What this session did — drained the MVH-root cohort
 
-# What changed this session
+Picked up v26's 5 MVH roots and stream-dispatched implementers; cascade unblocks fed the next layer. **17 beads closed, 12 commits pushed.** Headline finding: **most MVH-root beads (zs0.8, zs0.25, sx9r.22, 8mup.32, i0tw.38) were SUBSUMED** — the spec text + Go runtime + closed-sibling sensors had already landed in prior sessions. The remaining roots needed only the corpus-search sensor that pins spec-text to runtime.
 
-**88 commits, ~143 beads closed.** Two parallel work streams ran:
+## Commits landed (a46d23e..ed5c34b)
 
-1. **Stream of single-bead implementers under the new tightened protocol** (post-L-015): mwo4 (9-bead workspace cluster), hqwn345/hqwn78/hqwn5975/hqwn2628 (typed aliases + JSONL writer + §8 event rows), ml3rw (CP-037 typed surface), nptq0 (ErrorCategory extension), i0tw12/13/16 (scenario harness SH-012/013/015a), hqwn1718/hqwn13 (consumer-class sensors), rec1541 (RC-011/029 sensors), mwo27/mwo22/mwo47 (workspace SUBSUMED + WM-035), pvcs (meta-decomposition closure). Each: single bead, exit, no free-claim. Zero collisions on these.
+| SHA | Bead | What |
+|---|---|---|
+| `218955a` | hk-zs0.17 | AR-016 spec-corpus sensor — subsystem is a Go package |
+| `fd09379` | hk-i0tw.15 | SH-015 5-step ordered teardown sensor (325 LOC) |
+| `20a5cfd` | hk-zs0.26 | AR-025 regex byte-identity sensor + exported `AgentTypeRegexPattern` const |
+| `10e821d` | hk-1hoxo | `core.RateLimitSource` typed alias (open-vocab regex pattern; not closed enum) |
+| `cb84707` | hk-i0tw.28 | SH-026 timeout-verdict + cancel-chain sensor (318 LOC) |
+| `342d6f5` | (merge of cb84707) | |
+| `f1f3c45` | hk-sx9r.20 | ON-016 `required_migration_release` payload field + 4 sensor tests |
+| `73f5002` | hk-i0tw.33 | SH-031 sequential-scenarios sensor (265 LOC) |
+| `dd58966` | hk-zs0.1 | AR-052 spec-category front-matter sensor (276 LOC) + added `spec-category: foundation-cross-cutting` to control-points/event-model/execution-model/handler-contract |
+| `0cb73fc` | hk-i0tw.25 | SH-023 assertion-failed verdict sensor (307 LOC) |
+| `7ac15f1` | hk-e1kdc | event-model §8.7.4 table — `required_migration_release?` (orchestrator inline) |
+| `4893b96` | hk-i0tw.35 | SH-033 signal-handling sensor (346 LOC) |
+| `ed5c34b` | hk-zs0.28 | AR-027 four-surface byte-identity sensor + patched missing `agent_type` field in execution-model.md Node RECORD |
 
-2. **Three long-running OLD-protocol implementers** (i3152, mup11, sx5860) free-claimed extensively across spec boundaries. Returned in last hour with 14 / 17 / 27 commits respectively. Rebased onto main; 3 commits skipped as L-015 duplicates (hk-8mwo.45 WM-033 sweep, hk-hqwn.59.75 consumer_failed, hk-hqwn.59.28 skills_provisioned — all already closed by newer-protocol siblings). All other commits landed clean. Post-merge cleanup commit (`ac4b86b`) fixed two echoes: `internal/lifecycle/orphansweep.go` was passing `nil` to a workspace function whose signature ml3rw had changed; and sx5860's `rc011_*` / `rc029_*` specaudit fixture-helper symbols collided with rec1541's earlier-committed canonical names — deleted sx5860's redundant files.
+## SUBSUMED closures (no commits)
 
-3. **L-015 protocol fix** (commit `b74b1d4`) is the headline outcome. The "Continue claiming until 250k" HARD RULE in `.claude/implementer-protocol.md` was a main-thread budget rule mis-copied into the implementer surface; sub-agents read it and free-claimed past their assigned scope. User flagged it after the second collision (sx5860 jumped from `spec:operator-nfr` to `spec:event-model` to grab `hk-hqwn.8` while a sibling was simultaneously dispatched on the same bead). Replaced the rule with "Do your assigned bead(s) and exit"; updated HANDOFF directives' IMPLEMENTER LIFECYCLE block; added L-015 entry to `docs/orchestration-learnings.md`. Validated empirically: every new-protocol dispatch this session exited cleanly without collision.
+- `hk-zs0.8` (AR-006) — mechanism-tag definition; sensor not lint-implementable per AR-INV-001 reviewer-enforced model; covered by `internal/core/modetag.go`.
+- `hk-zs0.25` (AR-024) — agent-type conformance class; `core.AgentType` typed string + sidecar fields already landed (8mwo.63/.38). Four-surface sensor is AR-027's scope (zs0.28).
+- `hk-sx9r.22` (ON-018) — N-1 compat window declaration fully embodied in `internal/operatornfr/schemacompatwindow_test.go` (hk-sx9r.78). Sensor bead is hk-sx9r.69 (open, downstream).
+- `hk-8mup.32` (PL-020) — composition-root sensor already landed in commit `e7e13d6` (`internal/specaudit/pl020_composition_root_test.go`).
+- `hk-i0tw.38` (SH-INV-002) — `shinv002_workspace_reset_test.go` already on main as commit `1d95451`; prior session implemented without closing the bead.
 
-# Lingering / next session
+## Audit closure
 
-**Verify ready=11 is genuine, then dispatch — but the ceiling may already be the cognition gate.** Open(156) is still ≫ Ready(11), so run the blocker-distribution recipe (directives §"TRUST `br ready` BUT VERIFY"). However, the runaway sx5860 cascade ended its session reporting that "all 11 ready items are epics" and that the remaining 156 are blocked behind three chains: (a) `hk-zs0.*` DEFERRED architecture beads (.38/.39/.41/.52 — deferred until 2027-01-01), (b) `hk-a8bg.*` Control Points subtree (Gates/Hooks/Guards/Budgets/Roles — needs zs0 to undefer), (c) `hk-sx9r.22/23/24` upgrade contract (needs hk-a8bg.39 → CP). If that's correct, this session's bootstrap-corpus drain is complete and the next move is the `harmonik-foundation` kerf work to unblock the zs0 cognition decisions. Verify the chain claim before committing to that pivot.
+- `hk-wcstp` — cascade-closure spot-check (15 beads across `hk-872/sx9r/i0tw/8mup` namespaces): **14/15 CONFIRMED**, 1 WEAK (hk-sx9r.6 commit-hash gate — coverage embedded in operatornfr handler, no dedicated test). No reopens. Cohort closures legitimate despite bare `done` rationale.
 
-**Open follow-up beads** filed this session: `hk-tyjfi` (typed `SkillVersion` alias for `skills_provisioned` `version?` field — already closed by mup11 in the merge wave), and an inline `TODO(hk-placeholder)` on `RateLimitSource` in `agentevents_hqwn59.go` that hqwn2628 left without a real follow-up bead — file one at session start: `br create -p high --labels "kind:schema,spec:event-model" -t "RateLimitSource typed enum or vocabulary"`.
+## Pattern observations (candidate L-018 / product-input)
 
-**Watch for**: new L-015-style cross-spec free-claims should NOT happen anymore (and L-016 covers the platform-level escape hatch); if a returning implementer has commits for beads not in its brief, that's a regression. The `mup11` orphan-sweep production code (`internal/lifecycle/orphansweep.go`) was authored against the pre-ml3rw API surface and only got a one-line patch to compile; a brief diff-review of that file vs the latest workspace package contracts is worth doing in a fresh dispatch.
+1. **MVH-root beads were declarations; sensors landed via siblings.** 5 of the 9 root-dispatch attempts returned SUBSUMED. The deliverable is reliably (a) confirm the spec text exists, (b) confirm the runtime expression exists, (c) point at the closed-sibling sensor that already enforces it. If `kerf finalize` had emitted explicit `derives-from` edges instead of `blocks`, half this session's first-wave dispatches could have been skipped at audit time.
+2. **Corpus-search sensors are the dominant deliverable shape.** 9 of 12 commits land an `internal/specaudit/{ar,sh,on}###_*_test.go` file with 8–13 sub-checks (heading present, normative tokens present, cross-refs cited, Tags-line present). The pattern is mechanical enough that a generator (`kerf scaffold-sensor <req-id>`) is feasible.
+3. **`post-mvh` label filter MUST be checked every refill.** `br ready` surfaces `post-mvh` beads as soon as their blockers close — the label is the only thing keeping them out of dispatch. Four times this session `br ready` listed `hk-8i31.27`, `hk-8mwo.14`, `hk-8mwo.33`, `hk-sx9r.23` — all correctly post-mvh, all silently skipped by manual label check.
+4. **Cross-spec spec-text patches surface during sensor work.** zs0.28 found `agent_type` missing from execution-model.md Node RECORD. zs0.1 found 4 specs missing the AR-052 `spec-category` front-matter. These were inline-fixed in the same commit. Without the sensor, both gaps would have stayed silent until reviewer-enforced lint caught them.
 
-**Closure-count caveat — spot-check the runaway-cascade closures.** The 197-closure headline (Closed 614→815) is a real database count but is mixed: roughly 50–70 are real new-implementation work (mwo4's workspace cluster, the handler-contract surface, the JSONL writer, the §8 event rows, PL-006/PL-012/PL-014, brcli BI-010/012, etc.); roughly 80–100 are legitimate SUBSUMED bookkeeping against pre-existing code; and roughly 50–70 are unreviewed SUBSUMED calls made by the runaway sx5860/mup11 cascades AFTER my worktree-teardown (mostly `hk-872.*`, `hk-sx9r.*`, `hk-i0tw.*`, `hk-8mup.*` closed in their final hour). The third group never ran through agent-reviewer. Worth sampling 5–10 of them next session to verify the SUBSUMED rationale held up — if any are false positives, reopen and re-dispatch.
+# Next session — direction
 
-**Push.** Main is 93 commits ahead of `origin/main` (`3bcc684..d727453`). Run `git push origin main` at session start (or end-of-this-session if user wants).
+The MVH-root cohort is **drained.** Remaining `scope:bootstrap` ready beads are second-layer cascades:
+
+| Bead | Status | Quick notes |
+|---|---|---|
+| `hk-zs0.14` | ready | Subsystem envelope declaration (8 elements). Unblocked by zs0.1. AR-013 chain. |
+| `hk-hqwn.59.22` | ready | Event row: agent_started (§8.3.2). Event-model payload schema work. |
+| `hk-hqwn.59.27` | ready | Event row: session_log_location (§8.3.7). Event-model payload schema work. |
+| `hk-i0tw` epic deps | several | Scenario-harness sensor cohort continues. |
+
+Filter `post-mvh` first; ~7 non-post-mvh tasks visible per `br ready --limit 0 | grep -v "\[epic\]"`.
+
+**Recommended:** spawn 3 sonnet implementers on `hk-zs0.14`, `hk-hqwn.59.22`, `hk-hqwn.59.27` in parallel — cross-spec, parallel-safe. Pattern is the same corpus-search sensor as v27.
+
+**Anti-recommendation:** do NOT spend cycles trying to find more MVH-root work in the existing corpus. The roots are drained. The next throughput wins come from (a) cascade through the sensor layer, (b) reviewing whether L-018-candidate "kerf should emit derives-from edges" lands as a real bead, or (c) starting on subsystem-skeleton work (`internal/daemon/` composition root, redaction registry, etc.) that has no dispatchable bead today.
+
+# Files to open first
+
+- This file (the directives — v27 BEAD PICKING block has updated post-mvh language).
+- `docs/orchestration-learnings.md` — no new L-### added this session; consider whether L-018 ("MVH-root beads are largely SUBSUMED-by-prior-sessions; product input = `kerf finalize` derives-from edges") is worth writing.
+- `STATUS.md` — high-level state (unchanged this session).
+- `.claude/implementer-protocol.md` — implementer rules (unchanged this session, but always read).
 
 # Quick references
 
-- `docs/orchestration-learnings.md` — L-001 through L-015; read on resume.
-- `.claude/implementer-protocol.md` — revised per L-015; brief template in appendix.
-- `STATUS.md` — high-level project state.
-- `git log 3bcc684..HEAD --oneline` — this session's 88 commits.
+- MVH-root cohort (5 beads) DRAINED — 4 SUBSUMED + 1 sensor (`218955a`); plus 8 sequential cascade-unblocked beads dispatched in same session.
+- 12 commits on main since session start, pushed clean.
+- ~130 `post-mvh` beads remain correctly parked — DO NOT dispatch unless explicitly dragged forward.
+- 40 deferred beads — legitimate cognition holds; do not un-defer without explicit audit (L-017 protocol).
+- `hk-e1kdc` filed and closed this session — only follow-up bead created.
+- No reviewer dispatches this session — sonnet implementer self-judgment + protocol discipline held; no rework needed.

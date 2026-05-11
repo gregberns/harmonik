@@ -34,6 +34,7 @@ This is **dual-purpose**:
 - [L-014 — Sensor-to-sensor `blocks` edges are a structural smell](#l-014) — `open` · `product-input`
 - [L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers](#l-015) — `process-fix-applied` · `product-input`
 - [L-016 — `git worktree remove` does not kill the sub-agent process](#l-016) — `process-improvement-pending` · `product-input`
+- [L-017 — `defer_until` is a separate field from `status=deferred` and silently filters `br ready`](#l-017) — `process-fix-applied` · `product-input`
 
 ---
 
@@ -231,3 +232,15 @@ Kept terse on purpose — three-paragraph entries, not essays.
 **The only durable fix is the L-015 rule itself.** Once implementers stop free-claiming, this risk evaporates — a single-bead-and-exit implementer does its assigned work and reports back, and even if its bash sessions outlive the worktree, it has nothing to claim. The sx5860/mup11 cascades happened because they were dispatched *before* the L-015 fix landed mid-session; future sessions will not have OLD-protocol agents in flight.
 
 **Product input.** The harmonik daemon's dispatch lifecycle MUST encode terminal sub-agent boundaries: signal-on-merge, dispatch-id-scoped writes, and a session-level fence so an orphaned agent's late writes are rejected rather than silently absorbed. The bootstrap process can't easily kill agent processes; the daemon (which owns the sub-agent runtime) can.
+
+---
+
+### L-017 — `defer_until` is a separate field from `status=deferred` and silently filters `br ready` <a name="l-017"></a>
+
+**Observed 2026-05-10 (post-v25 audit session).** User flagged that recent agents had become confused about MVH scope. Audit of the 158 open beads showed 132 were correctly labeled `post-mvh`, 13 were genuinely MVH-relevant, and 0 of those 13 were dispatchable — every MVH-tagged task was blocked transitively by either deferred `hk-zs0.*` cognition beads or `post-mvh`-labeled tasks. After dragging structurally-needed blockers forward (4 zs0 beads un-deferred via `br update -s open`, 4 post-mvh beads relabeled, 5 over-aggressive `blocks` edges converted to `related`), `br ready` STILL did not surface the un-deferred beads. `br doctor --repair` rebuilt the stale `blocked_issues_cache` cleanly but ready depth did not change. Direct JSON inspection revealed the cause: each formerly-deferred bead carried `defer_until: 2027-01-01T16:00:00Z` as a separate field that survived the status flip and silently kept the bead out of `br ready`.
+
+**Why this matters.** The L-011 directive ("trust but verify `br ready`") tells the orchestrator to suspect `blocked_issues_cache` and parent-child gridlock when Open ≫ Ready. It does NOT mention `defer_until`. An orchestrator un-defers a bead, sees `status=open`, sees `br ready` unchanged, and concludes the cache repair didn't take or the dep graph is still gridlocked — not that a third filter is in play. The previous v22→v25 handoffs all framed the corpus as "drained, blocked on cognition." It was actually drained, blocked on a labeling/dep mismatch, AND filtered by a stale `defer_until` field that no `br doctor` check surfaces.
+
+**Fix applied.** Cleared via `br update <id> --defer ""`. After clearing the 8 affected beads, `br ready` immediately reflected the 3 root-unblocked beads (zs0.8, zs0.17, zs0.25) plus the previously-visible sx9r.22 + i0tw.15. Net: 5 dispatchable MVH tasks; 8 more chained behind them. HANDOFF directives' L-011 paragraph should be amended in a future session to add a third check: `br list --json` for nonempty `defer_until` on any bead with `status=open`.
+
+**Product input.** Beads' filtering surfaces (`ready`, `stats`, status flags, defer_until field) are independent and don't cross-validate. Harmonik's daemon-side dispatch queue should expose a single "is this dispatchable right now" predicate rather than three orthogonal filters that compose by accident. The bootstrap can't fix Beads, but the daemon's wrapping layer can normalize.

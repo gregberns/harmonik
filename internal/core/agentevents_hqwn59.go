@@ -265,12 +265,13 @@ type AgentRateLimitStatusPayload struct {
 	// AgentRateLimitStatus constant. Emitters MUST emit only on transitions per §8.9(h).
 	Status AgentRateLimitStatus `json:"status"`
 
-	// RateLimitSource is the optional provider-reported source string identifying
-	// which rate limit was hit (e.g., "anthropic-api-tier-1"). Nil when not
-	// reported or when status=cleared. Non-nil must be non-empty.
-	// TODO(hk-1hoxo): promote to typed alias when §6.3 defines the full
-	// rate_limit_source vocabulary.
-	RateLimitSource *string `json:"rate_limit_source,omitempty"`
+	// RateLimitSource is the optional provider-reported source identifying
+	// which rate limit was hit (e.g., RateLimitSourceAnthropic). Nil when not
+	// reported or when status=cleared. Non-nil must be a valid RateLimitSource
+	// per the ^[a-z][a-z0-9-]*$ shape declared in ratelimitsource.go.
+	// The vocabulary is open per event-model.md §6.3; known providers are
+	// declared as constants in ratelimitsource.go.
+	RateLimitSource *RateLimitSource `json:"rate_limit_source,omitempty"`
 
 	// RetryAfterSeconds is the optional provider-reported retry delay. Nil when
 	// not reported or when status=cleared. Non-nil must be >= 0.
@@ -287,7 +288,7 @@ type AgentRateLimitStatusPayload struct {
 //   - RunID must not be uuid.Nil.
 //   - SessionID must be non-empty.
 //   - Status must be a valid AgentRateLimitStatus constant.
-//   - RateLimitSource, when non-nil, must be non-empty.
+//   - RateLimitSource, when non-nil, must satisfy RateLimitSource.Valid().
 //   - RetryAfterSeconds, when non-nil, must be >= 0.
 //   - ChangedAt must be non-empty.
 func (p AgentRateLimitStatusPayload) Valid() bool {
@@ -300,7 +301,7 @@ func (p AgentRateLimitStatusPayload) Valid() bool {
 	if !p.Status.Valid() {
 		return false
 	}
-	if p.RateLimitSource != nil && *p.RateLimitSource == "" {
+	if p.RateLimitSource != nil && !p.RateLimitSource.Valid() {
 		return false
 	}
 	if p.RetryAfterSeconds != nil && *p.RetryAfterSeconds < 0 {

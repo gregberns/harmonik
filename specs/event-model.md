@@ -6,6 +6,7 @@ title: Event Model
 spec-id: event-model
 requirement-prefix: EV
 status: reviewed
+spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
 version: 0.3.4
 spec-template-version: 1.1

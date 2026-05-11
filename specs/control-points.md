@@ -6,6 +6,7 @@ title: Control Points
 spec-id: control-points
 requirement-prefix: CP
 status: reviewed
+spec-category: foundation-cross-cutting
 spec-shape: requirements-first
 version: 0.3.2
 spec-template-version: 1.1

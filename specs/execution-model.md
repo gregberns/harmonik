@@ -6,6 +6,7 @@ title: Execution Model
 spec-id: execution-model
 requirement-prefix: EM
 status: reviewed
+spec-category: foundation-cross-cutting
 spec-shape: requirements-first
 version: 0.3.3
 spec-template-version: 1.1

@@ -394,7 +394,7 @@ type ar041FixtureExpectedViolation struct {
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
 var ar041FixtureExpectedViolations = map[string]ar041FixtureExpectedViolation{
-	// CP-034 (specs/control-points.md line 315): `https://github.com/expr-lang/expr`
+	// CP-034 (specs/control-points.md line 316): `https://github.com/expr-lang/expr`
 	//
 	// This URL is a library-attribution citation for the `expr-lang/expr` Go
 	// module, which CP-034 mandates as the policy-expression grammar.  The
@@ -403,7 +403,9 @@ var ar041FixtureExpectedViolations = map[string]ar041FixtureExpectedViolation{
 	// and human-readable cross-reference only — it is not a load-bearing
 	// external knowledge source.  No spec-fix bead is required; this entry
 	// documents the evaluation decision.
-	"specs/control-points.md:315:CP-034:external-url:https://github.com/expr-lang/expr": {
+	// Line shifted from 315 → 316 when hk-zs0.1 added spec-category to
+	// control-points.md front matter (one line inserted above line 315).
+	"specs/control-points.md:316:CP-034:external-url:https://github.com/expr-lang/expr": {
 		pinnedBy: "ar041-allowable",
 		reason: "CP-034 cites github.com/expr-lang/expr for the policy-expression grammar library; " +
 			"the normative artifact is the in-repo go.mod entry, not the external URL; " +

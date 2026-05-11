@@ -629,7 +629,8 @@ RECORD Workflow:
 RECORD Node:
     node_id             : NodeID          -- unique within the workflow; §4.8.EM-034a namespacing applies under expansion
     type                : NodeType        -- one of {agentic, non-agentic, gate, control-point, sub-workflow}
-    handler_ref         : String | None   -- required when type = agentic; forbidden otherwise
+    handler_ref         : String | None   -- required when type = agentic; forbidden otherwise; see [handler-contract.md §4.2]
+    agent_type          : String | None   -- agent-type identifier per [architecture.md §6.1 AR-025]; required when type = agentic; DOT routing hint per [handler-contract.md §4.2]; e.g., "claude-code", "pi"
     timeout             : Integer | None  -- positive seconds
     required_skills     : List<String>    -- resolved per [control-points.md §4.11]
     policy_ref          : String | None   -- see [control-points.md §6.3]

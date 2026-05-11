@@ -4,6 +4,7 @@ import "github.com/google/uuid"
 
 // agentevents_hqwn59.go — event-bus payload types for §8.3 agent/handler
 // lifecycle events covered by this implementer wave (hqwn59b):
+//   - agent_started            (§8.3.2)
 //   - agent_ready              (§8.3.1)
 //   - agent_output_chunk       (§8.3.3)
 //   - agent_failed             (§8.3.5)
@@ -12,7 +13,79 @@ import "github.com/google/uuid"
 //   - handler_capabilities     (§8.3.9)
 //
 // Spec ref: specs/event-model.md §8.3.
-// Bead refs: hk-hqwn.59.21, hk-hqwn.59.23, hk-hqwn.59.25, hk-hqwn.59.26, hk-hqwn.59.28, hk-hqwn.59.29.
+// Bead refs: hk-hqwn.59.22, hk-hqwn.59.21, hk-hqwn.59.23, hk-hqwn.59.25, hk-hqwn.59.26, hk-hqwn.59.28, hk-hqwn.59.29.
+
+// AgentStartedPayload is the typed event payload for the agent_started event
+// (event-model.md §8.3.2).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — handler lifecycle audit and observability; the
+// orchestrator and audit subsystem use this event to record that an agent
+// subprocess was dispatched and began execution per handler-contract.md §4.1).
+//
+// Emitted by the handler subprocess via the daemon watcher immediately after the
+// handler begins execution. The event_id is stamped by the daemon watcher per
+// EV-002b; the handler does not generate event_id independently.
+//
+// # Payload fields (event-model.md §8.3.2)
+//
+//   - run_id      — the run in whose context the agent started
+//   - session_id  — handler-assigned session identifier (UUIDv7, opaque outside handler layer)
+//   - node_id     — the workflow node that this agent instance is executing
+//   - agent_type  — the conformance class of the handler subprocess (AR-025)
+//   - started_at  — RFC 3339 wall-clock timestamp at which the agent process started
+//
+// Note: agent_started MUST NOT include environment variables per HC-029
+// (handler-contract.md §6.4). See hk-8i31.36 and specaudit HC-029 binding test.
+type AgentStartedPayload struct {
+	// RunID is the run in whose context the agent started.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// SessionID is the handler-assigned session identifier. Required (non-empty).
+	// UUIDv7 per handler-contract.md §4.1; opaque to non-handler consumers.
+	SessionID SessionID `json:"session_id"`
+
+	// NodeID is the workflow node that this agent instance is executing.
+	// Required (non-empty).
+	NodeID NodeID `json:"node_id"`
+
+	// AgentType is the conformance class of the handler subprocess.
+	// Required; must satisfy AgentType.Valid() per AR-025 / AR-027.
+	AgentType AgentType `json:"agent_type"`
+
+	// StartedAt is the RFC 3339 wall-clock timestamp at which the agent process
+	// started. Required (non-empty).
+	StartedAt string `json:"started_at"`
+}
+
+// Valid reports whether p is a well-formed AgentStartedPayload.
+//
+// Rules per event-model.md §8.3.2:
+//   - RunID must not be uuid.Nil.
+//   - SessionID must be non-empty.
+//   - NodeID must be non-empty.
+//   - AgentType must satisfy AgentType.Valid().
+//   - StartedAt must be non-empty.
+func (p AgentStartedPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.SessionID == "" {
+		return false
+	}
+	if p.NodeID == "" {
+		return false
+	}
+	if !p.AgentType.Valid() {
+		return false
+	}
+	if p.StartedAt == "" {
+		return false
+	}
+	return true
+}
 
 // AgentReadyPayload is the typed event payload for the agent_ready event
 // (event-model.md §8.3.1).

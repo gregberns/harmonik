@@ -16,6 +16,15 @@ import (
 // Spec ref: specs/process-lifecycle.md §4.6 PL-020 — internal/daemon is the
 // composition root; Config is its public configuration surface.
 type Config struct {
+	// ProjectDir is the root directory of the harmonik project. It is the
+	// directory that contains .beads/, .harmonik/, and the worktree parent.
+	// Must be an absolute path resolved by the caller (cmd/harmonik) before
+	// passing in. An empty string is only valid in unit tests that do not
+	// exercise path-dependent behaviour.
+	//
+	// MVH_ROADMAP row #1 (hk-56ajv).
+	ProjectDir string
+
 	// LogWriter is the destination for structured daemon log output.
 	// A nil LogWriter silences all log output (useful in tests).
 	LogWriter io.Writer

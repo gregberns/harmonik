@@ -30,9 +30,13 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -75,5 +79,50 @@ func run() int {
 	// TODO(hk-b3f): pass policyEngine to the EM dispatcher once the
 	// dispatcher wiring beads (hk-b3f cluster-A) land. The binding site is
 	// here; the consumer site is internal/orchestrator (not yet shipped).
+
+	// --project flag (MVH_ROADMAP row #1, hk-56ajv).
+	//
+	// Default: current working directory. Resolved to an absolute path via
+	// filepath.Abs before the directory-existence check, so relative paths
+	// work intuitively from any shell context.
+	//
+	// MVH stays foreground — no additional flags, no env-var fallbacks, no
+	// config-file loading (MVH_ROADMAP §"What we are NOT building for MVH").
+	var projectFlag string
+	flag.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+	flag.Parse()
+
+	// Resolve project directory.
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik: cannot determine working directory: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+
+	projectDir, err := filepath.Abs(projectFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: cannot resolve project path %q: %v\n", projectFlag, err)
+		return 1
+	}
+
+	// Validate the directory exists. Fail fast with a clear message so the
+	// operator knows immediately when they've pointed at a non-existent path.
+	if _, err := os.Stat(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
+		return 1
+	}
+
+	cfg := daemon.Config{
+		ProjectDir: projectDir,
+	}
+
+	if err := daemon.Start(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: %v\n", err)
+		return 1
+	}
+
 	return 0
 }

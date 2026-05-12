@@ -165,6 +165,19 @@ var ErrGitignoreWriteForbidden = errors.New("workspace: GitignoreWriteForbidden"
 // Downstream routing: daemon refuses to start; operator must upgrade git.
 var ErrGitVersionTooOld = errors.New("workspace: GitVersionTooOld")
 
+// ErrNotFound is returned by ArchiveVerdict when the source verdict file
+// ${workspace_path}/.harmonik/review.json does not exist at the time of the
+// archive call.
+//
+// Triggered when: ArchiveVerdict is called but .harmonik/review.json is absent
+// (workspace-model.md §4.7.WM-027a / T-WM-016).
+//
+// Workspace transition: none — the caller decides how to handle a missing
+// verdict source; likely a malformed-reviewer-outcome per WM-027a §(e).
+//
+// Downstream routing: caller routes per handler-contract.md §4.6 failure rules.
+var ErrNotFound = errors.New("workspace: NotFound")
+
 // Class returns the canonical error-class string for err as defined in §8 of
 // specs/workspace-model.md.
 //
@@ -182,6 +195,7 @@ var ErrGitVersionTooOld = errors.New("workspace: GitVersionTooOld")
 //   - "SidecarWithoutLease"          if errors.Is(err, ErrSidecarWithoutLease).
 //   - "GitignoreWriteForbidden"      if errors.Is(err, ErrGitignoreWriteForbidden).
 //   - "GitVersionTooOld"             if errors.Is(err, ErrGitVersionTooOld).
+//   - "NotFound"                     if errors.Is(err, ErrNotFound).
 //
 // errors.Is walks the full Unwrap chain, so any error that wraps a class
 // sentinel at any depth is correctly classified.
@@ -214,6 +228,8 @@ func Class(err error) string {
 		return "GitignoreWriteForbidden"
 	case errors.Is(err, ErrGitVersionTooOld):
 		return "GitVersionTooOld"
+	case errors.Is(err, ErrNotFound):
+		return "NotFound"
 	default:
 		return ""
 	}

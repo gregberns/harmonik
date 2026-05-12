@@ -149,3 +149,73 @@ func ReadReviewVerdict(workspacePath string) (*ReviewVerdict, error) {
 
 	return &v, nil
 }
+
+// ReviewVerdictArchivePath returns the canonical path for an archived reviewer
+// verdict file per workspace-model.md §4.7.WM-027a §(c):
+//
+//	${workspace_path}/.harmonik/review.iter-<N>.json
+//
+// N is the 1-indexed ordinal of the just-completed iteration (iteration cap = 3
+// per execution-model.md §4.3). The caller MUST pass the absolute worktree path.
+func ReviewVerdictArchivePath(workspacePath string, iterationN int) string {
+	return filepath.Join(workspacePath, ".harmonik", fmt.Sprintf("review.iter-%d.json", iterationN))
+}
+
+// ArchiveVerdict renames the current reviewer verdict file
+// ${workspace_path}/.harmonik/review.json to
+// ${workspace_path}/.harmonik/review.iter-<N>.json, where N is iterationN.
+//
+// This implements the daemon-side archive step in workspace-model.md
+// §4.7.WM-027a §(c): before launching iteration N+1's reviewer, the daemon
+// MUST archive the prior review.json by renaming it to review.iter-<N>.json.
+//
+// The rename uses os.Rename (POSIX-atomic within one filesystem) followed by a
+// best-effort fsync of the parent directory per the WM-026 discipline.
+//
+// Returns:
+//   - nil on success.
+//   - ErrNotFound (wrapped) when the source review.json does not exist.
+//   - an error (wrapping ErrNotFound) when the destination review.iter-<N>.json
+//     already exists — double-archive at the same N is a caller error.
+//   - a wrapped I/O error for any other filesystem failure.
+func ArchiveVerdict(workspacePath string, iterationN int) error {
+	src := ReviewVerdictPath(workspacePath)
+	dst := ReviewVerdictArchivePath(workspacePath, iterationN)
+
+	// Check that the source exists; report ErrNotFound if absent.
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: review.json absent at %q", ErrNotFound, src)
+		}
+		return fmt.Errorf("workspace: ArchiveVerdict: Stat source %q: %w", src, err)
+	}
+
+	// Check that the destination does not exist; error on double-archive.
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: destination already exists at %q (double-archive at iteration %d)", dst, iterationN)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("workspace: ArchiveVerdict: Stat destination %q: %w", dst, err)
+	}
+
+	// Atomic rename: POSIX rename(2) is atomic within one filesystem.
+	if err := os.Rename(src, dst); err != nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: Rename %q → %q: %w", src, dst, err)
+	}
+
+	// Fsync the parent directory so the rename is durable — best-effort on
+	// macOS/APFS per WM-026 precedent.
+	dir := filepath.Dir(src)
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
+	dirFD, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: Open dir %q for fsync: %w", dir, err)
+	}
+	_ = dirFD.Sync() // best-effort on APFS per WM-026 / WM-013a precedent
+	if err := dirFD.Close(); err != nil {
+		return fmt.Errorf("workspace: ArchiveVerdict: Close dir fd: %w", err)
+	}
+
+	return nil
+}

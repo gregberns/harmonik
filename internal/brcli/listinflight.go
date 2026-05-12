@@ -126,12 +126,14 @@ func (a *Adapter) ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, err
 		// Edges are NOT available from br list (only dependency_count /
 		// dependent_count). Set to nil — callers needing full edges MUST call
 		// ShowBead or ListDependencies for each bead.
+		// Labels are surfaced per BI-013 / BI-009a workflow-mode label exposure.
 		record := core.BeadRecord{
 			BeadID:        core.BeadID(item.ID),
 			Title:         item.Title,
 			Description:   item.Description,
 			BeadType:      item.IssueType,
 			Status:        status,
+			Labels:        item.Labels,
 			Edges:         nil,
 			AuditTrailRef: item.ID,
 		}

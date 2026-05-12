@@ -12,6 +12,7 @@ package core
 //   - Description:   extended detail text (optional; owned by Beads)
 //   - BeadType:      opaque bead-category string; harmonik treats as an opaque enum owned by Beads
 //   - Status:        coarse lifecycle status from the Beads read surface (§6.1 ENUM CoarseStatus)
+//   - Labels:        raw label strings from Beads (optional); includes workflow:<mode> per BI-009a
 //   - Edges:         typed dependency edges connecting this bead to others (§6.1 RECORD DependencyEdge)
 //   - AuditTrailRef: opaque handle used for `br audit-log` retrieval (§4.10 BI-029 / BI-031 step 3)
 type BeadRecord struct {
@@ -20,6 +21,7 @@ type BeadRecord struct {
 	Description   string           // extended description (optional)
 	BeadType      string           // opaque bead-category string owned by Beads
 	Status        CoarseStatus     // coarse lifecycle status (read surface; §6.1 ENUM CoarseStatus)
+	Labels        []string         // raw label strings from Beads; nil and empty are equivalent (optional)
 	Edges         []DependencyEdge // typed dependency edges; may be empty for a freshly created bead
 	AuditTrailRef string           // opaque handle for `br` audit-log retrieval
 }

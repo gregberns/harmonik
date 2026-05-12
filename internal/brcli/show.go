@@ -32,6 +32,7 @@ type brShowItem struct {
 	Description  string       `json:"description"`
 	Status       string       `json:"status"`
 	IssueType    string       `json:"issue_type"`
+	Labels       []string     `json:"labels"`
 	Dependencies []brShowEdge `json:"dependencies"`
 	Dependents   []brShowEdge `json:"dependents"`
 	// Parent field is intentionally not used for edge construction — its
@@ -171,6 +172,7 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		Description:   item.Description,
 		BeadType:      item.IssueType,
 		Status:        status,
+		Labels:        item.Labels,
 		Edges:         edges,
 		AuditTrailRef: string(id),
 	}

@@ -718,8 +718,12 @@ type t3StubLedger struct {
 	closes   int
 }
 
-func (s *t3StubLedger) Ready(_ context.Context) ([]core.BeadID, error) {
-	return s.readyIDs, nil
+func (s *t3StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+	records := make([]core.BeadRecord, len(s.readyIDs))
+	for i, id := range s.readyIDs {
+		records[i] = core.BeadRecord{BeadID: id}
+	}
+	return records, nil
 }
 func (s *t3StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	s.mu.Lock()

@@ -103,7 +103,7 @@ type workLoopDeps struct {
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
 // extracted as an interface so that workloop_test.go can substitute a stub.
 type beadLedger interface {
-	Ready(ctx context.Context) ([]core.BeadID, error)
+	Ready(ctx context.Context) ([]core.BeadRecord, error)
 	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
 	CloseBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
 	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
@@ -182,7 +182,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 1: poll the ledger for ready beads.
-		readyIDs, err := deps.brAdapter.Ready(ctx)
+		readyRecords, err := deps.brAdapter.Ready(ctx)
 		if err != nil {
 			// Treat poll errors as transient: log and backoff.
 			if ctx.Err() != nil {
@@ -198,7 +198,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 2: nothing ready — sleep and retry.
-		if len(readyIDs) == 0 {
+		if len(readyRecords) == 0 {
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
 				return nil
 			}
@@ -206,7 +206,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 3: pick first ready bead, generate RunID, claim it.
-		beadID := readyIDs[0]
+		// Labels (including any workflow:<mode> per BI-009a) are available on
+		// the record for workflow-mode resolution (BI-013); mode-resolution
+		// dispatch is implemented in T-WM-009.
+		beadID := readyRecords[0].BeadID
 
 		runUUID, uuidErr := uuid.NewV7()
 		if uuidErr != nil {

@@ -30,6 +30,12 @@ func showBeadFixtureValidJSON(id string) string {
 	return `[{"id":"` + id + `","title":"Implement bead-detail query","description":"Build ShowBead method on top of Run.","status":"in_progress","issue_type":"task","dependencies":[{"id":"hk-872","title":"Parent bead","status":"open","priority":2,"dependency_type":"parent-child"},{"id":"hk-872.45","title":"Sibling bead","status":"closed","priority":2,"dependency_type":"waits-for"}],"dependents":[{"id":"hk-872.22","title":"Downstream bead","status":"open","priority":2,"dependency_type":"blocks"}],"parent":"hk-872"}]`
 }
 
+// showBeadFixtureWithLabelsJSON returns a br show response where the bead
+// carries workflow:<mode> and area: labels per BI-009a.
+func showBeadFixtureWithLabelsJSON(id string) string {
+	return `[{"id":"` + id + `","title":"Label-bearing bead","description":"","status":"open","issue_type":"task","labels":["area:brcli","workflow:review-loop"],"dependencies":[],"dependents":[],"parent":""}]`
+}
+
 // showBeadFixtureNotFoundJSON returns the br error envelope for ISSUE_NOT_FOUND.
 func showBeadFixtureNotFoundJSON(searchedID string) string {
 	return `{"error":{"code":"ISSUE_NOT_FOUND","message":"Issue not found: ` + searchedID + `","hint":"Check the bead ID and try again.","retryable":false,"context":{"searched_id":"` + searchedID + `"}}}`
@@ -339,5 +345,40 @@ func TestShowBeadExecFailure(t *testing.T) {
 	_, err = adapter.ShowBead(context.Background(), core.BeadID("hk-872.15"))
 	if err == nil {
 		t.Fatal("expected error for exec failure, got nil")
+	}
+}
+
+// TestShowBeadLabelsSurface verifies that ShowBead (BI-015) surfaces the
+// labels array including workflow:<mode> labels per BI-009a so callers can
+// extract per-task workflow-mode overrides.
+func TestShowBeadLabelsSurface(t *testing.T) {
+	id := core.BeadID("hk-7om2q.10")
+	jsonStr := showBeadFixtureWithLabelsJSON(string(id))
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	record, err := adapter.ShowBead(context.Background(), id)
+	if err != nil {
+		t.Fatalf("ShowBead: unexpected error: %v", err)
+	}
+
+	if len(record.Labels) != 2 {
+		t.Fatalf("Labels length = %d; want 2 (got %v)", len(record.Labels), record.Labels)
+	}
+
+	wantLabel := "workflow:review-loop"
+	found := false
+	for _, l := range record.Labels {
+		if l == wantLabel {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Labels does not contain %q; got %v", wantLabel, record.Labels)
 	}
 }

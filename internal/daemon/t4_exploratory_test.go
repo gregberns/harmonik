@@ -86,16 +86,16 @@ type t4StubLedger struct {
 	readyCallCount int
 }
 
-func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadID, error) {
+func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.readyCallCount++
 	if len(s.ready) == 0 {
-		return []core.BeadID{}, nil
+		return []core.BeadRecord{}, nil
 	}
-	out := []core.BeadID{s.ready[0]}
+	id := s.ready[0]
 	s.ready = s.ready[1:]
-	return out, nil
+	return []core.BeadRecord{{BeadID: id}}, nil
 }
 
 func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -734,7 +734,7 @@ type t4RequeueLedger struct {
 	inner *t4StubLedger
 }
 
-func (r *t4RequeueLedger) Ready(ctx context.Context) ([]core.BeadID, error) {
+func (r *t4RequeueLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	return r.inner.Ready(ctx)
 }
 
@@ -769,7 +769,7 @@ type t4OrderLedger struct {
 	callCount            int
 }
 
-func (o *t4OrderLedger) Ready(ctx context.Context) ([]core.BeadID, error) {
+func (o *t4OrderLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	return o.inner.Ready(ctx)
 }
 

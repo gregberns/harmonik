@@ -103,6 +103,7 @@ func (a *Adapter) ListBeadsByStatus(ctx context.Context, status string) ([]core.
 			Description:   item.Description,
 			BeadType:      item.IssueType,
 			Status:        cs,
+			Labels:        item.Labels,
 			Edges:         nil,
 			AuditTrailRef: item.ID,
 		}

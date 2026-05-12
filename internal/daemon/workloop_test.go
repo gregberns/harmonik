@@ -106,16 +106,16 @@ type stubBeadLedger struct {
 	opened []core.BeadID
 }
 
-func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadID, error) {
+func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.ready) == 0 {
-		return []core.BeadID{}, nil
+		return []core.BeadRecord{}, nil
 	}
 	// Dequeue one bead per Ready call — simulates a draining queue.
-	out := []core.BeadID{s.ready[0]}
+	id := s.ready[0]
 	s.ready = s.ready[1:]
-	return out, nil
+	return []core.BeadRecord{{BeadID: id}}, nil
 }
 
 func (s *stubBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
@@ -431,7 +431,7 @@ type closeErrFixtureLedger struct {
 	closeErr error
 }
 
-func (c *closeErrFixtureLedger) Ready(ctx context.Context) ([]core.BeadID, error) {
+func (c *closeErrFixtureLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	return c.inner.Ready(ctx)
 }
 

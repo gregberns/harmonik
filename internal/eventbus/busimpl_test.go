@@ -33,10 +33,12 @@ package eventbus_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -879,6 +881,234 @@ func busImplDrainFixtureNewRunID(t *testing.T) core.RunID {
 		t.Fatalf("busImplDrainFixtureNewRunID: uuid.NewV7: %v", err)
 	}
 	return core.RunID(id)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-xvpwb: DeadLetterSink wiring in busimpl.Emit consumer-error path
+// ─────────────────────────────────────────────────────────────────────────────
+
+// deadLetterSinkFixtureRecord is one entry captured by the stub sink.
+type deadLetterSinkFixtureRecord struct {
+	reason string
+	evtID  string
+}
+
+// deadLetterSinkFixtureStub is an in-memory DeadLetterSink for testing.
+// It records all calls to Record so tests can assert on them.
+type deadLetterSinkFixtureStub struct {
+	mu      sync.Mutex
+	records []deadLetterSinkFixtureRecord
+}
+
+func (s *deadLetterSinkFixtureStub) Record(_ context.Context, env core.EventEnvelope, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records = append(s.records, deadLetterSinkFixtureRecord{
+		reason: reason,
+		evtID:  env.EventID.String(),
+	})
+	return nil
+}
+
+func (s *deadLetterSinkFixtureStub) Close() error { return nil }
+
+func (s *deadLetterSinkFixtureStub) deadLetterSinkFixtureSnap() []deadLetterSinkFixtureRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]deadLetterSinkFixtureRecord, len(s.records))
+	copy(out, s.records)
+	return out
+}
+
+// TestBusImplWithSink_NilSinkDoesNotPanicOnAsyncError verifies that when
+// NewBusImplWithSink is called with a nil sink, async consumer errors do NOT
+// cause a panic in the bus goroutine.
+//
+// Bead ref: hk-xvpwb.
+func TestBusImplWithSink_NilSinkDoesNotPanicOnAsyncError(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.NewBusImplWithSink(nil, nil, nil)
+
+	sub := core.Subscription{
+		ConsumerID:    "xvpwb-nil-sink-async",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			return fmt.Errorf("deliberate async error")
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n-nil-sink"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// Emit MUST return nil; the async error should be silently absorbed.
+	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("Emit: %v; want nil (nil sink MUST NOT propagate async errors)", emitErr)
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bus.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	// If we reach here without panic, the contract holds.
+}
+
+// TestBusImplWithSink_AsyncConsumerErrorRecordedToSink verifies that an async
+// consumer that returns a non-nil error causes the dead-letter sink to receive
+// a Record call with reason "consumer_error".
+//
+// Bead ref: hk-xvpwb.
+func TestBusImplWithSink_AsyncConsumerErrorRecordedToSink(t *testing.T) {
+	t.Parallel()
+
+	sink := &deadLetterSinkFixtureStub{}
+	bus := eventbus.NewBusImplWithSink(nil, nil, sink)
+
+	sub := core.Subscription{
+		ConsumerID:    "xvpwb-async-error",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			return fmt.Errorf("deliberate consumer error")
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n-async-error"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("Emit: %v; want nil", emitErr)
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bus.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+
+	records := sink.deadLetterSinkFixtureSnap()
+	if len(records) != 1 {
+		t.Fatalf("sink.Record called %d times, want 1", len(records))
+	}
+	if records[0].reason != "consumer_error" {
+		t.Errorf("sink.Record reason = %q, want %q (hk-xvpwb)", records[0].reason, "consumer_error")
+	}
+}
+
+// TestBusImplWithSink_ObserverPanicRecordedToSink verifies that an observer
+// consumer that panics causes the dead-letter sink to receive a Record call
+// with reason "observer_panic", and that the panic does NOT propagate out of
+// the bus goroutine.
+//
+// Bead ref: hk-xvpwb.
+func TestBusImplWithSink_ObserverPanicRecordedToSink(t *testing.T) {
+	t.Parallel()
+
+	sink := &deadLetterSinkFixtureStub{}
+	bus := eventbus.NewBusImplWithSink(nil, nil, sink)
+
+	sub := core.Subscription{
+		ConsumerID:    "xvpwb-observer-panic",
+		ConsumerClass: core.ConsumerClassObserver,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			panic("deliberate observer panic")
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n-panic"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// Emit must return nil — panic occurs off the critical path.
+	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("Emit: %v; want nil", emitErr)
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bus.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+
+	records := sink.deadLetterSinkFixtureSnap()
+	if len(records) != 1 {
+		t.Fatalf("sink.Record called %d times, want 1", len(records))
+	}
+	if records[0].reason != "observer_panic" {
+		t.Errorf("sink.Record reason = %q, want %q (hk-xvpwb)", records[0].reason, "observer_panic")
+	}
+}
+
+// TestBusImplWithSink_NilSinkDoesNotPanicOnObserverPanic verifies that when
+// NewBusImplWithSink is called with a nil sink, an observer panic does NOT
+// propagate out of the bus goroutine.
+//
+// Bead ref: hk-xvpwb.
+func TestBusImplWithSink_NilSinkDoesNotPanicOnObserverPanic(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.NewBusImplWithSink(nil, nil, nil)
+
+	sub := core.Subscription{
+		ConsumerID:    "xvpwb-nil-sink-panic",
+		ConsumerClass: core.ConsumerClassObserver,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			panic("deliberate observer panic with nil sink")
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n-nil-sink-panic"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	if emitErr := bus.Emit(context.Background(), busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("Emit: %v; want nil", emitErr)
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bus.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	// Reaching here without panic satisfies the nil-sink safety contract.
 }
 
 // busImplFixtureJSONLPath returns a temporary file path for use as a JSONL log.

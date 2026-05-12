@@ -30,6 +30,16 @@ import (
 // L-class events call Append(line, sync=false). The durability class is
 // derived from [isFsyncBoundaryEvent] per the §8 taxonomy table.
 //
+// # Dead-letter sink (hk-xvpwb)
+//
+// When constructed via [NewBusImplWithSink], a [handlercontract.DeadLetterSink]
+// is injected at construction time and receives undeliverable events:
+//   - Observer/async consumer panics are recorded with reason "observer_panic".
+//   - Async/observer consumer dispatch errors are recorded with reason "consumer_error".
+//
+// The sink field is optional; a nil sink causes the bus to silently drop
+// undeliverable events (logging is not yet wired — post-MVH).
+//
 // # Dispatch order (EV-014a)
 //
 // Emit returns after: (a) redaction (EV-035), (b) JSONL append + fsync for
@@ -50,14 +60,15 @@ import (
 // Plain Emit (no run_id) only touches wg; DrainRun does not wait for those.
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl.
+// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb.
 type busImpl struct {
-	registry      *handlercontract.RedactionRegistry
-	jsonlWriter   *JSONLWriter // nil when no log path is configured
-	idGen         *core.EventIDGenerator
-	mu            sync.Mutex
-	subscriptions []core.Subscription
-	sealed        bool
+	registry       *handlercontract.RedactionRegistry
+	jsonlWriter    *JSONLWriter                   // nil when no log path is configured
+	deadLetterSink handlercontract.DeadLetterSink // nil when no sink is configured
+	idGen          *core.EventIDGenerator
+	mu             sync.Mutex
+	subscriptions  []core.Subscription
+	sealed         bool
 	// wg tracks ALL in-flight async/observer goroutines (global quiescence).
 	// Drain(ctx) waits on wg. EmitWithRunID also increments the per-run entry
 	// in runDrainers so DrainRun can wait for just one run (hk-fx6zl).
@@ -177,6 +188,39 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 	}
 }
 
+// NewBusImplWithSink constructs a busImpl with a [handlercontract.RedactionRegistry],
+// a [*JSONLWriter], and a [handlercontract.DeadLetterSink] for undeliverable events.
+//
+// Async/observer consumer panics are recorded to sink with reason "observer_panic".
+// Async/observer consumer dispatch errors are recorded to sink with reason "consumer_error".
+//
+// Passing nil for registry, writer, or sink is safe:
+//   - nil registry falls back to HC-031-only redaction (same as [NewBusImpl]).
+//   - nil writer disables JSONL append.
+//   - nil sink silently drops undeliverable events (bus MUST NOT panic on nil sink).
+//
+// This constructor is the preferred call site for daemon.Start when
+// MVH_ROADMAP row #9 dead-letter wiring is active.
+//
+// The returned bus is unsealed; callers MUST call Subscribe for all consumers
+// before calling Seal (EV-009). The returned value satisfies [EventBus].
+//
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
+// specs/handler-contract.md §4.7.HC-032.
+// Bead ref: hk-xvpwb.
+func NewBusImplWithSink(registry *handlercontract.RedactionRegistry, writer *JSONLWriter, sink handlercontract.DeadLetterSink) EventBus {
+	if registry == nil {
+		registry = handlercontract.NewRedactionRegistry()
+	}
+	return &busImpl{
+		registry:       registry,
+		jsonlWriter:    writer,
+		deadLetterSink: sink,
+		idGen:          core.NewEventIDGenerator(),
+		runDrainers:    make(map[string]*sync.WaitGroup),
+	}
+}
+
 // Emit applies EV-035 redaction to payload via the registry's
 // RedactionMiddleware, then appends the event to the JSONL log (stub at MVH),
 // then dispatches to matching registered consumers per EV-014a.
@@ -281,9 +325,26 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 			b.wg.Add(1)
 			go func() {
 				defer b.wg.Done()
+				// Panic recovery (hk-xvpwb): recover observer panics and record
+				// them to the dead-letter sink with reason "observer_panic". If
+				// the sink is nil, the panic is absorbed and logged nowhere
+				// (post-MVH: add structured logger fallback).
+				defer func() {
+					if r := recover(); r != nil {
+						if b.deadLetterSink != nil {
+							_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						}
+					}
+				}()
 				// Context is passed through so callers can cancel in-flight
 				// async/observer work during shutdown before Drain returns.
-				_ = sub.Handler(ctx, evt)
+				// Consumer errors are recorded to the dead-letter sink with
+				// reason "consumer_error" (hk-xvpwb).
+				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+					if b.deadLetterSink != nil {
+						_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					}
+				}
 			}()
 		}
 	}
@@ -379,7 +440,24 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 			go func() {
 				defer b.wg.Done()
 				defer runWG.Done()
-				_ = sub.Handler(ctx, evt)
+				// Panic recovery (hk-xvpwb): recover observer panics and record
+				// them to the dead-letter sink with reason "observer_panic". If
+				// the sink is nil, the panic is absorbed and logged nowhere
+				// (post-MVH: add structured logger fallback).
+				defer func() {
+					if r := recover(); r != nil {
+						if b.deadLetterSink != nil {
+							_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						}
+					}
+				}()
+				// Consumer errors are recorded to the dead-letter sink with
+				// reason "consumer_error" (hk-xvpwb).
+				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+					if b.deadLetterSink != nil {
+						_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					}
+				}
 			}()
 		}
 	}

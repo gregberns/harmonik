@@ -26,6 +26,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -283,14 +284,30 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		outcome := sess.Outcome()
 
 		// Steps 9 & 10: emit run_completed, close or reopen the bead.
+		//
+		// Failure condition (hk-9cob3): a watcher error that is NOT a
+		// context-cancellation (ErrCanceled) means the watcher fired agent_failed
+		// due to a protocol violation (malformed NDJSON, line-too-long, panic,
+		// I/O error). In that case the run is treated as failed even when the
+		// subprocess exits 0, because the work product may be incomplete or
+		// corrupt.
+		watcherErr := watcher.Err()
+		watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
+
 		transitionTID, _ := deps.tidGen.Next()
-		if outcome.ExitCode == 0 {
+		if outcome.ExitCode == 0 && !watcherFailed {
 			_ = deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID)
 			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
 		} else {
-			failReason := fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
+			var failReason string
+			if watcherFailed {
+				failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
+					watcherErr, outcome.ExitCode, runID.String())
+			} else {
+				failReason = fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
+			}
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d", outcome.ExitCode))
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d watcher_failed=%v", outcome.ExitCode, watcherFailed))
 		}
 
 		// Step 11 (hk-fgdgz): clean up the git worktree after every dispatch

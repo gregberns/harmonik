@@ -1,9 +1,15 @@
 package eventbus
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"iter"
+	"log"
 	"os"
 	"sync"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // writeRequest is a single unit of work sent to the drainer goroutine.
@@ -275,4 +281,60 @@ func (w *JSONLWriter) Close() error {
 	close(w.stop)
 	<-w.done
 	return nil
+}
+
+// Filter returns an iterator over the events in the JSONL file at path whose
+// envelope run_id matches runID. Events are yielded in file order (append
+// order). The file is read from the beginning each time Filter is called;
+// Filter is a pure read-side operation and does NOT shard or modify the file
+// (EV-020).
+//
+// Each line is decoded as a [core.Event] envelope. Lines whose run_id field
+// matches runID are yielded to the caller. Lines that do not match are
+// skipped silently. Lines that are malformed JSON (cannot be decoded as a
+// core.Event envelope) are also skipped, with a log.Printf warning — the
+// caller is not interrupted.
+//
+// The torn-tail rule (event-model.md §6.2): a final line that lacks a
+// terminating newline is treated as malformed by the JSON decoder and is
+// therefore skipped per the above malformed-line policy.
+//
+// Filter is a free function bound to a path rather than a method on
+// JSONLWriter so that callers can read any JSONL file (including files written
+// by a closed writer, or files under a different path) without holding a live
+// writer reference.
+//
+// Spec ref: event-model.md §6.2 EV-020; POST_MVH_PARALLELISM_ROADMAP.md row 10.
+// Bead ref: hk-e61c3.5.
+//
+//nolint:gosec // G304: path is caller-supplied and scoped to the harmonik project dir; not user input.
+func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
+	return func(yield func(core.Event) bool) {
+		f, err := os.Open(path)
+		if err != nil {
+			log.Printf("eventbus.Filter: open %s: %v", path, err)
+			return
+		}
+		defer func() { _ = f.Close() }()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			lineBytes := scanner.Bytes()
+			// Decode just the envelope fields needed for matching.
+			var ev core.Event
+			if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
+				log.Printf("eventbus.Filter: malformed line in %s (skipping): %v", path, decodeErr)
+				continue
+			}
+			if ev.RunID == nil || *ev.RunID != runID {
+				continue
+			}
+			if !yield(ev) {
+				return
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			log.Printf("eventbus.Filter: scan %s: %v", path, scanErr)
+		}
+	}
 }

@@ -206,7 +206,7 @@ func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
 }
 
 // brcliFixturePWDBinary writes a shell script that prints its working directory
-// (via pwd) to stdout and exits 0. Used by TestNewWithWorkingDirSetsCmdDir to
+// (via pwd) to stdout and exits 0. Used by TestNewForProjectSetsCmdDir to
 // assert that Run sets cmd.Dir on the subprocess.
 func brcliFixturePWDBinary(t *testing.T) string {
 	t.Helper()
@@ -220,17 +220,17 @@ func brcliFixturePWDBinary(t *testing.T) string {
 	return path
 }
 
-// TestNewWithWorkingDirSetsCmdDir verifies that Run sets cmd.Dir to the
-// workingDir supplied to NewWithWorkingDir, so that `br` runs in the project
+// TestNewForProjectSetsCmdDir verifies that Run sets cmd.Dir to the
+// workingDir supplied to NewForProject, so that `br` runs in the project
 // directory rather than the daemon's process CWD. Regression guard for
 // hk-o1sln.
-func TestNewWithWorkingDirSetsCmdDir(t *testing.T) {
+func TestNewForProjectSetsCmdDir(t *testing.T) {
 	path := brcliFixturePWDBinary(t)
 	workingDir := t.TempDir()
 
-	adapter, err := brcli.NewWithWorkingDir(path, workingDir)
+	adapter, err := brcli.NewForProject(path, workingDir)
 	if err != nil {
-		t.Fatalf("NewWithWorkingDir: %v", err)
+		t.Fatalf("NewForProject: %v", err)
 	}
 
 	result, runErr := adapter.Run(context.Background())
@@ -253,10 +253,10 @@ func TestNewWithWorkingDirSetsCmdDir(t *testing.T) {
 	}
 }
 
-// TestNewWithWorkingDirRejectsEmptyWorkingDir verifies that NewWithWorkingDir
+// TestNewForProjectRejectsEmptyWorkingDir verifies that NewForProject
 // returns an error when workingDir is empty (hk-o1sln).
-func TestNewWithWorkingDirRejectsEmptyWorkingDir(t *testing.T) {
-	adapter, err := brcli.NewWithWorkingDir("/path/to/br", "")
+func TestNewForProjectRejectsEmptyWorkingDir(t *testing.T) {
+	adapter, err := brcli.NewForProject("/path/to/br", "")
 	if err == nil {
 		t.Fatal("expected error for empty workingDir, got nil")
 	}
@@ -265,10 +265,10 @@ func TestNewWithWorkingDirRejectsEmptyWorkingDir(t *testing.T) {
 	}
 }
 
-// TestNewWithWorkingDirRejectsEmptyBrPath verifies that NewWithWorkingDir
+// TestNewForProjectRejectsEmptyBrPath verifies that NewForProject
 // returns an error when brPath is empty (hk-o1sln).
-func TestNewWithWorkingDirRejectsEmptyBrPath(t *testing.T) {
-	adapter, err := brcli.NewWithWorkingDir("", "/some/dir")
+func TestNewForProjectRejectsEmptyBrPath(t *testing.T) {
+	adapter, err := brcli.NewForProject("", "/some/dir")
 	if err == nil {
 		t.Fatal("expected error for empty brPath, got nil")
 	}

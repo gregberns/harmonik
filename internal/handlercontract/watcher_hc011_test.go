@@ -54,7 +54,7 @@ func (p *watcherFixturePublisher) EventTypes() []string {
 	return out
 }
 
-// watcherFixtureDeadLetter is a minimal DeadLetterSink that collects spilled events.
+// watcherFixtureDeadLetter is a minimal WatcherDeadLetterSink that collects spilled events.
 //
 // Append stores eventType strings; payload is ignored in tests (content is
 // covered by the publisher fixture and the production payload-builder tests).
@@ -632,8 +632,8 @@ func TestWatcher_SpawnWatcher_PanicsOnEmptySessionID(t *testing.T) {
 // interface is satisfiable from daemon-side code only (hk-8i31.82).
 var _ handlercontract.EventEmitter = (*watcherFixturePublisher)(nil)
 
-// Compile-time check: watcherFixtureDeadLetter satisfies DeadLetterSink.
-var _ handlercontract.DeadLetterSink = (*watcherFixtureDeadLetter)(nil)
+// Compile-time check: watcherFixtureDeadLetter satisfies WatcherDeadLetterSink.
+var _ handlercontract.WatcherDeadLetterSink = (*watcherFixtureDeadLetter)(nil)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Imports needed by the tests above

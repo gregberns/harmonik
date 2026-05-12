@@ -48,8 +48,9 @@ type EventEmitter interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
 
-// DeadLetterSink is the interface the watcher uses to route events that cannot
-// be delivered to the in-process bus (bus full, subscriber panic).
+// WatcherDeadLetterSink is the interface the watcher uses to route pre-envelope
+// events that cannot be delivered to the in-process bus (bus full, subscriber
+// panic) per HC-027.
 //
 // The watcher MUST NOT drop events silently; per HC-027 they MUST reach the
 // dead-letter destination declared by [event-model.md §4.3].
@@ -58,8 +59,10 @@ type EventEmitter interface {
 // EventEmitter.Emit; since the bus has not yet stamped the envelope (emission
 // failed), the dead-letter sink receives the pre-envelope form.
 //
+// For the post-envelope dead-letter sink (bus consumer errors) see [DeadLetterSink].
+//
 // Spec: specs/handler-contract.md §4.6.HC-027.
-type DeadLetterSink interface {
+type WatcherDeadLetterSink interface {
 	// Append records the (eventType, payload) pair in the dead-letter store.
 	//
 	// Implementations MUST be non-blocking or use a bounded-retry policy.
@@ -134,7 +137,7 @@ type SpawnWatcherConfig struct {
 	// (buffer-full, subscriber panic).  The watcher MUST NOT silently drop
 	// undeliverable events per HC-027.
 	// Required (non-nil).
-	DeadLetter DeadLetterSink
+	DeadLetter WatcherDeadLetterSink
 
 	// PublishBufSize is the capacity of the internal publish channel.
 	// When zero, WatcherPublishBufSize (8) is used per HC-011a.
@@ -410,7 +413,7 @@ func (w *Watcher) publishOrDeadLetter(
 	eventType core.EventType,
 	payload []byte,
 	pub EventEmitter,
-	dl DeadLetterSink,
+	dl WatcherDeadLetterSink,
 ) {
 	if err := pub.Emit(ctx, eventType, payload); err != nil {
 		// Route to dead-letter; best-effort (errors from Append are not actionable
@@ -440,7 +443,7 @@ func (w *Watcher) setTermErr(err error) {
 // error_category field of the payload.
 //
 // The caller passes the returned values directly to EventEmitter.Emit or
-// DeadLetterSink.Append; envelope stamping (event_id, timestamps,
+// WatcherDeadLetterSink.Append; envelope stamping (event_id, timestamps,
 // source_subsystem) is the bus's responsibility per EV-002b.
 //
 // sessionID is accepted for future use (sub-reason may encode it in payload);

@@ -49,17 +49,16 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		binary = "claude"
 	}
 
-	// Build a LaunchSpec-mutating handler using a real handler.Handler.
-	// To forward HandlerArgs to every Launch call we wrap the real handler.
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{})
 
 	return workLoopDeps{
 		brAdapter:     p.BrAdapter,
 		bus:           p.Bus,
-		h:             &argsInjectingHandler{inner: h, args: p.HandlerArgs},
+		h:             h,
 		intentLogDir:  p.IntentLogDir,
 		projectDir:    p.ProjectDir,
 		handlerBinary: binary,
+		handlerArgs:   p.HandlerArgs,
 		handlerEnv:    nil,
 		brTimeoutCfg:  brcli.TimeoutConfig{},
 		tidGen:        core.NewTransitionIDGenerator(),
@@ -70,20 +69,4 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
-}
-
-// argsInjectingHandler wraps handler.Handler to append fixed args to every
-// LaunchSpec before delegating to the inner handler.  This lets tests pass
-// arguments like ["-c", "exit 0"] without modifying the production LaunchSpec
-// construction in the work loop.
-type argsInjectingHandler struct {
-	inner handler.Handler
-	args  []string
-}
-
-func (a *argsInjectingHandler) Launch(ctx context.Context, spec handler.LaunchSpec) (handler.Session, *handlercontract.Watcher, error) {
-	if len(a.args) > 0 {
-		spec.Args = append(spec.Args, a.args...)
-	}
-	return a.inner.Launch(ctx, spec)
 }

@@ -74,6 +74,16 @@ type Config struct {
 	// Bead ref: hk-ecrxy.
 	HandlerBinary string
 
+	// HandlerArgs are extra arguments appended to the handler binary invocation
+	// for every bead dispatch.
+	//
+	// The work loop sets LaunchSpec.Args = HandlerArgs on each iteration. When
+	// nil no extra arguments are passed. Tests may supply ["-c", "exit 0"] to
+	// exercise the handler path without a real claude binary (hk-4e5b5).
+	//
+	// Bead ref: hk-4e5b5.
+	HandlerArgs []string
+
 	// HandlerEnv is the environment for handler subprocesses in "KEY=VALUE" form.
 	//
 	// When nil the child inherits no environment. Production callers MUST inject

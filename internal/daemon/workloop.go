@@ -71,6 +71,10 @@ type workLoopDeps struct {
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
 
+	// handlerArgs are extra arguments appended to the handler binary invocation
+	// for every bead dispatch (hk-4e5b5).  Nil → no extra args.
+	handlerArgs []string
+
 	// handlerEnv is the environment for the handler subprocess ("KEY=VALUE" pairs).
 	// Nil → child inherits no environment; the production caller MUST inject at
 	// minimum HARMONIK_PROJECT_HASH per lifecycle.ProvenanceEnvVar.
@@ -124,6 +128,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter) (workLoopDeps
 		intentLogDir:  intentLogDir,
 		projectDir:    cfg.ProjectDir,
 		handlerBinary: binary,
+		handlerArgs:   cfg.HandlerArgs,
 		handlerEnv:    cfg.HandlerEnv,
 		brTimeoutCfg:  brcli.TimeoutConfig{},
 		tidGen:        core.NewTransitionIDGenerator(),
@@ -245,7 +250,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Step 6: launch the handler subprocess.
 		spec := handler.LaunchSpec{
 			Binary:  deps.handlerBinary,
-			Args:    nil,
+			Args:    deps.handlerArgs,
 			Env:     deps.handlerEnv,
 			WorkDir: wtPath,
 			Role:    "implementer",

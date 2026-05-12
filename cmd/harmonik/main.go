@@ -31,9 +31,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -118,20 +120,50 @@ func run() int {
 		return 1
 	}
 
-	cfg := daemon.Config{
-		ProjectDir: projectDir,
+	// hk-sm6j7: resolve br binary via PATH so the work loop is reachable.
+	// If br is not on PATH, BrPath remains empty and daemon.Start skips the
+	// work loop (existing nil-path guard at daemon.go:251 is preserved).
+	brPath, _ := exec.LookPath("br")
+
+	// hk-keul6: default JSONL log path to <ProjectDir>/.harmonik/events/events.jsonl
+	// per event-model.md §6.2 EV-020.
+	jsonlLogPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
+
+	// hk-woebv: create required subdirectories before daemon.Start so that
+	// eventbus.OpenJSONLWriter never fails with "no such file or directory".
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/events/: %v\n", err)
+		return 1
+	}
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: cannot create .harmonik/beads-intents/: %v\n", err)
+		return 1
 	}
 
-	// Build a context that is cancelled on SIGINT or SIGTERM so that the
-	// work loop shuts down cleanly when the operator presses Ctrl-C or the
-	// process receives SIGTERM. The signal handling now lives at the
-	// composition root (here) rather than inside daemon.Start, making Start
-	// testable without process-level signals (hk-7oz2f).
+	// hk-002zx: startup banner so the operator knows the daemon is active.
+	fmt.Fprintln(os.Stderr, "harmonik daemon starting in", projectDir)
+
+	cfg := daemon.Config{
+		ProjectDir:   projectDir,
+		BrPath:       brPath,
+		JSONLLogPath: jsonlLogPath,
+	}
+
+	// Build a context that is cancelled on SIGINT or SIGTERM so the work loop
+	// shuts down cleanly. Signal handling lives at the composition root
+	// (hk-7oz2f) so daemon.Start is testable without process-level signals.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.
+	// All other errors map to exit code 1.
 	if err := daemon.Start(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", err)
+		if errors.Is(err, lifecycle.ErrPidfileLocked) {
+			return 5
+		}
 		return 1
 	}
 

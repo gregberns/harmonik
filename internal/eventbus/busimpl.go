@@ -12,48 +12,68 @@ import (
 
 // busImpl is the concrete in-process implementation of [EventBus].
 //
-// At MVH the implementation wires EV-035 redaction (HC-031 common-prefix rule
-// via handlercontract.RedactByFieldName) into Emit before JSONL append and
-// consumer dispatch. Per-handler value-pattern redaction (HC-032) is added by
-// the sibling bead hk-8i31.83 which refactors Emit to call the
-// RedactionRegistry middleware instead of RedactByFieldName directly.
+// Emit applies the full EV-035 redaction pipeline before JSONL append and
+// consumer dispatch: HC-031 common-prefix field-name redaction PLUS HC-032
+// per-handler value-pattern redaction via the [handlercontract.RedactionRegistry]
+// supplied at construction.
+//
+// When constructed via [NewBusImpl] (no patterns), the registry applies HC-031
+// only. When constructed via [NewBusImplWithRegistry], the caller's patterns
+// are also applied.
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-035.
-// Bead ref: hk-8mup.62.
+// Bead refs: hk-8mup.62, hk-8i31.83.
 type busImpl struct {
+	registry      *handlercontract.RedactionRegistry
 	mu            sync.Mutex
 	subscriptions []core.Subscription
 	sealed        bool
 }
 
-// NewBusImpl constructs a new busImpl ready for subscription registration.
+// NewBusImpl constructs a busImpl with a zero-pattern RedactionRegistry.
+//
+// This constructor provides backward compatibility for call sites that do not
+// yet have a RedactionRegistry available. Redaction applies HC-031
+// (common-prefix field names) only. Callers that need HC-032 per-handler
+// value-pattern redaction MUST use [NewBusImplWithRegistry].
 //
 // The returned bus is unsealed; callers MUST call Subscribe for all consumers
 // before calling Seal (EV-009). The returned value satisfies [EventBus].
 //
-// At MVH, redaction is HC-031 (RedactByFieldName) only. The per-handler
-// RedactionRegistry (HC-032) is wired by the sibling bead hk-8i31.83, which
-// refactors NewBusImpl to accept a registry parameter.
-//
-// Spec ref: specs/event-model.md §6.1, §4.2 PL-005 step 0.
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-035, PL-005 step 0.
 func NewBusImpl() EventBus {
-	return &busImpl{}
+	return &busImpl{registry: handlercontract.NewRedactionRegistry()}
 }
 
-// Emit applies EV-035 redaction to payload, then dispatches to all matching
-// registered consumers.
+// NewBusImplWithRegistry constructs a busImpl that delegates all redaction to
+// the supplied [handlercontract.RedactionRegistry].
 //
-// For this initial implementation (hk-8mup.62), JSONL persistence is deferred
-// because the JSONLWriter requires a daemon-startup-resolved file path that is
-// not yet threaded through daemon.Config. The redaction + dispatch path is
-// fully exercised. JSONL wiring is added by the JSONL-path bead.
+// The registry MUST be fully populated (all RegisterPattern calls complete)
+// before the bus is sealed per PL-005 step 0. Passing a nil registry is
+// equivalent to calling [NewBusImpl].
 //
-// Redaction is HC-031 (RedactByFieldName) only; HC-032 per-handler patterns
-// are composed in by the sibling hk-8i31.83 RedactionRegistry refactor.
+// The returned bus is unsealed; callers MUST call Subscribe for all consumers
+// before calling Seal (EV-009). The returned value satisfies [EventBus].
+//
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-035; specs/handler-contract.md §4.7.HC-032.
+func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBus {
+	if registry == nil {
+		return NewBusImpl()
+	}
+	return &busImpl{registry: registry}
+}
+
+// Emit applies EV-035 redaction to payload via the registry's
+// RedactionMiddleware, then dispatches to all matching registered consumers.
+//
+// JSONL persistence is deferred because the JSONLWriter requires a
+// daemon-startup-resolved file path not yet threaded through daemon.Config.
+// The redaction + dispatch path is fully exercised. JSONL wiring is added by
+// the JSONL-path bead.
 //
 // Spec ref: specs/event-model.md §6.1, §7.1, §4.4 EV-035.
 func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
-	// Step 1: decode payload to map for field-name redaction (EV-035 / HC-031).
+	// Step 1: decode payload to map for redaction (EV-035).
 	var rawPayload map[string]any
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &rawPayload); err != nil {
@@ -61,9 +81,9 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		}
 	}
 
-	// Step 2: apply HC-031 common-prefix redaction BEFORE JSONL append and
-	// consumer dispatch (EV-035).
-	redacted := handlercontract.RedactByFieldName(rawPayload)
+	// Step 2: apply HC-031 + HC-032 redaction pipeline BEFORE JSONL append
+	// and consumer dispatch (EV-035).
+	redacted := b.registry.RedactionMiddleware(rawPayload)
 
 	// Step 3: re-encode redacted payload.
 	redactedBytes, err := json.Marshal(redacted)

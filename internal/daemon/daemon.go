@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // Config holds the startup configuration for the harmonik daemon.
@@ -28,21 +29,26 @@ type Config struct {
 // registry, handler registry, skill registry, policy registry) in-process
 // per AR-INV-007 and PL-020a.
 //
-// Step 0 wiring as of hk-8mup.62:
-//   - Instantiates the EventBus (eventbus.NewBusImpl) per EV-035.
-//
-// The RedactionRegistry (hk-8i31.83) will refactor bus construction to pass
-// the registry in; at that point NewBusImpl is superseded by a registry-aware
-// constructor.
+// Step 0 wiring as of hk-8i31.83:
+//   - Instantiates the RedactionRegistry (handlercontract.NewRedactionRegistry)
+//     per HC-032. No seed patterns are registered at this scope; handlers
+//     register their own patterns when they land.
+//   - Instantiates the EventBus (eventbus.NewBusImplWithRegistry) with the
+//     registry per EV-035.
 //
 // Spec ref: specs/process-lifecycle.md §4.6 PL-020, PL-020a, PL-005 step 0.
 func Start(_ Config) error {
 	// Step 0 (PL-005): bootstrap cross-subsystem registries.
 
-	// Instantiate the EventBus (EV-035; hk-8mup.62).
+	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).
+	// No seed patterns here — handlers call registry.RegisterPattern when they
+	// are wired (per PL-005 step 0 semantics).
+	registry := handlercontract.NewRedactionRegistry()
+
+	// Instantiate the EventBus with the registry (EV-035; hk-8mup.62, hk-8i31.83).
 	// The bus is not yet Seal()ed here because subsystems that Subscribe have
 	// not yet been wired. Seal() will be called once all consumers register.
-	_ = eventbus.NewBusImpl()
+	_ = eventbus.NewBusImplWithRegistry(registry)
 
 	return nil
 }

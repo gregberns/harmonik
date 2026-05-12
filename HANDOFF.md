@@ -90,7 +90,7 @@ CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight str
 
 # State
 
-Main at `8277522`, pushed to origin/main. **Open=139, Closed=847, Ready=10 (1 MVH-relevant: hk-8mup.63), Deferred=40.** No active worktrees. **Read `MVH_ROADMAP.md` first — it was rewritten in this session as the empirical source of truth and supersedes the bead corpus for "what needs to happen for MVH."** Detailed appendix at `MVH_REALITY_CHECK.md`. Working tree clean.
+Main at `8277522`, pushed to origin/main. **Open=139, Closed=847, Ready=10 (1 MVH-relevant: hk-8mup.63), Deferred=40.** No active worktrees. **Read `MVH_ROADMAP.md` first — it's the source of truth for MVH and supersedes the bead corpus.** Working tree clean.
 
 # What this session did — drained the MVH redaction-chain critical path AND surfaced a viability question
 

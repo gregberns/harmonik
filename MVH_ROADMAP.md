@@ -66,6 +66,3 @@ Wall-time estimate at one implementer dispatch per row, with reasonable rebases:
 
 `br ready --limit 0` shows 10 entries. 9 are either epics or `post-mvh`-labeled. Only **one** non-rollup non-`post-mvh` open bead exists: `hk-8mup.63` (JSONL wiring). The remaining 10 rows above have no bead at all. Filing beads for them is fine and traceable, but the corpus lagging this doc is the expected steady state — **update this doc first, then file beads if needed, not the other way around.**
 
-## Pointer
-
-Detailed empirical findings (verified file:line refs, commands run, outputs observed) are in `MVH_REALITY_CHECK.md`. That file is appendix; this file is decision-making.

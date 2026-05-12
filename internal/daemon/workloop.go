@@ -94,7 +94,7 @@ type beadLedger interface {
 	Ready(ctx context.Context) ([]core.BeadID, error)
 	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
 	CloseBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
-	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
+	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
 }
 
 // newWorkLoopDeps constructs the production workLoopDeps from daemon.Config and
@@ -219,7 +219,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if headErr != nil {
 			// Worktree creation failed — reopen the bead so it can be retried.
 			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID)
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("resolve HEAD failed: %v", headErr))
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -232,7 +233,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		wtErr := workspace.CreateWorktree(ctx, deps.projectDir, runID.String(), headSHA, workspace.NoWorktreeRootOverride())
 		if wtErr != nil {
 			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID)
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("create worktree failed: %v", wtErr))
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -259,7 +261,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if launchErr != nil {
 			// Launch failure — reopen the bead.
 			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID)
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("launch error: %v", launchErr))
 			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
 			// Clean up the worktree even on launch failure (hk-fgdgz).
 			removeWorktree(ctx, deps.projectDir, wtPath)
@@ -285,7 +288,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			_ = deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID)
 			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
 		} else {
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID)
+			failReason := fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
 			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d", outcome.ExitCode))
 		}
 

@@ -286,7 +286,7 @@ func TestBI010_ReopenBead_IntentFileDeletedOnSuccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID)
+	err := adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, "")
 	if err != nil {
 		t.Fatalf("ReopenBead: unexpected error: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestBI010_ReopenBead_IntendedPostState_Open(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID)
+	_ = adapter.ReopenBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, "")
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusOpen {

@@ -128,7 +128,7 @@ func (s *stubBeadLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutC
 	return nil
 }
 
-func (s *stubBeadLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
+func (s *stubBeadLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.opened = append(s.opened, beadID)

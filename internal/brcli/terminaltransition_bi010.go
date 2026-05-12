@@ -201,6 +201,11 @@ func (a *Adapter) CloseBead(
 
 // ReopenBead issues the BI-010 reopen write: closed → open.
 //
+// reason is a short human-readable string describing why the bead was
+// reopened (e.g. "exit=1 run_id=<uuid>"). When non-empty it is passed as
+// `br reopen --reason <reason>` so the operator can read it via `br show`
+// without grepping the JSONL log (hk-amuzn). When empty the flag is omitted.
+//
 // Emitted on transient failure with no in-run retry available, or when a
 // `reopen-bead` verdict is issued by a reconciliation investigator per
 // reconciliation/spec.md §4.5 RC-020 / RC-025.
@@ -216,7 +221,12 @@ func (a *Adapter) ReopenBead(
 	runID core.RunID,
 	transitionID core.TransitionID,
 	beadID core.BeadID,
+	reason string,
 ) error {
+	args := []string{"reopen", string(beadID)}
+	if reason != "" {
+		args = append(args, "--reason", reason)
+	}
 	return a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
@@ -226,6 +236,6 @@ func (a *Adapter) ReopenBead(
 		beadID,
 		core.TerminalOpReopen,
 		core.CoarseStatusOpen,
-		[]string{"reopen", string(beadID)},
+		args,
 	)
 }

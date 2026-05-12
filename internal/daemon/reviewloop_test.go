@@ -386,6 +386,138 @@ func TestReviewLoop_CapHit(t *testing.T) {
 	})
 }
 
+// rlFixtureNoProgressHandlerScript writes a /bin/sh handler script whose
+// implementer phase (odd invocations) commits a new file on the FIRST
+// implementer run and does nothing on subsequent runs.  This ensures the diff
+// hash is identical on iterations ≥ 2, triggering no-progress detection.
+//
+// The reviewer phase (even invocations) writes the verdict supplied in
+// firstVerdict (used for iteration 1 only; no iteration-2 reviewer is expected
+// because no-progress terminates before launching it).
+//
+// Helper prefix: rlFixture (bead hk-7om2q.22).
+func rlFixtureNoProgressHandlerScript(t *testing.T, wtPath, firstVerdict string) string {
+	t.Helper()
+
+	vj := strings.ReplaceAll(rlFixtureVerdictJSON(firstVerdict), "'", "'\\''")
+	wtpEsc := strings.ReplaceAll(wtPath, "'", "'\\''")
+
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+WTP='%s'
+CNT_FILE="$WTP/.harmonik/rl_count"
+if [ ! -f "$CNT_FILE" ]; then
+  printf '0' > "$CNT_FILE"
+fi
+CNT=$(cat "$CNT_FILE")
+CNT=$((CNT + 1))
+printf '%%d' "$CNT" > "$CNT_FILE"
+# Even invocations = reviewer; odd = implementer.
+if [ $((CNT %% 2)) -eq 0 ]; then
+  # Reviewer: write the verdict (only iteration 1 reviewer is expected).
+  printf '%%s' '%s' > "$WTP/.harmonik/review.json"
+else
+  IMPL_NUM=$(((CNT + 1) / 2))
+  if [ "$IMPL_NUM" -eq 1 ]; then
+    # First implementer: commit a file so diff hash advances.
+    printf '%%d' "$CNT" > "$WTP/impl_iter_$CNT.txt"
+    git -C "$WTP" add "impl_iter_$CNT.txt" >/dev/null 2>&1
+    git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+  fi
+  # Subsequent implementers: do nothing — diff hash stays identical.
+fi
+exit 0
+`, wtpEsc, vj)
+
+	scriptPath := filepath.Join(t.TempDir(), "rl_noprogress_handler.sh")
+	//nolint:gosec // G306: test-only fixture script; not production
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("rlFixtureNoProgressHandlerScript: WriteFile: %v", err)
+	}
+	return scriptPath
+}
+
+// TestReviewLoop_NoProgress verifies that identical implementer output across
+// iterations triggers the no-progress termination path (EM-015e / T-WM-022):
+//   - The first iteration runs normally (implementer commits, reviewer issues
+//     REQUEST_CHANGES).
+//   - The second implementer run does NOT commit anything — diff hash is
+//     unchanged relative to iteration 1.
+//   - Before launching the iteration-2 reviewer, the daemon detects the stale
+//     hash, emits no_progress_detected, and terminates with needs-attention.
+//   - result.Success = false
+//   - result.CompletionReason = "no_progress"
+//   - result.NeedsAttention = true
+//   - no_progress_detected is emitted BEFORE review_loop_cycle_complete.
+//   - reviewer_launched is emitted exactly once (iteration 1 only).
+func TestReviewLoop_NoProgress(t *testing.T) {
+	t.Parallel()
+
+	projectDir := rlFixtureProjectDir(t)
+	rlFixtureGitRepo(t, projectDir)
+	wtPath, parentSHA := rlFixtureWorktree(t, projectDir)
+
+	// Script: iter-1 implementer commits → iter-1 reviewer issues REQUEST_CHANGES
+	// → iter-2 implementer does nothing → no_progress fires before iter-2 reviewer.
+	scriptPath := rlFixtureNoProgressHandlerScript(t, wtPath, "REQUEST_CHANGES")
+
+	collector := &stubEventCollector{}
+	ledger := &stubBeadLedger{}
+
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           ledger,
+		Bus:                 collector,
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	result := daemon.ExportedRunReviewLoop(
+		ctx, deps,
+		rlFixtureRunID(t),
+		core.BeadID("rl-noprogress-001"),
+		wtPath, parentSHA,
+	)
+
+	if result.Success {
+		t.Error("expected success=false on no-progress path")
+	}
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonNoProgress) {
+		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonNoProgress)
+	}
+	if !result.NeedsAttention {
+		t.Error("expected needs_attention=true on no-progress path")
+	}
+
+	eventTypes := collector.eventTypes()
+
+	// no_progress_detected must be emitted.
+	rlAssertEventPresent(t, eventTypes, string(core.EventTypeNoProgressDetected))
+
+	// reviewer_launched appears exactly once (iteration 1 only — iteration 2
+	// reviewer must NOT be launched when no-progress is detected).
+	launchCount := 0
+	for _, et := range eventTypes {
+		if et == string(core.EventTypeReviewerLaunched) {
+			launchCount++
+		}
+	}
+	if launchCount != 1 {
+		t.Errorf("reviewer_launched emitted %d times; want 1 (no iter-2 reviewer)", launchCount)
+	}
+
+	// Ordering: no_progress_detected before review_loop_cycle_complete.
+	rlAssertEventSubsequence(t, eventTypes, []string{
+		string(core.EventTypeNoProgressDetected),
+		string(core.EventTypeReviewLoopCycleComplete),
+	})
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Assertion helpers
 // ─────────────────────────────────────────────────────────────────────────────

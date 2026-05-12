@@ -157,13 +157,18 @@ func TestHC004LaunchIdempotentOnRunIDNodeID(t *testing.T) {
 
 	checks := []check{
 		{
-			id:     "2",
-			label:  "idempotent-on-run-id-node-id",
-			needle: "idempotent on the key",
-			detail: "HC-004 body must declare 'idempotent on the key' (spec.run_id, spec.node_id) " +
-				"(expected phrase 'idempotent on the key'); the idempotency key is the composite " +
-				"(run_id, node_id) pair — two launches for the same node within a run are the " +
-				"same logical launch and MUST NOT produce two subprocesses",
+			id:    "2",
+			label: "idempotent-on-run-id-node-id",
+			// HC-004 was extended (hk-wb0ci hygiene sweep) to include phase and
+			// iteration_count in the key for multi-phase modes; the canonical
+			// phrase changed from "idempotent on the key" to the 2-tuple /
+			// 4-tuple description.  The needle below matches the stable
+			// sub-phrase present in both the old and new spec text.
+			needle: "spec.run_id, spec.node_id",
+			detail: "HC-004 body must name spec.run_id and spec.node_id as idempotency key components " +
+				"(expected phrase 'spec.run_id, spec.node_id'); the (run_id, node_id) pair is the " +
+				"minimum idempotency key for single-mode launches — two launches for the same node " +
+				"within a run MUST NOT produce two subprocesses",
 		},
 		{
 			id:     "3",

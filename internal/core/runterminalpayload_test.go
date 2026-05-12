@@ -540,6 +540,152 @@ func TestRunFailedPayload_LastCheckpointCarriesFailureClassAndSHA(t *testing.T) 
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowMode field tests — RunCompletedPayload (T-WM-005)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestRunCompletedPayload_WorkflowModeOmittedWhenNil verifies that when
+// WorkflowMode is nil the JSON output omits the workflow_mode key (omitempty),
+// preserving backward compatibility with v0.3.x consumers per
+// event-model.md §8.1 workflow_mode payload-field rule.
+func TestRunCompletedPayload_WorkflowModeOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureCompleted(t)
+	p.WorkflowMode = nil
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+	if _, ok := m["workflow_mode"]; ok {
+		t.Error("workflow_mode key present in JSON when WorkflowMode is nil, want omitted")
+	}
+}
+
+// TestRunCompletedPayload_WorkflowModeEmittedWhenSet verifies that when
+// WorkflowMode is non-nil the JSON output carries the workflow_mode key with
+// the correct string value per event-model.md §8.1.
+func TestRunCompletedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureCompleted(t)
+	mode := WorkflowModeSingle
+	p.WorkflowMode = &mode
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+
+	raw, ok := m["workflow_mode"]
+	if !ok {
+		t.Fatal("workflow_mode key absent in JSON when WorkflowMode is set, want present")
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json.Unmarshal workflow_mode value: %v", err)
+	}
+	if got != string(WorkflowModeSingle) {
+		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeSingle)
+	}
+}
+
+// TestRunCompletedPayload_Valid_InvalidWorkflowMode verifies that Valid() rejects
+// a payload with a non-nil WorkflowMode set to an invalid value.
+func TestRunCompletedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureCompleted(t)
+	invalid := WorkflowMode("unknown-mode")
+	p.WorkflowMode = &invalid
+	if p.Valid() {
+		t.Error("Valid() = true with invalid WorkflowMode, want false")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowMode field tests — RunFailedPayload (T-WM-005)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestRunFailedPayload_WorkflowModeOmittedWhenNil verifies that when
+// WorkflowMode is nil the JSON output omits the workflow_mode key (omitempty).
+func TestRunFailedPayload_WorkflowModeOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureFailed(t)
+	p.WorkflowMode = nil
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+	if _, ok := m["workflow_mode"]; ok {
+		t.Error("workflow_mode key present in JSON when WorkflowMode is nil, want omitted")
+	}
+}
+
+// TestRunFailedPayload_WorkflowModeEmittedWhenSet verifies that when
+// WorkflowMode is non-nil the JSON output carries the workflow_mode key with
+// the correct string value per event-model.md §8.1.
+func TestRunFailedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureFailed(t)
+	mode := WorkflowModeReviewLoop
+	p.WorkflowMode = &mode
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+
+	raw, ok := m["workflow_mode"]
+	if !ok {
+		t.Fatal("workflow_mode key absent in JSON when WorkflowMode is set, want present")
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json.Unmarshal workflow_mode value: %v", err)
+	}
+	if got != string(WorkflowModeReviewLoop) {
+		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeReviewLoop)
+	}
+}
+
+// TestRunFailedPayload_Valid_InvalidWorkflowMode verifies that Valid() rejects
+// a payload with a non-nil WorkflowMode set to an invalid value.
+func TestRunFailedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	p := runterminalFixtureFailed(t)
+	invalid := WorkflowMode("unknown-mode")
+	p.WorkflowMode = &invalid
+	if p.Valid() {
+		t.Error("Valid() = true with invalid WorkflowMode, want false")
+	}
+}
+
 // TestRunTerminal_MutualExclusion_TypeLevel verifies at the type level that
 // RunCompletedPayload and RunFailedPayload are distinct types (exactly one of
 // which is emitted per terminal transition per EM-015b). The test documents

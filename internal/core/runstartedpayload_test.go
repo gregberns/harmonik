@@ -214,6 +214,104 @@ func TestRunStartedPayload_JSONKeys(t *testing.T) {
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowMode field tests (T-WM-005)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestRunStartedPayload_WorkflowModeOmittedWhenNil verifies that when
+// WorkflowMode is nil the JSON output omits the workflow_mode key (omitempty),
+// preserving backward compatibility with v0.3.x consumers per
+// event-model.md §8.1 workflow_mode payload-field rule.
+func TestRunStartedPayload_WorkflowModeOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	p := runstartedFixture(t)
+	p.WorkflowMode = nil
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+	if _, ok := m["workflow_mode"]; ok {
+		t.Error("workflow_mode key present in JSON when WorkflowMode is nil, want omitted")
+	}
+}
+
+// TestRunStartedPayload_WorkflowModeEmittedWhenSet verifies that when
+// WorkflowMode is non-nil the JSON output carries the workflow_mode key with
+// the correct string value per event-model.md §8.1.
+func TestRunStartedPayload_WorkflowModeEmittedWhenSet(t *testing.T) {
+	t.Parallel()
+
+	p := runstartedFixture(t)
+	mode := WorkflowModeReviewLoop
+	p.WorkflowMode = &mode
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+
+	raw, ok := m["workflow_mode"]
+	if !ok {
+		t.Fatal("workflow_mode key absent in JSON when WorkflowMode is set, want present")
+	}
+	var got string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("json.Unmarshal workflow_mode value: %v", err)
+	}
+	if got != string(WorkflowModeReviewLoop) {
+		t.Errorf("workflow_mode: got %q, want %q", got, WorkflowModeReviewLoop)
+	}
+}
+
+// TestRunStartedPayload_Valid_InvalidWorkflowMode verifies that Valid() rejects
+// a payload with a non-nil WorkflowMode set to an invalid value.
+func TestRunStartedPayload_Valid_InvalidWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	p := runstartedFixture(t)
+	invalid := WorkflowMode("unknown-mode")
+	p.WorkflowMode = &invalid
+	if p.Valid() {
+		t.Error("Valid() = true with invalid WorkflowMode, want false")
+	}
+}
+
+// TestRunStartedPayload_Valid_AllWorkflowModes verifies that Valid() accepts
+// each of the three declared WorkflowMode constants when set as a non-nil pointer.
+func TestRunStartedPayload_Valid_AllWorkflowModes(t *testing.T) {
+	t.Parallel()
+
+	modes := []WorkflowMode{
+		WorkflowModeSingle,
+		WorkflowModeReviewLoop,
+		WorkflowModeDot,
+	}
+
+	for _, mode := range modes {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			p := runstartedFixture(t)
+			p.WorkflowMode = &mode
+			if !p.Valid() {
+				t.Errorf("Valid() = false for WorkflowMode %q, want true", mode)
+			}
+		})
+	}
+}
+
 // TestRunStartedPayload_EmissionOrderSensor documents the EM-015a ordering
 // invariant at the type level: run_started MUST be emitted AFTER create_run
 // allocates run_id AND AFTER the Beads atomic-claim persists AND BEFORE any

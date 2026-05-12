@@ -22,6 +22,12 @@ import "github.com/google/uuid"
 // BeadID is *BeadID (pointer) to distinguish "run is bead-tied" (non-nil) from
 // "run is not bead-tied" (nil). Set-but-empty is a validation error per Valid().
 //
+// # WorkflowMode optionality
+//
+// WorkflowMode is optional for backward compatibility with v0.3.x consumers
+// per event-model.md §8.1 workflow_mode payload-field rule. When non-nil,
+// the value MUST be a declared WorkflowMode constant.
+//
 // # WorkspacePath and InputRef
 //
 // Both fields are declared as plain strings in the event-model.md §6.3 YAML
@@ -57,6 +63,12 @@ type RunStartedPayload struct {
 	// (execution-model.md §6.1 Run.input; event-model.md §8.1.1 input_ref).
 	// Required (non-empty). Plain string per event-model.md §6.3 YAML schema.
 	InputRef string `json:"input_ref"`
+
+	// WorkflowMode surfaces the resolved dispatch shape for this run
+	// (event-model.md §8.1 workflow_mode payload-field rule;
+	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
+	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
+	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunStartedPayload.
@@ -68,6 +80,7 @@ type RunStartedPayload struct {
 //   - BeadID, when non-nil, must dereference to a non-empty value.
 //   - WorkspacePath must be non-empty.
 //   - InputRef must be non-empty.
+//   - WorkflowMode, when non-nil, must be a declared WorkflowMode constant.
 func (p RunStartedPayload) Valid() bool {
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		return false
@@ -85,6 +98,9 @@ func (p RunStartedPayload) Valid() bool {
 		return false
 	}
 	if p.InputRef == "" {
+		return false
+	}
+	if p.WorkflowMode != nil && !p.WorkflowMode.Valid() {
 		return false
 	}
 	return true

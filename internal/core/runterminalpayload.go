@@ -19,6 +19,7 @@ import "github.com/google/uuid"
 //   - terminal_state_id — StateID of the terminal node reached (required)
 //   - ended_at          — RFC 3339 wall-clock timestamp (required)
 //   - summary           — optional human-readable completion note
+//   - workflow_mode     — optional resolved dispatch shape (backward-compat per §8.1)
 type RunCompletedPayload struct {
 	// RunID identifies the run that completed. Required (must not be uuid.Nil).
 	RunID RunID `json:"run_id"`
@@ -36,6 +37,12 @@ type RunCompletedPayload struct {
 	// Summary is an optional human-readable completion note.
 	// Nil when omitted; non-nil must be non-empty (Valid() enforces this).
 	Summary *string `json:"summary,omitempty"`
+
+	// WorkflowMode surfaces the resolved dispatch shape for this run
+	// (event-model.md §8.1 workflow_mode payload-field rule;
+	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
+	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
+	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunCompletedPayload.
@@ -45,6 +52,7 @@ type RunCompletedPayload struct {
 //   - TerminalStateID must not be uuid.Nil.
 //   - EndedAt must be non-empty.
 //   - Summary, when non-nil, must be non-empty.
+//   - WorkflowMode, when non-nil, must be a declared WorkflowMode constant.
 func (p RunCompletedPayload) Valid() bool {
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		return false
@@ -56,6 +64,9 @@ func (p RunCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.Summary != nil && *p.Summary == "" {
+		return false
+	}
+	if p.WorkflowMode != nil && !p.WorkflowMode.Valid() {
 		return false
 	}
 	return true
@@ -124,6 +135,12 @@ type RunFailedPayload struct {
 	// no checkpoint exists (failure before the first durable transition, e.g.,
 	// budget_exhausted at dispatch).
 	LastCheckpoint string `json:"last_checkpoint"`
+
+	// WorkflowMode surfaces the resolved dispatch shape for this run
+	// (event-model.md §8.1 workflow_mode payload-field rule;
+	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
+	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
+	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunFailedPayload.
@@ -136,6 +153,7 @@ type RunFailedPayload struct {
 //   - TerminalStateID, when non-nil, must not be uuid.Nil.
 //   - ErrorCategory, when non-nil, must be a declared ErrorCategory constant.
 //   - LastCheckpoint is permitted to be empty (no prior checkpoint).
+//   - WorkflowMode, when non-nil, must be a declared WorkflowMode constant.
 func (p RunFailedPayload) Valid() bool {
 	if uuid.UUID(p.RunID) == uuid.Nil {
 		return false
@@ -153,6 +171,9 @@ func (p RunFailedPayload) Valid() bool {
 		return false
 	}
 	if p.ErrorCategory != nil && !p.ErrorCategory.Valid() {
+		return false
+	}
+	if p.WorkflowMode != nil && !p.WorkflowMode.Valid() {
 		return false
 	}
 	return true

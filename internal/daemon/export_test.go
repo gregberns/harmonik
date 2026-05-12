@@ -45,6 +45,19 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-7om2q.8.
 	WorkflowModeDefault core.WorkflowMode
+
+	// MaxConcurrent is the ceiling on simultaneously in-flight bead goroutines.
+	// Zero value is normalised to 1 (MVH single-threaded default) mirroring
+	// newWorkLoopDeps behaviour. Set to >1 to exercise concurrent dispatch in
+	// tests (hk-e61c3.2).
+	MaxConcurrent int
+
+	// RunRegistry is the in-flight run registry for the work loop. When nil,
+	// ExportedWorkLoopDeps creates a fresh NewRunRegistry(). Supply an explicit
+	// registry when the test needs to inspect or control it directly.
+	//
+	// Bead ref: hk-e61c3.2.
+	RunRegistry *RunRegistry
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -63,6 +76,18 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		wmd = core.WorkflowModeSingle
 	}
 
+	// Normalise MaxConcurrent: zero value → 1 (MVH single-threaded default).
+	maxConcurrent := p.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+
+	// Use the caller-supplied RunRegistry or create a fresh one.
+	reg := p.RunRegistry
+	if reg == nil {
+		reg = NewRunRegistry()
+	}
+
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{})
 
 	return workLoopDeps{
@@ -77,6 +102,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		brTimeoutCfg:        brcli.TimeoutConfig{},
 		tidGen:              core.NewTransitionIDGenerator(),
 		workflowModeDefault: wmd,
+		runRegistry:         reg,
+		maxConcurrent:       maxConcurrent,
 	}
 }
 

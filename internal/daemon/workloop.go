@@ -1,16 +1,21 @@
 package daemon
 
-// workloop.go — MVH main work loop (MVH_ROADMAP row #10, hk-ecrxy).
+// workloop.go — main work loop for the harmonik daemon.
 //
-// RunWorkLoop polls the bead ledger for ready work, claims one bead at a time,
-// materialises a git worktree, spawns the handler subprocess, waits for it to
-// complete, and closes (or reopens) the bead based on the outcome.
+// RunWorkLoop polls the bead ledger for ready work, claims beads up to
+// MaxConcurrent at a time, materialises git worktrees, spawns handler
+// subprocesses, and closes (or reopens) beads based on outcome.
 //
-// # Concurrency
+// # Concurrency model (hk-e61c3.2, POST_MVH_PARALLELISM_ROADMAP row 5)
 //
-// MVH: MaxConcurrent = 1 (one in-flight bead). The loop serialises work:
-// claim → worktree → launch → wait → close → repeat. Concurrent runs are a
-// post-MVH unlock.
+// Goroutine-per-active-bead: the outer poll loop spawns one goroutine per
+// claimed bead. The in-flight count is gated by MaxConcurrent via RunRegistry.
+// At MaxConcurrent=1 (the MVH default), the loop is semantically equivalent
+// to the prior serial implementation: only one goroutine is ever in-flight,
+// so behaviour is byte-identical to the pre-parallelism code.
+//
+// Anti-pattern (roadmap §6): do NOT use a worker-pool-fed-by-queue. One
+// goroutine per active bead — in-flight count MUST equal runRegistry.Len().
 //
 // # Configurable binary
 //
@@ -21,7 +26,7 @@ package daemon
 //
 // Spec ref: MVH_ROADMAP.md row #10; specs/execution-model.md §4.3 EM-013 (run_id
 // as join key); specs/event-model.md §8.1 (run_started / run_completed events).
-// Bead: hk-ecrxy.
+// Beads: hk-ecrxy (MVH loop), hk-e61c3.2 (parallelism).
 
 import (
 	"context"
@@ -30,6 +35,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -98,6 +104,26 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-7om2q.8.
 	workflowModeDefault core.WorkflowMode
+
+	// runRegistry tracks in-flight bead runs (hk-e61c3.2). The outer poll loop
+	// gates goroutine creation on runRegistry.Len() < maxConcurrent. Each
+	// dispatched goroutine calls Register on claim and Unregister on exit.
+	//
+	// MUST be a field on workLoopDeps — NOT a package-level variable (see
+	// POST_MVH_PARALLELISM_ROADMAP.md §6 anti-pattern).
+	//
+	// Bead ref: hk-e61c3.2.
+	runRegistry *RunRegistry
+
+	// maxConcurrent is the ceiling on simultaneously in-flight bead goroutines.
+	// Sourced from daemon.Config.MaxConcurrent (zero → 1 per Config godoc).
+	// Row 6 (hk-e61c3.1) adds this field to Config; row 5 (this bead) enforces it.
+	//
+	// POST_MVH_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
+	// or adapter.
+	//
+	// Bead ref: hk-e61c3.2.
+	maxConcurrent int
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -159,6 +185,12 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		binary = "claude"
 	}
 
+	// Normalise MaxConcurrent: zero value → 1 (MVH single-threaded default).
+	maxConcurrent := cfg.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+
 	return workLoopDeps{
 		brAdapter:           adapter,
 		bus:                 bus,
@@ -171,75 +203,118 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		brTimeoutCfg:        brcli.TimeoutConfig{},
 		tidGen:              core.NewTransitionIDGenerator(),
 		workflowModeDefault: workflowModeDefault,
+		runRegistry:         NewRunRegistry(),
+		maxConcurrent:       maxConcurrent,
 	}, nil
 }
 
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled
 // (typically from SIGINT/SIGTERM received by the daemon process). On context
-// cancellation it returns nil; non-nil errors indicate a fatal setup failure
+// cancellation it stops accepting new beads, waits for all in-flight goroutines
+// to finish, then returns nil. Non-nil errors indicate a fatal setup failure
 // within the loop itself (never an error from a single bead run — those are
 // absorbed and result in ReopenBead).
 //
-// One iteration of the outer loop:
-//  1. Poll Ready beads.
-//  2. If none, sleep workloopPollInterval and try again.
-//  3. Pick beads[0], generate a fresh RunID (UUIDv7), claim it.
-//  4. Create the git worktree.
-//  5. Emit run_started.
-//  6. Launch handler subprocess.
-//  7. Wait for <-watcher.Done().
-//  8. sess.Wait to reap; read Outcome.
-//  9. Emit run_completed.
+// Goroutine-per-bead model (hk-e61c3.2, POST_MVH_PARALLELISM_ROADMAP row 5):
 //
-// 10. CloseBead on success or ReopenBead on failure.
+// Each iteration of the outer poll loop:
+//  1. Check context cancellation.
+//  2. If runRegistry.Len() >= maxConcurrent: sleep and retry (at capacity).
+//  3. Poll Ready beads.
+//  4. If none, sleep workloopPollInterval and retry.
+//  5. Pick beads[0], generate RunID, claim it.
+//  6. Spawn goroutine: Register → dispatch (worktree+handler) → Unregister.
+//
+// Goroutine dispatch path:
+//  1. resolveHEAD + CreateWorktree.
+//  2. emitRunStarted.
+//  3. Route to mode-specific driver (review-loop or single).
+//  4. CloseBead or ReopenBead based on outcome.
+//  5. removeWorktree.
+//  6. Unregister from runRegistry.
+//
+// At MaxConcurrent=1 the loop is semantically equivalent to the prior serial
+// implementation: only one goroutine is ever in-flight, so the poll loop
+// blocks on capacity before polling again.
+//
+// Shutdown: when ctx is cancelled the outer loop exits immediately. The
+// embedded WaitGroup wg waits for all in-flight goroutines to drain before
+// runWorkLoop returns, satisfying the per-run Drain guarantee (hk-fx6zl).
 func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
+	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
+	// returning so callers know all bead work is complete on return.
+	var wg sync.WaitGroup
+
+	// effectiveMax: 0-value → 1 to preserve MVH single-threaded default.
+	effectiveMax := deps.maxConcurrent
+	if effectiveMax <= 0 {
+		effectiveMax = 1
+	}
+
 	for {
-		// Check for cancellation first so we don't spin after ctx is done.
+		// Step 1: check for cancellation before any new dispatch.
 		select {
 		case <-ctx.Done():
+			// Stop accepting new work; wait for in-flight goroutines.
+			wg.Wait()
 			return nil
 		default:
 		}
 
-		// Step 1: poll the ledger for ready beads.
+		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
+		if deps.runRegistry.Len() >= effectiveMax {
+			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				wg.Wait()
+				return nil
+			}
+			continue
+		}
+
+		// Step 3: poll the ledger for ready beads.
 		readyRecords, err := deps.brAdapter.Ready(ctx)
 		if err != nil {
 			// Treat poll errors as transient: log and backoff.
 			if ctx.Err() != nil {
+				wg.Wait()
 				return nil
 			}
 			// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
 			// misconfiguration (hk-c1ln2: silent-failure fix).
 			fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				wg.Wait()
 				return nil
 			}
 			continue
 		}
 
-		// Step 2: nothing ready — sleep and retry.
+		// Step 4: nothing ready — sleep and retry.
 		if len(readyRecords) == 0 {
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				wg.Wait()
 				return nil
 			}
 			continue
 		}
 
-		// Step 3: pick first ready bead, generate RunID, claim it.
+		// Step 5: pick first ready bead, generate RunID, claim it.
 		// Labels (including any workflow:<mode> per BI-009a) are available on
 		// the record for workflow-mode resolution (BI-013); mode-resolution
 		// dispatch is implemented in T-WM-009.
-		beadID := readyRecords[0].BeadID
+		beadRecord := readyRecords[0]
+		beadID := beadRecord.BeadID
 
 		runUUID, uuidErr := uuid.NewV7()
 		if uuidErr != nil {
 			// UUID generation failure is fatal — system entropy problem.
+			wg.Wait()
 			return fmt.Errorf("daemon: workloop: generate RunID: %w", uuidErr)
 		}
 		runID := core.RunID(runUUID)
 
 		claimTID, tidErr := deps.tidGen.Next()
 		if tidErr != nil {
+			wg.Wait()
 			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
 		}
 
@@ -247,170 +322,160 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if claimErr != nil {
 			// Claim conflict or transient error — surface to stderr and retry.
 			if ctx.Err() != nil {
+				wg.Wait()
 				return nil
 			}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				wg.Wait()
 				return nil
 			}
 			continue
 		}
 
-		// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
-		// Four-tier precedence: per-bead label → project config (no-op) →
-		// daemon default → single. Resolved once at claim time; immutable for
-		// the run's lifetime. See moderesolve.go.
-		workflowMode := resolveWorkflowMode(ctx, readyRecords[0], deps.workflowModeDefault, deps.bus)
+		// Step 6: Register the run and spawn a goroutine to handle it end-to-end.
+		// The goroutine owns Unregister on exit; the outer loop may proceed to
+		// claim the next bead immediately (up to effectiveMax).
+		deps.runRegistry.Register(runID, &RunHandle{
+			BeadID:    beadID,
+			StartedAt: time.Now(),
+		})
+		wg.Add(1)
+		go func(runID core.RunID, beadRecord core.BeadRecord) {
+			defer wg.Done()
+			defer deps.runRegistry.Unregister(runID)
+			beadRunOne(ctx, deps, runID, beadRecord)
+		}(runID, beadRecord)
+	}
+}
 
-		// Step 4: create the git worktree.
-		//
-		// Resolve HEAD as the parent commit to avoid racing with operator activity
-		// in the main worktree per workspace-model.md §4.1 WM-003.
-		headSHA, headErr := resolveHEAD(ctx, deps.projectDir)
-		if headErr != nil {
-			// Worktree creation failed — reopen the bead so it can be retried.
-			fmt.Fprintf(os.Stderr, "daemon: workloop: resolveHEAD for bead %s: %v (reopening)\n", beadID, headErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("resolve HEAD failed: %v", headErr))
-			if ctx.Err() != nil {
-				return nil
-			}
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
-			}
-			continue
-		}
+// beadRunOne executes a single claimed bead end-to-end: worktree creation,
+// mode dispatch, close/reopen, worktree removal. It is called from within a
+// goroutine spawned by the outer poll loop of runWorkLoop.
+//
+// The function never returns an error; all per-bead failures result in
+// ReopenBead so the bead re-enters the ready queue for retry. Fatal conditions
+// (UUID generation, worktree setup) are surfaced to stderr and cause the bead
+// to be reopened rather than aborting the daemon.
+//
+// Bead ref: hk-e61c3.2.
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord) {
+	beadID := beadRecord.BeadID
 
-		wtErr := workspace.CreateWorktree(ctx, deps.projectDir, runID.String(), headSHA, workspace.NoWorktreeRootOverride())
-		if wtErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("create worktree failed: %v", wtErr))
-			if ctx.Err() != nil {
-				return nil
-			}
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
-			}
-			continue
-		}
+	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
+	// Four-tier precedence: per-bead label → project config (no-op) →
+	// daemon default → single. Resolved once at claim time; immutable for
+	// the run's lifetime. See moderesolve.go.
+	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
 
-		wtPath := workspace.WorktreePath(deps.projectDir, runID.String(), workspace.NoWorktreeRootOverride())
+	// Resolve HEAD as the parent commit to avoid racing with operator activity
+	// in the main worktree per workspace-model.md §4.1 WM-003.
+	headSHA, headErr := resolveHEAD(ctx, deps.projectDir)
+	if headErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveHEAD for bead %s: %v (reopening)\n", beadID, headErr)
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("resolve HEAD failed: %v", headErr))
+		return
+	}
 
-		// Step 5: emit run_started.
-		emitRunStarted(ctx, deps.bus, runID, beadID, wtPath)
+	wtErr := workspace.CreateWorktree(ctx, deps.projectDir, runID.String(), headSHA, workspace.NoWorktreeRootOverride())
+	if wtErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("create worktree failed: %v", wtErr))
+		return
+	}
 
-		// Step 6 (mode-dispatch): route to the mode-specific driver.
-		//
-		// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
-		// handled by runReviewLoop in reviewloop.go.
-		//
-		// single mode (default MVH): one-shot implementer dispatch, the historical
-		// work-loop behaviour retained below.
-		if workflowMode == core.WorkflowModeReviewLoop {
-			rlResult := runReviewLoop(ctx, deps, runID, beadID, wtPath, headSHA)
+	wtPath := workspace.WorktreePath(deps.projectDir, runID.String(), workspace.NoWorktreeRootOverride())
+	defer removeWorktree(ctx, deps.projectDir, wtPath)
 
-			transitionTID, _ := deps.tidGen.Next()
-			if rlResult.success {
-				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
-					emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
-				} else {
-					emitRunCompleted(ctx, deps.bus, runID, true, rlResult.summary)
-				}
-			} else {
-				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, rlResult.needsAttention); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, closeErr)
-				}
-				emitRunCompleted(ctx, deps.bus, runID, false, rlResult.summary)
-			}
-			removeWorktree(ctx, deps.projectDir, wtPath)
-			if ctx.Err() != nil {
-				return nil
-			}
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
-			}
-			continue
-		}
+	// Emit run_started.
+	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath)
 
-		// single mode: launch one implementer subprocess and close or reopen on exit.
-		spec := handler.LaunchSpec{
-			Binary:  deps.handlerBinary,
-			Args:    deps.handlerArgs,
-			Env:     deps.handlerEnv,
-			WorkDir: wtPath,
-			Role:    "implementer",
-		}
-		sess, watcher, launchErr := deps.h.Launch(ctx, spec)
-		if launchErr != nil {
-			// Launch failure — reopen the bead and surface to stderr.
-			fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n", beadID, runID.String(), launchErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("launch error: %v", launchErr))
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
-			// Clean up the worktree even on launch failure (hk-fgdgz).
-			removeWorktree(ctx, deps.projectDir, wtPath)
-			if ctx.Err() != nil {
-				return nil
-			}
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
-			}
-			continue
-		}
-
-		// Step 7: await watcher completion.
-		<-watcher.Done()
-
-		// Step 8: reap the subprocess.
-		_ = sess.Wait(ctx)
-		outcome := sess.Outcome()
-
-		// Steps 9 & 10: emit run_completed/run_failed, close or reopen the bead.
-		//
-		// hk-9cob3: a watcher error that is NOT context-cancellation means the
-		// watcher fired agent_failed (malformed NDJSON, line-too-long, panic, I/O
-		// error). Treat as failed even on exit=0 — work product may be corrupt.
-		//
-		// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
-		// fails the bead remains in_progress while JSONL would record
-		// run_completed=true — split-brain. Emit run_failed instead.
-		watcherErr := watcher.Err()
-		watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
+	// Mode-dispatch: route to the mode-specific driver.
+	//
+	// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
+	// handled by runReviewLoop in reviewloop.go.
+	//
+	// single mode (default MVH): one-shot implementer dispatch.
+	if workflowMode == core.WorkflowModeReviewLoop {
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, wtPath, headSHA)
 
 		transitionTID, _ := deps.tidGen.Next()
-		if outcome.ExitCode == 0 && !watcherFailed {
+		if rlResult.success {
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
 				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+				emitRunCompleted(ctx, deps.bus, runID, true, rlResult.summary)
 			}
 		} else {
-			var failReason string
-			if watcherFailed {
-				failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
-					watcherErr, outcome.ExitCode, runID.String())
-			} else {
-				failReason = fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, rlResult.needsAttention); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, closeErr)
 			}
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d watcher_failed=%v", outcome.ExitCode, watcherFailed))
+			emitRunCompleted(ctx, deps.bus, runID, false, rlResult.summary)
 		}
+		return
+	}
 
-		// Step 11 (hk-fgdgz): clean up the git worktree after every dispatch
-		// (success or failure). Non-fatal: failure to prune is logged but does not
-		// abort the loop.
-		removeWorktree(ctx, deps.projectDir, wtPath)
+	// single mode: launch one implementer subprocess and close or reopen on exit.
+	spec := handler.LaunchSpec{
+		Binary:  deps.handlerBinary,
+		Args:    deps.handlerArgs,
+		Env:     deps.handlerEnv,
+		WorkDir: wtPath,
+		Role:    "implementer",
+	}
+	sess, watcher, launchErr := deps.h.Launch(ctx, spec)
+	if launchErr != nil {
+		// Launch failure — reopen the bead and surface to stderr.
+		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n", beadID, runID.String(), launchErr)
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("launch error: %v", launchErr))
+		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
+		return
+	}
 
-		// Check for cancellation before next iteration.
-		if ctx.Err() != nil {
-			return nil
+	// Await watcher completion.
+	<-watcher.Done()
+
+	// Reap the subprocess.
+	_ = sess.Wait(ctx)
+	outcome := sess.Outcome()
+
+	// Emit run_completed/run_failed, close or reopen the bead.
+	//
+	// hk-9cob3: a watcher error that is NOT context-cancellation means the
+	// watcher fired agent_failed (malformed NDJSON, line-too-long, panic, I/O
+	// error). Treat as failed even on exit=0 — work product may be corrupt.
+	//
+	// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
+	// fails the bead remains in_progress while JSONL would record
+	// run_completed=true — split-brain. Emit run_failed instead.
+	watcherErr := watcher.Err()
+	watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
+
+	transitionTID, _ := deps.tidGen.Next()
+	if outcome.ExitCode == 0 && !watcherFailed {
+		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+		} else {
+			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
 		}
+	} else {
+		var failReason string
+		if watcherFailed {
+			failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
+				watcherErr, outcome.ExitCode, runID.String())
+		} else {
+			failReason = fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
+		}
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d watcher_failed=%v", outcome.ExitCode, watcherFailed))
 	}
 }
 

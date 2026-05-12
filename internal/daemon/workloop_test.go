@@ -429,6 +429,198 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TestWorkLoop_TwoConcurrentBeads — hk-e61c3.2 concurrent dispatch at N=2
+// ─────────────────────────────────────────────────────────────────────────────
+
+// concurrentFixtureLedger is a stub beadLedger used by
+// TestWorkLoop_TwoConcurrentBeads to observe when two beads are simultaneously
+// claimed.  It records peak in-flight count by tracking how many CloseBead
+// calls have not yet occurred at the time each ClaimBead succeeds.
+//
+// Helper prefix: concurrentFixture (per implementer-protocol §Helper-prefix;
+// bead hk-e61c3.2).
+type concurrentFixtureLedger struct {
+	mu sync.Mutex
+
+	// ready is the queue of bead IDs to hand out from Ready.
+	ready []core.BeadID
+
+	// inFlight tracks how many beads are currently claimed-but-not-yet-closed.
+	inFlight int
+
+	// peakInFlight is the high-water mark of inFlight observed across all
+	// ClaimBead calls.
+	peakInFlight int
+
+	// closed records IDs of beads that have been closed.
+	closed []core.BeadID
+
+	// claimedCh is closed once two beads have been simultaneously claimed.
+	// Used as a rendezvous so the test can assert peak concurrency.
+	claimedCh chan struct{}
+
+	// claimedOnce guards the close of claimedCh.
+	claimedOnce sync.Once
+}
+
+func (c *concurrentFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.ready) == 0 {
+		return []core.BeadRecord{}, nil
+	}
+	id := c.ready[0]
+	c.ready = c.ready[1:]
+	return []core.BeadRecord{{BeadID: id}}, nil
+}
+
+func (c *concurrentFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	c.mu.Lock()
+	c.inFlight++
+	if c.inFlight > c.peakInFlight {
+		c.peakInFlight = c.inFlight
+	}
+	peak := c.peakInFlight
+	c.mu.Unlock()
+
+	// Signal once two beads are simultaneously in-flight.
+	if peak >= 2 {
+		c.claimedOnce.Do(func() { close(c.claimedCh) })
+	}
+	return nil
+}
+
+func (c *concurrentFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.inFlight--
+	c.closed = append(c.closed, beadID)
+	return nil
+}
+
+func (c *concurrentFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.inFlight--
+	return nil
+}
+
+func (c *concurrentFixtureLedger) closedCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.closed)
+}
+
+func (c *concurrentFixtureLedger) peak() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.peakInFlight
+}
+
+// TestWorkLoop_TwoConcurrentBeads verifies that with MaxConcurrent=2 two beads
+// are dispatched concurrently: both beads reach the claimed state simultaneously
+// (peak in-flight == 2) and both close successfully.
+//
+// Acceptance criteria (hk-e61c3.2):
+//   - With MaxConcurrent>1, two ready beads dispatch concurrently.
+//   - Both beads close before the loop exits.
+//   - peakInFlight == 2 at some point during the run.
+func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const (
+		beadA = core.BeadID("concurrent-bead-A")
+		beadB = core.BeadID("concurrent-bead-B")
+	)
+
+	ledger := &concurrentFixtureLedger{
+		ready:     []core.BeadID{beadA, beadB},
+		claimedCh: make(chan struct{}),
+	}
+	collector := &stubEventCollector{}
+
+	// Handler: sleep briefly so both goroutines are simultaneously in-flight,
+	// then exit 0 so both beads are closed.
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:     ledger,
+		Bus:           collector,
+		ProjectDir:    projectDir,
+		HandlerBinary: "/bin/sh",
+		HandlerArgs:   []string{"-c", "sleep 0.2; exit 0"},
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		MaxConcurrent: 2,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	// Wait until both beads are simultaneously claimed (or test times out).
+	select {
+	case <-ledger.claimedCh:
+		// Both beads claimed — concurrency confirmed.
+	case <-time.After(8 * time.Second):
+		t.Fatal("timed out waiting for two simultaneous in-flight beads at MaxConcurrent=2")
+	}
+
+	// Wait for both beads to close.
+	deadline := time.After(8 * time.Second)
+	for {
+		if ledger.closedCount() >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for both beads to close; closed=%d", ledger.closedCount())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-loopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("work loop did not exit after context cancellation")
+	}
+
+	// Assert peak concurrency was 2.
+	if p := ledger.peak(); p < 2 {
+		t.Errorf("peakInFlight = %d; want >= 2 (two beads must be simultaneously in-flight at MaxConcurrent=2)", p)
+	}
+
+	// Assert both beads were closed (not reopened).
+	if n := ledger.closedCount(); n != 2 {
+		t.Errorf("closedCount = %d; want 2", n)
+	}
+
+	// Assert run_started and run_completed events emitted for both runs.
+	eventTypes := collector.eventTypes()
+	var startedCount, completedCount int
+	for _, et := range eventTypes {
+		switch et {
+		case string(core.EventTypeRunStarted):
+			startedCount++
+		case string(core.EventTypeRunCompleted):
+			completedCount++
+		}
+	}
+	if startedCount < 2 {
+		t.Errorf("run_started count = %d; want >= 2 (one per bead)", startedCount)
+	}
+	if completedCount < 2 {
+		t.Errorf("run_completed count = %d; want >= 2 (one per bead)", completedCount)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // closeErrFixture — stub ledger for CloseBead-error path (hk-wfbxf)
 // ─────────────────────────────────────────────────────────────────────────────
 

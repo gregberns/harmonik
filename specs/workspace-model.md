@@ -250,6 +250,8 @@ Tags: mechanism
 
 At any instant, AT MOST ONE agent process MAY be actively writing to the worktree. Agents run sequentially as the run traverses its workflow graph; parallel nodes within one run MUST NOT share a worktree. Parallel nodes across different runs occupy separate worktrees per WM-002. Enforcement is delegated to the orchestrator (S01): the orchestrator MUST NOT dispatch a second agent into a workspace already holding a live handler subprocess. The workspace manager's storage-level contribution is the lease-lock file (§4.3.WM-013a), whose content identifies the owning run but does not by itself arbitrate per-agent concurrency.
 
+> INFORMATIVE: `review-loop` mode (per [execution-model.md §4.3]) is a concrete instance of this rule. The implementer agent and the reviewer agent are sequential occupants of the same worktree: the implementer agent runs to a checkpoint or exits; only then does the reviewer agent launch; the reviewer exits before the implementer (or a fresh implementer session for the next iteration) resumes. The implementer and reviewer never run concurrently against the same worktree. No new workspace primitive is introduced for `review-loop`; the rule of one-active-agent-at-a-time already accommodates the iteration cycle.
+
 Tags: mechanism
 
 #### WM-012 — One run per bead at a time
@@ -274,6 +276,8 @@ The lease on a workspace is represented by a lease-lock file at the canonical pa
 - `ttl_sec` (integer, required) — advisory lifetime; informative for the orphan sweep, does not enforce auto-expiry.
 
 The workspace manager MUST write the lease-lock file atomically (write-to-temp + rename) and MUST fsync the file before emitting `workspace_leased` (§4.4.WM-016). Lock-file birth timing: immediately preceding the `workspace_leased` emission; the emission ordering of WM-016 applies unchanged (worktree → branch → sessions dir + sidecar → lease lock → `workspace_leased`). On every `workspace_created` emission, the workspace manager MUST NOT yet have written a lease-lock file — the lock is tied to lease acquisition, not to workspace existence.
+
+**One lease per run lifetime — including across multi-session modes.** In `review-loop` mode (per [execution-model.md §4.3]) — and any other workflow mode that launches multiple sessions sequentially within a single run — exactly ONE lease MUST cover the entire run. The lease is acquired at `workspace_leased` (per WM-016) and released only at the terminal workspace transition (`workspace_merge_status` with `status=merged` or `workspace_discarded`) per WM-013b. Multiple sessions (e.g., implementer launches one per iteration plus reviewer launches one per iteration, up to the iteration cap of 3) all occur under the same lease. The lease-lock file is NOT re-acquired or released per session; only the per-session sidecars (per §4.7.WM-026) are written per launch.
 
 > NOTE: The canonical lock path in this spec is `${workspace_path}/.harmonik/lease.lock`. [handler-contract.md §4.10 HC-044a] currently names `.harmonik/worktrees/<run_id>/.lock` and [process-lifecycle.md §4.2 PL-006] names `.harmonik/lease.lock`. The three specs disagree on filename; OQ-WM-005 tracks the coordinated resolution. Until HC and PL align, implementers MUST treat this spec's filename as authoritative for WM's writer side, and MUST NOT assume HC-044a's fail-fast path shares a filename with the WM-owned lock.
 
@@ -320,6 +324,8 @@ The workspace manager MUST ensure that the backing repository's root `.gitignore
 .harmonik/sessions/
 .harmonik/worktrees/
 .harmonik/events/
+.harmonik/review.json
+.harmonik/review.iter-*.json
 ```
 
 The `.harmonik/sessions/` inclusion here is SPECIFICALLY scoped to `<repo>/.harmonik/sessions/` at the repo root (which should not exist — sessions live INSIDE worktrees) and is a defense-in-depth against session-log leakage from a stray operator operation. Per-worktree `.harmonik/sessions/` directories are NOT excluded by the entry above because the `.gitignore` interpretation is rooted at the main worktree; checkpoint commits from inside a task worktree see their own `.harmonik/sessions/` as in-tree and are free to include them per WM-030's preserve-in-merged-branch contract.
@@ -338,6 +344,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 A `Workspace` MUST traverse the lifecycle states `created` → `ready` → `leased` → (optionally `merge-pending` → optionally `conflict-resolving`) → (`merged` | `discarded`). The lifecycle state is orthogonal to the interrupt-state field (§4.10); the orthogonality applies only to in-flight states, per §4.10.WM-037a. See §7.1 for the transition table.
 
 > NOTE: The `setup` state from WM v0.2 has been retired in v0.3.0. Its material is subsumed into `created → ready`; the retired enum value MUST NOT be reintroduced. See §12 revision history.
+
+> NORMATIVE: `review-loop` mode introduces NO new workspace lifecycle state. The existing `leased → merge-pending → merged` (or `... → discarded`) progression accommodates the entire iterate-review-iterate cycle. Per-iteration state (current iteration index, cumulative reviewer verdicts) lives in the Run record's `context` per [execution-model.md §4.3], NOT in the workspace state machine.
 
 Tags: mechanism
 
@@ -498,6 +506,23 @@ The workspace manager MUST write the first session's metadata sidecar BEFORE emi
 
 Tags: mechanism
 
+#### WM-027a — Reviewer verdict artifact path
+
+For workflows that include a reviewer agent (notably `review-loop` mode per [execution-model.md §4.3]), the reviewer agent MUST write its verdict to the canonical path `${workspace_path}/.harmonik/review.json` inside the worktree. The file's content MUST conform to the `agent-reviewer` skill's JSON verdict schema v1 (carrying `schema_version`, `verdict ∈ {APPROVE, REQUEST_CHANGES, BLOCK}`, `flags[]`, and `notes`); the schema is owned by the agent-reviewer skill surface per [handler-contract.md §4.11] and the event-model verdict-routing entry. Lifecycle:
+
+(a) The reviewer subprocess writes the file as part of its session output. The reviewer MUST overwrite any existing `.harmonik/review.json` from an earlier iteration; archival of the prior file is the daemon's responsibility per (c) below, NOT the reviewer's.
+
+(b) The daemon (or the orchestrator-core dispatch loop) MUST read `${workspace_path}/.harmonik/review.json` after the reviewer's `agent_completed` event (per [handler-contract.md §4.3]) and before deciding the next phase of the run (continue, terminate, escalate). The verdict-routing logic itself is owned by [execution-model.md §4.3] and [handler-contract.md §4.1]; this requirement names only the on-disk bus between reviewer and daemon.
+
+(c) On entry to a subsequent iteration's reviewer phase (iteration N+1, where iteration 1 is the first reviewer launch and the iteration cap of 3 is hardcoded for v1 per [execution-model.md §4.3]), the daemon MUST archive the prior `.harmonik/review.json` by renaming it to `${workspace_path}/.harmonik/review.iter-<N>.json` (where `<N>` is the just-completed iteration ordinal) BEFORE launching the next reviewer session. The rename MUST use the atomic temp+rename+fsync(parent_dir) discipline of WM-026. Archived per-iteration verdicts persist in the worktree for the lifetime of the workspace.
+
+(d) `.harmonik/review.json` and `.harmonik/review.iter-*.json` MUST be excluded from checkpoint commits via the WM-013e `.gitignore` hygiene set. The reviewer's verdict is workflow-control state, not work product; it MUST NOT pollute the squash-merge commit per WM-019.
+
+(e) Absence of `.harmonik/review.json` after a reviewer's `agent_completed` event is a malformed-reviewer-outcome condition. The daemon MUST treat the run's phase as inconclusive and route per the failure-handling rules of [handler-contract.md §4.6]; this spec does NOT define the resulting workspace transition.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
 #### WM-028 — Bead-ID propagates into session metadata when present
 
 When the run is tied to a bead, the metadata sidecar's `bead_id` field MUST carry the same `bead_id` value the checkpoint trailer carries per [execution-model.md §4.4 EM-017] and [beads-integration.md §4.6 BI-017, BI-018] — the trailer name (`Harmonik-Bead-ID`) and schema are owned by execution-model and beads-integration respectively; this spec asserts only the VALUE correlation. The `bead_id` field MUST be absent (or explicit null) when the run has no bead tie. CASS uses this metadata to join session logs to the Beads task ledger.
@@ -515,6 +540,8 @@ Tags: mechanism
 On successful merge (`workspace_merge_status` with `status=merged`), the workspace manager MUST preserve the sessions directory inside the merged branch (i.e., the session logs remain in the integration-branch commit tree) by default. An operator-configured alternative MAY move the directory to a post-merge archive path post-MVH; the default for MVH is preserve-in-merged-branch for audit retention.
 
 The MVH default requires that project `.gitignore` MUST NOT exclude `.harmonik/sessions/`; a gitignored sessions directory silently breaks the preserve-in-merged-branch contract. Violations are an operator-observable misconfiguration per [operator-nfr.md §4.9]. This spec asserts the preservation contract; enforcement of the .gitignore hygiene is an operator-nfr concern.
+
+> INFORMATIVE: `review-loop` mode exercises the multiple-sessions-per-workspace path more aggressively than `single` mode. A 3-iteration `review-loop` run (the iteration cap per [execution-model.md §4.3]) produces up to seven session directories per workspace (one initial implementer session plus, per iteration, one implementer and one reviewer launch). The post-merge retention defaults of this requirement apply unchanged; no new retention rule is needed for `review-loop`.
 
 Tags: mechanism
 
@@ -762,6 +789,8 @@ Type aliases: `CommitSHA`, `BeadID`, and `HandlerRef` are defined in the owning 
 | `${workspace_path}/.harmonik/events/workspace-<workspace_id>.jsonl` | S06 | Workspace-local durability JSONL file; append-only; carries `lease_released` markers (§4.3.WM-013b) and `interrupt_state_changed` markers (§4.10.WM-038a). Consumed by reconciliation on each sweep. |
 | `${workspace_path}/.harmonik/sessions/<session_id>/harmonik.meta.json.tmp-<pid>` | S06 (transient) | Transient temp file during atomic sidecar write per WM-026; orphans are removed by the startup sweep. |
 | `<repo>/.harmonik/worktrees/merge-<merge_id>/` | S06 (transient) | Scratch merge-worktree per §4.5.WM-019a option (b); unleased; lifecycle is create-use-remove within one merge operation. |
+| `${workspace_path}/.harmonik/review.json` | reviewer agent writes; S06 archives per §4.7.WM-027a | Reviewer verdict for the current iteration of a `review-loop` run; conforms to the `agent-reviewer` JSON verdict schema v1; excluded from checkpoint commits via WM-013e. |
+| `${workspace_path}/.harmonik/review.iter-<N>.json` | S06 (per-iteration archive) | Archived reviewer verdict for prior iteration `<N>` (1-indexed; iteration cap = 3 per [execution-model.md §4.3]); written by the daemon's atomic rename of the prior `.harmonik/review.json` before the next reviewer launch per §4.7.WM-027a; excluded from checkpoint commits via WM-013e. |
 | (`<integration branch>`) | S06 (target of merge) | Integration branch is a git branch, NOT a worktree. No separate on-disk directory is created by this spec; the task-branch squash-merge lands on this branch's tip per §4.5.WM-019. |
 
 ### 6.4 Schema evolution

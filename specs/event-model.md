@@ -8,10 +8,10 @@ requirement-prefix: EV
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.3.4
+version: 0.4.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-06
+last-updated: 2026-05-12
 depends-on:
   - architecture
   - execution-model
@@ -67,6 +67,8 @@ Events are the **observational stream**. They are NOT the state-reconstruction s
 - **TransitionKind** — the enum declared in [execution-model.md §4.10 EM-044] and [execution-model.md §6.1]. Values: `forward | local-patchback | architectural-rollback | policy-rollback | context-restore`. Event payloads use the enum by cross-reference; no redeclaration.
 - **FailureClass** — the enum declared in [execution-model.md §8]. Values: `transient | structural | deterministic | canceled | budget_exhausted | compilation_loop`.
 - **ErrorCategory** — the sentinel-error set declared in [handler-contract.md §4.5]. Values: `ErrTransient | ErrStructural | ErrDeterministic | ErrCanceled | ErrBudget | ErrSkillProvisioningFailed | ErrProtocolMismatch`. See §6.3 `run_failed` notes for how the two coexist.
+- **WorkflowMode** — the enum declared in [execution-model.md §6.1]. Values: `single | review-loop | dot`. Surfaced on run-lifecycle event payloads (`run_started`, `run_completed`, `run_failed`) and on every §8.1a review-loop event payload via the optional `workflow_mode` field per §8.1 / §8.1a.
+- **claude_session_id** — the Claude Code session identifier per [execution-model.md §3]. Distinct from this spec's `session_id` envelope/payload field. `session_id` (used pervasively on §8.3 agent-lifecycle event payloads) is a UUIDv7 minted by the handler per [handler-contract.md §4.1] and is opaque to non-handler consumers; `claude_session_id` is the Claude-Code-minted opaque string consumed by `claude --resume <id>`. The two MUST NOT be conflated; the review-loop event payloads at §8.1a carry `claude_session_id` explicitly to distinguish it.
 
 ## 8. Event taxonomy
 
@@ -89,6 +91,35 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 | 8.1.11 | `node_dispatch_requested` | O | daemon-core | observability, audit | `run_id`, `node_id`, `requested_at`, `origin` (`workflow` / `reconciliation` / `operator`) |
 
 > Section Axes (§8.1 Run lifecycle): All §8.1 event emissions are mechanism-tagged. Class F entries (`run_started`, `run_completed`, `run_failed`, `transition_event`, `checkpoint_written`) are fsync-backed; class O entries are best-effort. Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`. Replay-safety is `safe` for all: the JSONL append is idempotent at the content level and consumers tolerate duplicate delivery per EV-014b.
+
+> **`workflow_mode` payload-field rule (§8.1 and §8.1a).** Every run-lifecycle event payload listed in §8.1 (`run_started`, `run_completed`, `run_failed`) and every review-loop event payload listed in §8.1a MUST carry an optional `workflow_mode ∈ {single, review-loop, dot}` field (per WorkflowMode in §3 glossary, cross-referenced to [execution-model.md §6.1]). The field surfaces the resolved `workflow_mode` per [execution-model.md §4.3 EM-012a]. The field is OPTIONAL on `run_started` / `run_completed` / `run_failed` for backward compatibility with v0.3.x consumers (a v0.3.x reader observing the new field treats it as additive per §6.4); it is REQUIRED on every §8.1a review-loop event payload because those events are emitted only when `workflow_mode = review-loop`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.1a Review-loop cycle
+
+The six event types in this subsection are emitted only by runs whose `workflow_mode = review-loop` per [execution-model.md §4.3 EM-012, EM-015d]. Every event in this subsection MUST carry the standard envelope per §4.1 EV-001 (including `run_id`), AND MUST carry `workflow_mode = "review-loop"` on its payload per the §8.1 `workflow_mode` payload-field rule.
+
+A single `run_id` covers the entire review-loop cycle per [execution-model.md §4.3 EM-015d]. Multiple `session_id` values (per §8.3) exist under the umbrella `run_id`, one per implementer-launch and one per reviewer-launch within the cycle. The `claude_session_id` payload field (per §3 glossary) is distinct from `session_id` and carries the Claude Code session identifier used for `claude --resume` continuity across implementer iterations.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.1a.1 | `implementer_resumed` | O | orchestrator-core | audit, observability, improvement-loop | `run_id`, `workflow_mode`, `session_id`, `claude_session_id`, `iteration_count`, `prior_verdict_summary` (String, ≤ 256 bytes; derived from prior reviewer `notes` per §6.3) |
+| 8.1a.2 | `reviewer_launched` | O | orchestrator-core | audit, observability | `run_id`, `workflow_mode`, `session_id`, `claude_session_id`, `iteration_count` |
+| 8.1a.3 | `reviewer_verdict` | F | orchestrator-core (after `.harmonik/review.json` read) | audit, observability, improvement-loop, beads-integration | `run_id`, `workflow_mode`, `session_id`, `claude_session_id`, `iteration_count`, plus agent-reviewer JSON schema v1 fields verbatim: `schema_version` (Integer), `verdict ∈ {APPROVE, REQUEST_CHANGES, BLOCK}`, `flags` (String[]), `notes` (String) |
+| 8.1a.4 | `iteration_cap_hit` | O | orchestrator-core | audit, observability, operator-observability, beads-integration | `run_id`, `workflow_mode`, `iteration_count`, `cap_value` (Integer; = 3 at MVH), `final_verdict ∈ {REQUEST_CHANGES, BLOCK}` |
+| 8.1a.5 | `no_progress_detected` | O | orchestrator-core | audit, observability, improvement-loop | `run_id`, `workflow_mode`, `iteration_count`, `diff_hash_current` (String; SHA-256 hex), `diff_hash_prior` (String; SHA-256 hex) |
+| 8.1a.6 | `review_loop_cycle_complete` | F | orchestrator-core | audit, observability, beads-integration, improvement-loop | `run_id`, `workflow_mode`, `final_iteration_count` (Integer), `completion_reason ∈ {approved, cap_hit, blocked, no_progress, error}` |
+
+> Each of `implementer_resumed`, `reviewer_launched`, and `reviewer_verdict` carries both `session_id` (harmonik's internal UUIDv7, correlates with `agent_started`/`agent_completed`) and `claude_session_id` (the Claude Code subprocess session ID used for `--resume`).
+
+> Note: `iteration_cap_hit` is class O, deliberately downgraded from the change-design's class-F recommendation; terminal routing weight rests on `review_loop_cycle_complete` (class F) per the §8.1a emission-ordering rule.
+
+> Section Axes (§8.1a Review-loop cycle): All §8.1a event emissions are mechanism-tagged. Class F entries (`reviewer_verdict`, `review_loop_cycle_complete`) are fsync-backed because their loss orphans the cycle's terminal-routing decision; loss of either would force reconciliation into work greater than the cost of a disk sync per EV-016. Class O entries are best-effort. Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+> Emission ordering (§8.1a). For a single review-loop iteration, the emission order MUST be: (a) `implementer_resumed` (on every implementer launch after iteration 1; iteration 1's implementer is dispatched via `run_started` per §8.1 with no `implementer_resumed`); (b) `reviewer_launched`; (c) on no-progress detection BEFORE step (b), `no_progress_detected` followed directly by `review_loop_cycle_complete{completion_reason=no_progress}`, skipping (b); (d) `reviewer_verdict` (after the verdict file is read and validated); (e) on `REQUEST_CHANGES` with iterations remaining, loop back to (a) with `iteration_count + 1`; on cap-hit, emit `iteration_cap_hit` then `review_loop_cycle_complete{completion_reason=cap_hit}`; on `BLOCK`, emit `review_loop_cycle_complete{completion_reason=blocked}`; on `APPROVE`, emit `review_loop_cycle_complete{completion_reason=approved}`. The terminal `run_completed` / `run_failed` per §8.1 MUST follow `review_loop_cycle_complete`, never precede it.
+
+> Reviewer-verdict schema reuse (§8.1a.3). The `reviewer_verdict` payload's `schema_version`, `verdict`, `flags`, and `notes` fields conform verbatim to the `agent-reviewer` skill's JSON verdict schema v1 (referenced from the project skill registry). The daemon MUST read `.harmonik/review.json` from the run's worktree (path owned by [workspace-model.md §4.7]), MUST validate the file against schema v1 (the `schema_version` field MUST equal 1; `verdict` MUST be in `{APPROVE, REQUEST_CHANGES, BLOCK}`; `flags` MUST be a String array; `notes` MUST be a String), AND MUST emit `reviewer_verdict` only after successful validation. A malformed verdict file MUST cause the daemon to emit `review_loop_cycle_complete{completion_reason=error}` and route the run to the `needs-attention` close path per [execution-model.md §4.3 EM-015e]; the daemon MUST NOT emit `reviewer_verdict` with a malformed payload. The reviewer-hardening rule that `notes` MUST include file:line citations for any `REQUEST_CHANGES` verdict is enforced upstream of event emission (reviewer prompt + adapter validation per the agent-reviewer skill); event-model records what was emitted but does not re-validate citation form.
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
@@ -222,6 +253,9 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 | 8.8.3 | `dead_letter_enqueued` | O | bus-internal | observability, audit | `consumer_name`, `event_type`, `original_event_id`, `retries_attempted`, `enqueued_at` |
 | 8.8.4 | `bus_overflow` | O | bus-internal | observability, audit, operator-observability | `consumer_name`, `event_type`, `event_id`, `queue_depth`, `shed_at`, `shed_policy` (`fsync-spilled` / `ordinary-dropped` / `lossy-dropped`) |
 | 8.8.5 | `redaction_failed` | O | bus-internal | operator-observability, audit | `event_type`, `run_id?`, `error_class`, `failed_at` |
+| 8.8.6 | `bead_label_conflict` | O | daemon-core (claim path) | reconciliation, audit, observability | `bead_id`, `conflicting_labels[]` (String[]), `fallback_action` (String), `detected_at` |
+
+> §8.8.6 emission rule. `bead_label_conflict` is emitted by the daemon's claim path during workflow-mode resolution per [execution-model.md §4.3 EM-012a] when (a) a bead carries more than one `workflow:<mode>` label or (b) a bead carries a `workflow:<mode>` label whose `<mode>` value is not in `{single, review-loop, dot}`. In either case the daemon MUST treat the tier-1 input as absent AND MUST emit `bead_label_conflict` before continuing the precedence walk. The event is class O because the resolution path falls through to a defined tier-2/3/4 result; the conflict is observational evidence rather than a routing-gating decision.
 
 > Section Axes (§8.8 Observability and bus-internal): All §8.8 event emissions are mechanism-tagged. §8.8.1 (`metric`) is class L (lossy); others are class O. All entries use best-effort io-determinism. Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
 
@@ -878,7 +912,86 @@ reason: <enum: rto_breach | reconstruction_notify | clock_regression | cat0_post
 
 `reason` is exhaustive. New variants require an EV-027 amendment. The `cat0_post_ready` variant is RC-012a's carve-out: a Cat 0 prerequisite failure observed AFTER the daemon has reached `ready` MUST emit `daemon_degraded{reason=cat0_post_ready}` but MUST NOT transition the §6.1 daemon-status enum from `ready` to `degraded` (per [reconciliation/spec.md §4.2 RC-012a]). The `clock_regression` variant is EV-002c's HWM regression carve-out. The `silent_hang_aggregate` variant is the [operator-nfr.md §4.9 ON-040] silent-hang-fan-out aggregator.
 
-Remaining per-type payloads follow the same pattern: field names listed in §8 columns, Go types resolved against the registry per EV-032. Outstanding: full YAML for the remaining ~47 types lands within one revision cycle per OQ-EV-005.
+#### `implementer_resumed`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop" for this event
+session_id: <UUID>                                   # harmonik's internal handler-minted UUIDv7 per [handler-contract.md §4.1]; distinct from claude_session_id; correlates with agent_started/agent_completed
+claude_session_id: <String>                          # Claude Code session identifier per §3 glossary
+iteration_count: <Integer>                           # 1-based; per [execution-model.md §4.3 EM-015d]
+prior_verdict_summary: <String>                      # ≤ 256 bytes; front-truncation of prior reviewer notes per §6.3 derivation rule below
+```
+
+> Derivation rule for `prior_verdict_summary` (§8.1a.1). The daemon MUST derive this field at MVH by taking the first 256 UTF-8 bytes of the prior iteration's `reviewer_verdict.notes` field (front-truncate), discarding any incomplete trailing UTF-8 sequence. If the prior verdict had `verdict ∈ {APPROVE, BLOCK}` (no implementer resume occurs), this event MUST NOT fire. Iteration 1's implementer launch does NOT emit `implementer_resumed` (it is the initial dispatch); the field is therefore only populated from iteration 2 onward.
+
+#### `reviewer_launched`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop" for this event
+session_id: <UUID>                                   # harmonik's internal handler-minted UUIDv7 per [handler-contract.md §4.1]; distinct from claude_session_id; correlates with agent_started/agent_completed
+claude_session_id: <String>                          # Claude Code session identifier; the reviewer launches a fresh session (NOT resumed) per [execution-model.md §4.3 EM-015d], but the reviewer's own session-id is captured here for trace continuity
+iteration_count: <Integer>
+```
+
+#### `reviewer_verdict`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop" for this event
+session_id: <UUID>                                   # harmonik's internal handler-minted UUIDv7 per [handler-contract.md §4.1]; distinct from claude_session_id; correlates with agent_started/agent_completed
+claude_session_id: <String>
+iteration_count: <Integer>
+schema_version: <Integer>                            # MUST equal 1 (agent-reviewer JSON schema v1)
+verdict: <enum: APPROVE | REQUEST_CHANGES | BLOCK>   # from .harmonik/review.json verbatim
+flags: <String[]>                                    # issue tags from agent-reviewer schema v1; MAY be empty
+notes: <String>                                      # free text from agent-reviewer schema v1; 1–3 sentences per skill contract
+```
+
+The `schema_version`, `verdict`, `flags`, and `notes` fields are passed through from `.harmonik/review.json` after validation per §8.1a's reviewer-verdict schema-reuse rule. The verdict file MUST be archived to `.harmonik/review.iter-<iteration_count>.json` by the daemon per [execution-model.md §4.3 EM-015d] before the next iteration's reviewer launch (so the file slot is free for the next reviewer to write into).
+
+#### `iteration_cap_hit`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop"
+iteration_count: <Integer>                           # = cap_value at MVH
+cap_value: <Integer>                                 # = 3 at MVH per [execution-model.md §4.3 EM-015e]
+final_verdict: <enum: REQUEST_CHANGES | BLOCK>       # the verdict at the cap-hit boundary
+```
+
+#### `no_progress_detected`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop"
+iteration_count: <Integer>                           # the iteration AT which no-progress was detected (iteration ≥ 2)
+diff_hash_current: <String>                          # SHA-256 of `git diff <parent>..<head>` at the current iteration's worktree state; hex-encoded
+diff_hash_prior: <String>                            # SHA-256 of the prior iteration's diff; hex-encoded; equal to diff_hash_current at emission time
+```
+
+#### `review_loop_cycle_complete`
+
+```yaml
+run_id: <UUID>
+workflow_mode: <enum: single | review-loop | dot>   # always "review-loop"
+final_iteration_count: <Integer>                     # 1..3 at MVH; = iteration_count at termination
+completion_reason: <enum: approved | cap_hit | blocked | no_progress | error>   # see [execution-model.md §4.3 EM-015e]
+```
+
+#### `bead_label_conflict`
+
+```yaml
+bead_id: <String>                                    # opaque bead identifier per [beads-integration.md §4.3 BI-008]
+conflicting_labels: <String[]>                       # the offending `workflow:<mode>` labels observed on the bead (length ≥ 1)
+fallback_action: <String>                            # describes the daemon's fallback behavior (e.g., "tier-1 input treated as absent; precedence walk continues to tier 2")
+detected_at: <Timestamp>
+```
+
+Emitted by the daemon's claim path per [execution-model.md §4.3 EM-012a] when tier-1 mode resolution encounters either multiple `workflow:<mode>` labels on a single bead or a single label naming an unknown mode value. The event does not gate the run's dispatch; the precedence walk falls through to tier 2 / 3 / 4.
+
+Remaining per-type payloads follow the same pattern: field names listed in §8 columns, Go types resolved against the registry per EV-032. Outstanding: full YAML for the remaining ~41 types lands within one revision cycle per OQ-EV-005.
 
 ### 6.4 Schema evolution — breaking-change table
 
@@ -902,14 +1015,15 @@ Migration releases are scheduled at operator pauses per [operator-nfr.md §4.3].
 
 This spec owns the payload SHAPE for every type in §8. The WHEN of each emission is owned by the emitting subsystem:
 
-- Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5].
+- Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5]. The optional `workflow_mode` payload field on `run_started` / `run_completed` / `run_failed` is co-owned: this spec normatively declares its placement and enum values per §3 glossary `WorkflowMode`; [execution-model.md §4.3 EM-012a] declares how the resolved value is computed.
+- Review-loop cycle events (§8.1a): emission rules in [execution-model.md §4.3 EM-015d, EM-015e]. All six entries (`implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `iteration_cap_hit`, `no_progress_detected`, `review_loop_cycle_complete`) are orchestrator-core-emission-owned; this spec is normative for their payload shape, ordering rule, and durability class.
 - Control-point events (§8.2): emission rules in [control-points.md §6.5]. The new entries §8.2.10 `control_points_registration_started` (CP §7.1; companion to §8.2.9 `control_points_registered` — the pair brackets the registration batch per CP §7.1's crashed-mid-registration rule), §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041; envelope-hash mismatch on persisted-verdict replay), and §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b; cost-ceiling abort, durability pair) are CP-emission-owned.
 - Agent / handler events (§8.3), including silent-hang FSM: emission rules in [handler-contract.md §4.1, §4.9, §4.11, §7.1].
 - Budget events (§8.4): emission rules in [control-points.md §4.5].
 - Workspace events (§8.5): emission rules in [workspace-model.md §4.4, §4.5].
 - Reconciliation events (§8.6): emission rules in [reconciliation/spec.md §4.1, §4.3, §4.5]. The new entries §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a), §8.6.12 `reconciliation_detector_panic` (RC-020b), and §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a) are RC-emission-owned. §8.6.14 `bead_terminal_transition_recovered` is **(post-MVH)** per OQ-BI-008 and reserved for future BI-adapter emission; no MVH emitter exists.
 - Operator / daemon events (§8.7): emission rules in [operator-nfr.md §6.5, §7.3] and [process-lifecycle.md §6.2, §8.6]. The new entries §8.7.16 `operator_command_failed` (ON-013a) and §8.7.17 `operator_escalation_cleared` (ON; companion to RC-emitted `operator_escalation_required`) are ON-emission-owned.
-- Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`, `redaction_failed`) and free-call (`metric`). The new entry §8.8.5 `redaction_failed` (ON-022 fail-closed redactor) is bus-internal; the redactor MUST emit it before aborting the redaction-violating emission.
+- Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`, `redaction_failed`) and free-call (`metric`). The new entry §8.8.5 `redaction_failed` (ON-022 fail-closed redactor) is bus-internal; the redactor MUST emit it before aborting the redaction-violating emission. The new entry §8.8.6 `bead_label_conflict` (per [execution-model.md §4.3 EM-012a]) is emitted by the daemon's claim path on tier-1 mode-resolution conflicts.
 
 ## 7. Protocols and state machines
 
@@ -1010,6 +1124,8 @@ Branch points above correspond to normative requirements: fsync cadence (EV-016)
 - **[beads-integration.md §4.6]** — optional `bead_id` field propagation across run-lifecycle events. `bead_claimed` / `bead_closed` / `bead_reopened` are NOT declared as dedicated events; bead terminal transitions ride on `run_started` / `run_completed` / `run_failed` with `bead_id` per BI-010/BI-011.
 - **[beads-integration.md §4.10, OQ-BI-008]** — post-MVH reservation slot for `bead_terminal_transition_recovered` (§8.6.14) and post-MVH `divergence_kind` adapter-specific values.
 - **[process-lifecycle.md §6.2, §8.2]** — `daemon_ready` / `daemon_started` emission timing; RTO measurement endpoint.
+- **[execution-model.md §4.3 EM-012a, EM-015d, EM-015e]** — workflow-mode resolution precedence and review-loop cycle lifecycle that drive the §8.1a review-loop events and the `workflow_mode` payload field on §8.1 run-lifecycle events.
+- **[execution-model.md §6.1 WorkflowMode]** — enum referenced by the `workflow_mode` payload field per §3 glossary.
 
 ## 10. Conformance
 
@@ -1019,7 +1135,7 @@ Branch points above correspond to normative requirements: fsync cadence (EV-016)
 
 - Implement every requirement in EV-001 through EV-036 (including EV-002a, EV-011a, EV-014a, EV-014b, EV-019a, EV-034a).
 - Implement every invariant EV-INV-001 through EV-INV-006.
-- Declare and register every event type in §8 with payload fields named in the §8 tables and durability classes per EV-016.
+- Declare and register every event type in §8 with payload fields named in the §8 tables and durability classes per EV-016. This includes the six §8.1a review-loop event types (`implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `iteration_cap_hit`, `no_progress_detected`, `review_loop_cycle_complete`) and the §8.8.6 `bead_label_conflict` event type added by the workflow-modes integration; together these seven new cross-bus event types are the EV-027 amendment scope for the workflow-modes kerf.
 
 **Post-MVH extensions.** JSONL rotation policy (OQ-EV-001), quality-checks.md cross-reference (OQ-EV-002), testing.md migration (OQ-EV-003), and per-payload version field (OQ-EV-004) are deferred.
 
@@ -1100,6 +1216,8 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 12 citations fixed. WM: `§5.3→§4.7` (session-log pipeline) at §3 scope, §4.1 EV-005, §9.3 cross-refs; `§5.2→§4.4`, `§5.4→§4.5` at §9.3 emission-rule references. Reconciliation path fix: `[reconciliation.md §9.N]` → `[reconciliation/spec.md §N]` (multi-file spec) at §2.2 scope, §8.5.5 `workspace_interrupted` emitter reference, §8.6.3 verdict payload reference, §4.5 EV-023a cross-ref, §6.2 mid-file corruption Cat 6, §9.3 reconciliation emission rules. ON: `§7.3→§4.3` (operator pause), `§7.5→§4.5` (N-1 compat window), `§7.8→§4.8` (bus latency) at §4.7, §6.4, §10.3. BI: `§10.6→§4.6` (bead_id propagation) at §9.3, §A.3. No requirement IDs, invariants, or schemas touched. |
 | 2026-05-06 | 0.3.4 | foundation-author | Coordination patch landing 3 CP-emitted events that CP §6.5 / §7.1 / §4.7.CP-034b / §4.8.CP-041 declare but EV §8 was missing. **Taxonomy additions (3 new §8.2 control-point-lifecycle rows, no renumbering of pre-existing entries):** §8.2.10 `control_points_registration_started` (companion to existing §8.2.9 `control_points_registered`; the pair brackets the CP §7.1 registration batch — absence of the trailing event paired with a prior registration_started of the same `batch_id` signals a crashed-mid-registration batch); §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041 envelope-hash mismatch on persisted-verdict replay; reconciliation Cat 6 input); §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b cost-ceiling abort; durability class `F` because the abort and the event are a durability pair — the event MUST reach JSONL durability before the evaluator wrapper returns control). **§6.3 payload schema added** for `policy_expression_exceeded_cost` declaring `bound_fired ∈ {ast_steps, wall_clock}` discriminator and per-abort `io_determinism ∈ {deterministic, best-effort}` tag (load-bearing per CP-034b; re-adding post-MVH would be breaking). **§6.5 co-ownership map** updated to enumerate the 3 new CP-emission-owned entries. Mirrors the CP v0.2.0 changelog's "added to §6.5" note that never landed in EV. No EV requirement IDs added/renamed/retired; no pre-existing §8 entries renumbered; status remains `reviewed`. |
 | 2026-04-25 | 0.3.3 | foundation-author | Coordination patch wave landing R2 cross-spec items filed against EV by ON, RC, BI overnight 2026-04-24. **Taxonomy additions (7 new event-type IDs in gaps; no renumbering of pre-existing entries):** §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a `flock(LOCK_EX|LOCK_NB)` second-dispatch dedup); §8.6.12 `reconciliation_detector_panic` (RC-020b per-detector `recover()` barrier); §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a Cat 3b retry cap N=5); §8.6.14 `bead_terminal_transition_recovered` **(post-MVH)** reserved per OQ-BI-008 with explicit "no MVH emitter; structured-log via ON-035 at MVH" annotation block; §8.7.16 `operator_command_failed` (ON-013a panic-barrier emission carrying `command` + `failure_class` + optional `run_id`); §8.7.17 `operator_escalation_cleared` (ON companion to RC-emitted `operator_escalation_required`, carrying `clearance_reason` enum); §8.8.5 `redaction_failed` (ON-022 fail-closed redactor, bus-internal). **Daemon-shutdown durability confirmed F (resolves OQ-PL-012 — recorded here; OQ lives in PL).** §8.7.3 `daemon_shutdown` row already carried `F`; the durability-class statement is now load-bearing as the prior-cycle SIGTERM-receipt landmark for ON-033 RTO reconstruction. **Monotonic companion fields on §8.7.2/§8.7.3:** added `ready_at_ns_since_boot` (uint64) and `shutdown_at_ns_since_boot` (uint64) per ON-033, with concrete §6.3 payload schemas declaring both fields REQUIRED and explicitly noting boot-transition / SIGKILL `rto_undefined` carve-outs. **`daemon_degraded` reason enum promoted from informative (`/ other`) to exhaustive** with 6 values: `rto_breach`, `reconstruction_notify`, `clock_regression` (EV-002c), `cat0_post_ready` (RC-012a carve-out), `infrastructure_unavailable`, `silent_hang_aggregate` (ON-040 aggregator); concrete §6.3 payload added; §8.7.5 row updated; future variants require an EV-027 amendment. **`divergence_kind` post-MVH extension note** added under the §6.3 `store_divergence_detected` block: the MVH enum stays closed; adapter-specific values are reserved for a future revision per OQ-BI-008; no concrete adapter-specific values added in this revision. **§6.5 co-ownership map** updated to enumerate the 6 new MVH-active emitters (RC: §8.6.11–13; ON: §8.7.16–17 + bus-internal §8.8.5) and to mark §8.6.14 explicitly post-MVH. **§9.3 cross-references** added: ON-022 (`redaction_failed`), ON-013a (`operator_command_failed`), ON-033 (RTO consumer of monotonic fields), RC-002a / RC-020b / RC-026a / RC-012a, BI §4.10 + OQ-BI-008. No EV requirement IDs added/renamed/retired; no §8 entries renumbered; status remains `reviewed`. |
+
+| 2026-05-12 | 0.4.0 | foundation-author | Workflow-modes kerf integration (C3). **Taxonomy additions (7 new cross-bus event types):** new §8.1a Review-loop cycle subsection adds six event types — §8.1a.1 `implementer_resumed` (O), §8.1a.2 `reviewer_launched` (O), §8.1a.3 `reviewer_verdict` (F; promoted from class O because the verdict gates terminal routing of the run — loss would orphan a closed-or-needs-attention task), §8.1a.4 `iteration_cap_hit` (O), §8.1a.5 `no_progress_detected` (O), §8.1a.6 `review_loop_cycle_complete` (F). §8.8.6 adds `bead_label_conflict` (O), emitted by the daemon's claim path on tier-1 mode-resolution conflicts per [execution-model.md §4.3 EM-012a]. All seven additions are the EV-027 foundation-amendment scope for the workflow-modes kerf. **§8.1 `workflow_mode` payload-field rule:** new normative note declaring that `run_started` / `run_completed` / `run_failed` payloads carry an optional `workflow_mode ∈ {single, review-loop, dot}` field (additive, backward-compatible) and that every §8.1a review-loop event payload carries the field as REQUIRED. **§3 Glossary additions:** `WorkflowMode` (enum cross-referenced to [execution-model.md §6.1]) and `claude_session_id` (the Claude Code session identifier; explicitly disambiguated from harmonik's `session_id` event field which is the handler-minted UUIDv7). **§6.3 payload schemas:** concrete YAML added for all six §8.1a entries plus §8.8.6 `bead_label_conflict`. The §8.1a.3 `reviewer_verdict` payload reuses the `agent-reviewer` JSON schema v1 fields verbatim (`schema_version`, `verdict`, `flags`, `notes`); no parallel schema is introduced per the locked decision. The `prior_verdict_summary` field on `implementer_resumed` is derived by front-truncating the prior reviewer's `notes` at 256 UTF-8 bytes. **§8.1a ordering rule** normatively pins the emit order within an iteration (`implementer_resumed → reviewer_launched → reviewer_verdict`; or `no_progress_detected → review_loop_cycle_complete` early-exit; or terminal `review_loop_cycle_complete` before §8.1 `run_completed`/`run_failed`). **§6.5 co-ownership map** updated to enumerate the new orchestrator-core-emission-owned entries plus the bus-internal `bead_label_conflict`. **Conformance (§10.1)** expanded to include the seven new event types in Core MVH. No prior event-type identifiers renumbered or retired; no EV requirement IDs added, renamed, or retired (the rule additions are payload-field rules and ordering rules on §8.1 / §8.1a, not new top-level EV-NNN requirements). Status remains `reviewed`. |
 
 ## A. Appendices
 

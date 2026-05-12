@@ -144,6 +144,8 @@ Tags: mechanism
 
 The spec-draft pass MUST produce a normative exit-code taxonomy naming every non-zero exit code emitted by any operator command. The taxonomy MUST specify, for each code: the failure category, the operator-observable symptom, the emitted event type (if any), and the operator remediation pointer. The taxonomy lives in §8 of this spec; cross-references from other specs (e.g., [process-lifecycle.md §4.10 harmonik status]) MUST resolve to §8 entries.
 
+Review-loop termination paths (`iteration_cap_hit`, `BLOCK` verdict, `no_progress_detected`) MUST NOT be assigned a new top-level exit-code category. These are run-level terminations, not daemon-level exits; the operator-observable signal is the bead's `needs-attention` label per §4.3.ON-009a plus the `review_loop_cycle_complete` event's `completion_reason` field per [event-model.md §8.1]. Implementations MUST NOT extend §8 to accommodate these termination paths.
+
 Tags: mechanism
 
 #### ON-003 — Startup failure-mode catalog obligation
@@ -154,7 +156,24 @@ Tags: mechanism
 
 #### ON-004 — Config inventory obligation
 
-The spec-draft pass MUST produce a normative config inventory enumerating every operator-configurable knob referenced across foundation specs. For each knob, the inventory MUST specify: the precedence layer (runtime override / operator-policy file / workflow definition / default, per [control-points.md §4.7] CP-037), the default value, the allowed range or enumeration, and the change-takes-effect semantics (next operator pause, immediate, next daemon start, etc.). At minimum the inventory covers the timer-flush cadence ([event-model.md §4.4]), budget warning threshold ([control-points.md §4.5]), drain timeout (§4.7), RTO thresholds (§4.8), queue-empty re-query cadence ([process-lifecycle.md §4.4]), Cat 0 pre-check retry cadence ([reconciliation/spec.md §4.3]), and per-Cat reconciliation budgets ([reconciliation/spec.md §4.4]).
+The spec-draft pass MUST produce a normative config inventory enumerating every operator-configurable knob referenced across foundation specs. For each knob, the inventory MUST specify: the precedence layer (runtime override / operator-policy file / workflow definition / default, per [control-points.md §4.7] CP-037), the default value, the allowed range or enumeration, and the change-takes-effect semantics (next operator pause, immediate, next daemon start, etc.). At minimum the inventory covers the timer-flush cadence ([event-model.md §4.4]), budget warning threshold ([control-points.md §4.5]), drain timeout (§4.7), RTO thresholds (§4.8), queue-empty re-query cadence ([process-lifecycle.md §4.4]), Cat 0 pre-check retry cadence ([reconciliation/spec.md §4.3]), per-Cat reconciliation budgets ([reconciliation/spec.md §4.4]), and the `workflow_mode` knob per §4.1.ON-004a.
+
+Tags: mechanism
+
+#### ON-004a — Workflow-mode config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the `workflow_mode` knob with the following fields:
+
+- **Allowed enumeration:** `{single, review-loop, dot}`.
+- **Default value:** `single` (built-in fallback).
+- **Precedence layers** (four tiers, evaluated highest-to-lowest at claim time):
+  1. Per-task `workflow:<mode>` label on the bead per [beads-integration.md §4.3].
+  2. Per-project policy (reserved tier; not populated at MVH).
+  3. Daemon default per [process-lifecycle.md §4.1].
+  4. Built-in fallback `single`.
+- **Change-takes-effect semantics:** per-task at claim time (the resolved mode is sealed into the Run record per [execution-model.md §4.3] and is immutable for the run's lifetime); daemon default on next daemon start.
+- **Runtime tunability:** NOT runtime-tunable per §4.3.ON-013d.
+- **Iteration cap (review-loop):** hardcoded at 3 for MVH; NOT operator-tunable.
 
 Tags: mechanism
 
@@ -191,6 +210,8 @@ Tags: mechanism
 
 An operator `pause` or `upgrade` command issued while the daemon status is `ready` MUST NOT interrupt any in-flight run (per §3 `in_flight(run)`). The daemon MUST transition to `pausing`, allow every in-flight run to proceed to its next durable checkpoint per [execution-model.md §4.5], AND complete the full drain sequence of §4.7.ON-027 (all eight steps) before transitioning to `paused`. The `pausing → paused` transition is gated on drain-completion: entry into `paused` is forbidden until (a) no run satisfies `in_flight(run)` AND (b) every drain step of ON-027 has completed (or the drain-timeout escalation path of §4.7.ON-029 has fired). `upgrade` further transitions `paused` → `upgrading` → (exec-replace) → `running` under the contract of §4.6.
 
+For runs with `workflow_mode = single` or `workflow_mode = dot` (per [handler-contract.md §4.2 HC-006]), the durable checkpoint at which the run yields to the drain gate is the between-task checkpoint per [execution-model.md §4.5]; this is the default semantics. For runs with `workflow_mode = review-loop`, the durable checkpoint set is EXTENDED to include intra-run iteration boundaries: the interval between emission of a `reviewer_verdict` event (per [event-model.md §8.1]) and the next `implementer_resumed` event of the same cycle is a legitimate pause checkpoint. A `pause` issued mid-iteration of a `review-loop` run MUST be honored at the next such iteration-boundary checkpoint OR at the end of the cycle, whichever arrives first; the pause MUST NOT be deferred beyond the next iteration boundary. The amended pause checkpoint set applies ONLY when the run's resolved `workflow_mode` is `review-loop`; the original between-task invariant is unchanged for `single` and `dot` modes. `stop --immediate` aborts mid-iteration per §4.3.ON-009 regardless of mode; the run is left in the standard canceled-and-reconciled state.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
@@ -199,6 +220,13 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 `stop --immediate` and SIGKILL (treated equivalently) MUST abort in-flight runs (per §3 `in_flight(run)`). Aborted runs MUST emit `run_failed` with class `canceled` per [execution-model.md §8.4] once the daemon restarts and reconciliation classifies them per [reconciliation/spec.md §4.3]. No other operator control is permitted to abort in-flight runs; proposals to add `pause --immediate` or `upgrade --immediate` MUST be rejected as violations of §4.3.ON-008.
 
 Tags: mechanism
+
+#### ON-009a — Needs-attention queue drain discipline
+
+A bead closed under any non-success `review-loop` termination reason — `iteration_cap_hit` (the cycle exhausted the hardcoded iteration cap of 3 per §4.1.ON-004a), reviewer `BLOCK` verdict (per [handler-contract.md §4.2 HC-006] reviewer phase emission), or `no_progress_detected` — MUST be marked with the bead label `needs-attention` per [beads-integration.md §4.3]. The daemon's ready-work query per [beads-integration.md §4.5] MUST treat `needs-attention`-labeled beads as out-of-scope for automatic claim. There MUST NOT be an auto-retry path: no subsystem MAY re-dispatch a `needs-attention`-labeled bead without operator intervention. Operators drain the queue manually by either (a) removing the `needs-attention` label (which restores claimability on the next ready-work scan) after triage, or (b) closing the bead as `wontfix`. Phantom auto-retry logic — any code path that removes the label or re-dispatches the bead without an operator-issued command — is a structural violation of this requirement.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### ON-010 — Reconciliation carve-out: pause queues during `reconciling`
 
@@ -251,6 +279,13 @@ Tags: mechanism
 Operator commands MUST be idempotent on no-op transitions: a `pause` issued while already `paused` MUST return success (exit code 0) with `operator_pause_status{status=paused}` re-emitted at most once per command (deduplicated via session_id). A `stop` issued while `stopped` MUST return success with no event emission. A `resume` issued while `running` MUST return success with no transition. The operator's CLI MUST NOT see a different exit code for "already in target state" vs "transitioned successfully."
 
 Tags: mechanism
+
+#### ON-013d — Workflow mode is not an operator-control surface
+
+The daemon's `workflow_mode` (per §4.1.ON-004a and [handler-contract.md §4.2 HC-006]) MUST be observable via `harmonik status` — both the daemon's default mode and the per-run resolved value for any in-flight run — but MUST NOT be mutable via any operator command. There MUST NOT be a `harmonik set-mode` command or any equivalent runtime tuning surface; there MUST NOT be a `pause-then-set-mode` workflow. Operators wishing to change the daemon default MUST restart the daemon with a different config; operators wishing to change a per-task value MUST edit the bead's `workflow:<mode>` label (via `br update` per [beads-integration.md §4.3]) BEFORE the bead is claimed. Once a bead is claimed, the resolved `workflow_mode` is sealed into the Run record per [execution-model.md §4.3] and is immutable for the run's lifetime. The iteration cap (3 for `review-loop`, per §4.1.ON-004a) MUST NOT be operator-tunable at runtime. Proposals to introduce a runtime mode-mutation surface MUST be rejected as violations of this requirement.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### ON-014 — Reconciliation operator override (pre-execution verdict pause)
 
@@ -440,6 +475,13 @@ Tags: mechanism
 Every subsystem MUST emit structured logs. Unstructured log lines (free-form text only) are forbidden at spec-declared emission points. Structured logs are the MVH substrate for observability; Prometheus / OpenTelemetry wire formats are post-MVH per §4.10.ON-043.
 
 Structured-log wire format is OWNED by this spec (promoted from an unreferenced `[event-model.md §3.8]` target; the original citation did not resolve in EV). The minimum structured-log shape is a newline-delimited JSON record carrying the fields: `ts` (RFC 3339 with ms), `log_schema_version` (string, current `"1.0"`), `level` ∈ `{debug, info, warn, error}`, `subsystem`, `source_subsystem` (per [event-model.md §4.9 EV-034a]), `run_id?`, `node_id?`, `event_id?` (UUIDv7 correlation per [event-model.md §4.1] when the log corresponds to an event emission), `msg` (short human-readable), and `fields` (map of typed values). The `event_id` correlation field MUST be present when a log record is the subsystem's own emission of an event tracked in JSONL. Secrets-redaction per §4.7.ON-022 MUST apply to structured logs before emission; the redaction direction is producer-side, and consumers MUST NOT re-redact. Log files MUST rotate at 100 MiB or 24 hours (whichever comes first), with prior files moved to `.harmonik/logs/<subsystem>-<rotated_at>.jsonl`. The `log_schema_version` is under N-1 compatibility per ON-INV-001 (cross-spec coordination request: add structured logs to ON-018's enumeration; track as new OQ-ON-011 if the addition is too invasive for this revision). The detailed schema (including typed-field enumeration and the consumer-side parser contract) and the sensor for compliance are deferred to a dedicated `quality-checks.md` / logging-wire-format work and tracked in OQ-ON-007.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### ON-035a — Review-loop cycle observability via JSONL
+
+Operator visibility into `review-loop` cycle progression MUST be supplied entirely via the existing JSONL event-consumption path (`harmonik status`, `harmonik logs`, `jq` against `events.jsonl`). The cycle's observability surface is the set of review-loop event types declared in [event-model.md §8.1a] — `implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `iteration_cap_hit`, `no_progress_detected`, and `review_loop_cycle_complete`. No new operator command surface (e.g., `harmonik review-status`) MUST be introduced; review-loop information is rendered inline in `harmonik status` when a run's resolved `workflow_mode` is `review-loop`. The operator's diagnostic recipe for a stuck cycle is: filter `events.jsonl` by `run_id` and intersect with the named event types. Pause-reason discriminators reported by `harmonik status` per §4.3.ON-054 MUST NOT add a `review-loop`-specific reason; review-loop pause checkpoints (per §4.3.ON-008 amendment) reuse the existing `operator-pause` reason with the iteration-boundary checkpoint observable in the `drain_summary` field.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

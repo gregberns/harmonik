@@ -93,9 +93,16 @@ The choice of which handler binary to launch for a given node MUST be derived fr
 
 Tags: mechanism
 
-#### HC-004 — Launch is idempotent on (run_id, node_id)
+#### HC-003a — Workflow-mode is dispatch-level, not handler-selector
 
-`Handler.Launch` MUST be idempotent on the key `(spec.run_id, spec.node_id)` within one daemon generation: a second `Launch` call with the same key MUST return the existing `Session` (or an `ErrTransient` if the prior session is terminating) rather than spawn a duplicate subprocess. If a second `Launch` call arrives while the first is still executing its handshake (concurrent-launch), the second call MUST block on the handshake outcome and return the same `(Session, error)` the first call returns; it MUST NOT spawn a second subprocess. Callers receiving `ErrTransient` (prior session terminating) SHOULD retry after a backoff bounded by the node's retry policy in [control-points.md §6.7]; a concrete default per-handler retry delay is the per-handler spec's call. Reconciliation-driven re-launches after a daemon restart are a new daemon generation and therefore a new launch; idempotency is scoped per daemon generation.
+`LaunchSpec.workflow_mode` (per §4.2.HC-006) MUST NOT be used to pick among registered handlers. Handler selection remains the config-level binding from `agent_type` to a registered handler per §4.1.HC-003. The resolved workflow mode determines (a) which phase the daemon launches next within a multi-phase mode and (b) the LaunchSpec's `phase`, `iteration_count`, and `claude_session_id` fields per §4.2.HC-006. The same registered handler MUST be used across every phase of a multi-phase mode (e.g., both `implementer-initial` and `reviewer` phases of `review-loop` resolve to the same `agent_type` binding); the phases are distinguished by LaunchSpec content (prompt, `required_skills[]`, `freedom_profile_ref`), NOT by handler binding. The adapter surface (§4.3.HC-013) MUST NOT expand to accommodate workflow-mode dispatch; watcher behavior (§4.3.HC-011) MUST remain mode-agnostic.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-004 — Launch is idempotent on (run_id, node_id, phase, iteration_count)
+
+`Handler.Launch` MUST be idempotent within one daemon generation. The idempotency key composition depends on the LaunchSpec's `phase` and `iteration_count` fields per §4.2.HC-006: when both fields are present (multi-phase modes such as `review-loop`), the key is the 4-tuple `(spec.run_id, spec.node_id, spec.phase, spec.iteration_count)`; when both fields are absent (`workflow_mode = single` or omitted), the key is the 2-tuple `(spec.run_id, spec.node_id)`. A second `Launch` call with the same key MUST return the existing `Session` (or an `ErrTransient` if the prior session is terminating) rather than spawn a duplicate subprocess. If a second `Launch` call arrives while the first is still executing its handshake (concurrent-launch), the second call MUST block on the handshake outcome and return the same `(Session, error)` the first call returns; it MUST NOT spawn a second subprocess. Within a single `review-loop` cycle, the daemon MAY legitimately issue Launch calls with distinct `(phase, iteration_count)` tuples (e.g., `(phase=implementer-resume, iteration_count=2)` distinct from `(phase=implementer-resume, iteration_count=1)`) without this requirement's "return existing Session" branch firing. Callers receiving `ErrTransient` (prior session terminating) SHOULD retry after a backoff bounded by the node's retry policy in [control-points.md §6.7]; a concrete default per-handler retry delay is the per-handler spec's call. Reconciliation-driven re-launches after a daemon restart are a new daemon generation and therefore a new launch; idempotency is scoped per daemon generation. Review-loop launches that survive a daemon restart re-launch under their `(run_id, node_id, phase, iteration_count)` key in the new generation, distinguishing them from prior launches in the same logical cycle.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=unsafe; idempotency=idempotent
@@ -111,7 +118,17 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### HC-006 — LaunchSpec is the record defined in §6.1
 
-The delivered LaunchSpec MUST conform to the record shape in §6.1. Required fields are: `run_id`, `workflow_id`, `node_id`, `agent_type`, `workspace_path`, `required_skills[]`, `skill_search_paths[]`, `timeout`, `provisioning_timeout`, `budget`, `freedom_profile_ref`. Optional fields: `bead_id` (present when bead-tied per [execution-model.md §4.3]), `snapshot_token` (present for reconciliation-investigator handlers per [docs/foundation/reconciliation.md §9.4b] (bootstrap; migrates to `specs/reconciliation.md §9.4b` when finalized)).
+The delivered LaunchSpec MUST conform to the record shape in §6.1. Required fields are: `run_id`, `workflow_id`, `node_id`, `agent_type`, `workspace_path`, `required_skills[]`, `skill_search_paths[]`, `timeout`, `provisioning_timeout`, `budget`, `freedom_profile_ref`. Optional fields: `bead_id` (present when bead-tied per [execution-model.md §4.3]), `snapshot_token` (present for reconciliation-investigator handlers per [docs/foundation/reconciliation.md §9.4b] (bootstrap; migrates to `specs/reconciliation.md §9.4b` when finalized)), `workflow_mode`, `phase`, `iteration_count`, `claude_session_id`.
+
+**`workflow_mode`** (enum `{single, review-loop, dot}`, optional). Present iff the daemon resolved a non-default mode for the dispatched run; otherwise omitted. The handler MUST accept the field. The handler MUST NOT branch implementation behavior on this field — it is observational, supplied for handler-side logging and skill-loading hints only. Handler selection MUST NOT depend on this field per §4.1.HC-003a.
+
+**`phase`** (enum, optional). Present iff the dispatched run is in a multi-phase mode. For `workflow_mode = review-loop`, the domain is `{implementer-initial, implementer-resume, reviewer}`. For `workflow_mode = single`, the field MUST be omitted. The handler MUST NOT interpret routing semantics from `phase`; routing is the daemon's responsibility per §4.1.HC-003a.
+
+**`iteration_count`** (integer, optional, 1..3). Present iff the dispatched run is in a multi-phase mode that iterates. For `review-loop`, the value is bounded by the hardcoded iteration cap of 3 declared in [operator-nfr.md §4.1 ON-004]. For `workflow_mode = single`, the field MUST be omitted.
+
+**`claude_session_id`** (string, optional). Present iff `phase = implementer-resume` for a `review-loop` dispatch; carries the Claude Code session identifier used to drive `claude --resume <id>` and is distinct from harmonik's own `session_id` per §6.1. The `reviewer` phase MUST omit `claude_session_id`; each reviewer launch is a fresh Claude session. The `implementer-initial` phase MUST omit `claude_session_id` (no prior session exists to resume). Handlers that do not implement Claude Code's session-resume capability MAY ignore the field; handlers that do MUST honor it when present.
+
+> INFORMATIVE: The `phase = reviewer` launch typically carries an `agent-reviewer` skill in `required_skills[]` per the [CLAUDE.md] skill registry; `phase = implementer-*` launches carry the implementer skill set. Selection of `required_skills[]` is the daemon's claim-path responsibility per §4.11.HC-050, not the handler's. The reviewer phase's `outcome_emitted` corresponds to the reviewer writing a verdict file at `.harmonik/review.json` (archived to `.harmonik/review.iter-<N>.json` between iterations) per [workspace-model.md §4.7].
 
 Tags: mechanism
 
@@ -650,6 +667,10 @@ RECORD LaunchSpec:
     freedom_profile_ref   : String                  -- [control-points.md §6.7]
     bead_id               : String | None           -- present when bead-tied per [execution-model.md §4.3]
     snapshot_token        : String | None           -- present for reconciliation-investigator handlers per [docs/foundation/reconciliation.md §9.4b] (bootstrap)
+    workflow_mode         : Enum | None             -- {single, review-loop, dot}; present iff non-default mode resolved per §4.2.HC-006; observational only per §4.1.HC-003a
+    phase                 : Enum | None             -- multi-phase modes only; for review-loop: {implementer-initial, implementer-resume, reviewer}; omitted for single
+    iteration_count       : Integer | None          -- present iff phase present and mode iterates; 1..3 for review-loop per [operator-nfr.md §4.1 ON-004]
+    claude_session_id     : String | None           -- present iff phase=implementer-resume; Claude Code session ID for `claude --resume <id>`; distinct from SessionID
     schema_version        : Integer                 -- N-1 readable per [operator-nfr.md §4.5]
 ```
 

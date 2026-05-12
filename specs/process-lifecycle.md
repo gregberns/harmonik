@@ -112,6 +112,7 @@ Envelope for the process-lifecycle subsystem (daemon core / `internal/daemon`) p
   - Unix socket at `.harmonik/daemon.sock` (mode `0600`; HC-044 authentication model).
   - `.harmonik/daemon.instance-id` file (atomic write per PL-005 step 0).
   - `.harmonik/daemon.upgrading` marker (atomic write per PL-027(iv); content owned by [operator-nfr.md §4.6 ON-020a]).
+  - `workflow_mode_default` (in-memory enum value in `{single, review-loop, dot}`; loaded once at PL-005 step 0 per PL-004a; observable via `harmonik status`).
   - Project-hash derived tmux-session namespace.
   - Composition-root-resident registries (event bus, handler registry, skill registry, control-point registry, policy registry) per AR-INV-007 (PL-020a).
   - Daemon-emitted file surface per PL-004.
@@ -210,13 +211,24 @@ The daemon's per-project file surface includes: `.harmonik/daemon.pid` (PL-002, 
 
 Tags: mechanism
 
+#### PL-004a — Default workflow mode
+
+The daemon's project-level configuration MAY carry an optional `workflow_mode` field whose value MUST be one of the enum `{single, review-loop, dot}`. When the field is absent, the daemon's default workflow mode MUST be `single`. The field MUST be read exactly once during PL-005 step 0 (composition-root bootstrap) and MUST be cached in-process as `workflow_mode_default` for the daemon's lifetime; the daemon MUST NOT re-read the field after bootstrap. Mid-run mode change via this surface is FORBIDDEN; an operator-initiated rotation of the daemon-level default requires a daemon restart (or a `harmonik upgrade` exec-replacement per PL-027, which re-runs step 0).
+
+The daemon-level `workflow_mode_default` is the second-lowest-precedence tier of the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3]: per-task (bead `workflow:<mode>` label per [beads-integration.md §4.3 BI-009a]) → per-project → daemon-level (this requirement) → built-in fallback (`single`). The daemon MUST NOT override higher-precedence tiers (per-project or per-task) when both are present; resolution is the responsibility of the dispatch path per [execution-model.md §4.3].
+
+The on-disk location of the `workflow_mode` field is the daemon's existing project-config surface read at PL-005 step 0; this requirement does not introduce a new config file. The field is observable via `harmonik status` (passive surface, §PL-028); it is NOT operator-controllable through any other command at runtime.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.2 Startup sequence
 
 #### PL-005 — Startup order is deterministic
 
 The daemon's startup sequence MUST execute the following steps in order, and each step MUST complete before the next begins:
 
-0. **Composition-root bootstrap.** Instantiate the event bus ([event-model.md §4.3]), the control-point registry ([control-points.md §4.1]), the handler registry, the skill registry ([handler-contract.md §4.11]), and the policy registry — all in-process per [architecture.md AR-INV-007] and PL-020a. Register each subsystem's consumers and providers. Start the JSONL writer ([event-model.md §6.2]). The daemon MUST also mint a `daemon_instance_id` (UUIDv7 per [event-model.md §4.1] ID-generation discipline) and MUST write it to `.harmonik/daemon.instance-id` via the temp+rename+fsync(parent_dir) atomic discipline of [workspace-model.md §4.7 WM-026]: write content to a sibling temp file `.harmonik/daemon.instance-id.tmp-<pid>`; `fsync(temp_fd)`; `rename(2)` to the canonical name; `fsync(parent_directory_fd)`. The `daemon_instance_id` is the per-process correlation key used by every lifecycle event payload, the pidfile (PL-002b line 3), and external attach/audit consumers per [operator-nfr.md §4.10 ON-041]. A new instance MUST mint a fresh UUIDv7; reuse across exec-replacement (PL-027) is FORBIDDEN — the new daemon binary mints its own UUIDv7 even when adopting the listener fd from the outgoing instance. No external state is read in this step.
+0. **Composition-root bootstrap.** Instantiate the event bus ([event-model.md §4.3]), the control-point registry ([control-points.md §4.1]), the handler registry, the skill registry ([handler-contract.md §4.11]), and the policy registry — all in-process per [architecture.md AR-INV-007] and PL-020a. Register each subsystem's consumers and providers. Start the JSONL writer ([event-model.md §6.2]). The daemon MUST also load the `workflow_mode_default` value per §PL-004a from the project-config surface and cache it for the daemon's lifetime; absence of the field defaults the cached value to `single`. The daemon MUST also mint a `daemon_instance_id` (UUIDv7 per [event-model.md §4.1] ID-generation discipline) and MUST write it to `.harmonik/daemon.instance-id` via the temp+rename+fsync(parent_dir) atomic discipline of [workspace-model.md §4.7 WM-026]: write content to a sibling temp file `.harmonik/daemon.instance-id.tmp-<pid>`; `fsync(temp_fd)`; `rename(2)` to the canonical name; `fsync(parent_directory_fd)`. The `daemon_instance_id` is the per-process correlation key used by every lifecycle event payload, the pidfile (PL-002b line 3), and external attach/audit consumers per [operator-nfr.md §4.10 ON-041]. A new instance MUST mint a fresh UUIDv7; reuse across exec-replacement (PL-027) is FORBIDDEN — the new daemon binary mints its own UUIDv7 even when adopting the listener fd from the outgoing instance. No external state is read in this step.
 1. Acquire the pidfile lock (§PL-002). Exit on lock-contention failure with exit code `5` per [operator-nfr.md §8].
 2. Emit `daemon_started` (per [event-model.md §8.7.1]) with `{started_at, pid, binary_commit_hash}`.
 3. Execute the orphan sweep per §PL-006.
@@ -444,6 +456,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 #### PL-018 — Daemon is a deterministic Go binary with no LLM logic
 
 The daemon MUST be a deterministic Go binary. The daemon MUST NOT call any LLM, MUST NOT import any LLM SDK, and MUST NOT embed any cognition-bearing component per [architecture.md §4.2]. All cognition in harmonik lives in agent subprocesses launched via handlers (per [handler-contract.md §4.1 HC-001]) or in orchestrator-agent sessions interacting via the CLI (§PL-019). A proposal to embed cognition in the daemon (e.g., "let the daemon decide which bead to claim next using an LLM") violates this requirement.
+
+PL-018 applies to LLM-bearing logic; reading a config enum value is exempt. Mode dispatch (workflow-graph walking, agent role selection, iteration-cap enforcement) is owned by [handler-contract.md §4.1] and [execution-model.md §4.3]; the daemon's lifecycle code stores the enum and exposes it to dispatch, nothing more.
 
 Tags: mechanism
 

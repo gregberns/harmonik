@@ -144,6 +144,17 @@ Beads MUST provide atomic-claim semantics such that two agents or daemons cannot
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### BI-009a — Workflow-mode label
+
+A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, review-loop, dot}`. The label's presence asserts a per-task workflow-mode override; its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`). The bead-level label is the highest-precedence input in the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3].
+
+A bead carrying two or more `workflow:<...>` labels is malformed. The `br`-CLI adapter (§4.8) MUST treat this as a hard read-error on the ready-work query (BI-013) and the bead-detail query (BI-015): the adapter MUST emit a `bead_label_conflict` observability event per [event-model.md §8.8.6] (with structured-log fallback per [operator-nfr.md §4.9 ON-035]: on event-bus emission failure the adapter MUST emit a structured-log record with `subsystem=beads-adapter`, level=error, naming the offending `bead_id` and the colliding label set), MUST surface the bead to the dispatch loop with `workflow_mode = <unresolved>`, and the daemon MUST fall back to the next-lower precedence tier rather than dispatch under an ambiguous mode.
+
+The allowed-mode enum (`{single, review-loop, dot}`) is owned by [execution-model.md §4.3]; this requirement cites it by reference.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.4 Harmonik write surface — terminal transitions only
 
 #### BI-010 — Harmonik writes to Beads ONLY at terminal workflow transitions
@@ -190,6 +201,15 @@ Reconciliation auto-resolvers (Cat 3a, 3b, 3c per [reconciliation/spec.md §8.4a
 
 Tags: mechanism
 
+#### BI-010c — Workflow-mode label write discipline
+
+Agents MUST NOT add, remove, or modify `workflow:<...>` labels per BI-009a via `br update` (or any equivalent label-mutation surface) from inside a workflow run. The label is operator-set or set at bead-creation time only. A daemon-side OR reconciliation-side label write is permitted ONLY where a workflow's design intent explicitly so dictates (e.g., a self-modifying reconciliation routine), and any such write MUST route through the §4.8 adapter and MUST carry the §4.10 idempotency-key infrastructure exactly as terminal-transition writes do.
+
+The Beads-CLI skill per §4.9 BI-027 MUST document this prohibition so the rule appears in every agent's launch context per [handler-contract.md §4.11]. An agent observed to have issued a `workflow:<...>` label mutation from within a run is a conformance violation under BI-INV-001 — the label is treated as run-state-shape, and intra-run writes to bead state are forbidden.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 #### BI-011 — No intra-run writes to Beads
 
 Harmonik MUST NOT write per-node workflow transitions, outcome details, or fine-grained failure types to Beads. Intra-run state MUST live in the git checkpoint trail per [execution-model.md §4.4] and the JSONL event log per [event-model.md §6.2]. Writing every intra-run micro-transition to Beads is forbidden because it would thrash Beads's `blocked_issues_cache` and flood other Beads consumers.
@@ -208,6 +228,17 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 #### BI-013 — Ready-work query
 
 The daemon MUST be able to query the set of beads whose dependencies are satisfied and whose status is `open` via `br ready` (or its equivalent command). The ready-work query result is the input to the daemon's dispatch loop.
+
+The ready-work response payload MUST surface each bead's labels array — including any `workflow:<mode>` label per BI-009a — so the daemon's claim path can extract and apply the per-task workflow-mode override at dispatch time. This is a read-path observation that exploits the existing `br ... --format json` label exposure (per BI-025b); no new query surface is introduced.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### BI-013a — Ready-work query excludes `needs-attention` beads
+
+The `br`-CLI adapter's ready-work query (BI-013) MUST exclude beads carrying a `needs-attention` label from the dispatchable set, even when their `coarse_status` is `open`. The `needs-attention` label is set by the daemon when a `review-loop` run hits the iteration cap per [execution-model.md §4.3] (and by analogous operator-drain semantics per [operator-nfr.md §4.3]); its presence asserts that operator triage is required before the bead may be re-dispatched. The exclusion MUST be applied at adapter read time so the daemon's dispatch loop never observes a `needs-attention`-labeled bead as ready.
+
+An operator who clears the `needs-attention` label restores the bead to the dispatchable set on the next ready-work query; no special-case re-claim path is needed.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -264,6 +295,8 @@ Tags: mechanism
 #### BI-020 — Session logs for bead-bound runs carry `bead_id` metadata
 
 Session logs produced for an agent subprocess running as part of a bead-bound run MUST carry `bead_id` metadata per [workspace-model.md §4.7]. CASS indexing uses this metadata for join-to-Beads queries.
+
+The per-run session sidecar (per [workspace-model.md §4.7 WM-026]) MAY additionally carry the resolved `workflow_mode` for the run (the tier that won the four-tier resolution chain, not just the raw bead label) alongside `bead_id` for audit and reconciliation use. The on-disk shape of the sidecar field is owned by workspace-model; this spec asserts only that the resolved value, when carried, MUST match the mode the daemon dispatched the run under.
 
 Tags: mechanism
 

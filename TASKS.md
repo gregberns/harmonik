@@ -4,7 +4,9 @@
 >
 > **[HANDOFF.md](HANDOFF.md) remains authoritative for per-session current state and the next concrete steps.** This file tracks phase boundaries.
 >
-> Last updated: 2026-05-06 — Phase 0 closed: 11 reviewed specs, 905 live beads (3,589 edges, zero cycles), 376 `scope:bootstrap` beads (348 spec-corpus + 28 meta), discipline v0.12, all readiness gaps closed in beads. Phase 1 implementation gate **lifted**; agents claim work directly.
+> Last updated: 2026-05-12 — **Workflow-modes corpus shipped** (epic `hk-7om2q` + 32 child beads CLOSED; T-WM-020 wide deliverable bundled cap-hit/no-progress/happy-path/RC→APPROVE smoke tests inline; several siblings closed SUBSUMED). Daemon work-loop is now wired through review-loop dispatch with full §8.1a event coverage. Two follow-up beads filed: `hk-p4xbw` (parallelism-prep — `br --claim` not atomically exclusive, characterisation test in `internal/daemon/t5_realdb_concurrent_test.go`); `hk-wb0ci` (kind:hygiene — exploratory-test sweep over 5 pre-existing failures observed v32–v33).
+>
+> Previously: 2026-05-06 — Phase 0 closed: 11 reviewed specs, 905 live beads (3,589 edges, zero cycles), 376 `scope:bootstrap` beads (348 spec-corpus + 28 meta), discipline v0.12, all readiness gaps closed in beads. Phase 1 implementation gate **lifted**; agents claim work directly.
 
 ## Phase 1 (implementation) — active
 

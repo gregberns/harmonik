@@ -277,6 +277,8 @@ func TestReviewLoop_HappyPath_APPROVE(t *testing.T) {
 //   - Iteration 1: REQUEST_CHANGES → iteration 2 dispatched.
 //   - Iteration 2: APPROVE → cycle terminates as completed.
 //   - implementer_resumed emitted before iteration 2's reviewer.
+//   - Verdict file from iteration 1 archived to .harmonik/review.iter-1.json
+//     (T-WM-027 acceptance criterion: archive file exists after cycle).
 func TestReviewLoop_RequestChangesThenAPPROVE(t *testing.T) {
 	t.Parallel()
 
@@ -326,6 +328,16 @@ func TestReviewLoop_RequestChangesThenAPPROVE(t *testing.T) {
 		string(core.EventTypeReviewerVerdict),    // iter 2
 		string(core.EventTypeReviewLoopCycleComplete),
 	})
+
+	// T-WM-027 acceptance criterion: iteration 1 verdict is archived to
+	// .harmonik/review.iter-1.json. The daemon calls ArchiveVerdict(wtPath, 1)
+	// immediately after emitting reviewer_verdict for iteration 1, before looping
+	// to iteration 2. Verify the file exists at the canonical path.
+	//nolint:gosec // G304: test fixture path; wtPath is a t.TempDir()-derived value
+	archivePath := filepath.Join(wtPath, ".harmonik", "review.iter-1.json")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Errorf("T-WM-027: verdict archive file missing after RC→APPROVE cycle: %s: %v", archivePath, err)
+	}
 }
 
 // TestReviewLoop_CapHit verifies that three REQUEST_CHANGES verdicts trigger

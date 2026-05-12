@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
@@ -42,7 +41,7 @@ type claudeCodeRateLimitedPayload struct {
 }
 
 // ClaudeCodeAdapter is the concrete handlercontract.Adapter for the
-// "claude-code" agent type (core.AgentTypeClaudeCode = "claude-code").
+// "claude-code" agent type (handlercontract.AgentTypeClaudeCode = "claude-code").
 //
 // It is a zero-value-usable struct; callers SHOULD use NewClaudeCodeAdapter
 // for forward-compatibility but the zero value is equally valid.
@@ -69,7 +68,7 @@ func NewClaudeCodeAdapter() handlercontract.Adapter {
 	return ClaudeCodeAdapter{}
 }
 
-// Register adds a ClaudeCodeAdapter into reg under core.AgentTypeClaudeCode.
+// Register adds a ClaudeCodeAdapter into reg under handlercontract.AgentTypeClaudeCode.
 //
 // Returns the error from AdapterRegistry.Register (duplicate registration,
 // sealed registry, etc.) unchanged.  Callers MUST call Register before the
@@ -79,7 +78,7 @@ func NewClaudeCodeAdapter() handlercontract.Adapter {
 //
 // Spec: specs/handler-contract.md §4.3.HC-012, §4.3.HC-013.
 func Register(reg *handlercontract.AdapterRegistry) error {
-	return reg.Register(core.AgentTypeClaudeCode, NewClaudeCodeAdapter())
+	return reg.Register(handlercontract.AgentTypeClaudeCode, NewClaudeCodeAdapter())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,7 +90,7 @@ func Register(reg *handlercontract.AdapterRegistry) error {
 //
 // Returns true ONLY when event.Type is "agent_ready".  MUST NOT synthesize
 // ready-state from any other signal (HC-041 hard rule).
-func (ClaudeCodeAdapter) DetectReady(event core.EventEnvelope) bool {
+func (ClaudeCodeAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
 	return event.Type == handlercontract.ProgressMsgTypeAgentReady
 }
 
@@ -105,7 +104,7 @@ func (ClaudeCodeAdapter) DetectReady(event core.EventEnvelope) bool {
 //
 // Returns (false, 0) for all other event types, including
 // "agent_rate_limit_cleared".
-func (ClaudeCodeAdapter) DetectRateLimit(event core.EventEnvelope) (bool, time.Duration) {
+func (ClaudeCodeAdapter) DetectRateLimit(event handlercontract.EventEnvelope) (bool, time.Duration) {
 	if event.Type != handlercontract.ProgressMsgTypeAgentRateLimited {
 		return false, 0
 	}

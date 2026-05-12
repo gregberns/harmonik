@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
@@ -21,13 +20,13 @@ import (
 
 // claudeCodeFixtureMakeEvent builds a minimal valid EventEnvelope with the
 // given event type and payload bytes.
-func claudeCodeFixtureMakeEvent(t *testing.T, eventType string, payload json.RawMessage) core.EventEnvelope {
+func claudeCodeFixtureMakeEvent(t *testing.T, eventType string, payload json.RawMessage) handlercontract.EventEnvelope {
 	t.Helper()
 	if payload == nil {
 		payload = json.RawMessage(`{}`)
 	}
-	return core.EventEnvelope{
-		EventID:         core.EventID(uuid.MustParse("0196f500-0000-7000-8000-000000000099")),
+	return handlercontract.EventEnvelope{
+		EventID:         handlercontract.EventID(uuid.MustParse("0196f500-0000-7000-8000-000000000099")),
 		SchemaVersion:   1,
 		Type:            eventType,
 		TimestampWall:   time.Now(),
@@ -214,13 +213,13 @@ type stubSession struct {
 	sendErr error
 }
 
-func (s *stubSession) ID() core.SessionID { return "test-session" }
+func (s *stubSession) ID() handlercontract.SessionID { return "test-session" }
 func (s *stubSession) Attach(_ context.Context) (io.Reader, error) {
 	return nil, nil
 }
 func (s *stubSession) Kill(_ context.Context) error { return nil }
-func (s *stubSession) Wait(_ context.Context) (core.Outcome, error) {
-	return core.Outcome{}, nil
+func (s *stubSession) Wait(_ context.Context) (handlercontract.Outcome, error) {
+	return handlercontract.Outcome{}, nil
 }
 func (s *stubSession) LogLocation() string { return "" }
 func (s *stubSession) SendInput(_ context.Context, input string) error {
@@ -288,7 +287,7 @@ func TestClaudeCodeAdapter_RotateAccount_ReturnsErrSingleAccountOnly(t *testing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeCodeAdapter_Register_AddsToRegistry verifies that Register adds
-// a ClaudeCodeAdapter under core.AgentTypeClaudeCode in a fresh registry.
+// a ClaudeCodeAdapter under handlercontract.AgentTypeClaudeCode in a fresh registry.
 func TestClaudeCodeAdapter_Register_AddsToRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -300,13 +299,13 @@ func TestClaudeCodeAdapter_Register_AddsToRegistry(t *testing.T) {
 	types := reg.RegisteredTypes()
 	found := false
 	for _, at := range types {
-		if at == core.AgentTypeClaudeCode {
+		if at == handlercontract.AgentTypeClaudeCode {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("RegisteredTypes does not contain %q after Register", core.AgentTypeClaudeCode)
+		t.Errorf("RegisteredTypes does not contain %q after Register", handlercontract.AgentTypeClaudeCode)
 	}
 }
 
@@ -334,7 +333,7 @@ func TestClaudeCodeAdapter_Register_ForAgentReturnsAdapter(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	got, err := reg.ForAgent(core.AgentTypeClaudeCode)
+	got, err := reg.ForAgent(handlercontract.AgentTypeClaudeCode)
 	if err != nil {
 		t.Fatalf("ForAgent returned error: %v", err)
 	}

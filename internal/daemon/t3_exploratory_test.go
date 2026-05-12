@@ -725,6 +725,9 @@ func (s *t3StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	}
 	return records, nil
 }
+func (s *t3StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
 func (s *t3StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	s.mu.Lock()
 	s.claims++

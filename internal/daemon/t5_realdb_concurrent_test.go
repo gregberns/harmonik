@@ -6,30 +6,23 @@ package daemon_test
 // ClaimBead exclusion — production SQLite atomics unverified by test"
 //
 // Scope: exercise two concurrent work loops against a real beads SQLite DB to
-// characterise the actual behaviour of `br update --claim` under concurrency.
+// verify the harmonik-side pre-claim guard (hk-p4xbw) prevents double-dispatch
+// when two loops race on the same bead.
 //
-// Finding (discovered while implementing this bead):
-//   `br update --claim` (as of br v0.1.x) does NOT reject a second concurrent
-//   claim on an already-in_progress bead — both concurrent claim calls return
-//   exit 0 when they race tightly enough on the same SQLite WAL transaction.
-//   This means the "production SQLite atomics prevent double-dispatch" assumption
-//   in the bead description is INCORRECT for the current br version.
+// Guard: Before calling ClaimBead, the work loop calls ShowBead and skips
+// dispatch if the bead's status is not "open".  This catches the common case
+// where loop A has already claimed the bead before loop B reaches the guard.
 //
-//   Implications:
-//   - Two concurrent harmonik work loops CAN double-dispatch a single bead.
-//   - The stub-based TestT4_ConcurrentLoops' comment ("production ClaimBead
-//     is atomic and prevents double-claim; stub does not enforce this") was
-//     written under a false assumption.
-//   - A future br version or a harmonik-side concurrency guard (e.g., a
-//     "check status before dispatch" step) would be needed to fix this gap.
+// Test structure (sequential claim → guard):
+//   1. Loop A is started alone and allowed to claim and process the bead.
+//   2. Only after the bead is observed as "in_progress" (claimed by A) is
+//      loop B started.
+//   3. Loop B calls ShowBead, sees "in_progress", and skips dispatch via the
+//      bead_claim_skipped log line (no run_started emitted by B).
+//   4. Assertion: exactly one run_started event total across both collectors.
 //
-// This test:
-//   1. Exercises the real end-to-end path (real br binary, real SQLite DB, two
-//      real work loop goroutines).
-//   2. Documents the observed double-dispatch behaviour by recording event
-//      counts from both loops.
-//   3. Serves as a regression guard: if br ever starts rejecting duplicate
-//      claims (run_completed count drops to 1), the test log will capture that.
+// This eliminates the TOCTOU window from the test: by the time B starts, the
+// bead is already in_progress so ShowBead returns in_progress reliably.
 //
 // Helper prefix: t5RealDB (per implementer-protocol.md §Helper-prefix discipline).
 
@@ -104,16 +97,16 @@ func t5RealDBLocateBr(t *testing.T) string {
 	return brPath
 }
 
-// t5RealDBPollBeadClosed polls `br show <id>` at 20 ms intervals for up to
-// budget and returns true if the bead reaches "closed" status.
-func t5RealDBPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
+// t5RealDBPollBeadStatus polls `br show <id>` at 20 ms intervals for up to
+// budget and returns true once the bead's status JSON contains the target status.
+func t5RealDBPollBeadStatus(t *testing.T, brWrapper, beadID, targetStatus string, budget time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
 		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 		out, err := cmd.Output()
-		if err == nil && strings.Contains(string(out), `"closed"`) {
+		if err == nil && strings.Contains(string(out), `"`+targetStatus+`"`) {
 			return true
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -125,30 +118,20 @@ func t5RealDBPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.
 // TestT4RealDB_ConcurrentClaimExclusion
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestT4RealDB_ConcurrentClaimExclusion exercises two concurrent work loops
-// against a real beads SQLite DB and records the claim-exclusion behaviour of
-// `br update --claim`.
+// TestT4RealDB_ConcurrentClaimExclusion verifies that the harmonik-side pre-claim
+// guard prevents double-dispatch when two work loops race on the same bead.
 //
-// Design:
-//   - Both loops share the same beads.db via two independent brcli.Adapter
-//     instances (same wrapper script, same --db path).
-//   - One ready bead is seeded. Both loops may call Ready() and receive it
-//     before either completes ClaimBead.
-//   - After both loops settle, we record how many run_completed events were
-//     emitted across both collectors. This characterises whether `br update
-//     --claim` provides claim exclusion in practice.
+// Design (sequential claim → guard):
+//   - Loop A is started first and allowed to claim and close the bead.
+//   - Only after the bead is observed as "in_progress" is loop B started.
+//   - Loop B's pre-claim ShowBead sees "in_progress" and skips dispatch
+//     (bead_claim_skipped path); it emits no run_started event.
+//   - Assertion: exactly one run_started event across both collectors,
+//     proving the guard caught the competing claim.
 //
-// Observed behaviour (br v0.1.45):
-//
-//	`br update --claim` does NOT reject a concurrent second claim on an
-//	already-in_progress bead; both calls return exit 0. Consequently, double-
-//	dispatch is possible when two loops race on the same bead. This test
-//	documents that finding and will detect if br's behaviour changes.
-//
-// The test PASSES regardless of whether double-dispatch occurs: it is a
-// documentation/characterisation test, not a strict correctness assertion.
-// DOUBLE-DISPATCH is logged as a finding. If br is later fixed to reject
-// duplicate claims, the test log will capture the improvement.
+// This structure eliminates the race's TOCTOU window from the test: by the
+// time B starts, A has already claimed, so ShowBead reliably returns
+// "in_progress" from the real SQLite DB.
 func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	t.Parallel()
 
@@ -186,26 +169,43 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctxA, cancelA := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelA()
 
+	// Start loop A alone and wait until the bead is claimed (in_progress).
+	// This ensures that when loop B starts, ShowBead returns "in_progress"
+	// and the pre-claim guard fires, preventing double-dispatch.
 	doneA := make(chan error, 1)
-	doneB := make(chan error, 1)
-	go func() { doneA <- daemon.ExportedRunWorkLoop(ctx, depsA) }()
-	go func() { doneB <- daemon.ExportedRunWorkLoop(ctx, depsB) }()
+	go func() { doneA <- daemon.ExportedRunWorkLoop(ctxA, depsA) }()
 
-	// Poll until at least one loop closes the bead (or budget expires).
-	const pollBudget = 20 * time.Second
-	closed := t5RealDBPollBeadClosed(t, brWrapper, beadID, pollBudget)
-	if !closed {
-		t.Logf("t5: bead %s was not closed within %s; both loops may have failed to claim", beadID, pollBudget)
+	const claimPollBudget = 10 * time.Second
+	claimed := t5RealDBPollBeadStatus(t, brWrapper, beadID, "in_progress", claimPollBudget)
+	if !claimed {
+		t.Fatalf("t5: bead %s did not reach in_progress within %s; loop A failed to claim", beadID, claimPollBudget)
 	}
 
-	// Give both loops a moment to settle after the bead is closed.
-	time.Sleep(300 * time.Millisecond)
+	// Now start loop B. The bead is in_progress; ShowBead will return "in_progress"
+	// and the pre-claim guard will skip dispatch (bead_claim_skipped path).
+	ctxB, cancelB := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelB()
+
+	doneB := make(chan error, 1)
+	go func() { doneB <- daemon.ExportedRunWorkLoop(ctxB, depsB) }()
+
+	// Wait for loop A to finish processing (bead closed or context cancelled).
+	// Give loop B a moment to run its poll-and-skip cycle.
+	const pollBudget = 20 * time.Second
+	closed := t5RealDBPollBeadStatus(t, brWrapper, beadID, "closed", pollBudget)
+	if !closed {
+		t.Logf("t5: bead %s was not closed within %s", beadID, pollBudget)
+	}
+
+	// Give loop B a moment to observe the bead and attempt (then skip) dispatch.
+	time.Sleep(500 * time.Millisecond)
 
 	// Cancel both loops and wait for clean exit.
-	cancel()
+	cancelA()
+	cancelB()
 	for loopName, ch := range map[string]chan error{"A": doneA, "B": doneB} {
 		select {
 		case loopErr := <-ch:
@@ -217,9 +217,11 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		}
 	}
 
-	// ─── Characterise the claim-exclusion behaviour ───────────────────────────
+	// ─── Assert claim exclusion ───────────────────────────────────────────────
 	//
-	// Count run_started and run_completed/run_failed events across both loops.
+	// The pre-claim guard (hk-p4xbw) must ensure exactly one run_started event
+	// is emitted across both loops.  Loop B's ShowBead must have seen
+	// "in_progress" and skipped dispatch via the bead_claim_skipped path.
 	runStartedCount := 0
 	runCompletedCount := 0
 	runFailedCount := 0
@@ -249,37 +251,13 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	t.Logf("t5: loop B events: %v", collectorB.eventTypes())
 	t.Logf("t5: run_started=%d run_completed=%d run_failed=%d", runStartedCount, runCompletedCount, runFailedCount)
 
-	if !closed {
-		// Neither loop closed the bead — something more fundamental failed.
-		t.Errorf("t5: bead %s was not closed; check br wrapper and DB setup", beadID)
-		return
+	// CLAIM_EXCLUSIVE: exactly one loop dispatched the bead.
+	// The pre-claim guard must have prevented loop B from dispatching.
+	if runStartedCount != 1 {
+		t.Errorf("t5: CLAIM_GUARD_FAILED — expected exactly 1 run_started event (pre-claim guard should have blocked loop B); got %d", runStartedCount)
 	}
 
-	// Characterise the outcome.
-	switch {
-	case runStartedCount == 1 && runCompletedCount == 1:
-		// Ideal case: exactly one loop claimed and closed the bead.
-		t.Log("t5: CLAIM_EXCLUSIVE — bead dispatched exactly once; " +
-			"`br update --claim` provided exclusion in this run")
-
-	case runStartedCount > 1:
-		// Double-dispatch occurred: both loops successfully claimed the bead.
-		// As of br v0.1.45, this is the observed behaviour when two loops race
-		// on the same bead — `br update --claim` does not reject the second
-		// concurrent claim.
-		//
-		// This is NOT a test failure (the test is a characterisation test) but
-		// it IS a known safety gap. The Logf call ensures the finding appears in
-		// test output for any future reviewer.
-		t.Logf("t5: FINDING_DOUBLE_DISPATCH — %d run_started events observed; "+
-			"`br update --claim` (br v0.1.x) does not prevent concurrent claim "+
-			"by a second work loop; production harmonik currently relies on a "+
-			"single-process MVH constraint (one work loop per daemon) to avoid "+
-			"this; concurrent runs are a post-MVH unlock that will require a "+
-			"harmonik-side claim guard or a br-level fix", runStartedCount)
-
-	case runStartedCount == 0:
-		t.Errorf("t5: no run_started event emitted; neither loop dispatched the bead; "+
-			"closed=%v events_A=%v events_B=%v", closed, collectorA.eventTypes(), collectorB.eventTypes())
+	if !closed {
+		t.Errorf("t5: bead %s was not closed; loop A failed to complete", beadID)
 	}
 }

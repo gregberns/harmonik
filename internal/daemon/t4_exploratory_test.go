@@ -98,6 +98,9 @@ func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	return []core.BeadRecord{{BeadID: id}}, nil
 }
 
+func (s *t4StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
 func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -738,6 +741,10 @@ func (r *t4RequeueLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) 
 	return r.inner.Ready(ctx)
 }
 
+func (r *t4RequeueLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return r.inner.ShowBead(ctx, id)
+}
+
 func (r *t4RequeueLedger) ClaimBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {
 	return r.inner.ClaimBead(ctx, dir, cfg, runID, tid, id)
 }
@@ -771,6 +778,10 @@ type t4OrderLedger struct {
 
 func (o *t4OrderLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	return o.inner.Ready(ctx)
+}
+
+func (o *t4OrderLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return o.inner.ShowBead(ctx, id)
 }
 
 func (o *t4OrderLedger) ClaimBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {

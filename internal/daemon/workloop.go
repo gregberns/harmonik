@@ -137,19 +137,26 @@ type workLoopDeps struct {
 // management (Ready → claim → dispatch → close/reopen); interpretation of the
 // brief is the handler subprocess's responsibility.
 //
-// Consequence 1 — no pre-claim body validation: the daemon dispatches a bead
-// with an empty or malformed body identically to one with a fully-populated
-// brief.  If pre-claim body validation is needed in the future, add ShowBead
-// to this interface and call it between Ready and ClaimBead.
-//
-// Consequence 2 — handler contract: the handler subprocess is responsible for
+// Consequence — handler contract: the handler subprocess is responsible for
 // calling `br show <beadID> --format json` to obtain the work spec.  For MVH,
 // the bead ID is supplied to the handler via the implementer-protocol brief
 // in the SCOPE line (i.e., as content of the prompt passed by the operator to
 // claude).  Programmatic injection of the bead ID (e.g. a HARMONIK_BEAD_ID
 // env var) is a post-MVH hardening task; no bead exists for that yet.
+//
+// # ShowBead — pre-claim status guard (hk-p4xbw)
+//
+// ShowBead is called between Ready and ClaimBead to confirm the bead is still
+// "open" before dispatching.  This is the harmonik-side guard against double-
+// dispatch when two concurrent work loops both observe the same bead in the
+// Ready list.  The guard has a TOCTOU window (another loop could claim between
+// Show and Claim), but this is acceptable at MaxConcurrent>1 because the claim
+// semaphore (hk-e61c3.3) serialises claims on this daemon to N at a time.
+// Cross-daemon double-dispatch (post-MVH multi-daemon) is addressed by the
+// deferred upstream br patch (option 2, out of scope for this bead).
 type beadLedger interface {
 	Ready(ctx context.Context) ([]core.BeadRecord, error)
+	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
 	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error
 	CloseBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, needsAttention bool) error
 	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
@@ -316,6 +323,38 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if tidErr != nil {
 			wg.Wait()
 			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
+		}
+
+		// Pre-claim status guard (hk-p4xbw): read the bead's current status and
+		// skip dispatch if it is no longer "open".  This is the harmonik-side
+		// guard against double-dispatch when two concurrent work loops both
+		// observe the same bead from Ready before either has claimed it.
+		//
+		// TOCTOU note: a competing loop could claim the bead in the window
+		// between ShowBead and ClaimBead below.  In that case ClaimBead still
+		// proceeds and br returns exit 0 (br v0.1.45 does not reject a second
+		// concurrent claim); the claim semaphore (hk-e61c3.3) ensures this
+		// window is narrow.  Cross-daemon double-dispatch is deferred to the
+		// upstream br patch (option 2, out of scope).
+		showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+		if showErr != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
+			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				return nil
+			}
+			continue
+		}
+		if showRecord.Status != core.CoarseStatusOpen {
+			// Bead was claimed (or otherwise transitioned) by a competing loop.
+			// Skip dispatch — the other loop owns this bead.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
+			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				return nil
+			}
+			continue
 		}
 
 		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)

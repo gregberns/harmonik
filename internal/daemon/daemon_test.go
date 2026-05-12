@@ -442,6 +442,9 @@ func TestWorkflowModeDefault_UnknownValueRejectedAtStartup(t *testing.T) {
 type wmdStubLedger struct{}
 
 func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) { return nil, nil }
+func (s *wmdStubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
 func (s *wmdStubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }

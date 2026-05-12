@@ -118,6 +118,11 @@ func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	return []core.BeadRecord{{BeadID: id}}, nil
 }
 
+func (s *stubBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	// Stub always reports "open" — pre-claim guard passes unconditionally.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
+
 func (s *stubBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
 	return nil
 }
@@ -634,6 +639,10 @@ type closeErrFixtureLedger struct {
 
 func (c *closeErrFixtureLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	return c.inner.Ready(ctx)
+}
+
+func (c *closeErrFixtureLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return c.inner.ShowBead(ctx, id)
 }
 
 func (c *closeErrFixtureLedger) ClaimBead(ctx context.Context, d string, cfg brcli.TimeoutConfig, r core.RunID, tid core.TransitionID, bid core.BeadID) error {

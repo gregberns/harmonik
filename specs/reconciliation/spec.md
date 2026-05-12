@@ -54,6 +54,7 @@ It is the concrete answer to "why we don't need a dedicated database for in-flig
 - DOT authoring details for the reconciliation workflow library (node-level policies, specific prompts) — owned by the S01 Orchestrator Core subsystem spec, post-MVH.
 - Failure-commit policy (MVH: no failure commits) — owned by [execution-model.md §4.5].
 - Agent-subprocess silent-hang detection mechanics — owned by [handler-contract.md §4.6].
+- `needs-attention`-labeled closed beads — NOT a reconciliation surface. Detectors operate on in-flight runs (RC-010); a closed bead with a `needs-attention` label is a dispatch-filter signal for the BI-013a ingestion workflow, not evidence of store divergence or an incomplete run.
 
 ## 3. Glossary
 

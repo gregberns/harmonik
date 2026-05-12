@@ -441,7 +441,7 @@ func TestWorkflowModeDefault_UnknownValueRejectedAtStartup(t *testing.T) {
 // exercise ExportedWorkLoopDeps without running the work loop.
 type wmdStubLedger struct{}
 
-func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadID, error) { return nil, nil }
+func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) { return nil, nil }
 func (s *wmdStubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }

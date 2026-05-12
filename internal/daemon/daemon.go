@@ -1,6 +1,10 @@
 package daemon
 
-import "io"
+import (
+	"io"
+
+	"github.com/gregberns/harmonik/internal/eventbus"
+)
 
 // Config holds the startup configuration for the harmonik daemon.
 //
@@ -24,14 +28,21 @@ type Config struct {
 // registry, handler registry, skill registry, policy registry) in-process
 // per AR-INV-007 and PL-020a.
 //
-// The current implementation is a stub that returns nil (unimplemented).
-// Subsystem wiring is added by follow-on beads:
-//   - hk-8mup.62 — EventBus implementation and wiring
-//   - hk-8i31.83 — RedactionRegistry + wiring
+// Step 0 wiring as of hk-8mup.62:
+//   - Instantiates the EventBus (eventbus.NewBusImpl) per EV-035.
+//
+// The RedactionRegistry (hk-8i31.83) will refactor bus construction to pass
+// the registry in; at that point NewBusImpl is superseded by a registry-aware
+// constructor.
 //
 // Spec ref: specs/process-lifecycle.md §4.6 PL-020, PL-020a, PL-005 step 0.
 func Start(_ Config) error {
 	// Step 0 (PL-005): bootstrap cross-subsystem registries.
-	// Wiring added by hk-8mup.62 (EventBus) and hk-8i31.83 (RedactionRegistry).
+
+	// Instantiate the EventBus (EV-035; hk-8mup.62).
+	// The bus is not yet Seal()ed here because subsystems that Subscribe have
+	// not yet been wired. Seal() will be called once all consumers register.
+	_ = eventbus.NewBusImpl()
+
 	return nil
 }

@@ -27,24 +27,27 @@ import (
 // `br` from PATH at startup and pass that resolved path to New. The
 // constructor parameter is for testability only — unit tests MAY substitute
 // a mock `br` binary at the injected path.
+//
+// projectDir pins the working directory of every `br` subprocess.  `br`
+// discovers the .beads database by walking up from its CWD; if projectDir is
+// empty the subprocess inherits the harmonik process's CWD, which is almost
+// certainly wrong in production (the operator launched harmonik from an
+// arbitrary directory, not the project root).  Production callers MUST supply
+// projectDir via NewForProject; test callers that use mock binaries may use
+// New (mock binaries ignore CWD).
 type Adapter struct {
-	brPath string
-	// workingDir is the directory in which every `br` subprocess runs.
-	// When non-empty, Run sets cmd.Dir to this value so that `br` discovers
-	// the correct .beads/ database relative to the project root.
-	// When empty, the subprocess inherits the process CWD (test-only).
-	workingDir string
+	brPath     string
+	projectDir string // cmd.Dir for every br subprocess; empty = inherit process CWD
 }
 
-// New returns an Adapter that invokes the `br` binary at brPath. brPath MUST
-// be a non-empty absolute path; New does NOT resolve from PATH (that is the
-// production caller's responsibility per BI-025 — see daemon startup
-// integration in process-lifecycle.md §4.2).
+// New returns an Adapter that invokes the `br` binary at brPath with no fixed
+// working directory (subprocess inherits the process CWD).
 //
-// The resulting Adapter runs every `br` subprocess in the process CWD.
-// Production callers that need br to run in a specific project directory MUST
-// use NewWithWorkingDir instead.
+// Test callers that use mock `br` binaries (which ignore CWD) SHOULD use New.
+// Production callers that need `br` to discover the correct .beads database
+// MUST use NewForProject instead.
 //
+// brPath MUST be a non-empty absolute path; New does NOT resolve from PATH.
 // Returns nil and an error if brPath is empty.
 func New(brPath string) (*Adapter, error) {
 	if brPath == "" {
@@ -53,24 +56,29 @@ func New(brPath string) (*Adapter, error) {
 	return &Adapter{brPath: brPath}, nil
 }
 
-// NewWithWorkingDir returns an Adapter that invokes the `br` binary at brPath
-// and sets cmd.Dir = workingDir on every subprocess invocation. This ensures
-// that `br` discovers the .beads/ database in the project directory regardless
-// of the daemon process CWD (hk-o1sln).
+// NewForProject returns an Adapter that invokes the `br` binary at brPath
+// with cmd.Dir set to projectDir for every subprocess.
 //
-// workingDir MUST be a non-empty absolute path pointing to the harmonik project
-// root (i.e. cfg.ProjectDir). Production callers MUST use this constructor;
-// New is retained for unit tests that do not exercise path-dependent behaviour.
+// `br` discovers the .beads database by walking up from its working directory.
+// Without a pinned CWD, `br` walks from whatever directory harmonik was
+// launched from (often /, /tmp, or a developer's home — never the project
+// root). NewForProject pins cmd.Dir so that `br` always finds the .beads
+// database under projectDir, regardless of where the operator started harmonik.
 //
-// Returns nil and an error if brPath or workingDir is empty.
-func NewWithWorkingDir(brPath, workingDir string) (*Adapter, error) {
+// Production callers MUST use NewForProject.  Test callers that use mock `br`
+// binaries (which do not walk for .beads) MAY use New.
+//
+// brPath MUST be a non-empty absolute path.  projectDir MUST be a non-empty
+// absolute path to the harmonik project root.
+// Returns nil and an error if either argument is empty.
+func NewForProject(brPath, projectDir string) (*Adapter, error) {
 	if brPath == "" {
-		return nil, errors.New("brcli.NewWithWorkingDir: brPath must be non-empty; production callers must resolve br from PATH at startup")
+		return nil, errors.New("brcli.NewForProject: brPath must be non-empty; production callers must resolve br from PATH at startup")
 	}
-	if workingDir == "" {
-		return nil, errors.New("brcli.NewWithWorkingDir: workingDir must be non-empty; pass cfg.ProjectDir")
+	if projectDir == "" {
+		return nil, errors.New("brcli.NewForProject: projectDir must be non-empty; production callers must supply the project root directory")
 	}
-	return &Adapter{brPath: brPath, workingDir: workingDir}, nil
+	return &Adapter{brPath: brPath, projectDir: projectDir}, nil
 }
 
 // Result carries the captured outputs of a single `br` invocation.
@@ -133,13 +141,12 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	//nolint:gosec // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input.
 	cmd := exec.CommandContext(ctx, a.brPath, args...)
 
-	// Set the subprocess working directory so that `br` discovers the correct
-	// .beads/ database in the project root rather than the daemon's process CWD.
-	// When workingDir is empty the subprocess inherits the process CWD (test-only
-	// callers constructed via New; production callers MUST use NewWithWorkingDir).
-	// Fix: hk-o1sln.
-	if a.workingDir != "" {
-		cmd.Dir = a.workingDir
+	// Pin the working directory to the project root so that `br` discovers the
+	// .beads database under projectDir regardless of where the harmonik process
+	// was launched.  When projectDir is empty (test callers using New) the field
+	// is left unset and the subprocess inherits the process CWD.
+	if a.projectDir != "" {
+		cmd.Dir = a.projectDir
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer

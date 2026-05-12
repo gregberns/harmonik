@@ -210,6 +210,32 @@ func smokeFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budg
 	return false
 }
 
+// smokeFixturePollRunTerminal polls the JSONL log at jsonlPath for a
+// run_completed or run_failed event at 10 ms intervals for up to budget.
+//
+// The polling exists because the work loop emits run_completed/run_failed
+// AFTER CloseBead returns — so if the test cancels the context immediately
+// on seeing the bead "closed" (which happens when CloseBead's br subprocess
+// commits to SQLite), the loop may be killed mid-run before the event is
+// written.  Waiting for the terminal event here ensures the loop has fully
+// returned from CloseBead (or ReopenBead) before the context is cancelled,
+// avoiding the pre-existing race (hk-c1ln2 fix).
+func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		lines := smokeFixtureReadJSONLLines(t, jsonlPath)
+		for _, line := range lines {
+			if strings.Contains(line, string(core.EventTypeRunCompleted)) ||
+				strings.Contains(line, string(core.EventTypeRunFailed)) {
+				return true
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TestMVHSmoke — end-to-end happy path
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,10 +294,23 @@ func TestMVHSmoke(t *testing.T) {
 		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
-	// Poll until the bead is closed (10 ms interval, 20 s budget).
-	// The work loop poll cadence is 2 s; budget gives 10× headroom.
+	// Poll until the bead is closed AND a run_completed/run_failed event appears
+	// in the JSONL log (10 ms interval, 20 s budget).
+	//
+	// Two-phase poll rationale: the work loop commits to SQLite (bead→closed) as
+	// part of CloseBead, then emits run_completed immediately after.  If we cancel
+	// the context the instant we see "closed" in SQLite, the loop may be mid-way
+	// through CloseBead (br subprocess still running inside RunWithTimeout's
+	// select); cancellation then kills that subprocess and returns BrUnavailable
+	// instead of BrOK, causing run_failed to be emitted and the test to fail.
+	// Waiting for the terminal JSONL event ensures the full CloseBead cycle has
+	// finished before we cancel (hk-c1ln2).
 	const pollBudget = 20 * time.Second
 	closed := smokeFixturePollBeadClosed(t, brWrapper, beadID, pollBudget)
+	if closed {
+		// Give the work loop time to emit run_completed after CloseBead returns.
+		_ = smokeFixturePollRunTerminal(t, jsonlPath, 5*time.Second)
+	}
 
 	// Stop the work loop by cancelling the context.
 	loopCancel()

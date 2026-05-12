@@ -103,6 +103,12 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 	//nolint:gosec,contextcheck // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input. context.Background() is intentional: prevents Go's auto-SIGKILL-on-cancel so the HC-018 manual SIGTERM→SIGKILL grace path (BI-025c) owns termination.
 	cmd := exec.CommandContext(context.Background(), a.brPath, args...)
 
+	// Pin working directory to the project root so `br` discovers the correct
+	// .beads database (same rationale as in Run; hk-c1ln2 fix).
+	if a.projectDir != "" {
+		cmd.Dir = a.projectDir
+	}
+
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf

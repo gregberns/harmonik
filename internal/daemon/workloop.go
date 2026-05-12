@@ -109,9 +109,12 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter) (workLoopDeps
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.ProjectDir is empty; required for worktree creation")
 	}
 
-	adapter, err := brcli.NewWithWorkingDir(cfg.BrPath, cfg.ProjectDir)
+	// NewForProject pins cmd.Dir to cfg.ProjectDir so `br` discovers the
+	// .beads database under the project root, not wherever the operator
+	// launched harmonik from (hk-c1ln2: root-cause fix for silent no-claim).
+	adapter, err := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
 	if err != nil {
-		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: brcli.NewWithWorkingDir: %w", err)
+		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: brcli.NewForProject: %w", err)
 	}
 
 	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)
@@ -171,7 +174,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			// Non-fatal: wait and retry.
+			// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
+			// misconfiguration (hk-c1ln2: silent-failure fix).
+			fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
 				return nil
 			}
@@ -203,10 +208,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)
 		if claimErr != nil {
-			// Claim conflict or transient error — try next poll cycle.
+			// Claim conflict or transient error — surface to stderr and retry.
 			if ctx.Err() != nil {
 				return nil
 			}
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
 				return nil
 			}
@@ -220,6 +226,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		headSHA, headErr := resolveHEAD(ctx, deps.projectDir)
 		if headErr != nil {
 			// Worktree creation failed — reopen the bead so it can be retried.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: resolveHEAD for bead %s: %v (reopening)\n", beadID, headErr)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("resolve HEAD failed: %v", headErr))
@@ -234,6 +241,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		wtErr := workspace.CreateWorktree(ctx, deps.projectDir, runID.String(), headSHA, workspace.NoWorktreeRootOverride())
 		if wtErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("create worktree failed: %v", wtErr))
@@ -261,7 +269,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 		sess, watcher, launchErr := deps.h.Launch(ctx, spec)
 		if launchErr != nil {
-			// Launch failure — reopen the bead.
+			// Launch failure — reopen the bead and surface to stderr.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n", beadID, runID.String(), launchErr)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("launch error: %v", launchErr))
@@ -410,7 +419,7 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
+	_ = bus.Emit(ctx, core.EventTypeRunStarted, b)
 }
 
 func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string) {
@@ -428,5 +437,5 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 	if !success {
 		eventType = core.EventTypeRunFailed
 	}
-	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+	_ = bus.Emit(ctx, eventType, b)
 }

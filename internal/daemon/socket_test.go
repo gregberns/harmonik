@@ -167,6 +167,31 @@ func socketFixtureWaitReady(t *testing.T, sockPath string) {
 	t.Fatalf("socketFixtureWaitReady: socket at %q not ready within 5s", sockPath)
 }
 
+// socketFixtureWaitMode polls os.Stat(sockPath) at 1 ms intervals for up to
+// budget until the socket's permission bits equal wantMode.
+//
+// This is required because RunSocketListener calls os.Chmod BEFORE starting
+// the accept loop, but a dialled connection can succeed at the kernel level
+// immediately after ln.Listen returns (before Chmod runs). Polling for the
+// mode eliminates the race between socketFixtureWaitReady returning and the
+// mode check in TestRunSocketListener_BindsAndSetsMode.
+func socketFixtureWaitMode(t *testing.T, sockPath string, wantMode os.FileMode, budget time.Duration) os.FileMode {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	var got os.FileMode
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(sockPath)
+		if err == nil {
+			got = info.Mode().Perm()
+			if got == wantMode {
+				return got
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return got
+}
+
 // TestRunSocketListener_BindsAndSetsMode verifies that RunSocketListener
 // creates a socket at sockPath and sets its permissions to 0600.
 func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
@@ -177,6 +202,14 @@ func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
 	socketFixtureStartListener(t, sockPath, h)
 	socketFixtureWaitReady(t, sockPath)
 
+	// Poll for the expected mode rather than asserting immediately.
+	// RunSocketListener calls os.Chmod synchronously before its accept loop,
+	// but a kernel-level connection (which socketFixtureWaitReady detects)
+	// can succeed before Chmod runs — creating a race between "socket is
+	// dialable" and "mode has been set".  Polling resolves the race.
+	const wantMode = os.FileMode(0o600)
+	got := socketFixtureWaitMode(t, sockPath, wantMode, 500*time.Millisecond)
+
 	info, err := os.Stat(sockPath)
 	if err != nil {
 		t.Fatalf("Stat socket: %v", err)
@@ -184,8 +217,7 @@ func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
 	if info.Mode()&os.ModeSocket == 0 {
 		t.Errorf("socket path %q is not a Unix domain socket (mode=%v)", sockPath, info.Mode())
 	}
-	const wantMode = os.FileMode(0o600)
-	if got := info.Mode().Perm(); got != wantMode {
+	if got != wantMode {
 		t.Errorf("socket mode = %04o, want %04o", got, wantMode)
 	}
 }

@@ -28,6 +28,16 @@ func readyFixtureWithLabelsJSON() string {
 		`]`
 }
 
+// readyFixtureNeedsAttentionJSON returns a br ready response with two beads:
+// one carrying needs-attention (must be excluded) and one without (must be
+// included). Used to verify BI-013a exclusion at adapter read time.
+func readyFixtureNeedsAttentionJSON() string {
+	return `[` +
+		`{"id":"hk-7om2q.20","title":"Bead needing attention","description":"Per BI-013a.","status":"open","priority":2,"issue_type":"task","labels":["needs-attention","area:brcli"]},` +
+		`{"id":"hk-7om2q.21","title":"Normal ready bead","description":"Per BI-013a.","status":"open","priority":2,"issue_type":"task","labels":["area:brcli"]}` +
+		`]`
+}
+
 // readyFixtureEmptyJSON returns a br ready response with an empty array
 // (no ready beads). This is a valid result and MUST NOT be an error.
 func readyFixtureEmptyJSON() string {
@@ -203,5 +213,53 @@ func TestReadyLabelsSurface(t *testing.T) {
 	// Labels may be nil or empty for a bead with no labels — both are acceptable.
 	if len(records[1].Labels) != 0 {
 		t.Errorf("records[1].Labels = %v; want empty", records[1].Labels)
+	}
+}
+
+// TestReadyNeedsAttentionExcluded verifies BI-013a: beads carrying the
+// needs-attention label MUST be excluded from the dispatchable set even when
+// status is open. The adapter applies the exclusion at read time.
+func TestReadyNeedsAttentionExcluded(t *testing.T) {
+	jsonStr := readyFixtureNeedsAttentionJSON()
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	records, err := adapter.Ready(context.Background())
+	if err != nil {
+		t.Fatalf("Ready: unexpected error: %v", err)
+	}
+
+	// Only the bead without needs-attention must be returned.
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d; want 1 (needs-attention bead must be excluded)", len(records))
+	}
+	if records[0].BeadID != core.BeadID("hk-7om2q.21") {
+		t.Errorf("records[0].BeadID = %q; want %q", records[0].BeadID, "hk-7om2q.21")
+	}
+}
+
+// TestReadyNeedsAttentionOnlyExcludesAll verifies BI-013a with a payload that
+// contains only needs-attention beads: the result must be an empty (non-nil)
+// slice, not an error.
+func TestReadyNeedsAttentionOnlyExcludesAll(t *testing.T) {
+	// Single bead with needs-attention; should yield empty dispatchable set.
+	jsonStr := `[{"id":"hk-7om2q.22","title":"Needs triage","status":"open","priority":2,"issue_type":"task","labels":["needs-attention"]}]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	records, err := adapter.Ready(context.Background())
+	if err != nil {
+		t.Fatalf("Ready: unexpected error when all beads filtered: %v", err)
+	}
+	if len(records) != 0 {
+		t.Errorf("len(records) = %d; want 0 (all beads carry needs-attention)", len(records))
 	}
 }

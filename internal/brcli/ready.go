@@ -34,18 +34,28 @@ type brReadyItem struct {
 	Labels    []string `json:"labels"`
 }
 
+// labelNeedsAttention is the Beads label that marks a bead as requiring
+// operator triage before re-dispatch. Beads carrying this label MUST be
+// excluded from the ready-work set per BI-013a, even when coarse_status is
+// open. The label is set by the daemon when a review-loop run hits the
+// iteration cap (execution-model.md §4.3) or by operator-drain semantics
+// (operator-nfr.md §4.3).
+const labelNeedsAttention = "needs-attention"
+
 // Ready invokes `br ready --format json` and returns a BeadRecord slice for
 // every bead whose dependencies are satisfied and whose status is `open`.
 // Each record carries the bead's labels array — including any workflow:<mode>
 // label per BI-009a — so the daemon's claim path can apply per-task
 // workflow-mode overrides at dispatch time (BI-013).
 //
-// Spec ref: specs/beads-integration.md §4.5 BI-013.
+// Spec refs: specs/beads-integration.md §4.5 BI-013, BI-013a.
 //
 // The ready-work query is the input to the daemon dispatch loop. `br ready`
 // natively excludes `draft`-status beads (the harmonik-side readiness
 // mechanism for loaded-but-not-yet-dispatchable beads) and beads in
-// `deferred` or `tombstone` status, so no post-filtering is required.
+// `deferred` or `tombstone` status. Beads carrying a `needs-attention` label
+// are additionally excluded at adapter read time per BI-013a so the daemon's
+// dispatch loop never observes them as ready.
 //
 // An empty slice is a valid result (no ready beads) and is NOT an error.
 //
@@ -100,6 +110,20 @@ func (a *Adapter) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 				"brcli.Ready: malformed br ready output: missing id field in element: %w",
 				BrSchemaMismatch,
 			)
+		}
+		// Per BI-013a: exclude beads carrying the needs-attention label from the
+		// dispatchable set. The label asserts operator triage is required; its
+		// presence is checked at adapter read time so the daemon's dispatch loop
+		// never observes these beads as ready.
+		excluded := false
+		for _, lbl := range item.Labels {
+			if lbl == labelNeedsAttention {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
 		}
 		// br ready does not return full edges; Edges is nil per the Edges carve-out
 		// analogous to br list (callers needing full edges must call ShowBead).

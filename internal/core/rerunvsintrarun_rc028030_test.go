@@ -31,6 +31,7 @@ func rc77RunFixture(t *testing.T, runID RunID) Run {
 		WorkflowID:      WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006000")),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("/projects/my-project"),
+		WorkflowMode:    WorkflowModeSingle,
 		BeadID:          &beadID,
 		State:           stateID,
 		Context:         map[string]any{},

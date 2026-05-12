@@ -37,6 +37,7 @@ func guardsGatesFixtureRun(t *testing.T) *Run {
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: WorkflowVersion("0.1.0"),
 		Input:           WorkspaceRef("ws-ref-1"),
+		WorkflowMode:    WorkflowModeSingle,
 		State:           StateID(uuid.Must(uuid.NewV7())),
 		Context:         make(map[string]any),
 		StartTime:       time.Now(),

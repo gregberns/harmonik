@@ -38,6 +38,14 @@ type Run struct {
 	// execution-model.md §6.1 Run.input).
 	Input WorkspaceRef
 
+	// WorkflowMode is the dispatch shape for this run, resolved once at claim time
+	// per §4.3.EM-012a and sealed into the record; immutable for the run's lifetime
+	// (execution-model.md §4.3.EM-012; §6.1 Run.workflow_mode).
+	// Defaults to WorkflowModeSingle when no bead label, project config, or daemon
+	// default specifies otherwise (§4.3.EM-012a built-in fallback).
+	// Valid values: WorkflowModeSingle, WorkflowModeReviewLoop, WorkflowModeDot.
+	WorkflowMode WorkflowMode
+
 	// BeadID carries the bead identifier for bead-bound runs (beads-integration.md §4 BI-017).
 	// A bead-bound Run carries a non-nil non-empty BeadID; non-bead-bound Runs carry nil.
 	// The field is never set to an empty string — set-but-empty is a validation error.
@@ -65,6 +73,7 @@ type Run struct {
 //   - WorkflowID is non-empty
 //   - WorkflowVersion is non-empty
 //   - Input is non-empty
+//   - WorkflowMode is one of the declared constants (single, review-loop, dot)
 //   - State is not the zero UUID (current state must be set per EM-012)
 //   - BeadID, when non-nil, dereferences to a non-empty value
 //   - Context is non-nil (an empty map is valid; nil is not)
@@ -81,6 +90,9 @@ func (r Run) Valid() bool {
 		return false
 	}
 	if r.Input == "" {
+		return false
+	}
+	if !r.WorkflowMode.Valid() {
 		return false
 	}
 	if uuid.UUID(r.State) == uuid.Nil {

@@ -32,6 +32,7 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +57,7 @@ func runFixtureMinimalRun(t *testing.T) Run {
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("workspace://project/fixture-input"),
+		WorkflowMode:    WorkflowModeSingle,
 		BeadID:          nil,
 		State:           StateID(uuid.Must(uuid.NewV7())),
 		Context:         map[string]any{},
@@ -76,6 +78,7 @@ func runFixtureTerminalRun(t *testing.T) Run {
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: WorkflowVersion("2.3.1"),
 		Input:           WorkspaceRef("workspace://project/terminal-input"),
+		WorkflowMode:    WorkflowModeSingle,
 		BeadID:          &beadID,
 		State:           StateID(uuid.Must(uuid.NewV7())),
 		Context:         map[string]any{"status": "completed"},
@@ -105,10 +108,13 @@ func runFixtureEm012SpecContent(t *testing.T) string {
 	}
 	content := string(raw)
 
-	const anchor = "EM-012"
+	// Search for the requirement heading "#### EM-012" to avoid matching the
+	// anchor in cross-references or glossary entries that precede the heading
+	// in the spec (e.g. "(see §4.3.EM-012)" in the §3 glossary).
+	const anchor = "#### EM-012"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
-		t.Fatalf("EM-012 anchor not found in %s; the EM-012 requirement may have been removed or renamed", specPath)
+		t.Fatalf("EM-012 heading not found in %s; the EM-012 requirement may have been removed or renamed", specPath)
 	}
 	para := content[idx:]
 	// Clip at the next subsection header so we don't bleed into unrelated requirements.
@@ -130,12 +136,13 @@ func runFixtureEm012SpecContent(t *testing.T) string {
 //   - "workflow_id"       — resolved workflow
 //   - "workflow_version"  — pinned version at dispatch time
 //   - "input"             — workspace reference (NOT inline payload)
+//   - "workflow_mode"     — dispatch shape; resolved at claim time; defaults to single
 //   - "state"             — current run state
 //   - "context"           — shared key-value map
 //   - "start_time"        — RFC 3339 wall clock at dispatch
 //   - "end_time"          — optional; set on terminal transition
 //
-// Requirement-traceable bead: hk-b3f.12.
+// Requirement-traceable beads: hk-b3f.12, hk-7om2q.3.
 func TestRunEM012_SpecContainsRequiredFields(t *testing.T) {
 	t.Parallel()
 
@@ -149,6 +156,7 @@ func TestRunEM012_SpecContainsRequiredFields(t *testing.T) {
 		{"workflow_id", "EM-012 must name workflow_id (the resolved workflow)"},
 		{"workflow_version", "EM-012 must name workflow_version (pinned at dispatch)"},
 		{"input", "EM-012 must name input (workspace reference)"},
+		{"workflow_mode", "EM-012 must name workflow_mode (dispatch shape; resolved at claim time; defaults to single)"},
 		{"state", "EM-012 must name state (current run state)"},
 		{"context", "EM-012 must name context (shared key-value map)"},
 		{"start_time", "EM-012 must name start_time (RFC 3339 wall clock at dispatch)"},
@@ -408,6 +416,151 @@ func TestRunEM012_InputMustBeWorkspaceRefNotInlinePayload(t *testing.T) {
 	var ref WorkspaceRef = r.Input
 	if ref == "" {
 		t.Error("EM-012: Run.Input must be a non-empty WorkspaceRef (workspace reference, not inline payload)")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Forward-doc marker
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WorkflowMode field sensors (T-WM-003 / hk-7om2q.3)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// runFixtureWMRun returns a minimal valid Run with WorkflowMode set to the
+// supplied mode. Used by T-WM-003 sensors.
+func runFixtureWMRun(t *testing.T, mode WorkflowMode) Run {
+	t.Helper()
+	return Run{
+		RunID:           RunID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowVersion: WorkflowVersion("1.0.0"),
+		Input:           WorkspaceRef("workspace://project/wm-input"),
+		WorkflowMode:    mode,
+		State:           StateID(uuid.Must(uuid.NewV7())),
+		Context:         map[string]any{},
+		StartTime:       time.Now(),
+	}
+}
+
+// TestRunWM003_WorkflowModeSetAtClaimTime verifies that a Run constructed with
+// a WorkflowMode value is structurally valid per Run.Valid() for all three
+// declared modes (single, review-loop, dot).
+//
+// EM-012 (execution-model.md §4.3): "workflow_mode ∈ {single, review-loop, dot}
+// (resolved at claim time per §4.3.EM-012a; immutable for the run's lifetime;
+// defaults to `single`)".
+//
+// At the record level, "resolved at claim time" means the field MUST be set
+// before the Run is considered valid; Valid() returns false for an unset
+// (empty-string) WorkflowMode.
+//
+// Requirement-traceable bead: hk-7om2q.3.
+func TestRunWM003_WorkflowModeSetAtClaimTime(t *testing.T) {
+	t.Parallel()
+
+	modes := []struct {
+		mode WorkflowMode
+		name string
+	}{
+		{WorkflowModeSingle, "single"},
+		{WorkflowModeReviewLoop, "review-loop"},
+		{WorkflowModeDot, "dot"},
+	}
+
+	for _, tc := range modes {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := runFixtureWMRun(t, tc.mode)
+			if !r.Valid() {
+				t.Errorf("Run.Valid() = false for WorkflowMode=%q, want true (T-WM-003: mode must be valid at claim time)", tc.mode)
+			}
+			if r.WorkflowMode != tc.mode {
+				t.Errorf("Run.WorkflowMode = %q, want %q", r.WorkflowMode, tc.mode)
+			}
+		})
+	}
+}
+
+// TestRunWM003_EmptyWorkflowModeIsInvalid verifies that a Run with an unset
+// (zero-value / empty-string) WorkflowMode is rejected by Run.Valid().
+//
+// EM-012: workflow_mode is a required field; its absence at claim time is an
+// authoring error. The built-in fallback to `single` is a resolution rule for
+// the daemon's claim path (§4.3.EM-012a), not a validity exemption for the
+// Run record itself.
+//
+// Requirement-traceable bead: hk-7om2q.3.
+func TestRunWM003_EmptyWorkflowModeIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	r := runFixtureWMRun(t, WorkflowModeSingle)
+	r.WorkflowMode = WorkflowMode("") // unset — as if claim path forgot to populate
+	if r.Valid() {
+		t.Error("Run.Valid() = true with empty WorkflowMode, want false (T-WM-003: mode must be set at claim time)")
+	}
+}
+
+// TestRunWM003_UnknownWorkflowModeIsInvalid verifies that a Run carrying an
+// unrecognised WorkflowMode string is rejected by Run.Valid().
+//
+// EM-012a: "unknown-mode labels treat tier 1 as absent and emit bead_label_conflict".
+// At the record level, an unknown mode that somehow reaches the Run record is
+// an authoring error and must fail validation.
+//
+// Requirement-traceable bead: hk-7om2q.3.
+func TestRunWM003_UnknownWorkflowModeIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	r := runFixtureWMRun(t, WorkflowModeSingle)
+	r.WorkflowMode = WorkflowMode("unknown-mode")
+	if r.Valid() {
+		t.Error("Run.Valid() = true with unknown WorkflowMode, want false (T-WM-003: unknown mode must be invalid)")
+	}
+}
+
+// TestRunWM003_WorkflowModeJSONRoundTrip verifies that WorkflowMode
+// round-trips correctly through JSON marshal/unmarshal when embedded in a Run.
+//
+// EM-012 §6.1: the Run record is a persisted schema; WorkflowMode must
+// serialise to its canonical string form and deserialise back to the same
+// typed value without loss.
+//
+// Requirement-traceable bead: hk-7om2q.3.
+func TestRunWM003_WorkflowModeJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	modes := []WorkflowMode{
+		WorkflowModeSingle,
+		WorkflowModeReviewLoop,
+		WorkflowModeDot,
+	}
+
+	for _, mode := range modes {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			orig := runFixtureWMRun(t, mode)
+
+			data, err := json.Marshal(orig)
+			if err != nil {
+				t.Fatalf("json.Marshal(Run{WorkflowMode:%q}): %v", mode, err)
+			}
+
+			var got Run
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+
+			if got.WorkflowMode != mode {
+				t.Errorf("round-trip: got WorkflowMode=%q, want %q (T-WM-003: JSON must preserve mode)", got.WorkflowMode, mode)
+			}
+			if !got.WorkflowMode.Valid() {
+				t.Errorf("round-trip: WorkflowMode.Valid() = false for %q after unmarshal", got.WorkflowMode)
+			}
+		})
 	}
 }
 

@@ -58,6 +58,7 @@ func sensorBeadIDFixtureMakeRun(t *testing.T, id core.BeadID) core.Run {
 		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: core.WorkflowVersion("1.0.0"),
 		Input:           core.WorkspaceRef("workspace://sensor/biinv002"),
+		WorkflowMode:    core.WorkflowModeSingle,
 		BeadID:          &id,
 		State:           core.StateID(uuid.Must(uuid.NewV7())),
 		Context:         map[string]any{},

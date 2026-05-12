@@ -21,6 +21,7 @@ func validRun(t *testing.T) Run {
 		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("workspace://project/input"),
+		WorkflowMode:    WorkflowModeSingle,
 		BeadID:          &beadID,
 		State:           StateID(uuid.Must(uuid.NewV7())),
 		Context:         map[string]any{},

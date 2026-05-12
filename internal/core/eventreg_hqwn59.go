@@ -32,6 +32,7 @@ func init() {
 	registerReconciliationEvents()
 	registerDaemonLifecycleEvents()
 	registerBusEvents()
+	registerReviewLoopEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors.
@@ -239,6 +240,27 @@ func registerBusEvents() {
 	mustRegister("consumer_failed", func() EventPayload { return &ConsumerFailedPayload{} })
 	mustRegister("dead_letter_enqueued", func() EventPayload { return &DeadLetterEnqueuedPayload{} })
 	mustRegister("bus_overflow", func() EventPayload { return &BusOverflowPayload{} })
+}
+
+// registerReviewLoopEvents registers all §8.1a review-loop cycle and §8.8.6
+// event payload constructors (hk-7om2q.4).
+//
+// Durability classes per §8.1a and §8.8.6 tables:
+//   - implementer_resumed        (§8.1a.1): O (ordinary — orchestrator-core lifecycle)
+//   - reviewer_launched          (§8.1a.2): O (ordinary — orchestrator-core lifecycle)
+//   - reviewer_verdict           (§8.1a.3): F (fsync-boundary — verdict gates terminal routing)
+//   - iteration_cap_hit          (§8.1a.4): O (ordinary — deliberately downgraded; see §8.1a Note)
+//   - no_progress_detected       (§8.1a.5): O (ordinary — improvement-loop early-exit signal)
+//   - review_loop_cycle_complete (§8.1a.6): F (fsync-boundary — terminal routing landmark)
+//   - bead_label_conflict        (§8.8.6):  O (ordinary — claim-path observational evidence)
+func registerReviewLoopEvents() {
+	mustRegister("implementer_resumed", func() EventPayload { return &ImplementerResumedPayload{} })
+	mustRegister("reviewer_launched", func() EventPayload { return &ReviewerLaunchedPayload{} })
+	mustRegister("reviewer_verdict", func() EventPayload { return &ReviewerVerdictPayload{} })
+	mustRegister("iteration_cap_hit", func() EventPayload { return &IterationCapHitPayload{} })
+	mustRegister("no_progress_detected", func() EventPayload { return &NoProgressDetectedPayload{} })
+	mustRegister("review_loop_cycle_complete", func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
+	mustRegister("bead_label_conflict", func() EventPayload { return &BeadLabelConflictPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

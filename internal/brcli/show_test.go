@@ -382,3 +382,31 @@ func TestShowBeadLabelsSurface(t *testing.T) {
 		t.Errorf("Labels does not contain %q; got %v", wantLabel, record.Labels)
 	}
 }
+
+// TestShowBeadDescriptionFieldName is a regression guard for hk-nmiww:
+// br show --format json always emits the bead body under the "description" key,
+// NOT "body" (--body is only a CLI alias for br create --description).
+// This test ensures the "description" JSON field round-trips through ShowBead
+// into BeadRecord.Description so future test authors do not repeat the mistake
+// of checking for a "body" key that does not exist in br show JSON output.
+func TestShowBeadDescriptionFieldName(t *testing.T) {
+	wantBody := "This is the bead body text stored via --body or --description."
+	jsonStr := `[{"id":"hk-test-desc","title":"Description field name test","description":"` + wantBody + `","status":"open","issue_type":"task","dependencies":[],"dependents":[],"parent":""}]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	record, err := adapter.ShowBead(context.Background(), core.BeadID("hk-test-desc"))
+	if err != nil {
+		t.Fatalf("ShowBead: unexpected error: %v", err)
+	}
+
+	// BeadRecord.Description MUST carry the JSON "description" field value.
+	// br show JSON never emits a "body" key; only "description" is present.
+	if record.Description != wantBody {
+		t.Errorf("Description = %q; want %q (hk-nmiww: check JSON field is \"description\", not \"body\")", record.Description, wantBody)
+	}
+}

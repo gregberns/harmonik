@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
@@ -55,6 +57,32 @@ type Config struct {
 	// Bead ref: hk-8mup.63.
 	JSONLLogPath string
 
+	// BrPath is the absolute path to the `br` CLI binary.
+	//
+	// Must be non-empty when the work loop is active (i.e., ProjectDir is set).
+	// Production callers resolve it via exec.LookPath("br") at startup.
+	// When empty the work loop is skipped (unit-test mode without a bead ledger).
+	//
+	// Bead ref: hk-ecrxy.
+	BrPath string
+
+	// HandlerBinary is the executable to spawn for each bead dispatch.
+	//
+	// When empty the work loop defaults to "claude". The exploratory-testing wave
+	// (EXPLORATORY_TESTING_PLAN.md §6) overrides this field with a twin binary
+	// path so that test runs do not consume API credits.
+	//
+	// Bead ref: hk-ecrxy.
+	HandlerBinary string
+
+	// HandlerEnv is the environment for handler subprocesses in "KEY=VALUE" form.
+	//
+	// When nil the child inherits no environment. Production callers MUST inject
+	// at minimum HARMONIK_PROJECT_HASH (lifecycle.ProvenanceEnvVar). Tests may
+	// supply a minimal environment or nil.
+	//
+	// Bead ref: hk-ecrxy.
+	HandlerEnv []string
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -198,6 +226,49 @@ func Start(cfg Config) error {
 		// Surface sweep errors as the return value only if no other errors
 		// occurred — but per bead spec, do NOT abort Start on sweep error.
 		_ = sweepErr
+	}
+
+	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
+	//
+	// AdapterRegistry: construct, register ClaudeCodeAdapter for core.AgentTypeClaudeCode,
+	// seal.  The work loop uses the registry indirectly via handler.NewHandler; the
+	// registry is not currently forwarded to the handler (post-MVH wiring adds that
+	// seam).  Construct and seal here to satisfy PL-020a composition-root ordering.
+	adapterReg := handlercontract.NewAdapterRegistry()
+	if regErr := handler.Register(adapterReg); regErr != nil {
+		return fmt.Errorf("daemon.Start: register ClaudeCodeAdapter: %w", regErr)
+	}
+	// Seal the registry immediately: no further adapters at MVH.
+	// The first ForAgent call would seal it anyway; explicit seal here makes the
+	// ordering contract observable.
+	if _, forAgentErr := adapterReg.ForAgent(core.AgentTypeClaudeCode); forAgentErr != nil {
+		// ForAgent only fails if no adapter is registered — that would be a bug
+		// in the Register call above; treat as fatal.
+		return fmt.Errorf("daemon.Start: seal adapter registry: %w", forAgentErr)
+	}
+
+	// Skip the work loop when BrPath is not configured (unit-test mode).
+	if cfg.BrPath != "" {
+		deps, depsErr := newWorkLoopDeps(cfg, bus)
+		if depsErr != nil {
+			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
+		}
+
+		// Create a context that is cancelled on SIGINT or SIGTERM so that the
+		// work loop can shut down cleanly when the operator presses Ctrl-C or
+		// sends SIGTERM.  MVH ships as a foreground binary (MVH_ROADMAP §"What
+		// we are NOT building for MVH" — no daemonization), so SIGINT/SIGTERM
+		// is the operator's only stop mechanism at this stage.
+		loopCtx, loopStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer loopStop()
+
+		loopDone := make(chan error, 1)
+		go func() {
+			loopDone <- runWorkLoop(loopCtx, deps)
+		}()
+
+		// Block until the work loop exits (either ctx cancelled or fatal error).
+		<-loopDone
 	}
 
 	return nil

@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -232,8 +231,11 @@ func TestT3_DoubleInvocation(t *testing.T) {
 	}
 
 	// Start daemon 1 in background — it will pick up the bead and block on slow handler.
+	// ctx cancellation is the stop mechanism (hk-i4mtq: converted from syscall.Kill self-signal).
+	d1Ctx, d1Cancel := context.WithCancel(context.Background())
+	defer d1Cancel()
 	d1Done := make(chan error, 1)
-	go func() { d1Done <- daemon.Start(context.Background(), cfg) }()
+	go func() { d1Done <- daemon.Start(d1Ctx, cfg) }()
 
 	// Give daemon 1 time to acquire the pidfile and claim the bead.
 	time.Sleep(500 * time.Millisecond)
@@ -255,13 +257,15 @@ func TestT3_DoubleInvocation(t *testing.T) {
 		t.Logf("T3-01: PASS — second daemon correctly rejected with ErrPidfileLocked")
 	}
 
-	// Stop daemon 1.
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	// Stop daemon 1 via context cancellation (replaces syscall.Kill self-signal per hk-i4mtq).
+	// Testing ctx cancellation IS testing the same code path as SIGINT: the production caller
+	// (cmd/harmonik/main.go) translates SIGINT → ctx.Done via signal.NotifyContext.
+	d1Cancel()
 	select {
 	case err := <-d1Done:
 		t.Logf("T3-01: daemon 1 stopped: %v", err)
 	case <-time.After(5 * time.Second):
-		t.Error("T3-01: daemon 1 did not stop within 5s after SIGINT")
+		t.Error("T3-01: daemon 1 did not stop within 5s after cancel")
 	}
 }
 
@@ -295,8 +299,13 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		HandlerBinary: slowHandler,
 	}
 
+	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq). Testing ctx
+	// cancellation IS testing the SIGINT code path: production main.go translates
+	// SIGINT → ctx.Done via signal.NotifyContext.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(context.Background(), cfg) }()
+	go func() { done <- daemon.Start(ctx, cfg) }()
 
 	// Wait for bead to be claimed (status transitions from "open" to "in_progress").
 	// Work loop poll interval is 2s; allow 15s to claim.
@@ -312,7 +321,7 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if !claimed {
-		t.Logf("T3-02: bead not claimed within 15s (bead status: %s); SIGINT anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
+		t.Logf("T3-02: bead not claimed within 15s (bead status: %s); cancelling anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
 	}
 
 	// Give the work loop time to create the worktree and launch the handler
@@ -323,24 +332,24 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 
-	// Record worktree state before SIGINT.
+	// Record worktree state before cancellation.
 	wtGlob := filepath.Join(projectDir, ".harmonik", "worktrees", "*")
 	beforeWTs, _ := filepath.Glob(wtGlob)
-	t.Logf("T3-02: worktrees before SIGINT: %v", beforeWTs)
+	t.Logf("T3-02: worktrees before cancel: %v", beforeWTs)
 
-	// Send SIGINT.
-	t.Log("T3-02: sending SIGINT")
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	// Cancel context to stop the daemon (replaces SIGINT self-signal per hk-i4mtq).
+	t.Log("T3-02: cancelling context")
+	cancel()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("T3-02: daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("T3-02: daemon.Start returned error after cancel: %v", err)
 		} else {
 			t.Log("T3-02: daemon.Start returned nil (clean)")
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("T3-02: daemon.Start did not return within 10s after SIGINT")
+		t.Error("T3-02: daemon.Start did not return within 10s after cancel")
 	}
 
 	// Check bead status after shutdown.
@@ -348,29 +357,29 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 	// FINDING if: bead is left in "in_progress" (ReopenBead calls `br reopen` which
 	// only works on closed→open; it cannot transition in_progress→open).
 	beadStatusAfter := t3FixtureBeadStatus(t, brWrapper, beadID)
-	t.Logf("T3-02: bead %s status after SIGINT+shutdown: %q", beadID, beadStatusAfter)
+	t.Logf("T3-02: bead %s status after cancel+shutdown: %q", beadID, beadStatusAfter)
 	switch beadStatusAfter {
 	case "open":
-		t.Log("T3-02: PASS — bead returned to 'open' after SIGINT mid-run")
+		t.Log("T3-02: PASS — bead returned to 'open' after cancel mid-run")
 	case "in_progress":
 		if claimed {
-			t.Log("T3-02: FINDING — bead left in 'in_progress' after SIGINT mid-run; ReopenBead uses `br reopen` (closed→open) but bead is in_progress; bead stuck — cannot be dispatched on next run")
+			t.Log("T3-02: FINDING — bead left in 'in_progress' after cancel mid-run; ReopenBead uses `br reopen` (closed→open) but bead is in_progress; bead stuck — cannot be dispatched on next run")
 		} else {
 			t.Log("T3-02: NOTE — bead in 'in_progress' but was never confirmed claimed (timing); manual investigation needed")
 		}
 	case "closed":
-		t.Log("T3-02: NOTE — bead was closed (handler finished before signal was processed)")
+		t.Log("T3-02: NOTE — bead was closed (handler finished before cancel was processed)")
 	default:
-		t.Logf("T3-02: NOTE — bead in unexpected status %q after SIGINT", beadStatusAfter)
+		t.Logf("T3-02: NOTE — bead in unexpected status %q after cancel", beadStatusAfter)
 	}
 
 	// Record worktree state after shutdown — expected: worktree left behind (known gap hk-fgdgz).
 	afterWTs, _ := filepath.Glob(wtGlob)
-	t.Logf("T3-02: worktrees after SIGINT: %v", afterWTs)
+	t.Logf("T3-02: worktrees after cancel: %v", afterWTs)
 	if len(afterWTs) > 0 {
-		t.Logf("T3-02: FINDING (expected gap hk-fgdgz) — worktree(s) left behind after SIGINT: %v", afterWTs)
+		t.Logf("T3-02: FINDING (expected gap hk-fgdgz) — worktree(s) left behind after cancel: %v", afterWTs)
 	} else if claimed {
-		t.Log("T3-02: NOTE — no worktree found after SIGINT; check workspace.WorktreePath for correct glob pattern")
+		t.Log("T3-02: NOTE — no worktree found after cancel; check workspace.WorktreePath for correct glob pattern")
 	}
 
 	// Check JSONL for run events.
@@ -382,9 +391,11 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 // T3-03: SIGTERM mid-run
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestT3_SIGTERMMidRun is the same scenario as T3-02 but with SIGTERM.
-// daemon.Start uses signal.NotifyContext(SIGINT, SIGTERM) so both should behave
-// identically from the work loop's perspective.
+// TestT3_SIGTERMMidRun is the same scenario as T3-02 but simulates a SIGTERM-driven
+// shutdown. With ctx-based stop (hk-i4mtq), both T3-02 and T3-03 cancel the context;
+// the distinction between SIGINT and SIGTERM is now solely in cmd/harmonik/main.go
+// which translates both signals to ctx.Done via signal.NotifyContext. Testing ctx
+// cancellation here covers the same work-loop code path as either signal.
 func TestT3_SIGTERMMidRun(t *testing.T) {
 	realBr := t3FixtureBrPath(t)
 	projectDir, jsonlPath := t3FixtureProjectDir(t)
@@ -405,8 +416,11 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		HandlerBinary: slowHandler,
 	}
 
+	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(context.Background(), cfg) }()
+	go func() { done <- daemon.Start(ctx, cfg) }()
 
 	// Wait for bead to be claimed (status → in_progress).
 	deadline := time.Now().Add(15 * time.Second)
@@ -421,7 +435,7 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if !claimed {
-		t.Logf("T3-03: bead not claimed within 15s (bead status: %s); SIGTERM anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
+		t.Logf("T3-03: bead not claimed within 15s (bead status: %s); cancelling anyway", t3FixtureBeadStatus(t, brWrapper, beadID))
 	}
 
 	// Give the work loop time to create the worktree and launch the slow handler.
@@ -431,44 +445,44 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 
 	wtGlob := filepath.Join(projectDir, ".harmonik", "worktrees", "*")
 	beforeWTs, _ := filepath.Glob(wtGlob)
-	t.Logf("T3-03: worktrees before SIGTERM: %v", beforeWTs)
+	t.Logf("T3-03: worktrees before cancel: %v", beforeWTs)
 
-	// Send SIGTERM (not SIGINT this time).
-	t.Log("T3-03: sending SIGTERM")
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	// Cancel context (replaces SIGTERM self-signal per hk-i4mtq).
+	t.Log("T3-03: cancelling context")
+	cancel()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("T3-03: daemon.Start returned error after SIGTERM: %v", err)
+			t.Errorf("T3-03: daemon.Start returned error after cancel: %v", err)
 		} else {
 			t.Log("T3-03: daemon.Start returned nil (clean)")
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("T3-03: daemon.Start did not return within 10s after SIGTERM")
+		t.Error("T3-03: daemon.Start did not return within 10s after cancel")
 	}
 
 	beadStatusAfter := t3FixtureBeadStatus(t, brWrapper, beadID)
-	t.Logf("T3-03: bead %s status after SIGTERM+shutdown: %q", beadID, beadStatusAfter)
+	t.Logf("T3-03: bead %s status after cancel+shutdown: %q", beadID, beadStatusAfter)
 	switch beadStatusAfter {
 	case "open":
-		t.Log("T3-03: PASS — bead returned to 'open' after SIGTERM mid-run")
+		t.Log("T3-03: PASS — bead returned to 'open' after cancel mid-run")
 	case "in_progress":
 		if claimed {
-			t.Log("T3-03: FINDING — bead left in 'in_progress' after SIGTERM mid-run; same root cause as T3-02 (ReopenBead uses closed→open semantics)")
+			t.Log("T3-03: FINDING — bead left in 'in_progress' after cancel mid-run; same root cause as T3-02 (ReopenBead uses closed→open semantics)")
 		} else {
 			t.Log("T3-03: NOTE — bead in 'in_progress' but claim not confirmed; timing issue")
 		}
 	case "closed":
-		t.Log("T3-03: NOTE — bead was closed (handler finished before signal processed)")
+		t.Log("T3-03: NOTE — bead was closed (handler finished before cancel was processed)")
 	default:
-		t.Logf("T3-03: NOTE — bead in unexpected status %q after SIGTERM", beadStatusAfter)
+		t.Logf("T3-03: NOTE — bead in unexpected status %q after cancel", beadStatusAfter)
 	}
 
 	afterWTs, _ := filepath.Glob(wtGlob)
-	t.Logf("T3-03: worktrees after SIGTERM: %v", afterWTs)
+	t.Logf("T3-03: worktrees after cancel: %v", afterWTs)
 	if len(afterWTs) > 0 {
-		t.Logf("T3-03: FINDING (expected gap hk-fgdgz) — worktree(s) left behind after SIGTERM: %v", afterWTs)
+		t.Logf("T3-03: FINDING (expected gap hk-fgdgz) — worktree(s) left behind after cancel: %v", afterWTs)
 	}
 	lines := t3FixtureReadJSONLLines(t, jsonlPath)
 	t.Logf("T3-03: JSONL line count = %d", len(lines))
@@ -512,8 +526,10 @@ func TestT3_StalePidfile(t *testing.T) {
 		BrPath:       "", // no work loop; just test pidfile acquisition
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(context.Background(), cfg) }()
+	go func() { done <- daemon.Start(ctx, cfg) }()
 
 	select {
 	case err := <-done:
@@ -524,7 +540,7 @@ func TestT3_StalePidfile(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("T3-04: daemon.Start did not return within 5s (hung?)")
-		_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		cancel() // emergency stop; replaces syscall.Kill self-signal per hk-i4mtq
 	}
 }
 
@@ -562,8 +578,10 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		BrPath:       "", // no work loop; just orphan sweep on startup
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(context.Background(), cfg) }()
+	go func() { done <- daemon.Start(ctx, cfg) }()
 
 	select {
 	case err := <-done:
@@ -574,7 +592,7 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("T3-05: daemon.Start hung for 5s")
-		_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+		cancel() // emergency stop; replaces syscall.Kill self-signal per hk-i4mtq
 	}
 
 	// Check JSONL for daemon_orphan_sweep_completed with locks_cleared > 0.

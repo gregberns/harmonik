@@ -19,7 +19,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -194,7 +193,7 @@ func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_10BeadSequentialDrain(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// Seed 10 beads with varied ASCII bodies
@@ -210,19 +209,21 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 120*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-1: all_closed=%v elapsed=%.2fs per_bead=%.2fs", allClosed, elapsed.Seconds(), elapsed.Seconds()/10)
@@ -257,7 +258,7 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 // as the maximum achievable via br create --body.
 
 func TestT6_1MBBeadBody(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// Generate a 100KB body (br's max; 1MB is rejected by br validation).
@@ -306,19 +307,21 @@ func TestT6_1MBBeadBody(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 60*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-2: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
@@ -332,7 +335,7 @@ func TestT6_1MBBeadBody(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// Seed 2 beads: one with empty body (no --body flag), one with a single space
@@ -361,19 +364,21 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, ids, 60*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-3: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
@@ -387,7 +392,7 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_UnicodeHeavyBody(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	unicodeBody := "CJK: 这是一个测试条目，用于验证Unicode处理。" +
@@ -428,19 +433,21 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 60*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-4: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
@@ -454,7 +461,7 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_LargeWorktreeBase(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// Create 1000 subdirectories in the project dir to simulate a large repo
@@ -486,20 +493,22 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	// Budget is 90s — if worktree add stalls this will catch it
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 90*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-5: all_closed=%v elapsed=%.2fs (1000 subdirs in worktree base)", allClosed, elapsed.Seconds())
@@ -516,7 +525,7 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_ConcurrentBeadCreate(t *testing.T) {
-	// Not parallel: sends SIGINT to own process
+	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
 	// Seed 1 initial bead to get the daemon started
@@ -532,8 +541,10 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 		HandlerBinary: handlerScript,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
+	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	// Wait a bit for the daemon to start processing
 	time.Sleep(1 * time.Second)
@@ -548,14 +559,14 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, allIDs, 90*time.Second)
 
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	cancel()
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after SIGINT")
+		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
 	t.Logf("T6-6: all_closed=%v elapsed=%.2fs (1 initial + 3 late-arriving beads)", allClosed, elapsed.Seconds())

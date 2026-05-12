@@ -261,6 +261,12 @@ launched:
 
 // TestT2_MalformedNDJSON verifies that when the handler emits malformed NDJSON,
 // the watcher does not crash the process and the work loop continues to function.
+//
+// Post-hk-9cob3 behaviour: malformed NDJSON triggers an agent_failed event from
+// the watcher; the work loop treats watcher failure as a run failure and calls
+// ReopenBead even when the handler exits 0. This is the correct behaviour per
+// hk-9cob3 (watcher failure = run failure). The assertion below reflects the new
+// contract: bead must be REOPENED (not closed) after malformed NDJSON + exit 0.
 func TestT2_MalformedNDJSON(t *testing.T) {
 	t.Parallel()
 
@@ -324,9 +330,13 @@ exit 0
 
 	t.Logf("T2-S3: loopErr=%v events=%v closed=%v reopened=%v", loopErr, collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
 
-	// Exit 0 means bead should be CLOSED (not reopened).
-	if len(ledger.closedIDs()) == 0 {
-		t.Errorf("T2-S3 FAIL: bead was not closed after exit 0 + malformed NDJSON; reopened=%v", ledger.reopenedIDs())
+	// Post-hk-9cob3: malformed NDJSON → watcher emits agent_failed → work loop
+	// calls ReopenBead regardless of exit code. Bead must be REOPENED, not closed.
+	if len(ledger.reopenedIDs()) == 0 {
+		t.Errorf("T2-S3 FAIL: bead was not reopened after malformed NDJSON; closed=%v (expected ReopenBead per hk-9cob3 watcher-failure contract)", ledger.closedIDs())
+	}
+	if len(ledger.closedIDs()) > 0 {
+		t.Errorf("T2-S3 FAIL: bead was closed after malformed NDJSON (should be reopened per hk-9cob3); closed=%v", ledger.closedIDs())
 	}
 	if loopErr != nil {
 		t.Errorf("T2-S3 FAIL: work loop returned non-nil error (crash) after malformed NDJSON: %v", loopErr)

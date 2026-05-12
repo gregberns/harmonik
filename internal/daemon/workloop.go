@@ -102,6 +102,26 @@ type workLoopDeps struct {
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
 // extracted as an interface so that workloop_test.go can substitute a stub.
+//
+// # Bead body access — architectural note (hk-33tcf / T6 finding F-T6-004)
+//
+// The work loop intentionally does NOT read the bead body (description field)
+// from Beads-SQLite before or after claiming.  The bead body is the agent's
+// work brief, not the daemon's.  The daemon's responsibility is lifecycle
+// management (Ready → claim → dispatch → close/reopen); interpretation of the
+// brief is the handler subprocess's responsibility.
+//
+// Consequence 1 — no pre-claim body validation: the daemon dispatches a bead
+// with an empty or malformed body identically to one with a fully-populated
+// brief.  If pre-claim body validation is needed in the future, add ShowBead
+// to this interface and call it between Ready and ClaimBead.
+//
+// Consequence 2 — handler contract: the handler subprocess is responsible for
+// calling `br show <beadID> --format json` to obtain the work spec.  For MVH,
+// the bead ID is supplied to the handler via the implementer-protocol brief
+// in the SCOPE line (i.e., as content of the prompt passed by the operator to
+// claude).  Programmatic injection of the bead ID (e.g. a HARMONIK_BEAD_ID
+// env var) is a post-MVH hardening task; no bead exists for that yet.
 type beadLedger interface {
 	Ready(ctx context.Context) ([]core.BeadRecord, error)
 	ClaimBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID) error

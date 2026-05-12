@@ -74,6 +74,17 @@ type EventBus interface {
 	// Spec ref: specs/event-model.md §6.1, §7.1.
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 
+	// EmitWithRunID is identical to Emit but stamps the run_id field on the
+	// EV-001 envelope before JSONL append and consumer dispatch.
+	//
+	// Use EmitWithRunID for all run-scoped events (run_started, run_completed,
+	// run_failed, etc.).  Plain Emit is reserved for daemon-level events where no
+	// run is in flight (daemon_started, daemon_orphan_sweep_completed, etc.).
+	//
+	// Spec ref: specs/event-model.md §6.1 EV-001; specs/execution-model.md §4.3 EM-013.
+	// Bead: hk-n9f51.
+	EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error
+
 	// Subscribe registers a consumer with the bus.
 	//
 	// Subscribe is startup-only (EV-009): it MUST be called before [Seal] and

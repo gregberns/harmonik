@@ -270,6 +270,95 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	return nil
 }
 
+// EmitWithRunID is identical to Emit but stamps the run_id envelope field to
+// runID before JSONL append and consumer dispatch.
+//
+// Use EmitWithRunID for all run-scoped events (run_started, run_completed,
+// run_failed, etc.).  Plain Emit is reserved for daemon-level events where no
+// run is in flight (daemon_started, daemon_orphan_sweep_completed, etc.).
+//
+// Spec ref: specs/event-model.md §6.1 EV-001; specs/execution-model.md §4.3 EM-013.
+// Bead: hk-n9f51.
+func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
+	// Step 1: decode payload to map for redaction (EV-035).
+	var rawPayload map[string]any
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &rawPayload); err != nil {
+			return fmt.Errorf("eventbus.EmitWithRunID: payload unmarshal for redaction: %w", err)
+		}
+	}
+
+	// Step 2: apply HC-031 + HC-032 redaction pipeline BEFORE JSONL append
+	// and consumer dispatch (EV-035).
+	redacted := b.registry.RedactionMiddleware(rawPayload)
+
+	// Step 3: re-encode redacted payload.
+	redactedBytes, err := json.Marshal(redacted)
+	if err != nil {
+		return fmt.Errorf("eventbus.EmitWithRunID: re-encoding redacted payload: %w", err)
+	}
+
+	// Step 4a: build the complete EV-001 envelope with run_id stamped.
+	eventID, idErr := b.idGen.Next()
+	if idErr != nil {
+		return fmt.Errorf("eventbus.EmitWithRunID: generate event_id: %w", idErr)
+	}
+	now := time.Now()
+	runIDVal := runID
+	evt := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   1,
+		Type:            string(eventType),
+		TimestampWall:   now,
+		RunID:           &runIDVal,
+		SourceSubsystem: "eventbus",
+		Payload:         redactedBytes,
+	}
+
+	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
+	if b.jsonlWriter != nil {
+		envelopeBytes, marshalErr := json.Marshal(evt)
+		if marshalErr != nil {
+			return fmt.Errorf("eventbus.EmitWithRunID: marshal envelope: %w", marshalErr)
+		}
+		needsSync := isFsyncBoundaryEvent(eventType)
+		if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
+			return fmt.Errorf("eventbus.EmitWithRunID: JSONL append: %w", appendErr)
+		}
+	}
+
+	// Step 5: collect matching subscriptions once under lock.
+	b.mu.Lock()
+	subs := make([]core.Subscription, len(b.subscriptions))
+	copy(subs, b.subscriptions)
+	b.mu.Unlock()
+
+	// Step 6: dispatch per consumer class (EV-014a).
+	for _, sub := range subs {
+		if !sub.EventPattern.MatchesType(string(eventType)) {
+			continue
+		}
+		if sub.Handler == nil {
+			continue
+		}
+
+		switch sub.ConsumerClass {
+		case core.ConsumerClassSynchronous:
+			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+				return fmt.Errorf("eventbus.EmitWithRunID: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
+			}
+		default:
+			sub := sub // capture loop variable
+			b.wg.Add(1)
+			go func() {
+				defer b.wg.Done()
+				_ = sub.Handler(ctx, evt)
+			}()
+		}
+	}
+	return nil
+}
+
 // Subscribe registers a consumer with the bus.
 //
 // Returns a typed error if called after Seal (EV-009).

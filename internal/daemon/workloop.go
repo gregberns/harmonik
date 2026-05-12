@@ -410,7 +410,7 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeRunStarted, b)
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
 }
 
 func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string) {
@@ -428,5 +428,5 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 	if !success {
 		eventType = core.EventTypeRunFailed
 	}
-	_ = bus.Emit(ctx, eventType, b)
+	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
 }

@@ -28,6 +28,15 @@ func (e *CollectingEmitter) Emit(_ context.Context, eventType core.EventType, _ 
 	return nil
 }
 
+// EmitWithRunID records eventType (run_id is not stored; CollectingEmitter is
+// a test stub and observes only event types).  Returns nil.
+func (e *CollectingEmitter) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.eventTypes = append(e.eventTypes, string(eventType))
+	return nil
+}
+
 // EventTypes returns a snapshot of the collected event type strings in
 // emission order.  Safe to call concurrently with Emit.
 func (e *CollectingEmitter) EventTypes() []string {

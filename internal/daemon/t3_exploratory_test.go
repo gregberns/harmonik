@@ -747,3 +747,8 @@ func (s *t3StubLedger) closeCount() int  { s.mu.Lock(); defer s.mu.Unlock(); ret
 type t3StubBus struct{}
 
 func (*t3StubBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
+
+// EmitWithRunID is a no-op (test stub; run_id propagation not exercised in t3 tests).
+func (*t3StubBus) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
+	return nil
+}

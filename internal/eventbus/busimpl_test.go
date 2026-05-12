@@ -41,6 +41,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -641,6 +643,118 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 		if line == "" {
 			t.Errorf("JSONL line[%d] is empty; want a non-empty JSON object", i)
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARA-1 / hk-n9f51: EmitWithRunID stamps run_id on the envelope
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBusImplEmitWithRunID_RunIDAppearsInJSONL asserts that EmitWithRunID
+// appends a JSONL line whose "run_id" field matches the supplied RunID.
+//
+// Spec ref: specs/event-model.md §6.1 EV-001; specs/execution-model.md §4.3 EM-013.
+// Bead: hk-n9f51.
+func TestBusImplEmitWithRunID_RunIDAppearsInJSONL(t *testing.T) {
+	t.Parallel()
+
+	logPath := busImplFixtureJSONLPath(t)
+	writer, err := eventbus.OpenJSONLWriter(logPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bus := eventbus.NewBusImplWithWriter(nil, writer)
+	if sealErr := bus.Seal(); sealErr != nil {
+		t.Fatalf("Seal: %v", sealErr)
+	}
+
+	runUUID, uuidErr := uuid.NewV7()
+	if uuidErr != nil {
+		t.Fatalf("uuid.NewV7: %v", uuidErr)
+	}
+	runID := core.RunID(runUUID)
+
+	payload, marshalErr := json.Marshal(map[string]any{
+		"bead_id":        "hk-test001",
+		"workspace_path": "/tmp/wt",
+		"started_at":     "2026-05-12T00:00:00Z",
+	})
+	if marshalErr != nil {
+		t.Fatalf("json.Marshal payload: %v", marshalErr)
+	}
+
+	if emitErr := bus.EmitWithRunID(context.Background(), runID, core.EventType("run_started"), payload); emitErr != nil {
+		t.Fatalf("EmitWithRunID: %v", emitErr)
+	}
+
+	lines := busImplFixtureReadJSONLLines(t, logPath)
+	if len(lines) != 1 {
+		t.Fatalf("JSONL contains %d lines after EmitWithRunID, want 1", len(lines))
+	}
+
+	// Parse the envelope and assert run_id is present and matches.
+	var envelope map[string]any
+	if parseErr := json.Unmarshal([]byte(lines[0]), &envelope); parseErr != nil {
+		t.Fatalf("parse JSONL envelope: %v", parseErr)
+	}
+
+	gotRunID, ok := envelope["run_id"]
+	if !ok {
+		t.Fatal("JSONL envelope missing 'run_id' field; EmitWithRunID MUST stamp run_id (EV-001 / EM-013 / hk-n9f51)")
+	}
+	if gotRunID != runID.String() {
+		t.Errorf("envelope run_id = %q, want %q", gotRunID, runID.String())
+	}
+}
+
+// TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL asserts that plain Emit does
+// NOT set run_id on the envelope (omitempty suppresses the field when zero).
+//
+// Spec ref: specs/event-model.md §6.1 EV-001.
+// Bead: hk-n9f51.
+func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
+	t.Parallel()
+
+	logPath := busImplFixtureJSONLPath(t)
+	writer, err := eventbus.OpenJSONLWriter(logPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bus := eventbus.NewBusImplWithWriter(nil, writer)
+	if sealErr := bus.Seal(); sealErr != nil {
+		t.Fatalf("Seal: %v", sealErr)
+	}
+
+	payload, marshalErr := json.Marshal(map[string]any{
+		"started_at":         "2026-05-12T00:00:00Z",
+		"pid":                1,
+		"binary_commit_hash": "abc",
+	})
+	if marshalErr != nil {
+		t.Fatalf("json.Marshal payload: %v", marshalErr)
+	}
+
+	// daemon_started is F-class (daemon-level, no run in flight).
+	if emitErr := bus.Emit(context.Background(), core.EventType("daemon_started"), payload); emitErr != nil {
+		t.Fatalf("Emit: %v", emitErr)
+	}
+
+	lines := busImplFixtureReadJSONLLines(t, logPath)
+	if len(lines) != 1 {
+		t.Fatalf("JSONL contains %d lines after Emit, want 1", len(lines))
+	}
+
+	var envelope map[string]any
+	if parseErr := json.Unmarshal([]byte(lines[0]), &envelope); parseErr != nil {
+		t.Fatalf("parse JSONL envelope: %v", parseErr)
+	}
+
+	if runID, exists := envelope["run_id"]; exists {
+		t.Errorf("plain Emit MUST NOT set run_id; got %q (omitempty should suppress)", runID)
 	}
 }
 

@@ -46,6 +46,19 @@ type EventEmitter interface {
 	//
 	// Spec: specs/event-model.md §6.1, §7.1.
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+
+	// EmitWithRunID is identical to Emit but sets the run_id envelope field to
+	// runID before JSONL append and consumer dispatch (EV-001; EM-013).
+	//
+	// Use EmitWithRunID for all run-scoped events (run_started, run_completed,
+	// run_failed, etc.) so that the JSONL envelope carries the join key across
+	// git, Beads, and JSONL per EM-013 / POST_MVH_PARALLELISM_ROADMAP row #1.
+	// Plain Emit is reserved for daemon-level events where no run is in flight
+	// (daemon_started, daemon_orphan_sweep_completed, etc.).
+	//
+	// Spec: specs/event-model.md §6.1 EV-001; specs/execution-model.md §4.3 EM-013.
+	// Bead: hk-n9f51.
+	EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error
 }
 
 // WatcherDeadLetterSink is the interface the watcher uses to route pre-envelope

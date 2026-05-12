@@ -43,10 +43,13 @@ import (
 
 // hqwn57FixtureExpectedMethods is the exact set of method names the
 // specs/event-model.md §6.1 INTERFACE EventBus requires.
+// EmitWithRunID was added by hk-n9f51 (PARA-1: run_id envelope field) to
+// support run-scoped events per EM-013.
 var hqwn57FixtureExpectedMethods = []string{
 	"DeadLetterReplay",
 	"Drain",
 	"Emit",
+	"EmitWithRunID",
 	"ReplayFrom",
 	"Seal",
 	"Subscribe",
@@ -61,6 +64,10 @@ var hqwn57FixtureExpectedMethods = []string{
 type hqwn57FixtureSentinel struct{}
 
 func (hqwn57FixtureSentinel) Emit(_ context.Context, _ core.EventType, _ []byte) error {
+	return nil
+}
+
+func (hqwn57FixtureSentinel) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }
 

@@ -176,6 +176,12 @@ func (s *stubEventCollector) Emit(_ context.Context, eventType core.EventType, p
 	return nil
 }
 
+// EmitWithRunID records the event (run_id is stored in payload only for stub
+// simplicity; the envelope run_id is not materialised here).
+func (s *stubEventCollector) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, payload []byte) error {
+	return s.Emit(context.Background(), eventType, payload)
+}
+
 func (s *stubEventCollector) eventTypes() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

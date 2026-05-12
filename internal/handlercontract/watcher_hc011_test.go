@@ -46,6 +46,11 @@ func (p *watcherFixturePublisher) Emit(_ context.Context, eventType core.EventTy
 	return nil
 }
 
+// EmitWithRunID records eventType (run_id is not stored by this test stub).
+func (p *watcherFixturePublisher) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, _ []byte) error {
+	return p.Emit(context.Background(), eventType, nil)
+}
+
 func (p *watcherFixturePublisher) EventTypes() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

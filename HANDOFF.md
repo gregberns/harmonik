@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-11 main — v27, 12 commits pushed (a46d23e..ed5c34b), MVH-root cohort largely drained, specaudit sensor pattern dominant -->
+<!-- PP-TRIAL:v2 2026-05-12 main — v28, 8 commits pushed (e0b5240..60b6024). MVH-roadmap critical path (redaction chain) DRAINED but a runtime-vs-bookkeeping gap surfaced: composition root exists, daemon does nothing. Read MVH_REALITY_CHECK.md FIRST. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -90,100 +90,88 @@ CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight str
 
 # State
 
-Main at `ed5c34b`, pushed to origin/main. **Open=149, Closed=833, Ready=19 (~7 MVH tasks + 11 epics + 1 admin), Deferred=40.** No active worktrees, no in-flight implementers. Working tree clean.
+Main at `8277522`, pushed to origin/main. **Open=139, Closed=847, Ready=10 (1 MVH-relevant: hk-8mup.63), Deferred=40.** No active worktrees. **Read `MVH_ROADMAP.md` first — it was rewritten in this session as the empirical source of truth and supersedes the bead corpus for "what needs to happen for MVH."** Detailed appendix at `MVH_REALITY_CHECK.md`. Working tree clean.
 
-# What this session did — drained the MVH-root cohort
+# What this session did — drained the MVH redaction-chain critical path AND surfaced a viability question
 
-Picked up v26's 5 MVH roots and stream-dispatched implementers; cascade unblocks fed the next layer. **17 beads closed, 12 commits pushed.** Headline finding: **most MVH-root beads (zs0.8, zs0.25, sx9r.22, 8mup.32, i0tw.38) were SUBSUMED** — the spec text + Go runtime + closed-sibling sensors had already landed in prior sessions. The remaining roots needed only the corpus-search sensor that pins spec-text to runtime.
+Picked up v27's 3 ready MVH beads + the 8-bead chain behind them. Stream-dispatched implementers and SUBSUMED-audits in parallel. **14 beads closed, 7 commits pushed, 3 new beads filed-and-closed in-session, 1 new follow-up bead filed (hk-8mup.63 — JSONL persistence).** The session's headline finding is not a closure list — it's that **closing the redaction chain did not produce a runnable tool.** The MVH composition root now exists and compiles, but the daemon's `Start()` returns nil after wiring the bus; nothing schedules, dispatches, or processes tasks. Exploratory testing was dispatched to characterize the actual runtime gap.
 
-## Commits landed (a46d23e..ed5c34b)
+## Commits landed (e0b5240..60b6024)
 
 | SHA | Bead | What |
 |---|---|---|
-| `218955a` | hk-zs0.17 | AR-016 spec-corpus sensor — subsystem is a Go package |
-| `fd09379` | hk-i0tw.15 | SH-015 5-step ordered teardown sensor (325 LOC) |
-| `20a5cfd` | hk-zs0.26 | AR-025 regex byte-identity sensor + exported `AgentTypeRegexPattern` const |
-| `10e821d` | hk-1hoxo | `core.RateLimitSource` typed alias (open-vocab regex pattern; not closed enum) |
-| `cb84707` | hk-i0tw.28 | SH-026 timeout-verdict + cancel-chain sensor (318 LOC) |
-| `342d6f5` | (merge of cb84707) | |
-| `f1f3c45` | hk-sx9r.20 | ON-016 `required_migration_release` payload field + 4 sensor tests |
-| `73f5002` | hk-i0tw.33 | SH-031 sequential-scenarios sensor (265 LOC) |
-| `dd58966` | hk-zs0.1 | AR-052 spec-category front-matter sensor (276 LOC) + added `spec-category: foundation-cross-cutting` to control-points/event-model/execution-model/handler-contract |
-| `0cb73fc` | hk-i0tw.25 | SH-023 assertion-failed verdict sensor (307 LOC) |
-| `7ac15f1` | hk-e1kdc | event-model §8.7.4 table — `required_migration_release?` (orchestrator inline) |
-| `4893b96` | hk-i0tw.35 | SH-033 signal-handling sensor (346 LOC) |
-| `ed5c34b` | hk-zs0.28 | AR-027 four-surface byte-identity sensor + patched missing `agent_type` field in execution-model.md Node RECORD |
+| `e0b5240` | hk-zs0.14 | AR-013 eight-element envelope corpus-search sensor |
+| `b621a63` | hk-hqwn.59.22 | §8.3.2 `agent_started` payload struct + RegisterPayload |
+| `6ccc97f` | hk-8mup.61 (NEW) | Scaffold `internal/daemon/` composition-root package — `Start(cfg Config) error` entry point |
+| `64e87d9` | hk-8mup.62 (NEW) | Concrete EventBus `busimpl` — Emit applies HC-031 redaction before JSONL stub + consumer dispatch |
+| `5974c10` | hk-8i31.83 (NEW) | `RedactionRegistry` + `RedactionMiddleware` (HC-031+HC-032) + wired at `daemon.Start` |
+| `ae19275` | hk-8i31.37 | HC-030 runtime sensor — registry middleware in Emit producer path |
+| `924747c` | hk-hqwn.19 | EV-014a dispatch-order contract: sync blocks Emit, async/observer go off-path via `wg`, Drain awaits |
+| `60b6024` | (docs) | `MVH_ROADMAP.md` committed |
 
 ## SUBSUMED closures (no commits)
 
-- `hk-zs0.8` (AR-006) — mechanism-tag definition; sensor not lint-implementable per AR-INV-001 reviewer-enforced model; covered by `internal/core/modetag.go`.
-- `hk-zs0.25` (AR-024) — agent-type conformance class; `core.AgentType` typed string + sidecar fields already landed (8mwo.63/.38). Four-surface sensor is AR-027's scope (zs0.28).
-- `hk-sx9r.22` (ON-018) — N-1 compat window declaration fully embodied in `internal/operatornfr/schemacompatwindow_test.go` (hk-sx9r.78). Sensor bead is hk-sx9r.69 (open, downstream).
-- `hk-8mup.32` (PL-020) — composition-root sensor already landed in commit `e7e13d6` (`internal/specaudit/pl020_composition_root_test.go`).
-- `hk-i0tw.38` (SH-INV-002) — `shinv002_workspace_reset_test.go` already on main as commit `1d95451`; prior session implemented without closing the bead.
+- `hk-8mup.33` (PL-020a) — sibling `pl020_composition_root_test.go` already coalesced PL-020 + PL-020a coverage.
+- `hk-zs0.2` (AR-053) — §4.0 of `specs/architecture.md` already declares the §4.a envelope slot + reserved `<PREFIX>-ENV-NNN` ID range.
+- `hk-8mup.1` (PL-ENV-001) — `specs/process-lifecycle.md` §4.a already has the 8-element envelope.
+- `hk-8mwo.1` (WM-ENV-001) — `specs/workspace-model.md` §4.a already has the 8-element envelope.
+- `hk-8i31.39` (HC-032) — `internal/handlercontract/redaction_hc028_test.go` already has the per-handler pattern fixtures + compile-check tests (landed under hk-8i31.81). Runtime registration was deferred to hk-8i31.83 (filed + closed same session).
+- `hk-hqwn.7` (EV-004) — `specs/event-model.md` §EV-004 already declares `source_subsystem` open-vocab; `internal/core/event.go:85` types it as plain `string`; `internal/core/event_ev001_test.go:59` asserts the open-vocab shape.
+- `hk-hqwn.45` (EV-035) — `internal/eventbus/busimpl.go:86` already applies `registry.RedactionMiddleware` before consumer dispatch (just landed in `5974c10`).
 
-## Audit closure
+## New beads filed this session
 
-- `hk-wcstp` — cascade-closure spot-check (15 beads across `hk-872/sx9r/i0tw/8mup` namespaces): **14/15 CONFIRMED**, 1 WEAK (hk-sx9r.6 commit-hash gate — coverage embedded in operatornfr handler, no dedicated test). No reopens. Cohort closures legitimate despite bare `done` rationale.
+- `hk-8mup.61` (CLOSED `6ccc97f`) — daemon-package scaffold.
+- `hk-8mup.62` (CLOSED `64e87d9`) — concrete EventBus.
+- `hk-8i31.83` (CLOSED `5974c10`) — RedactionRegistry + middleware + wire.
+- `hk-8mup.63` (OPEN) — Thread JSONL log path through `daemon.Config` + `busimpl.Emit` fsync per durability class. **This is the only known explicit MVH gap on the bus side**; the wider daemon-behavior gap is being characterized by the exploratory agent.
 
-## Pattern observations (candidate L-018 / product-input)
+## Files added at repo root
 
-1. **MVH-root beads were declarations; sensors landed via siblings.** 5 of the 9 root-dispatch attempts returned SUBSUMED. The deliverable is reliably (a) confirm the spec text exists, (b) confirm the runtime expression exists, (c) point at the closed-sibling sensor that already enforces it. If `kerf finalize` had emitted explicit `derives-from` edges instead of `blocks`, half this session's first-wave dispatches could have been skipped at audit time.
-2. **Corpus-search sensors are the dominant deliverable shape.** 9 of 12 commits land an `internal/specaudit/{ar,sh,on}###_*_test.go` file with 8–13 sub-checks (heading present, normative tokens present, cross-refs cited, Tags-line present). The pattern is mechanical enough that a generator (`kerf scaffold-sensor <req-id>`) is feasible.
-3. **`post-mvh` label filter MUST be checked every refill.** `br ready` surfaces `post-mvh` beads as soon as their blockers close — the label is the only thing keeping them out of dispatch. Four times this session `br ready` listed `hk-8i31.27`, `hk-8mwo.14`, `hk-8mwo.33`, `hk-sx9r.23` — all correctly post-mvh, all silently skipped by manual label check.
-4. **Cross-spec spec-text patches surface during sensor work.** zs0.28 found `agent_type` missing from execution-model.md Node RECORD. zs0.1 found 4 specs missing the AR-052 `spec-category` front-matter. These were inline-fixed in the same commit. Without the sensor, both gaps would have stayed silent until reviewer-enforced lint caught them.
+- `MVH_ROADMAP.md` (committed `60b6024`) — corpus-bookkeeping view of remaining work, filtered by `not post-mvh`. **Caveat in header: this is NOT a demoability view.**
+- `MVH_REALITY_CHECK.md` (pending — exploratory agent in flight) — empirical runtime-gap analysis: tried to `go run` the thing, traced one event end-to-end, audited scheduler/dispatch/workspace/handler surfaces. Will list concrete gaps with file:line and "absent" verdicts. Read this BEFORE deciding next-session direction.
 
 # Next session — direction
 
-The MVH-root cohort is **drained.** What remains for MVH is **11 task-beads + 11 epic rollups + `hk-ahvq` Phase-0-completion meta-task.** Of the 11 task-beads, **3 are dispatchable right now**; the other 8 are chained behind them (almost entirely behind `hk-zs0.14`).
+**Do not assume the bead corpus is the source of truth for what's needed.** This session's exploratory dispatch was the explicit response to user pushback: "Are we seriously saying we have a viable working tool?" The answer was no, and the corpus's `post-mvh` filter likely hides work that is actually required for demoability (scheduler, handler dispatch, workspace creation, task ingestion, `cmd/harmonik` main, etc.). The MVH_REALITY_CHECK.md report from agent `a98c1daee8571f46c` should be the primary input for picking next moves.
 
-## Dispatchable RIGHT NOW (3)
+## If MVH_REALITY_CHECK.md is present
 
-| Bead | Spec | Notes |
-|---|---|---|
-| `hk-zs0.14` | architecture — AR-013 | Subsystem envelope declaration (8 elements). **Load-bearing root**: closing this unblocks 4 chained beads. Same corpus-search-sensor shape as v27. |
-| `hk-hqwn.59.22` | event-model — §8.3.2 | Event row: `agent_started`. Standalone; payload schema work. |
-| `hk-8mup.33` | process-lifecycle — PL-020a | Cross-subsystem registries reside in the composition root. Standalone; likely SUBSUMED candidate (sibling `pl020_composition_root_test.go` already covers PL-020/PL-020a per v27 hk-8mup.32 SUBSUMED finding). |
+1. Read it cover-to-cover. The "Verdict" paragraph is the headline; the "Concrete runtime gaps" table is the action list.
+2. For each gap, decide: existing bead (likely mislabeled `post-mvh` — un-defer / relabel via `br update`), or new bead (file via `br create`).
+3. Dispatch implementers in the same stream-not-waves shape as this session.
 
-## Chained MVH work (8) — unlocks as the 3 close
+## If MVH_REALITY_CHECK.md is missing or partial
 
-| Bead | Blocked by | Title |
-|---|---|---|
-| `hk-zs0.2` | hk-zs0.14 | Envelope declaration section slot (§4.a) with reserved `<PREFIX>-ENV-NNN` |
-| `hk-8mup.1` | hk-zs0.2 | Subsystem envelope declaration (daemon-core / `internal/daemon`) |
-| `hk-8mwo.1` | hk-zs0.2 | Subsystem envelope declaration (S06 / workspace-model) |
-| `hk-8i31.39` | hk-zs0.14 | Per-handler redaction patterns |
-| `hk-8i31.37` | hk-8i31.39 | Redaction registry middleware |
-| `hk-hqwn.45` | hk-8i31.37 | Redaction registry applied before event emission |
-| `hk-hqwn.19` | hk-hqwn.45 | Dispatch semantics |
-| `hk-hqwn.7` | hk-zs0.14 | `source_subsystem` is layout-open |
+The exploratory agent may have failed or timed out. In that case:
+- Check the agent's output file under `/private/tmp/claude-502/-Users-gb-github-harmonik/*/tasks/a98c1daee8571f46c.output` — but do NOT read the JSONL via the shell tool (per the dispatch-time warning). Use `tail` only if absolutely necessary, sparingly.
+- Re-dispatch a fresh exploratory agent with the same prompt shape (see commit history for this session's Agent call).
 
-Dep-graph shape: `zs0.14` is the root of two chains (envelope and redaction); a third chain runs purely inside hqwn. **Recommended dispatch:** spawn the 3 ready beads in parallel; on `zs0.14` close, `zs0.2` + `8i31.39` + `hqwn.7` become ready (3 refills); on `zs0.2` close, `8mup.1` + `8mwo.1` become ready; the redaction chain (`8i31.39 → 8i31.37 → hqwn.45 → hqwn.19`) is sequential. Net: ~3-4 stream cycles drains the MVH task surface, half of which will likely close SUBSUMED (v27 pattern was 5 of 9).
+## Bead-corpus ready surface (dispatch only if explicitly chosen)
 
-## After MVH tasks close
+`br ready --limit 0 | grep -v '[epic]'` shows ~10 ready beads as of session-end; all but `hk-8mup.63` (JSONL) are `post-mvh`-labeled. The hollow spec-epic rollups (`hk-872`, `hk-b3f`, `hk-hqwn`, `hk-8i31`, `hk-a8bg`, `hk-8mwo`, `hk-8mup`, `hk-sx9r`, `hk-63oh`, `hk-i0tw`) plus `hk-ahvq` are still parked — defer until cleanup pass.
 
-- **10 spec-epic rollups** (`hk-872`, `hk-b3f`, `hk-hqwn`, `hk-8i31`, `hk-a8bg`, `hk-8mwo`, `hk-8mup`, `hk-sx9r`, `hk-63oh`, `hk-i0tw`) need manual close at MVH-cut time. Beads' parent-child auto-rollup is disabled in this corpus per L-011 conversion. Cleanup, not new work.
-- **`hk-ahvq` "Phase 0 completion — load remaining pilots and exit to code phase"** is a substantive meta-task, not a rollup. Belongs in next session's first triage.
+## Pattern observations (candidate L-018 / L-019)
 
-## Post-mvh filter is the real ergonomic gap (NOT a `br ready` bug — protocol note)
-
-`br ready` itself is sound; the v27 friction was that `post-mvh` labeling is checked manually per bead. Of 8 non-epic entries in `br ready --limit 0`, 5 are `post-mvh`-labeled and skipped. Candidate small fix: a `br ready --exclude-label post-mvh` flag, or a session helper script. Until then: always run the per-bead label check before dispatching. Beware: my v27 in-session attempts to write a one-liner filter using `br ready --json` failed because `br ready --json` omits the `labels` field — only `br show` or `br list` carry labels. Don't trust scripted filters without re-checking against `br show`.
-
-**Anti-recommendation:** do NOT spend cycles trying to find more MVH-root work in the existing corpus. The roots are drained. After the 11 tasks close, MVH throughput depends on either (a) reviewing the `hk-ahvq` Phase-0 pilot-ingestion path, or (b) starting on subsystem-skeleton work (`internal/daemon/` composition root, redaction registry implementation) that doesn't have a dispatchable bead today and may need a new kerf work.
+1. **Bead-corpus `post-mvh` labels are not a demoability filter.** The roadmap doc generated from the corpus claimed 4 beads remained on the MVH path. The exploratory dispatch was launched precisely to test that claim. Likely L-### entry: "Distinguish corpus-bookkeeping MVH from runtime-demoability MVH; the corpus is a slow-moving artifact of planner judgment and lags reality."
+2. **Filing-then-closing-in-session worked smoothly.** 3 new beads (hk-8mup.61/.62, hk-8i31.83) were filed mid-session in response to a scoping report and all closed within ~30 minutes of file-time. The `br create --deps "blocks:<id>"` syntax composes a clean parent/child wiring that `br ready` honors. No friction.
+3. **Two-bead-one-file collision was correctly serialized.** hk-8mup.62 (busimpl.go) and hk-8i31.83 (registry + busimpl.go wire) were dispatched as ONE sequential-commits agent rather than two parallel ones. Per directives. Held cleanly — no rebase conflicts, two clean commits in one worktree.
+4. **Audit-only briefs continue to work.** 6 of 7 SUBSUMED closures this session were from explicit audit-only dispatches that resolved in <60s each. Pattern proven across two sessions now.
 
 # Files to open first
 
-- This file (the directives — v27 BEAD PICKING block has updated post-mvh language).
-- `docs/orchestration-learnings.md` — no new L-### added this session; **two candidate L-### entries** worth writing if next session reproduces the pattern: (a) "MVH-root beads are largely SUBSUMED-by-prior-sessions; product input = `kerf finalize` derives-from edges"; (b) "`br ready --json` omits labels — scripted post-mvh filters silently no-op unless they cross-check via `br show`."
+- **`MVH_REALITY_CHECK.md`** (if landed) — primary input for next-session direction.
+- This file (directives unchanged from v27).
+- `MVH_ROADMAP.md` (committed `60b6024`) — secondary; the corpus-bookkeeping view.
+- `docs/orchestration-learnings.md` — no new L-### added; two candidate entries documented above.
 - `STATUS.md` — high-level state (unchanged this session).
-- `.claude/implementer-protocol.md` — implementer rules (unchanged this session, but always read).
+- `.claude/implementer-protocol.md` — unchanged.
 
 # Quick references
 
-- MVH-root cohort (5 beads) DRAINED — 4 SUBSUMED + 1 sensor (`218955a`); plus 8 sequential cascade-unblocked beads dispatched in same session.
-- 12 commits on main since session start, pushed clean.
-- ~130 `post-mvh` beads remain correctly parked — DO NOT dispatch unless explicitly dragged forward.
-- 40 deferred beads — legitimate cognition holds; do not un-defer without explicit audit (L-017 protocol).
-- `hk-e1kdc` filed and closed this session — only follow-up bead created.
-- No reviewer dispatches this session — sonnet implementer self-judgment + protocol discipline held; no rework needed.
-- **MVH remaining surface: 11 task-beads (3 ready, 8 chained) + `hk-ahvq` Phase-0 meta-task + 10 hollow spec-epic rollups for end-of-MVH cleanup.** Half of the 11 likely close SUBSUMED per v27 pattern.
+- MVH redaction chain DRAINED (hk-zs0.14 sensor + hk-8mup.61/.62/.61 daemon scaffolding + hk-8i31.83/.37 + hk-hqwn.19/.45).
+- 7 commits on main since session start, plus 1 docs commit, pushed clean.
+- 14 bead closures total: 7 commits + 7 SUBSUMED.
+- Exploratory agent `a98c1daee8571f46c` may be in flight; check for MVH_REALITY_CHECK.md before assuming corpus-driven dispatch.
+- The one explicit known runtime gap on the bus side is hk-8mup.63 (JSONL persistence).
+- **Open question for product/user: is the bead corpus's `post-mvh` filter trustworthy as a runtime-MVH filter? Exploratory testing this session strongly suggests no.**

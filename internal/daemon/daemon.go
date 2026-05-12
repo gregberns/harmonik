@@ -175,12 +175,12 @@ func Start(cfg Config) error {
 	if cfg.ProjectDir != "" {
 		ctx := context.Background()
 		projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
-		sweepResult, sweepErr := lifecycle.RunOrphanSweep(
+		sweepResult, sweepErr := RunOrphanSweep(
 			ctx,
 			cfg.ProjectDir,
 			projectHash,
 			daemonStartTime,
-			lifecycle.OrphanSweepConfig{}, // nil fields fall back to OS-backed implementations
+			OrphanSweepConfig{}, // nil fields fall back to OS-backed implementations
 		)
 
 		// Build and emit daemon_orphan_sweep_completed (§8.7.14, O-class).

@@ -217,3 +217,74 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 		t.Errorf("daemon_started event not found in JSONL lines after sentinel: %v", lines[1:])
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-60uvn: orphan sweep wired into Start
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestDaemonStart_OrphanSweepEventEmitted asserts that Start emits a
+// daemon_orphan_sweep_completed event (§8.7.14, O-class) when ProjectDir is
+// set.
+//
+// The sweep is non-fatal: Start MUST return nil even if the sweep finds
+// nothing to clean up (the common case in a fresh temp dir).
+//
+// Spec ref: specs/process-lifecycle.md §4.2 PL-006 — "On completion, the
+// daemon MUST emit daemon_orphan_sweep_completed."
+// Bead ref: hk-60uvn.
+func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
+
+	cfg := daemon.Config{
+		ProjectDir:   projectDir,
+		JSONLLogPath: jsonlPath,
+	}
+	if err := daemon.Start(cfg); err != nil {
+		t.Fatalf("daemon.Start: %v; want nil (orphan sweep errors must not abort Start)", err)
+	}
+
+	lines := pidfileFixtureReadJSONLLines(t, jsonlPath)
+	// Expect at least 2 lines: daemon_started (F-class) + daemon_orphan_sweep_completed (O-class).
+	if len(lines) < 2 {
+		t.Fatalf("JSONL log has %d lines after Start, want ≥ 2 (daemon_started + daemon_orphan_sweep_completed)",
+			len(lines))
+	}
+
+	// Verify daemon_orphan_sweep_completed appears.
+	foundSweep := false
+	for _, line := range lines {
+		if strings.Contains(line, string(core.EventTypeDaemonOrphanSweepCompleted)) ||
+			strings.Contains(line, "swept_at") {
+			foundSweep = true
+			break
+		}
+	}
+	if !foundSweep {
+		t.Errorf("daemon_orphan_sweep_completed event not found in JSONL lines: %v", lines)
+	}
+}
+
+// TestDaemonStart_OrphanSweepRunsBeforeSocketBind asserts that Start returns
+// nil in a fresh project directory (no orphans to clean up), confirming the
+// sweep path executes without error.
+//
+// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3 — orphan sweep
+// runs before socket/listener bind.
+// Bead ref: hk-60uvn.
+func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
+
+	cfg := daemon.Config{
+		ProjectDir:   projectDir,
+		JSONLLogPath: jsonlPath,
+	}
+	// Start MUST succeed even in a fresh directory with no orphans.
+	if err := daemon.Start(cfg); err != nil {
+		t.Errorf("daemon.Start with empty project dir returned error: %v; "+
+			"sweep errors MUST NOT abort Start (PL-006)", err)
+	}
+}

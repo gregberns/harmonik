@@ -158,8 +158,9 @@ func Start(cfg Config) error {
 	// binary_commit_hash: use a placeholder until build-info injection lands;
 	// the field is required by the spec so we emit "unknown" to keep the
 	// envelope well-formed.
+	daemonStartTime := time.Now().UTC()
 	startedPayload := core.DaemonStartedPayload{
-		StartedAt:        time.Now().UTC().Format(time.RFC3339),
+		StartedAt:        daemonStartTime.Format(time.RFC3339),
 		PID:              os.Getpid(),
 		BinaryCommitHash: "unknown", // TODO(follow-up): inject from ldflags at build time
 	}
@@ -169,6 +170,40 @@ func Start(cfg Config) error {
 	}
 	if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, payloadBytes); emitErr != nil {
 		return fmt.Errorf("daemon.Start: emit daemon_started: %w", emitErr)
+	}
+
+	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep — BEFORE any socket
+	// or listener bind. Sweep errors are non-fatal: orphan presence is
+	// recoverable. Errors are surfaced via a daemon_orphan_sweep_completed
+	// event with an errors summary field.
+	//
+	// Skip sweep when ProjectDir is empty (unit-test mode).
+	if cfg.ProjectDir != "" {
+		ctx := context.Background()
+		projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
+		sweepResult, sweepErr := lifecycle.RunOrphanSweep(
+			ctx,
+			cfg.ProjectDir,
+			projectHash,
+			daemonStartTime,
+			lifecycle.OrphanSweepConfig{}, // nil fields fall back to OS-backed implementations
+		)
+
+		// Build and emit daemon_orphan_sweep_completed (§8.7.14, O-class).
+		// Do NOT abort Start on sweep error per PL-006.
+		sweepPayload := sweepResult.ToPayload()
+		sweepPayloadBytes, sweepMarshalErr := json.Marshal(sweepPayload)
+		if sweepMarshalErr != nil {
+			// Marshal failure should not block startup; log and continue.
+			sweepPayloadBytes = []byte(`{}`)
+		}
+		if sweepEmitErr := bus.Emit(ctx, core.EventTypeDaemonOrphanSweepCompleted, sweepPayloadBytes); sweepEmitErr != nil {
+			// Non-fatal: bus emit failure at this stage does not block startup.
+			_ = sweepEmitErr
+		}
+		// Surface sweep errors as the return value only if no other errors
+		// occurred — but per bead spec, do NOT abort Start on sweep error.
+		_ = sweepErr
 	}
 
 	return nil

@@ -758,6 +758,129 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-fx6zl: per-run Drain coordination — DrainRun isolates run B from run A
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBusImplDrainRun_IsolatesRunFromSlowPeer is the acceptance sensor for
+// hk-fx6zl.
+//
+// Contract under test:
+//
+//	Two concurrent runs (A and B) each dispatch an asynchronous consumer.
+//	Run A's consumer blocks for 5 seconds (simulating a slow handler).
+//	DrainRun(ctx, runB) MUST return in <100ms even while run A's consumer is
+//	still in flight.
+//
+// This verifies per-run fair termination: slow consumers from one run cannot
+// delay shutdown of another run (POST_MVH_PARALLELISM_ROADMAP.md §1, blocker A).
+//
+// Bead: hk-fx6zl.
+func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.NewBusImpl()
+
+	// Gate used to let run A's consumer block indefinitely until the test is done.
+	runAGate := make(chan struct{})
+	// runBRan records whether run B's consumer executed.
+	var runBRan atomic.Int32
+
+	// runAID and runBID are set before EmitWithRunID; the handler closure
+	// captures them by pointer so the handler can distinguish the two runs.
+	runAID := busImplDrainFixtureNewRunID(t)
+	runBID := busImplDrainFixtureNewRunID(t)
+
+	// Register a single wildcard async consumer. The handler distinguishes
+	// runs by comparing evt.RunID against the captured run IDs.
+	sub := core.Subscription{
+		ConsumerID:    "drain-run-isolation-async",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, evt core.Event) error {
+			if evt.RunID == nil {
+				return nil
+			}
+			switch *evt.RunID {
+			case runBID:
+				// Run B: complete quickly.
+				runBRan.Store(1)
+			case runAID:
+				// Run A: block until the test releases the gate.
+				<-runAGate
+			}
+			return nil
+		},
+	}
+
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n1"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// Emit run A's event — async consumer blocks on runAGate.
+	if emitErr := bus.EmitWithRunID(context.Background(), runAID, busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("EmitWithRunID (run A): %v", emitErr)
+	}
+	// Emit run B's event — async consumer runs quickly.
+	if emitErr := bus.EmitWithRunID(context.Background(), runBID, busImplFixtureEventType, payload); emitErr != nil {
+		t.Fatalf("EmitWithRunID (run B): %v", emitErr)
+	}
+
+	// Type-assert to RunDrainer to access per-run quiescence.
+	rd, ok := bus.(eventbus.RunDrainer)
+	if !ok {
+		t.Fatal("bus does not implement eventbus.RunDrainer; hk-fx6zl requires per-run drain support")
+	}
+
+	// DrainRun for run B must return in <100ms even though run A is still hanging.
+	drainBCtx, cancelB := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelB()
+
+	start := time.Now()
+	if drainErr := rd.DrainRun(drainBCtx, runBID); drainErr != nil {
+		t.Fatalf("DrainRun(runB): %v (elapsed %v); run B's consumer should have completed quickly, "+
+			"independent of the blocked run A consumer (hk-fx6zl)", drainErr, time.Since(start))
+	}
+	elapsed := time.Since(start)
+	if elapsed >= 100*time.Millisecond {
+		t.Errorf("DrainRun(runB) took %v, want <100ms; "+
+			"run A's hanging consumer MUST NOT delay run B's drain (hk-fx6zl)", elapsed)
+	}
+
+	if runBRan.Load() != 1 {
+		t.Error("run B's async consumer never ran before DrainRun returned")
+	}
+
+	// Clean up: release run A's consumer so the global Drain can complete.
+	close(runAGate)
+	globalDrainCtx, cancelGlobal := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancelGlobal()
+	if globalErr := bus.Drain(globalDrainCtx); globalErr != nil {
+		t.Fatalf("global Drain after releasing run A gate: %v", globalErr)
+	}
+}
+
+// busImplDrainFixtureNewRunID generates a fresh UUIDv7-based RunID for use in
+// per-run drain tests. Distinct from the busImplFixture prefix intentionally:
+// this prefix is reserved for hk-fx6zl helpers.
+func busImplDrainFixtureNewRunID(t *testing.T) core.RunID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("busImplDrainFixtureNewRunID: uuid.NewV7: %v", err)
+	}
+	return core.RunID(id)
+}
+
 // busImplFixtureJSONLPath returns a temporary file path for use as a JSONL log.
 func busImplFixtureJSONLPath(t *testing.T) string {
 	t.Helper()

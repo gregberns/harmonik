@@ -39,8 +39,18 @@ import (
 // Emit latency. A bounded worker pool (default 4 workers, operator-configurable)
 // replaces the per-goroutine approach in the post-MVH worker-pool bead.
 //
+// # Per-run Drain coordination (hk-fx6zl)
+//
+// wg is the process-level WaitGroup: it tracks ALL in-flight async/observer
+// goroutines and is used by the existing [EventBus.Drain] method to wait for
+// global quiescence. runDrainersMu guards runDrainers, a per-run WaitGroup
+// map keyed by run_id string. EmitWithRunID adds each dispatched goroutine to
+// both wg (global) and the run-specific WaitGroup so that [busImpl.DrainRun]
+// can wait for a single run's consumers without blocking on other runs.
+// Plain Emit (no run_id) only touches wg; DrainRun does not wait for those.
+//
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63.
+// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl.
 type busImpl struct {
 	registry      *handlercontract.RedactionRegistry
 	jsonlWriter   *JSONLWriter // nil when no log path is configured
@@ -48,9 +58,16 @@ type busImpl struct {
 	mu            sync.Mutex
 	subscriptions []core.Subscription
 	sealed        bool
-	// wg tracks in-flight asynchronous and observer goroutines so Drain can
-	// wait for quiescence (EV-014a; post-MVH: replace with bounded worker pool).
+	// wg tracks ALL in-flight async/observer goroutines (global quiescence).
+	// Drain(ctx) waits on wg. EmitWithRunID also increments the per-run entry
+	// in runDrainers so DrainRun can wait for just one run (hk-fx6zl).
 	wg sync.WaitGroup
+	// runDrainersMu guards runDrainers.
+	runDrainersMu sync.Mutex
+	// runDrainers maps run_id → WaitGroup tracking only that run's in-flight
+	// goroutines. Entries are created lazily on first EmitWithRunID for a run
+	// and are never removed (they become no-ops once the run drains).
+	runDrainers map[string]*sync.WaitGroup
 }
 
 // fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
@@ -102,8 +119,9 @@ func isFsyncBoundaryEvent(eventType core.EventType) bool {
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-035, PL-005 step 0.
 func NewBusImpl() EventBus {
 	return &busImpl{
-		registry: handlercontract.NewRedactionRegistry(),
-		idGen:    core.NewEventIDGenerator(),
+		registry:    handlercontract.NewRedactionRegistry(),
+		idGen:       core.NewEventIDGenerator(),
+		runDrainers: make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -123,8 +141,9 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 		return NewBusImpl()
 	}
 	return &busImpl{
-		registry: registry,
-		idGen:    core.NewEventIDGenerator(),
+		registry:    registry,
+		idGen:       core.NewEventIDGenerator(),
+		runDrainers: make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -154,6 +173,7 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 		registry:    registry,
 		jsonlWriter: writer,
 		idGen:       core.NewEventIDGenerator(),
+		runDrainers: make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -348,10 +368,17 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 				return fmt.Errorf("eventbus.EmitWithRunID: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
 			}
 		default:
+			// Asynchronous and observer consumers for a run-scoped event are
+			// tracked in BOTH the global wg (for Drain/global quiescence) and
+			// the per-run WaitGroup (for DrainRun/per-run fair termination).
+			// Bead: hk-fx6zl.
 			sub := sub // capture loop variable
+			runWG := b.runDrainer(evt.RunID.String())
 			b.wg.Add(1)
+			runWG.Add(1)
 			go func() {
 				defer b.wg.Done()
+				defer runWG.Done()
 				_ = sub.Handler(ctx, evt)
 			}()
 		}
@@ -398,6 +425,47 @@ func (b *busImpl) ReplayFrom(_ string, _ core.EventID) error {
 // Spec ref: specs/event-model.md §6.1, §6.2, §4.2 EV-011.
 func (b *busImpl) DeadLetterReplay(_ string, _ *core.EventPattern) error {
 	return nil
+}
+
+// runDrainer returns the WaitGroup for runID, creating it if it does not exist.
+// The returned pointer is stable for the lifetime of busImpl; callers may call
+// Add/Done/Wait without holding runDrainersMu.
+func (b *busImpl) runDrainer(runID string) *sync.WaitGroup {
+	b.runDrainersMu.Lock()
+	defer b.runDrainersMu.Unlock()
+	wg, ok := b.runDrainers[runID]
+	if !ok {
+		wg = &sync.WaitGroup{}
+		b.runDrainers[runID] = wg
+	}
+	return wg
+}
+
+// DrainRun blocks until all in-flight asynchronous and observer dispatches
+// for the given runID complete, or ctx is cancelled.
+//
+// DrainRun provides fair per-run quiescence: a slow consumer from run A does
+// NOT delay shutdown of run B (hk-fx6zl). Plain [EventBus.Drain] waits for
+// ALL in-flight goroutines across all runs and remains unchanged.
+//
+// DrainRun only tracks goroutines launched by [busImpl.EmitWithRunID] for the
+// given runID. Goroutines launched by plain [busImpl.Emit] (no run_id) are not
+// tracked per-run and will not be waited on.
+//
+// Bead: hk-fx6zl.
+func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
+	wg := b.runDrainer(runID.String())
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("eventbus.DrainRun(%s): %w", runID, ctx.Err())
+	}
 }
 
 // Drain blocks until all in-flight asynchronous and observer dispatches

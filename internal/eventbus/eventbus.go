@@ -14,6 +14,27 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// RunDrainer is an optional capability implemented by bus implementations that
+// support per-run quiescence (hk-fx6zl).
+//
+// busImpl satisfies this interface via [busImpl.DrainRun]. Callers that need
+// per-run drain (e.g. graceful shutdown of a single bead run without blocking
+// other concurrent runs) should type-assert the EventBus value:
+//
+//	if rd, ok := bus.(eventbus.RunDrainer); ok {
+//	    if err := rd.DrainRun(ctx, runID); err != nil { ... }
+//	}
+//
+// The base [EventBus.Drain] method continues to wait for ALL in-flight
+// goroutines across all runs and is unchanged by this interface.
+//
+// Bead: hk-fx6zl.
+type RunDrainer interface {
+	// DrainRun blocks until all in-flight asynchronous and observer dispatches
+	// for runID complete, or ctx is cancelled.
+	DrainRun(ctx context.Context, runID core.RunID) error
+}
+
 // TailTruncationCallback is the optional consumer-supplied callback the bus
 // invokes immediately after restart replay completes when the JSONL tail was
 // truncated by the read-recovery rule (specs/event-model.md §6.2).

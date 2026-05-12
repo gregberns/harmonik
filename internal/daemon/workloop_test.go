@@ -192,6 +192,15 @@ func (s *stubEventCollector) eventTypes() []string {
 	return out
 }
 
+// allEvents returns a snapshot of all recorded events (type + raw payload).
+func (s *stubEventCollector) allEvents() []stubEmittedEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]stubEmittedEvent, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TestDaemonStart_WorkLoopSkippedWithNoBrPath
 // ─────────────────────────────────────────────────────────────────────────────

@@ -551,3 +551,122 @@ func rlAssertEventSubsequence(t *testing.T, types []string, subsequence []string
 	}
 	t.Errorf("event subsequence %v not found in order; emitted: %v", subsequence, types)
 }
+
+// TestReviewLoop_RunIDPropagation verifies the T-WM-025 acceptance criteria:
+//   - A REQUEST_CHANGES → APPROVE cycle emits the expected ordered sequence.
+//   - Every §8.1a event payload carries a run_id matching the one passed to runReviewLoop.
+//   - Each reviewer_verdict payload is well-formed per agent-reviewer schema v1
+//     (validated via ReviewerVerdictPayload.Valid()).
+//
+// Helper prefix: rlFixture (per implementer-protocol.md §Helper-prefix discipline;
+// bead hk-7om2q.25).
+func TestReviewLoop_RunIDPropagation(t *testing.T) {
+	t.Parallel()
+
+	projectDir := rlFixtureProjectDir(t)
+	rlFixtureGitRepo(t, projectDir)
+	wtPath, parentSHA := rlFixtureWorktree(t, projectDir)
+
+	scriptPath := rlFixtureHandlerScript(t, wtPath, []string{"REQUEST_CHANGES", "APPROVE"})
+
+	collector := &stubEventCollector{}
+	ledger := &stubBeadLedger{}
+
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           ledger,
+		Bus:                 collector,
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	runID := rlFixtureRunID(t)
+
+	result := daemon.ExportedRunReviewLoop(
+		ctx, deps,
+		runID,
+		core.BeadID("rl-runid-prop-001"),
+		wtPath, parentSHA,
+	)
+
+	if !result.Success {
+		t.Fatalf("expected success=true on RC→APPROVE; summary=%q", result.Summary)
+	}
+
+	// ── 1. Expected ordered event sequence ───────────────────────────────────
+	eventTypes := collector.eventTypes()
+	rlAssertEventSubsequence(t, eventTypes, []string{
+		string(core.EventTypeReviewerLaunched),   // iter 1
+		string(core.EventTypeReviewerVerdict),    // iter 1 REQUEST_CHANGES
+		string(core.EventTypeImplementerResumed), // iter 2 dispatch
+		string(core.EventTypeReviewerLaunched),   // iter 2
+		string(core.EventTypeReviewerVerdict),    // iter 2 APPROVE
+		string(core.EventTypeReviewLoopCycleComplete),
+	})
+
+	// ── 2. All §8.1a event payloads carry the same run_id ────────────────────
+	//
+	// The §8.1a payload types all embed RunID at the top level as "run_id".
+	// We unmarshal each payload into a minimal struct to extract run_id and
+	// compare it to the runID passed into runReviewLoop.
+	type runIDEnvelope struct {
+		RunID uuid.UUID `json:"run_id"`
+	}
+
+	// §8.1a event types that carry run_id per the spec.
+	rl8a1EventTypes := map[string]struct{}{
+		string(core.EventTypeImplementerResumed):      {},
+		string(core.EventTypeReviewerLaunched):        {},
+		string(core.EventTypeReviewerVerdict):         {},
+		string(core.EventTypeIterationCapHit):         {},
+		string(core.EventTypeNoProgressDetected):      {},
+		string(core.EventTypeReviewLoopCycleComplete): {},
+	}
+
+	wantRunUUID := uuid.UUID(runID)
+	allEvents := collector.allEvents()
+
+	for i, ev := range allEvents {
+		if _, ok := rl8a1EventTypes[ev.EventType]; !ok {
+			continue
+		}
+		var env runIDEnvelope
+		if err := json.Unmarshal(ev.Payload, &env); err != nil {
+			t.Errorf("event[%d] %q: unmarshal run_id: %v", i, ev.EventType, err)
+			continue
+		}
+		if env.RunID != wantRunUUID {
+			t.Errorf("event[%d] %q: run_id = %v; want %v", i, ev.EventType, env.RunID, wantRunUUID)
+		}
+	}
+
+	// ── 3. reviewer_verdict payloads conform to agent-reviewer schema v1 ─────
+	//
+	// We expect two reviewer_verdict events (iter 1 = REQUEST_CHANGES, iter 2 = APPROVE).
+	// Each must unmarshal to a well-formed ReviewerVerdictPayload per .Valid().
+	verdictCount := 0
+	for i, ev := range allEvents {
+		if ev.EventType != string(core.EventTypeReviewerVerdict) {
+			continue
+		}
+		var pl core.ReviewerVerdictPayload
+		if err := json.Unmarshal(ev.Payload, &pl); err != nil {
+			t.Errorf("reviewer_verdict[%d]: unmarshal: %v", verdictCount, err)
+			verdictCount++
+			continue
+		}
+		if !pl.Valid() {
+			t.Errorf("reviewer_verdict event[%d] (payload index %d): ReviewerVerdictPayload.Valid() = false; payload: %s",
+				verdictCount, i, ev.Payload)
+		}
+		verdictCount++
+	}
+	if verdictCount != 2 {
+		t.Errorf("expected 2 reviewer_verdict events (iter 1 RC + iter 2 APPROVE); got %d", verdictCount)
+	}
+}

@@ -2,6 +2,7 @@ package handlercontract_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +268,81 @@ func TestAdapterRegistry_ForAgent_UnknownAlsoSeals(t *testing.T) {
 	if !r.Sealed() {
 		t.Error("Sealed() = false after ForAgent on unknown type; want true")
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HC-012 — parallelism-prep: concurrent ForAgent (hk-cdb9f)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestAdapterRegistry_ForAgent_ConcurrentNoRace verifies that N=100 goroutines
+// calling ForAgent concurrently — both before and after the seal transition —
+// produce no data races.  Run with -race to exercise the sync.RWMutex guard.
+func TestAdapterRegistry_ForAgent_ConcurrentNoRace(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 100
+
+	agentType := adapterRegistryFixtureValidType("concurrent")
+	r := handlercontract.NewAdapterRegistry()
+
+	if err := r.Register(agentType, adapterRegistryFixtureNewAdapter()); err != nil {
+		t.Fatalf("Register: unexpected error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	start := make(chan struct{})
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start // all goroutines unblock at once to maximise contention
+			_, _ = r.ForAgent(agentType)
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	// After N concurrent ForAgent calls the registry must be sealed.
+	if !r.Sealed() {
+		t.Error("Sealed() = false after concurrent ForAgent calls; want true")
+	}
+}
+
+// TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace verifies that
+// concurrent Register (pre-seal) and ForAgent (triggers seal) calls do not
+// race with each other under the -race detector.
+func TestAdapterRegistry_RegisterAndForAgent_ConcurrentNoRace(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 100
+
+	r := handlercontract.NewAdapterRegistry()
+
+	// Pre-register one type so ForAgent succeeds.
+	baseType := adapterRegistryFixtureValidType("base-concurrent")
+	if err := r.Register(baseType, adapterRegistryFixtureNewAdapter()); err != nil {
+		t.Fatalf("Register base: unexpected error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	start := make(chan struct{})
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			// Half the goroutines look up; the other half read sealed state.
+			// Both paths touch shared fields and must not race.
+			_, _ = r.ForAgent(baseType)
+			_ = r.Sealed()
+		}()
+	}
+
+	close(start)
+	wg.Wait()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

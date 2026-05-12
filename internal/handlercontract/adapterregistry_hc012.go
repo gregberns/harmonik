@@ -2,6 +2,7 @@ package handlercontract
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -38,6 +39,7 @@ import (
 //
 // Spec: specs/handler-contract.md §4.3.HC-012.
 type AdapterRegistry struct {
+	mu       sync.RWMutex
 	sealed   bool
 	adapters map[core.AgentType]Adapter
 }
@@ -66,13 +68,8 @@ func (r *AdapterRegistry) Register(agentType core.AgentType, adapter Adapter) er
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.Register called on zero-value registry; use NewAdapterRegistry")
 	}
-	if r.sealed {
-		return fmt.Errorf(
-			"handlercontract: AdapterRegistry.Register(%q): registry is sealed (ForAgent was already called); "+
-				"all agent types must be registered before dispatching begins — daemon defect",
-			agentType,
-		)
-	}
+	// Validate before acquiring the lock — these checks are argument-only and
+	// do not touch shared state.
 	if !agentType.Valid() {
 		return fmt.Errorf(
 			"handlercontract: AdapterRegistry.Register: invalid agent_type %q; "+
@@ -83,6 +80,15 @@ func (r *AdapterRegistry) Register(agentType core.AgentType, adapter Adapter) er
 	if adapter == nil {
 		return fmt.Errorf(
 			"handlercontract: AdapterRegistry.Register(%q): adapter is nil — daemon defect",
+			agentType,
+		)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sealed {
+		return fmt.Errorf(
+			"handlercontract: AdapterRegistry.Register(%q): registry is sealed (ForAgent was already called); "+
+				"all agent types must be registered before dispatching begins — daemon defect",
 			agentType,
 		)
 	}
@@ -110,9 +116,12 @@ func (r *AdapterRegistry) ForAgent(agentType core.AgentType) (Adapter, error) {
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.ForAgent called on zero-value registry; use NewAdapterRegistry")
 	}
-	// Seal on first lookup — dispatching has begun; no further registrations are allowed.
+	// Write-lock for seal transition: concurrent ForAgent calls must each observe
+	// sealed=true after the first caller sets it, and must not race with Register.
+	r.mu.Lock()
 	r.sealed = true
 	adapter, ok := r.adapters[agentType]
+	r.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf(
 			"handlercontract: AdapterRegistry.ForAgent(%q): no adapter registered for this agent_type; "+
@@ -134,6 +143,8 @@ func (r *AdapterRegistry) RegisteredTypes() []core.AgentType {
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.RegisteredTypes called on zero-value registry; use NewAdapterRegistry")
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	types := make([]core.AgentType, 0, len(r.adapters))
 	for at := range r.adapters {
 		types = append(types, at)
@@ -150,5 +161,7 @@ func (r *AdapterRegistry) Sealed() bool {
 	if r.adapters == nil {
 		panic("handlercontract: AdapterRegistry.Sealed called on zero-value registry; use NewAdapterRegistry")
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.sealed
 }

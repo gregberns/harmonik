@@ -21,26 +21,70 @@ import (
 // only. When constructed via [NewBusImplWithRegistry], the caller's patterns
 // are also applied.
 //
+// # JSONL wiring (hk-8mup.63)
+//
+// When constructed via [NewBusImplWithWriter], a [*JSONLWriter] is threaded
+// through the bus and Emit appends each redacted event as a JSONL line.
+// F-class (fsync-boundary) events call Append(line, sync=true); O-class and
+// L-class events call Append(line, sync=false). The durability class is
+// derived from [isFsyncBoundaryEvent] per the §8 taxonomy table.
+//
 // # Dispatch order (EV-014a)
 //
-// Emit returns after: (a) redaction (EV-035), (b) JSONL append + any mandated
-// fsync per EV-016 (deferred stub at MVH — JSONL path bead), (c) synchronous
-// consumer dispatch on the caller's goroutine. Asynchronous and observer
-// consumers are dispatched off the critical path via per-handler goroutines
-// (MVH) and MUST NOT extend Emit latency. A bounded worker pool (default 4
-// workers, operator-configurable) replaces the per-goroutine approach in the
-// post-MVH JSONL-path bead.
+// Emit returns after: (a) redaction (EV-035), (b) JSONL append + fsync for
+// F-class events per EV-016 (hk-8mup.63), (c) synchronous consumer dispatch
+// on the caller's goroutine. Asynchronous and observer consumers are dispatched
+// off the critical path via per-handler goroutines (MVH) and MUST NOT extend
+// Emit latency. A bounded worker pool (default 4 workers, operator-configurable)
+// replaces the per-goroutine approach in the post-MVH worker-pool bead.
 //
-// Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19.
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
+// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63.
 type busImpl struct {
 	registry      *handlercontract.RedactionRegistry
+	jsonlWriter   *JSONLWriter // nil when no log path is configured
 	mu            sync.Mutex
 	subscriptions []core.Subscription
 	sealed        bool
 	// wg tracks in-flight asynchronous and observer goroutines so Drain can
 	// wait for quiescence (EV-014a; post-MVH: replace with bounded worker pool).
 	wg sync.WaitGroup
+}
+
+// fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
+// event types derived from the §8 taxonomy table in specs/event-model.md.
+// F-class events require Append(line, sync=true) per EV-016 / EV-016a.
+//
+// This set is exhaustive for the §8 rows marked "F" as of event-model.md
+// v0.3.4. Additions to the §8 taxonomy MUST update this map.
+//
+// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a; §8 taxonomy table.
+// Bead ref: hk-8mup.63.
+var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
+	// §8.1 Run lifecycle (F-class rows).
+	core.EventType("run_started"):        {},
+	core.EventType("run_completed"):      {},
+	core.EventType("run_failed"):         {},
+	core.EventType("transition_event"):   {},
+	core.EventType("checkpoint_written"): {},
+	// §8.7 Daemon lifecycle (F-class rows).
+	core.EventType("daemon_started"):             {},
+	core.EventType("daemon_ready"):               {},
+	core.EventType("daemon_shutdown"):            {},
+	core.EventType("daemon_startup_failed"):      {},
+	core.EventType("operator_upgrade_completed"): {},
+}
+
+// isFsyncBoundaryEvent reports whether eventType is an F-class (fsync-boundary)
+// event per the §8 taxonomy table. F-class events require an fsync after JSONL
+// append (EV-016 / EV-016a). All other classes (O = ordinary, L = lossy-tail-ok)
+// do not require an fsync.
+//
+// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a; §8.
+// Bead ref: hk-8mup.63.
+func isFsyncBoundaryEvent(eventType core.EventType) bool {
+	_, ok := fsyncBoundaryEventTypes[eventType]
+	return ok
 }
 
 // NewBusImpl constructs a busImpl with a zero-pattern RedactionRegistry.
@@ -74,6 +118,31 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 		return NewBusImpl()
 	}
 	return &busImpl{registry: registry}
+}
+
+// NewBusImplWithWriter constructs a busImpl with both a
+// [handlercontract.RedactionRegistry] and a [*JSONLWriter] for durable event
+// logging.
+//
+// Every Emit call will append the redacted event to the JSONL log via writer.
+// F-class (fsync-boundary) event types are fsynced before Emit returns
+// (EV-016 / EV-016a); O-class and L-class events are written without fsync.
+//
+// Passing a nil registry is equivalent to a zero-pattern registry (HC-031
+// only). Passing a nil writer disables JSONL append (same behaviour as
+// [NewBusImplWithRegistry]).
+//
+// The returned bus is unsealed; callers MUST call Subscribe for all consumers
+// before calling Seal (EV-009). The returned value satisfies [EventBus].
+//
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
+// specs/handler-contract.md §4.7.HC-032.
+// Bead ref: hk-8mup.63.
+func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *JSONLWriter) EventBus {
+	if registry == nil {
+		registry = handlercontract.NewRedactionRegistry()
+	}
+	return &busImpl{registry: registry, jsonlWriter: writer}
 }
 
 // Emit applies EV-035 redaction to payload via the registry's
@@ -111,9 +180,16 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		return fmt.Errorf("eventbus.Emit: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4: JSONL append (deferred — file path not yet threaded through
-	// daemon.Config; wiring bead adds JSONLWriter here and performs fsync per
-	// EV-016 durability class before the sync-consumer dispatch below).
+	// Step 4: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
+	// F-class (fsync-boundary) events are fsynced before returning; O-class
+	// and L-class events are written without fsync. When no writer is
+	// configured (nil), this step is a no-op (e.g., in-memory-only tests).
+	if b.jsonlWriter != nil {
+		needsSync := isFsyncBoundaryEvent(eventType)
+		if appendErr := b.jsonlWriter.Append(redactedBytes, needsSync); appendErr != nil {
+			return fmt.Errorf("eventbus.Emit: JSONL append: %w", appendErr)
+		}
+	}
 
 	// Step 5: collect matching subscriptions once under lock so dispatch runs
 	// without holding the mutex.

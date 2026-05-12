@@ -33,7 +33,10 @@ package eventbus_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -523,4 +526,144 @@ func TestBusImplEmit_NilRegistryFallsBackToHC031Only(t *testing.T) {
 	} else if got != "run-000" {
 		t.Errorf("consumer payload[\"run_id\"] = %v, want %q; safe field MUST NOT be redacted", got, "run-000")
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EV-016 / EV-016a: JSONL append + fsync-boundary wiring (hk-8mup.63)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// busImplFixtureFsyncEventType is an F-class (fsync-boundary) event type
+// (daemon_started, §8.7.1) used to exercise the sync=true path in Emit.
+const busImplFixtureFsyncEventType core.EventType = "daemon_started"
+
+// busImplFixtureOrdinaryEventType is an O-class (ordinary) event type
+// (daemon_orphan_sweep_completed, §8.7.14) used to exercise the sync=false path.
+const busImplFixtureOrdinaryEventType core.EventType = "daemon_orphan_sweep_completed"
+
+// TestBusImplEmit_FsyncBoundaryEventWritesToJSONL asserts that when the bus
+// is constructed via NewBusImplWithWriter, an F-class (fsync-boundary) event
+// is appended to the JSONL tempfile and Emit returns without error.
+//
+// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a.
+// Bead ref: hk-8mup.63.
+func TestBusImplEmit_FsyncBoundaryEventWritesToJSONL(t *testing.T) {
+	t.Parallel()
+
+	logPath := busImplFixtureJSONLPath(t)
+	writer, err := eventbus.OpenJSONLWriter(logPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bus := eventbus.NewBusImplWithWriter(nil, writer)
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"started_at":         "2026-05-12T00:00:00Z",
+		"pid":                12345,
+		"binary_commit_hash": "abc123",
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	if emitErr := bus.Emit(context.Background(), busImplFixtureFsyncEventType, payload); emitErr != nil {
+		t.Fatalf("Emit (F-class): %v; want nil", emitErr)
+	}
+
+	lines := busImplFixtureReadJSONLLines(t, logPath)
+	if len(lines) != 1 {
+		t.Fatalf("JSONL file contains %d lines after one F-class Emit, want 1", len(lines))
+	}
+	if lines[0] == "" {
+		t.Error("JSONL line is empty; want a non-empty JSON object")
+	}
+}
+
+// TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync asserts that when the
+// bus is constructed via NewBusImplWithWriter, an O-class (ordinary) event is
+// appended to the JSONL tempfile without error, and a second F-class event
+// correctly appears as the second line.
+//
+// This confirms the sync=false (ordinary) path does not block or error,
+// and that lines accumulate correctly.
+//
+// Spec ref: specs/event-model.md §4.4 EV-016, EV-016a.
+// Bead ref: hk-8mup.63.
+func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
+	t.Parallel()
+
+	logPath := busImplFixtureJSONLPath(t)
+	writer, err := eventbus.OpenJSONLWriter(logPath)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	bus := eventbus.NewBusImplWithWriter(nil, writer)
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// Emit one O-class event.
+	ordinaryPayload, err := json.Marshal(map[string]any{
+		"tmux_sessions_killed": 0,
+		"swept_at":             "2026-05-12T00:00:01Z",
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal (ordinary): %v", err)
+	}
+	if emitErr := bus.Emit(context.Background(), busImplFixtureOrdinaryEventType, ordinaryPayload); emitErr != nil {
+		t.Fatalf("Emit (O-class): %v; want nil", emitErr)
+	}
+
+	// Emit one F-class event after the ordinary one.
+	fsyncPayload, err := json.Marshal(map[string]any{
+		"started_at":         "2026-05-12T00:00:02Z",
+		"pid":                99,
+		"binary_commit_hash": "def456",
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal (fsync): %v", err)
+	}
+	if emitErr := bus.Emit(context.Background(), busImplFixtureFsyncEventType, fsyncPayload); emitErr != nil {
+		t.Fatalf("Emit (F-class): %v; want nil", emitErr)
+	}
+
+	lines := busImplFixtureReadJSONLLines(t, logPath)
+	if len(lines) != 2 {
+		t.Fatalf("JSONL file contains %d lines after O-class + F-class Emit, want 2; lines: %v", len(lines), lines)
+	}
+	for i, line := range lines {
+		if line == "" {
+			t.Errorf("JSONL line[%d] is empty; want a non-empty JSON object", i)
+		}
+	}
+}
+
+// busImplFixtureJSONLPath returns a temporary file path for use as a JSONL log.
+func busImplFixtureJSONLPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "events.jsonl")
+}
+
+// busImplFixtureReadJSONLLines reads all non-empty lines from the JSONL file
+// at path and returns them without trailing newlines.
+func busImplFixtureReadJSONLLines(t *testing.T, path string) []string {
+	t.Helper()
+	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("busImplFixtureReadJSONLLines: ReadFile %s: %v", path, err)
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -43,6 +44,7 @@ import (
 type busImpl struct {
 	registry      *handlercontract.RedactionRegistry
 	jsonlWriter   *JSONLWriter // nil when no log path is configured
+	idGen         *core.EventIDGenerator
 	mu            sync.Mutex
 	subscriptions []core.Subscription
 	sealed        bool
@@ -99,7 +101,10 @@ func isFsyncBoundaryEvent(eventType core.EventType) bool {
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-035, PL-005 step 0.
 func NewBusImpl() EventBus {
-	return &busImpl{registry: handlercontract.NewRedactionRegistry()}
+	return &busImpl{
+		registry: handlercontract.NewRedactionRegistry(),
+		idGen:    core.NewEventIDGenerator(),
+	}
 }
 
 // NewBusImplWithRegistry constructs a busImpl that delegates all redaction to
@@ -117,7 +122,10 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 	if registry == nil {
 		return NewBusImpl()
 	}
-	return &busImpl{registry: registry}
+	return &busImpl{
+		registry: registry,
+		idGen:    core.NewEventIDGenerator(),
+	}
 }
 
 // NewBusImplWithWriter constructs a busImpl with both a
@@ -142,7 +150,11 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 	if registry == nil {
 		registry = handlercontract.NewRedactionRegistry()
 	}
-	return &busImpl{registry: registry, jsonlWriter: writer}
+	return &busImpl{
+		registry:    registry,
+		jsonlWriter: writer,
+		idGen:       core.NewEventIDGenerator(),
+	}
 }
 
 // Emit applies EV-035 redaction to payload via the registry's
@@ -180,13 +192,37 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		return fmt.Errorf("eventbus.Emit: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
-	// F-class (fsync-boundary) events are fsynced before returning; O-class
-	// and L-class events are written without fsync. When no writer is
-	// configured (nil), this step is a no-op (e.g., in-memory-only tests).
+	// Step 4a: build the complete EV-001 envelope. event_id and timestamp_wall
+	// are stamped here, inside the emitter, per EV-001. source_subsystem uses
+	// the eventbus package identifier; callers that need a subsystem-specific
+	// value should set it before dispatch (post-MVH daemon-watcher stamping per
+	// EV-002b will own this). schema_version=1 is the current envelope version.
+	eventID, idErr := b.idGen.Next()
+	if idErr != nil {
+		return fmt.Errorf("eventbus.Emit: generate event_id: %w", idErr)
+	}
+	now := time.Now()
+	evt := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   1,
+		Type:            string(eventType),
+		TimestampWall:   now,
+		SourceSubsystem: "eventbus",
+		Payload:         redactedBytes,
+	}
+
+	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
+	// Marshal the COMPLETE envelope (all EV-001 fields + nested payload) to a
+	// single JSON object. F-class (fsync-boundary) events are fsynced before
+	// returning; O-class and L-class events are written without fsync. When no
+	// writer is configured (nil), this step is a no-op (e.g., in-memory-only tests).
 	if b.jsonlWriter != nil {
+		envelopeBytes, marshalErr := json.Marshal(evt)
+		if marshalErr != nil {
+			return fmt.Errorf("eventbus.Emit: marshal envelope: %w", marshalErr)
+		}
 		needsSync := isFsyncBoundaryEvent(eventType)
-		if appendErr := b.jsonlWriter.Append(redactedBytes, needsSync); appendErr != nil {
+		if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
 			return fmt.Errorf("eventbus.Emit: JSONL append: %w", appendErr)
 		}
 	}
@@ -197,11 +233,6 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.Unlock()
-
-	evt := core.Event{
-		Type:    string(eventType),
-		Payload: redactedBytes,
-	}
 
 	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {

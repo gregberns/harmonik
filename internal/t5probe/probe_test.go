@@ -172,11 +172,16 @@ func TestT5_EventOrderInJSONL(t *testing.T) {
 		t.Fatalf("expected 3 lines, got %d", len(lines))
 	}
 
-	// Since JSONL records are payload-only, check the payload field "evt"
+	// JSONL records carry the full EV-001 envelope; the type-specific body is
+	// nested under "payload". Check payload["evt"] for the event type string.
 	for i, line := range lines {
 		var m map[string]any
 		_ = json.Unmarshal([]byte(line), &m)
-		got, _ := m["evt"].(string)
+		payloadRaw, _ := m["payload"].(map[string]any)
+		var got string
+		if payloadRaw != nil {
+			got, _ = payloadRaw["evt"].(string)
+		}
 		want := string(emitOrder[i])
 		if got != want {
 			t.Errorf("line %d: event order mismatch: got %q want %q", i, got, want)
@@ -320,22 +325,28 @@ func TestT5_RedactionHC031ByFieldName(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(lines))
 	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(lines[0]), &m); err != nil {
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &envelope); err != nil {
 		t.Fatalf("line is not valid JSON: %v", err)
+	}
+	// JSONL records carry the full EV-001 envelope; payload fields are nested
+	// under "payload".
+	p, _ := envelope["payload"].(map[string]any)
+	if p == nil {
+		t.Fatal("envelope missing 'payload' object")
 	}
 
 	for _, field := range []string{"secret_token", "api_key", "password"} {
-		val, ok := m[field]
+		val, ok := p[field]
 		if !ok {
-			t.Errorf("field %q missing from JSONL output", field)
+			t.Errorf("field %q missing from JSONL payload", field)
 			continue
 		}
 		if val != handlercontract.RedactedSentinel {
 			t.Errorf("field %q not redacted: got %q, want %q", field, val, handlercontract.RedactedSentinel)
 		}
 	}
-	if val, ok := m["safe_field"]; !ok || val != "visible" {
+	if val, ok := p["safe_field"]; !ok || val != "visible" {
 		t.Errorf("safe_field should pass through unchanged: got %v", val)
 	}
 }
@@ -377,13 +388,19 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(lines))
 	}
-	var m map[string]any
-	_ = json.Unmarshal([]byte(lines[0]), &m)
+	var envelope map[string]any
+	_ = json.Unmarshal([]byte(lines[0]), &envelope)
+	// JSONL records carry the full EV-001 envelope; payload fields are nested
+	// under "payload".
+	payload, _ := envelope["payload"].(map[string]any)
+	if payload == nil {
+		t.Fatal("envelope missing 'payload' object")
+	}
 
 	// carrier_field value matched the sk- pattern — must be redacted.
-	val, ok := m["carrier_field"]
+	val, ok := payload["carrier_field"]
 	if !ok {
-		t.Fatal("carrier_field missing from JSONL output")
+		t.Fatal("carrier_field missing from JSONL payload")
 	}
 	valStr, _ := val.(string)
 	if strings.Contains(valStr, "sk-") {
@@ -391,7 +408,7 @@ func TestT5_RedactionHC032ValuePattern(t *testing.T) {
 	}
 
 	// safe_field must pass through unchanged.
-	if safeVal, ok := m["safe_field"]; !ok || safeVal != "visible-ok" {
+	if safeVal, ok := payload["safe_field"]; !ok || safeVal != "visible-ok" {
 		t.Errorf("safe_field should pass through unchanged: got %v", safeVal)
 	}
 }

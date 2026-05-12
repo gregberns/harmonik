@@ -19,6 +19,7 @@ package brcli_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,7 +233,7 @@ func TestBI010_CloseBead_IntentFileDeletedOnSuccess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID)
+	err := adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, false)
 	if err != nil {
 		t.Fatalf("CloseBead: unexpected error: %v", err)
 	}
@@ -257,7 +258,7 @@ func TestBI010_CloseBead_IntendedPostState_Closed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID)
+	_ = adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, false)
 
 	entry := bi010FixtureReadIntentFile(t, intentLogDir)
 	if entry.IntendedPostState != core.CoarseStatusClosed {
@@ -265,6 +266,125 @@ func TestBI010_CloseBead_IntendedPostState_Closed(t *testing.T) {
 	}
 	if entry.Op != core.TerminalOpClose {
 		t.Errorf("BI-010: close Op = %q, want %q", entry.Op, core.TerminalOpClose)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CloseBead — needs-attention label
+// ─────────────────────────────────────────────────────────────────────────────
+
+// bi010FixtureAppendArgsAdapter returns an Adapter backed by a mock br that
+// appends each invocation's argv (space-separated) as a new line to argsFile
+// and exits 0.  Used to spy on every br invocation made by CloseBead so that
+// tests can verify the label add is (or is not) issued.
+func bi010FixtureAppendArgsAdapter(t *testing.T, argsFile string) *brcli.Adapter {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "br")
+	// Append positional args as a newline-terminated record; exit 0.
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexit 0\n", argsFile)
+	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("bi010FixtureAppendArgsAdapter: write mock: %v", err)
+	}
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("bi010FixtureAppendArgsAdapter: New: %v", err)
+	}
+	return adapter
+}
+
+// bi010FixtureReadArgsLines reads the spy file produced by
+// bi010FixtureAppendArgsAdapter and returns each non-empty line as a slice.
+func bi010FixtureReadArgsLines(t *testing.T, argsFile string) []string {
+	t.Helper()
+	//nolint:gosec // G304: argsFile constructed from t.TempDir() — test-controlled path
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("bi010FixtureReadArgsLines: ReadFile %s: %v", argsFile, err)
+	}
+	var lines []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// TestBI010_CloseBead_NeedsAttentionTrue_LabelAdded verifies that CloseBead
+// with needsAttention=true issues a second br invocation:
+// "label add <bead_id> -l needs-attention" after the close write.
+//
+// Spec ref: execution-model.md §4.3.EM-015e; operator-nfr.md §4.3.ON-009a;
+// beads-integration.md §4.3.13 BI-013a.
+// Bead: hk-7om2q.23.
+func TestBI010_CloseBead_NeedsAttentionTrue_LabelAdded(t *testing.T) {
+	t.Parallel()
+
+	argsFile := filepath.Join(t.TempDir(), "spy-args.txt")
+	adapter := bi010FixtureAppendArgsAdapter(t, argsFile)
+	intentLogDir := bi010FixtureIntentLogDir(t)
+	beadID := core.BeadID("hk-7om2q.23")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, true)
+	if err != nil {
+		t.Fatalf("CloseBead(needsAttention=true): unexpected error: %v", err)
+	}
+
+	lines := bi010FixtureReadArgsLines(t, argsFile)
+	if len(lines) < 2 {
+		t.Fatalf("EM-015e/ON-009a: expected at least 2 br invocations (close + label add), got %d: %v", len(lines), lines)
+	}
+
+	// First invocation: the close write.
+	wantClose := "close " + string(beadID)
+	if !strings.Contains(lines[0], wantClose) {
+		t.Errorf("EM-015e: first br invocation should be close; got %q, want to contain %q", lines[0], wantClose)
+	}
+
+	// Second invocation: the needs-attention label add.
+	wantLabel := "label add " + string(beadID) + " -l needs-attention"
+	if !strings.Contains(lines[1], wantLabel) {
+		t.Errorf("EM-015e/ON-009a: second br invocation should be label add needs-attention; got %q, want to contain %q", lines[1], wantLabel)
+	}
+}
+
+// TestBI010_CloseBead_NeedsAttentionFalse_NoLabelAdded verifies that CloseBead
+// with needsAttention=false issues only one br invocation (the close write)
+// and does NOT apply the needs-attention label.
+//
+// Spec ref: execution-model.md §4.3.EM-015e (APPROVE path — no label);
+// beads-integration.md §4.3.13 BI-013a.
+// Bead: hk-7om2q.23.
+func TestBI010_CloseBead_NeedsAttentionFalse_NoLabelAdded(t *testing.T) {
+	t.Parallel()
+
+	argsFile := filepath.Join(t.TempDir(), "spy-args.txt")
+	adapter := bi010FixtureAppendArgsAdapter(t, argsFile)
+	intentLogDir := bi010FixtureIntentLogDir(t)
+	beadID := core.BeadID("hk-7om2q.23")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := adapter.CloseBead(ctx, intentLogDir, brcli.TimeoutConfig{}, bi010FixtureRunID(t), bi010FixtureTransitionID(t), beadID, false)
+	if err != nil {
+		t.Fatalf("CloseBead(needsAttention=false): unexpected error: %v", err)
+	}
+
+	lines := bi010FixtureReadArgsLines(t, argsFile)
+	if len(lines) != 1 {
+		t.Errorf("EM-015e: needsAttention=false should issue exactly 1 br invocation (close only), got %d: %v", len(lines), lines)
+	}
+
+	for _, line := range lines {
+		if strings.Contains(line, "needs-attention") {
+			t.Errorf("EM-015e/ON-009a: needsAttention=false must NOT apply needs-attention label; found %q in invocations", line)
+		}
 	}
 }
 

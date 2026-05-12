@@ -174,10 +174,23 @@ func (a *Adapter) ClaimBead(
 // per workspace-model.md §4.5 WM-007. May also be emitted by the Cat 3c
 // auto-resolver per BI-010b.
 //
-// The full BI-030 intent-log protocol is applied.
+// When needsAttention is true, CloseBead applies the "needs-attention" label
+// to the bead immediately after the close write succeeds. This is the
+// operator-drain marker used by the review-loop close path when the cycle
+// terminates without an APPROVE verdict (cap-hit, BLOCK, or no-progress
+// early-exit) per execution-model.md §4.3.EM-015e and operator-nfr.md
+// §4.3.ON-009a. The label write uses `br label add <bead_id> -l
+// needs-attention` and routes through RunWithDBLockedRetry.
+//
+// When needsAttention is false, CloseBead issues the standard close write with
+// no label mutation (the APPROVE success path).
+//
+// The full BI-030 intent-log protocol is applied to the close write.
 //
 // Spec: beads-integration.md §4.4 BI-010 (close); §4.4 BI-010a (status table);
-// §4.4 BI-010b (reconciliation-driven writes); §4.10 BI-029, BI-030.
+// §4.4 BI-010b (reconciliation-driven writes); §4.10 BI-029, BI-030;
+// §4.3.13 BI-013a (needs-attention exclusion from ready-work query);
+// execution-model.md §4.3.EM-015e; operator-nfr.md §4.3.ON-009a.
 func (a *Adapter) CloseBead(
 	ctx context.Context,
 	intentLogDir string,
@@ -185,8 +198,9 @@ func (a *Adapter) CloseBead(
 	runID core.RunID,
 	transitionID core.TransitionID,
 	beadID core.BeadID,
+	needsAttention bool,
 ) error {
-	return a.terminalTransitionWrite(
+	if err := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
 		cfg,
@@ -196,7 +210,37 @@ func (a *Adapter) CloseBead(
 		core.TerminalOpClose,
 		core.CoarseStatusClosed,
 		[]string{"close", string(beadID)},
+	); err != nil {
+		return err
+	}
+
+	if !needsAttention {
+		return nil
+	}
+
+	// Apply needs-attention label: operator-drain marker per EM-015e / ON-009a.
+	// Routes through RunWithDBLockedRetry (same retry discipline as the close
+	// write). The label write is a separate br invocation; if it fails the bead
+	// is already closed but the operator-drain marker is absent — the caller
+	// MUST treat this as an error (the bead could be re-dispatched without
+	// operator triage, violating ON-009a's no-auto-retry constraint).
+	result, err := a.RunWithDBLockedRetry(
+		ctx,
+		cfg,
+		CommandKindWrite,
+		DBLockedRetryMax,
+		DBLockedRetryBase,
+		DBLockedRetryCap,
+		"label", "add", string(beadID), "-l", "needs-attention",
 	)
+	if err != nil {
+		return fmt.Errorf("brcli.CloseBead: br label add needs-attention: %w", err)
+	}
+	if result.BrErr != BrOK {
+		return fmt.Errorf("brcli.CloseBead: br label add needs-attention failed: %s (exit %d): stderr=%q",
+			result.BrErr, result.ExitCode, result.Stderr)
+	}
+	return nil
 }
 
 // ReopenBead issues the BI-010 reopen write: any active state → open.

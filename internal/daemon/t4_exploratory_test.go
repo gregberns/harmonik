@@ -105,7 +105,7 @@ func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutCon
 	return s.claimErr
 }
 
-func (s *t4StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID) error {
+func (s *t4StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closeErr != nil {
@@ -742,8 +742,8 @@ func (r *t4RequeueLedger) ClaimBead(ctx context.Context, dir string, cfg brcli.T
 	return r.inner.ClaimBead(ctx, dir, cfg, runID, tid, id)
 }
 
-func (r *t4RequeueLedger) CloseBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {
-	return r.inner.CloseBead(ctx, dir, cfg, runID, tid, id)
+func (r *t4RequeueLedger) CloseBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, needsAttention bool) error {
+	return r.inner.CloseBead(ctx, dir, cfg, runID, tid, id, needsAttention)
 }
 
 func (r *t4RequeueLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, reason string) error {
@@ -777,7 +777,7 @@ func (o *t4OrderLedger) ClaimBead(ctx context.Context, dir string, cfg brcli.Tim
 	return o.inner.ClaimBead(ctx, dir, cfg, runID, tid, id)
 }
 
-func (o *t4OrderLedger) CloseBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {
+func (o *t4OrderLedger) CloseBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, _ bool) error {
 	// Check whether run_completed has already been emitted at close time.
 	events := o.collector.eventTypes()
 	hasCompleted := false
@@ -791,7 +791,7 @@ func (o *t4OrderLedger) CloseBead(ctx context.Context, dir string, cfg brcli.Tim
 	o.completedBeforeClose = hasCompleted
 	o.callCount++
 	o.mu.Unlock()
-	return o.inner.CloseBead(ctx, dir, cfg, runID, tid, id)
+	return o.inner.CloseBead(ctx, dir, cfg, runID, tid, id, false)
 }
 
 func (o *t4OrderLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, reason string) error {

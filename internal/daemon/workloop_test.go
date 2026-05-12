@@ -122,7 +122,7 @@ func (s *stubBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutC
 	return nil
 }
 
-func (s *stubBeadLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
+func (s *stubBeadLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = append(s.closed, beadID)
@@ -439,7 +439,7 @@ func (c *closeErrFixtureLedger) ClaimBead(ctx context.Context, d string, cfg brc
 	return c.inner.ClaimBead(ctx, d, cfg, r, tid, bid)
 }
 
-func (c *closeErrFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+func (c *closeErrFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	return c.closeErr
 }
 

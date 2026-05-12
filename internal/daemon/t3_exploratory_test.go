@@ -731,7 +731,7 @@ func (s *t3StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutCon
 	s.mu.Unlock()
 	return nil
 }
-func (s *t3StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+func (s *t3StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	s.mu.Lock()
 	s.closes++
 	s.mu.Unlock()

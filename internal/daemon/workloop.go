@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -283,21 +284,26 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		_ = sess.Wait(ctx)
 		outcome := sess.Outcome()
 
-		// Steps 9 & 10: emit run_completed, close or reopen the bead.
+		// Steps 9 & 10: emit run_completed/run_failed, close or reopen the bead.
 		//
-		// Failure condition (hk-9cob3): a watcher error that is NOT a
-		// context-cancellation (ErrCanceled) means the watcher fired agent_failed
-		// due to a protocol violation (malformed NDJSON, line-too-long, panic,
-		// I/O error). In that case the run is treated as failed even when the
-		// subprocess exits 0, because the work product may be incomplete or
-		// corrupt.
+		// hk-9cob3: a watcher error that is NOT context-cancellation means the
+		// watcher fired agent_failed (malformed NDJSON, line-too-long, panic, I/O
+		// error). Treat as failed even on exit=0 — work product may be corrupt.
+		//
+		// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
+		// fails the bead remains in_progress while JSONL would record
+		// run_completed=true — split-brain. Emit run_failed instead.
 		watcherErr := watcher.Err()
 		watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if outcome.ExitCode == 0 && !watcherFailed {
-			_ = deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID)
-			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
+				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+			} else {
+				emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+			}
 		} else {
 			var failReason string
 			if watcherFailed {

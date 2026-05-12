@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -409,5 +410,114 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 	}
 	if !foundFailed {
 		t.Errorf("run_failed event not found; got event types: %v", eventTypes)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// closeErrFixture — stub ledger for CloseBead-error path (hk-wfbxf)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// closeErrFixtureLedger is a stub beadLedger that returns an error from
+// CloseBead.  All other methods delegate to the inner stubBeadLedger so the
+// normal claim/reopen recording is available.
+type closeErrFixtureLedger struct {
+	inner    *stubBeadLedger
+	closeErr error
+}
+
+func (c *closeErrFixtureLedger) Ready(ctx context.Context) ([]core.BeadID, error) {
+	return c.inner.Ready(ctx)
+}
+
+func (c *closeErrFixtureLedger) ClaimBead(ctx context.Context, d string, cfg brcli.TimeoutConfig, r core.RunID, tid core.TransitionID, bid core.BeadID) error {
+	return c.inner.ClaimBead(ctx, d, cfg, r, tid, bid)
+}
+
+func (c *closeErrFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	return c.closeErr
+}
+
+func (c *closeErrFixtureLedger) ReopenBead(ctx context.Context, d string, cfg brcli.TimeoutConfig, r core.RunID, tid core.TransitionID, bid core.BeadID, reason string) error {
+	return c.inner.ReopenBead(ctx, d, cfg, r, tid, bid, reason)
+}
+
+// TestWorkLoop_CloseBeadError_EmitsRunFailed verifies that when CloseBead
+// returns an error the work loop emits run_failed (not run_completed) so that
+// JSONL and bead state remain consistent (hk-wfbxf: no split-brain).
+func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const beadID = core.BeadID("test-bead-closeerr-001")
+	inner := &stubBeadLedger{
+		ready: []core.BeadID{beadID},
+	}
+	ledger := &closeErrFixtureLedger{
+		inner:    inner,
+		closeErr: errors.New("disk full"),
+	}
+	collector := &stubEventCollector{}
+
+	// Handler exits 0 so the loop attempts CloseBead.
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:     ledger,
+		Bus:           collector,
+		ProjectDir:    projectDir,
+		HandlerBinary: "/bin/sh",
+		HandlerArgs:   []string{"-c", "exit 0"},
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	// Poll until a run_failed event is emitted or timeout.
+	deadline := time.After(4 * time.Second)
+	for {
+		types := collector.eventTypes()
+		for _, et := range types {
+			if et == string(core.EventTypeRunFailed) {
+				goto found
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for run_failed event; got events: %v", collector.eventTypes())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+found:
+
+	cancel()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("work loop did not exit after context cancellation")
+	}
+
+	// Must have emitted run_failed, NOT run_completed.
+	types := collector.eventTypes()
+	for _, et := range types {
+		if et == string(core.EventTypeRunCompleted) {
+			t.Errorf("hk-wfbxf: run_completed emitted despite CloseBead error; events: %v", types)
+		}
+	}
+	foundFailed := false
+	for _, et := range types {
+		if et == string(core.EventTypeRunFailed) {
+			foundFailed = true
+			break
+		}
+	}
+	if !foundFailed {
+		t.Errorf("hk-wfbxf: run_failed not emitted on CloseBead error; events: %v", types)
 	}
 }

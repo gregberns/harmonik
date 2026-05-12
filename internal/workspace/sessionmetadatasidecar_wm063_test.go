@@ -411,3 +411,181 @@ func TestWM063_WriteAtomicRejectsInvalidSidecar(t *testing.T) {
 		t.Error("WM-026: WriteSessionMetadataSidecarAtomic with invalid sidecar = nil; want error")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T-WM-030 acceptance tests: WorkflowMode field on sidecar (hk-7om2q.30)
+//
+// BI-020 amendment: the sidecar MAY carry the resolved workflow_mode.
+// When non-nil, the value MUST match the mode the daemon dispatched the run
+// under. Helper prefix: sidecarWMFixture (distinct from sidecarRecordFixture).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// sidecarWMFixtureWithMode returns a valid SessionMetadataSidecar with the
+// WorkflowMode field set to mode.
+func sidecarWMFixtureWithMode(t *testing.T, mode core.WorkflowMode) SessionMetadataSidecar {
+	t.Helper()
+	s := sidecarRecordFixtureValid(t)
+	s.WorkflowMode = &mode
+	return s
+}
+
+// TestWM030_ReviewLoopSidecarCarriesWorkflowMode verifies that a sidecar
+// written for a review-loop run round-trips with workflow_mode="review-loop"
+// (T-WM-030 acceptance criterion 1).
+func TestWM030_ReviewLoopSidecarCarriesWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	sessionID := "sess-0196e300-0000-7000-8000-000000000010"
+	target := SessionMetadataSidecarPath(workspacePath, sessionID)
+
+	original := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+	if err := WriteSessionMetadataSidecarAtomic(target, &original); err != nil {
+		t.Fatalf("T-WM-030: WriteSessionMetadataSidecarAtomic: %v", err)
+	}
+
+	decoded, err := ReadSessionMetadataSidecar(target)
+	if err != nil {
+		t.Fatalf("T-WM-030: ReadSessionMetadataSidecar: %v", err)
+	}
+	if decoded == nil {
+		t.Fatal("T-WM-030: ReadSessionMetadataSidecar returned nil; want non-nil")
+	}
+
+	if decoded.WorkflowMode == nil {
+		t.Fatal("T-WM-030: decoded.WorkflowMode is nil; want review-loop")
+	}
+	if *decoded.WorkflowMode != core.WorkflowModeReviewLoop {
+		t.Errorf("T-WM-030: decoded.WorkflowMode = %q; want %q", *decoded.WorkflowMode, core.WorkflowModeReviewLoop)
+	}
+}
+
+// TestWM030_ReviewLoopSidecarJSONKeyPresent verifies that a review-loop sidecar
+// marshals with the "workflow_mode" key set to "review-loop".
+func TestWM030_ReviewLoopSidecarJSONKeyPresent(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("T-WM-030: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("T-WM-030: json.Unmarshal to raw map: %v", err)
+	}
+
+	val, ok := raw["workflow_mode"]
+	if !ok {
+		t.Fatal("T-WM-030: workflow_mode key absent in JSON; want present for review-loop run")
+	}
+	if string(val) != `"review-loop"` {
+		t.Errorf("T-WM-030: workflow_mode JSON value = %s; want \"review-loop\"", val)
+	}
+}
+
+// TestWM030_SingleModeSidecarOmitsWorkflowMode verifies that a sidecar where
+// WorkflowMode is nil (single-mode sidecar not carrying the optional field)
+// omits the "workflow_mode" key from the JSON (T-WM-030 acceptance criterion 2,
+// omit branch).
+func TestWM030_SingleModeSidecarOmitsWorkflowMode(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	// WorkflowMode is nil — represents a single-mode run that omits the field.
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("T-WM-030: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("T-WM-030: json.Unmarshal to raw map: %v", err)
+	}
+
+	if _, ok := raw["workflow_mode"]; ok {
+		t.Error("T-WM-030: workflow_mode key present with nil WorkflowMode; want omitted")
+	}
+}
+
+// TestWM030_SingleModeSidecarCarriesWorkflowModeSingle verifies that a sidecar
+// where WorkflowMode is explicitly set to "single" carries that value in JSON
+// (T-WM-030 acceptance criterion 2, carry-single branch).
+func TestWM030_SingleModeSidecarCarriesWorkflowModeSingle(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarWMFixtureWithMode(t, core.WorkflowModeSingle)
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("T-WM-030: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("T-WM-030: json.Unmarshal to raw map: %v", err)
+	}
+
+	val, ok := raw["workflow_mode"]
+	if !ok {
+		t.Fatal("T-WM-030: workflow_mode key absent; want \"single\" when explicitly set")
+	}
+	if string(val) != `"single"` {
+		t.Errorf("T-WM-030: workflow_mode JSON value = %s; want \"single\"", val)
+	}
+}
+
+// TestWM030_WorkflowModeRoundTrip verifies that a sidecar with
+// WorkflowMode=review-loop survives a full write→read round-trip with the
+// field intact.
+func TestWM030_WorkflowModeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	sessionID := "sess-0196e300-0000-7000-8000-000000000011"
+	target := SessionMetadataSidecarPath(workspacePath, sessionID)
+
+	original := sidecarWMFixtureWithMode(t, core.WorkflowModeReviewLoop)
+	if err := WriteSessionMetadataSidecarAtomic(target, &original); err != nil {
+		t.Fatalf("T-WM-030: WriteSessionMetadataSidecarAtomic: %v", err)
+	}
+
+	decoded, err := ReadSessionMetadataSidecar(target)
+	if err != nil {
+		t.Fatalf("T-WM-030: ReadSessionMetadataSidecar: %v", err)
+	}
+	if decoded == nil {
+		t.Fatal("T-WM-030: decoded is nil")
+	}
+
+	// All pre-existing required fields must survive.
+	if decoded.RunID != original.RunID {
+		t.Errorf("T-WM-030: RunID mismatch: got %v, want %v", decoded.RunID, original.RunID)
+	}
+	if decoded.AgentType != original.AgentType {
+		t.Errorf("T-WM-030: AgentType mismatch: got %q, want %q", decoded.AgentType, original.AgentType)
+	}
+
+	// WorkflowMode must survive.
+	if decoded.WorkflowMode == nil {
+		t.Fatal("T-WM-030: decoded.WorkflowMode is nil after round-trip; want review-loop")
+	}
+	if *decoded.WorkflowMode != core.WorkflowModeReviewLoop {
+		t.Errorf("T-WM-030: WorkflowMode mismatch: got %q, want %q", *decoded.WorkflowMode, core.WorkflowModeReviewLoop)
+	}
+}
+
+// TestWM030_WorkflowModeFieldIsOptional verifies that Valid() passes for a sidecar
+// with WorkflowMode set to nil (field is optional per BI-020).
+func TestWM030_WorkflowModeFieldIsOptional(t *testing.T) {
+	t.Parallel()
+
+	s := sidecarRecordFixtureValid(t)
+	// WorkflowMode is nil — the field is optional.
+	if err := s.Valid(); err != nil {
+		t.Errorf("T-WM-030: Valid() with nil WorkflowMode = %v; want nil (field is optional)", err)
+	}
+}

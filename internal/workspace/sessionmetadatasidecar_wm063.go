@@ -23,7 +23,7 @@ import (
 // source for agent_type at merge-time implementer identification per WM-022.
 //
 // Schema evolution: N-1 readable per §6.4 (add optional = non-breaking).
-// Current SchemaVersion: 1 (initial).
+// Current SchemaVersion: 2 (T-WM-030: added optional WorkflowMode field).
 type SessionMetadataSidecar struct {
 	// RunID is the UUID of the run that owns this session.
 	// Required per [execution-model.md §4.3 Run].
@@ -50,6 +50,17 @@ type SessionMetadataSidecar struct {
 	// [beads-integration.md §4 BI-020]; nil otherwise.
 	BeadID *core.BeadID `json:"bead_id,omitempty"`
 
+	// WorkflowMode is the resolved workflow mode under which the run was
+	// dispatched (the tier that won the four-tier resolution chain, not the raw
+	// bead label). Optional per [beads-integration.md §4.6 BI-020 amendment]:
+	// populated when the daemon writes the sidecar; absent (nil) in sidecars
+	// written before T-WM-030 shipped (N-1 read compat per §6.4).
+	//
+	// When non-nil, the value MUST match the mode the daemon dispatched the run
+	// under per the BI-020 invariant: "the resolved value, when carried, MUST
+	// match the mode the daemon dispatched the run under."
+	WorkflowMode *core.WorkflowMode `json:"workflow_mode,omitempty"`
+
 	// LaunchedAt is the RFC 3339 wall-clock timestamp at which the session
 	// was launched (handler subprocess spawned). Required; non-empty.
 	LaunchedAt string `json:"launched_at"`
@@ -62,7 +73,8 @@ type SessionMetadataSidecar struct {
 
 // SessionMetadataSidecarSchemaVersion is the current schema version of
 // SessionMetadataSidecar. Increment this constant on every normative schema change.
-const SessionMetadataSidecarSchemaVersion = 1
+// Version 2: added optional WorkflowMode field per T-WM-030 / BI-020 amendment.
+const SessionMetadataSidecarSchemaVersion = 2
 
 // Valid reports whether s is a well-formed SessionMetadataSidecar ready to be
 // written to disk. It checks all required fields for non-zero / non-empty values.

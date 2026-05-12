@@ -261,6 +261,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID)
 			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
+			// Clean up the worktree even on launch failure (hk-fgdgz).
+			removeWorktree(ctx, deps.projectDir, wtPath)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -286,6 +288,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID)
 			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d", outcome.ExitCode))
 		}
+
+		// Step 11 (hk-fgdgz): clean up the git worktree after every dispatch
+		// (success or failure). Non-fatal: failure to prune is logged but does not
+		// abort the loop.
+		removeWorktree(ctx, deps.projectDir, wtPath)
 
 		// Check for cancellation before next iteration.
 		if ctx.Err() != nil {
@@ -323,6 +330,22 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 		return "", fmt.Errorf("daemon: resolveHEAD: git rev-parse HEAD returned empty output")
 	}
 	return sha, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Worktree cleanup helpers (hk-fgdgz)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// removeWorktree removes the git worktree at wtPath and prunes stale metadata
+// from the repository at repoRoot. It uses `git worktree remove --force` twice
+// to handle locked worktrees (the second --force overrides the lock).
+//
+// Errors are non-fatal: the work loop continues even if cleanup fails (orphan
+// sweep at next startup will recover stale worktrees per PL-006).
+func removeWorktree(ctx context.Context, repoRoot, wtPath string) {
+	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", wtPath)
+	cmd.Dir = repoRoot
+	_ = cmd.Run()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

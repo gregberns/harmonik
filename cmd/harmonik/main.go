@@ -30,10 +30,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -119,7 +122,15 @@ func run() int {
 		ProjectDir: projectDir,
 	}
 
-	if err := daemon.Start(cfg); err != nil {
+	// Build a context that is cancelled on SIGINT or SIGTERM so that the
+	// work loop shuts down cleanly when the operator presses Ctrl-C or the
+	// process receives SIGTERM. The signal handling now lives at the
+	// composition root (here) rather than inside daemon.Start, making Start
+	// testable without process-level signals (hk-7oz2f).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := daemon.Start(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", err)
 		return 1
 	}

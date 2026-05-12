@@ -209,7 +209,7 @@ func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 	}
 
 	// daemon.Start should return promptly (no blocking work loop).
-	if err := daemon.Start(cfg); err != nil {
+	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
 	}
 

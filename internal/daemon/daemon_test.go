@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestDaemonStartCompiles(t *testing.T) {
 		t.Parallel()
 
 		cfg := daemon.Config{}
-		err := daemon.Start(cfg)
+		err := daemon.Start(context.Background(), cfg)
 		if err != nil {
 			t.Errorf("daemon.Start(Config{}) returned non-nil error: %v; "+
 				"stub Start must return nil until subsystem wiring is added", err)
@@ -39,7 +40,7 @@ func TestDaemonStartCompiles(t *testing.T) {
 
 		// Config.LogWriter is nil → silences log output; must not panic.
 		cfg := daemon.Config{LogWriter: nil}
-		if err := daemon.Start(cfg); err != nil {
+		if err := daemon.Start(context.Background(), cfg); err != nil {
 			t.Errorf("daemon.Start with nil LogWriter returned error: %v", err)
 		}
 	})
@@ -112,7 +113,7 @@ func TestDaemonStart_PidfileBlocksSecondInvocation(t *testing.T) {
 		ProjectDir:   projectDir,
 		JSONLLogPath: jsonlPath,
 	}
-	startErr := daemon.Start(cfg)
+	startErr := daemon.Start(context.Background(), cfg)
 	if startErr == nil {
 		t.Fatal("Start returned nil with pidfile already locked; want non-nil error (PL-002a / PL-008a)")
 	}
@@ -139,7 +140,7 @@ func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
 		ProjectDir:   projectDir,
 		JSONLLogPath: jsonlPath,
 	}
-	if err := daemon.Start(cfg); err != nil {
+	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
 	}
 
@@ -194,7 +195,7 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 		ProjectDir:   projectDir,
 		JSONLLogPath: jsonlPath,
 	}
-	if err := daemon.Start(cfg); err != nil {
+	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
 	}
 
@@ -241,7 +242,7 @@ func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
 		ProjectDir:   projectDir,
 		JSONLLogPath: jsonlPath,
 	}
-	if err := daemon.Start(cfg); err != nil {
+	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v; want nil (orphan sweep errors must not abort Start)", err)
 	}
 
@@ -283,7 +284,7 @@ func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
 		JSONLLogPath: jsonlPath,
 	}
 	// Start MUST succeed even in a fresh directory with no orphans.
-	if err := daemon.Start(cfg); err != nil {
+	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Errorf("daemon.Start with empty project dir returned error: %v; "+
 			"sweep errors MUST NOT abort Start (PL-006)", err)
 	}

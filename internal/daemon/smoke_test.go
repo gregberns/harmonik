@@ -11,11 +11,10 @@ package daemon_test
 //     a tiny /bin/sh wrapper script that exits 0 immediately.
 //   - Real brcli.Adapter calls through daemon.Start → newWorkLoopDeps.
 //
-// The test polls `br show <id>` until status == "closed" (10 ms interval,
-// 20 s budget) then sends SIGINT to the test process to stop the work loop
-// (daemon.Start uses signal.NotifyContext for SIGINT/SIGTERM; this is the
-// only supported stop mechanism at MVH — Config does not yet accept an
-// external context; follow-up bead hk-7oz2f tracks that gap).
+// The test passes a cancellable context to daemon.Start (hk-7oz2f) so that
+// the work loop can be stopped cleanly without sending SIGINT to the test
+// process.  Once the bead is confirmed closed, the cancel function is called
+// and the goroutine exits.
 //
 // Helper prefix: smokeFixture (per implementer-protocol §Helper-prefix discipline; bead hk-wql33).
 //
@@ -29,12 +28,12 @@ package daemon_test
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -223,17 +222,14 @@ func smokeFixturePollBeadClosed(t *testing.T, brWrapperPath, beadID string, budg
 //  3. Poll until the bead is closed.
 //  4. Assert JSONL contains run_started and run_completed events.
 //
-// The test sends SIGINT to self to stop the work loop after the bead is
-// confirmed closed; daemon.Start uses signal.NotifyContext which handles this
-// cleanly.
+// The test passes a cancellable context to daemon.Start (hk-7oz2f) and calls
+// cancel once the bead is confirmed closed, avoiding SIGINT to the test process.
 //
 // Known MVH gaps (follow-up beads filed inline):
 //   - Config.HandlerArgs not present → workaround: baked handler.sh script.
-//   - daemon.Start does not accept an external context → workaround: SIGINT.
 //   - Worktree cleanup not wired in R10 → workaround: accept worktree present.
 func TestMVHSmoke(t *testing.T) {
-	// Not parallel: test sends SIGINT to the process; cannot share signal
-	// handler with parallel tests that also use signal.NotifyContext.
+	t.Parallel()
 
 	realBrPath := smokeFixtureBrPath(t)
 
@@ -261,10 +257,15 @@ func TestMVHSmoke(t *testing.T) {
 	// extra args.  The smoke test works around this by using a baked handler.sh
 	// that exits 0 without args.
 
-	// Launch daemon.Start in a goroutine.  It blocks until SIGINT/SIGTERM.
+	// Build a cancellable context to drive a clean shutdown (hk-7oz2f).
+	// Cancelling loopCancel replaces the previous SIGINT-to-self workaround.
+	loopCtx, loopCancel := context.WithCancel(context.Background())
+	defer loopCancel()
+
+	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.
 	startDone := make(chan error, 1)
 	go func() {
-		startDone <- daemon.Start(cfg)
+		startDone <- daemon.Start(loopCtx, cfg)
 	}()
 
 	// Poll until the bead is closed (10 ms interval, 20 s budget).
@@ -272,18 +273,17 @@ func TestMVHSmoke(t *testing.T) {
 	const pollBudget = 20 * time.Second
 	closed := smokeFixturePollBeadClosed(t, brWrapper, beadID, pollBudget)
 
-	// Stop the work loop by sending SIGINT to this process.
-	// signal.NotifyContext in daemon.Start handles this and cancels loopCtx.
-	_ = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	// Stop the work loop by cancelling the context.
+	loopCancel()
 
-	// Wait for daemon.Start to return (up to 5 s after signal).
+	// Wait for daemon.Start to return (up to 5 s after cancel).
 	select {
 	case err := <-startDone:
 		if err != nil {
-			t.Errorf("daemon.Start returned error after SIGINT: %v", err)
+			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after SIGINT")
+		t.Error("daemon.Start did not return within 5 s after context cancel")
 	}
 
 	// Assert bead was closed within the polling budget.

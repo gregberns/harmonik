@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -87,6 +86,11 @@ type Config struct {
 
 // Start is the composition-root entry point for the harmonik daemon.
 //
+// ctx controls the lifetime of the work loop. The caller is responsible for
+// cancelling ctx when a clean shutdown is desired (e.g. via
+// signal.NotifyContext). This makes the stop mechanism testable without sending
+// OS signals to the test process (hk-7oz2f).
+//
 // It executes the deterministic startup sequence defined by
 // specs/process-lifecycle.md §4.2 PL-005:
 //
@@ -109,7 +113,7 @@ type Config struct {
 //
 // Spec ref: specs/process-lifecycle.md §4.6 PL-020, PL-020a, PL-005 step 0;
 // §4.1 PL-002, PL-002a, PL-002b.
-func Start(cfg Config) error {
+func Start(ctx context.Context, cfg Config) error {
 	// Step 1 (PL-002, hk-iarcy): acquire the advisory pidfile lock.
 	//
 	// AcquirePidfile constructs the path internally as
@@ -254,17 +258,13 @@ func Start(cfg Config) error {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}
 
-		// Create a context that is cancelled on SIGINT or SIGTERM so that the
-		// work loop can shut down cleanly when the operator presses Ctrl-C or
-		// sends SIGTERM.  MVH ships as a foreground binary (MVH_ROADMAP §"What
-		// we are NOT building for MVH" — no daemonization), so SIGINT/SIGTERM
-		// is the operator's only stop mechanism at this stage.
-		loopCtx, loopStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer loopStop()
-
+		// Use the caller-supplied ctx to drive a clean shutdown. The production
+		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that
+		// Ctrl-C / SIGTERM cancels the work loop without sending signals into
+		// the test process (hk-7oz2f).
 		loopDone := make(chan error, 1)
 		go func() {
-			loopDone <- runWorkLoop(loopCtx, deps)
+			loopDone <- runWorkLoop(ctx, deps)
 		}()
 
 		// Block until the work loop exits (either ctx cancelled or fatal error).

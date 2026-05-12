@@ -95,6 +95,13 @@ func run() int {
 	// config-file loading (MVH_ROADMAP §"What we are NOT building for MVH").
 	var projectFlag string
 	flag.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+
+	// --max-concurrent: maximum beads dispatched concurrently.
+	// Default 1 preserves MVH single-threaded semantics (POST_MVH_PARALLELISM_ROADMAP row 6, hk-e61c3.1).
+	// Values >1 are inert until the work-loop goroutine scheduler (hk-e61c3.2) lands.
+	var maxConcurrentFlag int
+	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently (default 1)")
+
 	flag.Parse()
 
 	// Resolve project directory.
@@ -146,9 +153,10 @@ func run() int {
 	fmt.Fprintln(os.Stderr, "harmonik daemon starting in", projectDir)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		BrPath:       brPath,
-		JSONLLogPath: jsonlLogPath,
+		ProjectDir:    projectDir,
+		BrPath:        brPath,
+		JSONLLogPath:  jsonlLogPath,
+		MaxConcurrent: maxConcurrentFlag,
 	}
 
 	// Build a context that is cancelled on SIGINT or SIGTERM so the work loop

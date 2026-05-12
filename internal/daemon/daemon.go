@@ -110,6 +110,21 @@ type Config struct {
 	//
 	// Bead ref: hk-ecrxy.
 	HandlerEnv []string
+
+	// MaxConcurrent is the maximum number of beads the work loop may dispatch
+	// concurrently. A value of zero is treated as 1, preserving MVH
+	// single-threaded semantics for any caller that does not set the field
+	// (zero-value compatibility).
+	//
+	// Ceiling enforcement lives in the work-loop scheduler (row 5, hk-e61c3.2),
+	// NOT in the bus or adapter. Row 5 reads this field and gates goroutine
+	// creation accordingly.
+	//
+	// The composition root (cmd/harmonik/main.go) exposes this as --max-concurrent.
+	// Default: 1. Valid range: ≥1. Values >1 are inert until hk-e61c3.2 lands.
+	//
+	// Bead ref: hk-e61c3.1. POST_MVH_PARALLELISM_ROADMAP row 6.
+	MaxConcurrent int
 }
 
 // Start is the composition-root entry point for the harmonik daemon.

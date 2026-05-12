@@ -37,6 +37,24 @@ type Config struct {
 	// MVH_ROADMAP row #1 (hk-56ajv).
 	ProjectDir string
 
+	// WorkflowModeDefault is the daemon-level default workflow mode loaded once
+	// at PL-005 step 0 per §PL-004a.  It is the second-lowest-precedence tier
+	// of the four-tier resolution chain (execution-model.md §4.3 EM-012a):
+	// per-bead label → per-project → daemon-default (this field) → built-in
+	// fallback (single).
+	//
+	// The zero value (empty string) is treated as [core.WorkflowModeSingle] —
+	// operators who do not set the field get the built-in default.  Any other
+	// unrecognised value is rejected at startup with an error so the daemon
+	// fails fast rather than silently degrading.
+	//
+	// The field is immutable for the daemon's lifetime; mid-run changes require
+	// a daemon restart (or exec-replacement via harmonik upgrade per PL-027).
+	//
+	// Spec ref: specs/process-lifecycle.md §4.1 PL-004a; §4.2 PL-005 step 0.
+	// Bead ref: hk-7om2q.8.
+	WorkflowModeDefault core.WorkflowMode
+
 	// LogWriter is the destination for structured daemon log output.
 	// A nil LogWriter silences all log output (useful in tests).
 	LogWriter io.Writer
@@ -161,6 +179,21 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Step 0 (PL-005): bootstrap cross-subsystem registries.
 
+	// PL-004a: resolve and cache workflow_mode_default once at step 0.
+	//
+	// The zero value (empty string) is treated as WorkflowModeSingle — the
+	// built-in fallback per PL-004a ("When the field is absent, the daemon's
+	// default workflow mode MUST be `single`").  Any unrecognised non-empty
+	// value is rejected at startup so the daemon fails fast.
+	//
+	// Bead ref: hk-7om2q.8.
+	workflowModeDefault := cfg.WorkflowModeDefault
+	if workflowModeDefault == "" {
+		workflowModeDefault = core.WorkflowModeSingle
+	} else if !workflowModeDefault.Valid() {
+		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
+	}
+
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).
 	// No seed patterns here — handlers call registry.RegisterPattern when they
 	// are wired (per PL-005 step 0 semantics).
@@ -263,7 +296,7 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Skip the work loop when BrPath is not configured (unit-test mode).
 	if cfg.BrPath != "" {
-		deps, depsErr := newWorkLoopDeps(cfg, bus)
+		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault)
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}

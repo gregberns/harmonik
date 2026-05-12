@@ -38,6 +38,13 @@ type WorkLoopDepsParams struct {
 
 	// IntentLogDir is the beads-intents directory path.  Required.
 	IntentLogDir string
+
+	// WorkflowModeDefault is the daemon-level default workflow mode per
+	// PL-004a.  Zero value is normalised to WorkflowModeSingle in
+	// ExportedWorkLoopDeps, mirroring daemon.Start step 0 behaviour.
+	//
+	// Bead ref: hk-7om2q.8.
+	WorkflowModeDefault core.WorkflowMode
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -49,20 +56,38 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		binary = "claude"
 	}
 
+	// Normalise WorkflowModeDefault: zero value → WorkflowModeSingle, mirroring
+	// daemon.Start step 0 per PL-004a.
+	wmd := p.WorkflowModeDefault
+	if wmd == "" {
+		wmd = core.WorkflowModeSingle
+	}
+
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{})
 
 	return workLoopDeps{
-		brAdapter:     p.BrAdapter,
-		bus:           p.Bus,
-		h:             h,
-		intentLogDir:  p.IntentLogDir,
-		projectDir:    p.ProjectDir,
-		handlerBinary: binary,
-		handlerArgs:   p.HandlerArgs,
-		handlerEnv:    nil,
-		brTimeoutCfg:  brcli.TimeoutConfig{},
-		tidGen:        core.NewTransitionIDGenerator(),
+		brAdapter:           p.BrAdapter,
+		bus:                 p.Bus,
+		h:                   h,
+		intentLogDir:        p.IntentLogDir,
+		projectDir:          p.ProjectDir,
+		handlerBinary:       binary,
+		handlerArgs:         p.HandlerArgs,
+		handlerEnv:          nil,
+		brTimeoutCfg:        brcli.TimeoutConfig{},
+		tidGen:              core.NewTransitionIDGenerator(),
+		workflowModeDefault: wmd,
 	}
+}
+
+// WorkflowModeDefaultOf returns the workflowModeDefault field from deps.
+// This is the test-seam accessor for the claim path (T-WM-009) to observe
+// the cached daemon-level default without exporting workLoopDeps itself.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
+// Bead ref: hk-7om2q.8.
+func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
+	return deps.workflowModeDefault
 }
 
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is

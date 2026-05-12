@@ -88,6 +88,16 @@ type workLoopDeps struct {
 	// tidGen is the TransitionID generator.  A single shared generator enforces
 	// strict monotonicity across the loop per execution-model.md §4.4 EM-018a.
 	tidGen *core.TransitionIDGenerator
+
+	// workflowModeDefault is the daemon-level default workflow mode cached at
+	// PL-005 step 0 per §PL-004a.  It is the third-tier fallback in the
+	// four-tier resolution chain (execution-model.md §4.3 EM-012a); the claim
+	// path (T-WM-009) reads this field when neither a per-bead label nor a
+	// per-project override is present.  Always a valid WorkflowMode value; zero
+	// value is never stored (Start normalises it to WorkflowModeSingle).
+	//
+	// Bead ref: hk-7om2q.8.
+	workflowModeDefault core.WorkflowMode
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -99,9 +109,12 @@ type beadLedger interface {
 	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
 }
 
-// newWorkLoopDeps constructs the production workLoopDeps from daemon.Config and
-// the shared event bus.  Returns an error if any required config field is missing.
-func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter) (workLoopDeps, error) {
+// newWorkLoopDeps constructs the production workLoopDeps from daemon.Config,
+// the shared event bus, and the pre-resolved workflowModeDefault.
+//
+// workflowModeDefault MUST already be normalised by the caller (daemon.Start
+// step 0) — it must be a valid WorkflowMode; zero value is never passed in.
+func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
 	if cfg.BrPath == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.BrPath is empty; production callers must resolve br from PATH at startup")
 	}
@@ -127,16 +140,17 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter) (workLoopDeps
 	}
 
 	return workLoopDeps{
-		brAdapter:     adapter,
-		bus:           bus,
-		h:             h,
-		intentLogDir:  intentLogDir,
-		projectDir:    cfg.ProjectDir,
-		handlerBinary: binary,
-		handlerArgs:   cfg.HandlerArgs,
-		handlerEnv:    cfg.HandlerEnv,
-		brTimeoutCfg:  brcli.TimeoutConfig{},
-		tidGen:        core.NewTransitionIDGenerator(),
+		brAdapter:           adapter,
+		bus:                 bus,
+		h:                   h,
+		intentLogDir:        intentLogDir,
+		projectDir:          cfg.ProjectDir,
+		handlerBinary:       binary,
+		handlerArgs:         cfg.HandlerArgs,
+		handlerEnv:          cfg.HandlerEnv,
+		brTimeoutCfg:        brcli.TimeoutConfig{},
+		tidGen:              core.NewTransitionIDGenerator(),
+		workflowModeDefault: workflowModeDefault,
 	}, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -288,4 +289,173 @@ func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
 		t.Errorf("daemon.Start with empty project dir returned error: %v; "+
 			"sweep errors MUST NOT abort Start (PL-006)", err)
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-7om2q.8: workflow_mode_default daemon config field (PL-004a)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// wmdFixtureProjectDir creates a temporary project directory for workflow-mode
+// default tests.  It reuses the pidfileFixtureProjectDir setup so the daemon
+// can start successfully.
+func wmdFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
+	t.Helper()
+	return pidfileFixtureProjectDir(t)
+}
+
+// TestWorkflowModeDefault_ZeroValueDefaultsToSingle asserts that when
+// Config.WorkflowModeDefault is the zero value (empty string), daemon.Start
+// treats it as core.WorkflowModeSingle per §PL-004a ("When the field is
+// absent, the daemon's default workflow mode MUST be `single`").
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a; §4.2 PL-005 step 0.
+// Bead ref: hk-7om2q.8.
+func TestWorkflowModeDefault_ZeroValueDefaultsToSingle(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := wmdFixtureProjectDir(t)
+
+	cfg := daemon.Config{
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: "", // zero value — must be normalised to "single"
+	}
+	if err := daemon.Start(context.Background(), cfg); err != nil {
+		t.Fatalf("daemon.Start with zero WorkflowModeDefault returned error: %v", err)
+	}
+}
+
+// TestWorkflowModeDefault_ReviewLoopObservableViaAccessor asserts that when
+// Config.WorkflowModeDefault is set to "review-loop", the value is cached and
+// observable via the WorkflowModeDefaultOf test-seam accessor.
+//
+// This test exercises the ExportedWorkLoopDeps path (which mirrors the
+// normalisation logic in daemon.Start step 0) to validate the accessor without
+// a full daemon.Start call that would require a live br binary.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
+// Bead ref: hk-7om2q.8.
+func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
+	t.Parallel()
+
+	params := daemon.WorkLoopDepsParams{
+		BrAdapter:           &wmdStubLedger{},
+		Bus:                 &wmdNoopBus{},
+		ProjectDir:          t.TempDir(),
+		HandlerBinary:       "echo",
+		IntentLogDir:        t.TempDir(),
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+	}
+
+	deps := daemon.ExportedWorkLoopDeps(params)
+	got := daemon.WorkflowModeDefaultOf(deps)
+
+	if got != core.WorkflowModeReviewLoop {
+		t.Errorf("WorkflowModeDefaultOf = %q; want %q", got, core.WorkflowModeReviewLoop)
+	}
+}
+
+// TestWorkflowModeDefault_SingleObservableViaAccessor asserts that
+// core.WorkflowModeSingle is observable when explicitly set.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
+// Bead ref: hk-7om2q.8.
+func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
+	t.Parallel()
+
+	params := daemon.WorkLoopDepsParams{
+		BrAdapter:           &wmdStubLedger{},
+		Bus:                 &wmdNoopBus{},
+		ProjectDir:          t.TempDir(),
+		HandlerBinary:       "echo",
+		IntentLogDir:        t.TempDir(),
+		WorkflowModeDefault: core.WorkflowModeSingle,
+	}
+
+	deps := daemon.ExportedWorkLoopDeps(params)
+	got := daemon.WorkflowModeDefaultOf(deps)
+
+	if got != core.WorkflowModeSingle {
+		t.Errorf("WorkflowModeDefaultOf = %q; want %q", got, core.WorkflowModeSingle)
+	}
+}
+
+// TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor asserts that the
+// zero value (empty string) is normalised to WorkflowModeSingle in
+// ExportedWorkLoopDeps, mirroring daemon.Start step 0 normalisation.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
+// Bead ref: hk-7om2q.8.
+func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
+	t.Parallel()
+
+	params := daemon.WorkLoopDepsParams{
+		BrAdapter:           &wmdStubLedger{},
+		Bus:                 &wmdNoopBus{},
+		ProjectDir:          t.TempDir(),
+		HandlerBinary:       "echo",
+		IntentLogDir:        t.TempDir(),
+		WorkflowModeDefault: "", // zero value
+	}
+
+	deps := daemon.ExportedWorkLoopDeps(params)
+	got := daemon.WorkflowModeDefaultOf(deps)
+
+	if got != core.WorkflowModeSingle {
+		t.Errorf("WorkflowModeDefaultOf with zero value = %q; want %q (PL-004a default)", got, core.WorkflowModeSingle)
+	}
+}
+
+// TestWorkflowModeDefault_UnknownValueRejectedAtStartup asserts that an
+// unknown workflow_mode_default value is rejected by daemon.Start with a
+// non-nil error.  The daemon MUST fail fast rather than silently degrading.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-004a — unknown values in the
+// daemon-level config MUST be rejected at startup (read-time validation).
+// Bead ref: hk-7om2q.8.
+func TestWorkflowModeDefault_UnknownValueRejectedAtStartup(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := wmdFixtureProjectDir(t)
+
+	cfg := daemon.Config{
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowMode("unknown-mode"),
+	}
+	err := daemon.Start(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("daemon.Start with unknown WorkflowModeDefault returned nil; want non-nil error (PL-004a)")
+	}
+	// Verify the error message names the bad value so the operator can diagnose.
+	if !strings.Contains(err.Error(), "unknown-mode") {
+		t.Errorf("error = %q; want it to contain the invalid value %q", err.Error(), "unknown-mode")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// wmd* stub helpers (bead hk-7om2q.8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// wmdStubLedger is a no-op beadLedger for workflow-mode-default tests that
+// exercise ExportedWorkLoopDeps without running the work loop.
+type wmdStubLedger struct{}
+
+func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadID, error) { return nil, nil }
+func (s *wmdStubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	return nil
+}
+func (s *wmdStubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	return nil
+}
+func (s *wmdStubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+	return nil
+}
+
+// wmdNoopBus is a no-op EventEmitter for workflow-mode-default tests.
+type wmdNoopBus struct{}
+
+func (b *wmdNoopBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
+func (b *wmdNoopBus) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
+	return nil
 }

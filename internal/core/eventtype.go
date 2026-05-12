@@ -367,6 +367,36 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// §8.1a Review-loop cycle event types (only when workflow_mode = review-loop)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeImplementerResumed is the implementer_resumed event type (§8.1a.1).
+	// Durability class: O. Emitted before each implementer dispatch from iteration 2+.
+	EventTypeImplementerResumed EventType = "implementer_resumed"
+
+	// EventTypeReviewerLaunched is the reviewer_launched event type (§8.1a.2).
+	// Durability class: O. Emitted before each reviewer dispatch.
+	EventTypeReviewerLaunched EventType = "reviewer_launched"
+
+	// EventTypeReviewerVerdict is the reviewer_verdict event type (§8.1a.3).
+	// Durability class: F. Emitted after reading and validating .harmonik/review.json.
+	EventTypeReviewerVerdict EventType = "reviewer_verdict"
+
+	// EventTypeIterationCapHit is the iteration_cap_hit event type (§8.1a.4).
+	// Durability class: O. Emitted when iteration cap is reached.
+	EventTypeIterationCapHit EventType = "iteration_cap_hit"
+
+	// EventTypeNoProgressDetected is the no_progress_detected event type (§8.1a.5).
+	// Durability class: O. Emitted when diff hash matches prior iteration.
+	EventTypeNoProgressDetected EventType = "no_progress_detected"
+
+	// EventTypeReviewLoopCycleComplete is the review_loop_cycle_complete event type (§8.1a.6).
+	// Durability class: F. Emitted exactly once per cycle before run_completed/run_failed.
+	EventTypeReviewLoopCycleComplete EventType = "review_loop_cycle_complete"
+)
+
+// ---------------------------------------------------------------------------
 // §8.8 Observability and bus-internal event types
 // ---------------------------------------------------------------------------
 

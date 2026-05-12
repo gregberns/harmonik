@@ -126,3 +126,36 @@ func ExportedBuildLaunchSpecImplementerResume(base handlercontract.LaunchSpec, i
 func ExportedBuildLaunchSpecReviewer(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
 	return buildLaunchSpecReviewer(base, iterationCount)
 }
+
+// ReviewLoopResultExported is the exported shape of reviewLoopResult for tests
+// in package daemon_test. Fields mirror reviewLoopResult verbatim.
+//
+// Bead ref: hk-7om2q.20.
+type ReviewLoopResultExported struct {
+	Success          bool
+	CompletionReason string
+	Summary          string
+	NeedsAttention   bool
+}
+
+// ExportedRunReviewLoop exposes runReviewLoop for tests in package daemon_test.
+// The result is converted to ReviewLoopResultExported to avoid exporting the
+// internal reviewLoopResult type.
+//
+// Bead ref: hk-7om2q.20.
+func ExportedRunReviewLoop(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	wtPath string,
+	parentSHA string,
+) ReviewLoopResultExported {
+	r := runReviewLoop(ctx, deps, runID, beadID, wtPath, parentSHA)
+	return ReviewLoopResultExported{
+		Success:          r.success,
+		CompletionReason: string(r.completionReason),
+		Summary:          r.summary,
+		NeedsAttention:   r.needsAttention,
+	}
+}

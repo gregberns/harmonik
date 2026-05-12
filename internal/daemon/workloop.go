@@ -240,7 +240,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Four-tier precedence: per-bead label → project config (no-op) →
 		// daemon default → single. Resolved once at claim time; immutable for
 		// the run's lifetime. See moderesolve.go.
-		_ = resolveWorkflowMode(ctx, readyRecords[0], deps.workflowModeDefault, deps.bus)
+		workflowMode := resolveWorkflowMode(ctx, readyRecords[0], deps.workflowModeDefault, deps.bus)
 
 		// Step 4: create the git worktree.
 		//
@@ -282,7 +282,41 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Step 5: emit run_started.
 		emitRunStarted(ctx, deps.bus, runID, beadID, wtPath)
 
-		// Step 6: launch the handler subprocess.
+		// Step 6 (mode-dispatch): route to the mode-specific driver.
+		//
+		// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
+		// handled by runReviewLoop in reviewloop.go.
+		//
+		// single mode (default MVH): one-shot implementer dispatch, the historical
+		// work-loop behaviour retained below.
+		if workflowMode == core.WorkflowModeReviewLoop {
+			rlResult := runReviewLoop(ctx, deps, runID, beadID, wtPath, headSHA)
+
+			transitionTID, _ := deps.tidGen.Next()
+			if rlResult.success {
+				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
+					emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+				} else {
+					emitRunCompleted(ctx, deps.bus, runID, true, rlResult.summary)
+				}
+			} else {
+				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, rlResult.needsAttention); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, closeErr)
+				}
+				emitRunCompleted(ctx, deps.bus, runID, false, rlResult.summary)
+			}
+			removeWorktree(ctx, deps.projectDir, wtPath)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				return nil
+			}
+			continue
+		}
+
+		// single mode: launch one implementer subprocess and close or reopen on exit.
 		spec := handler.LaunchSpec{
 			Binary:  deps.handlerBinary,
 			Args:    deps.handlerArgs,

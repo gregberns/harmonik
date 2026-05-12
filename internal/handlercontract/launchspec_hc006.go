@@ -6,20 +6,58 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// ReviewLoopPhase identifies which phase of a review-loop dispatch this
+// LaunchSpec represents, per specs/handler-contract.md §6.1 HC-006.
+//
+// Valid values are the three declared constants below. The field is present
+// in LaunchSpec only when workflow_mode = review-loop.
+//
+// TODO(hk-7om2q.6): migrate to core.ReviewLoopPhase once the typed wrapper is
+// added to internal/core per the typed-alias-deferral pattern.
+type ReviewLoopPhase string
+
+const (
+	// ReviewLoopPhaseImplementerInitial is the first implementer launch in a
+	// review-loop cycle. No prior Claude session exists.
+	ReviewLoopPhaseImplementerInitial ReviewLoopPhase = "implementer-initial"
+
+	// ReviewLoopPhaseImplementerResume is a subsequent implementer launch
+	// resuming a prior Claude Code session (claude --resume <id>).
+	ReviewLoopPhaseImplementerResume ReviewLoopPhase = "implementer-resume"
+
+	// ReviewLoopPhaseReviewer is the reviewer launch within a review-loop
+	// cycle. Each reviewer launch is a fresh Claude session.
+	ReviewLoopPhaseReviewer ReviewLoopPhase = "reviewer"
+)
+
+// Valid reports whether p is one of the declared ReviewLoopPhase constants.
+func (p ReviewLoopPhase) Valid() bool {
+	switch p {
+	case ReviewLoopPhaseImplementerInitial,
+		ReviewLoopPhaseImplementerResume,
+		ReviewLoopPhaseReviewer:
+		return true
+	default:
+		return false
+	}
+}
+
 // LaunchSpec is the record the daemon delivers to every Handler.Launch call
 // per specs/handler-contract.md §6.1 (HC-006).
 //
 // The daemon MUST populate all required fields. Optional fields (BeadID,
-// SnapshotToken) are nil when absent. The record is serialised to JSON and
-// delivered to the handler subprocess via stdin (default) or a file-path
-// argument when the payload exceeds 1 MiB (HC-005).
+// SnapshotToken, WorkflowMode, Phase, IterationCount, ClaudeSessionID) are nil
+// when absent. The record is serialised to JSON and delivered to the handler
+// subprocess via stdin (default) or a file-path argument when the payload
+// exceeds 1 MiB (HC-005).
 //
 // Schema evolution follows the N-1 readability contract per
 // [operator-nfr.md §4.5]: adding an optional field is non-breaking;
 // removing or renaming a field is breaking and requires a migration release.
 // SchemaVersion is incremented on every normative schema change.
 //
-// Current SchemaVersion: 1 (initial).
+// Current SchemaVersion: 2 (added WorkflowMode, Phase, IterationCount,
+// ClaudeSessionID per HC-006).
 type LaunchSpec struct {
 	// RunID is the UUID of the run that owns this session.
 	// Required per [execution-model.md §4.3 Run].
@@ -81,15 +119,46 @@ type LaunchSpec struct {
 	// Optional: present only for investigator handlers; nil otherwise.
 	SnapshotToken *core.SnapshotToken `json:"snapshot_token,omitempty"`
 
+	// WorkflowMode is the dispatch shape resolved for this run per
+	// specs/handler-contract.md §6.1 HC-006 and execution-model.md §4.3.EM-012.
+	// Optional: present iff the daemon resolved a non-default mode; omitted for
+	// single-handler runs. Observational only — handlers MUST NOT branch on this
+	// field; it is supplied for logging and skill-loading hints per §4.1.HC-003a.
+	//
+	// TODO(hk-7om2q.6): replace *string with *core.WorkflowMode once
+	// internal/core exports the typed wrapper (T-WM-001 closed; pending merge).
+	WorkflowMode *string `json:"workflow_mode,omitempty"`
+
+	// Phase identifies which phase of a multi-phase dispatch this LaunchSpec
+	// represents, per specs/handler-contract.md §6.1 HC-006.
+	// Optional: present iff the run is in a multi-phase mode (e.g., review-loop).
+	// For review-loop the domain is {implementer-initial, implementer-resume, reviewer}.
+	// Must be present iff IterationCount is present (co-presence rule).
+	Phase *ReviewLoopPhase `json:"phase,omitempty"`
+
+	// IterationCount is the 1-based iteration index within a multi-phase mode
+	// that iterates, per specs/handler-contract.md §6.1 HC-006.
+	// Optional: present iff Phase is present. For review-loop: 1..3 per
+	// [operator-nfr.md §4.1 ON-004].
+	// Must be present iff Phase is present (co-presence rule).
+	IterationCount *int `json:"iteration_count,omitempty"`
+
+	// ClaudeSessionID carries the Claude Code session identifier for
+	// `claude --resume <id>`, per specs/handler-contract.md §6.1 HC-006.
+	// Optional: present iff Phase = implementer-resume. The reviewer phase and
+	// implementer-initial phase MUST omit this field (no prior session to resume).
+	// Distinct from harmonik's own SessionID per §6.1.
+	ClaudeSessionID *string `json:"claude_session_id,omitempty"`
+
 	// SchemaVersion is the integer schema version of this LaunchSpec record.
 	// N-1 readable per [operator-nfr.md §4.5].
-	// Required; must be positive; current value is 1.
+	// Required; must be positive; current value is 2.
 	SchemaVersion int `json:"schema_version"`
 }
 
 // LaunchSpecSchemaVersion is the current schema version of LaunchSpec.
 // Increment this constant on every normative schema change.
-const LaunchSpecSchemaVersion = 1
+const LaunchSpecSchemaVersion = 2
 
 // Valid reports whether s is a well-formed LaunchSpec ready to be delivered
 // to a handler subprocess. It checks all required fields for non-zero values;
@@ -123,6 +192,42 @@ func (s LaunchSpec) Valid() error {
 	}
 	if s.FreedomProfileRef == "" {
 		return fmt.Errorf("handlercontract: LaunchSpec.FreedomProfileRef must be non-empty")
+	}
+	// Co-presence rule: Phase and IterationCount must either both be present
+	// or both be absent per specs/handler-contract.md §6.1 HC-006.
+	if (s.Phase == nil) != (s.IterationCount == nil) {
+		return fmt.Errorf(
+			"handlercontract: LaunchSpec.Phase and IterationCount must both be present or both absent; got phase=%v iteration_count=%v",
+			s.Phase, s.IterationCount,
+		)
+	}
+	// Phase value must be a declared ReviewLoopPhase constant when present.
+	if s.Phase != nil && !s.Phase.Valid() {
+		return fmt.Errorf(
+			"handlercontract: LaunchSpec.Phase %q is not a valid ReviewLoopPhase",
+			*s.Phase,
+		)
+	}
+	// IterationCount must be positive when present.
+	if s.IterationCount != nil && *s.IterationCount <= 0 {
+		return fmt.Errorf(
+			"handlercontract: LaunchSpec.IterationCount must be positive when present, got %d",
+			*s.IterationCount,
+		)
+	}
+	// ClaudeSessionID must be present iff Phase = implementer-resume.
+	if s.ClaudeSessionID != nil {
+		if s.Phase == nil || *s.Phase != ReviewLoopPhaseImplementerResume {
+			return fmt.Errorf(
+				"handlercontract: LaunchSpec.ClaudeSessionID must only be set when Phase = implementer-resume; got phase=%v",
+				s.Phase,
+			)
+		}
+	}
+	if s.Phase != nil && *s.Phase == ReviewLoopPhaseImplementerResume && s.ClaudeSessionID == nil {
+		return fmt.Errorf(
+			"handlercontract: LaunchSpec.ClaudeSessionID must be present when Phase = implementer-resume",
+		)
 	}
 	if s.SchemaVersion <= 0 {
 		return fmt.Errorf("handlercontract: LaunchSpec.SchemaVersion must be positive, got %d", s.SchemaVersion)

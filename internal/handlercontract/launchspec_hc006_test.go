@@ -43,11 +43,27 @@ func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 	}
 }
 
+// launchspecFixtureReviewLoop returns a valid LaunchSpec for a review-loop
+// dispatch in the implementer-resume phase (all four new HC-006 fields set).
+func launchspecFixtureReviewLoop(t *testing.T) handlercontract.LaunchSpec {
+	t.Helper()
+	spec := launchspecFixtureValid(t)
+	mode := "review-loop"
+	phase := handlercontract.ReviewLoopPhaseImplementerResume
+	iter := 2
+	sessionID := "claude-session-abc123"
+	spec.WorkflowMode = &mode
+	spec.Phase = &phase
+	spec.IterationCount = &iter
+	spec.ClaudeSessionID = &sessionID
+	return spec
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Field set: verify 13 fields are present and accessible
+// Field set: verify fields are present and accessible
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestLaunchSpec_RequiredFields verifies that all 13 fields declared in §6.1
+// TestLaunchSpec_RequiredFields verifies that all required fields declared in §6.1
 // are present and accessible on the LaunchSpec struct.
 func TestLaunchSpec_RequiredFields(t *testing.T) {
 	t.Parallel()
@@ -381,5 +397,246 @@ func TestLaunchSpec_ProvisioningTimeoutDefaultIs60(t *testing.T) {
 	spec.ProvisioningTimeout = 60
 	if err := spec.Valid(); err != nil {
 		t.Errorf("HC-006: Valid() with ProvisioningTimeout=60: %v", err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review-loop optional fields (HC-006): WorkflowMode, Phase, IterationCount,
+// ClaudeSessionID presence / absence rules.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestLaunchSpec_ReviewLoopFieldsAllPresent verifies that a review-loop
+// LaunchSpec with all four optional fields set passes Valid().
+func TestLaunchSpec_ReviewLoopFieldsAllPresent(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	if err := spec.Valid(); err != nil {
+		t.Errorf("HC-006: Valid() with review-loop fields = %v; want nil", err)
+	}
+}
+
+// TestLaunchSpec_ReviewLoopAllOptionalFieldsAbsent verifies that Valid() passes
+// when all four optional review-loop fields are nil (single-mode run).
+func TestLaunchSpec_ReviewLoopAllOptionalFieldsAbsent(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureValid(t)
+	// WorkflowMode, Phase, IterationCount, ClaudeSessionID all nil by default.
+	if spec.WorkflowMode != nil || spec.Phase != nil || spec.IterationCount != nil || spec.ClaudeSessionID != nil {
+		t.Fatal("HC-006: base fixture must have no review-loop fields set (test setup error)")
+	}
+	if err := spec.Valid(); err != nil {
+		t.Errorf("HC-006: Valid() with all review-loop fields absent = %v; want nil", err)
+	}
+}
+
+// TestLaunchSpec_ReviewLoopPhaseWithoutIterationCount verifies that Valid()
+// rejects a spec where Phase is present but IterationCount is absent.
+func TestLaunchSpec_ReviewLoopPhaseWithoutIterationCount(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	spec.IterationCount = nil
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with Phase set and IterationCount nil = nil; want error (co-presence rule)")
+	}
+}
+
+// TestLaunchSpec_ReviewLoopIterationCountWithoutPhase verifies that Valid()
+// rejects a spec where IterationCount is present but Phase is absent.
+func TestLaunchSpec_ReviewLoopIterationCountWithoutPhase(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	spec.Phase = nil
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with IterationCount set and Phase nil = nil; want error (co-presence rule)")
+	}
+}
+
+// TestLaunchSpec_ReviewLoopInvalidPhase verifies that Valid() rejects an
+// unrecognised Phase value.
+func TestLaunchSpec_ReviewLoopInvalidPhase(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	badPhase := handlercontract.ReviewLoopPhase("bogus-phase")
+	spec.Phase = &badPhase
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with invalid Phase = nil; want error")
+	}
+}
+
+// TestLaunchSpec_ReviewLoopZeroIterationCount verifies that Valid() rejects
+// IterationCount = 0 when Phase is also present.
+func TestLaunchSpec_ReviewLoopZeroIterationCount(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	zero := 0
+	spec.IterationCount = &zero
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with IterationCount=0 = nil; want error")
+	}
+}
+
+// TestLaunchSpec_ClaudeSessionIDRequiredForImplementerResume verifies that
+// Valid() rejects Phase=implementer-resume without ClaudeSessionID.
+func TestLaunchSpec_ClaudeSessionIDRequiredForImplementerResume(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	spec.ClaudeSessionID = nil
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with Phase=implementer-resume and nil ClaudeSessionID = nil; want error")
+	}
+}
+
+// TestLaunchSpec_ClaudeSessionIDForbiddenForImplementerInitial verifies that
+// Valid() rejects ClaudeSessionID when Phase=implementer-initial (no prior session).
+func TestLaunchSpec_ClaudeSessionIDForbiddenForImplementerInitial(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	phase := handlercontract.ReviewLoopPhaseImplementerInitial
+	spec.Phase = &phase
+	// ClaudeSessionID still set — should be rejected.
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with Phase=implementer-initial and ClaudeSessionID set = nil; want error")
+	}
+}
+
+// TestLaunchSpec_ClaudeSessionIDForbiddenForReviewer verifies that Valid()
+// rejects ClaudeSessionID when Phase=reviewer (each reviewer is a fresh session).
+func TestLaunchSpec_ClaudeSessionIDForbiddenForReviewer(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	phase := handlercontract.ReviewLoopPhaseReviewer
+	spec.Phase = &phase
+	// ClaudeSessionID still set — should be rejected.
+	if err := spec.Valid(); err == nil {
+		t.Error("HC-006: Valid() with Phase=reviewer and ClaudeSessionID set = nil; want error")
+	}
+}
+
+// TestLaunchSpec_ImplementerInitialNoClaudeSessionID verifies that a valid
+// implementer-initial spec (no ClaudeSessionID) passes Valid().
+func TestLaunchSpec_ImplementerInitialNoClaudeSessionID(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	phase := handlercontract.ReviewLoopPhaseImplementerInitial
+	spec.Phase = &phase
+	spec.ClaudeSessionID = nil
+	if err := spec.Valid(); err != nil {
+		t.Errorf("HC-006: Valid() with Phase=implementer-initial, no ClaudeSessionID = %v; want nil", err)
+	}
+}
+
+// TestLaunchSpec_ReviewerPhaseNoClaudeSessionID verifies that a valid reviewer
+// spec (no ClaudeSessionID) passes Valid().
+func TestLaunchSpec_ReviewerPhaseNoClaudeSessionID(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureReviewLoop(t)
+	phase := handlercontract.ReviewLoopPhaseReviewer
+	spec.Phase = &phase
+	spec.ClaudeSessionID = nil
+	if err := spec.Valid(); err != nil {
+		t.Errorf("HC-006: Valid() with Phase=reviewer, no ClaudeSessionID = %v; want nil", err)
+	}
+}
+
+// TestLaunchSpec_WorkflowModeOptionalPresence verifies that WorkflowMode can be
+// present or absent independently of Phase/IterationCount (it is observational
+// only per HC-003a; no co-presence rule with Phase).
+func TestLaunchSpec_WorkflowModeOptionalPresence(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureValid(t)
+	mode := "review-loop"
+	spec.WorkflowMode = &mode
+	// No Phase/IterationCount — WorkflowMode alone is fine.
+	if err := spec.Valid(); err != nil {
+		t.Errorf("HC-006: Valid() with WorkflowMode set but no Phase/IterationCount = %v; want nil", err)
+	}
+}
+
+// TestLaunchSpec_ReviewLoopJSONRoundTrip verifies that a review-loop LaunchSpec
+// with all four optional fields survives JSON marshal/unmarshal with values intact.
+func TestLaunchSpec_ReviewLoopJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := launchspecFixtureReviewLoop(t)
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("HC-006: json.Marshal(review-loop LaunchSpec): %v", err)
+	}
+
+	var decoded handlercontract.LaunchSpec
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("HC-006: json.Unmarshal(review-loop LaunchSpec): %v", err)
+	}
+
+	if err := decoded.Valid(); err != nil {
+		t.Errorf("HC-006: decoded review-loop LaunchSpec.Valid() = %v; want nil", err)
+	}
+	if decoded.WorkflowMode == nil || *decoded.WorkflowMode != *original.WorkflowMode {
+		t.Errorf("HC-006: WorkflowMode mismatch after round-trip: got %v, want %v", decoded.WorkflowMode, original.WorkflowMode)
+	}
+	if decoded.Phase == nil || *decoded.Phase != *original.Phase {
+		t.Errorf("HC-006: Phase mismatch after round-trip: got %v, want %v", decoded.Phase, original.Phase)
+	}
+	if decoded.IterationCount == nil || *decoded.IterationCount != *original.IterationCount {
+		t.Errorf("HC-006: IterationCount mismatch after round-trip: got %v, want %v", decoded.IterationCount, original.IterationCount)
+	}
+	if decoded.ClaudeSessionID == nil || *decoded.ClaudeSessionID != *original.ClaudeSessionID {
+		t.Errorf("HC-006: ClaudeSessionID mismatch after round-trip: got %v, want %v", decoded.ClaudeSessionID, original.ClaudeSessionID)
+	}
+}
+
+// TestLaunchSpec_ReviewLoopFieldsOmittedWhenAbsent verifies that the four
+// optional review-loop fields are absent from JSON when nil.
+func TestLaunchSpec_ReviewLoopFieldsOmittedWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureValid(t)
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("HC-006: json.Marshal: %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("HC-006: json.Unmarshal to raw map: %v", err)
+	}
+
+	for _, field := range []string{"workflow_mode", "phase", "iteration_count", "claude_session_id"} {
+		if _, ok := raw[field]; ok {
+			t.Errorf("HC-006: %q present in JSON with nil value; want omitted", field)
+		}
+	}
+}
+
+// TestLaunchSpec_ReviewLoopPhaseConstants verifies all three ReviewLoopPhase
+// constants are valid per ReviewLoopPhase.Valid().
+func TestLaunchSpec_ReviewLoopPhaseConstants(t *testing.T) {
+	t.Parallel()
+
+	phases := []handlercontract.ReviewLoopPhase{
+		handlercontract.ReviewLoopPhaseImplementerInitial,
+		handlercontract.ReviewLoopPhaseImplementerResume,
+		handlercontract.ReviewLoopPhaseReviewer,
+	}
+	for _, p := range phases {
+		if !p.Valid() {
+			t.Errorf("HC-006: ReviewLoopPhase(%q).Valid() = false; want true", p)
+		}
+	}
+	invalid := handlercontract.ReviewLoopPhase("not-a-phase")
+	if invalid.Valid() {
+		t.Error("HC-006: ReviewLoopPhase(\"not-a-phase\").Valid() = true; want false")
 	}
 }

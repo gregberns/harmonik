@@ -96,6 +96,19 @@ func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
 }
 
+// ExportedResolveWorkflowMode exposes resolveWorkflowMode for tests in package
+// daemon_test. See moderesolve.go for semantics.
+//
+// Bead ref: hk-7om2q.9.
+func ExportedResolveWorkflowMode(
+	ctx context.Context,
+	bead core.BeadRecord,
+	daemonDefault core.WorkflowMode,
+	bus handlercontract.EventEmitter,
+) core.WorkflowMode {
+	return resolveWorkflowMode(ctx, bead, daemonDefault, bus)
+}
+
 // ExportedBuildLaunchSpecImplementerInitial exposes buildLaunchSpecImplementerInitial
 // for tests in package daemon_test. See launchspecbuild.go for semantics.
 func ExportedBuildLaunchSpecImplementerInitial(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {

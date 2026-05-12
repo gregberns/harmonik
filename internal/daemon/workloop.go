@@ -236,6 +236,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
+		// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
+		// Four-tier precedence: per-bead label → project config (no-op) →
+		// daemon default → single. Resolved once at claim time; immutable for
+		// the run's lifetime. See moderesolve.go.
+		_ = resolveWorkflowMode(ctx, readyRecords[0], deps.workflowModeDefault, deps.bus)
+
 		// Step 4: create the git worktree.
 		//
 		// Resolve HEAD as the parent commit to avoid racing with operator activity

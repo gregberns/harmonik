@@ -390,4 +390,14 @@ const (
 	// EventTypeRedactionFailed is the redaction_failed event type (§8.8.5).
 	// Durability class: O.
 	EventTypeRedactionFailed EventType = "redaction_failed"
+
+	// EventTypeBeadLabelConflict is the bead_label_conflict event type (§8.8.6).
+	// Durability class: O (ordinary — claim-path observational evidence; the
+	// resolution path falls through to a defined tier-2/3/4 result per §4.3.EM-012a).
+	//
+	// Emitted by the daemon's claim path when (a) a bead carries more than one
+	// workflow:<mode> label, or (b) a bead carries a workflow:<mode> label whose
+	// <mode> value is not in {single, review-loop, dot}. In either case, tier-1
+	// is treated as absent and the precedence walk continues.
+	EventTypeBeadLabelConflict EventType = "bead_label_conflict"
 )

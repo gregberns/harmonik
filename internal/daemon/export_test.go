@@ -95,3 +95,21 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
 }
+
+// ExportedBuildLaunchSpecImplementerInitial exposes buildLaunchSpecImplementerInitial
+// for tests in package daemon_test. See launchspecbuild.go for semantics.
+func ExportedBuildLaunchSpecImplementerInitial(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
+	return buildLaunchSpecImplementerInitial(base, iterationCount)
+}
+
+// ExportedBuildLaunchSpecImplementerResume exposes buildLaunchSpecImplementerResume
+// for tests in package daemon_test. See launchspecbuild.go for semantics.
+func ExportedBuildLaunchSpecImplementerResume(base handlercontract.LaunchSpec, iterationCount int, claudeSessionID string) (handlercontract.LaunchSpec, error) {
+	return buildLaunchSpecImplementerResume(base, iterationCount, claudeSessionID)
+}
+
+// ExportedBuildLaunchSpecReviewer exposes buildLaunchSpecReviewer for tests in
+// package daemon_test. See launchspecbuild.go for semantics.
+func ExportedBuildLaunchSpecReviewer(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
+	return buildLaunchSpecReviewer(base, iterationCount)
+}

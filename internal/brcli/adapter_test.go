@@ -205,6 +205,78 @@ func brcliFixtureEchoArgsToFileBinary(t *testing.T, argsFile string) string {
 	return path
 }
 
+// brcliFixturePWDBinary writes a shell script that prints its working directory
+// (via pwd) to stdout and exits 0. Used by TestNewWithWorkingDirSetsCmdDir to
+// assert that Run sets cmd.Dir on the subprocess.
+func brcliFixturePWDBinary(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "br")
+	script := "#!/bin/sh\npwd\nexit 0\n"
+	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("brcliFixturePWDBinary: write mock: %v", err)
+	}
+	return path
+}
+
+// TestNewWithWorkingDirSetsCmdDir verifies that Run sets cmd.Dir to the
+// workingDir supplied to NewWithWorkingDir, so that `br` runs in the project
+// directory rather than the daemon's process CWD. Regression guard for
+// hk-o1sln.
+func TestNewWithWorkingDirSetsCmdDir(t *testing.T) {
+	path := brcliFixturePWDBinary(t)
+	workingDir := t.TempDir()
+
+	adapter, err := brcli.NewWithWorkingDir(path, workingDir)
+	if err != nil {
+		t.Fatalf("NewWithWorkingDir: %v", err)
+	}
+
+	result, runErr := adapter.Run(context.Background())
+	if runErr != nil {
+		t.Fatalf("Run: unexpected error: %v", runErr)
+	}
+	got := strings.TrimRight(string(result.Stdout), "\n")
+	// On macOS, /tmp is a symlink to /private/tmp. Evaluate both to a real path
+	// before comparing so the test is not brittle across platforms.
+	wantReal, err := filepath.EvalSymlinks(workingDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workingDir): %v", err)
+	}
+	gotReal, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(got): %v", err)
+	}
+	if gotReal != wantReal {
+		t.Errorf("cmd.Dir not set: subprocess pwd = %q; want %q", gotReal, wantReal)
+	}
+}
+
+// TestNewWithWorkingDirRejectsEmptyWorkingDir verifies that NewWithWorkingDir
+// returns an error when workingDir is empty (hk-o1sln).
+func TestNewWithWorkingDirRejectsEmptyWorkingDir(t *testing.T) {
+	adapter, err := brcli.NewWithWorkingDir("/path/to/br", "")
+	if err == nil {
+		t.Fatal("expected error for empty workingDir, got nil")
+	}
+	if adapter != nil {
+		t.Fatal("expected nil Adapter on error, got non-nil")
+	}
+}
+
+// TestNewWithWorkingDirRejectsEmptyBrPath verifies that NewWithWorkingDir
+// returns an error when brPath is empty (hk-o1sln).
+func TestNewWithWorkingDirRejectsEmptyBrPath(t *testing.T) {
+	adapter, err := brcli.NewWithWorkingDir("", "/some/dir")
+	if err == nil {
+		t.Fatal("expected error for empty brPath, got nil")
+	}
+	if adapter != nil {
+		t.Fatal("expected nil Adapter on error, got non-nil")
+	}
+}
+
 // TestRunFormatJSONAppendsFlag verifies that the BI-025b JSON-mode discipline
 // is wired end-to-end: commands routed through runFormatJSON (ShowBead,
 // ListDependencies) receive --format json as the last two arguments to `br`.

@@ -109,9 +109,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter) (workLoopDeps
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.ProjectDir is empty; required for worktree creation")
 	}
 
-	adapter, err := brcli.New(cfg.BrPath)
+	adapter, err := brcli.NewWithWorkingDir(cfg.BrPath, cfg.ProjectDir)
 	if err != nil {
-		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: brcli.New: %w", err)
+		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: brcli.NewWithWorkingDir: %w", err)
 	}
 
 	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)

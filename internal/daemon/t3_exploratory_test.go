@@ -233,7 +233,7 @@ func TestT3_DoubleInvocation(t *testing.T) {
 
 	// Start daemon 1 in background — it will pick up the bead and block on slow handler.
 	d1Done := make(chan error, 1)
-	go func() { d1Done <- daemon.Start(cfg) }()
+	go func() { d1Done <- daemon.Start(context.Background(), cfg) }()
 
 	// Give daemon 1 time to acquire the pidfile and claim the bead.
 	time.Sleep(500 * time.Millisecond)
@@ -244,7 +244,7 @@ func TestT3_DoubleInvocation(t *testing.T) {
 	}
 
 	// Attempt daemon 2 — must fail with ErrPidfileLocked.
-	d2Err := daemon.Start(cfg)
+	d2Err := daemon.Start(context.Background(), cfg)
 	t.Logf("T3-01: daemon 2 error: %v", d2Err)
 
 	if d2Err == nil {
@@ -296,7 +296,7 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(cfg) }()
+	go func() { done <- daemon.Start(context.Background(), cfg) }()
 
 	// Wait for bead to be claimed (status transitions from "open" to "in_progress").
 	// Work loop poll interval is 2s; allow 15s to claim.
@@ -406,7 +406,7 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(cfg) }()
+	go func() { done <- daemon.Start(context.Background(), cfg) }()
 
 	// Wait for bead to be claimed (status → in_progress).
 	deadline := time.Now().Add(15 * time.Second)
@@ -513,7 +513,7 @@ func TestT3_StalePidfile(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(cfg) }()
+	go func() { done <- daemon.Start(context.Background(), cfg) }()
 
 	select {
 	case err := <-done:
@@ -563,7 +563,7 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- daemon.Start(cfg) }()
+	go func() { done <- daemon.Start(context.Background(), cfg) }()
 
 	select {
 	case err := <-done:
@@ -715,7 +715,7 @@ func (s *t3StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutCon
 	s.mu.Unlock()
 	return nil
 }
-func (s *t3StubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+func (s *t3StubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
 	s.mu.Lock()
 	s.reopens++
 	s.mu.Unlock()

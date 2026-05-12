@@ -197,7 +197,7 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 	// We need to intercept the process to kill it. Since the loop runs handler
 	// internally, we use a short context timeout to simulate external kill.
 	// But for a real SIGKILL, we use the OS to find and kill the spawned twin process.
-	
+
 	// First, let the loop start and wait a bit for the hang twin to be launched.
 	waitDone := make(chan struct{})
 	go func() {
@@ -648,7 +648,7 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 	}
 
 	projectDir := t2FixtureProjectDir(t)
-	
+
 	// We need the run_id to check for worktree. We can intercept from the event payload.
 	const beadID = core.BeadID("t2-bead-wt-check")
 	ledger := &stubBeadLedger{
@@ -699,7 +699,7 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 	for _, ev := range collector.events {
 		if ev.EventType == string(core.EventTypeRunStarted) {
 			payload := string(ev.Payload)
-			// Find "run_id":"..." 
+			// Find "run_id":"..."
 			const prefix = `"run_id":"`
 			if idx := strings.Index(payload, prefix); idx >= 0 {
 				rest := payload[idx+len(prefix):]

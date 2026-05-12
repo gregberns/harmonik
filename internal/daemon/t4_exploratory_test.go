@@ -115,7 +115,7 @@ func (s *t4StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutCon
 	return nil
 }
 
-func (s *t4StubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID) error {
+func (s *t4StubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.opened = append(s.opened, id)
@@ -746,8 +746,8 @@ func (r *t4RequeueLedger) CloseBead(ctx context.Context, dir string, cfg brcli.T
 	return r.inner.CloseBead(ctx, dir, cfg, runID, tid, id)
 }
 
-func (r *t4RequeueLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {
-	err := r.inner.ReopenBead(ctx, dir, cfg, runID, tid, id)
+func (r *t4RequeueLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, reason string) error {
+	err := r.inner.ReopenBead(ctx, dir, cfg, runID, tid, id, reason)
 	if err == nil {
 		// Re-queue the bead so it can be dispatched again.
 		r.inner.mu.Lock()
@@ -794,8 +794,8 @@ func (o *t4OrderLedger) CloseBead(ctx context.Context, dir string, cfg brcli.Tim
 	return o.inner.CloseBead(ctx, dir, cfg, runID, tid, id)
 }
 
-func (o *t4OrderLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID) error {
-	return o.inner.ReopenBead(ctx, dir, cfg, runID, tid, id)
+func (o *t4OrderLedger) ReopenBead(ctx context.Context, dir string, cfg brcli.TimeoutConfig, runID core.RunID, tid core.TransitionID, id core.BeadID, reason string) error {
+	return o.inner.ReopenBead(ctx, dir, cfg, runID, tid, id, reason)
 }
 
 func (o *t4OrderLedger) closeCallCount() int {

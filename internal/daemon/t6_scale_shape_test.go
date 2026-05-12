@@ -12,6 +12,7 @@ package daemon_test
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -210,7 +211,7 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 120*time.Second)
 
@@ -306,7 +307,7 @@ func TestT6_1MBBeadBody(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 60*time.Second)
 
@@ -361,7 +362,7 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, ids, 60*time.Second)
 
@@ -428,7 +429,7 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 60*time.Second)
 
@@ -486,7 +487,7 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	// Budget is 90s — if worktree add stalls this will catch it
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 90*time.Second)
@@ -532,7 +533,7 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- daemon.Start(cfg) }()
+	go func() { startDone <- daemon.Start(context.Background(), cfg) }()
 
 	// Wait a bit for the daemon to start processing
 	time.Sleep(1 * time.Second)

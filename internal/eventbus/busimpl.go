@@ -21,13 +21,26 @@ import (
 // only. When constructed via [NewBusImplWithRegistry], the caller's patterns
 // are also applied.
 //
+// # Dispatch order (EV-014a)
+//
+// Emit returns after: (a) redaction (EV-035), (b) JSONL append + any mandated
+// fsync per EV-016 (deferred stub at MVH — JSONL path bead), (c) synchronous
+// consumer dispatch on the caller's goroutine. Asynchronous and observer
+// consumers are dispatched off the critical path via per-handler goroutines
+// (MVH) and MUST NOT extend Emit latency. A bounded worker pool (default 4
+// workers, operator-configurable) replaces the per-goroutine approach in the
+// post-MVH JSONL-path bead.
+//
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83.
+// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19.
 type busImpl struct {
 	registry      *handlercontract.RedactionRegistry
 	mu            sync.Mutex
 	subscriptions []core.Subscription
 	sealed        bool
+	// wg tracks in-flight asynchronous and observer goroutines so Drain can
+	// wait for quiescence (EV-014a; post-MVH: replace with bounded worker pool).
+	wg sync.WaitGroup
 }
 
 // NewBusImpl constructs a busImpl with a zero-pattern RedactionRegistry.
@@ -64,14 +77,21 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 }
 
 // Emit applies EV-035 redaction to payload via the registry's
-// RedactionMiddleware, then dispatches to all matching registered consumers.
+// RedactionMiddleware, then appends the event to the JSONL log (stub at MVH),
+// then dispatches to matching registered consumers per EV-014a.
 //
-// JSONL persistence is deferred because the JSONLWriter requires a
-// daemon-startup-resolved file path not yet threaded through daemon.Config.
-// The redaction + dispatch path is fully exercised. JSONL wiring is added by
-// the JSONL-path bead.
+// Dispatch order (EV-014a):
 //
-// Spec ref: specs/event-model.md §6.1, §7.1, §4.4 EV-035.
+//  1. Redaction via HC-031 + HC-032 registry (EV-035).
+//  2. JSONL append + fsync per durability class (EV-016). Deferred stub at MVH:
+//     file path not yet threaded through daemon.Config; follow-up bead adds wiring.
+//  3. Synchronous-consumer dispatch on the caller's goroutine — Emit blocks until
+//     the at-most-one synchronous consumer returns or errors (EV-010).
+//  4. Asynchronous and observer consumers are dispatched off the critical path
+//     via per-handler goroutines (MVH; post-MVH: bounded worker pool) and MUST
+//     NOT extend Emit latency (EV-014a).
+//
+// Spec ref: specs/event-model.md §6.1, §7.1, §4.2 EV-014a, §4.4 EV-035.
 func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []byte) error {
 	// Step 1: decode payload to map for redaction (EV-035).
 	var rawPayload map[string]any
@@ -91,29 +111,53 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		return fmt.Errorf("eventbus.Emit: re-encoding redacted payload: %w", err)
 	}
 
-	// Step 4: JSONL append (deferred — file path not yet wired at this bead
-	// scope). Redacted bytes are available here for the wiring bead.
+	// Step 4: JSONL append (deferred — file path not yet threaded through
+	// daemon.Config; wiring bead adds JSONLWriter here and performs fsync per
+	// EV-016 durability class before the sync-consumer dispatch below).
 
-	// Step 5: dispatch to matching consumers.
+	// Step 5: collect matching subscriptions once under lock so dispatch runs
+	// without holding the mutex.
 	b.mu.Lock()
 	subs := make([]core.Subscription, len(b.subscriptions))
 	copy(subs, b.subscriptions)
 	b.mu.Unlock()
 
+	evt := core.Event{
+		Type:    string(eventType),
+		Payload: redactedBytes,
+	}
+
+	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {
 		if !sub.EventPattern.MatchesType(string(eventType)) {
 			continue
 		}
-		// Synchronous consumers are invoked on the caller's goroutine (EV-010).
-		// Asynchronous / observer dispatch is a follow-on concern (EV-014a).
-		if sub.Handler != nil {
-			evt := core.Event{
-				Type:    string(eventType),
-				Payload: redactedBytes,
-			}
+		if sub.Handler == nil {
+			continue
+		}
+
+		switch sub.ConsumerClass {
+		case core.ConsumerClassSynchronous:
+			// Synchronous consumers run on the caller's goroutine and block
+			// Emit until they return (EV-010). At most one per event type is
+			// permitted; enforced at subscription time (hk-hqwn.49).
 			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-				return fmt.Errorf("eventbus.Emit: consumer %q: %w", sub.ConsumerID, handlerErr)
+				return fmt.Errorf("eventbus.Emit: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
 			}
+
+		default:
+			// Asynchronous and observer consumers run off the critical path
+			// (EV-014a / EV-011 / EV-012). At MVH a dedicated goroutine is
+			// launched per dispatch; post-MVH: replace with bounded worker pool
+			// (default 4 workers, operator-configurable per EV-014a).
+			sub := sub // capture loop variable
+			b.wg.Add(1)
+			go func() {
+				defer b.wg.Done()
+				// Context is passed through so callers can cancel in-flight
+				// async/observer work during shutdown before Drain returns.
+				_ = sub.Handler(ctx, evt)
+			}()
 		}
 	}
 	return nil
@@ -160,12 +204,24 @@ func (b *busImpl) DeadLetterReplay(_ string, _ *core.EventPattern) error {
 	return nil
 }
 
-// Drain blocks until all in-flight dispatches complete.
+// Drain blocks until all in-flight asynchronous and observer dispatches
+// complete, or ctx is cancelled.
 //
-// At MVH (synchronous dispatch only) this is a no-op; the async worker pool
-// is a follow-on concern per EV-014a.
+// Synchronous consumers run on the caller's goroutine and are always complete
+// by the time Emit returns; Drain only waits for off-path (async / observer)
+// goroutines (EV-014a).
 //
 // Spec ref: specs/event-model.md §6.1.
-func (b *busImpl) Drain(_ context.Context) error {
-	return nil
+func (b *busImpl) Drain(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		b.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("eventbus.Drain: %w", ctx.Err())
+	}
 }

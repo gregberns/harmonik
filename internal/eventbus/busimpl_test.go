@@ -1,9 +1,10 @@
 package eventbus_test
 
-// busimpl_test.go — sensors for the concrete EventBus implementation (EV-035).
+// busimpl_test.go — sensors for the concrete EventBus implementation (EV-035, EV-014a).
 //
-// Spec refs: specs/event-model.md §4.4 EV-035; specs/handler-contract.md §4.7.HC-031.
-// Bead ref: hk-8mup.62.
+// Spec refs: specs/event-model.md §4.4 EV-035, §4.2 EV-014a;
+// specs/handler-contract.md §4.7.HC-031.
+// Bead refs: hk-8mup.62, hk-hqwn.19.
 //
 // Helper prefix: busImplFixture (per implementer-protocol.md §Helper-prefix
 // discipline; distinct from jsonlWriter helpers).
@@ -23,12 +24,19 @@ package eventbus_test
 //
 //  4. TestBusImplSubscribe_AfterSealReturnsError — Subscribe called after Seal
 //     returns a non-nil error (EV-009).
+//
+//  5. TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot — Emit blocks until
+//     the synchronous consumer returns AND does NOT block on async/observer
+//     consumers (EV-014a dispatch-order contract: redact → JSONL-stub →
+//     sync-dispatch → Emit-returns, async/observer off critical path).
 
 import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -316,6 +324,131 @@ func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 		t.Error("consumer payload missing 'run_id' key")
 	} else if got != "run-999" {
 		t.Errorf("consumer payload[\"run_id\"] = %v, want %q; safe value MUST NOT be redacted", got, "run-999")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EV-014a: dispatch-order contract (hk-hqwn.19)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot is the EV-014a
+// dispatch-order sensor for hk-hqwn.19.
+//
+// Contract under test (EV-014a):
+//
+//  1. Emit MUST block until the synchronous consumer's handler returns.
+//  2. Emit MUST NOT block on asynchronous or observer consumer handlers.
+//  3. Async/observer handlers MUST eventually execute (observable via Drain).
+//
+// Method: the synchronous handler sleeps briefly and records when it ran; Emit
+// return is timestamped. If Emit returns BEFORE the sync handler records, the
+// contract is violated. The async handler is gated by a channel released AFTER
+// Emit returns; Drain then waits for it. If Drain times out, the async goroutine
+// was never launched.
+//
+// Spec ref: specs/event-model.md §4.2 EV-014a.
+// Bead ref: hk-hqwn.19.
+func TestBusImplEmit_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.NewBusImpl()
+
+	// syncDone is set to 1 by the synchronous handler just before it returns.
+	var syncDone atomic.Int32
+
+	// asyncGate is closed by the test after Emit returns, allowing the async
+	// handler to proceed and confirm it runs off the critical path.
+	asyncGate := make(chan struct{})
+	// asyncRan is set to 1 by the async handler once it has been unblocked.
+	var asyncRan atomic.Int32
+
+	syncSub := core.Subscription{
+		ConsumerID:    "dispatch-order-sync",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			// A small sleep makes the ordering difference visible: if Emit
+			// returns before this function records syncDone, the invariant is
+			// violated.
+			time.Sleep(5 * time.Millisecond)
+			syncDone.Store(1)
+			return nil
+		},
+	}
+
+	asyncSub := core.Subscription{
+		ConsumerID:    "dispatch-order-async",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			// Block until the test confirms Emit has already returned,
+			// verifying the async handler runs off the critical path.
+			<-asyncGate
+			asyncRan.Store(1)
+			return nil
+		},
+	}
+
+	observerSub := core.Subscription{
+		ConsumerID:    "dispatch-order-observer",
+		ConsumerClass: core.ConsumerClassObserver,
+		EventPattern:  busImplFixtureWildcardPattern(),
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error {
+			// Observer shares the asyncGate to confirm observer dispatch is
+			// also off the critical path.
+			<-asyncGate
+			return nil
+		},
+	}
+
+	for _, sub := range []core.Subscription{syncSub, asyncSub, observerSub} {
+		if _, err := bus.Subscribe(sub); err != nil {
+			t.Fatalf("Subscribe %q: %v", sub.ConsumerID, err)
+		}
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{"node_id": "n-dispatch-order"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// --- Contract assertion 1: Emit blocks on sync consumer ----------------
+	if err := bus.Emit(context.Background(), busImplFixtureEventType, payload); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	// Emit has returned. The synchronous handler MUST have completed already.
+	if syncDone.Load() != 1 {
+		t.Error("EV-014a violated: Emit returned before synchronous consumer handler finished; " +
+			"sync consumer MUST run on caller goroutine and complete before Emit returns")
+	}
+
+	// --- Contract assertion 2: async/observer did NOT block Emit -----------
+	// asyncRan is still 0 here because asyncGate is not yet closed.
+	if asyncRan.Load() != 0 {
+		t.Error("EV-014a violated: async consumer handler completed before Emit returned; " +
+			"async/observer dispatch MUST NOT extend Emit latency")
+	}
+
+	// --- Contract assertion 3: async/observer handlers eventually execute --
+	// Unblock the async and observer handlers, then wait via Drain.
+	close(asyncGate)
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bus.Drain(drainCtx); err != nil {
+		t.Fatalf("Drain: %v (async/observer goroutines did not complete in time)", err)
+	}
+
+	if asyncRan.Load() != 1 {
+		t.Error("EV-014a violated: async consumer handler never ran after Drain; " +
+			"async dispatch MUST eventually deliver the event off the critical path")
 	}
 }
 

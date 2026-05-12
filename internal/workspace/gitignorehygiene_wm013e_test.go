@@ -7,17 +7,20 @@ import (
 	"testing"
 )
 
-// leaseFixtureRequiredGitignoreEntries are the four harmonik control-plane patterns that MUST
+// leaseFixtureRequiredGitignoreEntries are the six harmonik control-plane patterns that MUST
 // appear in the repository's root .gitignore per WM-013e.
 //
 // Spec ref: workspace-model.md §4.3 WM-013e — "Required ignore entries (patterns
 // relative to repo root; order preserved): .harmonik/lease.lock,
-// .harmonik/sessions/, .harmonik/worktrees/, .harmonik/events/"
+// .harmonik/sessions/, .harmonik/worktrees/, .harmonik/events/,
+// .harmonik/review.json, .harmonik/review.iter-*.json"
 var leaseFixtureRequiredGitignoreEntries = []string{
 	".harmonik/lease.lock",
 	".harmonik/sessions/",
 	".harmonik/worktrees/",
 	".harmonik/events/",
+	".harmonik/review.json",
+	".harmonik/review.iter-*.json",
 }
 
 // TestWM013e_GitignoreHygieneForControlPlanePaths verifies that the workspace

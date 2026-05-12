@@ -150,13 +150,17 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 	t.Run("required-entries-constant-matches-spec", func(t *testing.T) {
 		t.Parallel()
 
-		// RequiredGitignoreEntries must match the four spec-canonical patterns
-		// per WM-013e (order preserved).
+		// RequiredGitignoreEntries must match the six spec-canonical patterns
+		// per WM-013e (order preserved). The two review-loop entries
+		// (.harmonik/review.json and .harmonik/review.iter-*.json) were added
+		// in T-WM-014 per workspace-model.md §4.3 WM-013e + §4.5.WM-027a.
 		wantEntries := []string{
 			".harmonik/lease.lock",
 			".harmonik/sessions/",
 			".harmonik/worktrees/",
 			".harmonik/events/",
+			".harmonik/review.json",
+			".harmonik/review.iter-*.json",
 		}
 		if len(RequiredGitignoreEntries) != len(wantEntries) {
 			t.Fatalf("WM-013e: RequiredGitignoreEntries len = %d, want %d",
@@ -166,6 +170,58 @@ func TestWM013e_EnsureGitignoreHygiene(t *testing.T) {
 			if entry != wantEntries[i] {
 				t.Errorf("WM-013e: RequiredGitignoreEntries[%d] = %q, want %q", i, entry, wantEntries[i])
 			}
+		}
+	})
+
+	t.Run("review-loop-entries-cover-wm027a-artifacts", func(t *testing.T) {
+		t.Parallel()
+
+		// workspace-model.md §4.3 WM-013e (via §4.5.WM-027a) requires that
+		// .harmonik/review.json and .harmonik/review.iter-*.json are excluded
+		// from checkpoint commits: "The reviewer's verdict is workflow-control
+		// state, not work product; it MUST NOT pollute the squash-merge commit
+		// per WM-019."
+		reviewJSON := ".harmonik/review.json"
+		reviewIter := ".harmonik/review.iter-*.json"
+
+		foundJSON := false
+		foundIter := false
+		for _, entry := range RequiredGitignoreEntries {
+			if entry == reviewJSON {
+				foundJSON = true
+			}
+			if entry == reviewIter {
+				foundIter = true
+			}
+		}
+		if !foundJSON {
+			t.Errorf("WM-013e: %q not in RequiredGitignoreEntries; required to cover WM-027a reviewer verdict", reviewJSON)
+		}
+		if !foundIter {
+			t.Errorf("WM-013e: %q not in RequiredGitignoreEntries; required to cover WM-027a per-iteration archive", reviewIter)
+		}
+
+		// Both entries must be present in a generated .gitignore after
+		// EnsureGitignoreHygiene runs on a repo with no prior .gitignore.
+		repo, _ := tempRepo(t)
+		gitignorePath := filepath.Join(repo, ".gitignore")
+		if err := os.Remove(gitignorePath); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("WM-013e: Remove .gitignore: %v", err)
+		}
+		if err := EnsureGitignoreHygiene(t.Context(), repo); err != nil {
+			t.Fatalf("WM-013e: EnsureGitignoreHygiene: %v", err)
+		}
+		//nolint:gosec // G304: path is constructed from repo + ".gitignore" in tempRepo, not user input
+		got, err := os.ReadFile(gitignorePath)
+		if err != nil {
+			t.Fatalf("WM-013e: ReadFile .gitignore: %v", err)
+		}
+		content := string(got)
+		if !gitignoreEntryPresent(content, reviewJSON) {
+			t.Errorf("WM-013e: generated .gitignore missing %q", reviewJSON)
+		}
+		if !gitignoreEntryPresent(content, reviewIter) {
+			t.Errorf("WM-013e: generated .gitignore missing %q", reviewIter)
 		}
 	})
 

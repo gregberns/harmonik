@@ -10,21 +10,28 @@ import (
 	"strings"
 )
 
-// RequiredGitignoreEntries are the four harmonik control-plane patterns that
+// RequiredGitignoreEntries are the six harmonik control-plane patterns that
 // MUST appear in the repository's root .gitignore per workspace-model.md
 // §4.3 WM-013e.
 //
 // Order is preserved per the spec: "Required ignore entries (patterns relative
 // to repo root; order preserved): .harmonik/lease.lock, .harmonik/sessions/,
-// .harmonik/worktrees/, .harmonik/events/"
+// .harmonik/worktrees/, .harmonik/events/, .harmonik/review.json,
+// .harmonik/review.iter-*.json"
 //
 // The .harmonik/events/ entry covers the workspace-local durability JSONL file
-// introduced by WM-013b.
+// introduced by WM-013b. The .harmonik/review.json and
+// .harmonik/review.iter-*.json entries exclude review-loop artifacts (reviewer
+// verdict files and their per-iteration archives) from checkpoint commits per
+// §4.5.WM-027a — the reviewer verdict is workflow-control state, not work
+// product, and MUST NOT pollute the squash-merge commit per WM-019.
 var RequiredGitignoreEntries = []string{
 	".harmonik/lease.lock",
 	".harmonik/sessions/",
 	".harmonik/worktrees/",
 	".harmonik/events/",
+	".harmonik/review.json",
+	".harmonik/review.iter-*.json",
 }
 
 // GitignoreBranchName is the dedicated git branch on which the workspace manager

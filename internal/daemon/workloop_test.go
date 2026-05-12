@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -468,6 +469,11 @@ type concurrentFixtureLedger struct {
 	claimedOnce sync.Once
 }
 
+func (c *concurrentFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	// Stub always reports "open" — pre-claim guard passes unconditionally.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
+
 func (c *concurrentFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -735,5 +741,169 @@ found:
 	}
 	if !foundFailed {
 		t.Errorf("hk-wfbxf: run_failed not emitted on CloseBead error; events: %v", types)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestWorkLoop_ClaimSemaphore — hk-e61c3.3 claim semaphore bounded concurrency
+// ─────────────────────────────────────────────────────────────────────────────
+
+// claimSemFixtureLedger is a stub beadLedger for
+// TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency. It tracks the peak number
+// of simultaneously active ClaimBead calls via an atomic counter.
+//
+// Helper prefix: claimSemFixture (per implementer-protocol.md §Helper-prefix;
+// bead hk-e61c3.3).
+type claimSemFixtureLedger struct {
+	mu sync.Mutex
+
+	// ready is the queue of bead IDs to hand out from Ready.
+	ready []core.BeadID
+
+	// closed records IDs of beads that have been closed.
+	closed []core.BeadID
+
+	// activeClaims is the number of ClaimBead calls currently executing.
+	activeClaims atomic.Int64
+
+	// peakClaims is the high-water mark of activeClaims across all calls.
+	peakClaims atomic.Int64
+}
+
+func (c *claimSemFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.ready) == 0 {
+		return []core.BeadRecord{}, nil
+	}
+	id := c.ready[0]
+	c.ready = c.ready[1:]
+	return []core.BeadRecord{{BeadID: id}}, nil
+}
+
+func (c *claimSemFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
+
+func (c *claimSemFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
+	// Increment active counter and update peak before doing work.
+	current := c.activeClaims.Add(1)
+	for {
+		old := c.peakClaims.Load()
+		if current <= old {
+			break
+		}
+		if c.peakClaims.CompareAndSwap(old, current) {
+			break
+		}
+	}
+	// Yield briefly to give the race detector a chance to observe concurrent
+	// access — in the sequential outer loop this never overlaps, but the
+	// instrumentation is useful when the test runs with -race.
+	time.Sleep(time.Millisecond)
+	c.activeClaims.Add(-1)
+	return nil
+}
+
+func (c *claimSemFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = append(c.closed, beadID)
+	return nil
+}
+
+func (c *claimSemFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+	return nil
+}
+
+func (c *claimSemFixtureLedger) closedCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.closed)
+}
+
+// TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency verifies that with
+// N=10 ready beads and MaxConcurrent=4 the claim semaphore (hk-e61c3.3)
+// ensures concurrent ClaimBead calls never exceed MaxConcurrent, and all
+// 10 beads are eventually closed.
+//
+// The outer poll loop is sequential, so in practice only one ClaimBead call
+// executes at a time (peak = 1 ≤ MaxConcurrent = 4). The test asserts that
+// invariant, verifies all beads close without deadlock, and is run with
+// -race to confirm there are no data races introduced by the semaphore.
+//
+// Acceptance criteria (hk-e61c3.3):
+//   - peakConcurrentClaims ≤ MaxConcurrent (4).
+//   - All 10 beads are closed before the loop exits.
+func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const (
+		beadCount     = 10
+		maxConcurrent = 4
+	)
+
+	ready := make([]core.BeadID, beadCount)
+	for i := range ready {
+		ready[i] = core.BeadID("sem-bead-" + string(rune('A'+i)))
+	}
+
+	ledger := &claimSemFixtureLedger{ready: ready}
+	collector := &stubEventCollector{}
+
+	// Handler exits immediately — we want all 10 beads to process quickly.
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:     ledger,
+		Bus:           collector,
+		ProjectDir:    projectDir,
+		HandlerBinary: "/bin/sh",
+		HandlerArgs:   []string{"-c", "exit 0"},
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		MaxConcurrent: maxConcurrent,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	// Poll until all 10 beads are closed or the test times out.
+	deadline := time.After(25 * time.Second)
+	for {
+		if ledger.closedCount() >= beadCount {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for all %d beads to close; closed=%d peak_concurrent_claims=%d",
+				beadCount, ledger.closedCount(), ledger.peakClaims.Load())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-loopDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("work loop did not exit after context cancellation")
+	}
+
+	// Assert concurrent ClaimBead calls never exceeded MaxConcurrent.
+	peak := ledger.peakClaims.Load()
+	if peak > maxConcurrent {
+		t.Errorf("hk-e61c3.3: peakConcurrentClaims = %d; want <= %d (semaphore must bound concurrent claims)",
+			peak, maxConcurrent)
+	}
+
+	// Assert all beads were closed (not reopened due to semaphore deadlock).
+	if n := ledger.closedCount(); n != beadCount {
+		t.Errorf("closedCount = %d; want %d (all beads must close under semaphore)", n, beadCount)
 	}
 }

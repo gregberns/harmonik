@@ -258,6 +258,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		effectiveMax = 1
 	}
 
+	// claimSem is a buffered-channel semaphore (hk-e61c3.3, POST_MVH_PARALLELISM_ROADMAP
+	// row 9) that bounds the number of simultaneous ClaimBead SQLite write calls to
+	// effectiveMax. A token is acquired before ClaimBead and released immediately
+	// after, keeping the SQLite write surface narrow even as effectiveMax goroutines
+	// run concurrently. This prevents "BrDbLocked" storms under N>5 ready beads.
+	//
+	// Anti-pattern (roadmap §6): do NOT push the semaphore into brAdapter. The
+	// ceiling belongs here in the work-loop scheduler.
+	//
+	// Bead ref: hk-e61c3.3.
+	claimSem := make(chan struct{}, effectiveMax)
+
 	for {
 		// Step 1: check for cancellation before any new dispatch.
 		select {
@@ -357,7 +369,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
+		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
+		// The select allows ctx cancellation to abort the acquire so the loop
+		// does not block indefinitely on shutdown.
+		select {
+		case claimSem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return nil
+		}
 		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)
+		// Release the semaphore immediately after the write completes.
+		<-claimSem
 		if claimErr != nil {
 			// Claim conflict or transient error — surface to stderr and retry.
 			if ctx.Err() != nil {

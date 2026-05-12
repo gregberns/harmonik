@@ -127,6 +127,31 @@ var obligationsFixtureConfigInventory = []obligationsFixtureConfigKnob{
 		ChangeEffective: "next-daemon-start",
 		SpecRef:         "operator-nfr.md §4.9 ON-037",
 	},
+	// workflow_mode and iteration_cap added per ON-004a (T-WM-029).
+	{
+		// workflow_mode resolves via four-tier precedence (per-task bead label
+		// → per-project policy → daemon default → built-in fallback) evaluated
+		// at claim time. The highest active tier at MVH is the per-task
+		// workflow:<mode> label on the bead, which is a workflow-definition
+		// concern per control-points.md §4.7 CP-037.
+		//
+		// Spec ref: operator-nfr.md §4.1 ON-004a.
+		Name:            "workflow_mode",
+		PrecedenceLayer: "workflow",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.1 ON-004a",
+	},
+	{
+		// iteration_cap is hardcoded at 3 for MVH and is NOT operator-tunable
+		// per §4.1.ON-004a and §4.3.ON-013d. Changing it requires a code
+		// change, which means a new binary = next daemon start.
+		//
+		// Spec ref: operator-nfr.md §4.1 ON-004a.
+		Name:            "iteration_cap",
+		PrecedenceLayer: "default",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.1 ON-004a",
+	},
 }
 
 // TestON003_StartupCatalogCoverageAgainstTaxonomy verifies that every entry in

@@ -168,7 +168,7 @@ func socketFixtureWaitReady(t *testing.T, sockPath string) {
 }
 
 // TestRunSocketListener_BindsAndSetsMode verifies that RunSocketListener
-// creates a socket at sockPath and sets its permissions to 0700.
+// creates a socket at sockPath and sets its permissions to 0600.
 func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
 	t.Parallel()
 
@@ -184,7 +184,7 @@ func TestRunSocketListener_BindsAndSetsMode(t *testing.T) {
 	if info.Mode()&os.ModeSocket == 0 {
 		t.Errorf("socket path %q is not a Unix domain socket (mode=%v)", sockPath, info.Mode())
 	}
-	const wantMode = os.FileMode(0o700)
+	const wantMode = os.FileMode(0o600)
 	if got := info.Mode().Perm(); got != wantMode {
 		t.Errorf("socket mode = %04o, want %04o", got, wantMode)
 	}

@@ -85,7 +85,7 @@ type RequestHandler interface {
 }
 
 // RunSocketListener binds a Unix-domain socket at sockPath, sets its
-// permissions to 0700, and accepts connections until ctx is cancelled.
+// permissions to 0600, and accepts connections until ctx is cancelled.
 // Each connection is handled in its own goroutine: one JSON request is
 // read, dispatched to h, and one JSON response is written before the
 // connection is closed.
@@ -112,12 +112,9 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler) e
 	}
 	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
 
-	// Restrict access to the daemon's own uid (PL-003 spirit: operator-local
-	// socket). The bead spec says 0700; PL-003 in lifecycle says 0600 for its
-	// own binding. The bead body wins per implementer-protocol path-discrepancy
-	// rule.
-	if err := os.Chmod(sockPath, 0o700); err != nil {
-		return fmt.Errorf("daemon: RunSocketListener: chmod 0700 %q: %w", sockPath, err)
+	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		return fmt.Errorf("daemon: RunSocketListener: chmod 0600 %q: %w", sockPath, err)
 	}
 
 	// Close the listener when ctx is cancelled so Accept unblocks.

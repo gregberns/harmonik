@@ -55,12 +55,6 @@ type Config struct {
 	// Bead ref: hk-8mup.63.
 	JSONLLogPath string
 
-	// ProjectDir is the root directory of the harmonik project being managed.
-	// Used to resolve daemon-local paths (pidfile, run directory, etc.).
-	// Required for non-test invocations; empty string skips pidfile acquisition.
-	//
-	// Spec ref: specs/process-lifecycle.md §4.6 PL-020.
-	ProjectDir string
 }
 
 // Start is the composition-root entry point for the harmonik daemon.

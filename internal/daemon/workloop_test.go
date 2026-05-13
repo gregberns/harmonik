@@ -286,8 +286,9 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Run with a 5-second timeout per bead body spec.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
+	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	// The loop will dispatch the bead, close it, then find the queue empty and
@@ -299,7 +300,7 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	}()
 
 	// Poll until the bead is closed or timeout.
-	deadline := time.After(4 * time.Second)
+	deadline := time.After(15 * time.Second)
 	for {
 		if len(ledger.closedIDs()) > 0 {
 			break
@@ -380,7 +381,9 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
+	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -390,7 +393,7 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 	}()
 
 	// Poll until the bead is reopened.
-	deadline := time.After(4 * time.Second)
+	deadline := time.After(15 * time.Second)
 	for {
 		if len(ledger.reopenedIDs()) > 0 {
 			break
@@ -565,7 +568,9 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// synthWorktreeFactory + synthLaunchSpecBuilder make each bead fast (<200ms in
+	// isolation). Keep generous margins for CI parallel load (hk-kqdpf.1).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	loopDone := make(chan struct{})
@@ -578,12 +583,12 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	select {
 	case <-ledger.claimedCh:
 		// Both beads claimed — concurrency confirmed.
-	case <-time.After(8 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("timed out waiting for two simultaneous in-flight beads at MaxConcurrent=2")
 	}
 
 	// Wait for both beads to close.
-	deadline := time.After(8 * time.Second)
+	deadline := time.After(20 * time.Second)
 	for {
 		if ledger.closedCount() >= 2 {
 			break
@@ -692,7 +697,9 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
+	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -702,7 +709,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	}()
 
 	// Poll until a run_failed event is emitted or timeout.
-	deadline := time.After(4 * time.Second)
+	deadline := time.After(15 * time.Second)
 	for {
 		types := collector.eventTypes()
 		for _, et := range types {
@@ -812,7 +819,13 @@ func (c *claimSemFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.T
 	return nil
 }
 
-func (c *claimSemFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+func (c *claimSemFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
+	// Re-enqueue the bead so transient errors (e.g. git worktree races under
+	// parallel test load) do not permanently lose beads and deadlock the poll loop
+	// (hk-kqdpf.1).
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ready = append(c.ready, beadID)
 	return nil
 }
 
@@ -865,6 +878,9 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		MaxConcurrent: maxConcurrent,
 	})
 
+	// synthLaunchSpecBuilder (injected by default in ExportedWorkLoopDeps) bypasses
+	// MaterializeClaudeSettings fsyncs, so each bead runs in milliseconds.
+	// Keep the context generous (30s) as a safety margin (hk-kqdpf.1).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

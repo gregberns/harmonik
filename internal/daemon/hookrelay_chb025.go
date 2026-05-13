@@ -92,6 +92,19 @@ type hookSession struct {
 	closed bool
 }
 
+// hookStoreIface is the interface over hook-session state used by the work loop
+// and waitWithSocketGrace.  The concrete type *hookSessionStore implements it;
+// tests may supply a lightweight stub via workLoopDeps to avoid the 3-second
+// stopHookGrace window (see synthHookStore in export_test.go).
+//
+// Bead ref: hk-kqdpf.1.
+type hookStoreIface interface {
+	RegisterHookSession(runID, claudeSessionID string)
+	CloseHookSession(runID, claudeSessionID string)
+	LatestOutcome(runID, claudeSessionID string) *json.RawMessage
+	WaitForOutcome(ctx context.Context, runID, claudeSessionID string) (json.RawMessage, error)
+}
+
 // hookSessionStore is the daemon-wide registry of active hook-relay sessions.
 //
 // One entry exists per active handler subprocess (open session window). Entries

@@ -137,7 +137,31 @@ type workLoopDeps struct {
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	// Bead ref: hk-gql20.21.
-	hookStore *hookSessionStore
+	hookStore hookStoreIface
+
+	// launchSpecBuilder builds the handler.LaunchSpec and claudeRunArtifacts for
+	// a given bead run. Production always uses buildClaudeLaunchSpec. Test fixtures
+	// that do not need real bridge setup (e.g. MaterializeClaudeSettings fsyncs)
+	// may inject a lightweight stub via ExportedWorkLoopDeps.
+	//
+	// When nil, buildClaudeLaunchSpec is used (production default).
+	//
+	// Bead ref: hk-kqdpf.1.
+	launchSpecBuilder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+
+	// worktreeFactory creates a worktree directory for a bead run and returns its
+	// absolute path. Production always uses workspace.CreateWorktree and then
+	// derives the path via workspace.WorktreePath. Test fixtures that do not need
+	// a real git worktree may inject a lightweight stub that creates a temp
+	// directory instead, avoiding git worktree contention under parallel load.
+	//
+	// The returned cleanup function (if non-nil) is called on defer to remove
+	// the worktree after the bead run completes. Production wires removeWorktree.
+	//
+	// When nil, the production path (workspace.CreateWorktree) is used.
+	//
+	// Bead ref: hk-kqdpf.1.
+	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
 	// adapterRegistry is the sealed adapter registry used to look up the
 	// per-agent-type Adapter (for Adapter.DetectReady) in the single-mode
@@ -166,26 +190,6 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
 
-	// hookRelayEnabled controls whether the single-mode dispatch path registers a
-	// hook-session entry and waits for a stop-hook outcome (CHB-025 / CHB-020).
-	//
-	// When true (production):
-	//   RegisterHookSession + CloseHookSession bracket the subprocess lifetime,
-	//   and waitWithSocketGrace applies the stopHookGrace window so a Stop hook
-	//   relay arriving after process exit is still captured.
-	//
-	// When false (test fixtures, e.g. shell scripts):
-	//   The hook session is not registered; WaitForOutcome returns nil immediately
-	//   (session not found), so waitWithSocketGrace adds no overhead.  The backward-
-	//   compat close-on-exit-0 branch then handles the test fixture outcome.
-	//
-	// newWorkLoopDeps always sets this to true (production path).
-	// ExportedWorkLoopDeps sets it to false by default so existing tests that use
-	// shell-script fixtures remain fast — they are not affected by the 3-second
-	// stopHookGrace window.
-	//
-	// Bead ref: hk-gql20.14.
-	hookRelayEnabled bool
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -234,7 +238,7 @@ type beadLedger interface {
 // store MUST be non-nil; it is the daemon-wide hook-session registry shared
 // between RunSocketListener (as HookRelayHandler) and the work loop completion
 // path (WaitForOutcome).
-func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
+func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store hookStoreIface) (workLoopDeps, error) {
 	if cfg.BrPath == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.BrPath is empty; production callers must resolve br from PATH at startup")
 	}
@@ -283,7 +287,6 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		adapterRegistry:     registry,
 		substrate:           nil, // nil at MVH; tmux substrate is post-MVH
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
-		hookRelayEnabled:    true, // always enabled in production (hk-gql20.14)
 	}, nil
 }
 
@@ -513,7 +516,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 	}
 
-	wtErr := workspace.CreateWorktree(ctx, deps.projectDir, runID.String(), headSHA, workspace.NoWorktreeRootOverride())
+	wtFactory := deps.worktreeFactory
+	if wtFactory == nil {
+		wtFactory = productionWorktreeFactory
+	}
+	wtPath, wtCleanup, wtErr := wtFactory(ctx, deps.projectDir, runID.String(), headSHA)
 	if wtErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
 		reopenTID, _ := deps.tidGen.Next()
@@ -521,9 +528,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			fmt.Sprintf("create worktree failed: %v", wtErr))
 		return
 	}
-
-	wtPath := workspace.WorktreePath(deps.projectDir, runID.String(), workspace.NoWorktreeRootOverride())
-	defer removeWorktree(ctx, deps.projectDir, wtPath)
+	if wtCleanup != nil {
+		defer wtCleanup()
+	}
 
 	// Emit run_started.
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath)
@@ -554,25 +561,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 	}
 
-	// single mode: two code paths depending on hookRelayEnabled.
-	//
-	// hookRelayEnabled=true (production, newWorkLoopDeps):
-	//   Full bridge-wired sequence per hk-gql20.14 / CHB-018..025.
-	//   Uses buildClaudeLaunchSpec, registers hook session, emits pre-exec
-	//   messages, starts heartbeat goroutine, waitAgentReady, waitWithSocketGrace,
-	//   MapWaitReturnToTerminalEvent.
-	//
-	// hookRelayEnabled=false (test fixtures, ExportedWorkLoopDeps default):
-	//   Lean pre-bridge dispatch (identical to the code that shipped before
-	//   hk-gql20.14).  No file I/O, no grace window, no bridge goroutines.
-	//   Shell-fixture tests with tight deadlines (4 s, 25 s) rely on this path
-	//   to stay fast.
-	if !deps.hookRelayEnabled {
-		beadRunOneLean(ctx, deps, runID, beadID, wtPath)
-		return
-	}
-
-	// ─── Bridge-wired path (production) ───────────────────────────────────────
+	// ─── Single-mode dispatch (production path) ───────────────────────────────
 
 	// Step 1: build the Claude launch spec via buildClaudeLaunchSpec.
 	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
@@ -588,7 +577,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		handlerBinary:     deps.handlerBinary,
 		baseEnv:           deps.handlerEnv,
 	}
-	spec, artifacts, specErr := buildClaudeLaunchSpec(ctx, rc)
+	specBuilder := deps.launchSpecBuilder
+	if specBuilder == nil {
+		specBuilder = buildClaudeLaunchSpec
+	}
+	spec, artifacts, specErr := specBuilder(ctx, rc)
 	if specErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: buildClaudeLaunchSpec bead %s run %s: %v (reopening)\n",
 			beadID, runID.String(), specErr)
@@ -599,9 +592,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 	}
 
-	// In production, HandlerArgs is always nil; spec.Args already contains the
+	// In production HandlerArgs is always nil and spec.Args already contains the
 	// bridge flags (--session-id or --resume) from buildClaudeLaunchSpec.
-	// (No append needed: HandlerArgs is empty in production.)
+	// For test fixtures that supply HandlerArgs (e.g. ["-c", "exit 0"]), prepend
+	// them so that the bridge flags become extra positional args the fixture can
+	// safely ignore (e.g. /bin/sh -c "exit 0" sh --session-id <uuid>).
+	if len(deps.handlerArgs) > 0 {
+		spec.Args = append(deps.handlerArgs, spec.Args...)
+	}
 
 	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
 	spec.Substrate = deps.substrate
@@ -771,73 +769,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 }
 
-// beadRunOneLean is the pre-bridge single-mode dispatch path used by test
-// fixtures (hookRelayEnabled=false). It is identical to the code that shipped
-// before hk-gql20.14: no buildClaudeLaunchSpec, no pre-exec messages, no hook
-// session, no heartbeat goroutine, no waitWithSocketGrace.
-//
-// This path exists solely to keep shell-fixture tests (which have tight time
-// deadlines) fast and deterministic under concurrent load. Production code
-// always goes through the full bridge path (beadRunOne's hookRelayEnabled=true
-// branch).
-//
-// Bead ref: hk-gql20.14.
-func beadRunOneLean(
-	ctx context.Context,
-	deps workLoopDeps,
-	runID core.RunID,
-	beadID core.BeadID,
-	wtPath string,
-) {
-	spec := handler.LaunchSpec{
-		Binary:  deps.handlerBinary,
-		Args:    deps.handlerArgs,
-		Env:     deps.handlerEnv,
-		WorkDir: wtPath,
-		Role:    "implementer",
-	}
-	sess, watcher, launchErr := deps.h.Launch(ctx, spec)
-	if launchErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
-			beadID, runID.String(), launchErr)
-		reopenTID, _ := deps.tidGen.Next()
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-			fmt.Sprintf("launch error: %v", launchErr))
-		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
-		return
-	}
-
-	// Await watcher completion.
-	<-watcher.Done()
-
-	// Reap the subprocess.
-	_ = sess.Wait(ctx)
-	outcome := sess.Outcome()
-
-	watcherErr := watcher.Err()
-	watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
-
-	transitionTID, _ := deps.tidGen.Next()
-	if outcome.ExitCode == 0 && !watcherFailed {
-		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
-		} else {
-			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
-		}
-	} else {
-		var failReason string
-		if watcherFailed {
-			failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
-				watcherErr, outcome.ExitCode, runID.String())
-		} else {
-			failReason = fmt.Sprintf("exit=%d run_id=%s", outcome.ExitCode, runID.String())
-		}
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d watcher_failed=%v", outcome.ExitCode, watcherFailed))
-	}
-}
-
 // isWatcherErrCanceled reports whether err is the ErrCanceled sentinel that
 // the watcher sets when the session context is cancelled cleanly (not a
 // genuine watcher failure).
@@ -859,6 +790,26 @@ func workloopSleep(ctx context.Context, d time.Duration) error {
 	case <-time.After(d):
 		return nil
 	}
+}
+
+// productionWorktreeFactory is the default worktreeFactory: creates a real git
+// worktree under the project's .harmonik/worktrees/ directory and returns the
+// path plus a cleanup function that removes it.
+//
+// Bead ref: hk-kqdpf.1.
+func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
+	if err := workspace.CreateWorktree(ctx, projectDir, runID, headSHA, workspace.NoWorktreeRootOverride()); err != nil {
+		return "", nil, err
+	}
+	wtPath := workspace.WorktreePath(projectDir, runID, workspace.NoWorktreeRootOverride())
+	// The cleanup uses background context so removal is attempted even when the
+	// per-bead context has been cancelled (e.g. on daemon shutdown or test
+	// cancellation). This mirrors the intent of the original `defer removeWorktree`
+	// call — git worktree prune is best-effort.
+	cleanup := func() {
+		removeWorktree(context.Background(), projectDir, wtPath)
+	}
+	return wtPath, cleanup, nil
 }
 
 // resolveHEAD resolves the current HEAD commit SHA of the git repository at

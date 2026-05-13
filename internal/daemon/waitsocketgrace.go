@@ -64,7 +64,7 @@ type exitInfo struct {
 // Bead: hk-gql20.22.
 func waitWithSocketGrace(
 	ctx context.Context,
-	store *hookSessionStore,
+	store hookStoreIface,
 	watcher *handlercontract.Watcher,
 	sess handler.Session,
 	runID, claudeSessID string,

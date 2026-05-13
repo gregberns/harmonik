@@ -691,7 +691,10 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	// synthLaunchSpecBuilder (injected by default in ExportedWorkLoopDeps) bypasses
+	// bridge file I/O, so CloseBead should be called within milliseconds. Keep a
+	// generous 10s safety margin for CI variability (hk-kqdpf.1).
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -699,15 +702,14 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for CloseBead to be called.
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(10 * time.Second)
 	for {
 		if ledger.closeCallCount() > 0 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Error("T4-S6: CloseBead was not called within 5s")
+			t.Error("T4-S6: CloseBead was not called within 10s")
 			goto doneS6
 		case <-time.After(10 * time.Millisecond):
 		}

@@ -156,6 +156,16 @@ type Adapter interface {
 	// Returns [ErrNoSession] when the session is gone.
 	// Returns [*ErrTmuxFailure] when display-message fails.
 	WindowPanePID(ctx context.Context, handle WindowHandle) (int, error)
+
+	// KillSession destroys the named tmux session and all windows it contains.
+	// Returns nil if the session has already been destroyed (idempotent).
+	//
+	// Returns [ErrNoSession] when the session does not exist (already gone).
+	// Returns [*ErrTmuxFailure] on unexpected tmux errors.
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006 — session-level orphan sweep
+	// kills each matching session via tmux kill-session.
+	KillSession(ctx context.Context, sessionName string) error
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

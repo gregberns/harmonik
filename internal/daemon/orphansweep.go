@@ -110,12 +110,23 @@ func RunOrphanSweep(
 	var result OrphanSweepResult
 	var errs []string
 
-	// (a) Tmux sessions.
+	// (a) Tmux sessions — two passes:
+	//   (a1) Kill orphan harmonik-owned sessions via the legacy TmuxLister/TmuxKiller path.
 	tmuxKilled, err := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("tmux: %v", err))
 	}
 	result.TmuxSessionsKilled = tmuxKilled
+
+	//   (a1b) Kill orphan harmonik-owned sessions via the Adapter path (hk-kqdpf.3):
+	//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those
+	//   with dead PIDs or zero non-zsh windows. Must run BEFORE the window sweep
+	//   so dead sessions are removed before we attempt to sweep their windows.
+	adapterSessionsKilled, err := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
+	if err != nil {
+		errs = append(errs, fmt.Sprintf("tmux-sessions-adapter: %v", err))
+	}
+	result.TmuxSessionsKilled += adapterSessionsKilled
 
 	// (a2) Tmux windows (PL-021c): kill orphan windows inside operator-owned
 	// sessions whose name matches the hk-<hash6>- sentinel prefix.

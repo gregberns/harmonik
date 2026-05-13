@@ -194,6 +194,25 @@ func (OSAdapter) WindowPanePID(ctx context.Context, handle WindowHandle) (int, e
 	return pid, nil
 }
 
+// KillSession destroys the named tmux session and all windows it contains.
+// Returns nil if the session has already been destroyed (idempotent).
+//
+// Spec ref: process-lifecycle.md §4.2 PL-006 — session-level orphan sweep
+// kills each matching session via tmux kill-session.
+func (OSAdapter) KillSession(ctx context.Context, sessionName string) error {
+	//nolint:gosec // G204: sessionName is a validated harmonik-<hash>- prefixed name, not raw user input
+	cmd := exec.CommandContext(ctx, "tmux", "kill-session", "-t", sessionName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if isNoSessionErr(out) {
+			return nil // already gone — idempotent success
+		}
+		return &ErrTmuxFailure{Op: "kill-session", ExitCode: exitCodeOf(err), Stderr: outStr}
+	}
+	return nil
+}
+
 // EnsureSession creates the named tmux session with the given working directory
 // if it does not already exist. It is idempotent: if the session exists,
 // EnsureSession returns nil without error.

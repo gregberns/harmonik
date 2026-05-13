@@ -105,6 +105,11 @@ func (a *orphanWindowFixtureAdapter) WindowPanePID(_ context.Context, _ WindowHa
 	return 0, nil
 }
 
+// KillSession is not exercised by window-sweep tests; returns nil.
+func (a *orphanWindowFixtureAdapter) KillSession(_ context.Context, _ string) error {
+	return nil
+}
+
 // orphanWindowFixtureRemoveWindow removes windowName from the session's window list.
 func (a *orphanWindowFixtureAdapter) orphanWindowFixtureRemoveWindow(session, windowName string) {
 	windows := a.sessions[session]

@@ -61,6 +61,7 @@ func (f *fakeTmuxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) 
 	}
 	return f.panePIDResult, nil
 }
+func (f *fakeTmuxAdapter) KillSession(_ context.Context, _ string) error { return nil }
 
 // Compile-time assertion: fakeTmuxAdapter implements tmux.Adapter.
 var _ tmux.Adapter = (*fakeTmuxAdapter)(nil)

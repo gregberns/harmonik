@@ -8,10 +8,10 @@ requirement-prefix: HC
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.3.5
+version: 0.3.6
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-12
+last-updated: 2026-05-13
 depends-on:
   - architecture
   - execution-model
@@ -478,6 +478,37 @@ The adapter's `DetectReady` callback (per §4.3.HC-013) MUST return `true` exact
 
 Tags: mechanism
 
+#### HC-056 — `agent_ready` timeout
+
+The daemon MUST observe an `agent_ready` event from each launched session within `agent_ready_timeout` of process start. The default value is **30 seconds**; operators MAY tune via `Config.AgentReadyTimeout`.
+
+On timeout, the daemon MUST:
+
+1. Cancel the session's context (which triggers `Session.Kill`).
+2. Reap the subprocess via `Session.Wait`.
+3. Emit `agent_failed{class=structural, sub_reason=agent_ready_timeout, exit_code=<observed>}`.
+4. Reopen the bead with reason `agent_ready_timeout`.
+
+The 30 s default is informed by claude's observed cold-start latency (≤ 5 s typical, 10–15 s under cold disk caches); the margin accommodates skill provisioning and one-time `.claude/` filesystem warm-up. Tighten in a follow-up bead once telemetry from real-claude smokes lands.
+
+The timeout MUST fire from the same goroutine that owns the session's lifecycle to ensure ordered Kill/Wait. Concurrent `agent_ready` arrival and timeout-expiry race is resolved in favour of `agent_ready` (last-second arrival wins).
+
+Cross-refs: HC-041 (DetectReady), [claude-hook-bridge.md §4.7 CHB-018] (emission ordering), [claude-hook-bridge.md §4.7 CHB-020] (terminal-event mapping). Closes follow-up bead `hk-do7te`.
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-057 — Heartbeat-emission ownership for `claude-code` at MVH
+
+For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"reasoning"}` events on the handler-process's behalf at the [claude-hook-bridge.md §4.7 CHB-019] cadence (300 s). This is a permissive carve-out from CHB-019's "handler-process emits" language, justified by the absence of a distinct claude-handler wrapper binary at MVH. Subscribers MUST treat daemon-emitted heartbeats as semantically equivalent to handler-emitted heartbeats; no payload distinction is required.
+
+Post-MVH, when a `harmonik claude-handler` shim binary lands, heartbeat emission MUST migrate to the shim and this clause is retired.
+
+Cross-ref: [claude-hook-bridge.md §4.7 CHB-019].
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.10 Agent-to-orchestrator trust (MVH)
 
 #### HC-042 — Handler subprocess launched from repo-relative path
@@ -543,6 +574,30 @@ For `agent_type = "claude-code"`, the handler subprocess MUST observe the follow
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+#### HC-055 — Allowed `claude` CLI flags at MVH
+
+The daemon's claude-launch path MUST construct `argv` from exactly the following allow-list:
+
+- `--session-id <uuid>` — passed when phase is `single`, `implementer-initial`, or `reviewer` ([claude-hook-bridge.md §4.3 CHB-008]).
+- `--resume <uuid>` — passed when phase is `implementer-resume` (CHB-008).
+
+Operator-supplied additional arguments (`Config.HandlerArgs`) are appended after the allow-listed flags and forwarded verbatim. `Config.HandlerArgs` MUST be validated against the [claude-hook-bridge.md §4.2 CHB-007] deny-list before exec.
+
+The following flags MUST NOT be passed at MVH (in addition to the CHB-007 deny-list):
+
+- `--print` / `-p` — incompatible with interactive tmux substrate.
+- `--add-dir` — workspace boundary is `cmd.Dir`; additional dirs defer to a follow-up bead.
+- `--allowed-tools`, `--disallowed-tools` — tool policy lives in worktree-materialized `.claude/settings.json` ([claude-hook-bridge.md §4.1 CHB-001..005]); CLI overrides would silently shadow policy.
+- `--mcp-server`, `--mcp-config` — out of scope. Follow-up bead.
+- `--permission-mode` — same shadowing concern.
+
+A daemon that detects any of these flags in `Config.HandlerArgs` MUST refuse to launch with a structural `forbidden_claude_flag` error.
+
+Cross-refs: [claude-hook-bridge.md §4.2 CHB-006] (env), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags), [claude-hook-bridge.md §4.1 CHB-001..005] (settings.json materialization).
+
+Tags: mechanism, security-relevant
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.11 Skill injection
 
@@ -730,6 +785,19 @@ VAR ErrBudget                       error   -- detection per §8.5; routed per [
 VAR ErrSkillProvisioningFailed      error   -- wraps ErrStructural; detection per §8.6
 VAR ErrProtocolMismatch             error   -- wraps ErrStructural; detection per §8.7
 ```
+
+#### HC-054 — `Session.Attach()` for `agent_type=claude-code` returns a live tty stream
+
+For sessions where `agent_type == "claude-code"` running under the tmux-pane substrate ([process-lifecycle.md §4.7 PL-021b]), `Session.Attach()` MUST return an `io.Reader` that streams the live contents of the pane's pty — not a tail of a log file. The reader MUST remain open for the lifetime of the session; reads MAY block when no bytes are available. The reader MUST NOT buffer beyond a single line ahead, so an attached operator observes claude's TUI in real time.
+
+Closing the reader MUST NOT terminate the session; the session terminates only via cancellation of the enclosing context or invocation of `Session.Kill`.
+
+Multiple concurrent `Attach()` calls are permitted; each call returns an independent reader fed from the same underlying pty. Implementations MAY coalesce readers into a single tee.
+
+Cross-refs: [process-lifecycle.md §4.7 PL-021b] (pane substrate), [claude-hook-bridge.md §4.7 CHB-018] (pre-exec emission ordering — unaffected).
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 6.2 Wire-protocol message envelope
 
@@ -1035,6 +1103,7 @@ Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing po
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N / §6.1 map per the v0.2 NOTE: §1.1→§4.1 (×1 in §9 cross-refs), §1.2→§4.2 (×1 in §9 cross-refs), §1.4→§4.4 (×1 in §9 cross-refs), §1.6→§4.8 (×1 in §4.3.HC-016 work-queue clause), §1.6a→§6.1 (×3 in §6.1 Handler.AgentType() comment, §6.1 LaunchSpec.agent_type comment, and §9 cross-refs — chose §6.1 since each site cites the identifier shape, not the normative requirement), §1.8→§4.9 (×2 in §9 cross-refs and §A.3 rationale footer). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §4.2.HC-010 (session_log_location progress-stream payload; note: task doc listed HC-008, but the bare identifier actually lives in HC-010 which owns `session_log_location` emission per the v0.2 HC-010 split). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~25 citations fixed. EV: `§3.1→§4.1` (envelope) ×3, `§3.2→§6.3` (payload schemas) ×5, `§3.7→§4.3` (bus consumer/dead-letter) ×2, `§3.2→§8` (event taxonomy) ×1 at §9.1 cross-refs. WM: `§5.3a→§4.7` (session-log pipeline) ×3, `§5.1→§4.1` (workspace path) ×1 at §6.1 LaunchSpec comment. ON: `§7.1→§4.9` (observability) ×2, `§7.2→§4.7` (secrets/sandbox) ×1, `§7.5→§4.5` (N-1 compat) ×2, `§7.8→§4.8` (restart RTO) ×1. PL: `§8.1→§4.1` (socket path) ×3, `§8.5→§4.5` (agent subprocess) ×1, `§8.6→§4.6` (daemon vs orchestrator-agent) ×1. Reconciliation path fix: `[reconciliation.md §9.4b]→[reconciliation/spec.md §4.4]` (snapshot-token binding) ×2 at §3 glossary and §9.3 cross-refs; `[reconciliation.md §9]→[reconciliation/spec.md §4]` at §4.10 startup-sweep reference. CP: `§6.11→§4.11` (skill declaration) ×4, `§6.9→§4.5` (budget) ×3. No requirement IDs, invariants, or schemas touched. |
 | 2026-04-25 | 0.3.3 | foundation-author | Two cross-spec coordination patches landing as gap-filler IDs (no renumbering; HC ID FREEZE preserved). **Edit 1 (§4.3 concurrency model):** new HC-016a — orphan-reconnect-window retry rule, the handler-side companion to [process-lifecycle.md §4.2 PL-003b]. Clients receiving the typed `daemon_not_ready{reason="unknown_run_id"}` rejection (issued by the daemon between socket bind at PL-005 step 3a and in-memory model build at PL-005 step 7) MUST retry per the [process-lifecycle.md §4.2 PL-009b] exponential backoff schedule (initial 100 ms, doubling, max 2 s per attempt, capped at `T_ready_wait = 60 s` per OQ-PL-002); the watcher MUST NOT classify the typed-error response as a session failure during the retry window (no `agent_failed`, no silent-hang escalation per §4.6.HC-026); after cap exhaustion the request fails with `ErrTransient` and the watcher emits `agent_failed` carrying sub-reason `daemon_startup_window_exceeded`. Closes the orphan-agent-reconnect-during-startup-window race named in PL-003b's R2 amendment. **Edit 2 (§4.6 error propagation):** new HC-026b — acceptance clause for [operator-nfr.md §4.9 ON-040]'s drain-forced silent-hang synthesis. When operator-initiated drain step 4 SIGKILLs a still-running agent subprocess per [operator-nfr.md §4.7 ON-029], ON-040 synthesizes `agent_warning_silent_hang{reason=drain_forced}` even when no §4.6.HC-026 / §7.1 silent-hang detection had fired; HC accepts ON-040's classification and obligates the watcher NOT to also emit an HC-classified silent-hang event for the same run/node, preserving HC-INV-004 (single terminal event per session) by routing the synthesis as ON-side-only. Acceptance clause; enforcement remains in operator-nfr. **New IDs (net):** HC-016a, HC-026b (2 new). No invariants, no schema changes, no §6 / §8 / §10 touches. Status remains `reviewed`. |
+| 2026-05-13 | 0.3.6 | bridge-integration | **HC-054/055/056/057 added (hk-gql20.3).** Additive amendments for the bridge-integration initiative. **HC-054** (§6.1) — `Session.Attach()` for `agent_type=claude-code` under the PL-021b tmux substrate returns a live pty `io.Reader` (not a log tail); single-line buffering for real-time observation; close-reader does not terminate the session; multiple concurrent attaches permitted. **HC-055** (§4.10) — claude CLI flag allow-list at MVH: only `--session-id` / `--resume` constructed by the daemon; explicit deny on `--print`, `--add-dir`, `--allowed-tools`/`--disallowed-tools`, `--mcp-server`/`--mcp-config`, `--permission-mode` (policy lives in worktree-materialized `.claude/settings.json`); operator `Config.HandlerArgs` validated against CHB-007 deny-list. **HC-056** (§4.9) — `agent_ready` timeout default 30s via `Config.AgentReadyTimeout`; on timeout: kill, reap, emit `agent_failed{sub_reason=agent_ready_timeout}`, reopen bead. Closes `hk-do7te`. **HC-057** (§4.9) — heartbeat-emission ownership carve-out: for `agent_type=claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf (CHB-019 cadence); retired when post-MVH shim binary lands. No existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-05-12 | 0.3.5 | foundation-author | Add HC-045a / HC-045b / HC-045c in §4.10 (gap-filler placement after HC-045, matching the HC-016a / HC-026b pattern) covering claude-code agent type's launch mechanism (pointer to claude-hook-bridge.md), hook-bridge one-shot NDJSON connection regime, and handler-side claude_session_id minting/resume discipline including orphan-reconnect git-derived lookup. Clarifying sentence added to HC-006 pointing forward to HC-045c and to CHB-023's durability boundary. No requirement IDs renumbered or retired; HC-053 in §6.2 is unchanged. Status remains `reviewed`. |
 | 2026-05-09 | 0.3.4 | foundation-author | Normative spec section for twin script-file format (hk-ahvq.48.11). **New §4.8.HC-036a — Twin script-file format:** promotes de-facto schema from `cmd/harmonik-twin-claude/scriptdriver.go` package godoc (hk-ahvq.48.3) to normative HC text. Defines: file path rule (`<fixture-root>/<scenario>/twin-scripts/<role>.yaml`); top-level YAML fields (`heartbeat_mode` enum `wall_clock`|`scripted`, default `wall_clock`; `messages` list); ScriptMessage record fields (`type` required string, `payload` optional map, `relative_timestamp_ms` optional int); heartbeat-mode semantics; load-time validation requirements. No existing requirement IDs renumbered; no invariants, no §6/§8/§10 touches. Status: reviewed → reviewed (spec-edit only). |
 

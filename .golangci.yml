@@ -133,6 +133,16 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "BI-004: handler MUST NOT import brcli; agents access br only via the Beads-CLI skill per handler-contract.md §4.11 (specs/beads-integration.md §4.2)" }
 
+        # lifecycle/tmux: may import internal/core, internal/lifecycle (provenance),
+        # and stdlib only. No other harmonik subsystem imports are permitted.
+        # Rationale: process-lifecycle.md §4.5 PL-021b, PL-021c; workspace-model.md §4.1 WM-002a.
+        lifecycle-tmux:
+          files: ["**/internal/lifecycle/tmux/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/lifecycle"
+
         # eventbus / policy / handler-contract: may import core only.
         # Add these rules when the packages land.
         # eventbus:

@@ -696,8 +696,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				}
 				_ = sess.Wait(ctx)
 				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					"agent_ready_timeout")
+				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					"agent_ready_timeout"); reopenErr != nil {
+					// ReopenBead failed: the bead remains in_progress and will NOT be
+					// re-dispatched by the poll loop (Ready only returns open beads).
+					// Log loudly so the operator can detect the stuck bead and recover
+					// manually (e.g. `br update <id> --status open`).
+					// Bead ref: hk-kqdpf.8.
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually\n",
+						beadID, runID.String(), reopenErr)
+				}
 				emitRunCompleted(ctx, deps.bus, runID, false, "agent_ready_timeout")
 				return
 			}

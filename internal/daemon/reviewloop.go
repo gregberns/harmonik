@@ -376,10 +376,20 @@ func runReviewLoop(
 			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.claudeSessionID)
 		}
 
+		// Create a per-phase tapping emitter so waitAgentReady can observe watcher
+		// events from the reviewer launch without a post-seal bus subscription (EV-009).
+		// A new handler is constructed using the tap so events flow through the channel.
+		revTap, revTapCh := newPerRunEventTap(deps.bus, runID)
+		tapRegistry := deps.adapterRegistry
+		if tapRegistry == nil {
+			tapRegistry = handlercontract.NewAdapterRegistry()
+		}
+		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, tapRegistry)
+
 		revSessionID := handlercontract.NewSessionID()
 		emitReviewerLaunched(ctx, deps.bus, runID, revSessionID, state.claudeSessionID, state.iterationCount)
 
-		revSess, revWatcher, revLaunchErr := deps.h.Launch(ctx, revSpec)
+		revSess, revWatcher, revLaunchErr := revH.Launch(ctx, revSpec)
 		if revLaunchErr != nil {
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
@@ -387,6 +397,55 @@ func runReviewLoop(
 			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
+		}
+
+		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
+		// the configured timeout, same as the implementer phase.
+		//
+		// When adapterRegistry is nil (test mode with no adapters) skip the guard
+		// and fall through to waitWithSocketGrace as before. When ErrAgentReadyTimeout
+		// fires: kill, reap, emit rlErrorResult so the caller (workloop) can reopen
+		// the bead via the same error envelope shape as the implementer phase.
+		_ = revTapCh // suppress lint if adapterRegistry is nil and block is skipped
+		if deps.adapterRegistry != nil {
+			revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+			if revAdapterErr != nil {
+				// No adapter for claude-code — non-fatal; skip ready-wait.
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) bead %s iter %d: %v (skipping ready-wait)\n",
+					beadID, state.iterationCount, revAdapterErr)
+			} else {
+				// Derive a child context that cancels when the reviewer watcher finishes
+				// (handler exit), preventing a full-timeout block on reviewer crash.
+				revReadyCtx, revReadyCancel := context.WithCancel(ctx)
+				go func() {
+					select {
+					case <-revWatcher.Done():
+						revReadyCancel()
+					case <-revReadyCtx.Done():
+					}
+				}()
+
+				revEventSrc := newChanAgentEventSource(revTapCh)
+				revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, deps.agentReadyTimeout)
+				revReadyCancel() // always release the watcher-done goroutine above
+
+				if revReadyErr == ErrAgentReadyTimeout {
+					// HC-056: reviewer agent_ready_timeout — kill, reap, error result.
+					fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
+						beadID, state.iterationCount, runID.String(), revReadyErr)
+					_ = revSess.Kill(ctx)
+					<-revWatcher.Done()
+					_ = revSess.Wait(ctx)
+					if deps.hookStore != nil {
+						deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+					}
+					result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))
+					emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+					return result
+				}
+				// revReadyErr == nil (agent_ready observed) OR context.Canceled (watcher
+				// exited first or ctx cancelled). Fall through to waitWithSocketGrace.
+			}
 		}
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

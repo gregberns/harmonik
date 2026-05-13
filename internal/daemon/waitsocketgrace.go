@@ -70,14 +70,24 @@ func waitWithSocketGrace(
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, exitInfo) {
 	// Step 1: race watcher completion vs context cancellation.
-	select {
-	case <-watcher.Done():
-		// Normal exit: handler process terminated.
-	case <-ctx.Done():
-		// Operator/daemon cancellation: kill the session and wait for the
-		// watcher to drain before proceeding.
+	//
+	// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
+	// sessions). Completion is signalled via HookSessionStore.WaitForOutcome,
+	// not via the watcher. Skip the watcher-based select; if the context is
+	// already cancelled just kill the session and fall through to sess.Wait().
+	if watcher != nil {
+		select {
+		case <-watcher.Done():
+			// Normal exit: handler process terminated.
+		case <-ctx.Done():
+			// Operator/daemon cancellation: kill the session and wait for the
+			// watcher to drain before proceeding.
+			_ = sess.Kill(ctx)
+			<-watcher.Done()
+		}
+	} else if ctx.Err() != nil {
+		// Substrate path, context already cancelled — kill and fall through.
 		_ = sess.Kill(ctx)
-		<-watcher.Done()
 	}
 
 	// Step 2: reap the subprocess.

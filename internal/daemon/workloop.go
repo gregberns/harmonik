@@ -666,14 +666,21 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// Derive a child context that cancels when the watcher finishes (handler
 			// exit). This prevents waitAgentReady from blocking for the full timeout
 			// when the handler exits before emitting agent_ready (e.g. a crash).
+			//
+			// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
+			// sessions return watcher=nil; completion flows via HookSessionStore.WaitForOutcome).
+			// Skip the watcher-done goroutine in that case — readyCtx is still valid
+			// and will be cancelled by the outer ctx or readyCancel below.
 			readyCtx, readyCancel := context.WithCancel(ctx)
-			go func() {
-				select {
-				case <-watcher.Done():
-					readyCancel()
-				case <-readyCtx.Done():
-				}
-			}()
+			if watcher != nil {
+				go func() {
+					select {
+					case <-watcher.Done():
+						readyCancel()
+					case <-readyCtx.Done():
+					}
+				}()
+			}
 
 			eventSrc := newChanAgentEventSource(tapCh)
 			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
@@ -684,7 +691,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
 					beadID, runID.String(), readyErr)
 				_ = sess.Kill(ctx)
-				<-watcher.Done()
+				if watcher != nil {
+					<-watcher.Done()
+				}
 				_ = sess.Wait(ctx)
 				reopenTID, _ := deps.tidGen.Next()
 				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
@@ -724,7 +733,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
 	// fails the bead remains in_progress while JSONL would record
 	// run_completed=true — split-brain. Emit run_failed instead.
-	watcherErr := watcher.Err()
+	// Substrate path: watcher is nil; treat as no watcher error.
+	var watcherErr error
+	if watcher != nil {
+		watcherErr = watcher.Err()
+	}
 	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
 	transitionTID, _ := deps.tidGen.Next()
 

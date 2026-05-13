@@ -7,8 +7,9 @@
 .kerf/*
 !.kerf/project-identifier
 
-# Beads task ledger — local DB + JSONL; smoke-load artifact, not tracked at MVH
-.beads/
+# Beads task ledger — track only the JSONL export, ignore SQLite DB / WAL / locks
+.beads/*
+!.beads/issues.jsonl
 
 # Go build outputs and test artifacts (build-practices.md §Git hygiene)
 /bin/
@@ -31,3 +32,6 @@
 
 # Stray sub-agent scratch dirs
 /.claire/
+
+# bv (beads viewer) local config and caches
+.bv/

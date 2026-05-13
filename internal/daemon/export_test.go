@@ -402,59 +402,39 @@ func ExportedWaitAgentReady(
 	return waitAgentReady(ctx, runID, source, adapter, timeout)
 }
 
+// (duplicate buildClaudeLaunchSpec stubs removed — canonical declarations above at lines ~295-356)
+
 // ─────────────────────────────────────────────────────────────────────────────
-// buildClaudeLaunchSpec test seams (hk-gql20.13)
+// waitWithSocketGrace test seams (hk-gql20.22)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ExportedClaudeRunCtx is the exported test-seam shape for claudeRunCtx with
-// PascalCase fields so package daemon_test can populate one directly.
+// HookSessionStoreExported is a type alias for *hookSessionStore, exposed so
+// tests in package daemon_test can declare helper-function parameters with the
+// correct concrete type without relying on interface{}.
 //
-// Bead ref: hk-gql20.13.
-type ExportedClaudeRunCtx struct {
-	RunID             core.RunID
-	BeadID            string
-	WorkspacePath     string
-	DaemonSocket      string
-	WorkflowMode      core.WorkflowMode
-	Phase             handlercontract.ReviewLoopPhase
-	IterationCount    int
-	PriorClaudeSessID *string
-	HandlerBinary     string
-	BaseEnv           []string
+// Bead ref: hk-gql20.22.
+type HookSessionStoreExported = hookSessionStore
+
+// ExitInfoExported is the exported shape of exitInfo for tests in package
+// daemon_test.
+//
+// Bead ref: hk-gql20.22.
+type ExitInfoExported struct {
+	ExitCode int
+	WaitErr  error
 }
 
-// ExportedClaudeRunArtifacts is the exported test-seam shape for claudeRunArtifacts.
-type ExportedClaudeRunArtifacts struct {
-	ClaudeSessionID  string
-	SessionLogPath   string
-	HandlerSessionID string
-	PreExecMsgs      []json.RawMessage
-}
-
-// ExportedBuildClaudeLaunchSpec exposes buildClaudeLaunchSpec for tests in
-// package daemon_test. Maps the exported PascalCase shape onto the internal
-// camelCase claudeRunCtx and returns the exported artifacts shape.
+// ExportedWaitWithSocketGrace exposes waitWithSocketGrace for tests in package
+// daemon_test.
 //
-// Bead ref: hk-gql20.13.
-func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
-	internal := claudeRunCtx{
-		runID:             rc.RunID,
-		beadID:            rc.BeadID,
-		workspacePath:     rc.WorkspacePath,
-		daemonSocket:      rc.DaemonSocket,
-		workflowMode:      rc.WorkflowMode,
-		phase:             rc.Phase,
-		iterationCount:    rc.IterationCount,
-		priorClaudeSessID: rc.PriorClaudeSessID,
-		handlerBinary:     rc.HandlerBinary,
-		baseEnv:           rc.BaseEnv,
-	}
-	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
-	exp := ExportedClaudeRunArtifacts{
-		ClaudeSessionID:  arts.claudeSessionID,
-		SessionLogPath:   arts.sessionLogPath,
-		HandlerSessionID: arts.handlerSessionID,
-		PreExecMsgs:      arts.preExecMsgs,
-	}
-	return spec, exp, err
+// Bead ref: hk-gql20.22.
+func ExportedWaitWithSocketGrace(
+	ctx context.Context,
+	store *hookSessionStore,
+	watcher *handlercontract.Watcher,
+	sess handler.Session,
+	runID, claudeSessID string,
+) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
+	outcome, ei := waitWithSocketGrace(ctx, store, watcher, sess, runID, claudeSessID)
+	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr}
 }

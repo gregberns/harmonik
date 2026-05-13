@@ -337,3 +337,60 @@ func ExportedWaitAgentReady(
 ) error {
 	return waitAgentReady(ctx, runID, source, adapter, timeout)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildClaudeLaunchSpec test seams (hk-gql20.13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedClaudeRunCtx is the exported test-seam shape for claudeRunCtx with
+// PascalCase fields so package daemon_test can populate one directly.
+//
+// Bead ref: hk-gql20.13.
+type ExportedClaudeRunCtx struct {
+	RunID             core.RunID
+	BeadID            string
+	WorkspacePath     string
+	DaemonSocket      string
+	WorkflowMode      core.WorkflowMode
+	Phase             handlercontract.ReviewLoopPhase
+	IterationCount    int
+	PriorClaudeSessID *string
+	HandlerBinary     string
+	BaseEnv           []string
+}
+
+// ExportedClaudeRunArtifacts is the exported test-seam shape for claudeRunArtifacts.
+type ExportedClaudeRunArtifacts struct {
+	ClaudeSessionID  string
+	SessionLogPath   string
+	HandlerSessionID string
+	PreExecMsgs      []json.RawMessage
+}
+
+// ExportedBuildClaudeLaunchSpec exposes buildClaudeLaunchSpec for tests in
+// package daemon_test. Maps the exported PascalCase shape onto the internal
+// camelCase claudeRunCtx and returns the exported artifacts shape.
+//
+// Bead ref: hk-gql20.13.
+func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+	internal := claudeRunCtx{
+		runID:             rc.RunID,
+		beadID:            rc.BeadID,
+		workspacePath:     rc.WorkspacePath,
+		daemonSocket:      rc.DaemonSocket,
+		workflowMode:      rc.WorkflowMode,
+		phase:             rc.Phase,
+		iterationCount:    rc.IterationCount,
+		priorClaudeSessID: rc.PriorClaudeSessID,
+		handlerBinary:     rc.HandlerBinary,
+		baseEnv:           rc.BaseEnv,
+	}
+	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
+	exp := ExportedClaudeRunArtifacts{
+		ClaudeSessionID:  arts.claudeSessionID,
+		SessionLogPath:   arts.sessionLogPath,
+		HandlerSessionID: arts.handlerSessionID,
+		PreExecMsgs:      arts.preExecMsgs,
+	}
+	return spec, exp, err
+}

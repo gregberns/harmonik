@@ -185,3 +185,21 @@ The user asked: "if the process isn't running as a daemon is that a problem?" An
 # Blocking question for the user
 
 None. The smoke epic is filed; dispatch `hk-1n0cw.1` first. If the smoke surfaces gaps, file follow-ups under `hk-1n0cw` and triage them before opening DOT.
+
+# Carry-forward reminders for the NEXT session (user-requested 2026-05-12)
+
+**OPEN THIS SESSION IN tmux.** The user wants to be able to attach to the tmux panes of the Claude subprocesses hk spawns. Running the orchestrator itself inside tmux is the prerequisite. Figure out the inspect-the-subprocess-pane workflow early.
+
+**DOT rollout, slow-roll plan** (after smoke is green):
+1. Run ONE DOT task end-to-end; review logs, output, full result.
+2. If clean, run TWO DOT tasks IN SERIES; review.
+3. If clean, run TWO DOT tasks IN PARALLEL; review.
+4. Then scale further.
+
+**DOT experiments to try once basic rollout works:**
+- Multi-agent arrangements — including one node being the ralph (review-loop) loop.
+- Add deterministic steps to a DOT graph — e.g., a node that checks whether the implementer's branch is off current `main`, and if not, sends a message back to the implementer agent to update/rebase.
+
+**tmux integration** — test out the tmux implementation (whatever pane/session management hk already has or needs).
+
+**Daemonization** — the user wants to be able to submit work and have it chug in the background. Get the deferred daemon work moving (detached process, pidfile, socket, JSON-RPC operator control per locked decision 2026-05-08).

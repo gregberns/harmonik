@@ -2,7 +2,7 @@
 
 > Current phase, active work, and session history. Every session updates this file before ending.
 
-Last updated: 2026-04-23 (Phase 2 main session closed)
+Last updated: 2026-04-30 (basata-trial scoping session; awaiting methodology sign-off)
 
 ## Current phase
 
@@ -244,6 +244,73 @@ Variants 2-5 are out of core scope but will be captured in `phases/phase-1/tried
 - Standard read-in via `CLAUDE.md` → `STATUS.md` → `INDEX.md`. Both files now describe the per-phase structure; new agents should not need to rediscover it.
 - For the active skill trial: `/session-resume research/planning-protocols/HANDOFF.md` if a handoff exists; otherwise produce one at session end.
 - For Phase 3 work (whenever it begins): `mkdir phases/phase-3/`, follow the convention captured in `METHODOLOGY.md` "Phase N pattern."
+
+### 2026-04-30 -- Basata-trial scoping; Phase 3 proposed; awaiting methodology sign-off
+
+**Context.** User returned with results from the basata project (take-home assignment, `~/github/basata`). Across roughly 30 sessions between 2026-04-28 and 2026-04-30 the user ran two parallel Claude Code agents — an "implementor" (drained the task queue, integrated changes) and a "tester" (manual-testing partner that wrote bug beads back into the implementor's queue). Both agents used the v2 `/session-handoff` + `/session-resume` skills heavily, restarting every 10-20 tasks as context grew past 200k tokens. User reported v2 worked "CRAZY GOOD" — a strong qualitative signal at n≫3, well past the 3-5 fires the methodology asked for before structural conclusions on v2.
+
+**Three signals identified in the basata corpus:**
+
+1. **v2 skill validation at n≫3.** The trial-finding-1 follow-up parked at "next real planning session produces n=3 signal" has accumulated ~10× that across basata. Can confirm whether v2 fixed the eight failure mechanisms from finding 1 and whether new failure modes appeared.
+2. **Novel orchestration pattern (not in Phase 2 catalog).** Implementor + tester + dedicated bug-bead-queue. Closest catalog primitives — `controller-orchestration`, `role-split-reviewer-library`, `parallel-reviewer-mob` — each cover one slice; the synthesis (fast-loop tester writes beads → slow-loop implementor drains queue, with manual-testing-driven discovery) is not in the catalog. Directly relevant to harmonik's orchestration design.
+3. **Restart-friction calibration item.** Two-track work needed `HANDOFF.md` + `HANDOFF-tester.md`; user reported "a little friction making sure the new session started with the right perspective." v2 was authored assuming one handoff per project; real practice broke that assumption.
+
+**Planning decisions (signed off this session):**
+
+- **Trial-finding 2 = v2 validation, basata-only scope.** One project, one bead system, one human, one cadence → uniform context for failure-mode signal. Output target: `trial-findings/2026-04-30-v2-validation.md`. Hypothesis-driven (the 8 mechanisms from finding 1) plus open coding for new modes. Restart-friction folds in as a calibration section, not its own finding (same class as finding 1: template assumed a shape real practice didn't fit).
+- **Phase 3 opens as a new phase.** Epistemic shape distinct from Phase 1 (corpus scoping) and Phase 2 (external research + reviewer evaluation): *deep characterization of a single observed pattern, written so a fresh agent can operate the pattern from the doc alone.* First Phase 3 doc: `phases/phase-3/implementor-tester-pattern.md`.
+- **Phase 3 eligibility criteria** (to prevent noise accumulation): pattern must be (a) observed in real practice, (b) not already in the Phase 2 unified catalog, (c) show evidence of effectiveness in real use.
+- **Phase 3 per-pattern doc template** (inherited by all future Phase 3 docs): actors, contract between actors, mechanism, asymmetries, preconditions, failure modes, harmonik implications, evidence citations to session+line.
+- **Reviewer gate for Phase 3 docs**: a fresh-agent-readability test — a reviewer sub-agent reads the finished doc cold and tries to describe how to operate the pattern; if they can, the doc passes.
+- **Methodology-first execution.** User explicit: don't do random things — assume numerous agents come after, structure work so they can consume it. No analysis until methodology is written and signed off.
+- **Pattern doc filename:** `implementor-tester-pattern.md` (confirmed).
+
+**Planned methodology files (proposed; awaiting user sign-off before writing):**
+
+1. `METHODOLOGY.md` — append a Phase 3 entry under the existing "Phase N pattern" subsection. Names eligibility criteria, doc template, reviewer gate.
+2. `phases/phase-3/methodology.md` — Phase 3 internal process (corpus → extraction → characterization → review → publication). Mirrors how Phase 2's research-statement.md §7 worked.
+3. `phases/phase-3/corpus/EXTRACTION.md` — extraction parameters (dialog filter, role classifier, neighbor-window heuristic). Reproducible by future agents. Cites `scripts/extract_dialog.py`.
+4. `trial-findings/CONVENTIONS.md` — codifies the finding-1 doc shape (Part 1 observations → Part 2 analysis → Part 3 implications → Part 4 open questions → Source material). Notes hypothesis-driven variant adds a Part 0 stating tested hypotheses.
+5. `STATUS.md` / `INDEX.md` updates — Phase 3 added, trial-findings convention linked.
+
+**Planned execution sequence (after methodology sign-off):**
+
+1. Build evidence layer — role-mapping sub-agents (first 1-2 user messages identify implementor vs tester) → extraction with user's "user turns + immediate neighbors, skip sub-agent runs" heuristic → corpus index.
+2. Two parallel analyses on the shared corpus: v2-validation lens (finding 2) and pattern-characterization lens (Phase 3 doc).
+3. Two writeups.
+4. Reviewer gates: fresh-agent readability test (Phase 3); counter-evidence sweep (trial finding 2).
+5. STATUS.md / INDEX.md updates at session close.
+
+**Source sessions identified by user as starting points:**
+
+- Implementor: `b9da1e6f-b499-4bb5-9888-595d1ce1428f` (~850KB)
+- Tester: `a739cf46-b69e-4669-99c8-6f3feee4f83b` (~388KB)
+
+Walk backward from these; identify role from first 1-2 user messages of each basata session in `~/.claude/projects/-Users-gb-github-basata/` from 2026-04-28 onward. User heuristic: ignore sub-agent stretches and long autonomous runs; "two messages before and after user messages" often suffices for context.
+
+**Orchestrator instructions used in basata (recorded for the pattern doc):**
+
+```
+Act as the orchestrator - delegate your work.
+Parallelize where it makes sense and is possible.
+You are responsible for determining the order of tasks to work on.
+```
+
+**Open structural question (parked for user):**
+
+- **Corpus placement.** Proposed `phases/phase-3/corpus/basata/` on the rationale that the corpus is *primary evidence* for the Phase 3 doc and trial-finding 2 is a secondary consumer; a future Phase 4 case study would then own its own corpus at `phases/phase-4/corpus/`. Alternative: `corpus/basata/` at track root as a cross-phase asset. Awaiting user call before any extraction.
+
+**What the next session should do:**
+
+1. Re-read this entry plus the methodology proposal above.
+2. Resolve the open corpus-placement structural question.
+3. If user has signed off on the methodology proposal: write the five methodology files. Stop and confirm before starting analysis.
+4. If user has signed off on the methodology files: proceed with the execution sequence (evidence layer first, then parallel analyses, then writeups, then reviewer gates).
+5. Do NOT skip ahead to analysis without methodology sign-off — user was explicit on this.
+
+**Status: BLOCKED on user sign-off of the methodology proposal above.**
+
+---
 
 ### 2026-04-28 -- Trial finding 1 + v2 skill iteration (overnight)
 

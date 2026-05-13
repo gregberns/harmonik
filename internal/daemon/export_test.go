@@ -68,6 +68,14 @@ type WorkLoopDepsParams struct {
 	// need adapters registered because Launch does not consult the registry
 	// at MVH.
 	AdapterRegistry *handlercontract.AdapterRegistry
+
+	// HookStore is the hook-session registry shared between RunSocketListener
+	// and the work loop completion path (hk-gql20.21). When nil,
+	// ExportedWorkLoopDeps creates a fresh store — tests that do not exercise
+	// the hook-relay path may omit this field.
+	//
+	// Bead ref: hk-gql20.21.
+	HookStore *hookSessionStore
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -106,6 +114,12 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		adapterReg = handlercontract.NewAdapterRegistry()
 	}
 
+	// Use the caller-supplied HookStore or create a fresh one (hk-gql20.21).
+	hookStore := p.HookStore
+	if hookStore == nil {
+		hookStore = newHookSessionStore()
+	}
+
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
 	return workLoopDeps{
@@ -122,6 +136,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		workflowModeDefault: wmd,
 		runRegistry:         reg,
 		maxConcurrent:       maxConcurrent,
+		hookStore:           hookStore,
 	}
 }
 
@@ -259,6 +274,13 @@ type HookRelayEnvelopeExported struct {
 // Bead ref: hk-gql20.20.
 func ExportedHookWaitForOutcome(ctx context.Context, s *hookSessionStore, runID, claudeSessionID string) (json.RawMessage, error) {
 	return s.WaitForOutcome(ctx, runID, claudeSessionID)
+}
+
+// ExportedHookStoreOf returns the hookStore field from deps.
+// Used by integration tests to inspect store state after dispatching
+// hook-relay envelopes through a running socket listener (hk-gql20.21).
+func ExportedHookStoreOf(deps workLoopDeps) *hookSessionStore {
+	return deps.hookStore
 }
 
 // ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.

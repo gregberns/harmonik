@@ -1,0 +1,254 @@
+package daemon
+
+// claudelaunchspec.go — buildClaudeLaunchSpec helper (hk-gql20.13).
+//
+// Threads together all bridge pieces required to launch a Claude Code (or
+// harmonik-twin-claude) subprocess for any workflow phase:
+//
+//   - MintClaudeSessionID — fresh UUIDv7 or resume reuse (CHB-008/009).
+//   - DeriveCIaudeTranscriptPath — session log path (CHB-018 step 2).
+//   - MaterializeClaudeSettings — atomic hook-bridge settings write (CHB-001..005).
+//   - CheckSettingsLocalJSON — fail-fast if settings.local.json shadows hooks (CHB-024).
+//   - ClaudeEnvVars — CHB-006 env-var set.
+//   - argv construction — --session-id or --resume per CHB-008 (OQ3: allow-list).
+//   - CheckForbiddenFlags — deny-list guard (CHB-007).
+//   - PreExecMessages — 4 ordered pre-exec progress messages (CHB-018).
+//
+// The helper is twin-blind: the same code path is used whether Binary points to
+// "claude" or "harmonik-twin-claude". The Binary field of the returned
+// handler.LaunchSpec is opaque to this helper — the caller sets it from
+// claudeRunCtx.handlerBinary.
+//
+// Spec refs:
+//   - specs/claude-hook-bridge.md §4.2 CHB-006..009, §4.7 CHB-018..019, §4.9 CHB-024.
+//   - specs/handler-contract.md §4.2 HC-055 (flag allow-list), §4.2 HC-005 (LaunchSpec delivery).
+//
+// Bead: hk-gql20.13
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+
+	"github.com/google/uuid"
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/workspace"
+)
+
+// claudeRunCtx carries the per-launch inputs to buildClaudeLaunchSpec.
+// The caller assembles this from a bead record and daemon configuration; the
+// helper treats all fields as read-only.
+type claudeRunCtx struct {
+	// runID is the UUIDv7 run identifier for this dispatch.
+	runID core.RunID
+
+	// beadID is the opaque bead correlation identifier.
+	beadID string
+
+	// workspacePath is the absolute path to the worktree assigned to this bead.
+	workspacePath string
+
+	// daemonSocket is the UNIX-domain socket path for the hook-relay, typically
+	// <ProjectDir>/.harmonik/daemon.sock.
+	daemonSocket string
+
+	// workflowMode is the resolved workflow mode for this run (e.g. "single",
+	// "review-loop").
+	workflowMode core.WorkflowMode
+
+	// phase is the review-loop phase string, or the empty string for single-mode.
+	// For review-loop, one of {implementer-initial, implementer-resume, reviewer}.
+	phase handlercontract.ReviewLoopPhase
+
+	// iterationCount is the 1-based iteration index for review-loop runs.
+	// Zero or negative means this is not a multi-phase run (single-mode).
+	iterationCount int
+
+	// priorClaudeSessID is non-nil only for the implementer-resume phase; it
+	// carries the Claude session ID minted by the previous implementer-initial
+	// launch in the same cycle. All other phases MUST pass nil.
+	priorClaudeSessID *string
+
+	// handlerBinary is the resolved path to the handler executable, taken from
+	// daemon Config (e.g. "claude" or "/usr/local/bin/harmonik-twin-claude").
+	handlerBinary string
+
+	// baseEnv is the base environment inherited from daemon Config.HandlerEnv,
+	// which MUST already include HARMONIK_PROJECT_HASH per PL-006a. CHB-006
+	// vars are appended (or overwrite) by ClaudeEnvVars.
+	baseEnv []string
+}
+
+// claudeRunArtifacts carries the values that the workloop and review-loop
+// need after buildClaudeLaunchSpec returns, in addition to the LaunchSpec.
+type claudeRunArtifacts struct {
+	// claudeSessionID is the Claude session ID minted (or reused) by
+	// MintClaudeSessionID for this launch. The caller stores it so it can be
+	// passed as priorClaudeSessID on the next implementer-resume launch.
+	claudeSessionID string
+
+	// sessionLogPath is the Claude transcript path derived from the workspace
+	// and session ID, as reported via the session_log_location message (CHB-018).
+	sessionLogPath string
+
+	// handlerSessionID is a freshly minted UUIDv7 identifying this particular
+	// handler session within harmonik's event bus. Distinct from claudeSessionID.
+	handlerSessionID string
+
+	// preExecMsgs holds the 4 ordered pre-exec progress messages (handler_capabilities,
+	// session_log_location, skills_provisioned, agent_ready) in compact JSON form.
+	// The caller MUST emit these on the bus BEFORE calling handler.Launch per CHB-018.
+	preExecMsgs []json.RawMessage
+
+	// substrate is the optional tmux-substrate reference for this session.
+	// At MVH this is always nil; the handler falls back to exec.CommandContext.
+	// TODO(hk-gql20.x): wire tmux substrate once component-2 lands.
+	substrate interface{}
+}
+
+// buildClaudeLaunchSpec threads together all bridge pieces required to launch
+// a Claude Code (or twin) subprocess for any workflow phase.
+//
+// The sequence follows the design in
+// .kerf/projects/gregberns-harmonik/bridge-integration/04-research/component-3-4/design.md §1:
+//
+//  1. MintClaudeSessionID — mint fresh or reuse (CHB-008/009).
+//  2. DeriveCIaudeTranscriptPath — session log location for CHB-018 step 2.
+//  3. MaterializeClaudeSettings — atomic hook-bridge settings file (CHB-001..005).
+//  4. CheckSettingsLocalJSON — fail-fast on settings.local.json shadow (CHB-024).
+//  5. Build ClaudeEnvConfig and call ClaudeEnvVars — CHB-006 env.
+//  6. Build argv — --session-id or --resume per CHB-008 (OQ3 allow-list).
+//  7. CheckForbiddenFlags — deny-list guard (CHB-007).
+//  8. PreExecMessages — render 4 ordered progress messages (CHB-018).
+//  9. Return handler.LaunchSpec + claudeRunArtifacts.
+//
+// Returns a non-nil error (wrapping handler.ErrStructural where applicable)
+// if any step fails. The caller MUST NOT call handler.Launch on error.
+//
+// Spec refs: claude-hook-bridge.md §4.2..4.3, §4.7, §4.9;
+// handler-contract.md HC-005, HC-055.
+func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	_ = ctx // reserved for future async steps (e.g. skill provisioning)
+
+	// Step 1 — MintClaudeSessionID (CHB-008, CHB-009).
+	mintRes, err := handler.MintClaudeSessionID(string(rc.phase), rc.priorClaudeSessID)
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: MintClaudeSessionID: %w", err)
+	}
+
+	// Step 2 — Derive Claude transcript path (CHB-018 step 2).
+	sessionLogPath := handler.DeriveCIaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
+
+	// Step 3 — Materialize .claude/settings.json in the worktree (CHB-001..005).
+	if err := workspace.MaterializeClaudeSettings(rc.workspacePath, sessionLogPath); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: MaterializeClaudeSettings: %w", err)
+	}
+
+	// Step 4 — Fail-fast if settings.local.json shadows bridge hooks (CHB-024).
+	if err := handler.CheckSettingsLocalJSON(rc.workspacePath); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: CheckSettingsLocalJSON: %w", err)
+	}
+
+	// Step 5 — Build ClaudeEnvConfig and derive the CHB-006 env slice.
+	handlerSessUID, err := uuid.NewV7()
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: mint handlerSessionID UUIDv7: %w", err)
+	}
+	handlerSessionID := handlerSessUID.String()
+
+	// WorkflowID and NodeID: at MVH the bead is the workflow unit, so we
+	// synthesise "bead/<beadID>" as the node identifier. WorkflowID reuses the
+	// runID's UUID (run is the workflow scope at MVH).
+	//
+	// TODO(hk-gql20.x): replace with typed WorkflowID / NodeID from a workflow
+	// registry once multi-node workflows are introduced.
+	nodeID := "bead/" + rc.beadID
+	workflowID := core.WorkflowID(core.RunID(rc.runID))
+
+	// Build optional ClaudeEnvConfig fields.
+	workflowModeStr := string(rc.workflowMode)
+	phaseStr := string(rc.phase)
+	iterCountStr := ""
+	if rc.iterationCount > 0 {
+		iterCountStr = strconv.Itoa(rc.iterationCount)
+	}
+
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            core.RunID(rc.runID).String(),
+		DaemonSocket:     rc.daemonSocket,
+		WorkspacePath:    rc.workspacePath,
+		HandlerSessionID: handlerSessionID,
+		ClaudeSessionID:  mintRes.ClaudeSessionID,
+		WorkflowID:       core.WorkflowID(workflowID).String(),
+		NodeID:           nodeID,
+		WorkflowMode:     workflowModeStr,
+		Phase:            phaseStr,
+		IterationCount:   iterCountStr,
+		BeadID:           rc.beadID,
+		BaseEnv:          rc.baseEnv,
+	}
+	env := handler.ClaudeEnvVars(cfg)
+
+	// Step 6 — Build argv (OQ3 allow-list: only --session-id or --resume).
+	// CHB-008: use --resume <uuid> for implementer-resume, --session-id <uuid> otherwise.
+	var args []string
+	if mintRes.ResumeMode {
+		args = []string{"--resume", mintRes.ClaudeSessionID}
+	} else {
+		args = []string{"--session-id", mintRes.ClaudeSessionID}
+	}
+
+	// Step 7 — Deny-list guard (CHB-007).
+	if err := handler.CheckForbiddenFlags(args, env); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: CheckForbiddenFlags: %w", err)
+	}
+
+	// Step 8 — Render pre-exec messages (CHB-018).
+	runIDStr := core.RunID(rc.runID).String()
+	rawMsgs, err := handler.PreExecMessages(
+		runIDStr,
+		handlerSessionID,
+		nodeID,
+		mintRes.ClaudeSessionID,
+		sessionLogPath,
+		nil, // skills = nil at MVH per design §1 step 9
+	)
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: PreExecMessages: %w", err)
+	}
+	preExecMsgs := make([]json.RawMessage, len(rawMsgs))
+	for i, b := range rawMsgs {
+		preExecMsgs[i] = json.RawMessage(b)
+	}
+
+	// Step 9 — Assemble handler.LaunchSpec and return.
+	//
+	// Binary is opaque to this helper; the caller sets it via rc.handlerBinary.
+	// Substrate is nil at MVH; handler falls back to exec.CommandContext.
+	spec := handler.LaunchSpec{
+		Binary:  rc.handlerBinary,
+		Args:    args,
+		Env:     env,
+		WorkDir: rc.workspacePath,
+		Role:    string(rc.phase), // "implementer-initial", "implementer-resume", "reviewer", or "" (single)
+	}
+
+	artifacts := claudeRunArtifacts{
+		claudeSessionID:  mintRes.ClaudeSessionID,
+		sessionLogPath:   sessionLogPath,
+		handlerSessionID: handlerSessionID,
+		preExecMsgs:      preExecMsgs,
+		substrate:        nil,
+	}
+
+	return spec, artifacts, nil
+}

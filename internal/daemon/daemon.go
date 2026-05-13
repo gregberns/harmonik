@@ -125,6 +125,23 @@ type Config struct {
 	//
 	// Bead ref: hk-e61c3.1. POST_MVH_PARALLELISM_ROADMAP row 6.
 	MaxConcurrent int
+
+	// AgentReadyTimeout is the maximum duration the daemon waits for an
+	// agent_ready event after launching a handler subprocess per HC-056.
+	//
+	// A zero value falls back to the defaultAgentReadyTimeout constant (30s)
+	// declared in agentready.go. Operators may reduce this value in environments
+	// with fast cold-start paths or increase it for slow disk-cache warm-up.
+	// The timeout is applied per-dispatch (not per-daemon lifetime).
+	//
+	// On expiry: the session context is cancelled, the subprocess is reaped,
+	// agent_failed{class=structural, sub_reason=agent_ready_timeout} is emitted,
+	// and the bead is reopened (HC-056 steps 1–4). Wiring into the workloop
+	// completion path lands in hk-gql20.14/.15.
+	//
+	// Spec ref: specs/handler-contract.md §4.9 HC-056.
+	// Bead ref: hk-gql20.18.
+	AgentReadyTimeout time.Duration
 }
 
 // Start is the composition-root entry point for the harmonik daemon.

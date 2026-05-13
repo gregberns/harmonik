@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -281,4 +282,36 @@ func ExportedNewSessionIDInterceptor(r io.Reader, cb func(string)) io.Reader {
 // Bead ref: hk-gql20.17.
 func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID core.RunID) handler.HeartbeatEmitter {
 	return newDaemonHeartbeatEmitter(bus, runID)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HC-056 test seams (hk-gql20.18)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedErrAgentReadyTimeout exposes ErrAgentReadyTimeout for tests.
+//
+// Bead ref: hk-gql20.18.
+var ExportedErrAgentReadyTimeout = ErrAgentReadyTimeout
+
+// AgentEventSourceExported is the exported alias for agentEventSource so that
+// test stubs in package daemon_test can satisfy the interface.
+//
+// Because agentEventSource is unexported, daemon_test stubs cannot reference it
+// directly. This exported alias carries the same method set, enabling type-safe
+// injection via ExportedWaitAgentReady.
+//
+// Bead ref: hk-gql20.18.
+type AgentEventSourceExported = agentEventSource
+
+// ExportedWaitAgentReady exposes waitAgentReady for tests in package daemon_test.
+//
+// Bead ref: hk-gql20.18.
+func ExportedWaitAgentReady(
+	ctx context.Context,
+	runID core.RunID,
+	source AgentEventSourceExported,
+	adapter handlercontract.Adapter,
+	timeout time.Duration,
+) error {
+	return waitAgentReady(ctx, runID, source, adapter, timeout)
 }

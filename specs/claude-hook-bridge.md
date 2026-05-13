@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.3
+version: 0.4
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -287,6 +287,23 @@ Formally:
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### CHB-027 — Daemon behavior on abrupt EOF before envelope arrival
+
+If a relay subprocess is killed (SIGKILL, OOM, or any other cause) AFTER opening the daemon socket connection but BEFORE writing a complete NDJSON envelope line, the daemon receives an abrupt EOF on that connection without any `run_id` or `claude_session_id` routing key.
+
+The daemon MUST:
+
+1. **Drop the connection silently.** No bus event is emitted. No terminal event (`agent_failed`, `agent_completed`) is emitted for any session. The connection is unidentifiable and cannot be attributed to any watcher.
+2. **Log a single debug-level line** noting the orphan connection (remote address, byte count received, timestamp). No structured event is emitted at MVH; the log line is for operator diagnostics only.
+3. **Leave the handler's Wait-return path as the authoritative recovery mechanism.** Per CHB-020 and CHB-INV-002, the handler-process emits the terminal event when `cmd.Wait()` returns. If the relay was carrying a Stop hook and died mid-write, no `outcome_emitted` arrives at the daemon; the watcher's "no outcome_emitted observed" branch fires on Wait-return, emitting `agent_failed{class=ErrTransient, sub_reason=bridge_partial_write}` per §8. This is a recoverable false-negative: the terminal event is correctly emitted with an accurate sub_reason; orchestrator retry semantics apply.
+
+**Scope boundary.** This requirement covers only connection-level EOF before any byte of the envelope reaches the daemon. Partial envelope receipt (some bytes written, no `\n` terminator) is handled by the existing wire-framing rule: the NDJSON reader discards the incomplete line and treats the connection as EOF with zero complete messages, which falls under this same rule.
+
+**Implementation note.** The current `RunSocketListener` (per `internal/daemon/socket.go`) dispatches each accepted connection to a goroutine that reads until EOF before routing; a connection that yields zero complete lines is already discarded without routing. This requirement makes that behavior normative. No code change is required; conformance testing MUST verify the silent-drop behavior (see §10).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.7 Handler-process responsibilities
 
 #### CHB-018 — Pre-Claude-exec emission ordering
@@ -427,6 +444,7 @@ Bridge-specific failure modes route through `agent_failed{class, sub_reason}` pe
 | `claude_exit_without_outcome` | ErrStructural | Claude exited cleanly (0) but no Stop hook fired |
 | `claude_crashed` | ErrStructural | Claude exited non-zero without outcome_emitted |
 | `claude_<error_type>` | per §4.5.CHB-013 | Mapped from StopFailure.error_type |
+| `bridge_partial_write` | ErrTransient | Relay process terminated after socket open but before envelope completion; daemon received EOF on an unidentified connection. Recovery: handler Wait-return CHB-020 "no outcome_emitted" branch fires per §4.6.CHB-027. |
 | `bridge_settings_shadowed` | ErrStructural | `.claude/settings.local.json` shadows bridge hooks per §4.9.CHB-024 |
 
 ## 9. Cross-references
@@ -499,3 +517,4 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | 2026-05-12 | 0.1 | foundation-author | Initial draft from kerf `claude-hook-bridge`. |
 | 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |
 | 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |
+| 2026-05-13 | 0.4 | agent (hk-w5vra.9) | CHB-027: daemon silent-drop on orphan relay connection (relay OOM-killed after socket open, before envelope write). §8 error taxonomy entry added: `bridge_partial_write` (ErrTransient). Doc-only; no code change required. |

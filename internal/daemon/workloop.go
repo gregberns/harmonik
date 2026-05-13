@@ -124,6 +124,19 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-e61c3.2.
 	maxConcurrent int
+
+	// hookStore is the daemon-wide hook-session registry. It implements
+	// HookRelayHandler and is passed to RunSocketListener as the hr argument so
+	// that incoming hook-relay envelopes are dispatched to the store (rather than
+	// rejected with bad_envelope when hr is nil). The work loop consults the store
+	// via WaitForOutcome in the completion path (hk-gql20.22).
+	//
+	// Constructed once at daemon.Start and shared between the socket listener and
+	// the work loop. Concurrent access is serialised by hookSessionStore.mu.
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
+	// Bead ref: hk-gql20.21.
+	hookStore *hookSessionStore
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -163,11 +176,16 @@ type beadLedger interface {
 }
 
 // newWorkLoopDeps constructs the production workLoopDeps from daemon.Config,
-// the shared event bus, and the pre-resolved workflowModeDefault.
+// the shared event bus, the pre-resolved workflowModeDefault, and the shared
+// hookSessionStore.
 //
 // workflowModeDefault MUST already be normalised by the caller (daemon.Start
 // step 0) — it must be a valid WorkflowMode; zero value is never passed in.
-func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry) (workLoopDeps, error) {
+//
+// store MUST be non-nil; it is the daemon-wide hook-session registry shared
+// between RunSocketListener (as HookRelayHandler) and the work loop completion
+// path (WaitForOutcome).
+func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
 	if cfg.BrPath == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.BrPath is empty; production callers must resolve br from PATH at startup")
 	}
@@ -212,6 +230,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		workflowModeDefault: workflowModeDefault,
 		runRegistry:         NewRunRegistry(),
 		maxConcurrent:       maxConcurrent,
+		hookStore:           store,
 	}, nil
 }
 

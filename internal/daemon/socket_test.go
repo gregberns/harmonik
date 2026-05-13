@@ -395,3 +395,99 @@ func TestRunSocketListener_CancelStopsListener(t *testing.T) {
 		t.Errorf("CancelStopsListener: RunSocketListener returned non-nil after cancel: %v", err)
 	}
 }
+
+// hookRelayFixtureEnvBytes marshals a hookRelayEnvelope map to NDJSON bytes
+// (with trailing newline) for writing to a Unix socket.
+func hookRelayFixtureEnvBytes(t *testing.T, env map[string]interface{}) []byte {
+	t.Helper()
+	data, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("hookRelayFixtureEnvBytes: marshal: %v", err)
+	}
+	return append(data, '\n')
+}
+
+// hookRelayFixtureSendAndReadAck sends a hookRelayEnvelope over conn and reads
+// back a hookRelayAckMsg (NDJSON line). The connection is closed by the caller.
+func hookRelayFixtureSendAndReadAck(t *testing.T, conn net.Conn, envBytes []byte) map[string]string {
+	t.Helper()
+	if _, err := conn.Write(envBytes); err != nil {
+		t.Fatalf("hookRelayFixtureSendAndReadAck: write: %v", err)
+	}
+	//nolint:errorlint // *net.UnixConn specific; type assertion is intentional
+	if uw, ok := conn.(*net.UnixConn); ok {
+		_ = uw.CloseWrite() //nolint:errcheck // cleanup error unactionable
+	}
+	var ack map[string]string
+	if err := json.NewDecoder(conn).Decode(&ack); err != nil {
+		t.Fatalf("hookRelayFixtureSendAndReadAck: decode ack: %v", err)
+	}
+	return ack
+}
+
+// TestSocketListener_HookRelayHandler is the bead hk-gql20.21 acceptance test.
+// It starts the socket listener with a real hookSessionStore, sends a
+// hook-relay envelope, and asserts the envelope is accepted (not bad_envelope)
+// and the store has recorded the outcome.
+//
+// Bead ref: hk-gql20.21.
+func TestSocketListener_HookRelayHandler(t *testing.T) {
+	t.Parallel()
+
+	const runID = "run-wire-hr-01"
+	const sessionID = "claude-sess-wire-hr-01"
+
+	// Construct a real hookSessionStore and register the session window so the
+	// store will accept outcome_emitted messages for (runID, sessionID).
+	store := daemon.ExportedNewHookSessionStore()
+	daemon.ExportedHookRegister(store, runID, sessionID)
+
+	sockPath := socketFixtureTempSockPath(t)
+	h := &stubHandler{}
+
+	// Start the listener with the real store as HookRelayHandler. With hr=nil
+	// the handler would return bad_envelope; with the real store it must return ok.
+	cancel, _ := socketFixtureStartListener(t, sockPath, h, store)
+	defer cancel()
+	socketFixtureWaitReady(t, sockPath)
+
+	// Build a valid hook-relay envelope (outcome_emitted type).
+	payload, err := json.Marshal(map[string]string{"kind": "WORK_COMPLETE", "summary": "wire test"})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	envMap := map[string]interface{}{
+		"type":               "outcome_emitted",
+		"run_id":             runID,
+		"claude_session_id":  sessionID,
+		"handler_session_id": "handler-sess-wire-01",
+		"emitted_at_ns":      int64(42000),
+		"payload":            json.RawMessage(payload),
+	}
+	envBytes := hookRelayFixtureEnvBytes(t, envMap)
+
+	// Send the envelope and read the ACK.
+	conn := socketFixtureDial(t, sockPath)
+	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
+
+	ack := hookRelayFixtureSendAndReadAck(t, conn, envBytes)
+
+	// Acceptance criterion 1: the envelope is accepted (not bad_envelope).
+	if ack["status"] != "ok" {
+		t.Errorf("hook-relay ACK status = %q (reason=%q), want %q",
+			ack["status"], ack["reason"], "ok")
+	}
+
+	// Acceptance criterion 2: the store has recorded the outcome.
+	got := daemon.ExportedHookLatestOutcome(store, runID, sessionID)
+	if got == nil {
+		t.Fatal("LatestOutcome after hook-relay dispatch: nil, want non-nil")
+	}
+	var gotMap map[string]string
+	if err := json.Unmarshal(*got, &gotMap); err != nil {
+		t.Fatalf("LatestOutcome unmarshal: %v", err)
+	}
+	if gotMap["summary"] != "wire test" {
+		t.Errorf("LatestOutcome summary = %q, want %q", gotMap["summary"], "wire test")
+	}
+}

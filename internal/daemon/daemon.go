@@ -326,9 +326,17 @@ func Start(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("daemon.Start: seal adapter registry: %w", forAgentErr)
 	}
 
+	// Construct the hook-session store once at the composition root (hk-gql20.21).
+	// The same instance is forwarded to RunSocketListener (as HookRelayHandler)
+	// and into workLoopDeps so the work loop can call WaitForOutcome in the
+	// completion path (hk-gql20.22).
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
+	hookStore := newHookSessionStore()
+
 	// Skip the work loop when BrPath is not configured (unit-test mode).
 	if cfg.BrPath != "" {
-		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg)
+		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg, hookStore)
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}

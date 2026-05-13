@@ -91,6 +91,27 @@ type LaunchSpec struct {
 	//
 	// Spec: specs/claude-hook-bridge.md §4.6.CHB-023.
 	StdoutWrapper func(io.Reader) io.Reader
+
+	// Substrate, when non-nil, indicates the subprocess MUST be hosted inside
+	// a substrate-managed environment (e.g. a tmux window) rather than spawned
+	// directly via exec.CommandContext.
+	//
+	// When nil, Launch preserves the current exec.CommandContext path (backward
+	// compatible; all existing callers are unaffected).
+	//
+	// When non-nil, Launch calls Substrate.SpawnWindow with a SubstrateSpawn
+	// built from Binary, Args, Env, and WorkDir. The returned SubstrateSession
+	// is adapted to Session via substrateSessionAdapter. If the SubstrateSession
+	// returns nil from Stdout(), SpawnWatcher is NOT wired (the bridge wire is
+	// the daemon Unix socket in that case).
+	//
+	// The daemon composition root (internal/daemon) constructs the concrete
+	// substrate (tmuxsubstrate.New) and injects it here; internal/handler MUST
+	// NOT import internal/lifecycle/tmux (depguard).
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b; handler-contract.md HC-054.
+	// Bead: hk-gql20.11.
+	Substrate Substrate
 }
 
 // Handler is the daemon-side factory for handler sessions.
@@ -162,6 +183,19 @@ func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontra
 func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	sessionID := handlercontract.NewSessionID()
 
+	// Substrate dispatch: when spec.Substrate is non-nil, delegate subprocess
+	// hosting to the substrate (e.g. a tmux window) instead of exec.CommandContext.
+	// The substrate path does not wire HandlerSpec delivery or SpawnWatcher when
+	// Stdout() is nil — the bridge wire is the daemon Unix socket in that case.
+	//
+	// When spec.Substrate is nil, the current exec.CommandContext path is preserved
+	// (backward compatible; all existing callers are unaffected).
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021b; handler-contract.md HC-054.
+	if spec.Substrate != nil {
+		return h.launchViaSubstrate(ctx, sessionID, spec)
+	}
+
 	//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
 	cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
 	cmd.Dir = spec.WorkDir
@@ -218,4 +252,58 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	})
 
 	return sess, watcher, nil
+}
+
+// launchViaSubstrate handles the non-nil Substrate path in Launch.
+//
+// It builds a SubstrateSpawn from spec and calls Substrate.SpawnWindow. The
+// returned SubstrateSession is wrapped in a substrateSessionAdapter so it
+// satisfies the Session interface. SpawnWatcher is wired only when
+// SubstrateSession.Stdout() returns a non-nil io.Reader; for tmux-hosted
+// sessions the bridge wire is the daemon Unix socket, so Stdout() returns nil
+// and the watcher is nil (the caller uses HookSessionStore.WaitForOutcome
+// for completion detection instead).
+//
+// HandlerSpec delivery is skipped for substrate sessions: the pty stdin is
+// owned by the substrate (tmux) and the LaunchSpec is injected via env vars
+// (CHB-006) or the hook-bridge socket instead.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021b.
+func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontract.SessionID, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
+	argv := append([]string{spec.Binary}, spec.Args...)
+	spawn := SubstrateSpawn{
+		WindowName: spec.WorkDir, // caller overrides via Substrate.SpawnWindow; opaque to handler
+		Cwd:        spec.WorkDir,
+		Env:        spec.Env,
+		Argv:       argv,
+	}
+
+	subSess, err := spec.Substrate.SpawnWindow(ctx, spawn)
+	if err != nil {
+		return nil, nil, fmt.Errorf("handler: Launch: Substrate.SpawnWindow: %w", err)
+	}
+
+	adapted := &substrateSessionAdapter{inner: subSess}
+
+	// Wire SpawnWatcher only when the substrate exposes a stdout pipe.
+	// For tmux-hosted sessions Stdout() returns nil; in that case return a
+	// nil watcher — callers use HookSessionStore.WaitForOutcome instead.
+	stdout := subSess.Stdout()
+	if stdout == nil {
+		return adapted, nil, nil
+	}
+
+	progressStream := io.Reader(stdout)
+	if spec.StdoutWrapper != nil {
+		progressStream = spec.StdoutWrapper(progressStream)
+	}
+
+	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
+		SessionID:      sessionID,
+		ProgressStream: progressStream,
+		Publisher:      h.publisher,
+		DeadLetter:     h.deadLetter,
+	})
+
+	return adapted, watcher, nil
 }

@@ -291,6 +291,70 @@ func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID co
 	return res.CommitSHA, res.Skipped, err
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// buildClaudeLaunchSpec test seams (hk-gql20.13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedClaudeRunCtx is the exported shape of claudeRunCtx for tests.
+// Fields mirror claudeRunCtx verbatim with exported names.
+//
+// Bead ref: hk-gql20.13.
+type ExportedClaudeRunCtx struct {
+	RunID             core.RunID
+	BeadID            string
+	WorkspacePath     string
+	DaemonSocket      string
+	WorkflowMode      core.WorkflowMode
+	Phase             handlercontract.ReviewLoopPhase
+	IterationCount    int
+	PriorClaudeSessID *string
+	HandlerBinary     string
+	BaseEnv           []string
+}
+
+// ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
+// Fields mirror claudeRunArtifacts verbatim with exported names.
+//
+// Bead ref: hk-gql20.13.
+type ExportedClaudeRunArtifacts struct {
+	ClaudeSessionID  string
+	SessionLogPath   string
+	HandlerSessionID string
+	PreExecMsgs      []json.RawMessage
+	Substrate        interface{}
+}
+
+// ExportedBuildClaudeLaunchSpec exposes buildClaudeLaunchSpec for tests in
+// package daemon_test. The ExportedClaudeRunCtx is translated to the internal
+// claudeRunCtx before calling.
+//
+// Bead ref: hk-gql20.13.
+func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+	internal := claudeRunCtx{
+		runID:             rc.RunID,
+		beadID:            rc.BeadID,
+		workspacePath:     rc.WorkspacePath,
+		daemonSocket:      rc.DaemonSocket,
+		workflowMode:      rc.WorkflowMode,
+		phase:             rc.Phase,
+		iterationCount:    rc.IterationCount,
+		priorClaudeSessID: rc.PriorClaudeSessID,
+		handlerBinary:     rc.HandlerBinary,
+		baseEnv:           rc.BaseEnv,
+	}
+	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
+	if err != nil {
+		return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
+	}
+	return spec, ExportedClaudeRunArtifacts{
+		ClaudeSessionID:  arts.claudeSessionID,
+		SessionLogPath:   arts.sessionLogPath,
+		HandlerSessionID: arts.handlerSessionID,
+		PreExecMsgs:      arts.preExecMsgs,
+		Substrate:        arts.substrate,
+	}, nil
+}
+
 // ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
 //
 // Bead ref: hk-w5vra.6.

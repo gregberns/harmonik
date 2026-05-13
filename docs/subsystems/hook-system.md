@@ -60,6 +60,12 @@ Without hooks, workflow composition (P06) requires agents to understand the enti
 - **Custom hook framework.** Build a hook registry and execution engine that works across agent types. Advantage: universal. Risk: duplicating Claude Code's hook system.
 - **Hybrid.** Claude Code hooks for Claude Code agents, custom hooks for other agent types, with a unified event model that normalizes hook outputs.
 
+## Realization at MVH
+
+For the `claude-code` agent type, the hook system is realized by [specs/claude-hook-bridge.md](../../specs/claude-hook-bridge.md). The bridge spec is the normative source for the `.claude/settings.json` shape, the relay subcommand contract, the hook-event-to-progress-message mapping, and the failure-mode classification.
+
+The "custom hook framework" implementation option enumerated above is the post-MVH expansion path for non-Claude agent types; each future agent type (pi-code, etc.) gets its own bridge spec mirroring claude-hook-bridge.md's structure.
+
 ## Open Questions
 1. How should hooks handle ambiguous completion signals -- when the LLM evaluator is uncertain whether work is done? Should there be a confidence threshold, or should ambiguity always escalate to a human?
 2. What is the right execution model for hooks -- synchronous (block until complete) or asynchronous (fire and continue)? Synchronous is safer but slower; asynchronous risks race conditions.

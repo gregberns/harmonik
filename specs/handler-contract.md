@@ -8,10 +8,10 @@ requirement-prefix: HC
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.3.4
+version: 0.3.5
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-09
+last-updated: 2026-05-12
 depends-on:
   - architecture
   - execution-model
@@ -126,7 +126,7 @@ The delivered LaunchSpec MUST conform to the record shape in §6.1. Required fie
 
 **`iteration_count`** (integer, optional, 1..3). Present iff the dispatched run is in a multi-phase mode that iterates. For `review-loop`, the value is bounded by the hardcoded iteration cap of 3 declared in [operator-nfr.md §4.1 ON-004]. For `workflow_mode = single`, the field MUST be omitted.
 
-**`claude_session_id`** (string, optional). Present iff `phase = implementer-resume` for a `review-loop` dispatch; carries the Claude Code session identifier used to drive `claude --resume <id>` and is distinct from harmonik's own `session_id` per §6.1. The `reviewer` phase MUST omit `claude_session_id`; each reviewer launch is a fresh Claude session. The `implementer-initial` phase MUST omit `claude_session_id` (no prior session exists to resume). Handlers that do not implement Claude Code's session-resume capability MAY ignore the field; handlers that do MUST honor it when present.
+**`claude_session_id`** (string, optional). Present iff `phase = implementer-resume` for a `review-loop` dispatch; carries the Claude Code session identifier used to drive `claude --resume <id>` and is distinct from harmonik's own `session_id` per §6.1. The `reviewer` phase MUST omit `claude_session_id`; each reviewer launch is a fresh Claude session. The `implementer-initial` phase MUST omit `claude_session_id` (no prior session exists to resume). Handlers that do not implement Claude Code's session-resume capability MAY ignore the field; handlers that do MUST honor it when present. The handler-side minting and propagation discipline for `claude_session_id` is normative per §4.10.HC-045c; the LaunchSpec field is populated by the daemon per HC-006 (this requirement) for the resume case only, and the daemon's durability obligation for the persisted value is per [claude-hook-bridge.md §4.6 CHB-023].
 
 > INFORMATIVE: The `phase = reviewer` launch typically carries an `agent-reviewer` skill in `required_skills[]` per the [CLAUDE.md] skill registry; `phase = implementer-*` launches carry the implementer skill set. Selection of `required_skills[]` is the daemon's claim-path responsibility per §4.11.HC-050, not the handler's. The reviewer phase's `outcome_emitted` corresponds to the reviewer writing a verdict file at `.harmonik/review.json` (archived to `.harmonik/review.iter-<N>.json` between iterations) per [workspace-model.md §4.7].
 
@@ -511,6 +511,38 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 Twin binaries MUST also be launched from a known repo-relative path with an expected-commit-hash check. The twin's expected commit hash MUST be pinned at workflow/policy configuration time.
 
 Tags: mechanism
+
+#### HC-045a — Pointer to claude-hook-bridge.md for claude-code agent type
+
+For `agent_type = "claude-code"`, the launch mechanism, `.claude/settings.json` materialization, hook-event-to-progress-message translation, env-var schema, and failure-mode classification are normatively defined by [claude-hook-bridge.md]. This spec (handler-contract) defines the cross-handler invariants; the bridge spec defines the claude-code-specific realization.
+
+Tags: mechanism
+
+#### HC-045b — Hook-bridge connection regime
+
+Some handler subsystems (notably the claude-code bridge per [claude-hook-bridge.md]) cause additional short-lived subprocesses to be spawned by the agent subprocess. These short-lived subprocesses MAY open one-shot NDJSON connections to the daemon socket (per HC-007's transport, per HC-007a's framing) carrying a single progress-stream message and then closing. Such connections MUST carry both `run_id` and `claude_session_id` in the message envelope at the top level (so the daemon's connection acceptor can route the message to the correct session-bound watcher). Such connections are NOT subject to HC-007's "sole bidirectional channel" phrasing (which scopes to the handler subprocess itself, not to incidental short-lived subprocesses spawned by the agent). HC-INV-007 (watcher is sole authoritative publisher) is preserved because the watcher publishes all messages from all connection regimes to the bus.
+
+Per-connection lifetime requirements: dial timeout ≤ 5 s, single message ≤ 1 MiB per HC-007a, optional ack-line read with 5 s deadline, then close. Failure modes are classified per HC-020 and routed through `agent_failed` per HC-024.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+#### HC-045c — Handler-side claude_session_id minting and resume
+
+For `agent_type = "claude-code"`, the handler subprocess MUST observe the following session-id lifecycle:
+
+(a) For `phase ∈ {single, implementer-initial, reviewer}`: the handler MUST mint a fresh UUIDv7 as `claude_session_id`, pass it to Claude via `--session-id <claude_session_id>`, AND include `claude_session_id` in the payload of the `handler_capabilities` progress-stream message per §4.2.HC-009.
+
+(b) For `phase = implementer-resume`: the handler MUST reuse `LaunchSpec.claude_session_id` (carried from the prior iteration, populated by the daemon per §4.2.HC-006), pass it to Claude via `--resume <claude_session_id>` (NOT `--session-id`), and include the same value in `handler_capabilities`.
+
+(c) The handler MUST NOT pass `--fork-session`, `--bare`, or `--no-session-persistence` flags to Claude, and MUST NOT set the env var `CLAUDE_CODE_SKIP_PROMPT_HISTORY`; these flags / vars conflict with bridge invariants per [claude-hook-bridge.md §4.2 CHB-007].
+
+(d) Each reviewer phase MUST mint a fresh `claude_session_id`; the handler MUST NOT inherit reviewer claude_session_id across iterations.
+
+(e) Orphan-reconnect lookups (per §4.3 HC-016a) MUST resolve `claude_session_id` from `Run.context.claude_session_id` reconstructed per [execution-model.md §4.7 EM-031] from the git checkpoint trail; JSONL-tail reads MUST NOT be used as the source of truth for `claude_session_id`.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 ### 4.11 Skill injection
 
@@ -1003,6 +1035,7 @@ Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing po
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N / §6.1 map per the v0.2 NOTE: §1.1→§4.1 (×1 in §9 cross-refs), §1.2→§4.2 (×1 in §9 cross-refs), §1.4→§4.4 (×1 in §9 cross-refs), §1.6→§4.8 (×1 in §4.3.HC-016 work-queue clause), §1.6a→§6.1 (×3 in §6.1 Handler.AgentType() comment, §6.1 LaunchSpec.agent_type comment, and §9 cross-refs — chose §6.1 since each site cites the identifier shape, not the normative requirement), §1.8→§4.9 (×2 in §9 cross-refs and §A.3 rationale footer). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §4.2.HC-010 (session_log_location progress-stream payload; note: task doc listed HC-008, but the bare identifier actually lives in HC-010 which owns `session_log_location` emission per the v0.2 HC-010 split). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~25 citations fixed. EV: `§3.1→§4.1` (envelope) ×3, `§3.2→§6.3` (payload schemas) ×5, `§3.7→§4.3` (bus consumer/dead-letter) ×2, `§3.2→§8` (event taxonomy) ×1 at §9.1 cross-refs. WM: `§5.3a→§4.7` (session-log pipeline) ×3, `§5.1→§4.1` (workspace path) ×1 at §6.1 LaunchSpec comment. ON: `§7.1→§4.9` (observability) ×2, `§7.2→§4.7` (secrets/sandbox) ×1, `§7.5→§4.5` (N-1 compat) ×2, `§7.8→§4.8` (restart RTO) ×1. PL: `§8.1→§4.1` (socket path) ×3, `§8.5→§4.5` (agent subprocess) ×1, `§8.6→§4.6` (daemon vs orchestrator-agent) ×1. Reconciliation path fix: `[reconciliation.md §9.4b]→[reconciliation/spec.md §4.4]` (snapshot-token binding) ×2 at §3 glossary and §9.3 cross-refs; `[reconciliation.md §9]→[reconciliation/spec.md §4]` at §4.10 startup-sweep reference. CP: `§6.11→§4.11` (skill declaration) ×4, `§6.9→§4.5` (budget) ×3. No requirement IDs, invariants, or schemas touched. |
 | 2026-04-25 | 0.3.3 | foundation-author | Two cross-spec coordination patches landing as gap-filler IDs (no renumbering; HC ID FREEZE preserved). **Edit 1 (§4.3 concurrency model):** new HC-016a — orphan-reconnect-window retry rule, the handler-side companion to [process-lifecycle.md §4.2 PL-003b]. Clients receiving the typed `daemon_not_ready{reason="unknown_run_id"}` rejection (issued by the daemon between socket bind at PL-005 step 3a and in-memory model build at PL-005 step 7) MUST retry per the [process-lifecycle.md §4.2 PL-009b] exponential backoff schedule (initial 100 ms, doubling, max 2 s per attempt, capped at `T_ready_wait = 60 s` per OQ-PL-002); the watcher MUST NOT classify the typed-error response as a session failure during the retry window (no `agent_failed`, no silent-hang escalation per §4.6.HC-026); after cap exhaustion the request fails with `ErrTransient` and the watcher emits `agent_failed` carrying sub-reason `daemon_startup_window_exceeded`. Closes the orphan-agent-reconnect-during-startup-window race named in PL-003b's R2 amendment. **Edit 2 (§4.6 error propagation):** new HC-026b — acceptance clause for [operator-nfr.md §4.9 ON-040]'s drain-forced silent-hang synthesis. When operator-initiated drain step 4 SIGKILLs a still-running agent subprocess per [operator-nfr.md §4.7 ON-029], ON-040 synthesizes `agent_warning_silent_hang{reason=drain_forced}` even when no §4.6.HC-026 / §7.1 silent-hang detection had fired; HC accepts ON-040's classification and obligates the watcher NOT to also emit an HC-classified silent-hang event for the same run/node, preserving HC-INV-004 (single terminal event per session) by routing the synthesis as ON-side-only. Acceptance clause; enforcement remains in operator-nfr. **New IDs (net):** HC-016a, HC-026b (2 new). No invariants, no schema changes, no §6 / §8 / §10 touches. Status remains `reviewed`. |
+| 2026-05-12 | 0.3.5 | foundation-author | Add HC-045a / HC-045b / HC-045c in §4.10 (gap-filler placement after HC-045, matching the HC-016a / HC-026b pattern) covering claude-code agent type's launch mechanism (pointer to claude-hook-bridge.md), hook-bridge one-shot NDJSON connection regime, and handler-side claude_session_id minting/resume discipline including orphan-reconnect git-derived lookup. Clarifying sentence added to HC-006 pointing forward to HC-045c and to CHB-023's durability boundary. No requirement IDs renumbered or retired; HC-053 in §6.2 is unchanged. Status remains `reviewed`. |
 | 2026-05-09 | 0.3.4 | foundation-author | Normative spec section for twin script-file format (hk-ahvq.48.11). **New §4.8.HC-036a — Twin script-file format:** promotes de-facto schema from `cmd/harmonik-twin-claude/scriptdriver.go` package godoc (hk-ahvq.48.3) to normative HC text. Defines: file path rule (`<fixture-root>/<scenario>/twin-scripts/<role>.yaml`); top-level YAML fields (`heartbeat_mode` enum `wall_clock`|`scripted`, default `wall_clock`; `messages` list); ScriptMessage record fields (`type` required string, `payload` optional map, `relative_timestamp_ms` optional int); heartbeat-mode semantics; load-time validation requirements. No existing requirement IDs renumbered; no invariants, no §6/§8/§10 touches. Status: reviewed → reviewed (spec-edit only). |
 
 ## A. Appendices

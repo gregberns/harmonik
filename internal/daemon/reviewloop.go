@@ -46,6 +46,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 	"unicode/utf8"
 
@@ -125,21 +126,69 @@ func runReviewLoop(
 	wtPath string,
 	parentSHA string,
 ) reviewLoopResult {
-	_ = beadID // reserved for future structured logging
+	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
+	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
+	daemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
 
 	state := reviewLoopState{iterationCount: 1}
 
 	for {
 		// ── Dispatch implementer ──────────────────────────────────────────
-		var implRole string
-		if state.iterationCount == 1 {
-			implRole = "implementer"
-			// Iteration 1: no prior session; implementer-initial launch.
-		} else {
+		if state.iterationCount >= 2 {
 			// Iteration ≥ 2: emit implementer_resumed BEFORE dispatch per EM-015d.
 			priorSummary := rlTruncateUTF8(state.lastVerdictNotes, priorVerdictSummaryMaxBytes)
 			emitImplementerResumed(ctx, deps.bus, runID, state.claudeSessionID, state.iterationCount, priorSummary)
-			implRole = "implementer"
+		}
+
+		// Build the implementer LaunchSpec via buildClaudeLaunchSpec (hk-gql20.15).
+		//
+		// Iteration 1: phase=implementer-initial, priorClaudeSessID=nil.
+		// Iteration ≥ 2: phase=implementer-resume, priorClaudeSessID=&prior.
+		//
+		// The CHB-023 StdoutWrapper (SessionIDInterceptor) is preserved on
+		// iteration 1 so the daemon can extract claude_session_id from
+		// handler_capabilities and persist it to git before the version_selected ACK.
+		var implPhase handlercontract.ReviewLoopPhase
+		var implPrior *string
+		if state.iterationCount == 1 {
+			implPhase = handlercontract.ReviewLoopPhaseImplementerInitial
+			// implPrior = nil — no prior session on first launch.
+		} else {
+			implPhase = handlercontract.ReviewLoopPhaseImplementerResume
+			prior := state.claudeSessionID
+			implPrior = &prior
+		}
+
+		implRC := claudeRunCtx{
+			runID:             runID,
+			beadID:            string(beadID),
+			workspacePath:     wtPath,
+			daemonSocket:      daemonSocket,
+			workflowMode:      core.WorkflowModeReviewLoop,
+			phase:             implPhase,
+			iterationCount:    state.iterationCount,
+			priorClaudeSessID: implPrior,
+			handlerBinary:     deps.handlerBinary,
+			baseEnv:           deps.handlerEnv,
+		}
+		implSpec, implArtifacts, implSpecErr := buildClaudeLaunchSpec(ctx, implRC)
+		if implSpecErr != nil {
+			result := rlErrorResult(fmt.Sprintf("implementer spec error at iteration %d: %v", state.iterationCount, implSpecErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		// Prepend deps.handlerArgs so test handlers (e.g. /bin/sh scriptPath) are invoked
+		// correctly. For production (claude binary, empty handlerArgs) this is a no-op.
+		// The session-id / resume flags from buildClaudeLaunchSpec follow the script path.
+		if len(deps.handlerArgs) > 0 {
+			implSpec.Args = append(deps.handlerArgs, implSpec.Args...)
+		}
+
+		// Register this phase's hook session so stop-hook outcomes are routed
+		// correctly (CHB-025). Closed after waitWithSocketGrace returns so late
+		// hooks from a completed implementer don't bleed into the reviewer.
+		if deps.hookStore != nil {
+			deps.hookStore.RegisterHookSession(runID.String(), implArtifacts.claudeSessionID)
 		}
 
 		// For the initial implementer launch (iteration 1): wire a
@@ -151,14 +200,6 @@ func runReviewLoop(
 		// after implWatcher.Done(). It is buffered (capacity 1) so the goroutine
 		// never blocks even if no one reads the channel.
 		sessionIDFromCapabilities := make(chan string, 1)
-
-		implSpec := handler.LaunchSpec{
-			Binary:  deps.handlerBinary,
-			Args:    deps.handlerArgs,
-			Env:     deps.handlerEnv,
-			WorkDir: wtPath,
-			Role:    implRole,
-		}
 
 		// Capture implSess so the ACK goroutine below can use it.
 		// The variable is set after Launch; the goroutine uses it only after the
@@ -210,14 +251,25 @@ func runReviewLoop(
 		var implLaunchErr error
 		implSess, implWatcher, implLaunchErr = deps.h.Launch(ctx, implSpec)
 		if implLaunchErr != nil {
+			if deps.hookStore != nil {
+				deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+			}
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
 
-		// Wait for implementer to complete.
-		<-implWatcher.Done()
-		_ = implSess.Wait(ctx)
+		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
+		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
+		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
+			runID.String(), implArtifacts.claudeSessionID)
+		_ = implEI // exit info available for diagnostics; iteration control uses verdict file
+
+		// Close this phase's hook session — late hooks from a completed implementer
+		// must not bleed into the next phase (reviewer or implementer-resume).
+		if deps.hookStore != nil {
+			deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+		}
 
 		if ctx.Err() != nil {
 			return reviewLoopResult{
@@ -291,26 +343,62 @@ func runReviewLoop(
 		}
 
 		// ── Dispatch reviewer ─────────────────────────────────────────────
+		//
+		// CHB-009: reviewer ALWAYS mints a fresh claudeSessionID (priorClaudeSessID=nil).
+		// Each reviewer is an independent fresh session; the prior implementer's
+		// session ID is NEVER passed to the reviewer even when it is known.
+		revRC := claudeRunCtx{
+			runID:             runID,
+			beadID:            string(beadID),
+			workspacePath:     wtPath,
+			daemonSocket:      daemonSocket,
+			workflowMode:      core.WorkflowModeReviewLoop,
+			phase:             handlercontract.ReviewLoopPhaseReviewer,
+			iterationCount:    state.iterationCount,
+			priorClaudeSessID: nil, // CHB-009: reviewer always mints fresh
+			handlerBinary:     deps.handlerBinary,
+			baseEnv:           deps.handlerEnv,
+		}
+		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
+		if revSpecErr != nil {
+			result := rlErrorResult(fmt.Sprintf("reviewer spec error at iteration %d: %v", state.iterationCount, revSpecErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		// Prepend deps.handlerArgs for test handlers; no-op in production.
+		if len(deps.handlerArgs) > 0 {
+			revSpec.Args = append(deps.handlerArgs, revSpec.Args...)
+		}
+
+		// Register reviewer's hook session (CHB-025); closed after wait completes
+		// so late hooks from a closed reviewer don't bleed into the next iteration.
+		if deps.hookStore != nil {
+			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.claudeSessionID)
+		}
+
 		revSessionID := handlercontract.NewSessionID()
 		emitReviewerLaunched(ctx, deps.bus, runID, revSessionID, state.claudeSessionID, state.iterationCount)
 
-		revSpec := handler.LaunchSpec{
-			Binary:  deps.handlerBinary,
-			Args:    deps.handlerArgs,
-			Env:     deps.handlerEnv,
-			WorkDir: wtPath,
-			Role:    "reviewer",
-		}
 		revSess, revWatcher, revLaunchErr := deps.h.Launch(ctx, revSpec)
 		if revLaunchErr != nil {
+			if deps.hookStore != nil {
+				deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+			}
 			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
 
-		// Wait for reviewer to complete.
-		<-revWatcher.Done()
-		_ = revSess.Wait(ctx)
+		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
+		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,
+			runID.String(), revArtifacts.claudeSessionID)
+		_ = revEI
+
+		// Close reviewer's hook session — late hooks must not bleed into the
+		// next iteration's implementer-resume (CHB-025 isolation).
+		if deps.hookStore != nil {
+			deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+		}
 
 		if ctx.Err() != nil {
 			return reviewLoopResult{

@@ -28,6 +28,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -62,6 +63,18 @@ type LaunchSpec struct {
 	// annotation. Callers SHOULD use a stable human-readable value (e.g.
 	// "implementer", "reviewer"). May be empty.
 	Role string
+
+	// HandlerSpec is the JSON payload delivered to the subprocess via stdin
+	// immediately after cmd.Start per specs/handler-contract.md §4.2.HC-005.
+	// When non-nil, Launch encodes it as compact JSON, writes it followed by a
+	// newline to the subprocess stdin pipe, and then closes the write end so the
+	// subprocess sees EOF after reading the spec. When nil, stdin is left open
+	// and no JSON is written (legacy / test-only path).
+	//
+	// The delivery runs in a goroutine bounded by ctx; if ctx expires before
+	// the write completes the goroutine exits and the subprocess receives a
+	// broken-pipe error on its next stdin read.
+	HandlerSpec *handlercontract.LaunchSpec
 }
 
 // Handler is the daemon-side factory for handler sessions.
@@ -117,8 +130,11 @@ func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontra
 //  2. Build the exec.Cmd via exec.CommandContext.
 //  3. Apply cmd.Dir, cmd.Env, and SysProcAttr from lifecycle.SpawnChildSysProcAttr.
 //  4. Call NewSession(ctx, cmd) to open pipes and start the child.
-//  5. Call handlercontract.SpawnWatcher with sess.Stdout() as ProgressStream.
-//  6. Return (sess, watcher, nil).
+//  5. If spec.HandlerSpec is non-nil, deliver the JSON-encoded LaunchSpec to
+//     subprocess stdin in a goroutine bounded by ctx, then close the write end
+//     per HC-005. Delivery errors are non-fatal to Launch but logged to stderr.
+//  6. Call handlercontract.SpawnWatcher with sess.Stdout() as ProgressStream.
+//  7. Return (sess, watcher, nil).
 func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	sessionID := handlercontract.NewSessionID()
 
@@ -131,6 +147,36 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	sess, err := NewSession(ctx, cmd)
 	if err != nil {
 		return nil, nil, fmt.Errorf("handler: Launch: NewSession: %w", err)
+	}
+
+	// HC-005: if a HandlerSpec is provided, encode it as compact JSON and write
+	// it to subprocess stdin followed by a newline, then close the write end so
+	// the subprocess sees EOF after reading exactly one JSON object. The delivery
+	// runs in a goroutine bounded by ctx so that a slow subprocess cannot block
+	// Launch indefinitely.
+	if spec.HandlerSpec != nil {
+		hs := spec.HandlerSpec
+		go func() {
+			// MarshalLaunchSpec validates the spec and returns compact JSON.
+			// Validation or encoding failure is a programmer error; log and
+			// close stdin so the subprocess sees EOF rather than hanging.
+			encoded, encErr := handlercontract.MarshalLaunchSpec(hs)
+			if encErr != nil {
+				fmt.Fprintf(os.Stderr, "handler: Launch: MarshalLaunchSpec: %v\n", encErr)
+				_ = sess.CloseStdin()
+				return
+			}
+			// SendInput writes the compact JSON line + '\n' (NDJSON framing).
+			// ctx bounds the write: if ctx is cancelled the subprocess stdin
+			// pipe will return an error and the goroutine exits.
+			if writeErr := sess.SendInput(ctx, string(encoded)); writeErr != nil {
+				// Subprocess may have already exited; log and continue to close.
+				fmt.Fprintf(os.Stderr, "handler: Launch: stdin write: %v\n", writeErr)
+			}
+			if closeErr := sess.CloseStdin(); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin: %v\n", closeErr)
+			}
+		}()
 	}
 
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{

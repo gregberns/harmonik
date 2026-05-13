@@ -70,6 +70,13 @@ type Session interface {
 	// Session captures up to ~4 KiB of stderr tail for Outcome.StderrTail; the
 	// caller MAY also read from Stderr, but only before Wait returns.
 	Stderr() io.Reader
+
+	// CloseStdin closes the write end of the subprocess stdin pipe, signalling
+	// EOF to the subprocess. Callers MUST call CloseStdin after delivering the
+	// LaunchSpec JSON to stdin (HC-005) so the subprocess can detect
+	// end-of-input. Calling CloseStdin more than once is safe (subsequent calls
+	// return nil because the underlying pipe is already closed).
+	CloseStdin() error
 }
 
 // Outcome carries exit metadata for a completed session.  Populated exactly
@@ -284,6 +291,12 @@ func (s *session) Stdout() io.Reader {
 // consumed by the drain goroutine.  Access StderrTail via Outcome() instead.
 func (s *session) Stderr() io.Reader {
 	return s.stderr
+}
+
+// CloseStdin closes the write end of the subprocess stdin pipe so the
+// subprocess sees EOF after LaunchSpec delivery per HC-005.
+func (s *session) CloseStdin() error {
+	return s.stdin.Close()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

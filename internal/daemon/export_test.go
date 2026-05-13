@@ -253,6 +253,13 @@ type HookRelayEnvelopeExported struct {
 	Payload          json.RawMessage
 }
 
+// ExportedHookWaitForOutcome exposes WaitForOutcome for tests.
+//
+// Bead ref: hk-gql20.20.
+func ExportedHookWaitForOutcome(ctx context.Context, s *hookSessionStore, runID, claudeSessionID string) (json.RawMessage, error) {
+	return s.WaitForOutcome(ctx, runID, claudeSessionID)
+}
+
 // ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.
 //
 // Bead ref: hk-w5vra.6.

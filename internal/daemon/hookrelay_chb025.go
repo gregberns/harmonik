@@ -29,6 +29,7 @@ package daemon
 //   - specs/claude-hook-bridge.md §6.2 HookRelayAck
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 )
@@ -96,15 +97,24 @@ type hookSession struct {
 // One entry exists per active handler subprocess (open session window). Entries
 // are created by RegisterHookSession (at handler launch) and removed by
 // CloseHookSession (when cmd.Wait() returns).
+//
+// notifyChans holds per-session broadcast channels for WaitForOutcome callers.
+// Each call to WaitForOutcome registers a buffered chan struct{} here; when
+// updateOutcome records the first outcome for a session it closes every channel
+// for that key (fan-out broadcast). Late arrivals (after close) drain and
+// return immediately because the store check is done under the mutex before
+// entering the select.
 type hookSessionStore struct {
-	mu       sync.Mutex
-	sessions map[hookSessionKey]*hookSession
+	mu          sync.Mutex
+	sessions    map[hookSessionKey]*hookSession
+	notifyChans map[hookSessionKey][]chan struct{}
 }
 
 // newHookSessionStore constructs an empty hookSessionStore.
 func newHookSessionStore() *hookSessionStore {
 	return &hookSessionStore{
-		sessions: make(map[hookSessionKey]*hookSession),
+		sessions:    make(map[hookSessionKey]*hookSession),
+		notifyChans: make(map[hookSessionKey][]chan struct{}),
 	}
 }
 
@@ -150,10 +160,82 @@ func (s *hookSessionStore) LatestOutcome(runID, claudeSessionID string) *json.Ra
 	return sess.latestOutcome
 }
 
+// WaitForOutcome blocks until an outcome_emitted payload is available for the
+// given (runID, claudeSessionID), then returns it. If an outcome is already
+// present at call time it is returned immediately (no blocking).
+//
+// On ctx cancellation the method returns (nil, ctx.Err()). If the session is
+// not registered it returns (nil, nil) immediately so callers can distinguish
+// "session unknown" from "context cancelled".
+//
+// Multiple concurrent callers for the same key are each woken independently
+// (fan-out close on the notify channel).
+//
+// Wakeup ordering: the waiter re-reads latestOutcome under the mutex after
+// waking, so it always observes the current last-received-wins value.
+func (s *hookSessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionID string) (json.RawMessage, error) {
+	key := hookSessionKey{runID: runID, claudeSessionID: claudeSessionID}
+
+	// Fast path: check under the mutex before allocating a channel.
+	s.mu.Lock()
+	sess, ok := s.sessions[key]
+	if !ok || sess == nil {
+		s.mu.Unlock()
+		return nil, nil
+	}
+	if sess.latestOutcome != nil {
+		result := *sess.latestOutcome
+		s.mu.Unlock()
+		return result, nil
+	}
+
+	// Slow path: register a per-waiter notify channel and wait outside the mutex.
+	ch := make(chan struct{})
+	s.notifyChans[key] = append(s.notifyChans[key], ch)
+	s.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		// Remove our channel from the notify list to avoid a memory leak.
+		s.mu.Lock()
+		chans := s.notifyChans[key]
+		filtered := chans[:0]
+		for _, c := range chans {
+			if c != ch {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(s.notifyChans, key)
+		} else {
+			s.notifyChans[key] = filtered
+		}
+		s.mu.Unlock()
+		return nil, ctx.Err()
+
+	case <-ch:
+		// Outcome arrived — read the current value under the mutex.
+		s.mu.Lock()
+		sess2, ok2 := s.sessions[key]
+		var result json.RawMessage
+		if ok2 && sess2 != nil && sess2.latestOutcome != nil {
+			result = *sess2.latestOutcome
+		}
+		s.mu.Unlock()
+		return result, nil
+	}
+}
+
 // updateOutcome replaces the session's latestOutcome with payload (last-received-wins).
 //
 // Returns (true, "") when the update succeeds.
 // Returns (false, reason) when the session is unknown (closed or never registered).
+//
+// When this is the FIRST outcome recorded for the session, all channels in
+// notifyChans[key] are closed (broadcast), waking any concurrent WaitForOutcome
+// callers. Subsequent calls update latestOutcome but do not re-signal (waiters
+// have already been released; they read the latest value under the mutex after
+// wake-up).
 func (s *hookSessionStore) updateOutcome(runID, claudeSessionID string, payload json.RawMessage) (ok bool, ackStatus string) {
 	key := hookSessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
@@ -165,7 +247,16 @@ func (s *hookSessionStore) updateOutcome(runID, claudeSessionID string, payload 
 	// Last-received-wins: replace (not append) the current outcome.
 	pl := make(json.RawMessage, len(payload))
 	copy(pl, payload)
+	firstOutcome := sess.latestOutcome == nil
 	sess.latestOutcome = &pl
+
+	// Broadcast to any WaitForOutcome callers on first outcome arrival.
+	if firstOutcome {
+		for _, ch := range s.notifyChans[key] {
+			close(ch)
+		}
+		delete(s.notifyChans, key)
+	}
 	return true, "ok"
 }
 

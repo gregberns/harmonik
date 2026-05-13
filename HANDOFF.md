@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-12 main — v34. Post-MVH parallelism epic LANDED + closed (hk-e61c3 + 6 children + hk-p4xbw + hk-wb0ci). Dogfood-smoke epic FILED as top priority (hk-1n0cw + 2 children). Loop is end-to-end on stubs; real-Claude path not yet validated. -->
+<!-- PP-TRIAL:v2 2026-05-12 main — v35. Hook-bridge build COMPLETE on main. 10 beads closed this session under hk-w5vra umbrella (.1 rename, .2 claude-twin, .3 hook-relay, .4 settings.json, .5 handler responsibilities, .6 daemon session_id, .8/.9/.10 spec amendments, .11 daemon dedup). Only .7 (real-claude re-smoke) remains. Main is 30+ commits ahead of origin; NOT pushed. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -13,23 +13,36 @@ STREAM-NOT-WAVES (HARD RULE). The orchestrator runs a CONTINUOUS STREAM of imple
 
 Per-return acknowledgment is ≤2 lines ("merged X, dispatched Y" OR "merged X, queue draining"). Full session summary lives at `/session-handoff` time, not inline.
 
-CANONICAL TRIAGE VIEW (HARD RULE). **`br ready --label next-init`** is the only queue the orchestrator dispatches from. The `next-init` label is rotated per-initiative — currently tagged on the dogfood-smoke beads (`hk-1n0cw.*`). When the current initiative closes, retire the label or rotate it to the next initiative's beads. Do NOT free-roam `br ready` while `next-init` work is open. Per the bv caveat: `bv --robot-triage` does not respect `post-mvh` or `status=deferred`; use `bv --robot-triage --label next-init` as the workaround.
+CANONICAL TRIAGE VIEW (HARD RULE). **`br ready --label next-init`** is the only queue the orchestrator dispatches from. The `next-init` label is rotated per-initiative — currently tagged on the `claude-adapter-real` initiative (the hk-w5vra.* family). When the current initiative closes, retire the label or rotate it to the next initiative's beads. Per the bv caveat: `bv --robot-triage` does not respect `post-mvh` or `status=deferred`; use `bv --robot-triage --label next-init` as the workaround.
+
+ISOLATED-WORKTREE STALE-BASE BUG (HARD RULE — NEW in v35).
+The Agent SDK's `isolation: "worktree"` mode has been cutting worktrees from commit `ecbe43e` (an old base) rather than current main this session. EVERY agent dispatched with `isolation: "worktree"` should be instructed in its brief to:
+
+    cd <your worktree path>
+    git fetch origin
+    git rebase main
+
+BEFORE reading any spec or code. Verify base via `git log --oneline -5`. Without this, the worktree lacks recent commits, and either: (a) the agent's commit shows whole-file creation on subsequent diffs, OR (b) the agent modifies files that were renamed on main (e.g., `cmd/harmonik-twin-claude/main.go` was renamed to `cmd/harmonik-twin-generic/main.go` by `.1`). Symptom of (b): rebase fails with file-location conflicts; agent's "modified" file actually targets the renamed-away version.
+
+The `.5` and `.11` dispatches this session included the rebase instruction and ff-merged cleanly. Earlier dispatches (`.2`, `.8`, `.9`, `.10`) didn't and required manual diff extraction. **Always include this in implementer briefs.**
 
 TRUST `br ready` BUT VERIFY (HARD RULE — three checks).
-`br ready` is NOT authoritative for "the corpus is drained." Three orthogonal filters can hide dispatchable work; check all three when puzzled:
+`br ready` is NOT authoritative for "the corpus is drained." Three orthogonal filters can hide dispatchable work:
 
-  1. **Stale `blocked_issues_cache` (L-011).** Cross-check `br stats` Open vs Ready — if Open ≫ Ready, suspect dep-model gridlock not corpus drain. Recovery: `br doctor --repair`.
-  2. **Parent-child gridlock (L-011).** If a single epic blocks many beads: `sqlite3 .beads/beads.db "UPDATE dependencies SET type='related' WHERE type='parent-child'"`, wipe `blocked_issues_cache`, `br doctor --repair`. Backup `.beads/beads.db` first.
-  3. **Stale `defer_until` (L-017).** `br list --status open --limit 0 --json | python3 -c "import json,sys;d=json.load(sys.stdin)['issues'];print([(b['id'],b['defer_until']) for b in d if b.get('defer_until')])"`. Clear via `br update <id> --defer ""`.
+  1. **Stale `blocked_issues_cache` (L-011).** Cross-check `br stats` Open vs Ready — if Open ≫ Ready, suspect dep-model gridlock. Recovery: `br doctor --repair`.
+  2. **Parent-child gridlock (L-011).** When you `br create --parent <id>`, fresh parent-child deps block the child even when parent stays open as umbrella epic. **Run after every batch of `br create --parent`:**
+       sqlite3 .beads/beads.db "UPDATE dependencies SET type='related' WHERE type='parent-child'; DELETE FROM blocked_issues_cache;"
+       br doctor --repair
+  3. **Stale `defer_until` (L-017).** Clear via `br update <id> --defer ""`.
 
 DON'T ASK — EXECUTE.
 On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question (user's standing directive; memory `feedback_resume_continue_directive`). Sub-agents inherit via `.claude/implementer-protocol.md`. Orchestrator on genuine ambiguity: decide and document.
 
 IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
-`.claude/implementer-protocol.md` (updated 2026-05-10) is authoritative. Key rules: (a) implementer CLOSES OWN BEADS via `br close` after each commit, (b) implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming, (c) implementer DOES NOT ASK questions back. Brief template in protocol appendix.
+`.claude/implementer-protocol.md` (updated 2026-05-10) is authoritative. Key rules: (a) implementer CLOSES OWN BEADS via `br close` after each commit, (b) implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming, (c) implementer DOES NOT ASK questions back.
 
 DISPATCH SHAPE.
-- Implementers: `model=sonnet`, `effort=high`, `isolation=worktree`, `run_in_background=true`.
+- Implementers: `model=sonnet`, `effort=high`, `isolation=worktree`, `run_in_background=true`. **REBASE FIRST per the hard rule above.**
 - Reviewers: `model=sonnet`, `effort=high`, no isolation.
 - Briefs ≤15 lines: see brief-template appendix in `.claude/implementer-protocol.md`. **Do NOT paraphrase the bead body.** Implementer fetches via `br show`.
 
@@ -37,13 +50,11 @@ PRE-FLIGHT (orchestrator, ≤3 reads per dispatch).
 - Bead body via `br show <id> --format json`.
 - The cited spec section or roadmap row.
 - ONE canonical sibling for pattern conventions.
-- Pre-dispatch grep for the bead's primary type name in the target package — if it exists, the bead may be SUBSUMED (sibling-pointer in brief; see L-008).
 
 BEAD PICKING — POST-AUDIT SCOPE.
-- **Canonical triage view: `br ready --label next-init`.** See HARD RULE above.
+- **Canonical triage view: `br ready --label next-init`.**
 - Same-package-different-file = parallel-safe.
-- Same-file conflict (2+ beads on one file) → serialize via per-bead dispatch.
-- **SUBSUMED beads are common in late waves.** Pre-grep the target package; if the primary deliverable already exists, brief the implementer to close as SUBSUMED without a commit.
+- Same-file conflict → serialize via per-bead dispatch.
 
 STANDING CONVENTIONS (full version: `.claude/implementer-protocol.md`).
 - Bead body wins over docs; spec wins over bead body for normative content.
@@ -58,8 +69,10 @@ REVIEWER TIER DISCIPLINE.
 INLINE-AMEND CEILING.
 Trivial single-line text fix, literal one-line code fix, mechanical multi-line refactor → orchestrator inline-amends, no fix-agent. Above ~3 mechanical edits in 1 file → spawn fix-agent on existing worktree.
 
+CWD DISCIPLINE (NEW v35).
+Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. When a worktree is removed under your shell's cwd, the shell stays in that removed dir. ALWAYS prefix bash commands with absolute paths.
+
 MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
-Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift inside worktrees.
 
     cd /Users/gb/github/harmonik
     for id in <agent-id-1> <agent-id-2>; do
@@ -70,127 +83,56 @@ Use `git -C /Users/gb/github/harmonik` for ALL git ops to avoid bash-cwd drift i
       git -C /Users/gb/github/harmonik worktree remove --force --force "$WTPATH"
       git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
-    git -C /Users/gb/github/harmonik push origin main
 
 FALLBACK — cherry-pick when worktree dir is gone. To merge a leftover branch whose worktree was already removed, use `git -C /Users/gb/github/harmonik cherry-pick <sha>` against the branch tip.
 
-REBASE-SKIP for duplicate-bead commits. When a long-running OLD-protocol implementer's branch carries a commit for a bead ALREADY closed by a newer-protocol dispatch in the same session, `git rebase main` will hit add/add or content conflicts. Use `git rebase --skip`. Cross-package signature mismatches DO NOT surface as text conflicts; always run `go vet ./...` after the last merge of a session.
+REBASE-SKIP for duplicate-bead commits. When a long-running OLD-protocol implementer's branch carries a commit for a bead ALREADY closed by a newer-protocol dispatch, `git rebase main` will hit add/add or content conflicts. Use `git rebase --skip`. Cross-package signature mismatches DO NOT surface as text conflicts; always run `go vet ./...` after the last merge of a session.
 
 `br close` failures from `blocks` deps → flip to `related`:
     br dep remove <id> <other> ; br dep add <id> <other> --type related ; br close <id> -r "..."
 
 `br update -d` does NOT exist — use `--description` or `--body`. `--notes` adds without overwriting. `br update --defer ""` clears `defer_until` (see L-017). `br create` flags: `-p` priority, `--labels "a,b,c"`, `--parent <id>`.
 
-REBASE-CONFLICT ON `go.mod` — DO NOT USE `git reset --soft main`. Use `git rebase -i main` to drop the offending hunk, or `--strategy-option theirs` for go.mod/go.sum specifically.
-
-`bv` USAGE. `bv --robot-triage` is a graph-aware triage sidecar. Reads only — `br` writes. Bare `bv` launches an interactive TUI that blocks the session; use only `--robot-*` flags. **Caveat:** bv does NOT respect `post-mvh` or `status=deferred`; always scope with `--label next-init` (or another initiative label).
-
-CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop. v33→v34 spanned this session at ~22% used at handoff — plenty of headroom.
+CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop. v34→v35 used ~60% of the budget — heavy session.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v34, 2026-05-12)
+# Where we are (v35, 2026-05-12)
 
-Main at `4a7a58f` (pushed). **Nothing in flight.** Stream is fully drained.
+Main at `f285d2b`. **Nothing in flight.** Stream is drained except `.7` (re-smoke). Working tree on `spec/claude-hook-bridge` branch with user's pre-session WIP (.gitignore, CLAUDE.md, research/planning-protocols/STATUS.md, untracked .beads/) preserved.
 
-## What MVH means as of today
+## The big win this session
 
-MVH ("minimum viable harmonik") is **shipped and runnable as a foreground binary**. The loop runs end-to-end against fixture-stub and twin handlers under `go test -race`:
+**The hook-bridge is feature-complete.** Bead `hk-w5vra` is the umbrella for "claude doesn't speak harmonik's NDJSON protocol" — the protocol-translation gap that caused the original RED smoke. The user authored a 456-line spec for the bridge mid-session (`specs/claude-hook-bridge.md`, CHB-001..027 across v0.1→v0.4), and 10 beads landed under it:
 
-- `cmd/harmonik/main.go` → `daemon.Start` → poll `br ready` → claim a bead via `br update --claim` → resolve `workflow:<mode>` label (4-tier precedence in `moderesolve.go`) → create worktree → dispatch handler subprocess → read verdict from `review.iter-N.json` (if review-loop mode) → close-or-reopen bead → loop.
-- **Concurrent runs work.** `cfg.MaxConcurrent` defaults to 1 (MVH-preserving) but can be set higher via `--max-concurrent` flag. Goroutine-per-active-bead, RunRegistry-tracked. N=10 throughput test passed at MaxConcurrent=4 with ~5–8× speedup over sequential baseline.
-
-## Two big initiatives landed this session
-
-**1. Workflow-modes corpus (v32→v33; epic hk-7om2q + 32 children, CLOSED).** The three dispatch modes — `single`, `review-loop`, `dot` — are defined in `specs/...` (per commit `caf4b57`). `single` and `review-loop` are implemented; `dot` is the spec slot for future workflow-composition. The `review-loop` mode IS the "ralph loop" — a per-bead implementer↔reviewer iteration with 5 termination paths (APPROVE, REQUEST_CHANGES looped, BLOCK, cap-hit at iter=3, no-progress via diff-hash). Until DOT lands, `review-loop` is the stand-in.
-
-**2. Post-MVH parallelism epic (v34; epic `hk-e61c3` + 6 row beads + `hk-p4xbw` + `hk-wb0ci`, all CLOSED).** Lifted MaxConcurrent from 1 to N. Six commits on main (all under `go test -race`):
-
-- `1bb7c34` row 6 — `MaxConcurrent` Config field + CLI flag
-- `92ee855` row 10 — `eventbus.Filter(path, runID)` helper
-- `7afb9eb` row 5 — goroutine-per-bead work loop (the gate row)
-- `c8e49c9` `hk-wb0ci` — HC-004 test needle updated (other 4 in the hygiene sweep were already passing)
-- `b628e97` row 7 — N=2 smoke test
-- `c2ce491` `hk-p4xbw` — pre-claim `ShowBead` guard; `FINDING_DOUBLE_DISPATCH` sentinel REMOVED
-- `8f3b9c7` row 9 — claim semaphore bounded at `MaxConcurrent`
-- `4a7a58f` row 11 — 10-bead throughput test (passed at MaxConcurrent=4)
-
-Roadmap: `POST_MVH_PARALLELISM_ROADMAP.md` at repo root (125 lines, audited against `60b6024`). All 11 rows of the roadmap are now landed.
-
-# Where we want to go (high level)
-
-The user wants to **start using hk to do real work** (dogfood). The user's stated long-term sequence: **ralph loop → parallel runs → DOT workflow format → ...**. Ralph loop ✓ shipped. Parallel runs ✓ shipped. DOT is next on the headline list, BUT —
-
-## TOP PRIORITY THIS COMING SESSION: dogfood smoke test
-
-**Epic `hk-1n0cw` — labelled `next-init`.** The reason: the loop runs end-to-end against stubs and the twin handler. It has NOT been verified against a real `claude` CLI subprocess on a real bead. Likely failure surfaces (per the loop-investigation report run this session):
-
-1. **Prompt/instruction injection.** What hk feeds to the Claude subprocess. Is the bead body passed? System/role prompt? The verdict-format requirement?
-2. **Authentication / session resumption.** `ClaudeCodeAdapter.RotateAccount` is a stub. `ParseClaudeSessionID` exists (T-WM-018) but real session reuse untested.
-3. **Worktree CWD / env.** Does the subprocess inherit the right CWD?
-4. **Adapter output parsing.** `DetectReady` / `DetectRateLimit` / `CleanExitSequence` rely on text patterns the real Claude CLI may not emit.
-
-Before any further investment in DOT, multi-bead dogfooding, or anything else, smoke the real-Claude path. The user explicitly chose this over diving into DOT.
-
-### Smoke epic children — DISPATCH ORDER
-
-| Bead | What | Sub-agent shape |
+| Bead | Commit | What |
 |---|---|---|
-| `hk-1n0cw.1` (P1, ready) | **TRACE.** Read-only: document what hk feeds to the Claude subprocess (argv, env, CWD, stdin, expected verdict file). Output: `docs/dogfood-smoke-trace.md`. | Explore subagent (read-only). |
-| `hk-1n0cw.2` (P1, blocked on .1) | **RUN.** Set up an isolated `.beads/` in a `mktemp -d` scratch dir, one disposable bead (adds a marker line to a file), build `/tmp/hk`, run it, capture observations to `docs/dogfood-smoke-run-<date>.md`. File ALL gaps as follow-up beads under `hk-1n0cw`. | Implementer subagent (worktree isolation, model=sonnet, effort=high). |
+| `hk-keb6o` | `0534c0b` (pre-session) | Wire LaunchSpec JSON to subprocess stdin (HC-005) |
+| `.1` | `e84da74` | Rename old generic-but-named-claude twin to `harmonik-twin-generic` |
+| `.2` | `12ed9db` | Build new `harmonik-twin-claude` mirroring real-claude lifecycle (CHB-021/022) |
+| `.3` | `f44f8fe` | Implement `harmonik hook-relay <event-kind>` subcommand (CHB-010..017) |
+| `.4` | `fb1bb8c` | Materialize `.claude/settings.json` in workspace (CHB-001..005) |
+| `.5` | `ea4464f` | Claude-code handler-process responsibilities (CHB-006..009, 018..020, 024) |
+| `.6` | `1b88110` | Daemon persists `claude_session_id` to `Run.context` before claude exec (CHB-023) |
+| `.8` | `b38c441` | Spec amendment: CHB-025 Stop-hook dedup gate (daemon last-wins) |
+| `.9` | `405a517` | Spec amendment: CHB-027 orphan-connection silent-drop + §8 `bridge_partial_write` entry |
+| `.10` | `feb6494` | Spec amendment: CHB-026 concurrent-socket serialization rule (per-conn FIFO, across unordered) |
+| `.11` | `f285d2b` | Daemon side: CHB-025 last-received-wins dedup for `outcome_emitted` |
 
-The user's standing instruction for the smoke: **instruct the next session agent to dispatch sub-agents for the actual smoke work — don't do it in the orchestrator's main context.** Dispatch shape per the directives block above.
+Plus a spec-review pass (`df06fb9`) that surfaced the 3 spec-amendment beads (.8/.9/.10).
 
-### After smoke is green: DOT workflow format
+# TOP PRIORITY NEXT SESSION — `hk-w5vra.7` re-smoke
 
-DOT is the third dispatch mode in `specs/` (defined in commit `caf4b57` as one of three) but the **`dot` mode itself is empty** — no implementation, no roadmap, no decomposed beads. Unlike parallelism (which had a 125-line roadmap ready to go), DOT will need a planning pass.
+Same procedure as the original (RED) smoke `hk-1n0cw.2`: isolated scratch beads dir, one disposable bead, run hk against the real `claude` CLI. With the bridge now in place this should be GREEN. Procedure documented in the bead body — `br show hk-w5vra.7`.
 
-User's preference asked this session: either
-- **A. Kerf spec pass** — `kerf new dot-workflow-mode --jig spec` (full structured process: problem-space → decomposition → research → design → spec draft → integration → tasks). The project rule is spec-first; this is the right move for something this size.
-- **B. Roadmap write-up first** (like POST_MVH_PARALLELISM_ROADMAP.md), bead-decompose from it.
+**OPEN THIS SESSION IN tmux** (user's standing reminder). The user wants to attach to the tmux panes of the Claude subprocesses hk spawns. Running the orchestrator session inside tmux is the prerequisite. Figure out the inspect-the-subprocess-pane workflow early.
 
-**No decision made yet.** Ask the user once smoke is green. Don't pre-commit to A or B.
+If the smoke surfaces gaps: file follow-up beads under `hk-w5vra` and iterate. If GREEN: close `hk-w5vra` and `hk-1n0cw` epics; remove the `next-init` label from any remaining beads or rotate to a new initiative.
 
-### Beyond DOT (locked decisions, not next-up)
+# After re-smoke is GREEN: DOT slow-roll
 
-- **Daemonization.** Detached process, pidfile, socket, JSON-RPC operator-control. Deferred per locked decision 2026-05-08. Don't open until DOT lands.
-- **Multi-project.** One daemon per project is locked; multi-project is post-daemonization.
-- **Reconciliation.** Post-MVH per RC spec; not blocking anything currently.
+User's plan: slow-roll DOT (the third workflow dispatch mode, currently an empty spec slot per commit `caf4b57`).
 
-# Open follow-up beads (not next-init, but on the radar)
-
-- **`hk-a6nob` (P3, parallelism follow-up).** `emitRunStarted` should use `EmitWithRunID` so the envelope `run_id` is populated; would let `eventbus.Filter` match `run_started` events directly. Currently the row-11 throughput test extracts run_ids from the payload as a workaround.
-
-# Pre-existing flakes — known, not blocking
-
-- `TestT4_ReopenThenRedispatch` — git-I/O contention; passes in isolation, intermittent under high parallel test load.
-- `TestWorkLoop_FailedHandlerReopensBead` — same root cause.
-- `TestT5_RedactionHC031ByFieldName` in `internal/t5probe` — surfaced by `hk-wb0ci`, out of that bead's scope.
-
-Possible follow-up: a small bead for git-I/O test-isolation hardening (use `t.Setenv` for `TMPDIR`? or serialize git-touching tests via a build tag?). NOT urgent.
-
-# About the foreground-binary question
-
-The user asked: "if the process isn't running as a daemon is that a problem?" Answer: **no, not for dogfooding.** Foreground binary works fine — keep the terminal alive (use `tmux` / `screen` so SSH drops don't kill it), operator control is via signals (SIGINT/SIGTERM stop, SIGSTOP/SIGCONT pause). Daemonization unlocks "detach + RPC + cross-invocation persistence" but none of those block real-world use today.
-
-# Files to open first (next session)
-
-1. **This file (HANDOFF.md)** — you're reading it.
-2. `docs/orchestration-learnings.md` — friction log.
-3. `POST_MVH_PARALLELISM_ROADMAP.md` (repo root) — for context on what just shipped.
-4. `br show hk-1n0cw` and `br show hk-1n0cw.1` — the top-priority bead bodies.
-5. `internal/daemon/workloop.go` and `internal/daemon/reviewloop.go` — the loop the smoke will exercise.
-6. `internal/handler/adapter_claudecode.go` — the Claude CLI adapter the smoke will hit.
-
-# Blocking question for the user
-
-None. The smoke epic is filed; dispatch `hk-1n0cw.1` first. If the smoke surfaces gaps, file follow-ups under `hk-1n0cw` and triage them before opening DOT.
-
-# Carry-forward reminders for the NEXT session (user-requested 2026-05-12)
-
-**OPEN THIS SESSION IN tmux.** The user wants to be able to attach to the tmux panes of the Claude subprocesses hk spawns. Running the orchestrator itself inside tmux is the prerequisite. Figure out the inspect-the-subprocess-pane workflow early.
-
-**DOT rollout, slow-roll plan** (after smoke is green):
 1. Run ONE DOT task end-to-end; review logs, output, full result.
 2. If clean, run TWO DOT tasks IN SERIES; review.
 3. If clean, run TWO DOT tasks IN PARALLEL; review.
@@ -200,6 +142,39 @@ None. The smoke epic is filed; dispatch `hk-1n0cw.1` first. If the smoke surface
 - Multi-agent arrangements — including one node being the ralph (review-loop) loop.
 - Add deterministic steps to a DOT graph — e.g., a node that checks whether the implementer's branch is off current `main`, and if not, sends a message back to the implementer agent to update/rebase.
 
-**tmux integration** — test out the tmux implementation (whatever pane/session management hk already has or needs).
+Before any DOT implementation work: open question whether to kerf-plan it (`kerf new dot-workflow-mode --jig spec`) or write a roadmap-first (like `POST_MVH_PARALLELISM_ROADMAP.md`). User hasn't decided.
 
-**Daemonization** — the user wants to be able to submit work and have it chug in the background. Get the deferred daemon work moving (detached process, pidfile, socket, JSON-RPC operator control per locked decision 2026-05-08).
+# Carry-forward reminders for the NEXT session
+
+**tmux integration** — test the tmux implementation hk already has.
+
+**Daemonization** — submit-work-and-walk-away model: detached process, pidfile, socket, JSON-RPC operator control per locked decision 2026-05-08.
+
+**Push to origin.** Main is 30+ commits ahead of `origin/main` and NOT pushed. User decides when to push; orchestrator should NOT auto-push.
+
+# Tech debt filed this session
+
+- **harmonik-twin-claude duplicates ~80% of harmonik-twin-generic** (version.go, scriptdriver.go, wire.go, wire_test.go, wire_ndjson_test.go, scriptdriver_test.go, silentHang_hc026_test.go, crashRecov_hc024_test.go, main_test.go). Right move = refactor to an internal package both binaries import. NOT urgent; the two binaries diverge in `main.go` (twin-claude has --scenario), `scenarios.go` (new), `e2e_chb021_test.go` (new). File a follow-up bead when the duplication starts to bite.
+- **Isolated-worktree stale-base bug.** The Agent SDK cuts worktrees from `ecbe43e` rather than current main; cause unknown. Mitigation = rebase-first in brief (now a hard rule). Probably worth a bug report to the SDK if reproducible.
+
+# Pre-existing flakes — still known, still not blocking
+
+- `TestT4_ReopenThenRedispatch` — git-I/O contention; passes in isolation.
+- `TestWorkLoop_FailedHandlerReopensBead` — same root cause.
+- `TestT5_RedactionHC031ByFieldName` in `internal/t5probe`.
+- `TestSession_Outcome_StderrTail` / `TestSession_Outcome_NonZeroExit` in `internal/handler` — confirmed pre-existing on main during `hk-keb6o` work.
+- `internal/specaudit` failures — pre-existing on main (multiple beads this session confirmed).
+
+# Files to open first (next session)
+
+1. **This file (HANDOFF.md)** — you're reading it.
+2. `docs/orchestration-learnings.md` — friction log; consider appending the worktree-stale-base bug.
+3. `specs/claude-hook-bridge.md` (v0.4) — the spec the implementation realizes.
+4. `docs/dogfood-smoke-trace.md` and `docs/dogfood-smoke-run-2026-05-12.md` — the RED baseline.
+5. `internal/handler/claudehandler_chb006_024.go` — `.5`'s handler-process implementation; the new behavior the smoke will exercise.
+6. `cmd/harmonik-twin-claude/` — the new claude twin.
+7. `br show hk-w5vra.7` — the re-smoke bead body.
+
+# Blocking question for the user
+
+None. Re-smoke `.7` is the dispatchable next step; if GREEN, DOT slow-roll. User wanted to be hands-on for the re-smoke (per next-init guidance), so don't auto-dispatch — confirm at session start.

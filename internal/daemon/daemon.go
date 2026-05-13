@@ -142,6 +142,21 @@ type Config struct {
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-gql20.18.
 	AgentReadyTimeout time.Duration
+
+	// Substrate is the optional tmux substrate for handler.Launch.
+	//
+	// When non-nil it is injected into workLoopDeps.substrate so that each bead
+	// dispatch spawns a new tmux window instead of forking a subprocess directly
+	// via exec.CommandContext.
+	//
+	// The production composition root (cmd/harmonik/main.go) reads $TMUX, resolves
+	// the current session name via tmux display-message, constructs a
+	// daemon.NewTmuxSubstrate, and stores it here. When nil the work loop falls
+	// back to exec.CommandContext (unit-test mode / non-tmux environments).
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
+	// Bead ref: hk-kqdpf.4.
+	Substrate handler.Substrate
 }
 
 // Start is the composition-root entry point for the harmonik daemon.

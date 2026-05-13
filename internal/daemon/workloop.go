@@ -285,7 +285,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		maxConcurrent:       maxConcurrent,
 		hookStore:           store,
 		adapterRegistry:     registry,
-		substrate:           nil, // nil at MVH; tmux substrate is post-MVH
+		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 	}, nil
 }

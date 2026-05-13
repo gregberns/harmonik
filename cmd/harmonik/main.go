@@ -211,18 +211,55 @@ func run() int {
 	// hk-002zx: startup banner so the operator knows the daemon is active.
 	fmt.Fprintln(os.Stderr, "harmonik daemon starting in", projectDir)
 
-	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		BrPath:        brPath,
-		JSONLLogPath:  jsonlLogPath,
-		MaxConcurrent: maxConcurrentFlag,
-	}
-
 	// Build a context that is cancelled on SIGINT or SIGTERM so the work loop
 	// shuts down cleanly. Signal handling lives at the composition root
 	// (hk-7oz2f) so daemon.Start is testable without process-level signals.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// hk-kqdpf.4: wire tmuxSubstrate into the daemon composition root.
+	//
+	// Fail fast when $TMUX is not set: the daemon requires an active tmux session
+	// so that handler subprocesses appear as new windows inside that session.
+	// The user may run from any existing session — the prefix-enforcement done by
+	// hk tmux-start (PL-006a) applies only to that subcommand, not to daemon start.
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
+	if os.Getenv("TMUX") == "" {
+		fmt.Fprintln(os.Stderr, "harmonik: $TMUX is not set — run hk inside a tmux session or via hk tmux-start")
+		return 1
+	}
+
+	// Resolve the current session name by asking tmux directly.
+	// We use exec.Command here (not OSAdapter.display-message) because this path
+	// runs before the substrate is constructed and there is no window handle to
+	// target; the unqualified display-message returns the current session.
+	var sessionNameBytes []byte
+	sessionNameBytes, err = exec.Command("tmux", "display-message", "-p", "#{session_name}").Output() //nolint:gosec // G204: arguments are hard-coded constants
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: cannot resolve tmux session name: %v\n", err)
+		return 1
+	}
+	sessionName := strings.TrimSpace(string(sessionNameBytes))
+	if sessionName == "" {
+		fmt.Fprintln(os.Stderr, "harmonik: tmux returned an empty session name — cannot attach substrate")
+		return 1
+	}
+
+	// Probe tmux version (≥ 3.0 required for -e env-injection per PL-021b).
+	tmuxAdapter := tmux.OSAdapter{}
+	if probeErr := tmuxAdapter.ProbeTmux(ctx); probeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: tmux probe failed: %v\n", probeErr)
+		return 1
+	}
+
+	cfg := daemon.Config{
+		ProjectDir:    projectDir,
+		BrPath:        brPath,
+		JSONLLogPath:  jsonlLogPath,
+		MaxConcurrent: maxConcurrentFlag,
+		Substrate:     daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
+	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.
 	// All other errors map to exit code 1.

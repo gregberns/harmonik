@@ -60,6 +60,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-e61c3.2.
 	RunRegistry *RunRegistry
+
+	// AdapterRegistry is the sealed adapter registry forwarded into
+	// handler.NewHandler as a latent seam (hk-gql20.16). When nil,
+	// ExportedWorkLoopDeps creates a fresh empty registry — tests do not
+	// need adapters registered because Launch does not consult the registry
+	// at MVH.
+	AdapterRegistry *handlercontract.AdapterRegistry
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -90,7 +97,15 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		reg = NewRunRegistry()
 	}
 
-	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{})
+	// Use the caller-supplied AdapterRegistry or create a fresh empty one.
+	// Tests do not need adapters registered: Launch does not consult the
+	// registry at MVH (hk-gql20.16).
+	adapterReg := p.AdapterRegistry
+	if adapterReg == nil {
+		adapterReg = handlercontract.NewAdapterRegistry()
+	}
+
+	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
 	return workLoopDeps{
 		brAdapter:           p.BrAdapter,

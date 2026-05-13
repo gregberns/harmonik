@@ -118,23 +118,31 @@ type Handler interface {
 type handler struct {
 	publisher  handlercontract.EventEmitter
 	deadLetter handlercontract.WatcherDeadLetterSink
+	registry   *handlercontract.AdapterRegistry
 }
 
 // NewHandler constructs a Handler whose Launch calls will forward events to
 // publisher and route undeliverable events to deadLetter.
 //
-// Both arguments are required (non-nil); NewHandler panics if either is nil —
+// All three arguments are required (non-nil); NewHandler panics if any is nil —
 // that would be a daemon-configuration defect with no recovery path.
-func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontract.WatcherDeadLetterSink) Handler {
+//
+// registry is stored as a latent seam for post-MVH adapter-selection in Launch;
+// it is not consulted at MVH (hk-gql20.16).
+func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontract.WatcherDeadLetterSink, registry *handlercontract.AdapterRegistry) Handler {
 	if publisher == nil {
 		panic("handler: NewHandler: publisher is nil — daemon defect")
 	}
 	if deadLetter == nil {
 		panic("handler: NewHandler: deadLetter is nil — daemon defect")
 	}
+	if registry == nil {
+		panic("handler: NewHandler: registry is nil — daemon defect")
+	}
 	return &handler{
 		publisher:  publisher,
 		deadLetter: deadLetter,
+		registry:   registry,
 	}
 }
 

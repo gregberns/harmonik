@@ -126,7 +126,7 @@ func TestHandler_Launch_HandlerSpecDeliveredViaLaunch(t *testing.T) {
 
 	pub := &handlercontract.CollectingEmitter{}
 	dl := handlercontract.NoopWatcherDeadLetter{}
-	h := handler.NewHandler(pub, dl)
+	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
 	// Capture stdin to a temp file, emit a fixed agent_ready so the watcher
 	// exits cleanly, then exit.
@@ -185,7 +185,7 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 
 	pub := &handlercontract.CollectingEmitter{}
 	dl := handlercontract.NoopWatcherDeadLetter{}
-	h := handler.NewHandler(pub, dl)
+	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
 	// Child: read one line from stdin, echo it to stdout as NDJSON, then exit.
 	spec := handler.LaunchSpec{

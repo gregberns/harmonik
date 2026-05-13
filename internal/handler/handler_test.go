@@ -34,7 +34,8 @@ func launchFixtureHandler(t *testing.T) (handler.Handler, *handlercontract.Colle
 	t.Helper()
 	pub := &handlercontract.CollectingEmitter{}
 	dl := handlercontract.NoopWatcherDeadLetter{}
-	h := handler.NewHandler(pub, dl)
+	reg := handlercontract.NewAdapterRegistry()
+	h := handler.NewHandler(pub, dl, reg)
 	return h, pub
 }
 

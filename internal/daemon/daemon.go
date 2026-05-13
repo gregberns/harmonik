@@ -293,9 +293,9 @@ func Start(ctx context.Context, cfg Config) error {
 	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
 	//
 	// AdapterRegistry: construct, register ClaudeCodeAdapter for core.AgentTypeClaudeCode,
-	// seal.  The work loop uses the registry indirectly via handler.NewHandler; the
-	// registry is not currently forwarded to the handler (post-MVH wiring adds that
-	// seam).  Construct and seal here to satisfy PL-020a composition-root ordering.
+	// seal.  The sealed registry is forwarded into handler.NewHandler as a latent
+	// seam for post-MVH adapter-selection (hk-gql20.16).  Construct and seal here
+	// to satisfy PL-020a composition-root ordering.
 	adapterReg := handlercontract.NewAdapterRegistry()
 	if regErr := handler.Register(adapterReg); regErr != nil {
 		return fmt.Errorf("daemon.Start: register ClaudeCodeAdapter: %w", regErr)
@@ -311,7 +311,7 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Skip the work loop when BrPath is not configured (unit-test mode).
 	if cfg.BrPath != "" {
-		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault)
+		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg)
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}

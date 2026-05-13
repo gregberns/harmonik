@@ -167,7 +167,7 @@ type beadLedger interface {
 //
 // workflowModeDefault MUST already be normalised by the caller (daemon.Start
 // step 0) — it must be a valid WorkflowMode; zero value is never passed in.
-func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
+func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry) (workLoopDeps, error) {
 	if cfg.BrPath == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.BrPath is empty; production callers must resolve br from PATH at startup")
 	}
@@ -185,7 +185,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 
 	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 
-	h := handler.NewHandler(bus, handlercontract.NoopWatcherDeadLetter{})
+	h := handler.NewHandler(bus, handlercontract.NoopWatcherDeadLetter{}, registry)
 
 	binary := cfg.HandlerBinary
 	if binary == "" {

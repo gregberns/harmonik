@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.2
+version: 0.3
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -266,6 +266,27 @@ The daemon MUST persist `claude_session_id` into `Run.context.claude_session_id`
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
+#### CHB-026 — Concurrent-connection serialization rule
+
+For every claude-code session the daemon socket acceptor receives messages from N+1 concurrent connections in the general case: one long-lived handler connection and N one-shot relay connections (one per hook-relay invocation). The serialization rule governing how the watcher merges these streams is:
+
+**Rule: per-connection FIFO, across-connection unordered.**
+
+Formally:
+
+1. **Within a single connection** the watcher MUST process messages in the order they arrive on that connection (FIFO). The handler connection is single-producer and sequential; each relay connection carries exactly one message. Per-connection FIFO is therefore trivially satisfied by any single-goroutine read loop per accepted connection.
+
+2. **Across distinct connections** the watcher MUST NOT impose or guarantee any ordering. Two messages arriving on different connections at approximately the same wall-clock instant MAY be observed in either order by downstream subscribers. Subscribers (bus consumers, event-model state machines) MUST be written to tolerate any arrival order of messages from distinct connections.
+
+3. **No cross-connection reordering by `emitted_at_ns`** is performed at MVH. `emitted_at_ns` is a monotonic-relative timestamp recorded by the emitter (handler or relay) for observability and replay purposes; the daemon's acceptor MUST NOT buffer messages from one connection while waiting to sort them against messages from another connection.
+
+**Rationale:** the current socket acceptor (per `internal/daemon/socket.go RunSocketListener`) dispatches each accepted connection to an independent goroutine with no cross-goroutine ordering gate. This is Rule (C). Rules (A) and (B) would require a shared ordered channel or a reorder buffer with a quiescence window, both of which introduce complexity and latency that are unnecessary at MVH. In practice, concurrent relay arrivals are rare: Claude's hook execution model fires hooks sequentially relative to the agent's tool invocations; the handler's long-lived connection carries low-frequency lifecycle messages. When relay messages genuinely race (e.g., two `Notification` events from a parallelized tool call), both orderings are semantically equivalent to the subscriber.
+
+**Twin parity implication:** `harmonik-twin-claude` emits all messages on a single connection (it does not spawn relay subprocesses). A twin run therefore trivially satisfies per-connection FIFO with no cross-connection ambiguity. CHB-021 byte-for-byte parity holds within each connection's ordered stream; the across-connection ordering variance that exists in real runs is absent in twin runs, which is consistent with declaring across-connection order as unspecified. Conformance tests MUST NOT assert a fixed cross-connection emission order; they MUST instead assert that each expected message is present and that per-connection order constraints hold.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.7 Handler-process responsibilities
 
 #### CHB-018 — Pre-Claude-exec emission ordering
@@ -477,3 +498,4 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 |---|---|---|---|
 | 2026-05-12 | 0.1 | foundation-author | Initial draft from kerf `claude-hook-bridge`. |
 | 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |
+| 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |

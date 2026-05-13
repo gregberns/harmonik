@@ -24,8 +24,17 @@ import "time"
 //     lists.  A nil or empty slice means the handler supports NO version; the
 //     daemon MUST treat this as a version-negotiation failure and return
 //     ErrProtocolMismatch.
+//   - claude_session_id  — the Claude Code session identifier (UUIDv7) minted by
+//     the handler subprocess before exec'ing Claude, per HC-045c.  Present for
+//     phase ∈ {single, implementer-initial, implementer-resume, reviewer}.  The
+//     daemon MUST persist this value into Run.context.claude_session_id with
+//     checkpoint-commit-class durability (CHB-023) before returning the
+//     version_selected ACK that gates the handler's `claude --session-id <uuid>`
+//     exec.  Empty string means the handler did not emit a session ID (pre-bridge
+//     twin binary; treated as absent by the daemon).
 //
-// Spec: specs/handler-contract.md §4.2.HC-009, §7.2.
+// Spec: specs/handler-contract.md §4.2.HC-009, §4.10.HC-045c, §7.2;
+// specs/claude-hook-bridge.md §4.6.CHB-023.
 type HandlerCapabilitiesMsg struct {
 	// Type is always ProgressMsgTypeHandlerCapabilities; retained for round-trip
 	// fidelity.  Watcher dispatches on this field before decoding.
@@ -41,6 +50,18 @@ type HandlerCapabilitiesMsg struct {
 	// pseudo-code at §7.2; OQ-HC-009 tracks whether semver should be used
 	// instead.  This field uses int until that open question is resolved.
 	SupportedVersions []int `json:"supported_versions"`
+
+	// ClaudeSessionID is the Claude Code session identifier minted by the handler
+	// subprocess before exec'ing Claude per HC-045c.  The daemon persists this
+	// value into Run.context.claude_session_id (CHB-023) before returning the
+	// version_selected ACK.
+	//
+	// Empty string when the handler did not include the field (pre-bridge twin
+	// binary path); the daemon treats an empty string as absent and synthesises an
+	// ID via rlSynthesiseClaudeSessionID so existing test paths are unaffected.
+	//
+	// Spec: specs/handler-contract.md §4.10.HC-045c; specs/claude-hook-bridge.md §4.6.CHB-023.
+	ClaudeSessionID string `json:"claude_session_id,omitempty"`
 }
 
 // HandlerCapabilitiesTimeout is the maximum duration the watcher waits for the

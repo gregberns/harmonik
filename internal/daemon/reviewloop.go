@@ -11,7 +11,8 @@ package daemon
 // For each iteration (1..cap):
 //  1. If iteration ≥ 2: emit implementer_resumed; dispatch implementer-resume.
 //     If iteration = 1: dispatch implementer-initial.
-//  2. Wait for implementer to complete; capture claude_session_id (iter 1 only).
+//  2. Wait for implementer to complete; capture claude_session_id (iter 1 only,
+//     via SessionIDInterceptor + persistClaudeSessionID + version_selected ACK).
 //  3. Compute current diff hash.
 //     If iteration ≥ 2 AND current_hash == last_diff_hash: emit no_progress_detected,
 //     emit review_loop_cycle_complete (no_progress), terminate (needs-attention).
@@ -29,7 +30,8 @@ package daemon
 // # State threaded through iterations (Run.context keys per core/runcontextkeys.go)
 //
 //   - RunContextKeyIterationCount   ("iteration_count") — initialised to 1 before iter 1
-//   - RunContextKeyClaudeSessionID  ("claude_session_id") — captured at iter 1 implementer exit
+//   - RunContextKeyClaudeSessionID  ("claude_session_id") — captured from handler_capabilities
+//     via SessionIDInterceptor, persisted to git (CHB-023) before version_selected ACK
 //   - RunContextKeyLastVerdict      ("last_verdict") — updated after each reviewer verdict
 //   - RunContextKeyLastDiffHash     ("last_diff_hash") — updated before each reviewer launch
 //
@@ -41,6 +43,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -139,6 +142,16 @@ func runReviewLoop(
 			implRole = "implementer"
 		}
 
+		// For the initial implementer launch (iteration 1): wire a
+		// SessionIDInterceptor on the progress stream so the daemon can extract
+		// claude_session_id from handler_capabilities, persist it to git (CHB-023),
+		// and release the version_selected ACK before the handler execs Claude.
+		//
+		// sessionIDFromCapabilities is filled by the persist goroutine and read
+		// after implWatcher.Done(). It is buffered (capacity 1) so the goroutine
+		// never blocks even if no one reads the channel.
+		sessionIDFromCapabilities := make(chan string, 1)
+
 		implSpec := handler.LaunchSpec{
 			Binary:  deps.handlerBinary,
 			Args:    deps.handlerArgs,
@@ -146,7 +159,56 @@ func runReviewLoop(
 			WorkDir: wtPath,
 			Role:    implRole,
 		}
-		implSess, implWatcher, implLaunchErr := deps.h.Launch(ctx, implSpec)
+
+		// Capture implSess so the ACK goroutine below can use it.
+		// The variable is set after Launch; the goroutine uses it only after the
+		// interceptor fires (which happens after Launch returns and the Watcher
+		// starts reading), so the ordering is safe.
+		var implSess handler.Session
+
+		if state.iterationCount == 1 {
+			// Capture loop variables for the closure.
+			capturedWtPath := wtPath
+			capturedRunID := runID
+			capturedBus := deps.bus
+			capturedCtx := ctx
+
+			implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+				return newSessionIDInterceptor(r, func(id string) {
+					// Fired on the Watcher's goroutine (inside Read).
+					// Spawn a goroutine to persist + ACK so the Watcher is not blocked.
+					//
+					// CHB-023 ordering: git commit → transition_event → ACK.
+					go func() {
+						res, persistErr := persistClaudeSessionID(capturedCtx, capturedWtPath, capturedRunID, id)
+						if persistErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: reviewloop: persist claude_session_id: %v (continuing without persistence)\n", persistErr)
+							// Signal empty so the review loop falls back to synthesis.
+							sessionIDFromCapabilities <- ""
+							return
+						}
+						if !res.Skipped {
+							// EM-025a: emit transition_event AFTER git commit.
+							emitClaudeSessionIDPersisted(capturedCtx, capturedBus, capturedRunID, res.CommitSHA, id)
+						}
+						// CHB-023: ACK (version_selected) AFTER the git commit.
+						// implSess is read from the outer variable; this goroutine
+						// runs only after Launch returns (the Watcher starts after
+						// Launch), so implSess is already set.
+						if ackErr := sendVersionSelectedACK(capturedCtx, implSess); ackErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: reviewloop: sendVersionSelectedACK: %v (non-fatal)\n", ackErr)
+						}
+						sessionIDFromCapabilities <- id
+					}()
+				})
+			}
+		}
+
+		var implWatcher *handlercontract.Watcher
+		var implLaunchErr error
+		implSess, implWatcher, implLaunchErr = deps.h.Launch(ctx, implSpec)
 		if implLaunchErr != nil {
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -166,11 +228,23 @@ func runReviewLoop(
 			}
 		}
 
-		// Capture claude_session_id from the initial implementer launch (iteration 1 only).
-		// At MVH: synthesise an ID (twin binary does not emit JSON stdout).
-		// Post-MVH: use handlercontract.ParseClaudeSessionID on the session stdout buffer.
+		// Capture claude_session_id for iteration 1.
+		// Prefer the value persisted to git via the interceptor (CHB-023).
+		// Fall back to synthesis when the handler did not emit claude_session_id in
+		// handler_capabilities (pre-bridge twin binary; existing test paths).
 		if state.iterationCount == 1 {
-			state.claudeSessionID = rlSynthesiseClaudeSessionID()
+			select {
+			case id := <-sessionIDFromCapabilities:
+				if id != "" {
+					state.claudeSessionID = id
+				} else {
+					state.claudeSessionID = rlSynthesiseClaudeSessionID()
+				}
+			default:
+				// Interceptor never fired (handler exited without emitting
+				// handler_capabilities with claude_session_id). Synthesise.
+				state.claudeSessionID = rlSynthesiseClaudeSessionID()
+			}
 		}
 
 		// ── Compute diff hash BEFORE launching reviewer ───────────────────

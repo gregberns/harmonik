@@ -11,6 +11,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -185,4 +186,19 @@ func ExportedRunReviewLoop(
 		Summary:          r.summary,
 		NeedsAttention:   r.needsAttention,
 	}
+}
+
+// ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.
+//
+// Bead ref: hk-w5vra.6.
+func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID, sessionID string) (string, bool, error) {
+	res, err := persistClaudeSessionID(ctx, wtPath, runID, sessionID)
+	return res.CommitSHA, res.Skipped, err
+}
+
+// ExportedNewSessionIDInterceptor exposes newSessionIDInterceptor for tests.
+//
+// Bead ref: hk-w5vra.6.
+func ExportedNewSessionIDInterceptor(r io.Reader, cb func(string)) io.Reader {
+	return newSessionIDInterceptor(r, cb)
 }

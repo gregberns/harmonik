@@ -28,6 +28,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 
@@ -75,6 +76,21 @@ type LaunchSpec struct {
 	// the write completes the goroutine exits and the subprocess receives a
 	// broken-pipe error on its next stdin read.
 	HandlerSpec *handlercontract.LaunchSpec
+
+	// StdoutWrapper is an optional function that wraps the subprocess stdout
+	// io.Reader before it is passed to handlercontract.SpawnWatcher.
+	//
+	// When non-nil, Launch calls StdoutWrapper(sess.Stdout()) and passes the
+	// returned io.Reader to SpawnWatcher as ProgressStream instead of the raw
+	// pipe.  The wrapper MUST pass all bytes through to the caller's io.Reader
+	// unchanged; it may observe bytes in-flight for side effects (e.g., extracting
+	// a session ID from handler_capabilities per CHB-023).
+	//
+	// When nil, Launch passes sess.Stdout() directly to SpawnWatcher (default
+	// behaviour; all existing callers are unaffected).
+	//
+	// Spec: specs/claude-hook-bridge.md §4.6.CHB-023.
+	StdoutWrapper func(io.Reader) io.Reader
 }
 
 // Handler is the daemon-side factory for handler sessions.
@@ -179,9 +195,16 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		}()
 	}
 
+	// Apply optional StdoutWrapper before wiring to SpawnWatcher (CHB-023).
+	// When StdoutWrapper is nil the raw pipe is used directly (no-op for existing callers).
+	progressStream := io.Reader(sess.Stdout())
+	if spec.StdoutWrapper != nil {
+		progressStream = spec.StdoutWrapper(progressStream)
+	}
+
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
 		SessionID:      sessionID,
-		ProgressStream: sess.Stdout(),
+		ProgressStream: progressStream,
 		Publisher:      h.publisher,
 		DeadLetter:     h.deadLetter,
 	})

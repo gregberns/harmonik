@@ -124,13 +124,21 @@ func socketFixtureSendRecv(t *testing.T, conn net.Conn, req daemon.SocketRequest
 // A t.Cleanup is registered that cancels the context. If the caller has
 // already drained the channel, the cleanup skips the drain (non-blocking
 // receive) to avoid a deadlock.
-func socketFixtureStartListener(t *testing.T, sockPath string, h daemon.RequestHandler) (cancel context.CancelFunc, done <-chan error) {
+// socketFixtureStartListener starts RunSocketListener in a goroutine.
+// The optional hr argument is forwarded to RunSocketListener as the HookRelayHandler;
+// pass nil (or omit) for tests that only exercise the SocketRequest protocol.
+func socketFixtureStartListener(t *testing.T, sockPath string, h daemon.RequestHandler, hr ...daemon.HookRelayHandler) (cancel context.CancelFunc, done <-chan error) {
 	t.Helper()
+
+	var hookRelay daemon.HookRelayHandler
+	if len(hr) > 0 {
+		hookRelay = hr[0]
+	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	ch := make(chan error, 1)
 	go func() {
-		ch <- daemon.RunSocketListener(ctx, sockPath, h)
+		ch <- daemon.RunSocketListener(ctx, sockPath, h, hookRelay)
 	}()
 	t.Cleanup(func() {
 		cancel()

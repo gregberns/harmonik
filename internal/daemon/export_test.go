@@ -11,6 +11,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -186,6 +187,55 @@ func ExportedRunReviewLoop(
 		Summary:          r.summary,
 		NeedsAttention:   r.needsAttention,
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CHB-025 test seams (hk-w5vra.11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedHookSessionStore exposes hookSessionStore for tests.
+//
+// Bead ref: hk-w5vra.11.
+func ExportedNewHookSessionStore() *hookSessionStore {
+	return newHookSessionStore()
+}
+
+// ExportedHookRegister exposes RegisterHookSession for tests.
+func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {
+	s.RegisterHookSession(runID, claudeSessionID)
+}
+
+// ExportedHookClose exposes CloseHookSession for tests.
+func ExportedHookClose(s *hookSessionStore, runID, claudeSessionID string) {
+	s.CloseHookSession(runID, claudeSessionID)
+}
+
+// ExportedHookLatestOutcome exposes LatestOutcome for tests.
+func ExportedHookLatestOutcome(s *hookSessionStore, runID, claudeSessionID string) *json.RawMessage {
+	return s.LatestOutcome(runID, claudeSessionID)
+}
+
+// ExportedHookDispatch exposes dispatchHookRelayEnvelope for tests.
+func ExportedHookDispatch(s *hookSessionStore, env HookRelayEnvelopeExported) (string, string) {
+	ack := s.dispatchHookRelayEnvelope(hookRelayEnvelope{
+		Type:             env.Type,
+		RunID:            env.RunID,
+		ClaudeSessionID:  env.ClaudeSessionID,
+		HandlerSessionID: env.HandlerSessionID,
+		EmittedAtNs:      env.EmittedAtNs,
+		Payload:          env.Payload,
+	})
+	return ack.Status, ack.Reason
+}
+
+// HookRelayEnvelopeExported is the exported shape of hookRelayEnvelope for tests.
+type HookRelayEnvelopeExported struct {
+	Type             string
+	RunID            string
+	ClaudeSessionID  string
+	HandlerSessionID string
+	EmittedAtNs      int64
+	Payload          json.RawMessage
 }
 
 // ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.

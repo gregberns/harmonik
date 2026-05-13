@@ -9,6 +9,21 @@ import (
 	"os"
 )
 
+// HookRelayHandler is the interface the daemon registers to process hook-relay
+// messages received from harmonik hook-relay subprocesses over the Unix socket.
+//
+// Hook-relay messages carry a "type" field (e.g., "outcome_emitted") rather
+// than the "op" field of SocketRequest. The socket acceptor dispatches to this
+// interface when a connection's JSON payload has a non-empty "type" field.
+//
+// Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §6.1 HookRelayMessage,
+// §6.2 HookRelayAck, §4.10 CHB-025.
+type HookRelayHandler interface {
+	// HandleHookRelay dispatches a single hookRelayEnvelope and returns the
+	// ACK/typed-error to be written back to the relay connection per §6.2.
+	HandleHookRelay(env hookRelayEnvelope) hookRelayAckMsg
+}
+
 // SocketRequest is a single request sent by an agent subprocess over the
 // Unix socket. One request is sent per connection (simple request/response
 // model at MVH).
@@ -87,7 +102,7 @@ type RequestHandler interface {
 // RunSocketListener binds a Unix-domain socket at sockPath, sets its
 // permissions to 0600, and accepts connections until ctx is cancelled.
 // Each connection is handled in its own goroutine: one JSON request is
-// read, dispatched to h, and one JSON response is written before the
+// read, dispatched to h or hr, and one JSON response is written before the
 // connection is closed.
 //
 // Stale socket removal: if a file already exists at sockPath (e.g. from a
@@ -98,9 +113,15 @@ type RequestHandler interface {
 // RunSocketListener returns nil when ctx is cancelled and the listener
 // closes cleanly. It returns a non-nil error only on bind failure.
 //
+// Dispatch: if the connection's JSON payload contains a non-empty "type" field,
+// the message is routed to hr (HookRelayHandler) as a hookRelayEnvelope; otherwise
+// it is routed to h (RequestHandler) as a SocketRequest. hr may be nil, in which
+// case hook-relay messages are rejected with a bad_envelope response.
+//
 // Spec ref: MVH_ROADMAP row #5 — "Production Unix socket listener …
 // request loop for emit-outcome / claim-next from agent subprocesses."
-func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler) error {
+// Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
+func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler) error {
 	// Remove a stale socket file left by a previously crashed daemon.
 	// Ignore the error: if the file doesn't exist, Remove returns an error
 	// which we discard intentionally.
@@ -133,17 +154,67 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler) e
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h)
+		go handleSocketConn(ctx, conn, h, hr)
 	}
 }
 
-// handleSocketConn reads one JSON SocketRequest from conn, dispatches it to h,
-// writes one JSON SocketResponse, and closes the connection.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler) {
+// handleSocketConn reads one JSON message from conn and dispatches it to the
+// appropriate handler:
+//   - If the decoded JSON has a non-empty "type" field → hook-relay envelope,
+//     dispatched to hr (HookRelayHandler); response is a hookRelayAckMsg.
+//   - Otherwise → SocketRequest, dispatched to h (RequestHandler); response is
+//     a SocketResponse.
+//
+// CHB-027: if the relay sent zero complete lines (abrupt EOF before the '\n'
+// terminator), json.Decoder.Decode returns an error and the connection is dropped
+// with no response after writing a bad_envelope ack — the relay will have exited
+// already in this case, so the write is best-effort.
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
+	// Decode into a raw map first to detect the message format (type vs op).
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&raw); err != nil {
+		// CHB-027: orphan connection / partial write. Drop silently; best-effort
+		// ack so relay can observe the error if it is still alive.
+		writeHookRelayAck(conn, hookRelayAckMsg{
+			Status: "bad_envelope",
+			Reason: fmt.Sprintf("decode: %v", err),
+		})
+		return
+	}
+
+	// Distinguish hook-relay envelope from SocketRequest by the "type" field.
+	if typeRaw, hasType := raw["type"]; hasType && len(typeRaw) > 2 {
+		// Looks like a hookRelayEnvelope (has non-empty "type").
+		// Re-marshal the raw map back to JSON so we can Unmarshal into the typed struct.
+		reEncoded, encErr := json.Marshal(raw)
+		if encErr != nil {
+			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "re-encode failed"})
+			return
+		}
+		var env hookRelayEnvelope
+		if err := json.Unmarshal(reEncoded, &env); err != nil {
+			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: fmt.Sprintf("envelope decode: %v", err)})
+			return
+		}
+		if hr == nil {
+			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "no hook-relay handler registered"})
+			return
+		}
+		ack := hr.HandleHookRelay(env)
+		writeHookRelayAck(conn, ack)
+		return
+	}
+
+	// SocketRequest path (op-based protocol).
+	reEncoded, encErr := json.Marshal(raw)
+	if encErr != nil {
+		writeSocketResponse(conn, SocketResponse{Ok: false, Error: "re-encode failed"})
+		return
+	}
 	var req SocketRequest
-	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&req); err != nil {
+	if err := json.Unmarshal(reEncoded, &req); err != nil {
 		writeSocketResponse(conn, SocketResponse{
 			Ok:    false,
 			Error: fmt.Sprintf("daemon: decode request: %v", err),
@@ -181,6 +252,16 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler) {
 	}
 
 	writeSocketResponse(conn, resp)
+}
+
+// writeHookRelayAck serialises ack as NDJSON and writes it to conn.
+// Write errors are silently discarded (connection is about to close).
+func writeHookRelayAck(conn net.Conn, ack hookRelayAckMsg) {
+	data, err := json.Marshal(ack)
+	if err != nil {
+		return
+	}
+	_, _ = conn.Write(append(data, '\n')) //nolint:errcheck // write error unactionable; connection closing
 }
 
 // writeSocketResponse encodes resp as JSON and writes it to conn.

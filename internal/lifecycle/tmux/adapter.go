@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -207,36 +205,4 @@ type ErrTmuxFailure struct {
 // Error implements the error interface.
 func (e *ErrTmuxFailure) Error() string {
 	return fmt.Sprintf("tmux: %s exited %d: %s", e.Op, e.ExitCode, e.Stderr)
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// WindowName placeholder (implemented in hk-gql20.8)
-// ──────────────────────────────────────────────────────────────────────────────
-
-// WindowName derives the deterministic tmux window name for a given agent
-// session. The function is pure: identical inputs produce identical outputs
-// across invocations.
-//
-// Parameters:
-//   - beadID is the Beads issue ID for the run (e.g. "hk-abc123").
-//   - phase is the agent-session phase ([PhaseSingle], [PhaseImplementerInitial], etc.).
-//   - iteration is the review-loop iteration count (1-indexed; 0 for single-mode).
-//   - projectHash is the stable project identifier from [lifecycle.ComputeProjectHash].
-//   - ownsSession is true when this window IS the session's primary attach window
-//     (i.e., the window holds the operator-facing pane that created the session).
-//
-// The returned name is truncated to 64 bytes per tmux's window-name limit per
-// workspace-model.md §4.1 WM-002a.
-//
-// Implementation: hk-gql20.8 (internal/lifecycle/tmux/windowname.go).
-//
-// TODO(hk-gql20.8): replace this stub with the full WM-002a implementation.
-//
-// Spec ref: workspace-model.md §4.1 WM-002a.
-func WindowName(beadID core.BeadID, phase Phase, iteration int, projectHash core.ProjectHash, ownsSession bool) string {
-	// Stub — hk-gql20.8 will provide the normative implementation.
-	// Return an empty string so callers that compile against this skeleton
-	// are type-correct; the OSAdapter (hk-gql20.7) will not call WindowName
-	// at runtime until hk-gql20.8 lands.
-	return ""
 }

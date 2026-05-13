@@ -274,3 +274,11 @@ func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID co
 func ExportedNewSessionIDInterceptor(r io.Reader, cb func(string)) io.Reader {
 	return newSessionIDInterceptor(r, cb)
 }
+
+// ExportedNewDaemonHeartbeatEmitter exposes newDaemonHeartbeatEmitter for
+// tests in package daemon_test.
+//
+// Bead ref: hk-gql20.17.
+func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID core.RunID) handler.HeartbeatEmitter {
+	return newDaemonHeartbeatEmitter(bus, runID)
+}

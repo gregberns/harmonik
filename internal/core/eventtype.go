@@ -146,6 +146,10 @@ const (
 	// Durability class: F.
 	EventTypeAgentFailed EventType = "agent_failed"
 
+	// EventTypeAgentHeartbeat is the agent_heartbeat event type (§8.3 HC-026a).
+	// Durability class: O.
+	EventTypeAgentHeartbeat EventType = "agent_heartbeat"
+
 	// EventTypeAgentRateLimitStatus is the agent_rate_limit_status event type (§8.3.6).
 	// Durability class: O.
 	EventTypeAgentRateLimitStatus EventType = "agent_rate_limit_status"

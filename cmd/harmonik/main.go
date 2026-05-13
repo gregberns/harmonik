@@ -42,6 +42,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -56,6 +57,22 @@ func main() {
 // daemon logic so that the wiring can be inspected and replaced at this single
 // site.
 func run() int {
+	// Subcommand dispatch: hook-relay must be checked before flag.Parse so that
+	// flag does not consume the event-kind positional argument.
+	//
+	// Spec: specs/claude-hook-bridge.md §4.4 CHB-010..017.
+	if len(os.Args) >= 2 && os.Args[1] == "hook-relay" {
+		eventKind := ""
+		if len(os.Args) >= 3 {
+			eventKind = os.Args[2]
+		}
+		if eventKind == "" {
+			fmt.Fprintln(os.Stderr, "harmonik hook-relay: missing event-kind argument")
+			return 1
+		}
+		return hookrelay.Run(eventKind, os.Stdin, os.Stderr, nil)
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

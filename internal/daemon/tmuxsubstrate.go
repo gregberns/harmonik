@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/handler"
@@ -158,14 +159,56 @@ type tmuxSubstrateSession struct {
 	waitOnce sync.Once
 }
 
-// Kill issues `tmux kill-window` for the handle. Idempotent: subsequent calls
-// return nil.
+// Kill terminates the hosted process and then destroys the tmux window.
+// Idempotent: subsequent calls return nil.
+//
+// When the session holds a pane PID (s.pid > 0), Kill sends SIGTERM to the
+// process and waits up to killGracePeriod for it to exit. If the process is
+// still alive after the grace period, Kill sends SIGKILL. It then calls
+// KillWindow to remove the tmux window regardless of whether the PID step
+// succeeded. This ensures that killing the tmux window shell alone (which
+// previously sent SIGHUP to the child) is not relied upon to terminate the
+// hosted process.
+//
+// Background: the tmux pane PID is the shell that was started by tmux
+// new-window. The hosted claude process is a child of that shell. Sending
+// SIGTERM/SIGKILL directly to the shell is more reliable than relying on
+// tmux kill-window to propagate a signal to the child process.
+const killGracePeriod = 3 * time.Second
+
 func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	var killErr error
 	s.killOnce.Do(func() {
+		// Step 1: terminate the hosted process if we have a PID.
+		if s.pid > 0 {
+			killProcessWithGrace(s.pid, killGracePeriod)
+		}
+		// Step 2: destroy the tmux window (cleans up pane/window state).
 		killErr = s.adapter.KillWindow(ctx, s.handle)
 	})
 	return killErr
+}
+
+// killProcessWithGrace sends SIGTERM to pid, waits up to grace for the process
+// to exit, then sends SIGKILL if it is still alive. It is a best-effort
+// helper: all errors are silently swallowed because the window cleanup in
+// KillWindow is the authoritative cleanup step.
+func killProcessWithGrace(pid int, grace time.Duration) {
+	// Send SIGTERM. Ignore errors: process may already be gone.
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+
+	// Poll for process exit using kill(pid, 0) which returns ESRCH when gone.
+	deadline := time.Now().Add(grace)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			// ESRCH means no such process — it has exited.
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Grace period elapsed; escalate to SIGKILL.
+	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
 // Wait blocks until the tmux window hosting the subprocess is gone. It polls

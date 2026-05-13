@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -41,10 +42,13 @@ type fakeTmuxAdapter struct {
 
 	// killWindowErr is returned by KillWindow when non-nil.
 	killWindowErr error
+
+	// killWindowCalled is incremented each time KillWindow is called.
+	killWindowCalled int
 }
 
-func (f *fakeTmuxAdapter) ProbeTmux(_ context.Context) error          { return nil }
-func (f *fakeTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { return nil, nil }
+func (f *fakeTmuxAdapter) ProbeTmux(_ context.Context) error                { return nil }
+func (f *fakeTmuxAdapter) ListSessions(_ context.Context) ([]string, error)  { return nil, nil }
 func (f *fakeTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -53,6 +57,7 @@ func (f *fakeTmuxAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn
 	return f.newWindowInOutcome
 }
 func (f *fakeTmuxAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
+	f.killWindowCalled++
 	return f.killWindowErr
 }
 func (f *fakeTmuxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
@@ -237,6 +242,140 @@ func TestTmuxSubstrateSession_Kill_Delegates(t *testing.T) {
 
 	if err := sess.Kill(t.Context()); err != nil {
 		t.Errorf("SubstrateSession.Kill: %v", err)
+	}
+}
+
+// TestTmuxSubstrateSession_Kill_TerminatesProcessAndCleansWindow verifies that
+// Kill (hk-kqdpf.7) signals the hosted process and then calls KillWindow to
+// clean up the tmux window. The test uses a zero PID (pid=0 skips the signal
+// step) so it does not need a real process; it verifies that KillWindow is
+// always called exactly once.
+func TestTmuxSubstrateSession_Kill_TerminatesProcessAndCleansWindow(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win")},
+		// panePIDResult=0 keeps pid=0 in the session; kill path skips the signal
+		// step (pid <= 0 guard) and goes straight to KillWindow.
+		panePIDResult: 0,
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: "hk-win",
+		Cwd:        t.TempDir(),
+		Argv:       []string{"claude"},
+	}
+
+	sess, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	if err := sess.Kill(t.Context()); err != nil {
+		t.Errorf("SubstrateSession.Kill: unexpected error: %v", err)
+	}
+
+	// KillWindow MUST have been called exactly once.
+	if fake.killWindowCalled != 1 {
+		t.Errorf("KillWindow call count: got %d, want 1", fake.killWindowCalled)
+	}
+}
+
+// TestTmuxSubstrateSession_Kill_IdempotentWithWindow verifies that calling Kill
+// twice does NOT call KillWindow a second time (killOnce guard).
+func TestTmuxSubstrateSession_Kill_IdempotentWithWindow(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win")},
+		panePIDResult:      0,
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: "hk-win",
+		Cwd:        t.TempDir(),
+		Argv:       []string{"claude"},
+	}
+
+	sess, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	// First call.
+	if err := sess.Kill(t.Context()); err != nil {
+		t.Errorf("SubstrateSession.Kill (first): %v", err)
+	}
+	// Second call must be idempotent.
+	if err := sess.Kill(t.Context()); err != nil {
+		t.Errorf("SubstrateSession.Kill (second): %v", err)
+	}
+
+	// KillWindow MUST have been called exactly once despite two Kill calls.
+	if fake.killWindowCalled != 1 {
+		t.Errorf("KillWindow call count after two Kill calls: got %d, want 1", fake.killWindowCalled)
+	}
+}
+
+// TestTmuxSubstrateSession_Kill_WithRealChildProcess verifies the signal path
+// end-to-end by spawning a real OS process (sleep), then calling Kill and
+// confirming the process is gone. This test exercises killProcessWithGrace
+// with a live PID. It is not a tmux test — it bypasses SpawnWindow and
+// constructs the session manually via a helper to inspect the exported Kill
+// method's real signal behaviour.
+//
+// The real PID is injected via the panePIDResult field of the fake adapter so
+// that SpawnWindow populates sess.pid, which Kill uses to signal the process.
+func TestTmuxSubstrateSession_Kill_WithRealChildProcess(t *testing.T) {
+	t.Parallel()
+
+	// Spawn a long-lived subprocess (sleep 60) as a stand-in for a claude process.
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep subprocess: %v", err)
+	}
+	childPID := cmd.Process.Pid
+	t.Cleanup(func() {
+		// Best-effort cleanup: kill the child if the test failed before Kill did.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win")},
+		// Inject the real child PID so Kill signals it.
+		panePIDResult: childPID,
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: "hk-win",
+		Cwd:        t.TempDir(),
+		Argv:       []string{"sleep", "60"},
+	}
+
+	sess, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	// Kill should terminate the child process via SIGTERM.
+	if err := sess.Kill(t.Context()); err != nil {
+		t.Errorf("SubstrateSession.Kill: %v", err)
+	}
+
+	// Verify the process is gone: cmd.Wait should return quickly.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-done:
+		// Process exited — Kill worked correctly.
+	case <-time.After(5 * time.Second):
+		t.Error("child process still alive 5s after Kill — signal path did not work")
+		_ = cmd.Process.Kill()
 	}
 }
 

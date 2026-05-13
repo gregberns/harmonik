@@ -194,6 +194,40 @@ func (OSAdapter) WindowPanePID(ctx context.Context, handle WindowHandle) (int, e
 	return pid, nil
 }
 
+// EnsureSession creates the named tmux session with the given working directory
+// if it does not already exist. It is idempotent: if the session exists,
+// EnsureSession returns nil without error.
+//
+// The session is created with `tmux new-session -d -s <name> -c <workDir>`.
+// When workDir is empty the tmux default working directory is used.
+//
+// Returns [ErrTmuxMissing] when tmux is not on PATH.
+// Returns [*ErrTmuxFailure] on any other tmux invocation error.
+//
+// Spec ref: process-lifecycle.md §4.10 PL-028 refinement — step iii:
+// "Invoke `tmux new-session -d -s <session-name> -c <project_dir>`. Idempotent if exists."
+func (OSAdapter) EnsureSession(ctx context.Context, name, workDir string) error {
+	args := []string{"new-session", "-d", "-s", name}
+	if workDir != "" {
+		args = append(args, "-c", workDir)
+	}
+	//nolint:gosec // G204: args are constructed from validated session names and operator-supplied project path
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if isNotFoundErr(err) {
+			return ErrTmuxMissing
+		}
+		outStr := strings.TrimSpace(string(out))
+		// "duplicate session" means the session already exists — idempotent success.
+		if isDuplicateSessionErr(out) {
+			return nil
+		}
+		return &ErrTmuxFailure{Op: "new-session", ExitCode: exitCodeOf(err), Stderr: outStr}
+	}
+	return nil
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -281,6 +315,14 @@ func isWindowCollisionErr(out []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(string(out)))
 	return strings.Contains(lower, "duplicate window name") ||
 		strings.Contains(lower, "already exists")
+}
+
+// isDuplicateSessionErr reports whether the combined output from `tmux new-session`
+// indicates a session with the same name already exists (idempotent EnsureSession).
+func isDuplicateSessionErr(out []byte) bool {
+	lower := strings.ToLower(strings.TrimSpace(string(out)))
+	return strings.Contains(lower, "duplicate session") ||
+		strings.Contains(lower, "session already exists")
 }
 
 // isNoWindowErr reports whether the combined output indicates the target window

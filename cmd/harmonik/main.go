@@ -38,12 +38,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 func main() {
@@ -57,9 +59,49 @@ func main() {
 // daemon logic so that the wiring can be inspected and replaced at this single
 // site.
 func run() int {
-	// Subcommand dispatch: hook-relay must be checked before flag.Parse so that
-	// flag does not consume the event-kind positional argument.
+	// Subcommand dispatch: tmux-start and hook-relay must be checked before
+	// flag.Parse so that flag does not consume their positional arguments.
+
+	// hk tmux-start — operator-facing tmux session bootstrap.
+	// Parses its own --session-name flag and must run before flag.Parse so
+	// that the global flag set does not reject the subcommand-specific flag.
 	//
+	// Spec: process-lifecycle.md §4.10 PL-028 refinement.
+	if len(os.Args) >= 2 && os.Args[1] == "tmux-start" {
+		subArgs := os.Args[2:]
+		sessionNameFlag := ""
+		projectDirFlag := ""
+		// Minimal flag parsing for tmux-start arguments only.
+		for i := 0; i < len(subArgs); i++ {
+			switch {
+			case subArgs[i] == "--session-name" && i+1 < len(subArgs):
+				i++
+				sessionNameFlag = subArgs[i]
+			case strings.HasPrefix(subArgs[i], "--session-name="):
+				sessionNameFlag = strings.TrimPrefix(subArgs[i], "--session-name=")
+			case subArgs[i] == "--project" && i+1 < len(subArgs):
+				i++
+				projectDirFlag = subArgs[i]
+			case strings.HasPrefix(subArgs[i], "--project="):
+				projectDirFlag = strings.TrimPrefix(subArgs[i], "--project=")
+			}
+		}
+		if projectDirFlag == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot determine working directory: %v\n", err)
+				return 24
+			}
+			projectDirFlag = wd
+		}
+		absProjectDir, err := filepath.Abs(projectDirFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik tmux-start: cannot resolve project path %q: %v\n", projectDirFlag, err)
+			return 24
+		}
+		return tmux.RunTmuxStart(absProjectDir, sessionNameFlag, os.Stdout, os.Stderr, tmux.SyscallExec, nil)
+	}
+
 	// Spec: specs/claude-hook-bridge.md §4.4 CHB-010..017.
 	if len(os.Args) >= 2 && os.Args[1] == "hook-relay" {
 		eventKind := ""

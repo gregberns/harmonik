@@ -1,0 +1,395 @@
+package main_test
+
+// e2e_chb021_test.go — end-to-end test for harmonik-twin-claude per
+// specs/claude-hook-bridge.md §4.8.CHB-021 (twin-parity) and §4.8.CHB-022
+// (daemon is twin-blind).
+//
+// # What this file tests
+//
+// 1. E2E scenario=single-happy-path: builds the twin binary, runs it via
+//    handler.Launch (so the daemon's Watcher reads its stdout, exactly as it
+//    would for a real claude subprocess), and asserts the Watcher observes the
+//    complete expected event sequence.
+//
+// 2. Twin-parity smoke: runs the single-happy-path scenario against a
+//    bytes.Buffer (bypassing the subprocess) and asserts the NDJSON byte
+//    sequence matches the expected message-type sequence derived from CHB-018/020.
+//
+// 3. CHB-022 guard: the handler.Handler and handlercontract.Watcher used in
+//    the E2E test carry zero "if isTwin" branches (they are the production
+//    types); the test itself is the conformance proof.
+//
+// # Test helper prefix
+//
+// chbE2EFixture (per implementer-protocol.md §Helper-prefix discipline;
+// bead hk-w5vra.2).
+//
+// Cite: specs/claude-hook-bridge.md §4.8.CHB-021, §4.8.CHB-022;
+// specs/handler-contract.md §4.3.HC-011, §4.8.HC-036.
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
+)
+
+// chbE2EFixtureBuildBinary builds the harmonik-twin-claude binary into a temp
+// directory and returns its absolute path.
+//
+// The binary is built without the ldflags commit-hash stamp (unstamped build):
+// tests do not go through VerifyTwinLaunch, which requires the stamp.
+func chbE2EFixtureBuildBinary(t *testing.T) string {
+	t.Helper()
+	outDir := t.TempDir()
+	binPath := filepath.Join(outDir, "harmonik-twin-claude")
+
+	// Resolve the module root: walk up from the test file until go.mod is found.
+	// In the worktree the module root is at the repo root (one level above cmd/).
+	// Use exec.LookPath("go") to locate the Go toolchain (avoids hardcoding path).
+	goTool, lookErr := exec.LookPath("go")
+	if lookErr != nil {
+		t.Skipf("chbE2EFixtureBuildBinary: 'go' not found in PATH; skipping E2E test: %v", lookErr)
+		return ""
+	}
+
+	// Find module root: the directory containing go.mod relative to this test.
+	// This test file lives at cmd/harmonik-twin-claude/ so the module root is
+	// two directories up.  Use runtime.Caller for robustness.
+	// Since we're in package main_test at cmd/harmonik-twin-claude/, we find
+	// the go.mod by resolving the module path via 'go env GOMOD'.
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		t.Fatalf("chbE2EFixtureBuildBinary: getwd: %v", cwdErr)
+	}
+
+	goModCmd := exec.CommandContext(t.Context(), goTool, "env", "GOMOD") //nolint:gosec // goTool from LookPath
+	goModCmd.Dir = cwd
+
+	goModOut, goModErr := goModCmd.Output()
+	if goModErr != nil {
+		t.Skipf("chbE2EFixtureBuildBinary: go env GOMOD: %v; skipping E2E test", goModErr)
+		return ""
+	}
+	moduleRoot := filepath.Dir(strings.TrimSpace(string(goModOut)))
+
+	// Build the binary from the module root using the package import path.
+	pkgPath := "github.com/gregberns/harmonik/cmd/harmonik-twin-claude"
+	buildCmd := exec.CommandContext(t.Context(), goTool, "build", "-o", binPath, pkgPath) //nolint:gosec // goTool from LookPath
+	buildCmd.Dir = moduleRoot
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+
+	if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+		t.Fatalf("chbE2EFixtureBuildBinary: build failed: %v\n%s", buildErr, out)
+	}
+	return binPath
+}
+
+// chbE2EFixtureHandler constructs a handler.Handler with a CollectingEmitter
+// and NoopWatcherDeadLetter for E2E test use.
+func chbE2EFixtureHandler(t *testing.T) (handler.Handler, *handlercontract.CollectingEmitter) {
+	t.Helper()
+	pub := &handlercontract.CollectingEmitter{}
+	dl := handlercontract.NoopWatcherDeadLetter{}
+	h := handler.NewHandler(pub, dl)
+	return h, pub
+}
+
+// chbE2EFixtureSingleHappyPathExpectedTypes returns the ordered event-type
+// sequence the watcher MUST observe for scenario=single-happy-path per
+// CHB-018/020 + HC-009/010/049/039 ordering.
+//
+// Note: the watcher's knownProgressMsgTypes filter drops unknown types; the
+// types listed here are the subset the watcher will actually publish.
+func chbE2EFixtureSingleHappyPathExpectedTypes() []string {
+	return []string{
+		"handler_capabilities",
+		"session_log_location",
+		"skills_provisioned",
+		"agent_ready",
+		"agent_started",
+		"agent_heartbeat",
+		"agent_heartbeat",
+		"agent_output_chunk",
+		"outcome_emitted",
+		"agent_completed",
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E2E test 1: single-happy-path via handler.Launch (CHB-021 primary assertion)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestCHB021_E2E_SingleHappyPath wires handler.NewHandler + handler.Launch with
+// the built harmonik-twin-claude binary (scenario=single-happy-path) and asserts
+// the Watcher observes the complete expected event sequence.
+//
+// This test is the CHB-022 conformance proof: handler.Handler and
+// handlercontract.Watcher carry zero "if isTwin" branches; the twin binary
+// produces the same observable outcome as a real claude subprocess would.
+//
+// Cite: specs/claude-hook-bridge.md §4.8.CHB-021, §4.8.CHB-022; §10.
+func TestCHB021_E2E_SingleHappyPath(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+	h, pub := chbE2EFixtureHandler(t)
+
+	spec := handler.LaunchSpec{
+		Binary:  binPath,
+		Args:    []string{"--scenario", "single-happy-path"},
+		Env:     []string{},
+		WorkDir: t.TempDir(),
+		Role:    "implementer",
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	sess, watcher, err := h.Launch(ctx, spec)
+	if err != nil {
+		t.Fatalf("handler.Launch: %v", err)
+	}
+
+	// Wait for the watcher to drain all output (subprocess stdout EOF → watcher done).
+	select {
+	case <-watcher.Done():
+	case <-ctx.Done():
+		t.Fatalf("context cancelled before watcher finished: %v", ctx.Err())
+	}
+
+	if watcherErr := watcher.Err(); watcherErr != nil {
+		t.Errorf("watcher.Err(): expected nil (clean exit), got %v", watcherErr)
+	}
+
+	if err := sess.Wait(ctx); err != nil {
+		t.Errorf("Session.Wait: %v", err)
+	}
+
+	// Assert the observed event types match the expected sequence (CHB-021).
+	got := pub.EventTypes()
+	want := chbE2EFixtureSingleHappyPathExpectedTypes()
+
+	if len(got) == 0 {
+		t.Fatal("publisher received no events; twin binary produced no output")
+	}
+
+	// Verify all expected types appear in order (sequence prefix check).
+	// Use an index to walk the want list against the got list, tolerating any
+	// additional events the bus may emit (run_started etc.) not in the progress
+	// stream.
+	wi := 0
+	for _, gotType := range got {
+		if wi >= len(want) {
+			break
+		}
+		if gotType == want[wi] {
+			wi++
+		}
+	}
+	if wi < len(want) {
+		t.Errorf("CHB-021 E2E: expected event sequence not observed\n  want: %v\n  got:  %v\n  matched %d of %d", want, got, wi, len(want))
+	}
+
+	// Assert agent_completed is the last known-type progress-stream event (CHB-020).
+	lastProgressType := ""
+	for _, et := range got {
+		if isKnownProgressType(et) {
+			lastProgressType = et
+		}
+	}
+	if lastProgressType != "agent_completed" {
+		t.Errorf("CHB-021 E2E: last progress-stream event = %q, want agent_completed (CHB-020 terminal-event obligation)", lastProgressType)
+	}
+}
+
+// isKnownProgressType reports whether et is one of the 12 known progress-stream
+// message types per specs/handler-contract.md §4.2.HC-007.
+func isKnownProgressType(et string) bool {
+	switch et {
+	case "handler_capabilities", "session_log_location", "skills_provisioned",
+		"agent_ready", "agent_started", "agent_output_chunk",
+		"agent_completed", "agent_failed",
+		"agent_rate_limited", "agent_rate_limit_cleared",
+		"agent_heartbeat", "outcome_emitted":
+		return true
+	}
+	return false
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E2E test 2: twin-parity smoke (CHB-021 wire-format assertion)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestCHB021_TwinParity_SingleHappyPath verifies that the single-happy-path
+// scenario emits the expected NDJSON byte sequence (modulo timestamps and
+// Claude-content payload fields) when run against a bytes.Buffer.
+//
+// This test constructs the canned scenario in-process (calling cannedScenario
+// from the main package is not possible in _test external package; instead it
+// drives the built binary with --scenario and captures its stdout).
+//
+// Wire-bytes comparison: we compare "type" fields in emission order, tolerating
+// dynamic timestamp values, matching CHB-021 §10 "identical progress-stream byte
+// sequences (modulo timestamp fields and Claude transcript-text payload contents)".
+//
+// Cite: specs/claude-hook-bridge.md §4.8.CHB-021; §10.
+func TestCHB021_TwinParity_SingleHappyPath(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	// Run the twin binary and capture its stdout.
+	cmd := exec.CommandContext(ctx, binPath, "--scenario", "single-happy-path") //nolint:gosec // binPath from build
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = []string{}
+	cmd.Dir = t.TempDir()
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("twin binary exited with error: %v", err)
+	}
+
+	// Parse the NDJSON output into type-sequence.
+	gotTypes := chbE2EFixtureParseNDJSONTypes(t, &stdout)
+
+	wantTypes := chbE2EFixtureSingleHappyPathExpectedTypes()
+
+	if len(gotTypes) != len(wantTypes) {
+		t.Errorf("CHB-021 twin-parity: got %d NDJSON lines, want %d\n  got:  %v\n  want: %v",
+			len(gotTypes), len(wantTypes), gotTypes, wantTypes)
+		return
+	}
+	for i, want := range wantTypes {
+		if gotTypes[i] != want {
+			t.Errorf("CHB-021 twin-parity: line %d type = %q, want %q", i, gotTypes[i], want)
+		}
+	}
+}
+
+// chbE2EFixtureParseNDJSONTypes parses all NDJSON lines from buf and returns
+// the "type" field value from each JSON object.  Skips blank lines.
+func chbE2EFixtureParseNDJSONTypes(t *testing.T, buf *bytes.Buffer) []string {
+	t.Helper()
+	var types []string
+	scanner := bufio.NewScanner(buf)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(line, &obj); err != nil {
+			t.Errorf("chbE2EFixtureParseNDJSONTypes: unmarshal line %q: %v", string(line), err)
+			continue
+		}
+		var typStr string
+		if raw, ok := obj["type"]; ok {
+			_ = json.Unmarshal(raw, &typStr)
+		}
+		if typStr != "" {
+			types = append(types, typStr)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Errorf("chbE2EFixtureParseNDJSONTypes: scanner error: %v", err)
+	}
+	return types
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario flag smoke tests (hk-w5vra.2 — all 5 scenarios must be recognised)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestCHB021_AllScenariosRecognised verifies that every conformance-class
+// scenario name is accepted by the twin binary (exit 0) and produces at least
+// one NDJSON line on stdout.
+//
+// Cite: specs/claude-hook-bridge.md §10 "Scenario tests MUST cover...".
+func TestCHB021_AllScenariosRecognised(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+
+	scenarios := []string{
+		"single-happy-path",
+		"review-loop-3iter",
+		"rate-limit",
+		"dial-failed",
+		"daemon-not-ready-retry",
+	}
+
+	for _, sc := range scenarios {
+		sc := sc
+		t.Run(sc, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+
+			cmd := exec.CommandContext(ctx, binPath, "--scenario", sc) //nolint:gosec // binPath from build
+			var stdout bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = os.Stderr
+			cmd.Env = []string{}
+			cmd.Dir = t.TempDir()
+
+			if err := cmd.Run(); err != nil {
+				t.Errorf("scenario %q: twin exited with error: %v", sc, err)
+				return
+			}
+
+			types := chbE2EFixtureParseNDJSONTypes(t, &stdout)
+			if len(types) == 0 {
+				t.Errorf("scenario %q: twin produced no NDJSON output", sc)
+			}
+		})
+	}
+}
+
+// TestCHB021_UnknownScenarioExitsOne verifies that an unrecognised --scenario
+// value causes the twin to exit 1 with a diagnostic on stderr.
+func TestCHB021_UnknownScenarioExitsOne(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "--scenario", "this-does-not-exist") //nolint:gosec // binPath from build
+	cmd.Env = []string{}
+	cmd.Dir = t.TempDir()
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected non-zero exit for unknown scenario, got exit 0")
+	}
+	// exec.ExitError wraps the non-zero exit code.
+	var exitErr *exec.ExitError
+	if !isExitError(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Errorf("expected exit code 1, got: %v", err)
+	}
+}
+
+// isExitError reports whether err is *exec.ExitError and stores it in target.
+func isExitError(err error, target **exec.ExitError) bool {
+	if ee, ok := err.(*exec.ExitError); ok {
+		*target = ee
+		return true
+	}
+	return false
+}

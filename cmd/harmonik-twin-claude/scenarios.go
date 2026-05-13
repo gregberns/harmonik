@@ -1,0 +1,613 @@
+// Canned scenarios for harmonik-twin-claude (hk-w5vra.2).
+//
+// Each scenario is a fixed ScriptFile embedded in the binary, covering the
+// §10 Conformance scenario set from specs/claude-hook-bridge.md CHB-021.
+//
+// # Scenario names
+//
+//   - single-happy-path       — full happy-path lifecycle (handler_capabilities →
+//     session_log_location → skills_provisioned → agent_ready → optional
+//     heartbeats → outcome_emitted{WORK_COMPLETE} → agent_completed).
+//   - review-loop-3iter       — 3-iteration review-loop: implementer-initial,
+//     reviewer-1, implementer-resume, reviewer-2, implementer-resume,
+//     reviewer-3 with claude_session_id stability across implementer-resume
+//     launches and freshness across reviewer launches (CHB-008/009).
+//   - rate-limit              — agent_rate_limited (non-terminal) emitted
+//     mid-run via StopFailure mapping; then agent_rate_limit_cleared and
+//     resume (CHB-013 rate_limit mapping).
+//   - dial-failed             — twin emits agent_failed immediately, simulating
+//     the handler-side terminal-event emission when the relay can't dial (CHB
+//     §8 bridge_dial_failed sub-reason).
+//   - daemon-not-ready-retry  — twin emits a brief delay then the full happy
+//     path, simulating the relay-side retry path for daemon_not_ready
+//     (CHB-016).
+//
+// # Mechanism tagging
+//
+// All scenarios are mechanism-tagged (HC-037): no cognition, deterministic
+// per-scenario output per CHB-021.
+//
+// Cite: specs/claude-hook-bridge.md §4.8.CHB-021, §10;
+// specs/handler-contract.md §4.8.HC-036, §4.8.HC-037.
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+// cannedScenario returns the ScriptFile for the named scenario per CHB-021 §10.
+//
+// Returns an error if name is not a recognised scenario name.
+func cannedScenario(name string) (*ScriptFile, error) {
+	switch name {
+	case "single-happy-path":
+		return scenarioSingleHappyPath(), nil
+	case "review-loop-3iter":
+		return scenarioReviewLoop3Iter(), nil
+	case "rate-limit":
+		return scenarioRateLimit(), nil
+	case "dial-failed":
+		return scenarioDialFailed(), nil
+	case "daemon-not-ready-retry":
+		return scenarioDaemonNotReadyRetry(), nil
+	default:
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry", name)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: single-happy-path (CHB-021 §10 class 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioSingleHappyPath returns the full happy-path claude-code session
+// lifecycle per CHB-018 pre-exec ordering + CHB-020 terminal-event emission:
+//
+//  1. handler_capabilities (CHB-018 step 1, HC-009)
+//  2. session_log_location  (CHB-018 step 2, HC-010)
+//  3. skills_provisioned    (CHB-018 step 3, HC-049)
+//  4. agent_ready           (CHB-018 step 4, HC-039)
+//  5. agent_started         (§6.4)
+//  6. agent_heartbeat × 2   (CHB-019 timer-driven heartbeat, HC-026a)
+//  7. agent_output_chunk    (HC-007)
+//  8. outcome_emitted       (CHB-013 Stop→WORK_COMPLETE, HC-008)
+//  9. agent_completed       (CHB-020 Wait-return, HC-024)
+//
+// Cite: specs/claude-hook-bridge.md §4.8.CHB-021, §10 "single workflow-mode run".
+func scenarioSingleHappyPath() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-chb021-shp-001"
+		sessID    = "sess-chb021-shp-001"
+		nodeID    = "node-chb021-shp-001"
+		agentType = "claude-twin-claude"
+	)
+	logPath := "/tmp/harmonik/sessions/" + sessID + ".jsonl"
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities — first message on stream (HC-009).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-shp-001",
+				},
+			},
+			// 2. session_log_location (HC-010).
+			{
+				Type: "session_log_location",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"log_path":   logPath,
+					"log_format": "ndjson",
+				},
+			},
+			// 3. skills_provisioned (HC-049).
+			{
+				Type: "skills_provisioned",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"skills":     []any{},
+				},
+			},
+			// 4. agent_ready (HC-039).
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted", "heartbeat"},
+				},
+			},
+			// 5. agent_started (§6.4).
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// 6a. agent_heartbeat × 1 (CHB-019 timer-driven, HC-026a).
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 10,
+			},
+			// 6b. agent_heartbeat × 2.
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "tool_call",
+				},
+				RelativeTimestampMs: 10,
+			},
+			// 7. agent_output_chunk (HC-007, event-model §8.3.3).
+			{
+				Type: "agent_output_chunk",
+				Payload: map[string]any{
+					"run_id":        runID,
+					"session_id":    sessID,
+					"chunk_index":   0,
+					"bytes_emitted": 512,
+				},
+				RelativeTimestampMs: 5,
+			},
+			// 8. outcome_emitted — Stop→WORK_COMPLETE (CHB-013, HC-008).
+			{
+				Type: "outcome_emitted",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"node_id":        nodeID,
+					"outcome_status": "WORK_COMPLETE",
+				},
+			},
+			// 9. agent_completed — Wait-return (CHB-020, HC-024).
+			{
+				Type: "agent_completed",
+				Payload: map[string]any{
+					"run_id":      runID,
+					"session_id":  sessID,
+					"ended_at":    now.Add(50 * time.Millisecond).Format(time.RFC3339Nano),
+					"exit_code":   0,
+					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: review-loop-3iter (CHB-021 §10 class 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioReviewLoop3Iter returns the 3-iteration review-loop sequence per
+// CHB-021 §10 "3-iteration review-loop run". The full sequence models:
+//
+//   - iteration 1: implementer-initial + reviewer-1
+//   - iteration 2: implementer-resume (stable claude_session_id) + reviewer-2 (fresh)
+//   - iteration 3: implementer-resume (stable claude_session_id) + reviewer-3 (fresh)
+//
+// claude_session_id is stable across implementer-resume launches (CHB-008) and
+// fresh across reviewer launches (CHB-009).
+//
+// Cite: specs/claude-hook-bridge.md §4.3.CHB-008, §4.3.CHB-009, §10.
+func scenarioReviewLoop3Iter() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-chb021-rl3-001"
+		nodeID    = "node-chb021-rl3-001"
+		agentType = "claude-twin-claude"
+
+		// Implementer claude_session_id is stable across resume phases (CHB-008).
+		implClaudeSessionID = "claude-impl-rl3-001"
+
+		// Reviewer claude_session_ids are minted fresh per iteration (CHB-009).
+		rev1ClaudeSessionID = "claude-rev-rl3-001"
+		rev2ClaudeSessionID = "claude-rev-rl3-002"
+		rev3ClaudeSessionID = "claude-rev-rl3-003"
+	)
+
+	msgs := []ScriptMessage{}
+
+	// Helper: emit a minimal happy-path session block for one phase.
+	addPhase := func(sessID, claudeSessID, phase, outcomeStatus string, iteration int) {
+		_ = phase     // informational only; not emitted to stream
+		_ = iteration // informational only; not emitted to stream
+		msgs = append(msgs,
+			ScriptMessage{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           claudeSessID,
+				},
+			},
+			ScriptMessage{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			ScriptMessage{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			ScriptMessage{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 5,
+			},
+			ScriptMessage{
+				Type: "outcome_emitted",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"node_id":        nodeID,
+					"outcome_status": outcomeStatus,
+				},
+			},
+			ScriptMessage{
+				Type: "agent_completed",
+				Payload: map[string]any{
+					"run_id":      runID,
+					"session_id":  sessID,
+					"ended_at":    now.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+					"exit_code":   0,
+					"outcome_ref": runID + "/" + sessID + "/outcome",
+				},
+			},
+		)
+	}
+
+	// Iteration 1: implementer-initial + reviewer-1.
+	addPhase("sess-impl-rl3-initial", implClaudeSessionID, "implementer-initial", "WORK_COMPLETE", 1)
+	addPhase("sess-rev-rl3-001", rev1ClaudeSessionID, "reviewer", "REVIEWER_VERDICT", 1)
+
+	// Iteration 2: implementer-resume (same claude_session_id) + reviewer-2 (fresh).
+	addPhase("sess-impl-rl3-resume2", implClaudeSessionID, "implementer-resume", "WORK_COMPLETE", 2)
+	addPhase("sess-rev-rl3-002", rev2ClaudeSessionID, "reviewer", "REVIEWER_VERDICT", 2)
+
+	// Iteration 3: implementer-resume (same claude_session_id) + reviewer-3 (fresh).
+	addPhase("sess-impl-rl3-resume3", implClaudeSessionID, "implementer-resume", "WORK_COMPLETE", 3)
+	addPhase("sess-rev-rl3-003", rev3ClaudeSessionID, "reviewer", "REVIEWER_VERDICT", 3)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages:      msgs,
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: rate-limit (CHB-021 §10 class 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioRateLimit returns a script that emits the rate-limit lifecycle per
+// CHB-013: StopFailure{error_type=rate_limit} → agent_rate_limited (non-terminal)
+// → heartbeats(waiting_input) → agent_rate_limit_cleared → resume → outcome.
+//
+// Cite: specs/claude-hook-bridge.md §4.5.CHB-013 (rate_limit mapping),
+// specs/handler-contract.md §4.6.HC-025.
+func scenarioRateLimit() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID      = "run-chb021-rl-001"
+		sessID     = "sess-chb021-rl-001"
+		nodeID     = "node-chb021-rl-001"
+		retryAfter = 60
+	)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// Preamble: handler_capabilities + agent_ready + agent_started.
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-rl-001",
+				},
+			},
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted", "heartbeat"},
+				},
+			},
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": "claude-twin-claude",
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// Initial reasoning heartbeat before rate-limit.
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 5,
+			},
+			// Rate-limit onset (CHB-013: StopFailure{rate_limit} → agent_rate_limited).
+			// Non-terminal per event-model §8.3.
+			{
+				Type: "agent_rate_limited",
+				Payload: map[string]any{
+					"run_id":              runID,
+					"session_id":          sessID,
+					"rate_limit_source":   "anthropic",
+					"retry_after_seconds": retryAfter,
+					"changed_at":          now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+				},
+				RelativeTimestampMs: 5,
+			},
+			// Heartbeats during rate-limited window (HC-026a: waiting_input phase).
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "waiting_input",
+				},
+				RelativeTimestampMs: 10,
+			},
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "waiting_input",
+				},
+				RelativeTimestampMs: 10,
+			},
+			// Rate-limit cleared.
+			{
+				Type: "agent_rate_limit_cleared",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"changed_at": now.Add(200 * time.Millisecond).Format(time.RFC3339Nano),
+				},
+				RelativeTimestampMs: 5,
+			},
+			// Resume: reasoning heartbeat then outcome.
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 5,
+			},
+			// outcome_emitted after rate-limit window.
+			{
+				Type: "outcome_emitted",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"node_id":        nodeID,
+					"outcome_status": "WORK_COMPLETE",
+				},
+			},
+			// agent_completed.
+			{
+				Type: "agent_completed",
+				Payload: map[string]any{
+					"run_id":      runID,
+					"session_id":  sessID,
+					"ended_at":    now.Add(250 * time.Millisecond).Format(time.RFC3339Nano),
+					"exit_code":   0,
+					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: dial-failed (CHB-021 §10 class 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioDialFailed returns a script that emits agent_failed immediately,
+// simulating handler-side terminal-event emission when the relay can't dial
+// the daemon socket (CHB §8 bridge_dial_failed sub-reason).
+//
+// In a real bridge failure the handler-process emits agent_failed when it
+// detects the relay exited non-zero. This twin synthesizes that emission
+// directly.
+//
+// Cite: specs/claude-hook-bridge.md §8 (bridge_dial_failed), §10.
+func scenarioDialFailed() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID  = "run-chb021-df-001"
+		sessID = "sess-chb021-df-001"
+		nodeID = "node-chb021-df-001"
+	)
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// Preamble through agent_ready (handler still connected).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-df-001",
+				},
+			},
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": "claude-twin-claude",
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// Handler detects relay exited 1 (bridge_dial_failed) and emits
+			// agent_failed as the terminal event (CHB-020 + CHB §8).
+			{
+				Type: "agent_failed",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"ended_at":       now.Add(10 * time.Millisecond).Format(time.RFC3339Nano),
+					"error_category": "transient",
+					"reason":         "bridge_dial_failed",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: daemon-not-ready-retry (CHB-021 §10 class 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioDaemonNotReadyRetry returns a script that models the relay-side retry
+// path for daemon_not_ready (CHB-016): the relay pauses (via heartbeats in the
+// twin's scripted mode) and then proceeds to the full happy path once the
+// daemon becomes ready.
+//
+// In a real bridge the relay retries the socket dial; the twin simulates this
+// by emitting the preamble messages only after a scripted delay.
+//
+// Cite: specs/claude-hook-bridge.md §4.6.CHB-016, §10.
+func scenarioDaemonNotReadyRetry() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-chb021-dnr-001"
+		sessID    = "sess-chb021-dnr-001"
+		nodeID    = "node-chb021-dnr-001"
+		agentType = "claude-twin-claude"
+	)
+	logPath := "/tmp/harmonik/sessions/" + sessID + ".jsonl"
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// Simulated retry window: the twin waits 50 ms before emitting
+			// handler_capabilities (the relay would have been retrying the daemon
+			// socket dial during this window per CHB-016).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-dnr-001",
+				},
+				RelativeTimestampMs: 50, // simulated retry window
+			},
+			{
+				Type: "session_log_location",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"log_path":   logPath,
+					"log_format": "ndjson",
+				},
+			},
+			{
+				Type: "skills_provisioned",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"skills":     []any{},
+				},
+			},
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 5,
+			},
+			{
+				Type: "outcome_emitted",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"node_id":        nodeID,
+					"outcome_status": "WORK_COMPLETE",
+				},
+			},
+			{
+				Type: "agent_completed",
+				Payload: map[string]any{
+					"run_id":      runID,
+					"session_id":  sessID,
+					"ended_at":    now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+					"exit_code":   0,
+					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}

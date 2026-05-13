@@ -8,10 +8,10 @@ requirement-prefix: PL
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.2
+version: 0.4.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-12
+last-updated: 2026-05-13
 depends-on:
   - architecture
   - execution-model
@@ -519,6 +519,42 @@ The daemon MUST version-pin `ntm` per the external-inputs protocol (parallel pat
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### PL-021b — Direct-tmux substrate (MVH alternative to ntm adapter)
+
+For the MVH the daemon MUST consume a direct-tmux substrate in place of the ntm adapter described in PL-021. The direct-tmux substrate is implemented by package `internal/lifecycle/tmux` and exposes the following obligations:
+
+1. **Pane creation.** On every handler-subprocess spawn whose `agent_type` requires interactive-pty hosting, the daemon MUST create the subprocess via `tmux new-window -d -t <session>: -n <window-name> -c <cwd> -e KEY=VALUE [...] -- <binary> <argv...>`. The daemon MUST NOT spawn such subprocesses via `exec.CommandContext` directly. Subprocesses whose adapter does not request substrate hosting (e.g. unit-test twin invocations outside the daemon) remain on the direct-exec path; this carve-out preserves twin parity per [claude-hook-bridge.md §4.8 CHB-022] because adapter-registry dispatch — not binary-name branching — selects the path.
+2. **Tmux availability check.** The daemon MUST probe tmux at PL-005 step 4 (Cat 0 pre-check) by invoking `tmux -V` and asserting major version ≥ 3.0. On failure the daemon MUST exit with ON §8 code 22 (`tmux-unavailable`, retitled from the v0.4.x ntm-unavailable). This obligation supersedes PL-021a's `ntm`-targeted absence-detection for the duration of the MVH; PL-021a remains in force as the long-term contract once an ntm adapter ships.
+3. **Session resolution.** Before dispatching the first handler subprocess the daemon MUST resolve the tmux session it will host windows in:
+   - If the environment variable `TMUX` is set at daemon startup, the daemon MUST use the session named in `$TMUX` (the operator's existing session). Windows the daemon creates in this session MUST carry a sentinel prefix `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of the project hash. The daemon does NOT create or kill the operator's session.
+   - If `TMUX` is unset, the daemon MUST refuse to spawn any handler subprocess and MUST surface a directive instructing the operator to run `hk tmux-start` before retrying. The daemon MUST exit with a non-zero status surfaced via ON §8 code 24 (`tmux-session-unavailable`, declared PL-INTERIM pending ON absorption). The daemon MUST NOT silently create its own session when `TMUX` is unset; the operator must opt in via the start subcommand.
+4. **Window naming.** Window names MUST be a deterministic function of `(bead_id, phase, iteration_count, project_hash, owns_session)` per [workspace-model.md §4.1 WM-002a]. The function MUST be replay-stable: replaying a recorded run reproduces the exact window name. In the `owns_session=true` mode the name is `<bead_id>` (workflow:single) or `<bead_id>/i<n>` / `<bead_id>/r<n>` (workflow:review-loop implementer / reviewer). In the `owns_session=false` ($TMUX-reuse) mode the same name is prefixed with `hk-<hash6>-`.
+5. **No pane-output consumption.** The daemon MUST NOT read pane stdout/stderr through `tmux pipe-pane` or any other channel. All bridge-protocol messages ([claude-hook-bridge.md §4.7 CHB-018] pre-exec messages, [claude-hook-bridge.md §4.7 CHB-019] heartbeats, [claude-hook-bridge.md §4.7 CHB-020] terminal events, [claude-hook-bridge.md §4.10 CHB-025] outcome dedup) flow through the daemon's Unix socket per PL-003a and the `harmonik hook-relay` subcommand per [claude-hook-bridge.md §4.4 CHB-010]. The pty exists exclusively for operator ergonomics (interactive attach).
+6. **Substrate seam.** The handler-package `LaunchSpec` carries an optional substrate handle. When non-nil, `Handler.Launch` MUST route subprocess creation through the substrate. The substrate handle is constructed at the daemon composition root and threaded via the adapter registry; daemon code MUST NOT branch on `LaunchSpec.Binary` to decide substrate engagement ([claude-hook-bridge.md §4.8 CHB-022] twin-blindness).
+7. **Wait/kill discipline.** The substrate `Wait` operation MUST satisfy the PL-014 single-`cmd.Wait()` invariant in spirit — for substrate-hosted sessions the daemon has no `*exec.Cmd` to wait on; the substrate observes pane death by polling `tmux list-panes` at a 100ms cadence (matching PL-006 sweep cadence) and reports exit semantics via the Outcome type. The substrate `Kill` operation MUST issue `tmux kill-window`; SIGKILL escalation is delegated to tmux itself.
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+
+#### PL-021c — Pane orphan recovery within PL-006
+
+The orphan sweep of PL-006 MUST be extended to cover orphan tmux **windows** in addition to orphan tmux **sessions**. The extension is required because the PL-021b $TMUX-reuse mode places harmonik-created windows inside an operator-owned session whose name does NOT match the `harmonik-<project_hash>-` prefix that PL-006 enumerates.
+
+The extended sweep MUST:
+
+1. Enumerate all live tmux sessions via `tmux list-sessions -F '#{session_name}'`.
+2. For each session, enumerate its windows via `tmux list-windows -t <session> -F '#{window_name}'`.
+3. For every window whose name begins with `hk-<hash6>-` where `<hash6>` is the first 6 hex chars of *this* daemon's project hash, the daemon MUST issue `tmux kill-window -t <session>:<window>`.
+4. After issuing kill-window commands, the daemon MUST poll at 100 ms cadence up to a 2-second ceiling for the windows to disappear; after the ceiling, the daemon MUST proceed regardless.
+5. The `daemon_orphan_sweep_completed` event payload MUST gain a new field `tmux_windows_killed: <integer ≥ 0>`.
+
+The session-level sweep of PL-006 is NOT modified.
+
+Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_windows_killed` field addition.
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+
 #### PL-022 — ntm adapter MUST NOT consume workflow-semantic features
 
 The ntm adapter MUST NOT import or consume: (a) ntm's Pipeline System (harmonik's workflow semantics live in DOT graphs, not ntm pipelines), (b) ntm's SwarmPlan format (harmonik uses DOT per locked decision #7, not SwarmPlan), (c) ntm's checkpoint/recovery (tmux-session-resume is NOT equivalent to harmonik's git-checkpoint-based workflow-state recovery; the two solve different problems), or (d) ntm's file-reservation / Agent Mail features (harmonik uses Gas Town worktree+merge per locked decision #7; file reservations are explicitly rejected).
@@ -599,10 +635,35 @@ The daemon MUST support the following entry points:
 - **`harmonik pause`** — operator command; semantics owned by [operator-nfr.md §4.3 ON-008]. PL-028 obligates only command-dispatch and socket routing.
 - **`harmonik stop [--graceful|--immediate]`** — shutdown command; `--graceful` is the default. Behavior per PL-011 / PL-012.
 - **`harmonik upgrade`** — upgrade command; daemon-internal mechanics per PL-027; operator-facing semantics per [operator-nfr.md §4.6 ON-020].
+- **`hk tmux-start`** — operator-facing tmux session bootstrap. Detailed contract in PL-028 refinement and PL-028b below.
 
 Agent-facing commands (`harmonik claim-next`, `harmonik emit-outcome`, and Beads-CLI-proxy methods) route over the same socket per PL-015; their concrete method set is tracked as OQ-PL-005. Command-dispatch is deterministic CLI; semantic behavior of `pause`, `stop`, and `upgrade` is owned by [operator-nfr.md §4.3, §4.6, §4.7]. All multi-daemon coordination flags (machine-level listing, ceiling config) are delegated to [operator-nfr.md §4.10 ON-041].
 
 Tags: mechanism
+
+#### PL-028 refinement — `hk tmux-start` subcommand replaces `harmonik runner` tmux duties for MVH
+
+The `harmonik runner` four-step lifecycle of PL-028 obligates the daemon (or runner wrapper) to open a tmux session in step 3. For the MVH this obligation is satisfied by a distinct subcommand `hk tmux-start`:
+
+1. **Trigger conditions.** `hk tmux-start` is invoked by the operator explicitly when starting work from a non-tmux shell. MUST NOT be invoked automatically by the daemon. When the operator is already inside a tmux session (`$TMUX` set), `hk tmux-start` MUST refuse with a friendly message (exit code 0) and SHOULD print the session name they are already in.
+2. **Steps.** `hk tmux-start` MUST execute:
+   - **i.** Verify `$TMUX` is unset. If set, exit 0 with the directive.
+   - **ii.** Compute the session name `harmonik-<project_hash>-default` per PL-006a provenance. `--session-name` flag MAY override; override MUST still carry the `harmonik-<project_hash>-` prefix.
+   - **iii.** Invoke `tmux new-session -d -s <session-name> -c <project_dir>`. Idempotent if exists.
+   - **iv.** `execve` `tmux attach-session -t <session-name>`, replacing the `hk tmux-start` process.
+3. **`hk` started inside an `hk tmux-start`-created session.** When the operator runs `hk` from inside the session created by step 2.iv, `$TMUX` is set. `hk` therefore takes the PL-021b $TMUX-reuse path, creates handler windows in that same session.
+4. **Relationship to PL-028 `harmonik runner`.** `harmonik runner` step-3 obligation is satisfied for the MVH by `hk tmux-start`; `harmonik runner` MAY be implemented as a convenience or deferred entirely until post-MVH.
+5. **Exit codes.** 22 if `tmux -V` probe fails; 24 (PL-INTERIM) for any other unrecoverable failure during steps i–iv. Code 0 for the "$TMUX already set" no-op path.
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+
+#### PL-028b — `hk` daemon refusal when `$TMUX` is unset
+
+When `$TMUX` is unset at `harmonik daemon` startup, the daemon MUST refuse to enter the ready state and MUST exit with code 24 (`tmux-session-unavailable`, PL-INTERIM) after printing a directive that names `hk tmux-start` as the operator action. The refusal MUST occur during PL-005 step 5 (post Cat 0 pre-check, pre socket-bind step 3a), so no pidfile, socket, or event-bus state is established by a daemon that cannot dispatch.
+
+Tags: mechanism
+Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
 
 ## 5. Invariants
 
@@ -912,6 +973,7 @@ Default-if-unresolved: Probe at startup only; mid-session drift detected by reco
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-13 | 0.4.3 | bridge-integration | **Direct-tmux substrate + tmux-start amendments (hk-gql20.1).** Additive amendments for the direct-tmux substrate at MVH. **PL-021b** (new, §4.7) — direct-tmux substrate obligations: pane creation via `tmux new-window`, tmux availability probe at PL-005 step 4 with ON §8 code 22 on failure, session resolution distinguishing `$TMUX`-set ($TMUX-reuse with `hk-<hash6>-` sentinel) vs unset (refuse with code 24), deterministic window naming per WM-002a, no pane-output consumption (bridge wire is the Unix socket per PL-003a / CHB-010), substrate seam threaded via adapter registry preserving CHB-022 twin-blindness, wait/kill via `tmux list-panes` polling / `tmux kill-window`. **PL-021c** (new, §4.7) — window-level orphan sweep keyed on `hk-<hash6>-` prefix, 100ms/2s polling, `tmux_windows_killed` payload field. **PL-028 refinement** (§4.10) — `hk tmux-start` subcommand: $TMUX guard, ensure-session, syscall.Exec into attach, exit codes 0/22/24. **PL-028b** (new, §4.10) — daemon refusal when `$TMUX` unset (exit 24, no pidfile/socket bind). Cross-spec coordination: ON §8 to absorb code 24 (`tmux-session-unavailable`, declared PL-INTERIM); EV §8.7 `daemon_orphan_sweep_completed` payload to add `tmux_windows_killed`; WM-002a adds deterministic window-naming clause; HC-054/055/056/057 add Attach pty contract, claude flag allow-list, agent_ready timeout, heartbeat ownership. No existing PL IDs renumbered. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.2 | foundation-author | Add PL-017a in §4.5 (gap-filler after PL-017, avoiding collision with existing PL-018 "Daemon is a deterministic Go binary" in §4.6) clarifying that hook-bridge relay subprocesses spawned by an agent subprocess are grandchildren of the daemon and not subject to PL-014, PL-014a, or PL-006. Companion to [claude-hook-bridge.md] new spec. No prior IDs renumbered. Status remains `reviewed`. |
 | 2026-04-25 | 0.4.1 | foundation-author | Cross-spec coordination patch wave landing the 9 items filed against PL by the four R2 integrations of 2026-04-24 (ON, RC, BI, EV). Status remains `reviewed`; all PL IDs FROZEN; no renumbering. **(1) PL-INTERIM markers dropped on codes 22 (`ntm-unavailable`) and 23 (`orchestrator-agent-unavailable`)** — ON v0.4.0 absorbed both into [operator-nfr.md §8]; PL-008a header retitled "Exit-code consumption from ON §8" (lost the "(defer with PL-INTERIM additions)" suffix), prose rewritten to consume codes 22/23 directly with a one-sentence historical note; PL-021a / PL-028 / §8 / §10.2 conformance prose strip every "(interim, …)" parenthetical. PL-008a also adds code 14 (`upgrade-hash-mismatch`) for the new PL-005 step 8a marker-mismatch path. **(2) `.harmonik/daemon.upgrading` marker promoted from informative to normative** per ON-020a — PL-027(iv) rewritten to MUST-write the marker before `execve` via the temp+rename+fsync(parent_dir) discipline of [workspace-model.md §4.7 WM-026], file content owned by ON-020a, removed on clean transition to `ready`. **(3) `daemon_instance_id` (UUIDv7) minted at PL-005 step 0** — extended step 0 to mint a fresh UUIDv7 per process and write it to `.harmonik/daemon.instance-id` via WM-026 atomic discipline; reuse across exec-replacement is FORBIDDEN. **(4) PL-002b pidfile gains line 3 = `daemon_instance_id`** — three-line pidfile (PID / PGID / UUIDv7) replaces the v0.4.0 two-line format; readers tolerate one-line (v0.2.x) and two-line (v0.4.0) backwards-compat formats; PL-INV-001 sensor extended to assert line-3 equality with the in-memory id. **(5) PL-009 / PL-011a payloads gain `_at_ns_since_boot` monotonic-companion fields** per ON-033 — `daemon_ready` payload becomes `{ready_at, ready_at_ns_since_boot, investigator_run_ids[]}` and `daemon_shutdown` payload becomes `{shutdown_at, shutdown_at_ns_since_boot, mode}`; sourced from `CLOCK_MONOTONIC` on Linux / `mach_absolute_time()` on darwin; §6.2 Co-owned event payloads listing updated to match. **(6) New PL-005 step 8a inserted** — reads `.harmonik/daemon.upgrading` and `.harmonik/daemon.state` markers between step 8 (reconciliation dispatch) and step 9 (ready transition); upgrading marker triggers `expected_commit_hash` integrity gate (mismatch fails with ON §8 code 14) and skips redundant Cat 0 pre-check repeats; state marker initializes the daemon into the persisted suffix-state (`paused` / `pausing` / `upgrade-prepare` / `stopped`) rather than `ready`; corrupt markers treated as absent with structured-log warning. Step 9 amended to defer `daemon_ready` emission when step 8a selects a non-`ready` target. (Judgment call: chose 8a as the placement rather than 0a because the markers gate the transition AT step 9, not the pre-classification work; both ON-020a and ON-030a cite "PL-005 step 0" but the actual semantic gate is at step 9, so reads land late enough to not perturb startup determinism; reads remain io-determinism=deterministic.) **(7) PL-003a JSON-RPC method inventory adds `get-agent-count`** — daemon-internal / introspection method returning `{count: <integer ≥ 0>}` reporting tracked live handler subprocesses; consumed by [operator-nfr.md §4.10 ON-041] cross-daemon machine-ceiling drift-reconciliation surface. **(8) PL-006 orphan-sweep enumeration extended to `br` (Beads CLI) subprocesses** per OQ-BI-010 — `br` subprocesses bear the same PL-006a provenance marker (env var + PGID) and reap via the same SIGTERM-then-SIGKILL discipline as handler subprocesses; the subprocess-cleanup bullet split into (i) handlers + (ii) `br`; `daemon_orphan_sweep_completed` event payload gains `br_subprocesses_killed` count field. **(9) PL-006 orphan-sweep enumerates `.harmonik/reconciliation-locks/*.lock` and removes stale entries** per RC-002a / RC-002b — new bullet under PL-006: probe each lock with `flock(LOCK_EX|LOCK_NB)`, on success + dead creator-PID per `kill(pid, 0)` remove via `unlink` + `fsync(parent_directory_fd)`; on `EWOULDBLOCK` leave in place (the probe is the serialization point against concurrent acquisition); the verdict-executed-trailer discriminator question is RC's per RC-002b — the sweep removes the lock either way; `daemon_orphan_sweep_completed` payload gains `reconciliation_locks_removed` count field. **PL-004 file surface enumeration** updated to include `.harmonik/daemon.instance-id`, `.harmonik/daemon.upgrading`, `.harmonik/daemon.state` (read-only by PL — content owned by ON-030a), and the `.harmonik/reconciliation-locks/` directory (RC-002a-written, PL-006-swept). **§4.a envelope** (e) State owned + (h) Boundary classification updated to add `daemon_instance_id`, the upgrading marker, `mint_daemon_instance_id` (io-determinism=non-deterministic, idempotency=non-idempotent), and `read_startup_markers` (idempotent) operations. **§9.1 Depends-on** adds [reconciliation/spec.md §4.1 RC-002a, RC-002b] for the lock-sweep cite. **§9.3 Co-references** add [operator-nfr.md §4.6 ON-020a], [operator-nfr.md §4.7 ON-030a], [operator-nfr.md §4.8 ON-033] anchor entries. **§10.2 conformance test prose** for PL-005/PL-006 extended to seed `br` subprocesses + `.harmonik/reconciliation-locks/*.lock` files (with and without the verdict-executed-trailer for the RC-002b discriminator) and assert the new payload count fields and the `EWOULDBLOCK`-protected non-removal of locks under active acquisition; PL-008a test asserts code 14 in the consumed-codes list. No requirement IDs were renumbered, no IDs retired, no OQs added (the 9 items resolve cross-spec coordination requests filed in the v0.4.0 row; remaining OQs from v0.4.0 unchanged). Cross-spec coordination requests filed by this revision: EV must add `ready_at_ns_since_boot` to §8.7.2 `daemon_ready` payload schema and `shutdown_at_ns_since_boot` to §8.7.3 `daemon_shutdown` payload schema (tracked in EV's v0.3.3 patch wave per SESSION_HANDOFF); ON's next revision should declare `daemon_instance_id` propagation to `harmonik list` output columns per ON-041 and to `daemon.state` marker content per ON-030a so the marker correlates with the live daemon instance. PL IDs remain FROZEN. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft migrated from [docs/foundation/components.md §8] per spec-template 1.1. Incorporates round-2 amendments: §8.2 step 1a orphan sweep, §8.3 upgrade-contract obligation, §8.5 silent-hang obligation, §8.6 daemon-vs-orchestrator-agent distinction, §8.8 crash semantics. |

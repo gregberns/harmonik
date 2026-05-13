@@ -49,13 +49,16 @@ var bridgeEventKinds = []string{
 }
 
 // bridgeMatcherGroupFor returns the single bridge matcher-group for eventKind.
-func bridgeMatcherGroupFor(eventKind string) bridgeMatcherGroup {
+// daemonBinaryPath MUST be the absolute path to the running harmonik binary
+// (resolved at daemon start via os.Executable) so that the hook command can
+// be found regardless of the tmux window's $PATH (hk-kqdpf.6 fix).
+func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGroup {
 	return bridgeMatcherGroup{
 		Matcher: "",
 		Hooks: []bridgeHookEntry{
 			{
 				Type:    "command",
-				Command: "harmonik",
+				Command: daemonBinaryPath,
 				Args:    []string{"hook-relay", eventKind},
 				Timeout: 30,
 			},
@@ -104,6 +107,11 @@ func bridgeMatcherGroupFor(eventKind string) bridgeMatcherGroup {
 // # Parameters
 //
 //   - workspacePath: absolute path to the worktree root (${workspace_path}).
+//   - daemonBinaryPath: absolute path to the running harmonik binary, resolved
+//     via os.Executable() at daemon startup. Used as the hook "command" field so
+//     the relay subprocess can be found regardless of the tmux window's $PATH
+//     (hk-kqdpf.6). MUST be non-empty; callers MUST fail fast at daemon start if
+//     os.Executable() errors.
 //   - sessionLogPath: absolute path to the session-log file for warning lines
 //     (used only on malformed-JSON overwrite per CHB-004). May be "" to skip
 //     the warning write (tests or callers that have not yet created the log).
@@ -113,7 +121,7 @@ func bridgeMatcherGroupFor(eventKind string) bridgeMatcherGroup {
 //   - claude-hook-bridge.md §4.1 CHB-001..005 — hook entries, merge, gitignore.
 //   - workspace-model.md §4.7 WM-026 — atomic-write discipline.
 //   - workspace-model.md §4.3 WM-013e — gitignore hygiene (worktree scope).
-func MaterializeClaudeSettings(workspacePath, sessionLogPath string) error {
+func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath string) error {
 	settingsPath := ClaudeSettingsPath(workspacePath)
 
 	// Ensure the .claude/ parent directory exists.
@@ -137,7 +145,7 @@ func MaterializeClaudeSettings(workspacePath, sessionLogPath string) error {
 		var parsed map[string]interface{}
 		if jsonErr := json.Unmarshal(existing, &parsed); jsonErr != nil {
 			// Malformed JSON — overwrite path per CHB-004.
-			merged = buildBridgeOnlySettings()
+			merged = buildBridgeOnlySettings(daemonBinaryPath)
 			overwrote = true
 			if sessionLogPath != "" {
 				warnLine := fmt.Sprintf("[workspace-manager WARNING] WM-040a/CHB-004: %s was malformed JSON; overwritten with bridge-required content. Original parse error: %v\n",
@@ -148,11 +156,11 @@ func MaterializeClaudeSettings(workspacePath, sessionLogPath string) error {
 				}
 			}
 		} else {
-			merged = mergeSettingsWithBridge(parsed)
+			merged = mergeSettingsWithBridge(parsed, daemonBinaryPath)
 		}
 	} else {
 		// File absent — write fresh bridge-only content.
-		merged = buildBridgeOnlySettings()
+		merged = buildBridgeOnlySettings(daemonBinaryPath)
 	}
 
 	// Strip disableAllHooks: true per CHB-004.
@@ -182,10 +190,11 @@ func MaterializeClaudeSettings(workspacePath, sessionLogPath string) error {
 
 // buildBridgeOnlySettings returns a settings map containing only the
 // bridge-required hook entries per CHB-003.
-func buildBridgeOnlySettings() map[string]interface{} {
+// daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
+func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	hooks := make(map[string]interface{}, len(bridgeEventKinds))
 	for _, kind := range bridgeEventKinds {
-		hooks[kind] = []interface{}{groupToInterface(bridgeMatcherGroupFor(kind))}
+		hooks[kind] = []interface{}{groupToInterface(bridgeMatcherGroupFor(kind, daemonBinaryPath))}
 	}
 	return map[string]interface{}{
 		"hooks": hooks,
@@ -194,7 +203,8 @@ func buildBridgeOnlySettings() map[string]interface{} {
 
 // mergeSettingsWithBridge appends bridge matcher-groups to each event-type
 // array in existing, per CHB-004: user hooks continue to fire alongside.
-func mergeSettingsWithBridge(existing map[string]interface{}) map[string]interface{} {
+// daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
+func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath string) map[string]interface{} {
 	// Clone top-level so we don't mutate the caller's map.
 	merged := make(map[string]interface{}, len(existing))
 	for k, v := range existing {
@@ -214,7 +224,7 @@ func mergeSettingsWithBridge(existing map[string]interface{}) map[string]interfa
 
 	// Append the bridge matcher-group to each event-type array.
 	for _, kind := range bridgeEventKinds {
-		bridgeGroup := groupToInterface(bridgeMatcherGroupFor(kind))
+		bridgeGroup := groupToInterface(bridgeMatcherGroupFor(kind, daemonBinaryPath))
 		existing, exists := hooksMap[kind]
 		if !exists || existing == nil {
 			hooksMap[kind] = []interface{}{bridgeGroup}

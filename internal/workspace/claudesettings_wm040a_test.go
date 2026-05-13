@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// testDaemonBinaryPath is the fake absolute daemon binary path used by most
+// tests (hk-kqdpf.6). Tests that need the real os.Executable() path use it
+// directly.
+const testDaemonBinaryPath = "/usr/local/bin/harmonik-test"
+
 // claudeSettingsFixturePath returns the canonical settings path for a
 // workspace at workspacePath (helper for tests).
 func claudeSettingsFixturePath(workspacePath string) string {
@@ -63,8 +68,9 @@ func claudeSettingsFixtureHookEntries(t *testing.T, hooksMap map[string]interfac
 }
 
 // claudeSettingsFixtureBridgeGroupPresent reports whether arr contains
-// the bridge matcher-group for eventKind per CHB-003.
-func claudeSettingsFixtureBridgeGroupPresent(arr []interface{}, eventKind string) bool {
+// the bridge matcher-group for eventKind per CHB-003, checking that the hook
+// "command" field matches wantCommand (hk-kqdpf.6: must be an absolute path).
+func claudeSettingsFixtureBridgeGroupPresent(arr []interface{}, eventKind, wantCommand string) bool {
 	for _, elem := range arr {
 		m, ok := elem.(map[string]interface{})
 		if !ok {
@@ -82,7 +88,7 @@ func claudeSettingsFixtureBridgeGroupPresent(arr []interface{}, eventKind string
 		if !ok {
 			continue
 		}
-		if h["command"] != "harmonik" {
+		if h["command"] != wantCommand {
 			continue
 		}
 		args, ok := h["args"].([]interface{})
@@ -107,7 +113,7 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 
 	workspacePath := t.TempDir()
 
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a: MaterializeClaudeSettings (clean): %v", err)
 	}
 
@@ -134,7 +140,7 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
-		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind) {
+		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, testDaemonBinaryPath) {
 			t.Errorf("WM-040a: bridge group missing for event kind %q", kind)
 		}
 	}
@@ -213,7 +219,7 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 		t.Fatalf("WM-040a: WriteFile user settings: %v", err)
 	}
 
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a: MaterializeClaudeSettings (merge): %v", err)
 	}
 
@@ -223,7 +229,7 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 	// Assert: bridge groups present for ALL five event-kinds.
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
-		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind) {
+		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, testDaemonBinaryPath) {
 			t.Errorf("WM-040a merge: bridge group missing for %q", kind)
 		}
 	}
@@ -269,7 +275,7 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 	// Session log path for warning capture.
 	sessionLogPath := filepath.Join(t.TempDir(), "session.log")
 
-	if err := MaterializeClaudeSettings(workspacePath, sessionLogPath); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, sessionLogPath); err != nil {
 		t.Fatalf("WM-040a: MaterializeClaudeSettings (malformed): %v", err)
 	}
 
@@ -278,7 +284,7 @@ func TestWM040a_MalformedJSONOverwrite(t *testing.T) {
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
-		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind) {
+		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, testDaemonBinaryPath) {
 			t.Errorf("WM-040a malformed overwrite: bridge group missing for %q after overwrite", kind)
 		}
 	}
@@ -320,7 +326,7 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 		t.Fatalf("WM-040a: WriteFile disableAllHooks settings: %v", err)
 	}
 
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a: MaterializeClaudeSettings (disableAllHooks): %v", err)
 	}
 
@@ -335,7 +341,7 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 	hooks := claudeSettingsFixtureHooksMap(t, m)
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
-		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind) {
+		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, testDaemonBinaryPath) {
 			t.Errorf("WM-040a: bridge group missing for %q after disableAllHooks strip", kind)
 		}
 	}
@@ -352,11 +358,11 @@ func TestWM040a_GitignoreIdempotent(t *testing.T) {
 	workspacePath := t.TempDir()
 
 	// First call.
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a gitignore idempotent: first call: %v", err)
 	}
 	// Second call.
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a gitignore idempotent: second call: %v", err)
 	}
 
@@ -394,7 +400,7 @@ func TestWM040a_OrderingSettingsBeforeWorkspaceLeased(t *testing.T) {
 	workspacePath := t.TempDir()
 
 	before := time.Now()
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a ordering: MaterializeClaudeSettings: %v", err)
 	}
 	after := time.Now()
@@ -425,15 +431,16 @@ func TestWM040a_OrderingSettingsBeforeWorkspaceLeased(t *testing.T) {
 }
 
 // TestWM040a_CHB003HookShape verifies the exact shape of bridge hook entries
-// per CHB-003: type=command, command=harmonik, args=["hook-relay","<kind>"],
-// timeout=30, matcher="".
+// per CHB-003: type=command, command=<absolute binary path>, args=["hook-relay","<kind>"],
+// timeout=30, matcher="". The command field MUST be the absolute path to the
+// running daemon binary (hk-kqdpf.6 — not a bare "harmonik" name).
 //
 // Spec ref: claude-hook-bridge.md CHB-003.
 func TestWM040a_CHB003HookShape(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a CHB-003: MaterializeClaudeSettings: %v", err)
 	}
 
@@ -473,8 +480,9 @@ func TestWM040a_CHB003HookShape(t *testing.T) {
 			if h["type"] != "command" {
 				t.Errorf("CHB-003: %q hook type = %q; want \"command\"", kind, h["type"])
 			}
-			if h["command"] != "harmonik" {
-				t.Errorf("CHB-003: %q hook command = %q; want \"harmonik\"", kind, h["command"])
+			// hk-kqdpf.6: command MUST be the absolute daemon binary path, not bare "harmonik".
+			if h["command"] != testDaemonBinaryPath {
+				t.Errorf("CHB-003: %q hook command = %q; want absolute path %q", kind, h["command"], testDaemonBinaryPath)
 			}
 			args, ok := h["args"].([]interface{})
 			if !ok || len(args) != 2 {
@@ -518,7 +526,7 @@ func TestWM040a_AtomicWriteNoOrphan(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
-	if err := MaterializeClaudeSettings(workspacePath, ""); err != nil {
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
 		t.Fatalf("WM-040a atomic: MaterializeClaudeSettings: %v", err)
 	}
 
@@ -537,5 +545,63 @@ func TestWM040a_AtomicWriteNoOrphan(t *testing.T) {
 	settingsPath := claudeSettingsFixturePath(workspacePath)
 	if _, err := os.Stat(settingsPath); err != nil {
 		t.Errorf("WM-040a atomic: canonical settings.json missing: %v", err)
+	}
+}
+
+// TestWM040a_HookCommandIsAbsolutePath verifies that the hook "command" field
+// in the materialized settings.json is exactly the daemonBinaryPath passed in,
+// not the bare name "harmonik" (hk-kqdpf.6 acceptance criterion).
+//
+// This test uses os.Executable() to get the actual test binary path, ensuring
+// the absolute-path contract holds for a real path rather than a constant.
+//
+// Spec ref: claude-hook-bridge.md CHB-003 (hook command field); hk-kqdpf.6.
+func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
+	t.Parallel()
+
+	// Use the real test binary path so this test exercises the os.Executable()
+	// contract used by production main.go.
+	execPath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("TestWM040a_HookCommandIsAbsolutePath: os.Executable(): %v", err)
+	}
+
+	workspacePath := t.TempDir()
+	if err := MaterializeClaudeSettings(workspacePath, execPath, ""); err != nil {
+		t.Fatalf("TestWM040a_HookCommandIsAbsolutePath: MaterializeClaudeSettings: %v", err)
+	}
+
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	m := claudeSettingsFixtureReadJSON(t, settingsPath)
+	hooks := claudeSettingsFixtureHooksMap(t, m)
+
+	for _, kind := range bridgeEventKinds {
+		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
+		if !claudeSettingsFixtureBridgeGroupPresent(arr, kind, execPath) {
+			t.Errorf("hk-kqdpf.6: hook command for %q is not the absolute path %q", kind, execPath)
+		}
+	}
+
+	// Verify the command is not the bare "harmonik" name — the regression we are fixing.
+	for _, kind := range bridgeEventKinds {
+		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
+		for _, elem := range arr {
+			m2, ok := elem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			hooksArr, ok := m2["hooks"].([]interface{})
+			if !ok || len(hooksArr) == 0 {
+				continue
+			}
+			h, ok := hooksArr[0].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			cmd, _ := h["command"].(string)
+			if cmd == "harmonik" {
+				t.Errorf("hk-kqdpf.6 regression: hook command for %q is bare \"harmonik\"; must be absolute path", kind)
+			}
+		}
 	}
 }

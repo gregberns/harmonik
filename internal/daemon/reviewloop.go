@@ -169,6 +169,7 @@ func runReviewLoop(
 			iterationCount:    state.iterationCount,
 			priorClaudeSessID: implPrior,
 			handlerBinary:     deps.handlerBinary,
+			daemonBinaryPath:  deps.daemonBinaryPath,
 			baseEnv:           deps.handlerEnv,
 		}
 		implSpec, implArtifacts, implSpecErr := buildClaudeLaunchSpec(ctx, implRC)
@@ -357,6 +358,7 @@ func runReviewLoop(
 			iterationCount:    state.iterationCount,
 			priorClaudeSessID: nil, // CHB-009: reviewer always mints fresh
 			handlerBinary:     deps.handlerBinary,
+			daemonBinaryPath:  deps.daemonBinaryPath,
 			baseEnv:           deps.handlerEnv,
 		}
 		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)

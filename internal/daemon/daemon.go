@@ -157,6 +157,24 @@ type Config struct {
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
 	// Bead ref: hk-kqdpf.4.
 	Substrate handler.Substrate
+
+	// DaemonBinaryPath is the absolute path to the running harmonik binary,
+	// resolved via os.Executable() at daemon startup (hk-kqdpf.6).
+	//
+	// It is materialized as the hook "command" field in every workspace's
+	// .claude/settings.json so that Claude's hook-relay subprocess can be found
+	// regardless of the tmux window's $PATH. If the daemon binary is run from a
+	// non-installed path (e.g. /tmp/hk), a bare "harmonik" command would fail in
+	// the tmux window — this field avoids that failure.
+	//
+	// MUST be non-empty in production; cmd/harmonik/main.go resolves it via
+	// os.Executable() and fails fast if that call errors. When empty, the work
+	// loop substitutes the literal string "harmonik" as a fallback for legacy
+	// unit-test callers that do not set this field.
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.1 CHB-003 (hook command field).
+	// Bead ref: hk-kqdpf.6.
+	DaemonBinaryPath string
 }
 
 // Start is the composition-root entry point for the harmonik daemon.

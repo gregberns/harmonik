@@ -217,6 +217,15 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// hk-kqdpf.6: resolve the absolute path to this binary so that settings.json
+	// hook commands reference an absolute path rather than a bare "harmonik" name.
+	// Fail fast here so the daemon never starts with an unresolvable hook command.
+	daemonBinaryPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: os.Executable() failed — cannot resolve daemon binary path for hook commands: %v\n", err)
+		return 1
+	}
+
 	// hk-kqdpf.4: wire tmuxSubstrate into the daemon composition root.
 	//
 	// Fail fast when $TMUX is not set: the daemon requires an active tmux session
@@ -254,11 +263,12 @@ func run() int {
 	}
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		BrPath:        brPath,
-		JSONLLogPath:  jsonlLogPath,
-		MaxConcurrent: maxConcurrentFlag,
-		Substrate:     daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
+		ProjectDir:       projectDir,
+		BrPath:           brPath,
+		JSONLLogPath:     jsonlLogPath,
+		MaxConcurrent:    maxConcurrentFlag,
+		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
+		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

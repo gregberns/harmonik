@@ -473,6 +473,10 @@ type ExportedClaudeRunCtx struct {
 	IterationCount    int
 	PriorClaudeSessID *string
 	HandlerBinary     string
+	// DaemonBinaryPath is the absolute path to the running harmonik binary for
+	// hook command materialization (hk-kqdpf.6). Empty in tests that don't need
+	// real hook wiring.
+	DaemonBinaryPath string
 	BaseEnv           []string
 }
 
@@ -504,6 +508,7 @@ func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx)
 		iterationCount:    rc.IterationCount,
 		priorClaudeSessID: rc.PriorClaudeSessID,
 		handlerBinary:     rc.HandlerBinary,
+		daemonBinaryPath:  rc.DaemonBinaryPath,
 		baseEnv:           rc.BaseEnv,
 	}
 	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)

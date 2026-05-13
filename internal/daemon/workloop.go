@@ -80,6 +80,12 @@ type workLoopDeps struct {
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
 
+	// daemonBinaryPath is the absolute path to the running harmonik binary,
+	// resolved via os.Executable() at daemon startup (hk-kqdpf.6). Threaded
+	// into claudeRunCtx so MaterializeClaudeSettings emits absolute-path hook
+	// commands instead of bare "harmonik". When empty, falls back to "harmonik".
+	daemonBinaryPath string
+
 	// handlerArgs are extra arguments appended to the handler binary invocation
 	// for every bead dispatch (hk-4e5b5).  Nil → no extra args.
 	handlerArgs []string
@@ -263,6 +269,14 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		binary = "claude"
 	}
 
+	// Resolve daemonBinaryPath: use the value from Config if set, otherwise fall
+	// back to "harmonik" for legacy unit-test callers that don't set the field.
+	// Production cmd/harmonik/main.go always sets this via os.Executable().
+	daemonBinaryPath := cfg.DaemonBinaryPath
+	if daemonBinaryPath == "" {
+		daemonBinaryPath = "harmonik"
+	}
+
 	// Normalise MaxConcurrent: zero value → 1 (MVH single-threaded default).
 	maxConcurrent := cfg.MaxConcurrent
 	if maxConcurrent <= 0 {
@@ -276,6 +290,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		intentLogDir:        intentLogDir,
 		projectDir:          cfg.ProjectDir,
 		handlerBinary:       binary,
+		daemonBinaryPath:    daemonBinaryPath,
 		handlerArgs:         cfg.HandlerArgs,
 		handlerEnv:          cfg.HandlerEnv,
 		brTimeoutCfg:        brcli.TimeoutConfig{},
@@ -575,6 +590,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		iterationCount:    1,
 		priorClaudeSessID: nil,
 		handlerBinary:     deps.handlerBinary,
+		daemonBinaryPath:  deps.daemonBinaryPath,
 		baseEnv:           deps.handlerEnv,
 	}
 	specBuilder := deps.launchSpecBuilder

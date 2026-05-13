@@ -76,6 +76,12 @@ type claudeRunCtx struct {
 	// daemon Config (e.g. "claude" or "/usr/local/bin/harmonik-twin-claude").
 	handlerBinary string
 
+	// daemonBinaryPath is the absolute path to the running harmonik binary,
+	// resolved via os.Executable() at daemon startup (hk-kqdpf.6). Passed to
+	// MaterializeClaudeSettings so the hook "command" field in settings.json
+	// references an absolute path rather than the bare "harmonik" name.
+	daemonBinaryPath string
+
 	// baseEnv is the base environment inherited from daemon Config.HandlerEnv,
 	// which MUST already include HARMONIK_PROJECT_HASH per PL-006a. CHB-006
 	// vars are appended (or overwrite) by ClaudeEnvVars.
@@ -144,7 +150,9 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	sessionLogPath := handler.DeriveCIaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
 
 	// Step 3 — Materialize .claude/settings.json in the worktree (CHB-001..005).
-	if err := workspace.MaterializeClaudeSettings(rc.workspacePath, sessionLogPath); err != nil {
+	// Pass rc.daemonBinaryPath so the hook "command" field is an absolute path
+	// rather than the bare "harmonik" name (hk-kqdpf.6 fix).
+	if err := workspace.MaterializeClaudeSettings(rc.workspacePath, rc.daemonBinaryPath, sessionLogPath); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: MaterializeClaudeSettings: %w", err)
 	}

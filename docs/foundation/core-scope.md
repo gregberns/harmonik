@@ -207,7 +207,7 @@ loop forever:
 
 Full recommendation at `docs/foundation/project-level/subsystem-organization.md`. Key alignments:
 
-- **Single Go module, single binary.** Module `github.com/gregberns/harmonik`. Daemon + subcommands at `cmd/harmonik/`; twin binaries separate (`cmd/harmonik-twin-{claude,pi}/`).
+- **Single Go module, single binary.** Module `github.com/gregberns/harmonik`. Daemon + subcommands at `cmd/harmonik/`; twin binaries separate (`cmd/harmonik-twin-{generic,claude,pi}/`); `harmonik-twin-generic` is the NDJSON back-half test handler; `harmonik-twin-claude` (hk-w5vra.2) will mirror real Claude lifecycle.
 - **Subsystems under `internal/`.** Each of S01–S09 plus `handler/{contract,claudecode,pi,twin}`, `adapter/{br,ntm}`, and `daemon` (composition root).
 - **Shared types in `internal/core`** (leaf package, imports no subsystem). Types: `RunID`, `StateID`, `TransitionID`, `BeadID`, event envelope + taxonomy, `Outcome`/`Transition`/`Checkpoint`, four-axis tag types.
 - **`pkg/` deliberately empty at MVH.** No public library surface.

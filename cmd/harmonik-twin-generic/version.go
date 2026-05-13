@@ -1,10 +1,10 @@
-// Build-time commit-hash stamp for the harmonik-twin-claude binary (HC-043).
+// Build-time commit-hash stamp for the harmonik-twin-generic binary (HC-043).
 //
 // The commitHash variable is the sole hook for the ldflags stamp injected at
 // build time:
 //
 //	go build -ldflags "-X main.commitHash=$(git rev-parse HEAD)" \
-//	    ./cmd/harmonik-twin-claude
+//	    ./cmd/harmonik-twin-generic
 //
 // The linker writes the provided value as a raw string into the binary's data
 // segment. The daemon's pre-launch gate (internal/handler.VerifyCommitHash,
@@ -44,11 +44,11 @@ var commitHash string
 //
 // Output format (when stamp is present):
 //
-//	harmonik-twin-claude commit=<sha>
+//	harmonik-twin-generic commit=<sha>
 //
 // Output format (when stamp is absent — unstamped build):
 //
-//	harmonik-twin-claude commit=(unstamped)
+//	harmonik-twin-generic commit=(unstamped)
 //
 // Per HC-043: "System handlers MAY log the --version output at startup in
 // lieu of a hash check." For twin binaries HC-045 requires an explicit
@@ -59,7 +59,7 @@ func versionLine() string {
 	if stamp == "" {
 		stamp = "(unstamped)"
 	}
-	return fmt.Sprintf("harmonik-twin-claude commit=%s", stamp)
+	return fmt.Sprintf("harmonik-twin-generic commit=%s", stamp)
 }
 
 // writeVersion writes the version line followed by a newline to w.

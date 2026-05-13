@@ -74,7 +74,7 @@
 
 ### B1. Twin binaries — **BLOCKER**
 
-- **Source:** `bootstrap.md` §5 step 4 ("Claude twin binary"); HC bootstrap subset includes `hk-8i31.77` (canonical twin handler binary) — but that's the **handler-side reception** of the twin, not the twin binary itself. `subsystem-organization.md` §Go module layout names `cmd/harmonik-twin-claude/` but the directory does not exist.
+- **Source:** `bootstrap.md` §5 step 4 ("Claude twin binary"); HC bootstrap subset includes `hk-8i31.77` (canonical twin handler binary) — but that's the **handler-side reception** of the twin, not the twin binary itself. `subsystem-organization.md` §Go module layout names `cmd/harmonik-twin-claude/` but the directory does not exist. **[Update per hk-w5vra.1: the generic NDJSON back-half test handler now lives at `cmd/harmonik-twin-generic/`; the real Claude-lifecycle twin is `cmd/harmonik-twin-claude/` per hk-w5vra.2 (not yet built).]**
 - **What's missing:** The twin Go program(s) that emit the parity surface declared at `[handler-contract.md §4.8]` (HC-035 through HC-040). A scenario test cannot be authored before the binary it asserts against exists.
 - **Severity:** BLOCKER for the §1 acceptance test. The first slice of self-build cycles is conventionally "harmonik builds harmonik" — but the FIRST cycle must be hand-built, including the twin.
 - **Recommendation:** carve the twin binary out as Phase 1's **first hand-build task**, before the orchestrator code itself. Author a 5-bead meta-epic ("twin-binary scaffolding" → 1 main loop, 1 wire-protocol parity, 1 process-tree contract, 1 hash-verification check, 1 conformance test against HC-035..HC-040). Not the same thing as HC-077-style abstract beads — these are concrete code-existence beads.

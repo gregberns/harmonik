@@ -24,7 +24,8 @@ harmonik/
   cmd/
     harmonik/                     # daemon + subcommands (daemon, attach, runner)
       main.go
-    harmonik-twin-claude/         # twin binary (separate process per decision #6)
+    harmonik-twin-generic/        # generic NDJSON back-half test handler (renamed per hk-w5vra.1)
+    harmonik-twin-claude/         # Claude-lifecycle twin (hk-w5vra.2, not yet built)
     harmonik-twin-pi/
   internal/
     core/                         # shared types — NO imports from subsystems

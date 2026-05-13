@@ -54,7 +54,7 @@ import (
 //     the call site (the launch cannot safely proceed without a verified hash).
 //
 // Integration test: TestVerifyCommitHash_HC043_RealBinary in commithash_test.go
-// exercises this function against a real harmonik-twin-claude binary built with
+// exercises this function against a real harmonik-twin-generic binary built with
 // the production ldflags stamp (hk-uwie).
 //
 // Cite: specs/handler-contract.md §4.10.HC-043.

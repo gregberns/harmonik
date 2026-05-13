@@ -12,7 +12,7 @@
 //
 // # Integration test gap
 //
-// A full integration test against a real harmonik-twin-claude build with its
+// A full integration test against a real harmonik-twin-generic build with its
 // production Makefile target is not included here because it requires the
 // twin-binary build infrastructure (hk-ahvq.48.4 — open).  That test is
 // tracked as a follow-up bead; see the TODO comment in commithash.go and the
@@ -194,23 +194,23 @@ func TestVerifyCommitHash_HC043_HashSubstringInFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 //
 // TestVerifyCommitHash_HC043_RealBinary exercises VerifyCommitHash against the
-// actual harmonik-twin-claude binary built with the production ldflags stamp
-// (same stamp path as the Makefile's build-twin-claude target).
+// actual harmonik-twin-generic binary built with the production ldflags stamp
+// (same stamp path as the Makefile's build-twin-generic target).
 //
-// commitHashFixtureBuildTwin compiles cmd/harmonik-twin-claude with
+// commitHashFixtureBuildTwin compiles cmd/harmonik-twin-generic with
 // -ldflags "-X main.commitHash=<HEAD>" using exec.CommandContext(t.Context(),
 // ...) and returns the binary path together with the stamped hash value.  The
 // binary is placed in t.TempDir() and is cleaned up automatically.
 
-// commitHashFixtureBuildTwin builds cmd/harmonik-twin-claude with the
-// production ldflags stamp (mirroring the Makefile build-twin-claude target)
+// commitHashFixtureBuildTwin builds cmd/harmonik-twin-generic with the
+// production ldflags stamp (mirroring the Makefile build-twin-generic target)
 // and returns (binaryPath, stampedHash).  The binary is written into
 // t.TempDir() and cleaned up automatically.
 //
 // If git or the Go toolchain is unavailable the test is skipped, not failed.
 //
 // Cite: specs/handler-contract.md §4.10.HC-043, §4.10.HC-045; Makefile
-// build-twin-claude target.
+// build-twin-generic target.
 func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 	t.Helper()
 
@@ -232,8 +232,8 @@ func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 		t.Skip("commitHashFixtureBuildTwin: git rev-parse HEAD returned empty string")
 	}
 
-	outBinary := filepath.Join(t.TempDir(), "claude-twin")
-	pkgPath := filepath.Join(repoRoot, "cmd", "harmonik-twin-claude")
+	outBinary := filepath.Join(t.TempDir(), "generic-twin")
+	pkgPath := filepath.Join(repoRoot, "cmd", "harmonik-twin-generic")
 	ldflag := "-X main.commitHash=" + headSHA
 
 	cmd := exec.CommandContext(
@@ -251,7 +251,7 @@ func commitHashFixtureBuildTwin(t *testing.T) (binaryPath, stampedHash string) {
 }
 
 // TestVerifyCommitHash_HC043_RealBinary verifies VerifyCommitHash against the
-// actual harmonik-twin-claude binary built with the production ldflags stamp.
+// actual harmonik-twin-generic binary built with the production ldflags stamp.
 //
 // Round-trip correctness check: the hash embedded by the linker must be found
 // by VerifyCommitHash, and a different hash must produce ErrStructural.

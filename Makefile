@@ -42,20 +42,28 @@ test:  ## go test ./... (no race; quick smoke)
 # Twin-binary targets
 # ---------------------------------------------------------------------------
 
-# build-twin-claude: compile cmd/harmonik-twin-claude/ into twins/claude-twin.
-# Output path satisfies SH-009 in-tree default (<repo-root>/twins/) and
-# HC-036(c) binary-name convention (<real>-twin = claude-twin).
+# build-twin-generic: compile cmd/harmonik-twin-generic/ into twins/generic-twin.
+# This is the generic test handler twin that emits harmonik-native NDJSON
+# directly (testing the back half of the pipeline without simulating Claude's
+# lifecycle). Renamed from harmonik-twin-claude per hk-w5vra.1.
+# Output path satisfies SH-009 in-tree default (<repo-root>/twins/).
 # Cite: specs/scenario-harness.md §4.3.SH-009;
 #       specs/handler-contract.md §4.8.HC-036(c).
-.PHONY: build-twin-claude
-build-twin-claude:  ## Build cmd/harmonik-twin-claude → twins/claude-twin (SH-009 / HC-036 / HC-043)
+.PHONY: build-twin-generic
+build-twin-generic:  ## Build cmd/harmonik-twin-generic → twins/generic-twin (SH-009 / HC-043)
 	@mkdir -p $(TWINS_DIR)
-	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/claude-twin ./cmd/harmonik-twin-claude
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/generic-twin ./cmd/harmonik-twin-generic
+
+# build-twin-claude: alias kept for compatibility during transition; delegates
+# to build-twin-generic until hk-w5vra.2 ships the real Claude twin.
+# TODO(hk-w5vra.2): replace this alias with the real harmonik-twin-claude build.
+.PHONY: build-twin-claude
+build-twin-claude: build-twin-generic  ## Alias → build-twin-generic (hk-w5vra.2 will replace with real Claude twin)
 
 # twins: build all twin binaries into twins/.
 # Add further per-twin prerequisites here as new twin packages land.
 .PHONY: twins
-twins: build-twin-claude  ## Build all twin binaries into twins/ (SH-009 search-path default)
+twins: build-twin-generic  ## Build all twin binaries into twins/ (SH-009 search-path default)
 
 # build-all: build the module + all twin binaries.
 # Suitable as a pre-scenario-test warmup target.

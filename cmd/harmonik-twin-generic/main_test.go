@@ -8,27 +8,27 @@ import (
 	"testing"
 )
 
-// twinClaudeFixture helpers follow the per-bead prefix discipline declared in
-// implementer-protocol.md §Helper-prefix discipline. Prefix: twinClaudeFixture.
+// twinGenericFixture helpers follow the per-bead prefix discipline declared in
+// implementer-protocol.md §Helper-prefix discipline. Prefix: twinGenericFixture.
 
-// twinClaudeFixtureSocketFile creates a temp directory and returns a
+// twinGenericFixtureSocketFile creates a temp directory and returns a
 // non-existent socket path inside it (the socket is not actually created here;
 // the twin binary only dials, the daemon creates it).
-func twinClaudeFixtureSocketFile(t *testing.T) string {
+func twinGenericFixtureSocketFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	return filepath.Join(dir, "daemon.sock")
 }
 
-// twinClaudeFixtureLaunchSpecFile writes a minimal JSON file to t.TempDir and
+// twinGenericFixtureLaunchSpecFile writes a minimal JSON file to t.TempDir and
 // returns its path.  The content is intentionally minimal: LaunchSpec parsing
 // is deferred to hk-ahvq.48.2.
-func twinClaudeFixtureLaunchSpecFile(t *testing.T) string {
+func twinGenericFixtureLaunchSpecFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "launch-spec.json")
 	if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("twinClaudeFixtureLaunchSpecFile: write: %v", err)
+		t.Fatalf("twinGenericFixtureLaunchSpecFile: write: %v", err)
 	}
 	return p
 }
@@ -39,7 +39,7 @@ func twinClaudeFixtureLaunchSpecFile(t *testing.T) string {
 func TestRunMissingSocketPath(t *testing.T) {
 	// Override os.Args so flag.Parse sees no arguments.
 	orig := os.Args
-	os.Args = []string{"harmonik-twin-claude"}
+	os.Args = []string{"harmonik-twin-generic"}
 	defer func() { os.Args = orig }()
 
 	code := run()
@@ -53,8 +53,8 @@ func TestRunMissingSocketPath(t *testing.T) {
 func TestRunLaunchSpecFileMissing(t *testing.T) {
 	orig := os.Args
 	os.Args = []string{
-		"harmonik-twin-claude",
-		"--socket-path", twinClaudeFixtureSocketFile(t),
+		"harmonik-twin-generic",
+		"--socket-path", twinGenericFixtureSocketFile(t),
 		"--launch-spec", filepath.Join(t.TempDir(), "does-not-exist.json"),
 	}
 	defer func() { os.Args = orig }()
@@ -72,9 +72,9 @@ func TestRunLaunchSpecFileMissing(t *testing.T) {
 func TestRunLaunchSpecFilePresent(t *testing.T) {
 	orig := os.Args
 	os.Args = []string{
-		"harmonik-twin-claude",
-		"--socket-path", twinClaudeFixtureSocketFile(t),
-		"--launch-spec", twinClaudeFixtureLaunchSpecFile(t),
+		"harmonik-twin-generic",
+		"--socket-path", twinGenericFixtureSocketFile(t),
+		"--launch-spec", twinGenericFixtureLaunchSpecFile(t),
 	}
 	defer func() { os.Args = orig }()
 
@@ -123,7 +123,7 @@ func TestVersionLineUnstamped(t *testing.T) {
 	defer func() { commitHash = orig }()
 
 	got := versionLine()
-	const want = "harmonik-twin-claude commit=(unstamped)"
+	const want = "harmonik-twin-generic commit=(unstamped)"
 	if got != want {
 		t.Errorf("versionLine() = %q, want %q", got, want)
 	}
@@ -138,7 +138,7 @@ func TestVersionLineStamped(t *testing.T) {
 	defer func() { commitHash = orig }()
 
 	got := versionLine()
-	want := "harmonik-twin-claude commit=" + stamp
+	want := "harmonik-twin-generic commit=" + stamp
 	if got != want {
 		t.Errorf("versionLine() = %q, want %q", got, want)
 	}
@@ -155,7 +155,7 @@ func TestWriteVersion(t *testing.T) {
 	writeVersion(&buf)
 
 	got := buf.String()
-	if !strings.HasPrefix(got, "harmonik-twin-claude commit=") {
+	if !strings.HasPrefix(got, "harmonik-twin-generic commit=") {
 		t.Errorf("writeVersion output %q does not start with expected prefix", got)
 	}
 	if !strings.HasSuffix(got, "\n") {
@@ -167,7 +167,7 @@ func TestWriteVersion(t *testing.T) {
 // is passed and does not require --socket-path.
 func TestRunVersionFlag(t *testing.T) {
 	orig := os.Args
-	os.Args = []string{"harmonik-twin-claude", "--version"}
+	os.Args = []string{"harmonik-twin-generic", "--version"}
 	defer func() { os.Args = orig }()
 
 	code := run()

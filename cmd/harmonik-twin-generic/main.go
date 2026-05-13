@@ -1,8 +1,13 @@
-// Command harmonik-twin-claude is the canonical twin binary for the Claude
-// Code handler. The daemon's handler subsystem subprocess-launches this
-// binary in scenario tests and CI in place of a real Claude Code session.
+// Command harmonik-twin-generic is the generic test handler twin binary.
+// It emits harmonik-native NDJSON progress-stream messages directly,
+// testing the back half of the pipeline without simulating Claude's lifecycle.
 //
-// # Scope (hk-ahvq.48.1, hk-ahvq.48.3, hk-ahvq.48.4)
+// # Scope
+//
+// This binary was renamed from harmonik-twin-claude per bead hk-w5vra.1 to
+// make its narrow scope explicit. A separate harmonik-twin-claude binary (bead
+// hk-w5vra.2) will mirror what the real Claude CLI lifecycle produces, per
+// CHB-021 (specs/claude-hook-bridge.md §4.8).
 //
 // This scaffold covers:
 //   - Flag parsing: --socket-path (LaunchSpec.SocketPath per §6.1),
@@ -55,7 +60,7 @@ func main() {
 //	0 — connected successfully and closed cleanly.
 //	1 — precondition failure (missing socket path, dial error, etc.).
 func run() int {
-	fs := flag.NewFlagSet("harmonik-twin-claude", flag.ContinueOnError)
+	fs := flag.NewFlagSet("harmonik-twin-generic", flag.ContinueOnError)
 
 	// --version: print the build-time commit-hash stamp and exit 0.
 	// The stamp is injected via -ldflags "-X main.commitHash=<sha>" at build
@@ -101,7 +106,7 @@ func run() int {
 	// Validate precondition: socket-path is required. Exit cleanly without a
 	// stack trace so downstream beads can assert on this behaviour.
 	if *socketPath == "" {
-		fmt.Fprintln(os.Stderr, "harmonik-twin-claude: --socket-path is required")
+		fmt.Fprintln(os.Stderr, "harmonik-twin-generic: --socket-path is required")
 		return 1
 	}
 
@@ -110,7 +115,7 @@ func run() int {
 	if *launchSpecPath != "" {
 		//nolint:gosec // G304: path is operator-supplied via --launch-spec flag; provenance is the daemon
 		if _, err := os.Stat(*launchSpecPath); err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: --launch-spec file not found: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harmonik-twin-generic: --launch-spec file not found: %v\n", err)
 			return 1
 		}
 	}
@@ -123,7 +128,7 @@ func run() int {
 		var err error
 		scriptFile, err = loadScriptFile(*scriptPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: --script-path: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harmonik-twin-generic: --script-path: %v\n", err)
 			return 1
 		}
 	}
@@ -133,7 +138,7 @@ func run() int {
 
 	conn, err := dialSocket(ctx, *socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik-twin-claude: dial %s: %v\n", *socketPath, err)
+		fmt.Fprintf(os.Stderr, "harmonik-twin-generic: dial %s: %v\n", *socketPath, err)
 		return 1
 	}
 	defer func() { _ = conn.Close() }()
@@ -145,7 +150,7 @@ func run() int {
 	if scriptFile != nil {
 		emitter := newWireEmitter(conn)
 		if err := runScript(ctx, emitter, scriptFile); err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: script-driver: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harmonik-twin-generic: script-driver: %v\n", err)
 			return 1
 		}
 	}

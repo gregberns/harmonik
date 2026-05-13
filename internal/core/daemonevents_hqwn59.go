@@ -731,6 +731,14 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// sweep. Required (must be >= 0).
 	TmuxSessionsKilled int `json:"tmux_sessions_killed"`
 
+	// TmuxWindowsKilled is the number of orphan tmux windows killed during the
+	// sweep. These are windows inside operator-owned sessions whose name begins
+	// with "hk-<hash6>-" for this project's hash. Required (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021c — "The daemon_orphan_sweep_completed
+	// event payload MUST gain a new field tmux_windows_killed: <integer >= 0>."
+	TmuxWindowsKilled int `json:"tmux_windows_killed"`
+
 	// LocksCleared is the number of stale worktree lease-lock files cleared
 	// during the sweep. Required (must be >= 0).
 	LocksCleared int `json:"locks_cleared"`
@@ -762,6 +770,7 @@ type DaemonOrphanSweepCompletedPayload struct {
 //
 // Rules per event-model.md §8.7.14:
 //   - TmuxSessionsKilled must be >= 0.
+//   - TmuxWindowsKilled must be >= 0.
 //   - LocksCleared must be >= 0.
 //   - SubprocessesKilled must be >= 0.
 //   - BrSubprocessesKilled must be >= 0.
@@ -770,6 +779,9 @@ type DaemonOrphanSweepCompletedPayload struct {
 //   - SweptAt must be non-empty.
 func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 	if p.TmuxSessionsKilled < 0 {
+		return false
+	}
+	if p.TmuxWindowsKilled < 0 {
 		return false
 	}
 	if p.LocksCleared < 0 {

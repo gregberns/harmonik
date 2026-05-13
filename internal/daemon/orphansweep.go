@@ -9,6 +9,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -22,6 +23,10 @@ import (
 type OrphanSweepResult struct {
 	// TmuxSessionsKilled is the number of orphan tmux sessions killed.
 	TmuxSessionsKilled int
+
+	// TmuxWindowsKilled is the number of orphan tmux windows killed inside
+	// operator-owned sessions (PL-021c window-level sweep).
+	TmuxWindowsKilled int
 
 	// LocksCleared is the number of stale worktree lease-lock files removed.
 	LocksCleared int
@@ -48,6 +53,7 @@ type OrphanSweepResult struct {
 func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 	return core.DaemonOrphanSweepCompletedPayload{
 		TmuxSessionsKilled:         r.TmuxSessionsKilled,
+		TmuxWindowsKilled:          r.TmuxWindowsKilled,
 		LocksCleared:               r.LocksCleared,
 		SubprocessesKilled:         r.SubprocessesKilled,
 		BrSubprocessesKilled:       r.BrSubprocessesKilled,
@@ -65,6 +71,10 @@ type OrphanSweepConfig struct {
 
 	// TmuxKiller overrides the tmux session killer. Nil → OSTmuxSessionKiller.
 	TmuxKiller lifecycle.TmuxSessionKiller
+
+	// TmuxAdapter is the tmux Adapter used for the window-level orphan sweep
+	// (PL-021c). Nil → no window sweep (production callers MUST provide this).
+	TmuxAdapter ltmux.Adapter
 
 	// HandlerLister overrides the handler subprocess lister.
 	// Nil → OSHandlerProcessLister.
@@ -106,6 +116,14 @@ func RunOrphanSweep(
 		errs = append(errs, fmt.Sprintf("tmux: %v", err))
 	}
 	result.TmuxSessionsKilled = tmuxKilled
+
+	// (a2) Tmux windows (PL-021c): kill orphan windows inside operator-owned
+	// sessions whose name matches the hk-<hash6>- sentinel prefix.
+	windowsKilled, err := ltmux.SweepOrphanTmuxWindows(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
+	if err != nil {
+		errs = append(errs, fmt.Sprintf("tmux-windows: %v", err))
+	}
+	result.TmuxWindowsKilled = windowsKilled
 
 	// (b) Worktree lease-lock files.
 	sweepResult, err := workspace.SweepStaleLeaseLocks(ctx, projectDir, workspace.NoWorktreeRootOverride())

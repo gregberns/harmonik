@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.4
+version: 0.6
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -323,6 +323,8 @@ Tags: mechanism
 
 While Claude is alive (the handler's `cmd.Wait()` has not returned and `outcome_emitted` has not been observed), the handler-process MUST emit `agent_heartbeat{phase: "reasoning"}` at intervals of `T_silent_hang / 2 = 300 seconds` (per [handler-contract.md §4.6 HC-026a]). Heartbeats emitted by the relay (Notification-driven, §4.5.CHB-013) supplement, not replace, the handler's timer.
 
+> NOTE (cross-ref HC-057): For `agent_type = claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per [handler-contract.md §4.6 HC-057] (daemon-side heartbeat carve-out); such daemon-emitted heartbeats satisfy this requirement without constituting a protocol violation.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
@@ -518,4 +520,5 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |
 | 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |
 | 2026-05-13 | 0.4 | agent (hk-w5vra.9) | CHB-027: daemon silent-drop on orphan relay connection (relay OOM-killed after socket open, before envelope write). §8 error taxonomy entry added: `bridge_partial_write` (ErrTransient). Doc-only; no code change required. |
-| 2026-05-13 | 0.5 | agent (hk-gql20.4) | Decision record: no CHB-028 clause filed. The bridge-integration initiative (`hk-gql20`) evaluated whether the tmux substrate required an amendment to CHB. Conclusion: no amendment is needed. Twin parity remains at the wire-format level (CHB-021 and CHB-022 are unchanged); the substrate — tmux panes as the execution environment for Claude subprocesses — is orthogonal to the hook-relay and progress-stream contracts defined here. Tmux substrate obligations are captured in [workspace-model.md WM-002a] and [handler-contract.md HC-026a]. Source: `.kerf/projects/gregberns-harmonik/bridge-integration/05-specs/claude-hook-bridge-amendments.md`. |
+| 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` at MVH the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
+| 2026-05-13 | 0.5 | agent (hk-gql20.4) | Decision record: no CHB-028 clause filed. The bridge-integration initiative (`hk-gql20`) evaluated whether the tmux substrate required an amendment to CHB. Conclusion: no amendment is needed. Twin parity remains at the wire-format level (CHB-021 and CHB-022 are unchanged); the substrate — tmux panes as the execution environment for Claude subprocesses — is orthogonal to the hook-relay and progress-stream contracts defined here. Tmux substrate obligations are captured in [workspace-model.md WM-002a] and [handler-contract.md HC-054]. Source: `.kerf/projects/gregberns-harmonik/bridge-integration/05-specs/claude-hook-bridge-amendments.md`. |

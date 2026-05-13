@@ -8,10 +8,10 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.1
+version: 0.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-12
+last-updated: 2026-05-13
 depends-on:
   - handler-contract
   - workspace-model
@@ -215,7 +215,7 @@ Tags: mechanism
 |---|---|---|
 | `SessionStart {source: startup}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
 | `SessionStart {source: resume}` | (no-op at MVH; ready-state is handler-emitted per §4.7) | — |
-| `Stop` | `outcome_emitted` | `kind = WORK_COMPLETE` if phase ∈ {single, implementer-initial, implementer-resume}; `kind = REVIEWER_VERDICT` if phase = reviewer. For reviewer, payload is read from `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json` per §4.5.CHB-014. For implementer, payload is `{summary: <Claude's final assistant message text, truncated to 4 KiB>}`. |
+| `Stop` | `outcome_emitted` | `kind = WORK_COMPLETE` if phase ∈ {single, implementer-initial, implementer-resume}; `kind = REVIEWER_VERDICT` if phase = reviewer. For reviewer, payload is read from `${HARMONIK_WORKSPACE_PATH}/.harmonik/review.json` per §4.5.CHB-014. For implementer, payload is `{summary: <Claude's final assistant message text, truncated to 4 KiB>}`. The relay emits `outcome_emitted` on EVERY Stop invocation without filtering; in a multi-turn session multiple `outcome_emitted` messages are delivered. The daemon watcher applies last-received-wins dedup per §4.10 CHB-025. |
 | `SessionEnd` | (no-op; the handler emits `agent_completed` on Wait-return per §4.7) | — |
 | `StopFailure {error_type: rate_limit}` | `agent_rate_limited` | `retry_after_seconds = 60` (synthesized constant at MVH; no Claude-provided retry-after available). `agent_rate_limited` is non-terminal per [event-model.md §8.3]. |
 | `StopFailure {error_type ∈ {authentication_failed, oauth_org_not_allowed, billing_error, invalid_request, max_output_tokens, unknown}}` | `outcome_emitted{kind = FAILURE_SIGNAL}` | `payload.error_type = "claude_" + error_type`; `payload.sub_reason = "claude_" + error_type`; `payload.suggested_class = ErrStructural`. The relay MUST NOT emit `agent_failed`; per CHB-INV-002 the relay never emits terminal events. The handler-process consumes `outcome_emitted{kind = FAILURE_SIGNAL}` on Wait-return and emits the single terminal `agent_failed` per §4.7 CHB-020 carrying the suggested class. |
@@ -325,6 +325,27 @@ This check protects against silent bridging failure when a user-managed `.claude
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+### 4.10 Stop-hook dedup gate
+
+#### CHB-025 — Daemon last-received-wins dedup for `outcome_emitted` (option b)
+
+**Context.** Claude's Stop hook fires once per turn-loop completion, not once per session. In a multi-turn session the relay therefore emits one `outcome_emitted` message per completed turn (each with `kind ∈ {WORK_COMPLETE, REVIEWER_VERDICT, FAILURE_SIGNAL}`). The relay MUST NOT attempt to suppress intermediate Stop deliveries via transcript inspection or local state (relay-side gate is rejected; see rationale below).
+
+**Rule.** The daemon's per-session watcher MUST accept every `outcome_emitted` message keyed by `(run_id, claude_session_id)` and replace its in-memory "current outcome" with the most-recently-received value. When `cmd.Wait()` returns for the Claude subprocess (per §4.7 CHB-020), the watcher uses the LAST `outcome_emitted` received as the authoritative outcome for the terminal-event derivation.
+
+**Boundary.** The "last-received-wins" replacement is bounded to the open session window: from the first `outcome_emitted` for a given `(run_id, claude_session_id)` until `cmd.Wait()` returns. After `cmd.Wait()` returns the session window is closed; any stale relay messages that arrive late (due to OS scheduling) are silently dropped by the daemon using the existing `unknown_session` typed-error path per §6.2.
+
+**Why last, not first.** The semantically correct outcome is the one Claude commits to immediately before exiting. In a multi-turn session Claude may complete an intermediate turn (emitting WORK_COMPLETE) and then continue work in response to a follow-up; the final Stop before exit is the ground truth. Accepting only the first `outcome_emitted` would misclassify intermediate-turn stops as the session result.
+
+**Why relay does not gate (option a rejected).** A relay-side gate would require the relay to inspect Claude's transcript file to determine whether the current Stop is the "final" one. This couples the relay to the Claude transcript JSONL format — an interface Claude Code does not formally contract, subject to schema drift, and not available for inspection until after Claude writes it (race-prone). The relay's invariant per CHB-INV-003 is that it derives outputs deterministically from `(stdin payload, env, on-disk artifacts)` without coupling to undocumented internals; transcript inspection would violate this. The daemon already owns per-session state and is the natural home for last-wins replacement logic.
+
+**Implementation note.** The daemon watcher MUST update a single `latestOutcome *OutcomeEmittedPayload` field (or equivalent) on the per-session struct on each `outcome_emitted` receipt, protected by the watcher's existing serialization discipline (the watcher goroutine owns all writes). No additional locking surface is needed. A follow-up implementation bead exists for this (see below).
+
+**Follow-up bead.** Daemon-side implementation of CHB-025 (the last-received-wins watcher field + drop-after-close logic) is tracked as a separate implementation bead filed under parent `hk-w5vra` with labels `next-init,claude-adapter-real`. The spec is normative immediately; code is deferred to that bead.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ## 5. Invariants
 
 #### CHB-INV-001 — Two-contributor session
@@ -423,6 +444,7 @@ A handler implementation claiming `claude-code` conformance MUST satisfy:
 - CHB-021..022 (twin parity).
 - CHB-023 (daemon-side claude_session_id durability before Claude exec).
 - CHB-024 (startup verification that bridge hooks are not shadowed by settings.local.json).
+- CHB-025 (daemon last-received-wins dedup for `outcome_emitted` across multi-turn Stop firings).
 
 Scenario tests MUST cover:
 
@@ -454,3 +476,4 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | Date | Version | Author | Change |
 |---|---|---|---|
 | 2026-05-12 | 0.1 | foundation-author | Initial draft from kerf `claude-hook-bridge`. |
+| 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |

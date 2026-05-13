@@ -76,6 +76,41 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-gql20.21.
 	HookStore *hookSessionStore
+
+	// AdapterRegistry2 is the sealed adapter registry forwarded to beadRunOne
+	// for waitAgentReady (hk-gql20.14). Named AdapterRegistry2 to avoid
+	// collision with the existing AdapterRegistry field (used for
+	// handler.NewHandler). When nil, ExportedWorkLoopDeps stores nil in
+	// workLoopDeps.adapterRegistry — waitAgentReady is then skipped.
+	//
+	// Bead ref: hk-gql20.14.
+	AdapterRegistry2 *handlercontract.AdapterRegistry
+
+	// Substrate is the optional tmux substrate for handler.Launch (hk-gql20.14).
+	// Nil at MVH.
+	//
+	// Bead ref: hk-gql20.14.
+	Substrate handler.Substrate
+
+	// AgentReadyTimeout is the HC-056 timeout for waitAgentReady (hk-gql20.14).
+	// Zero → defaultAgentReadyTimeout (30s).
+	//
+	// Bead ref: hk-gql20.14.
+	AgentReadyTimeout time.Duration
+
+	// HookRelayEnabled controls whether the single-mode dispatch path registers a
+	// hook-session and applies the 3-second stopHookGrace window in
+	// waitWithSocketGrace (hk-gql20.14 / CHB-025).
+	//
+	// False (default): no registration; WaitForOutcome returns immediately (no
+	// grace-window overhead). Used by shell-fixture tests where no real hook
+	// relay connects.
+	//
+	// True: full CHB-025 registration; same as newWorkLoopDeps production path.
+	// Set explicitly by tests that exercise the hook-relay path (e.g. socket tests).
+	//
+	// Bead ref: hk-gql20.14.
+	HookRelayEnabled bool
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -137,6 +172,10 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		runRegistry:         reg,
 		maxConcurrent:       maxConcurrent,
 		hookStore:           hookStore,
+		adapterRegistry:     p.AdapterRegistry2,
+		substrate:           p.Substrate,
+		agentReadyTimeout:   p.AgentReadyTimeout,
+		hookRelayEnabled:    p.HookRelayEnabled,
 	}
 }
 

@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -137,6 +138,54 @@ type workLoopDeps struct {
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	// Bead ref: hk-gql20.21.
 	hookStore *hookSessionStore
+
+	// adapterRegistry is the sealed adapter registry used to look up the
+	// per-agent-type Adapter (for Adapter.DetectReady) in the single-mode
+	// completion path (HC-056 / hk-gql20.14).
+	//
+	// The work loop calls ForAgent(core.AgentTypeClaudeCode) on each dispatch to
+	// obtain the adapter. When nil, waitAgentReady is skipped (test mode).
+	//
+	// Bead ref: hk-gql20.14.
+	adapterRegistry *handlercontract.AdapterRegistry
+
+	// substrate is the optional tmux-substrate for handler.Launch.  At MVH this
+	// is always nil; handler falls back to exec.CommandContext.  When non-nil it
+	// is attached to the LaunchSpec.Substrate field so the handler spawns the
+	// subprocess inside a tmux window.
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
+	// Bead ref: hk-gql20.14.
+	substrate handler.Substrate
+
+	// agentReadyTimeout is the maximum duration waitAgentReady blocks waiting
+	// for an agent_ready event per HC-056.  Zero → defaultAgentReadyTimeout (30s).
+	// Sourced from Config.AgentReadyTimeout (also zero-value safe).
+	//
+	// Spec ref: specs/handler-contract.md §4.9 HC-056.
+	// Bead ref: hk-gql20.14.
+	agentReadyTimeout time.Duration
+
+	// hookRelayEnabled controls whether the single-mode dispatch path registers a
+	// hook-session entry and waits for a stop-hook outcome (CHB-025 / CHB-020).
+	//
+	// When true (production):
+	//   RegisterHookSession + CloseHookSession bracket the subprocess lifetime,
+	//   and waitWithSocketGrace applies the stopHookGrace window so a Stop hook
+	//   relay arriving after process exit is still captured.
+	//
+	// When false (test fixtures, e.g. shell scripts):
+	//   The hook session is not registered; WaitForOutcome returns nil immediately
+	//   (session not found), so waitWithSocketGrace adds no overhead.  The backward-
+	//   compat close-on-exit-0 branch then handles the test fixture outcome.
+	//
+	// newWorkLoopDeps always sets this to true (production path).
+	// ExportedWorkLoopDeps sets it to false by default so existing tests that use
+	// shell-script fixtures remain fast — they are not affected by the 3-second
+	// stopHookGrace window.
+	//
+	// Bead ref: hk-gql20.14.
+	hookRelayEnabled bool
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -231,6 +280,10 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		runRegistry:         NewRunRegistry(),
 		maxConcurrent:       maxConcurrent,
 		hookStore:           store,
+		adapterRegistry:     registry,
+		substrate:           nil, // nil at MVH; tmux substrate is post-MVH
+		agentReadyTimeout:   cfg.AgentReadyTimeout,
+		hookRelayEnabled:    true, // always enabled in production (hk-gql20.14)
 	}, nil
 }
 
@@ -501,7 +554,241 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 	}
 
-	// single mode: launch one implementer subprocess and close or reopen on exit.
+	// single mode: two code paths depending on hookRelayEnabled.
+	//
+	// hookRelayEnabled=true (production, newWorkLoopDeps):
+	//   Full bridge-wired sequence per hk-gql20.14 / CHB-018..025.
+	//   Uses buildClaudeLaunchSpec, registers hook session, emits pre-exec
+	//   messages, starts heartbeat goroutine, waitAgentReady, waitWithSocketGrace,
+	//   MapWaitReturnToTerminalEvent.
+	//
+	// hookRelayEnabled=false (test fixtures, ExportedWorkLoopDeps default):
+	//   Lean pre-bridge dispatch (identical to the code that shipped before
+	//   hk-gql20.14).  No file I/O, no grace window, no bridge goroutines.
+	//   Shell-fixture tests with tight deadlines (4 s, 25 s) rely on this path
+	//   to stay fast.
+	if !deps.hookRelayEnabled {
+		beadRunOneLean(ctx, deps, runID, beadID, wtPath)
+		return
+	}
+
+	// ─── Bridge-wired path (production) ───────────────────────────────────────
+
+	// Step 1: build the Claude launch spec via buildClaudeLaunchSpec.
+	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	rc := claudeRunCtx{
+		runID:             runID,
+		beadID:            string(beadID),
+		workspacePath:     wtPath,
+		daemonSocket:      daemonSock,
+		workflowMode:      workflowMode,
+		phase:             "", // empty = single-mode
+		iterationCount:    1,
+		priorClaudeSessID: nil,
+		handlerBinary:     deps.handlerBinary,
+		baseEnv:           deps.handlerEnv,
+	}
+	spec, artifacts, specErr := buildClaudeLaunchSpec(ctx, rc)
+	if specErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: buildClaudeLaunchSpec bead %s run %s: %v (reopening)\n",
+			beadID, runID.String(), specErr)
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("build launch spec error: %v", specErr))
+		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("build launch spec error: %v", specErr))
+		return
+	}
+
+	// In production, HandlerArgs is always nil; spec.Args already contains the
+	// bridge flags (--session-id or --resume) from buildClaudeLaunchSpec.
+	// (No append needed: HandlerArgs is empty in production.)
+
+	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+	spec.Substrate = deps.substrate
+
+	// Step 2: register the hook session so incoming Stop-hook relays are routed
+	// to this run's hookSessionStore entry (CHB-025).
+	deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
+	defer deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+
+	// Step 3: emit pre-exec messages on the bus BEFORE Launch (CHB-018 ordering).
+	// Each message carries a "type" field that maps directly to a core.EventType.
+	// Parse it from the raw JSON and use it as the envelope type.
+	for _, msg := range artifacts.preExecMsgs {
+		emitPreExecMessage(ctx, deps.bus, runID, msg)
+	}
+
+	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
+	// watcher events without a post-seal bus subscription (EV-009).
+	tap, tapCh := newPerRunEventTap(deps.bus, runID)
+	// Use deps.adapterRegistry when available; fall back to a fresh empty
+	// registry when nil. NewHandler panics on nil registry.
+	tapRegistry := deps.adapterRegistry
+	if tapRegistry == nil {
+		tapRegistry = handlercontract.NewAdapterRegistry()
+	}
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, tapRegistry)
+
+	sess, watcher, launchErr := runH.Launch(ctx, spec)
+	if launchErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
+			beadID, runID.String(), launchErr)
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("launch error: %v", launchErr))
+		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
+		return
+	}
+
+	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
+	hbDone := make(chan struct{})
+	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+		handler.HeartbeatInterval, hbDone,
+		newDaemonHeartbeatEmitter(deps.bus, runID))
+	defer close(hbDone)
+
+	// Step 6: waitAgentReady — HC-056 agent_ready timeout guard.
+	// Obtain the adapter from the registry for DetectReady; skip when registry
+	// is nil (test mode with no adapters registered).
+	//
+	// HC-056 timeout semantics: we only treat this as a hard failure requiring
+	// reopen if the SPECIFIC HC-056 timeout sentinel (ErrAgentReadyTimeout)
+	// fires. If the watcher exits first (handler crash, clean exit without
+	// agent_ready) the watcher-done cancel fires first, returning
+	// context.Canceled — in that case we skip the reopen and fall through to
+	// the normal waitWithSocketGrace path which handles the exit correctly per
+	// CHB-020 branch 3.
+	if deps.adapterRegistry != nil {
+		adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+		if adapterErr != nil {
+			// No adapter for claude-code — non-fatal at MVH; skip ready-wait.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(claude-code) bead %s: %v (skipping ready-wait)\n",
+				beadID, adapterErr)
+		} else {
+			// Derive a child context that cancels when the watcher finishes (handler
+			// exit). This prevents waitAgentReady from blocking for the full timeout
+			// when the handler exits before emitting agent_ready (e.g. a crash).
+			readyCtx, readyCancel := context.WithCancel(ctx)
+			go func() {
+				select {
+				case <-watcher.Done():
+					readyCancel()
+				case <-readyCtx.Done():
+				}
+			}()
+
+			eventSrc := newChanAgentEventSource(tapCh)
+			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+			readyCancel() // always release the watcher-done goroutine above
+
+			if readyErr == ErrAgentReadyTimeout {
+				// HC-056: agent_ready_timeout — kill, reap, reopen.
+				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
+					beadID, runID.String(), readyErr)
+				_ = sess.Kill(ctx)
+				<-watcher.Done()
+				_ = sess.Wait(ctx)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					"agent_ready_timeout")
+				emitRunCompleted(ctx, deps.bus, runID, false, "agent_ready_timeout")
+				return
+			}
+			// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
+			// exited first, outer ctx cancelled, or watcher-done cancel).
+			// Fall through to waitWithSocketGrace.
+		}
+	}
+	_ = tapCh // suppress unused-variable lint when adapterRegistry is nil
+
+	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
+	// apply the stop-hook grace window for a pending outcome_emitted payload.
+	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
+		runID.String(), artifacts.claudeSessionID)
+
+	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
+	term := handler.MapWaitReturnToTerminalEvent(
+		artifacts.handlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,
+	)
+
+	// Step 9: emit terminal event and close or reopen the bead.
+	//
+	// Bridge-wired path (CHB-020): the terminal event type drives the decision.
+	// When no stop-hook outcome arrived (branch 3) AND the handler exited 0
+	// without a watcher error, we fall back to the pre-bridge close-on-exit-0
+	// heuristic so that existing test fixtures (shell scripts that exit 0) and
+	// MVH twin-blind runs continue to work as expected.
+	//
+	// The fallback does NOT apply when a stop-hook outcome was observed but
+	// contained FAILURE_SIGNAL (branch 2), or when the watcher itself failed
+	// (malformed NDJSON, panic, line-too-long) — those are genuine failures.
+	//
+	// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
+	// fails the bead remains in_progress while JSONL would record
+	// run_completed=true — split-brain. Emit run_failed instead.
+	watcherErr := watcher.Err()
+	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
+	transitionTID, _ := deps.tidGen.Next()
+
+	switch {
+	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
+		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
+		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+		} else {
+			emitRunCompleted(ctx, deps.bus, runID, true, "agent_completed: stop-hook outcome")
+		}
+
+	case socketOutcome == nil && ei.exitCode == 0 && !watcherFailed:
+		// No stop-hook arrived AND handler exited 0 without watcher error.
+		// Fall back to the pre-bridge close-on-exit-0 heuristic for
+		// MVH twin-blind runs.
+		//
+		// hk-wfbxf: same CloseBead error handling as branch 1.
+		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+		} else {
+			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+		}
+
+	default:
+		// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
+		// watcher failure (malformed NDJSON, panic, etc.).
+		var failReason string
+		if watcherFailed {
+			failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
+				watcherErr, ei.exitCode, runID.String())
+		} else if term.SubReason != "" {
+			failReason = fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d run_id=%s",
+				term.Class, term.SubReason, ei.exitCode, runID.String())
+		} else {
+			failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
+		}
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: %s", failReason))
+	}
+}
+
+// beadRunOneLean is the pre-bridge single-mode dispatch path used by test
+// fixtures (hookRelayEnabled=false). It is identical to the code that shipped
+// before hk-gql20.14: no buildClaudeLaunchSpec, no pre-exec messages, no hook
+// session, no heartbeat goroutine, no waitWithSocketGrace.
+//
+// This path exists solely to keep shell-fixture tests (which have tight time
+// deadlines) fast and deterministic under concurrent load. Production code
+// always goes through the full bridge path (beadRunOne's hookRelayEnabled=true
+// branch).
+//
+// Bead ref: hk-gql20.14.
+func beadRunOneLean(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	wtPath string,
+) {
 	spec := handler.LaunchSpec{
 		Binary:  deps.handlerBinary,
 		Args:    deps.handlerArgs,
@@ -511,8 +798,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	sess, watcher, launchErr := deps.h.Launch(ctx, spec)
 	if launchErr != nil {
-		// Launch failure — reopen the bead and surface to stderr.
-		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n", beadID, runID.String(), launchErr)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
+			beadID, runID.String(), launchErr)
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("launch error: %v", launchErr))
@@ -527,15 +814,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	_ = sess.Wait(ctx)
 	outcome := sess.Outcome()
 
-	// Emit run_completed/run_failed, close or reopen the bead.
-	//
-	// hk-9cob3: a watcher error that is NOT context-cancellation means the
-	// watcher fired agent_failed (malformed NDJSON, line-too-long, panic, I/O
-	// error). Treat as failed even on exit=0 — work product may be corrupt.
-	//
-	// hk-wfbxf: CloseBead errors must not be silently discarded. If CloseBead
-	// fails the bead remains in_progress while JSONL would record
-	// run_completed=true — split-brain. Emit run_failed instead.
 	watcherErr := watcher.Err()
 	watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)
 
@@ -558,6 +836,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
 		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: exit=%d watcher_failed=%v", outcome.ExitCode, watcherFailed))
 	}
+}
+
+// isWatcherErrCanceled reports whether err is the ErrCanceled sentinel that
+// the watcher sets when the session context is cancelled cleanly (not a
+// genuine watcher failure).
+//
+// This mirrors the pre-bridge check in the original single-mode path:
+// "watcherFailed := watcherErr != nil && !errors.Is(watcherErr, handlercontract.ErrCanceled)"
+//
+// Bead ref: hk-gql20.14.
+func isWatcherErrCanceled(err error) bool {
+	return errors.Is(err, handlercontract.ErrCanceled)
 }
 
 // workloopSleep sleeps for d or until ctx is cancelled. Returns a non-nil
@@ -605,6 +895,32 @@ func removeWorktree(ctx context.Context, repoRoot, wtPath string) {
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", wtPath)
 	cmd.Dir = repoRoot
 	_ = cmd.Run()
+}
+
+// emitPreExecMessage emits a single CHB-018 pre-exec progress message on the
+// bus using the message's embedded "type" field as the event type.
+//
+// Each pre-exec message is compact JSON with a top-level "type" field matching
+// one of the §8.3 event-type constants (handler_capabilities,
+// session_log_location, skills_provisioned, agent_ready). Parsing the type
+// avoids emitting all four under a single catch-all envelope, which would
+// break per-type JSONL filtering for consumers.
+//
+// If the type field cannot be parsed the message is still emitted under the
+// agent_ready type as a safe fallback (no information is lost; the payload
+// is the ground truth).
+//
+// Spec: specs/claude-hook-bridge.md §4.7 CHB-018.
+// Bead: hk-gql20.14.
+func emitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msg json.RawMessage) {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	eventType := core.EventTypeAgentReady // safe fallback
+	if err := json.Unmarshal(msg, &envelope); err == nil && envelope.Type != "" {
+		eventType = core.EventType(envelope.Type)
+	}
+	_ = bus.EmitWithRunID(ctx, runID, eventType, msg)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

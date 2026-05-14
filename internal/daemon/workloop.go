@@ -195,6 +195,14 @@ type workLoopDeps struct {
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
+
+	// projectCfg is the decoded .harmonik/config.yaml loaded once at startup
+	// (EM-012b tier-2). The zero value is safe: LookupAgent returns ("","") for
+	// all agent types. Passed to ResolveModelPreference at claim time.
+	//
+	// Spec ref: specs/execution-model.md §4.3 EM-012b.
+	// Bead ref: hk-bfvk7.
+	projectCfg ProjectConfig
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -301,6 +309,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		adapterRegistry:     registry,
 		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
+		projectCfg:          cfg.ProjectCfg,
 	}, nil
 }
 
@@ -519,6 +528,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// the run's lifetime. See moderesolve.go.
 	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
 
+	// Resolve (model, effort) per EM-012b four-tier precedence walk.
+	// Resolved once at claim time; sealed into the run for its lifetime.
+	// The agentType is claude-code for the production path at MVH; it is
+	// sourced from the handler binary convention (single adapter at MVH).
+	// See modelpreference.go for the resolver and tier-3 defaults.
+	resolvedModel, resolvedEffort := ResolveModelPreference(
+		ctx,
+		beadRecord.Labels,
+		core.AgentTypeClaudeCode,
+		deps.projectCfg,
+		deps.bus,
+		string(beadID),
+	)
+
 	// Resolve the parent commit (start_from SHA) for worktree creation per
 	// WM-005b / BI-009b. resolveParentCommit parses the bead's ## Branching
 	// section and resolves start_from to a commit SHA; it falls back to HEAD
@@ -560,7 +583,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// single mode (default MVH): one-shot implementer dispatch.
 	if workflowMode == core.WorkflowModeReviewLoop {
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA)
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
@@ -597,6 +620,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		baseEnv:           deps.handlerEnv,
 		beadTitle:         beadRecord.Title,
 		beadDescription:   beadRecord.Description,
+		model:             resolvedModel,
+		effort:            resolvedEffort,
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {

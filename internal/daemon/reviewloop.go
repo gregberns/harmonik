@@ -129,6 +129,8 @@ func runReviewLoop(
 	beadDescription string,
 	wtPath string,
 	parentSHA string,
+	resolvedModel string,
+	resolvedEffort string,
 ) reviewLoopResult {
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
@@ -177,6 +179,8 @@ func runReviewLoop(
 			baseEnv:           deps.handlerEnv,
 			beadTitle:         beadTitle,
 			beadDescription:   beadDescription,
+			model:             resolvedModel,
+			effort:            resolvedEffort,
 			// priorVerdictFile and priorVerdictSummary are populated below for
 			// implementer-resume phases (iteration ≥ 2) once state.lastVerdictNotes is known.
 		}
@@ -399,6 +403,8 @@ func runReviewLoop(
 			baseEnv:           deps.handlerEnv,
 			beadTitle:         beadTitle,
 			beadDescription:   beadDescription,
+			model:             resolvedModel,
+			effort:            resolvedEffort,
 		}
 		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
 		if revSpecErr != nil {

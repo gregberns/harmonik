@@ -175,6 +175,17 @@ type Config struct {
 	// Spec ref: specs/claude-hook-bridge.md §4.1 CHB-003 (hook command field).
 	// Bead ref: hk-kqdpf.6.
 	DaemonBinaryPath string
+
+	// ProjectCfg is the decoded .harmonik/config.yaml loaded once at startup
+	// (EM-012b tier-2). Populated by Start via LoadProjectConfig; callers may
+	// leave it zero-value for tests that do not exercise project-config resolution.
+	//
+	// The zero value (ProjectConfig{}) is safe: LookupAgent returns ("","") for
+	// all agent types, causing resolution to fall through to tier 3 and tier 4.
+	//
+	// Spec ref: specs/execution-model.md §4.3 EM-012b — tier-2 slot.
+	// Bead ref: hk-bfvk7.
+	ProjectCfg ProjectConfig
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -257,6 +268,20 @@ func Start(ctx context.Context, cfg Config) error {
 		workflowModeDefault = core.WorkflowModeSingle
 	} else if !workflowModeDefault.Valid() {
 		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
+	}
+
+	// EM-012b tier-2: load .harmonik/config.yaml once at startup and cache in cfg.
+	// A parse error or unsupported schema_version causes the daemon to refuse to start
+	// (loud failure per bead spec; operators must fix the config before restarting).
+	// A missing file is silently treated as "no project config" (zero-value ProjectConfig).
+	//
+	// Bead ref: hk-bfvk7.
+	if cfg.ProjectDir != "" {
+		projectCfg, cfgErr := LoadProjectConfig(cfg.ProjectDir)
+		if cfgErr != nil {
+			return fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", cfgErr)
+		}
+		cfg.ProjectCfg = projectCfg
 	}
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).

@@ -108,6 +108,12 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
 
+	// ProjectCfg is the decoded .harmonik/config.yaml for EM-012b tier-2 resolution.
+	// The zero value is safe: LookupAgent returns ("","") for all agent types.
+	//
+	// Bead ref: hk-bfvk7.
+	ProjectCfg ProjectConfig
+
 	// LaunchSpecBuilder, when non-nil, overrides the buildClaudeLaunchSpec
 	// function called by beadRunOne. Production tests leave this nil; the
 	// ExportedWorkLoopDeps default installs synthLaunchSpecBuilder, which
@@ -217,6 +223,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		adapterRegistry:     p.AdapterRegistry2,
 		substrate:           p.Substrate,
 		agentReadyTimeout:   p.AgentReadyTimeout,
+		projectCfg:          p.ProjectCfg,
 	}
 }
 
@@ -297,7 +304,7 @@ func ExportedRunReviewLoop(
 	wtPath string,
 	parentSHA string,
 ) ReviewLoopResultExported {
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA)
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "")
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),
@@ -720,4 +727,61 @@ func ExportedPasteInjectOnLaunch(
 // Bead ref: hk-zrj83.
 func ExportedBufferName(sessionID, purpose string) string {
 	return bufferName(sessionID, purpose)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project config + model resolution test seams (hk-bfvk7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedProjectConfig is a type alias for ProjectConfig so tests in package
+// daemon_test can reference the type directly.
+//
+// Bead ref: hk-bfvk7.
+type ExportedProjectConfig = ProjectConfig
+
+// ExportedErrMalformedConfigYAML is a type alias so tests can use errors.As.
+//
+// Bead ref: hk-bfvk7.
+type ExportedErrMalformedConfigYAML = ErrMalformedConfigYAML
+
+// ExportedErrUnsupportedConfigVersion is a type alias so tests can use errors.As.
+//
+// Bead ref: hk-bfvk7.
+type ExportedErrUnsupportedConfigVersion = ErrUnsupportedConfigVersion
+
+// ExportedLoadProjectConfig exposes LoadProjectConfig for tests in package daemon_test.
+//
+// Bead ref: hk-bfvk7.
+func ExportedLoadProjectConfig(repoRoot string) (ProjectConfig, error) {
+	return LoadProjectConfig(repoRoot)
+}
+
+// ExportedResolveModelPreference exposes ResolveModelPreference for tests.
+//
+// Bead ref: hk-bfvk7.
+func ExportedResolveModelPreference(
+	ctx context.Context,
+	beadLabels []string,
+	agentType core.AgentType,
+	projectCfg ProjectConfig,
+	bus handlercontract.EventEmitter,
+	beadID string,
+) (model, effort string) {
+	return ResolveModelPreference(ctx, beadLabels, agentType, projectCfg, bus, beadID)
+}
+
+// WorkLoopDepsWithProjectCfg returns a copy of params with ProjectCfg set to cfg.
+// Used by integration tests to inject a non-zero ProjectConfig into the work loop.
+//
+// Bead ref: hk-bfvk7.
+func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg ProjectConfig) WorkLoopDepsParams {
+	p.ProjectCfg = cfg
+	return p
+}
+
+// ExportedProjectCfgOf returns the projectCfg field from deps for inspection.
+//
+// Bead ref: hk-bfvk7.
+func ExportedProjectCfgOf(deps workLoopDeps) ProjectConfig {
+	return deps.projectCfg
 }

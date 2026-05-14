@@ -1,24 +1,37 @@
 package daemon
 
-// modelpreference.go — ModelPreference shape validation per HC-055a (hk-xo03m).
+// modelpreference.go — ModelPreference shape validation + 4-tier resolution per
+// HC-055a and EM-012b (hk-xo03m, hk-bfvk7).
 //
-// Provides regex + enum guards for the model and effort fields that flow through
-// claudeRunCtx into buildClaudeLaunchSpec.  Both guards are called before argv
-// construction; invalid values produce a *ModelPreferenceError rather than being
-// silently dropped.
+// Provides:
+//   - regex + enum guards for model/effort fields (validateModel, validateEffort).
+//   - compiled tier-3 defaults per agent type (defaultModelEntries).
+//   - ResolveModelPreference: the EM-012b 4-tier precedence walk.
 //
-// Judgment calls (hk-xo03m):
-//   - modelRegex is a package-level compiled var (no per-call compile cost).
-//   - validEffortLevels is a map[string]struct{} (O(1) lookup; enum is short).
-//   - *ModelPreferenceError is the typed error; it names the failing field and value.
+// Judgment calls (hk-bfvk7):
+//   - Tier-3 defaults live here, adjacent to the validator functions and the
+//     resolution function; this avoids a separate file for a small static map.
+//   - Tier-1 conflict detection emits bead_label_conflict per EM-012a precedent
+//     (emitBeadLabelConflict in moderesolve.go is reused).
+//   - model and effort are resolved independently: each walks all four tiers.
+//   - mtime invalidation for .harmonik/config.yaml is NOT implemented; operators
+//     restart the daemon to reload (matches WorkflowModeDefault and other startup-
+//     time fields; documented in projectconfig.go as well).
 //
 // Spec refs:
 //   - specs/handler-contract.md §4.10 HC-055a — ModelPreference descriptor invariants.
 //   - specs/execution-model.md §4.3 EM-012b — model/effort resolution chain.
+//
+// Beads: hk-xo03m (validators), hk-bfvk7 (defaults + resolution).
 
 import (
+	"context"
 	"fmt"
 	"regexp"
+	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // modelRegex is the shape constraint for the model alias (HC-055a).
@@ -96,4 +109,169 @@ func validateEffort(effort string) error {
 		}
 	}
 	return nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tier-3: compiled per-agent-type defaults (EM-012b §3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// modelDefaultEntry is the (model, effort) pair stored in defaultModelEntries.
+type modelDefaultEntry struct {
+	model  string
+	effort string
+}
+
+// defaultModelEntries is the compiled tier-3 default map keyed by AgentType.
+// Entries here are normative for the agent type they describe; they are the
+// "current operator practice" defaults and are updated by adding new agent
+// adapters (EM-012b §3: "entries are normative for the binding they describe
+// and additive over time").
+//
+// Judgment call (hk-bfvk7): claude-code defaults to model=sonnet, effort=medium
+// to match current operator practice. claude-twin leaves both empty: the twin
+// binary uses a local fixture stream and does not forward --model/--effort to
+// a real model API. Unknown agent types receive empty defaults (tier 4 fallback).
+var defaultModelEntries = map[core.AgentType]modelDefaultEntry{
+	core.AgentTypeClaudeCode: {model: "sonnet", effort: "medium"},
+	core.AgentTypeClaudeTwin: {model: "", effort: ""},
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ResolveModelPreference — EM-012b 4-tier precedence walk
+// ─────────────────────────────────────────────────────────────────────────────
+
+// labelPrefixModel is the label prefix for per-bead model overrides (EM-012b §1).
+const labelPrefixModel = "model:"
+
+// labelPrefixEffort is the label prefix for per-bead effort overrides (EM-012b §1).
+const labelPrefixEffort = "effort:"
+
+// ResolveModelPreference resolves the (model, effort) pair for a run by walking
+// the EM-012b four-tier precedence list.  model and effort are resolved
+// independently: each walks all four tiers and uses the first non-empty result.
+//
+//   - Tier 1: per-bead model:<alias> and effort:<level> labels.
+//   - Tier 2: per-project .harmonik/config.yaml (projectCfg.LookupAgent).
+//   - Tier 3: compiled default map (defaultModelEntries).
+//   - Tier 4: empty strings — handler applies its own tool default.
+//
+// Tier-1 conflict handling (EM-012b): multiple model:<alias> labels → treat as
+// absent + emit bead_label_conflict. Same for multiple effort:<level> labels.
+// An unrecognised effort value also treats tier 1 as absent + emits
+// bead_label_conflict. model values are not validated here (shape validation
+// happens in claudelaunchspec.go Step 6); only the conflict/count rule applies.
+//
+// Returns ("", "") when no tier supplies a value (pure tier-4 fallback).
+func ResolveModelPreference(
+	ctx context.Context,
+	beadLabels []string,
+	agentType core.AgentType,
+	projectCfg ProjectConfig,
+	bus handlercontract.EventEmitter,
+	beadID string,
+) (model, effort string) {
+	model = resolveModelField(ctx, beadLabels, agentType, projectCfg, bus, beadID)
+	effort = resolveEffortField(ctx, beadLabels, agentType, projectCfg, bus, beadID)
+	return model, effort
+}
+
+// resolveModelField resolves the model field through the four tiers.
+func resolveModelField(
+	ctx context.Context,
+	beadLabels []string,
+	agentType core.AgentType,
+	projectCfg ProjectConfig,
+	bus handlercontract.EventEmitter,
+	beadID string,
+) string {
+	// Tier 1: collect model:<alias> labels.
+	var modelLabels []string
+	for _, lbl := range beadLabels {
+		if strings.HasPrefix(lbl, labelPrefixModel) {
+			modelLabels = append(modelLabels, lbl)
+		}
+	}
+
+	if len(modelLabels) == 1 {
+		// Exactly one model label: accept the alias value as-is (shape validation
+		// deferred to claudelaunchspec.go Step 6 per HC-055a value-opacity invariant).
+		return strings.TrimPrefix(modelLabels[0], labelPrefixModel)
+	}
+	if len(modelLabels) > 1 {
+		// Conflict: multiple model labels → treat tier 1 as absent, emit event.
+		emitBeadLabelConflict(ctx, bus,
+			core.BeadRecord{BeadID: core.BeadID(beadID), Labels: beadLabels},
+			modelLabels,
+			"tier-1 model absent: multiple model:<alias> labels; walk continues to tier 2")
+		// Fall through to tier 2.
+	}
+	// len == 0: tier 1 absent, no event.
+
+	// Tier 2: per-project config.
+	cfgModel, _ := projectCfg.LookupAgent(agentType)
+	if cfgModel != "" {
+		return cfgModel
+	}
+
+	// Tier 3: compiled default.
+	if e, ok := defaultModelEntries[agentType]; ok && e.model != "" {
+		return e.model
+	}
+
+	// Tier 4: empty (handler tool default).
+	return ""
+}
+
+// resolveEffortField resolves the effort field through the four tiers.
+func resolveEffortField(
+	ctx context.Context,
+	beadLabels []string,
+	agentType core.AgentType,
+	projectCfg ProjectConfig,
+	bus handlercontract.EventEmitter,
+	beadID string,
+) string {
+	// Tier 1: collect effort:<level> labels.
+	var effortLabels []string
+	for _, lbl := range beadLabels {
+		if strings.HasPrefix(lbl, labelPrefixEffort) {
+			effortLabels = append(effortLabels, lbl)
+		}
+	}
+
+	if len(effortLabels) == 1 {
+		val := strings.TrimPrefix(effortLabels[0], labelPrefixEffort)
+		// Validate the effort value per EM-012b: unrecognised → tier absent + event.
+		if _, ok := validEffortLevels[val]; !ok {
+			emitBeadLabelConflict(ctx, bus,
+				core.BeadRecord{BeadID: core.BeadID(beadID), Labels: beadLabels},
+				effortLabels,
+				"tier-1 effort absent: unrecognised effort value "+val+"; walk continues to tier 2")
+			// Fall through to tier 2.
+		} else {
+			return val
+		}
+	} else if len(effortLabels) > 1 {
+		// Conflict: multiple effort labels → treat tier 1 as absent, emit event.
+		emitBeadLabelConflict(ctx, bus,
+			core.BeadRecord{BeadID: core.BeadID(beadID), Labels: beadLabels},
+			effortLabels,
+			"tier-1 effort absent: multiple effort:<level> labels; walk continues to tier 2")
+		// Fall through to tier 2.
+	}
+	// len == 0: tier 1 absent, no event.
+
+	// Tier 2: per-project config.
+	_, cfgEffort := projectCfg.LookupAgent(agentType)
+	if cfgEffort != "" {
+		return cfgEffort
+	}
+
+	// Tier 3: compiled default.
+	if e, ok := defaultModelEntries[agentType]; ok && e.effort != "" {
+		return e.effort
+	}
+
+	// Tier 4: empty (handler tool default).
+	return ""
 }

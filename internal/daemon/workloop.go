@@ -195,7 +195,6 @@ type workLoopDeps struct {
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
-
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -655,6 +654,58 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
+
+	// Step 4a: wire the agent-ready callback so that incoming agent_ready relay
+	// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
+	// into tapCh, which waitAgentReady blocks on.
+	//
+	// Without this call, hookSessionStore.notifyAgentReady finds agentReadyCallback
+	// == nil and is a no-op: tapCh stays empty and waitAgentReady always fires
+	// ErrAgentReadyTimeout (HC-056). This is the root cause identified in smoke v6
+	// (docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v6.md §9, bead hk-lj1p9.4).
+	//
+	// The callback is invoked from the socket-acceptor goroutine and MUST be
+	// non-blocking. tap.Emit is used to forward the event through the same path
+	// as watcher events, ensuring waitAgentReady's observer goroutine receives it.
+	// context.Background() is intentional: the callback fires asynchronously from
+	// a socket-acceptor goroutine whose lifetime is decoupled from ctx; bus.Emit
+	// with Background is non-blocking and safe to call after ctx is cancelled.
+	//
+	// The defer CloseHookSession (step 2 above) ensures the callback is never
+	// called after the hook session is torn down: notifyAgentReady reads the
+	// callback under the mutex, and CloseHookSession deletes the session entry,
+	// so any post-close relay message returns unknown_session before reaching the
+	// callback.
+	//
+	// Ordering: tap is created before Launch (step 4), Launch returns before this
+	// call (step 4a), and waitAgentReady is called after (step 6). This ensures
+	// the callback is registered before waitAgentReady blocks on tapCh.
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
+	// Bead ref: hk-lj1p9.4.
+	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
+		_ = tap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+	})
+
+	// Step 4b: paste-inject the kick-off message into the Claude pane (hk-zrj83).
+	//
+	// pasteInjectOnLaunch delivers "Please read .harmonik/agent-task.md and begin."
+	// (or the phase-appropriate equivalent) to the tmux pane via WriteLastPane.
+	// Without this call the Claude pane sits at the interactive REPL prompt with
+	// no task, even after agent_ready is observed (secondary wiring gap identified
+	// in smoke v6 §7a, bead hk-lj1p9.4).
+	//
+	// Runs in a background goroutine so it does not block the workloop goroutine.
+	// Errors inside pasteInjectOnLaunch are logged to stderr but non-fatal (spec
+	// PL-021d: paste-inject failure does not reopen the bead).
+	//
+	// phase="" (single-mode implementer-initial) routes to pasteInjectImplementerInitial
+	// in pasteinject.go, which writes "Please read .harmonik/agent-task.md and begin.\n".
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+	// Bead ref: hk-lj1p9.4, hk-zrj83.
+	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
+		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
 	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
 	hbDone := make(chan struct{})

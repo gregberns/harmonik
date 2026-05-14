@@ -268,6 +268,20 @@ func runReviewLoop(
 			return result
 		}
 
+		// Paste-inject: deliver the kick-off message to the implementer pane (hk-zrj83).
+		// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
+		// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
+		//
+		// NOTE: The review-loop implementer path does not currently call waitAgentReady
+		// (it uses waitWithSocketGrace directly), so no SetAgentReadyCallback wire is
+		// needed here. If a future pass adds waitAgentReady to the implementer phase,
+		// a per-run tap must be constructed before Launch and wired via SetAgentReadyCallback.
+		//
+		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+		// Bead ref: hk-lj1p9.4, hk-zrj83.
+		go pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID,
+			implPhase, state.iterationCount, wtPath)
+
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
 		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
@@ -410,6 +424,28 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+
+		// Wire the reviewer's agent-ready callback into revTap so that relay-synthesized
+		// agent_ready envelopes from the hook-relay subprocess reach revTapCh, which
+		// waitAgentReady (below) blocks on. Without this call notifyAgentReady finds a
+		// nil callback and revTapCh stays empty, causing HC-056 to fire every 30s.
+		//
+		// Same wiring gap as single-mode beadRunOne (bead hk-lj1p9.4); fixed in both paths.
+		//
+		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
+		// Bead ref: hk-lj1p9.4.
+		if deps.hookStore != nil {
+			capturedRevTap := revTap
+			deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() {
+				_ = capturedRevTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+			})
+		}
+
+		// Paste-inject the reviewer kick-off message into the reviewer pane (hk-zrj83).
+		// "Read .harmonik/review-target.md ..." is delivered via WriteLastPane so the
+		// reviewer Claude pane receives its task immediately after spawn.
+		go pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID,
+			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
 		// the configured timeout, same as the implementer phase.

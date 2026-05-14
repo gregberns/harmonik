@@ -8,7 +8,7 @@ requirement-prefix: PL
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.4
+version: 0.4.5
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -561,6 +561,47 @@ Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` 
 Tags: mechanism
 Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
 
+#### PL-021d — Daemon→pane write mechanism (tmux load-buffer + paste-buffer)
+
+PL-021b §5 forbids the daemon from *reading* pane output via `tmux pipe-pane` or any equivalent channel. This clause addresses the symmetric case — the daemon *writing* content into a pane — which is unspecified in PL-021b and needed for initial-task delivery and inter-phase message injection (see [docs/claude-session-comms-audit-2026-05-13.md §6 B2]).
+
+**Permitted write mechanism.** When the daemon must deliver text to a pane (e.g., initial task instruction, phase-transition directive), it MUST use the `tmux load-buffer` + `tmux paste-buffer` sequence rather than `tmux send-keys` with a bare string argument:
+
+1. Write the payload to a temporary file under `.harmonik/` using the temp+rename+fsync(parent_dir) atomic discipline of [workspace-model.md §4.7 WM-026].
+2. Load the temp file into a named tmux buffer: `tmux load-buffer -b <buffer-name> <temp-file-path>`.
+3. Paste the buffer into the target pane: `tmux paste-buffer -b <buffer-name> -t <pane-target>`.
+4. Delete the buffer immediately after paste: `tmux delete-buffer -b <buffer-name>`.
+5. Remove the temporary file.
+
+The `send-keys -l` variant (literal-string send) is also permitted as a fallback when payload length is below 512 bytes and no newlines are present in the payload; for all other payloads the load-buffer + paste-buffer sequence MUST be used. The `send-keys` bare-string form (without `-l`) is FORBIDDEN for daemon-injected payloads because it interprets shell metacharacters.
+
+**Buffer-name discipline.** The buffer name MUST be deterministic per agent session and write purpose:
+
+- Format: `harmonik-<session-id>-<purpose>`
+- `<session-id>` is the bead's session UUID (the same ID used in the `agent_started` event and the tmux window name).
+- `<purpose>` is a short lowercase slug identifying the write's role: `task` for the initial task delivery, `phase-msg` for phase-transition directives, `feedback` for reviewer-feedback injection.
+- Example: `harmonik-01hwxyz-abc123-task`
+
+The buffer name MUST be globally unique within tmux (tmux buffer names are shared across sessions in a server). The session-id component ensures this because session IDs are unique per harmonik run. The daemon MUST NOT reuse a buffer name for a second paste without first deleting it.
+
+**Cleanup obligation.** The daemon MUST delete the named buffer via `tmux delete-buffer -b <buffer-name>` immediately after `paste-buffer` returns, regardless of whether `paste-buffer` succeeded or failed. If `delete-buffer` fails (e.g., the buffer was already consumed), the failure MUST be logged at DEBUG level and ignored — it is not a fatal error. Buffer accumulation across sessions is not a correctness hazard (tmux garbage-collects buffers on server exit), but leaving buffers named with the `harmonik-` prefix is undesirable for operator hygiene.
+
+**Why this is not equivalent to pipe-pane stdout reads.** `tmux pipe-pane` attaches a kernel-level pipe to the pane's pty output — it intercepts and re-routes the pty's read path, creating a side-channel that bypasses the operator's attached view. In contrast, `tmux paste-buffer` writes content into the pane's *input* via tmux's internal paste mechanism, which routes through the same TTY input path a human would use (equivalent to the operator pasting text from a tmux copy-paste buffer). No kernel-level pipe redirection occurs. The pty sees exactly what it would see from operator interaction; the operator's attached view shows the injected text entering the prompt, preserving full inspectability. The bridge-protocol messages over the Unix socket (PL-021b §5) remain the sole output channel for harmonik-structured data; the paste mechanism carries only human-readable instruction text.
+
+**Structured-log audit.** Every daemon→pane write MUST be recorded as a structured log entry at INFO level with the following fields:
+
+- `event`: `"daemon_pane_write"`
+- `session_id`: the bead session UUID
+- `pane_target`: the tmux pane target string (e.g., `harmonik-proj-session:task-window.0`)
+- `buffer_name`: the buffer name used
+- `purpose`: the purpose slug
+- `payload_bytes`: the byte length of the payload
+
+This ensures the operator and conformance tests can audit every daemon-injected write without parsing pane output.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+
 #### PL-022 — ntm adapter MUST NOT consume workflow-semantic features
 
 The ntm adapter MUST NOT import or consume: (a) ntm's Pipeline System (harmonik's workflow semantics live in DOT graphs, not ntm pipelines), (b) ntm's SwarmPlan format (harmonik uses DOT per locked decision #7, not SwarmPlan), (c) ntm's checkpoint/recovery (tmux-session-resume is NOT equivalent to harmonik's git-checkpoint-based workflow-state recovery; the two solve different problems), or (d) ntm's file-reservation / Agent Mail features (harmonik uses Gas Town worktree+merge per locked decision #7; file reservations are explicitly rejected).
@@ -991,6 +1032,7 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-13 | 0.4.5 | agent (hk-ultyu) | **Daemon→pane write mechanism (PL-021d, new, §4.7).** Fills the symmetric gap left by PL-021b §5 (which forbids `pipe-pane` reads but left the write direction unspecified). **PL-021d** permits `tmux load-buffer -b <name> <file>` + `tmux paste-buffer -b <name> -t <pane>` as the daemon→pane write mechanism; `send-keys -l` is allowed as a fallback for payloads ≤ 512 bytes with no newlines; bare `send-keys` (without `-l`) is FORBIDDEN. Buffer-name discipline: `harmonik-<session-id>-<purpose>` (deterministic per session, globally unique, slug-named purpose e.g. `task`, `phase-msg`, `feedback`). Cleanup obligation: `tmux delete-buffer` immediately after paste; failure logged at DEBUG and ignored. Justification added for why this is not equivalent to `pipe-pane`: writes route through the TTY input path (same as operator paste), not a kernel-level pipe on the output side. Structured-log audit: `daemon_pane_write` event at INFO with `session_id`, `pane_target`, `buffer_name`, `purpose`, `payload_bytes`. Refs: hk-ultyu, docs/claude-session-comms-audit-2026-05-13.md §6 B2. |
 | 2026-05-13 | 0.4.4 | agent (hk-gql20.25) | **Bridge-integration spec review findings (MEDIUM + MINOR).** **PL-021c §6** (new): post-ceiling survivor handling — if subprocesses are still alive after the 2-second `tmux kill-window` poll ceiling, the daemon MUST log a structured WARN with key `tmux_kill_window_survivor` naming each surviving PID and include a new `tmux_kill_window_survivors []int` field in the `daemon_orphan_sweep_completed` event payload; no SIGKILL escalation at MVH (operator session is not harmonik's to mass-kill). Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload requires `tmux_kill_window_survivors []int` addition. **PL-021b §8** (new): window-name observability — the daemon MUST emit the resolved `tmux_window_name` as a field of the `agent_started` progress-stream message so that the determinism asserted in PL-021b §4 is externally observable. Cross-spec coordination: [event-model.md §6.3] `agent_started` payload requires new optional `tmux_window_name string` field. **OQ-PL-015** (new): deferred OQ for operator-facing window-name surface (e.g., `hk attach --list-windows`); cross-ref PL-021b §4, §8, WM-002a. No existing clauses revised. Refs: hk-gql20.25. |
 | 2026-05-13 | 0.4.3 | bridge-integration | **Direct-tmux substrate + tmux-start amendments (hk-gql20.1).** Additive amendments for the direct-tmux substrate at MVH. **PL-021b** (new, §4.7) — direct-tmux substrate obligations: pane creation via `tmux new-window`, tmux availability probe at PL-005 step 4 with ON §8 code 22 on failure, session resolution distinguishing `$TMUX`-set ($TMUX-reuse with `hk-<hash6>-` sentinel) vs unset (refuse with code 24), deterministic window naming per WM-002a, no pane-output consumption (bridge wire is the Unix socket per PL-003a / CHB-010), substrate seam threaded via adapter registry preserving CHB-022 twin-blindness, wait/kill via `tmux list-panes` polling / `tmux kill-window`. **PL-021c** (new, §4.7) — window-level orphan sweep keyed on `hk-<hash6>-` prefix, 100ms/2s polling, `tmux_windows_killed` payload field. **PL-028 refinement** (§4.10) — `hk tmux-start` subcommand: $TMUX guard, ensure-session, syscall.Exec into attach, exit codes 0/22/24. **PL-028b** (new, §4.10) — daemon refusal when `$TMUX` unset (exit 24, no pidfile/socket bind). Cross-spec coordination: ON §8 to absorb code 24 (`tmux-session-unavailable`, declared PL-INTERIM); EV §8.7 `daemon_orphan_sweep_completed` payload to add `tmux_windows_killed`; WM-002a adds deterministic window-naming clause; HC-054/055/056/057 add Attach pty contract, claude flag allow-list, agent_ready timeout, heartbeat ownership. No existing PL IDs renumbered. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.2 | foundation-author | Add PL-017a in §4.5 (gap-filler after PL-017, avoiding collision with existing PL-018 "Daemon is a deterministic Go binary" in §4.6) clarifying that hook-bridge relay subprocesses spawned by an agent subprocess are grandchildren of the daemon and not subject to PL-014, PL-014a, or PL-006. Companion to [claude-hook-bridge.md] new spec. No prior IDs renumbered. Status remains `reviewed`. |

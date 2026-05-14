@@ -67,9 +67,11 @@ func TestCHB028_FreshWrite(t *testing.T) {
 	}
 }
 
-// TestCHB028_CollisionRejection verifies that a pre-existing agent-task.md on a
-// fresh launch (ReAttach=false) returns ErrTaskFileCollision.
-func TestCHB028_CollisionRejection(t *testing.T) {
+// TestCHB028_LaunchOverwrites verifies that a second WriteAgentTask call on the
+// same workspace overwrites the existing agent-task.md. Review-loop phase
+// transitions (impl → reviewer → impl-resume) reuse the same worktree; each
+// launch writes content for its own (run_id, phase, iteration) tuple.
+func TestCHB028_LaunchOverwrites(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
@@ -78,29 +80,35 @@ func TestCHB028_CollisionRejection(t *testing.T) {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 
-	payload := AgentTaskPayload{
+	first := AgentTaskPayload{
 		BeadID:        "hk-abc02",
-		Title:         "Task",
+		Title:         "First Task",
 		Phase:         "implementer-initial",
 		Iteration:     1,
 		RunID:         "018e1234-0000-7000-8000-000000000002",
 		WorkspacePath: workspacePath,
-		Body:          "Some body.",
-		ReAttach:      false,
+		Body:          "First body.",
 	}
-
-	// First write — must succeed.
-	if err := WriteAgentTask(workspacePath, payload); err != nil {
+	if err := WriteAgentTask(workspacePath, first); err != nil {
 		t.Fatalf("WriteAgentTask first write: %v", err)
 	}
 
-	// Second write on same path without ReAttach — must return ErrTaskFileCollision.
-	err := WriteAgentTask(workspacePath, payload)
-	if err == nil {
-		t.Fatal("CHB-028 collision: expected ErrTaskFileCollision, got nil")
+	second := first
+	second.Phase = "reviewer"
+	second.Body = "Reviewer body."
+	if err := WriteAgentTask(workspacePath, second); err != nil {
+		t.Fatalf("WriteAgentTask second (overwrite) write: %v", err)
 	}
-	if !errors.Is(err, ErrTaskFileCollision) {
-		t.Errorf("CHB-028 collision: want ErrTaskFileCollision, got %v", err)
+
+	got, err := os.ReadFile(AgentTaskPath(workspacePath))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(got), "Reviewer body.") {
+		t.Errorf("second launch should have overwritten file; got %q", string(got))
+	}
+	if strings.Contains(string(got), "First body.") {
+		t.Errorf("first-launch body should no longer be present; got %q", string(got))
 	}
 }
 

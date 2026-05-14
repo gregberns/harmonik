@@ -17,13 +17,9 @@ import (
 	"strings"
 )
 
-// ErrTaskFileCollision is returned by WriteAgentTask when a pre-existing
-// agent-task.md is found at materialization time and the caller has NOT
-// indicated a re-attach path (AgentTaskPayload.ReAttach = false).
-//
-// Per claude-hook-bridge.md §4.11 CHB-028: a pre-existing agent-task.md at
-// materialization time on a fresh launch is a fatal structural error; the
-// caller MUST NOT exec Claude and MUST emit agent_failed.
+// ErrTaskFileCollision is retained for backwards compatibility of the public
+// surface; it is no longer returned by WriteAgentTask. Each launch overwrites
+// the prior file (see WriteAgentTask docs and CHB-028 amendment 2026-05-13).
 var ErrTaskFileCollision = errors.New("workspace: TaskFileCollision")
 
 // ErrTaskFileEmpty is returned by WriteAgentTask when the constructed file
@@ -49,9 +45,9 @@ var ErrTaskFileEmpty = errors.New("workspace: TaskFileEmpty")
 //     commit SHAs for the diff under review.
 //
 // Re-attach flag:
-//   - ReAttach: when true, WriteAgentTask skips the collision check and returns
-//     nil if agent-task.md already exists (idempotent re-attach path per
-//     CHB-028 re-launch semantics).
+//   - ReAttach: when true, WriteAgentTask returns nil immediately if
+//     agent-task.md already exists (idempotent re-attach path per CHB-028
+//     re-launch semantics — daemon restart finding its own prior write).
 type AgentTaskPayload struct {
 	// BeadID is the opaque bead correlation identifier (HARMONIK_BEAD_ID).
 	// Use "none" when not bead-tied.
@@ -101,7 +97,8 @@ type AgentTaskPayload struct {
 	// ReAttach signals that the daemon is re-attaching to an existing session.
 	// When true, WriteAgentTask returns nil immediately if agent-task.md is
 	// already present (idempotent re-attach semantics per CHB-028).
-	// When false (default), a pre-existing file is ErrTaskFileCollision.
+	// When false (default), the existing file is overwritten with the new
+	// content; review-loop phase transitions are normal overwrite, not error.
 	ReAttach bool
 }
 
@@ -162,14 +159,17 @@ const ReviewTargetGitignoreLine = ".harmonik/review-target.md"
 // writes to agent-task.tmp-<pid>, fsyncs, renames to agent-task.md, fsyncs
 // the parent directory.
 //
-// # Collision semantics
+// # Overwrite / re-attach semantics
 //
-// A pre-existing agent-task.md on a fresh launch (payload.ReAttach = false)
-// is a fatal structural error: returns ErrTaskFileCollision (wrapped). The
-// caller MUST NOT exec Claude.
+// Each call writes the file with content for the caller's
+// (run_id, phase, iteration) tuple. Review-loop phase transitions
+// (impl → reviewer → impl-resume) reuse the same worktree and each is its
+// own logical launch with its own content, so a pre-existing file is
+// overwritten — not an error.
 //
-// On re-attach (payload.ReAttach = true), a pre-existing file is a no-op —
-// the existing file is idempotent for a given (run_id, phase, iteration) tuple.
+// When payload.ReAttach = true (daemon restart finding its own prior write
+// for the same launch), WriteAgentTask returns nil immediately if the file
+// is already present, avoiding a redundant write.
 //
 // # Validation
 //
@@ -194,15 +194,15 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 
 	target := AgentTaskPath(workspacePath)
 
-	// Collision check (skip on re-attach path).
-	if !payload.ReAttach {
-		if _, err := os.Stat(target); err == nil {
-			// File exists on a fresh launch — fatal collision.
-			return fmt.Errorf("%w: agent-task.md already exists at %q (not on re-attach path)",
-				ErrTaskFileCollision, target)
-		}
-	} else {
-		// Re-attach: if file already exists, treat as idempotent no-op.
+	// Each launch overwrites the file with content for the current
+	// (run_id, phase, iteration) tuple. Review-loop phase transitions
+	// (impl → reviewer → impl-resume) reuse the same worktree; each is
+	// its own logical launch with its own task content, so overwrite is
+	// expected, not a collision. The ReAttach field is retained for
+	// callers who want to short-circuit on a same-tuple existing file
+	// (daemon restart finding its own prior write); when true and the
+	// file is present, return early as a no-op.
+	if payload.ReAttach {
 		if _, err := os.Stat(target); err == nil {
 			return nil
 		}

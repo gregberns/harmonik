@@ -89,6 +89,14 @@ func defaultClaudeGlobalConfigPath() string {
 //     MUST be the same path Claude Code will be launched with as its working
 //     directory (cmd.Dir / tmux start-directory).
 func EnsureWorktreeTrust(worktreePath string) error {
+	// Resolve symlinks so the key matches what Claude Code stores after its own
+	// realpath() normalization (e.g. macOS /var/folders → /private/var/folders).
+	// Without this, the trust entry is written under one path and looked up
+	// under another, the interactive trust dialog fires, SessionStart never
+	// arrives, and HC-056 times out (smoke v8 RED, hk-o5eww).
+	if resolved, err := filepath.EvalSymlinks(worktreePath); err == nil {
+		worktreePath = resolved
+	}
 	cfgPath := claudeGlobalConfigPath()
 	return ensureWorktreeTrustAt(worktreePath, cfgPath)
 }

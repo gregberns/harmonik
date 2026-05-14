@@ -358,3 +358,25 @@ func BenchmarkJSONLWriterFsyncLatency(b *testing.B) {
 		}
 	})
 }
+
+// TestJSONLWriterCloseIdempotent verifies that calling Close twice does not
+// panic with "close of closed channel".
+//
+// Regression test for hk-mmvcm: bus.Seal() + deferred w.Close() double-close.
+func TestJSONLWriterCloseIdempotent(t *testing.T) {
+	path := jsonlWriterFixtureTempPath(t, "close_idempotent.jsonl")
+	w, err := eventbus.OpenJSONLWriter(path)
+	if err != nil {
+		t.Fatalf("OpenJSONLWriter: %v", err)
+	}
+
+	// First close — normal shutdown.
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("first Close: %v", closeErr)
+	}
+
+	// Second close — must not panic and must return nil.
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("second Close: %v", closeErr)
+	}
+}

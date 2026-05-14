@@ -81,6 +81,10 @@ type JSONLWriter struct {
 	// no new items enter queue, so the drainer can safely drain and exit.
 	mu       sync.Mutex
 	isClosed bool
+
+	// closeOnce ensures Close is idempotent: a second call returns nil without
+	// re-closing the stop channel (which would panic).
+	closeOnce sync.Once
 }
 
 // ErrWriterClosed is returned by Append when called after Close.
@@ -268,17 +272,22 @@ func (w *JSONLWriter) Append(line []byte, sync bool) error {
 // Close signals the drainer goroutine to stop accepting new requests, waits
 // for it to finish processing any already-enqueued requests, then returns.
 //
-// Close should be called exactly once, after all Append calls complete and
-// the daemon's Drain phase has finished. Calling Close concurrently with
-// Append produces undefined behaviour only if Append is still being called
-// while Close runs; the typical shutdown sequence (Drain all subscribers, then
-// Close writer) is safe.
+// Close is idempotent: a second (or subsequent) call is a no-op and returns
+// nil without panicking. This protects callers that combine an explicit close
+// with a deferred close (e.g. bus.Seal() + defer w.Close()).
+//
+// Calling Close concurrently with Append is safe: Append checks isClosed
+// under mu and returns [ErrWriterClosed] rather than sending on the queue.
+// The typical shutdown sequence (Drain all subscribers, then Close writer)
+// is safe.
 func (w *JSONLWriter) Close() error {
 	w.mu.Lock()
 	w.isClosed = true
 	w.mu.Unlock()
 
-	close(w.stop)
+	w.closeOnce.Do(func() {
+		close(w.stop)
+	})
 	<-w.done
 	return nil
 }

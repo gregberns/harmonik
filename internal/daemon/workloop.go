@@ -689,24 +689,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 4b: paste-inject the kick-off message into the Claude pane (hk-zrj83).
 	//
-	// pasteInjectOnLaunch delivers "Please read .harmonik/agent-task.md and begin."
-	// (or the phase-appropriate equivalent) to the tmux pane via WriteLastPane.
-	// Without this call the Claude pane sits at the interactive REPL prompt with
-	// no task, even after agent_ready is observed (secondary wiring gap identified
-	// in smoke v6 §7a, bead hk-lj1p9.4).
-	//
-	// Runs in a background goroutine so it does not block the workloop goroutine.
-	// Errors inside pasteInjectOnLaunch are logged to stderr but non-fatal (spec
-	// PL-021d: paste-inject failure does not reopen the bead).
-	//
-	// phase="" (single-mode implementer-initial) routes to pasteInjectImplementerInitial
-	// in pasteinject.go, which writes "Please read .harmonik/agent-task.md and begin.\n".
-	//
-	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-	// Bead ref: hk-lj1p9.4, hk-zrj83.
-	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
-		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
-
 	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
 	hbDone := make(chan struct{})
 	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
@@ -784,6 +766,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 	_ = tapCh // suppress unused-variable lint when adapterRegistry is nil
+
+	// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
+	// and begin." (or phase-appropriate equivalent) to the tmux pane via
+	// WriteLastPane.
+	//
+	// MUST run AFTER waitAgentReady returns (smoke v9 RED, hk-zchbu): when
+	// paste-inject fires before agent_ready, the trailing \n is consumed by
+	// Claude Code's welcome-splash render before the REPL input state is
+	// active; the buffered text sits in the input bar unsubmitted, claude
+	// never reads agent-task.md, HC-056 never fires (the splash itself
+	// doesn't emit SessionStart on its own), and the run hangs.
+	//
+	// Errors are logged to stderr but non-fatal (PL-021d).
+	//
+	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
+	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
+		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.

@@ -441,12 +441,6 @@ func runReviewLoop(
 			})
 		}
 
-		// Paste-inject the reviewer kick-off message into the reviewer pane (hk-zrj83).
-		// "Read .harmonik/review-target.md ..." is delivered via WriteLastPane so the
-		// reviewer Claude pane receives its task immediately after spawn.
-		go pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
-
 		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
 		// the configured timeout, same as the implementer phase.
 		//
@@ -495,6 +489,13 @@ func runReviewLoop(
 				// exited first or ctx cancelled). Fall through to waitWithSocketGrace.
 			}
 		}
+
+		// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).
+		// Running before agent_ready races Claude's welcome splash, which
+		// consumes the trailing \n and leaves the buffered text unsubmitted.
+		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
+		go pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID,
+			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
 		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,

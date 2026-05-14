@@ -247,6 +247,12 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 
 // buildAgentTaskContent constructs the UTF-8 Markdown content for agent-task.md
 // per the CHB-028 content shape.
+//
+// Every task file ends with a ## Session Completion section that instructs
+// Claude to run `/quit` after committing the work.  This is the mechanism that
+// causes Claude's Stop hook to fire, which triggers the `outcome_emitted`
+// envelope via harmonik hook-relay, which unblocks the daemon's workloop
+// (CHB-028 §session-completion-instruction, hk-cmybm).
 func buildAgentTaskContent(p AgentTaskPayload) string {
 	var sb strings.Builder
 
@@ -288,6 +294,19 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString(fmt.Sprintf("review_base_sha: %s\n", p.ReviewBaseSHA))
 		sb.WriteString(fmt.Sprintf("review_head_sha: %s\n", p.ReviewHeadSHA))
 	}
+
+	// Session Completion section (hk-cmybm): every task file instructs Claude
+	// to run /quit after completing and committing the work.  In interactive TUI
+	// mode, the Stop hook fires on session exit (/quit or Ctrl-C) — NOT after
+	// each assistant response.  Without /quit, the daemon's workloop sits at
+	// sess.Wait() forever because the claude process remains alive at the REPL.
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+	sb.WriteString("\n## Session Completion\n\n")
+	sb.WriteString("IMPORTANT: You MUST run `/quit` as your final action after committing all work.\n")
+	sb.WriteString("Do not ask the user to run it — you must type `/quit` yourself and submit it.\n")
+	sb.WriteString("The daemon cannot detect that your task is complete until you exit this session.\n")
+	sb.WriteString("Failure to run `/quit` will leave the workflow permanently stalled.\n")
 
 	return sb.String()
 }

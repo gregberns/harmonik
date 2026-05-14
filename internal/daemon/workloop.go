@@ -785,6 +785,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
 		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
+	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
+	// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
+	// hook and unblock the workloop (CHB-028 session-completion-instruction,
+	// hk-cmybm).
+	//
+	// Background: in interactive TUI mode the Stop hook fires on session exit
+	// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
+	// cannot execute slash commands from their tool API; the daemon detects the
+	// commit and injects /quit programmatically via tmux send-keys.
+	//
+	// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
+	// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
+	// Bead: hk-cmybm.
+	if qs, ok := deps.substrate.(quitSender); ok {
+		go pasteInjectQuitOnCommit(ctx, qs, wtPath, headSHA)
+	}
+
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,

@@ -97,6 +97,9 @@ func (f *fakeTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error 
 // SendKeysEnter is a no-op stub to satisfy the [tmux.Adapter] interface.
 func (f *fakeTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error { return nil }
 
+// SendKeysQuit is a no-op stub to satisfy the [tmux.Adapter] interface.
+func (f *fakeTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error { return nil }
+
 // WriteToPane records the paneTarget and returns nil.
 func (f *fakeTmuxAdapter) WriteToPane(_ context.Context, _, paneTarget string, _ []byte) error {
 	f.writeToPaneTarget = paneTarget

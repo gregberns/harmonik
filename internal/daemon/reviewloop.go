@@ -282,6 +282,21 @@ func runReviewLoop(
 		go pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID,
 			implPhase, state.iterationCount, wtPath)
 
+		// Quit-on-commit: after the implementer's task commit lands in the worktree,
+		// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
+		// The initial HEAD for this iteration is the current worktree HEAD at launch time.
+		// Non-fatal: only fires when substrate implements quitSender (tmux path).
+		//
+		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+		// Bead: hk-cmybm.
+		if qs, ok := deps.substrate.(quitSender); ok {
+			implInitialSHA, resolveErr := resolveWorktreeHEAD(ctx, wtPath)
+			if resolveErr != nil {
+				implInitialSHA = parentSHA // fallback to known-good parent SHA
+			}
+			go pasteInjectQuitOnCommit(ctx, qs, wtPath, implInitialSHA)
+		}
+
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
 		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,

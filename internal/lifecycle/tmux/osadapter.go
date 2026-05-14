@@ -379,6 +379,28 @@ func (OSAdapter) SendKeysEnter(ctx context.Context, paneTarget string) error {
 	return nil
 }
 
+// SendKeysQuit sends `/quit` followed by an `Enter` key event to paneTarget
+// via `tmux send-keys -t <paneTarget> /quit Enter`.
+//
+// Both `/quit` and `Enter` are sent as real key events (not raw bytes through
+// bracketed-paste mode), so Claude Code's interactive REPL processes them as
+// a typed slash command and executes `/quit` to exit the session.
+//
+// `/quit` has no shell metacharacters; the bare (non-literal) send-keys form
+// is safe here.  Callers MUST NOT pass user-controlled input to this method.
+//
+// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+// Bead: hk-cmybm.
+func (OSAdapter) SendKeysQuit(ctx context.Context, paneTarget string) error {
+	// paneTarget is a daemon-managed pane address (e.g. "%NNNN"), not user input.
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paneTarget, "/quit", "Enter")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ErrTmuxFailure{Op: "send-keys-quit", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
 // WriteToPane is the preferred high-level helper for daemon→pane writes. It
 // executes the full PL-021d sequence:
 //

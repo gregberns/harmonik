@@ -84,6 +84,7 @@ type tmuxSubstrate struct {
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
 var _ pasteInjecter = (*tmuxSubstrate)(nil)
 var _ enterSender = (*tmuxSubstrate)(nil)
+var _ quitSender = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
 // creates new windows in sessionName.
@@ -217,6 +218,41 @@ func (s *tmuxSubstrate) SendEnterToLastPane(ctx context.Context) error {
 		paneTarget = string(handle) + ".0"
 	}
 	return s.adapter.SendKeysEnter(ctx, paneTarget)
+}
+
+// SendQuitToLastPane sends `/quit` followed by Enter to the first pane of the
+// most recently spawned window via `tmux send-keys -t <pane> /quit Enter`.
+//
+// Both `/quit` and `Enter` are dispatched as real key events (not through
+// bracketed-paste mode), causing Claude Code's interactive REPL to execute
+// the /quit slash command and exit the session.  This fires the Stop hook,
+// which delivers outcome_emitted to the daemon socket and unblocks the
+// workloop's waitWithSocketGrace call.
+//
+// Called from pasteInjectQuitOnCommit after the task commit lands in the
+// worktree.
+//
+// Returns [tmux.ErrStructural] (wrapped) when no window has been spawned yet.
+//
+// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+// Bead: hk-cmybm.
+func (s *tmuxSubstrate) SendQuitToLastPane(ctx context.Context) error {
+	s.lastHandleMu.Lock()
+	handle := s.lastHandle
+	paneID := s.lastPaneID
+	s.lastHandleMu.Unlock()
+
+	if handle == "" {
+		return fmt.Errorf("daemon: tmuxSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+
+	var paneTarget string
+	if paneID != "" {
+		paneTarget = paneID
+	} else {
+		paneTarget = string(handle) + ".0"
+	}
+	return s.adapter.SendKeysQuit(ctx, paneTarget)
 }
 
 // WriteLastPane delivers payload to the first pane of the most recently spawned

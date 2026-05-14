@@ -250,6 +250,23 @@ type Adapter interface {
 	// Bead: hk-rf4ux.
 	SendKeysEnter(ctx context.Context, paneTarget string) error
 
+	// SendKeysQuit sends `/quit` followed by an Enter key event to paneTarget
+	// via `tmux send-keys -t <paneTarget> /quit Enter`.
+	//
+	// Unlike [SendKeysLiteral] (which uses -l and routes through bracketed-paste
+	// mode), this sends the text and key-name as real key events.  Claude Code's
+	// interactive REPL receives `/quit` as typed characters and `Enter` as a
+	// keypress, causing it to execute the `/quit` slash command and exit.
+	//
+	// `/quit` contains no shell metacharacters; the bare send-keys form is safe.
+	//
+	// Primary use case: daemon-injected session-exit after the task commit lands
+	// (hk-cmybm).
+	//
+	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+	// Bead: hk-cmybm.
+	SendKeysQuit(ctx context.Context, paneTarget string) error
+
 	// WriteToPane executes the full PL-021d write sequence: LoadBuffer + PasteBuffer
 	// + structured-log emission (daemon_pane_write at INFO level).
 	//

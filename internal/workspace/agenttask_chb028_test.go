@@ -367,6 +367,62 @@ func TestCHB028_GitignoreUpdated(t *testing.T) {
 // WriteReviewerFeedback tests (EM-015d-RFD)
 // ---------------------------------------------------------------------------
 
+// TestCHB028_SessionCompletionInstruction verifies that every agent-task.md
+// includes the ## Session Completion section with the /quit instruction.
+//
+// This is the mechanism that unblocks the daemon's workloop (hk-cmybm): the
+// Stop hook fires on /quit, which delivers outcome_emitted to the daemon socket.
+func TestCHB028_SessionCompletionInstruction(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"implementer-initial", "implementer-resume", "reviewer"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			// Each subtest gets its own workspace dir to avoid rename conflicts.
+			subDir := t.TempDir()
+			subWorkspacePath := filepath.Join(subDir, "workspace")
+			subHarmonikDir := filepath.Join(subWorkspacePath, ".harmonik")
+			if err := os.MkdirAll(subHarmonikDir, 0o750); err != nil {
+				t.Fatalf("MkdirAll .harmonik phase=%q: %v", phase, err)
+			}
+
+			payload := AgentTaskPayload{
+				BeadID:        "hk-abc09",
+				Title:         "Task",
+				Phase:         phase,
+				Iteration:     1,
+				RunID:         "018e1234-0000-7000-8000-000000000009",
+				WorkspacePath: subWorkspacePath,
+				Body:          "Do the work.",
+			}
+
+			if err := WriteAgentTask(subWorkspacePath, payload); err != nil {
+				t.Fatalf("WriteAgentTask phase=%q: %v", phase, err)
+			}
+
+			data, err := os.ReadFile(AgentTaskPath(subWorkspacePath))
+			if err != nil {
+				t.Fatalf("ReadFile phase=%q: %v", phase, err)
+			}
+			content := string(data)
+
+			if !strings.Contains(content, "## Session Completion") {
+				t.Errorf("phase=%q: missing ## Session Completion section; content:\n%s", phase, content)
+			}
+			if !strings.Contains(content, "/quit") {
+				t.Errorf("phase=%q: missing /quit instruction; content:\n%s", phase, content)
+			}
+			// Verify the instruction is imperative (Claude must run /quit, not report it).
+			if !strings.Contains(content, "You MUST run `/quit`") {
+				t.Errorf("phase=%q: instruction not imperative (must contain 'You MUST run `/quit`'); content:\n%s", phase, content)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WriteReviewerFeedback tests (EM-015d-RFD)
+// ---------------------------------------------------------------------------
+
 // TestEM015dRFD_FreshWrite verifies that WriteReviewerFeedback creates the
 // reviewer-feedback file with the correct content.
 func TestEM015dRFD_FreshWrite(t *testing.T) {

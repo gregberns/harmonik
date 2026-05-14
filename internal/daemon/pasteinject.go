@@ -69,6 +69,92 @@ type enterSender interface {
 	SendEnterToLastPane(ctx context.Context) error
 }
 
+// quitSender is an optional interface implemented by tmux-backed Substrates
+// that can send `/quit Enter` to the most recently spawned pane as real
+// key events (not bracketed paste).
+//
+// This is the mechanism for the daemon-side session-exit injection:  after
+// the task commit lands in the worktree, the daemon calls SendQuitToLastPane
+// to cause Claude Code's REPL to execute /quit, which fires the Stop hook
+// and delivers outcome_emitted to the daemon socket.
+//
+// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+// Bead: hk-cmybm.
+type quitSender interface {
+	// SendQuitToLastPane sends `/quit` followed by Enter to the most recently
+	// spawned window's first pane.  Returns a non-nil error if no window has
+	// been spawned yet or if the underlying send-keys call fails.
+	SendQuitToLastPane(ctx context.Context) error
+}
+
+// commitPollInterval is the interval between git HEAD checks in
+// pasteInjectQuitOnCommit.  500ms balances responsiveness with avoiding
+// excessive git subprocess overhead.
+const commitPollInterval = 500 * time.Millisecond
+
+// commitPollTimeout is the maximum time pasteInjectQuitOnCommit will wait
+// for a new commit before giving up.  Chosen to exceed typical bead execution
+// times while avoiding infinite hangs.
+const commitPollTimeout = 10 * time.Minute
+
+// pasteInjectQuitOnCommit watches the worktree at wtPath for a new commit
+// (HEAD changing from initialSHA).  When detected, it sends `/quit Enter`
+// to the pane via qs to cause Claude Code to exit and fire the Stop hook.
+//
+// This is the daemon-side complement to the agent-task.md session-completion
+// instruction (CHB-028 / hk-cmybm).  Claude Code agents cannot execute slash
+// commands from their tool API; the daemon detects the commit landing and
+// injects /quit programmatically.
+//
+// The function runs in a goroutine and returns when:
+//   - A new commit is detected and /quit is sent (success).
+//   - commitPollTimeout elapses without a new commit (non-fatal: log only).
+//   - ctx is cancelled (daemon shutting down).
+//
+// Non-fatal: errors are logged to stderr; the caller's waitWithSocketGrace
+// will eventually time out via stopHookGrace (3s) if /quit is never sent.
+//
+// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+// Bead: hk-cmybm.
+func pasteInjectQuitOnCommit(
+	ctx context.Context,
+	qs quitSender,
+	wtPath string,
+	initialSHA string,
+) {
+	deadline := time.Now().Add(commitPollTimeout)
+	ticker := time.NewTicker(commitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-commit: timeout waiting for new commit in %s (initial=%s)\n",
+					wtPath, initialSHA)
+				return
+			}
+
+			headSHA, err := resolveWorktreeHEAD(ctx, wtPath)
+			if err != nil {
+				// Worktree may not be ready yet; keep polling.
+				continue
+			}
+			if headSHA != initialSHA {
+				// New commit detected — send /quit to trigger Stop hook.
+				if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: SendQuitToLastPane: %v\n", qErr)
+				}
+				return
+			}
+		}
+	}
+}
+
 // pasteInjectMsgs holds the phase-specific kick-off messages delivered to the
 // pane after spawn.  Newline-terminated so the pane receives a complete line
 // ready for Claude to act on.

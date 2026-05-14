@@ -135,6 +135,11 @@ func (a *orphanWindowFixtureAdapter) SendKeysEnter(_ context.Context, _ string) 
 	return nil
 }
 
+// SendKeysQuit is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error {
+	return nil
+}
+
 // WriteToPane is a no-op stub to satisfy the [Adapter] interface.
 func (a *orphanWindowFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil

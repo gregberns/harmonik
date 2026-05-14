@@ -215,6 +215,14 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 			ErrTaskFileEmpty, payload.BeadID, payload.RunID)
 	}
 
+	// Ensure .harmonik/ directory exists in the worktree before writing.
+	// git worktree add creates the worktree root but not its .harmonik/ subdirectory;
+	// this MkdirAll is idempotent and safe to call on every launch.
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("workspace: WriteAgentTask: MkdirAll %q: %w", filepath.Dir(target), err)
+	}
+
 	// Atomic write per WM-026.
 	if err := atomicWriteWithParentFsync(target, []byte(content)); err != nil {
 		return fmt.Errorf("workspace: WriteAgentTask: atomic write %q: %w", target, err)

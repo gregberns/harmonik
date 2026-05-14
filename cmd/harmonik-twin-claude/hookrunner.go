@@ -42,6 +42,19 @@ import (
 // (Actual test helpers are in hookrunner_test.go; prefix declared here as a
 // godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
 
+// extractExitCode returns the OS exit code from err when err is an *exec.ExitError,
+// or -1 when the subprocess could not be launched at all.
+func extractExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
+}
+
 // callStopHook executes the Stop hook command with worktreePath as cwd.
 //
 // Returns the exit code and wall-clock duration in milliseconds.

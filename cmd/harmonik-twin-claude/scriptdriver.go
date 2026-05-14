@@ -66,6 +66,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -157,6 +161,17 @@ type ScriptFile struct {
 	// Defaults to "wall_clock" when absent or empty.
 	HeartbeatMode heartbeatMode `yaml:"heartbeat_mode"`
 
+	// StartupDelayMs is the number of milliseconds to sleep after initial
+	// flag-parse but BEFORE emitting handler_capabilities (audit item 6).
+	// When zero the twin emits handler_capabilities immediately (default).
+	// Models the splash-dismiss window for daemon-side timeout-sensitivity
+	// scenarios. Does NOT exercise the tmux pane-delivery path (that is
+	// real-claude-only per docs/twin-parity-audit-2026-05-14.md §5).
+	// The sleep is context-aware: if ctx is cancelled mid-sleep the twin
+	// exits cleanly.
+	// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 6 (hk-8ys88).
+	StartupDelayMs int `yaml:"startup_delay_ms"`
+
 	// Messages is the ordered list of progress-stream messages to emit.
 	// nil or empty means no messages are emitted (the driver exits immediately).
 	Messages []ScriptMessage `yaml:"messages"`
@@ -205,6 +220,12 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 // it without magic strings.
 const callStopHookStep = "call_stop_hook"
 
+// commitOnCueStep is the type constant for the YAML step that writes a
+// sentinel file and runs git commit in the worktree. Declared as a constant
+// so tests and callers can reference it without magic strings.
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
+const commitOnCueStep = "commit_on_cue"
+
 // runScript drives the wireEmitter through the ordered message list in sf.
 //
 // For each ScriptMessage:
@@ -251,6 +272,17 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 			continue
 		}
 
+		// commit_on_cue is a special step that writes a sentinel file and runs
+		// git commit in the worktree, emitting twin_committed with the result.
+		// This lets pasteInjectQuitOnCommit detect a HEAD change and fire /quit.
+		// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
+		if msg.Type == commitOnCueStep {
+			if err := runCommitOnCue(ctx, e, cfg); err != nil {
+				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
+			}
+			continue
+		}
+
 		if err := emitScriptMessage(e, msg); err != nil {
 			return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 		}
@@ -282,6 +314,100 @@ func runCallStopHook(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) e
 	}
 	// Non-zero exit code is reported but does not fail the script step per bead
 	// error policy (real claude doesn't exit on non-zero hook exit either).
+	return nil
+}
+
+// runCommitOnCue handles the commit_on_cue script step.
+//
+// It:
+//  1. Verifies --worktree-path was set (cfg.worktreePath non-empty), else emits
+//     twin_error and returns an error (caller exits 1).
+//  2. Writes a sentinel file at <worktree>/.harmonik-twin-commit-<unix-ns>.
+//  3. Runs git add + git commit via exec.CommandContext with cwd=worktreePath.
+//     Git author/committer identity is set to harmonik-twin / twin@harmonik.local
+//     via env vars to avoid touching the project's git config.
+//  4. Emits twin_committed with commit_sha, exit_code, duration_ms.
+//     Non-zero git exit → emit twin_committed with exit_code and stderr_excerpt;
+//     do NOT exit the twin (let the YAML script continue per bead error policy).
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
+func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) error {
+	if cfg.worktreePath == "" {
+		_ = e.emitTwinError("commit_on_cue: --worktree-path was not supplied")
+		return fmt.Errorf("commit_on_cue: --worktree-path is required for this step")
+	}
+
+	// Use nanosecond timestamp in the filename so parallel invocations don't collide.
+	ts := strconv.FormatInt(time.Now().UnixNano(), 10)
+	sentinelName := ".harmonik-twin-commit-" + ts
+	sentinelPath := filepath.Join(cfg.worktreePath, sentinelName)
+	sentinelContent := "commit-on-cue " + ts + "\n"
+
+	//nolint:gosec // G306: sentinel file is world-readable; not sensitive.
+	if err := os.WriteFile(sentinelPath, []byte(sentinelContent), 0o644); err != nil {
+		_ = e.emitTwinError("commit_on_cue: write sentinel: " + err.Error())
+		return fmt.Errorf("commit_on_cue: write sentinel %q: %w", sentinelPath, err)
+	}
+
+	start := time.Now()
+
+	// Git author/committer identity set via env vars to avoid touching git config.
+	gitEnv := append(os.Environ(), //nolint:gocritic // appendAssign: intentional new slice
+		"GIT_AUTHOR_NAME=harmonik-twin",
+		"GIT_AUTHOR_EMAIL=twin@harmonik.local",
+		"GIT_COMMITTER_NAME=harmonik-twin",
+		"GIT_COMMITTER_EMAIL=twin@harmonik.local",
+	)
+
+	// git add <sentinelName>
+	addCmd := exec.CommandContext(ctx, "git", "add", sentinelName) //nolint:gosec // G204: sentinelName is a timestamp-derived literal
+	addCmd.Dir = cfg.worktreePath
+	addCmd.Env = gitEnv
+	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
+		stderrExcerpt := strings.TrimSpace(string(addOut))
+		if len(stderrExcerpt) > 200 {
+			stderrExcerpt = stderrExcerpt[:200]
+		}
+		durationMs := int(time.Since(start).Milliseconds())
+		_ = e.emitTwinCommitted("", 1, durationMs, stderrExcerpt)
+		// Non-zero git exit → do NOT return error; let script continue per bead policy.
+		return nil
+	}
+
+	// git commit -m "twin commit-on-cue at <ts>"
+	commitMsg := "twin commit-on-cue at " + ts
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg) //nolint:gosec // G204: commitMsg is a timestamp-derived literal
+	commitCmd.Dir = cfg.worktreePath
+	commitCmd.Env = gitEnv
+	commitOut, commitErr := commitCmd.CombinedOutput()
+	durationMs := int(time.Since(start).Milliseconds())
+
+	if commitErr != nil {
+		stderrExcerpt := strings.TrimSpace(string(commitOut))
+		if len(stderrExcerpt) > 200 {
+			stderrExcerpt = stderrExcerpt[:200]
+		}
+		exitCode := extractExitCode(commitErr)
+		if err := e.emitTwinCommitted("", exitCode, durationMs, stderrExcerpt); err != nil {
+			return fmt.Errorf("commit_on_cue: emit twin_committed (error path): %w", err)
+		}
+		// Non-zero git commit → do NOT exit twin per bead error policy.
+		return nil
+	}
+
+	// Extract the commit SHA from HEAD.
+	revCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD") //nolint:gosec // G204: constant args
+	revCmd.Dir = cfg.worktreePath
+	revCmd.Env = gitEnv
+	shaOut, shaErr := revCmd.Output()
+	commitSHA := ""
+	if shaErr == nil {
+		commitSHA = strings.TrimSpace(string(shaOut))
+	}
+
+	if err := e.emitTwinCommitted(commitSHA, 0, durationMs, ""); err != nil {
+		return fmt.Errorf("commit_on_cue: emit twin_committed: %w", err)
+	}
 	return nil
 }
 

@@ -94,6 +94,43 @@ func chbE2EFixtureBuildBinary(t *testing.T) string {
 	return binPath
 }
 
+// chbE2EFixtureInitGitRepo creates a temp directory, runs git init + baseline
+// commit, and returns the directory path. Used by scenarios that need a real
+// git worktree (e.g., commit-on-cue-startup-delay).
+func chbE2EFixtureInitGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		//nolint:gosec // G204: git with controlled args; test helper
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=chb-e2e-test",
+			"GIT_AUTHOR_EMAIL=test@harmonik.local",
+			"GIT_COMMITTER_NAME=chb-e2e-test",
+			"GIT_COMMITTER_EMAIL=test@harmonik.local",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	run("init", "-b", "main")
+	run("config", "user.email", "test@harmonik.local")
+	run("config", "user.name", "chb-e2e-test")
+
+	baselinePath := filepath.Join(dir, ".gitkeep")
+	if err := os.WriteFile(baselinePath, []byte("baseline\n"), 0o600); err != nil {
+		t.Fatalf("chbE2EFixtureInitGitRepo: write baseline: %v", err)
+	}
+	run("add", ".gitkeep")
+	run("commit", "-m", "baseline")
+
+	return dir
+}
+
 // chbE2EFixtureHandler constructs a handler.Handler with a CollectingEmitter
 // and NoopWatcherDeadLetter for E2E test use.
 func chbE2EFixtureHandler(t *testing.T) (handler.Handler, *handlercontract.CollectingEmitter) {
@@ -325,37 +362,65 @@ func TestCHB021_AllScenariosRecognised(t *testing.T) {
 
 	binPath := chbE2EFixtureBuildBinary(t)
 
-	scenarios := []string{
-		"single-happy-path",
-		"review-loop-3iter",
-		"rate-limit",
-		"dial-failed",
-		"daemon-not-ready-retry",
+	// scenarioSpec carries the args for each scenario. Most scenarios run without
+	// extra flags; commit-on-cue-startup-delay requires --worktree-path pointing
+	// to a git repo because it includes a commit_on_cue step.
+	type scenarioSpec struct {
+		name         string
+		extraArgssFn func(t *testing.T) []string // returns additional flags; nil = no extras
+		// needsEnv: when true, pass os.Environ() to the subprocess rather than
+		// an empty env. Required for scenarios that spawn git subprocesses.
+		needsEnv bool
+	}
+
+	scenarios := []scenarioSpec{
+		{name: "single-happy-path"},
+		{name: "review-loop-3iter"},
+		{name: "rate-limit"},
+		{name: "dial-failed"},
+		{name: "daemon-not-ready-retry"},
+		{
+			name:     "commit-on-cue-startup-delay",
+			needsEnv: true, // commit_on_cue spawns git; needs PATH
+			extraArgssFn: func(t *testing.T) []string {
+				t.Helper()
+				return []string{"--worktree-path", chbE2EFixtureInitGitRepo(t)}
+			},
+		},
 	}
 
 	for _, sc := range scenarios {
 		sc := sc
-		t.Run(sc, func(t *testing.T) {
+		t.Run(sc.name, func(t *testing.T) {
 			t.Parallel()
 
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 
-			cmd := exec.CommandContext(ctx, binPath, "--scenario", sc) //nolint:gosec // binPath from build
+			args := []string{"--scenario", sc.name}
+			if sc.extraArgssFn != nil {
+				args = append(args, sc.extraArgssFn(t)...)
+			}
+
+			cmd := exec.CommandContext(ctx, binPath, args...) //nolint:gosec // binPath from build
 			var stdout bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = os.Stderr
-			cmd.Env = []string{}
+			if sc.needsEnv {
+				cmd.Env = os.Environ()
+			} else {
+				cmd.Env = []string{}
+			}
 			cmd.Dir = t.TempDir()
 
 			if err := cmd.Run(); err != nil {
-				t.Errorf("scenario %q: twin exited with error: %v", sc, err)
+				t.Errorf("scenario %q: twin exited with error: %v", sc.name, err)
 				return
 			}
 
 			types := chbE2EFixtureParseNDJSONTypes(t, &stdout)
 			if len(types) == 0 {
-				t.Errorf("scenario %q: twin produced no NDJSON output", sc)
+				t.Errorf("scenario %q: twin produced no NDJSON output", sc.name)
 			}
 		})
 	}

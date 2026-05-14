@@ -64,6 +64,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -227,6 +228,24 @@ func run() int {
 	// heartbeats.
 	if scriptFile != nil {
 		emitter := newWireEmitter(out)
+
+		// startup_delay_ms: sleep AFTER flag-parse but BEFORE emitting
+		// handler_capabilities (audit item 6, hk-8ys88). Models the
+		// splash-dismiss window for daemon-side timeout-sensitivity scenarios.
+		// Does NOT exercise the tmux pane-delivery path (real-claude-only).
+		// Sleep is context-aware: cancelled mid-sleep → clean exit.
+		if scriptFile.StartupDelayMs > 0 {
+			delay := time.Duration(scriptFile.StartupDelayMs) * time.Millisecond
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+				// Delay elapsed normally.
+			case <-ctx.Done():
+				timer.Stop()
+				fmt.Fprintf(os.Stderr, "harmonik-twin-claude: startup delay cancelled: %v\n", ctx.Err())
+				return 1
+			}
+		}
 
 		// Emit twin_settings_loaded when --worktree-path was supplied (hk-e66ht).
 		// loadedSettings is non-nil iff --worktree-path was set and settings.json

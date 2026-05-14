@@ -51,8 +51,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioDialFailed(), nil
 	case "daemon-not-ready-retry":
 		return scenarioDaemonNotReadyRetry(), nil
+	case "commit-on-cue-startup-delay":
+		return scenarioCommitOnCueStartupDelay(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay", name)
 	}
 }
 
@@ -508,6 +510,99 @@ func scenarioDialFailed() *ScriptFile {
 // ─────────────────────────────────────────────────────────────────────────────
 // Scenario: daemon-not-ready-retry (CHB-021 §10 class 5)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: commit-on-cue-startup-delay (hk-8ys88, audit items 3+6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioCommitOnCueStartupDelay exercises both twin extensions from hk-8ys88:
+//   - startup_delay_ms: twin sleeps 100ms before emitting handler_capabilities,
+//     modelling the splash-dismiss window for timeout-sensitivity scenarios
+//     (docs/twin-parity-audit-2026-05-14.md §4 item 6).
+//   - commit_on_cue: step writes a sentinel file + git commit in the worktree
+//     so pasteInjectQuitOnCommit can detect the HEAD change (§4 item 3).
+//
+// Expected event ordering (with --worktree-path supplied):
+//
+//  1. handler_capabilities   (emitted AFTER startup_delay_ms sleep)
+//  2. agent_ready
+//  3. agent_output_chunk     (represents work output)
+//  4. commit_on_cue step     → emits twin_committed
+//  5. outcome_emitted
+//  6. agent_completed
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 items 3+6; hk-8ys88.
+func scenarioCommitOnCueStartupDelay() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-hk8ys88-coc-001"
+		sessID    = "sess-hk8ys88-coc-001"
+		nodeID    = "node-hk8ys88-coc-001"
+		agentType = "claude-twin-claude"
+	)
+
+	return &ScriptFile{
+		HeartbeatMode:  heartbeatModeScripted,
+		StartupDelayMs: 100, // models 750ms splash-dismiss window at small scale
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities (emitted after startup_delay_ms).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-hk8ys88-001",
+				},
+			},
+			// 2. agent_ready.
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted", "commit_on_cue"},
+				},
+			},
+			// 3. agent_output_chunk (represents work output before commit).
+			{
+				Type: "agent_output_chunk",
+				Payload: map[string]any{
+					"run_id":        runID,
+					"session_id":    sessID,
+					"chunk_index":   0,
+					"bytes_emitted": 256,
+				},
+			},
+			// 4. commit_on_cue: writes sentinel + git commit → emits twin_committed.
+			//    Requires --worktree-path to be set; without it twin emits twin_error.
+			{
+				Type: commitOnCueStep,
+			},
+			// 5. outcome_emitted.
+			{
+				Type: "outcome_emitted",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"node_id":        nodeID,
+					"outcome_status": "WORK_COMPLETE",
+				},
+			},
+			// 6. agent_completed.
+			{
+				Type: "agent_completed",
+				Payload: map[string]any{
+					"run_id":      runID,
+					"session_id":  sessID,
+					"ended_at":    now.Add(200 * time.Millisecond).Format(time.RFC3339Nano),
+					"exit_code":   0,
+					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}
 
 // scenarioDaemonNotReadyRetry returns a script that models the relay-side retry
 // path for daemon_not_ready (CHB-016): the relay pauses (via heartbeats in the

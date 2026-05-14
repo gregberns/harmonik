@@ -510,6 +510,40 @@ func (e *wireEmitter) emitTwinHookCalled(hookType string, exitCode, durationMs i
 	})
 }
 
+// emitTwinCommitted emits a twin_committed message.
+//
+// Emitted after the commit_on_cue script step runs git commit in the worktree.
+// Carries the resulting commit SHA (empty on failure), exit code, wall-clock
+// duration, and an optional stderr excerpt (truncated to 200 chars) when the
+// git command exits non-zero.
+//
+// Non-zero exit_code does NOT cause the twin to exit — the script continues
+// per the bead error policy (same as call_stop_hook).
+//
+// Fields:
+//   - commit_sha:     string — full SHA of the new HEAD commit; empty on failure.
+//   - exit_code:      int    — OS exit code from git commit (0 = success).
+//   - duration_ms:    int    — wall-clock duration of git add + git commit (ms).
+//   - stderr_excerpt: string — first 200 chars of combined stdout+stderr on failure; "" on success.
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
+func (e *wireEmitter) emitTwinCommitted(commitSHA string, exitCode, durationMs int, stderrExcerpt string) error {
+	type msg struct {
+		Type          string `json:"type"`
+		CommitSHA     string `json:"commit_sha"`
+		ExitCode      int    `json:"exit_code"`
+		DurationMs    int    `json:"duration_ms"`
+		StderrExcerpt string `json:"stderr_excerpt,omitempty"`
+	}
+	return e.emit(msg{
+		Type:          "twin_committed",
+		CommitSHA:     commitSHA,
+		ExitCode:      exitCode,
+		DurationMs:    durationMs,
+		StderrExcerpt: stderrExcerpt,
+	})
+}
+
 // emitTwinError emits a twin_error message.
 //
 // Emitted when the twin encounters an unrecoverable internal error that should

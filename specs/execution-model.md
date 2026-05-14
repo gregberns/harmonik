@@ -245,6 +245,27 @@ The cycle MUST observe:
 - **Per-iteration state.** Before launching the reviewer, the daemon MUST compute `last_diff_hash` per §4.3.EM-015e and write it into `Run.context.last_diff_hash`. After the reviewer's verdict file lands, the daemon MUST read `.harmonik/review.json`, validate it against the `agent-reviewer` JSON schema v1, archive the file to `.harmonik/review.iter-<N>.json` (where `<N>` is the current `iteration_count`), and update `Run.context.last_verdict` to the verdict value.
 - **Per-iteration events.** Each implementer resume MUST emit `implementer_resumed` per [event-model.md §8.1a]; each reviewer launch MUST emit `reviewer_launched`; the verdict-file read MUST emit `reviewer_verdict` carrying the agent-reviewer schema v1 fields verbatim plus `run_id`, `session_id`, and `iteration_count`. On no-progress detection per §4.3.EM-015e, the daemon MUST emit `no_progress_detected`. On cap-hit per §4.3.EM-015e, the daemon MUST emit `iteration_cap_hit`. On cycle termination (by any path), the daemon MUST emit exactly one `review_loop_cycle_complete` per [event-model.md §8.1a] carrying the `completion_reason`.
 - **Iteration counter.** The daemon MUST initialize `Run.context.iteration_count = 1` at claim time and increment it by 1 immediately before each implementer dispatch after the first. `iteration_count` MUST NOT exceed the cap defined by §4.3.EM-015e.
+- **Reviewer-feedback delivery to implementer-resume (EM-015d-RFD).** Before launching an `implementer-resume` (i.e., any implementer dispatch for iteration N ≥ 2), the daemon MUST execute the following ordered steps:
+
+  1. **Write the reviewer-feedback file.** The daemon MUST write `${workspace_path}/.harmonik/reviewer-feedback.iter-<N-1>.md` (where `<N-1>` is the just-completed iteration's `iteration_count`) containing:
+     - a header line: `# Reviewer feedback — iteration <N-1>` followed by a blank line;
+     - the `verdict` field from the archived `review.iter-<N-1>.json` (one of `APPROVE`, `REQUEST_CHANGES`, `BLOCK`);
+     - the `flags` array from the archived verdict, formatted as a Markdown unordered list (empty list rendered as the string `(none)`);
+     - the full `notes` field from the archived verdict (no truncation; the truncated `prior_verdict_summary` on the bus event per [event-model.md §8.1a.1] is a separate derivative; the on-disk file carries the full text);
+     - a `diff_summary` section containing the SHA-256 hex value stored in `Run.context.last_diff_hash` preceded by the label `diff_hash:` and, if available, the line-count of `git diff <parent>..<head>` output at the time the hash was computed, labelled `diff_lines:`.
+
+     The write MUST use the atomic temp-write + rename + `fsync(parent_dir)` discipline of [workspace-model.md §4.7 WM-026]. The temp file MUST be created in the same directory (`.harmonik/`) so the rename is within the same filesystem. The file MUST exist and be readable before step 2 executes; the daemon MUST treat a failure to create the file as a daemon-side error and route the run per [handler-contract.md §4.6] failure handling without launching the implementer-resume.
+
+  2. **Paste-inject the read instruction.** Only AFTER the file from step 1 exists on disk (i.e., the atomic rename in step 1 has completed), the daemon MUST inject the following instruction into the resumed Claude pane via the tmux paste mechanism defined by [process-lifecycle.md §4.3 PL-021b-PASTE] (to be specified by bead hk-wuyn1's amendment of EM-015d):
+
+     > Before continuing, read `.harmonik/reviewer-feedback.iter-<N-1>.md` in your worktree. It contains the prior reviewer's verdict, flags, and notes for iteration `<N-1>`. Address every flag marked `REQUEST_CHANGES` before proceeding.
+
+     The paste-inject MUST occur AFTER `claude --resume <claude_session_id>` has reattached to the implementer's transcript (i.e., after the pane is live and the session has resumed, not during or before the `tmux new-window` spawn). The ordering invariant is: **file exists → pane is live → paste-inject fires**. The daemon MUST NOT paste-inject before the pane's process is observable via the tmux adapter (i.e., `WindowPanePID` returns a non-zero PID for the new window). If the paste-inject fails (tmux error, pane gone), the daemon MUST log the failure and route the run per [handler-contract.md §4.6] failure handling.
+
+  The `reviewer-feedback.iter-<N-1>.md` file MUST be excluded from checkpoint commits via the [workspace-model.md §4.7 WM-013e] `.gitignore` hygiene set; it is workflow-control state, not work product. The file is NOT removed after the run; it persists in the worktree for post-run inspection.
+
+  Tags (sub-clause EM-015d-RFD): mechanism
+  Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 The `review-loop` cycle is NOT a sub-workflow per §4.8; the `EM-034` sub-workflow-expansion rule does not apply. Sub-workflow nodes MAY appear inside a node-level workflow whose `workflow_mode = single`, but `review-loop` itself is mode-driven, not graph-driven.
 

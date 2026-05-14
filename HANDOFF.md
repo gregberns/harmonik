@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-14 main — v40. Three epics closed in one session: branching (hk-8m91i), scenario-testing (hk-wuu5h), model-selection (hk-cfhj2). 14 commits on main pushed to origin (HEAD `952f7eb`). 1 commit on side branch `ci-workflows-hk-4tttc` AWAITING USER PUSH (OAuth token lacks workflow scope). Phase 2 first-real-demo is the next obvious step. -->
+<!-- PP-TRIAL:v2 2026-05-14 main — v41. Three implementer waves (8 + 5 + 4), 14 new beads closed (12 commits, 2 SUBSUMED), stale CI branch dropped, root MD archived. HEAD `7c54c76`, pushed. Zero-blocker code backlog drained — remaining ready work is spec-authoring (needs user check-in) or parent-child gridlock (needs L-011 sqlite-flip). Phase 2 first-demo bead `hk-09tne` filed and awaiting daemon-driven run. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -16,6 +16,8 @@ IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers in the v38 ses
 
 WORKTREE TASK-INJECTION LEAK (v36, ONGOING). Implementer edits leak into main's working tree as uncommitted changes. Workaround: `git stash push -m "v36-leak ..." && git merge --ff-only <branch> && git stash drop`. Never commit the leaked main-tree edits as a separate commit — the proper changes arrive via the worktree branch merge.
 
+WORKTREE AUTO-REMOVED BY HARNESS (v41 NEW). When an implementer agent finishes, the harness may auto-remove its worktree directory (but NOT the branch). If `git -C <wtpath>` returns `cannot change to directory`, the worktree is already gone — just `git merge --ff-only worktree-agent-<id>` directly from main. The branch can be rebased without a checked-out worktree by creating a temporary worktree at `/tmp/wt-<short>`, rebasing there, merging into main, then removing the temp worktree. Pattern used 3x in v41.
+
 ISOLATED-WORKTREE STALE-BASE BUG (v35, ONGOING). Every implementer dispatched with `isolation: "worktree"` MUST be told in its brief to:
 
     cd <your worktree path>
@@ -23,6 +25,8 @@ ISOLATED-WORKTREE STALE-BASE BUG (v35, ONGOING). Every implementer dispatched wi
     git rebase main
 
 BEFORE reading any spec or code. Verify base via `git log --oneline -5`.
+
+WORKTREE BEADS-JSONL LEAK (v41 PATTERN). Implementers' `br close` writes to `.beads/issues.jsonl` in the worktree, which then conflicts with rebase. Workaround in the merge dance: `git -C "$WTPATH" stash push -m leak && git -C "$WTPATH" rebase main` BEFORE the ff-merge. The stash is intentionally never popped — the JSONL state on main wins.
 
 TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
 `br ready` is not authoritative for "the corpus is drained":
@@ -38,7 +42,7 @@ On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back 
 
 PUSH AUTONOMY (v40 2026-05-14). User lifted the "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation. Destructive-op rules (force-push, reset --hard, branch -D, --no-verify) STILL require confirmation; only the routine push step is lifted.
 
-CI-WORKFLOW PUSH CAVEAT (v40 2026-05-14). The orchestrator's OAuth token lacks GitHub `workflow` scope — pushes that modify `.github/workflows/*` files are REJECTED at remote. Process: keep workflow-file changes on a side branch (`ci-workflows-<bead>`), surface to user, user pushes manually. Do NOT include workflow-file changes in main pushes.
+NO CI (v41 2026-05-14). User explicitly does NOT want GitHub Actions. The `ci-workflows-hk-4tttc` side branch was dropped in v41 and `.github/workflows/` does NOT exist in main. Do not propose CI workflow files in future work. Scenario tests run locally only.
 
 IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
 `.claude/implementer-protocol.md` is authoritative. (a) Implementer CLOSES OWN BEADS via `br close` after each commit. (b) Implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming. (c) Implementer DOES NOT ASK questions back. (d) **Implementer COMMITS EXPLICITLY** (v38 reinforcement).
@@ -54,7 +58,7 @@ PRE-FLIGHT (orchestrator, ≤3 reads per dispatch).
 - ONE canonical sibling for pattern conventions.
 
 CWD DISCIPLINE.
-Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. Verify `pwd` returns `/Users/gb/github/harmonik` before any build/test command.
+Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. Verify `pwd` returns `/Users/gb/github/harmonik` before any build/test command. v41 hit CWD-disappeared errors 3x when removing a worktree the shell was sitting inside — always `cd /Users/gb/github/harmonik &&` before any worktree-remove.
 
 MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
@@ -62,55 +66,90 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
     for id in <agent-id-1> <agent-id-2>; do
       WTPATH="/Users/gb/github/harmonik/.claude/worktrees/agent-$id"
       BRANCH="worktree-agent-$id"
-      git -C "$WTPATH" rebase main
+      # v41 pattern: stash leak then rebase BEFORE ff-merge
+      [ -d "$WTPATH" ] && git -C "$WTPATH" stash push -m leak
+      [ -d "$WTPATH" ] && git -C "$WTPATH" rebase main
       git -C /Users/gb/github/harmonik merge --ff-only "$BRANCH"
-      git -C /Users/gb/github/harmonik worktree remove --force --force "$WTPATH"
+      git -C /Users/gb/github/harmonik worktree remove --force --force "$WTPATH" 2>/dev/null
       git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v38 used ~30% — heavy session.
+CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50% across 3 waves.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v40, 2026-05-14)
+# Where we are (v41, 2026-05-14)
 
-**Main at `952f7eb`, pushed to origin. Working tree dirty only with HANDOFF + beads.jsonl session-end churn. One side branch `ci-workflows-hk-4tttc` awaits user push (OAuth scope).**
+**Main at `7c54c76`, pushed to origin. Working tree clean.**
 
-Phase 1 (operational harmonik) shipped in v38. v40 closed three Phase-2-prerequisite epics in parallel:
+v41 ran three implementer waves and closed 14 beads (12 new commits, 2 SUBSUMED). All waves drained the zero-blocker leaf-code backlog. The next session should pivot from sub-agent dispatch to either: (a) running harmonik daemon on `hk-09tne` (the Phase 2 first-demo), or (b) breaking parent-child gridlock to surface a wave-4 batch.
 
-- **Branching (`hk-8m91i`)** — closed. 5 children landed: spec amendment to WM-005/005b/006/008/019 + new BI-009b parse contract; new `internal/branching` package for `.harmonik/branching.yaml` defaults; daemon factory now cuts worktrees from the bead's `start_from` ref instead of raw HEAD; landing-strategy selector adds cherry-pick alongside squash; full WM-005b resolution chain wired at claim time.
-- **Scenario-testing (`hk-wuu5h`)** — closed. 5 children + 1 spec-doc follow-up: twin parity audit doc (5 fixes twin-feasible today, 4 extension-needed, 2 real-claude-only); twin extended with `--worktree-path`, settings.json reader, Stop hook caller, `commit_on_cue`, `startup_delay_ms`; scenario harness at `test/scenario/` boots daemon+twin and asserts event sequences for 5 fixes; CI workflows for PR-tier smoke and nightly full suite (side-branched pending push).
-- **Model selection (`hk-cfhj2`)** — closed. 3 children landed: spec amendment EM-012b (4-tier resolution chain) + HC-055a (ModelPreference invariant, value-opacity); `claudelaunchspec.go` accepts `--model`/`--effort` with shape validation; `.harmonik/config.yaml` loader + tier-3 compiled defaults + claim-time resolution wired into `claudeRunCtx`.
+## v41 waves
 
-## CI push pending (operator action required)
+**Wave 1** (8 dispatched, 7 commits + 1 SUBSUMED):
+- `hk-hqwn.44` source_subsystem registry → `2e9ce19`
+- `hk-hqwn.49` sync-consumer cardinality + acyclicity sensors → `f311f12`
+- `hk-hqwn.50` UUIDv7 monotonic event_id → SUBSUMED by `hk-hqwn.62` / `5ca45d9`
+- `hk-hqwn.52` EV-INV-006 redaction + structural check → `4e694b5`
+- `hk-hqwn.59.27` session_log_location payload → `5aead46`
+- `hk-hqwn.59.78` redaction_failed payload → `c7f2fc3`
+- `hk-8i31.27` mechanism-tagged error classification (HC-023) → `04aeb01`
+- `hk-8i31.41` HC-034 no-secret-in-JSONL test → `0ddc097`
 
-The branch `ci-workflows-hk-4tttc` contains commit `4022bca` which adds `.github/workflows/ci.yml` (PR-tier scenario smoke) and `scenario-nightly.yml` (nightly full suite). The orchestrator's OAuth token cannot push workflow files (no `workflow` scope). **Run `git push origin ci-workflows-hk-4tttc` from your own shell, then merge that branch into main locally and push** (or open a PR from it). Until then, scenario tests still run locally but CI does not enforce them.
+**Wave 2** (5 dispatched, 5 commits):
+- `hk-mmvcm` JSONLWriter.Close idempotent → `1ae9782`
+- `hk-6x7dw` rename StaleVerdictPayload.SnapshotToken → `1ff0c86`
+- `hk-xlach` CHB-INV-003 mechanism-no-cognition → `514c0f6`
+- `hk-gerqr` CHB-INV-001 two-contributor session → `79e7f19`
+- `hk-qo96c` CHB-INV-002 single terminal event → `8956ebc`
 
-## v40 process notes
+**Wave 3** (4 dispatched, 3 commits + 1 SUBSUMED):
+- `hk-qo08q.22` CHB-022 daemon-is-twin-blind → `7c54c76`
+- `hk-qo08q.23` CHB-023 session_id durable checkpoint → SUBSUMED by `hk-w5vra.6` / `1b88110`
+- `hk-qo08q.24` CHB-024 settings-precedence → `be91ba6`
+- `hk-u5c5i` sub_reason enum → `b939afe`
 
-- The "ask before push" constraint is lifted (HANDOFF directive PUSH AUTONOMY). CI-workflow caveat is the only remaining gate.
-- Recurring friction: CWD drifts into agent worktrees during long bash chains — `cd /Users/gb/github/harmonik && pwd` recovery pattern used repeatedly. Worth a directive note for the next agent.
-- Beads parent-child-as-blocker gridlock (L-011) hit twice in v40 — once for branching children, once for model children. Sqlite-flip `blocks → related` for parent edges remains the standard recovery.
+## Cleanup
+
+- Stale `ci-workflows-hk-4tttc` branch dropped (CI explicitly unwanted).
+- Orphan `worktree-agent-ae97d05df4ee78078` removed (its `hk-gql20.11` work already in main via different commit).
+- Root MD archived to `docs/historical/`: `OVERNIGHT_RUN_2026-04-19.md`, `MVH_ROADMAP.md`, `QUESTIONS.md`, `EXPLORATORY_TESTING_PLAN.md`.
+- Root MD deleted: `NEXT_AGENT.md`, `SESSION_HANDOFF.md` (superseded by this file).
+- Stale closeable beads: `hk-zrj83`, `hk-gql20.23`, `hk-w5vra.7` (closed in cleanup commit).
+
+## Follow-up beads filed in v41
+
+- `hk-09tne` — Phase 2 first-demo: append milestone line to README via harmonik daemon end-to-end. P2 docs.
+- `hk-6x7dw` — EV-036 violation (CLOSED in wave 2).
+- `hk-mmvcm` — JSONLWriter close-of-closed-channel panic (CLOSED in wave 2).
 
 # Next session — START HERE
 
-**Phase 2 first-real-demo.** Phase 1 proved harmonik can drive a real claude end-to-end on one bead (operational green). Phase 2 swaps the orchestrator's dispatch substrate: instead of the Agent tool spawning sub-agents, the orchestrator files real beads and runs the harmonik daemon against them. The branching/model/scenario infrastructure that just landed is the prerequisite stack — branching gives team-friendly base/target refs, model selection lets each bead pick its harness model, scenario tests give regression coverage.
+**Two viable next moves.** Pick one based on what you want to learn.
 
-The pragmatic first demo: pick a small concrete bead, dispatch it through harmonik daemon with `start_from: main`, `lands_on: main`, `model: sonnet`, `effort: high`, watch the resulting JSONL stream and merge commit on main. If that round-trips end-to-end, file a parallel pair of beads and run `harmonik --max-concurrent 2`. That's the proof point for Phase 2 entry.
+**Option A — Phase 2 first-demo run (RECOMMENDED).** Drive `hk-09tne` end-to-end through the harmonik daemon (NOT via sub-agent dispatch). This is the v40-handoff's stated Phase-2 entry test. Steps:
+
+    cd /Users/gb/github/harmonik
+    go build -o /tmp/harmonik ./cmd/harmonik
+    # In a tmux session:
+    /tmp/harmonik tmux-start --session-name harmonik-phase2 --project /Users/gb/github/harmonik
+    # Inside the resulting tmux session:
+    /tmp/harmonik --project /Users/gb/github/harmonik --max-concurrent 1
+
+The daemon should poll `br ready`, claim `hk-09tne`, spawn a real claude in a tmux window, watch the work happen, and merge to main. Success signal: a merge commit on main authored by the implementer + `outcome_emitted{kind=approved}` in `.harmonik/events/events.jsonl`. If round-trip fails, file a bug bead with the failing-step name and the JSONL excerpt. Pre-flight blockers: `hk-zrj83` (paste-inject), `hk-fdyip` (auto-trust) — paste-inject is closed; auto-trust still has an open design question, but the operational-green smoke ran without it being formally resolved so the demo should work.
+
+**Option B — wave 4 via gridlock-flip.** Open beads under epic parents (hk-hqwn, hk-8i31, hk-872, hk-b3f, hk-a8bg, hk-8mwo) all show "0 open children" via the simple prefix filter — meaning either every child IS closed, or the dep edge is `blocks` and L-011-grid-lock applies. Run `bv --robot-triage --format toon` to see if children are still actionable; if `br stats` Open count exceeds the sum of openable children, flip parent-`blocks` edges to `related` via the sqlite-flip in the directives above, then dispatch a new wave.
 
 Open follow-ups (not blocking):
-- Phase 2 demo bead — pick one and run it (no bead filed yet — file at session start).
-- DOT-defined node graphs (Phase 3).
-- Twin paste-receipt + reject-input-before-ready (audit items 4+5) — small twin extensions, low priority since current scenarios don't exercise them yet.
+- DOT testbed (Phase 3) — needs `kerf new dot-testbed --jig spec` work — defer until Phase 2 demo proves out.
+- Daemon command-queue: `br create` IS the queue; SIGUSR1 "poll now" handler in `workloop.go` is the smallest possible LP-extension (≤20 LOC) if poll-latency bites.
+- Pre-existing test failures (not introduced this session, file fix beads if needed): `TestAR013EnvelopeDeclaration/claude-hook-bridge.md` (specaudit), `TestEventEV002b_HandlerPackageDoesNotImportCore` (core/handler import cycle hint), `PL-021*` axis-invalid spec-audit failures in process-lifecycle.md.
 
 # Files to open first
 
 1. `HANDOFF.md` (this).
-2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — Phase 1 milestone.
-3. `docs/twin-parity-audit-2026-05-14.md` — twin coverage map; informs which scenarios the daemon-driven demo can rely on.
-4. `specs/workspace-model.md` §WM-005b — bead-level branching contract (new).
-5. `specs/execution-model.md` §EM-012b — model-selection resolution chain (new).
-6. `internal/branching/branching.go` — project-defaults loader.
-7. `internal/daemon/branching.go` — bead-body parser + resolution-chain wiring.
-8. `internal/daemon/projectconfig.go` + `modelpreference.go` — model resolution.
-9. `test/scenario/scenarios_test.go` — 5 baseline scenarios that should keep passing as the daemon evolves.
+2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — Phase 1 milestone + the 11 umbrella fixes that converged.
+3. `docs/twin-parity-audit-2026-05-14.md` — twin coverage map.
+4. `specs/workspace-model.md` §WM-005b + `specs/execution-model.md` §EM-012b — bead-level branching + model selection (Phase 2 prerequisites).
+5. `cmd/harmonik/main.go` — daemon entrypoint, tmux-start subcommand.
+6. `internal/daemon/workloop.go` — the run-one loop.

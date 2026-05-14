@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -403,6 +404,85 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 
 	if got != core.WorkflowModeSingle {
 		t.Errorf("WorkflowModeDefaultOf with zero value = %q; want %q (PL-004a default)", got, core.WorkflowModeSingle)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-tjl40: daemon.Start binds Unix socket (PL-003 / CHB-025)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestDaemonStart_BindsSocket asserts that daemon.Start binds a Unix-domain
+// socket at <ProjectDir>/.harmonik/daemon.sock with mode 0600, and that Start
+// returns nil after ctx is cancelled.
+//
+// BrPath is intentionally empty so the work loop is skipped; only socket
+// binding behaviour is exercised.
+//
+// macOS sun_path limit (104 bytes) is handled by placing the project dir
+// under /tmp when t.TempDir() would produce a path too long to bind.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-003; §4.2 PL-005 step 3a.
+// Bead ref: hk-tjl40.
+func TestDaemonStart_BindsSocket(t *testing.T) {
+	t.Parallel()
+
+	const sunPathMax = 104
+	const harmonikRelSock = "/.harmonik/daemon.sock"
+
+	// Choose a project dir short enough to fit in sun_path.
+	candidate := t.TempDir()
+	var projectDir string
+	if len(candidate)+len(harmonikRelSock) <= sunPathMax {
+		projectDir = candidate
+	} else {
+		dir, err := os.MkdirTemp("/tmp", "hk-tjl40-")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:errcheck // cleanup error unactionable
+		projectDir = dir
+	}
+
+	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
+	eventsDir := filepath.Dir(jsonlPath)
+	//nolint:gosec // G301: test-only temp directory
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll events dir: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- daemon.Start(ctx, daemon.Config{
+			ProjectDir:   projectDir,
+			JSONLLogPath: jsonlPath,
+		})
+	}()
+
+	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
+
+	// Poll for the socket file with mode 0600.
+	deadline := time.Now().Add(5 * time.Second)
+	var sockFound bool
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(sockPath)
+		if err == nil && info.Mode()&os.ModeSocket != 0 && info.Mode().Perm() == 0o600 {
+			sockFound = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	cancel() // clean shutdown
+
+	startErr := <-startDone
+	if startErr != nil {
+		t.Errorf("daemon.Start returned non-nil after ctx cancel: %v", startErr)
+	}
+
+	if !sockFound {
+		t.Errorf("daemon.sock not found at %q with mode 0600 within 5s", sockPath)
 	}
 }
 

@@ -367,6 +367,41 @@ func Start(ctx context.Context, cfg Config) error {
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	hookStore := newHookSessionStore()
 
+	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
+	// subprocesses can deliver outcome_emitted envelopes to the daemon.
+	//
+	// Only bind when ProjectDir is set; unit-test callers that omit ProjectDir
+	// skip the socket (no path to bind). The socket listener runs concurrently
+	// with the work loop and shuts down on the same ctx.
+	//
+	// RequestHandler: no production implementer at MVH (claim-next / emit-outcome
+	// wiring is a follow-up bead). A noopRequestHandler is passed so that rare
+	// op-path connections get a proper ok=false response rather than a nil-deref
+	// panic. Hook-relay envelopes route via hr (hookStore), not h, so this is
+	// non-blocking for the hook-relay path.
+	//
+	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3a; §4.1 PL-003.
+	if cfg.ProjectDir != "" {
+		sockPath := filepath.Join(cfg.ProjectDir, ".harmonik", "daemon.sock")
+		// .harmonik/ was already created above (pidfile block), but when
+		// ProjectDir is set with BrPath="" (test mode skipping pidfile) we still
+		// need the dir. MkdirAll is idempotent.
+		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		if mkErr := os.MkdirAll(filepath.Dir(sockPath), 0o755); mkErr != nil {
+			return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
+		}
+
+		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
+		// the absence of the socket is observable externally). Drain the done
+		// channel to avoid goroutine leaks; error is discarded per the same
+		// reasoning as defer ln.Close() discards errors in RunSocketListener.
+		socketDone := make(chan error, 1)
+		go func() {
+			socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore)
+		}()
+		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
+	}
+
 	// Skip the work loop when BrPath is not configured (unit-test mode).
 	if cfg.BrPath != "" {
 		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg, hookStore)

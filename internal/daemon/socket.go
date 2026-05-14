@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -97,6 +98,23 @@ type RequestHandler interface {
 	// role is the agent role requesting the next bead.
 	// The returned json.RawMessage is serialised into SocketResponse.Result.
 	ClaimNext(ctx context.Context, role string) (json.RawMessage, error)
+}
+
+// noopRequestHandler is a minimal RequestHandler that rejects every request
+// with a clear error. It is used at MVH where the real claim-next / emit-outcome
+// wiring is deferred to a follow-up bead. Hook-relay envelopes never reach
+// RequestHandler (they are dispatched via HookRelayHandler), so this stub has
+// no impact on the hook-relay path.
+//
+// Spec ref: MVH_ROADMAP row #5.
+type noopRequestHandler struct{}
+
+func (n *noopRequestHandler) EmitOutcome(_ context.Context, _ OutcomeRequest) (json.RawMessage, error) {
+	return nil, errors.New("daemon: RequestHandler not wired at MVH")
+}
+
+func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMessage, error) {
+	return nil, errors.New("daemon: RequestHandler not wired at MVH")
 }
 
 // RunSocketListener binds a Unix-domain socket at sockPath, sets its

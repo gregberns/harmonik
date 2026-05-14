@@ -192,15 +192,15 @@ loop forever:
 **Daemon is the sole driver for MVH.** No orchestrator-agent (LLM session) required. Daemon auto-picks eligible beads, dispatches workflows, commits, closes. Orchestrator-agent layer (separate Claude Code session driving daemon via CLI) is optional, post-MVH.
 
 **Conventions set:**
-- Single-run concurrency for MVH. One run at a time; multiple eligible beads queue.
+- Concurrency is operator-configurable via `--max-concurrent N`. The default of 1 is a soft default, not a hard cap; multiple eligible beads queue when in-flight count reaches N.
 - Bead-to-workflow binding lives on the bead (a `workflow_name` field or typed edge). Daemon resolves to a DOT workflow in the library.
 - Bead selection: pick ANY eligible bead; oldest-first is a tiebreaker, not a priority. No prioritization or scoring in MVH.
-- Main loop is single-threaded over runs. Within a run, one node at a time. Handler I/O is async (watcher goroutine) but the main loop awaits node completion.
+- `internal/daemon/workloop.go` runs goroutine-per-active-bead up to `MaxConcurrent`. Within a run, one node at a time. Handler I/O is async (watcher goroutine) but each run awaits node completion.
 - No workflow-level transactionality. A run that commits 3 nodes and fails on node 4 leaves 3 checkpoints durable; no rollback. State-at-failure preserved in git.
 
 ### Deferred / follow-up
 
-- **Operator-configurable concurrency** — post-MVH. Controls to add: max concurrent runs, per-project cap, machine-level budget coordination across daemons.
+- **Operator-configurable concurrency** — `--max-concurrent` flag is live, gated by a claim semaphore in `RunRegistry` (hk-e61c3.3). Follow-ups: per-project cap, machine-level budget coordination across daemons.
 - **Bead prioritization** — post-MVH. Options: priority field on bead, orchestrator-agent-driven selection, SLA-based scheduling.
 
 ## Section 6 — Subsystem organization (aligned 2026-04-24)

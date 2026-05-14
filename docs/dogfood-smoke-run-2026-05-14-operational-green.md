@@ -155,4 +155,4 @@ Prior to this milestone, the only way to run a sub-agent task was to call `Agent
 
 This gives true process-level isolation, persistent worktrees, and clean capacity management outside the orchestrator's context window — which is the core thesis of harmonik's "deterministic skeleton, probabilistic organs" architecture.
 
-The first post-MVH unlock (concurrent runs) requires validating `--max-concurrent > 1` in smoke — that is the natural next step.
+The first post-MVH unlock (concurrent runs) has since landed: `--max-concurrent > 1` is validated by `internal/daemon/t8_smoke_test.go` and `internal/daemon/t11_throughput_test.go` (parallelism roadmap rows 1–6, hk-e61c3).

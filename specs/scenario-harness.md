@@ -407,9 +407,9 @@ Tags: mechanism
 
 ### 4.11 Concurrency policy
 
-#### SH-031 — Scenarios run sequentially at MVH
+#### SH-031 — Scenarios run sequentially
 
-The harness MUST execute scenarios sequentially at MVH: at most one scenario's full lifecycle (per SH-016a synthetic-project-root creation through SH-015 fixture teardown completion) may be active at any time. "Active" means: between the start of a scenario's fixture-up and the completion of that scenario's teardown sub-step (e), no other scenario MAY have any sub-step running. Pre-fetching scenario N+1's fixture state in parallel with scenario N's teardown is forbidden at v0.1. Reconciliation workflows internal to a single scenario (per PL-005 step 8 dispatching against fixture state) are not "concurrent scenarios" and are unaffected by this requirement. Concurrent multi-scenario execution is tracked at OQ-SH-002 for a post-MVH revision; the trigger is a measured suite-wall-clock pain point, not a speculative parallelism win.
+The harness MUST execute scenarios sequentially: at most one scenario's full lifecycle (per SH-016a synthetic-project-root creation through SH-015 fixture teardown completion) may be active at any time. "Active" means: between the start of a scenario's fixture-up and the completion of that scenario's teardown sub-step (e), no other scenario MAY have any sub-step running. Pre-fetching scenario N+1's fixture state in parallel with scenario N's teardown is forbidden at v0.1. Reconciliation workflows internal to a single scenario (per PL-005 step 8 dispatching against fixture state) are not "concurrent scenarios" and are unaffected by this requirement. Concurrent multi-scenario execution is tracked at OQ-SH-002; the trigger is a measured suite-wall-clock pain point, not a speculative parallelism win.
 
 Tags: mechanism
 

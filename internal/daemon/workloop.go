@@ -9,10 +9,11 @@ package daemon
 // # Concurrency model (hk-e61c3.2, POST_MVH_PARALLELISM_ROADMAP row 5)
 //
 // Goroutine-per-active-bead: the outer poll loop spawns one goroutine per
-// claimed bead. The in-flight count is gated by MaxConcurrent via RunRegistry.
-// At MaxConcurrent=1 (the MVH default), the loop is semantically equivalent
-// to the prior serial implementation: only one goroutine is ever in-flight,
-// so behaviour is byte-identical to the pre-parallelism code.
+// claimed bead. The in-flight count is gated by MaxConcurrent via RunRegistry's
+// claim semaphore (hk-e61c3.3). Parallelism roadmap rows 1–6 are shipped.
+// At MaxConcurrent=1 (the default), the loop is semantically equivalent to the
+// prior serial implementation: only one goroutine is ever in-flight, so
+// behaviour is byte-identical to the pre-parallelism code.
 //
 // Anti-pattern (roadmap §6): do NOT use a worker-pool-fed-by-queue. One
 // goroutine per active bead — in-flight count MUST equal runRegistry.Len().
@@ -284,7 +285,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		daemonBinaryPath = "harmonik"
 	}
 
-	// Normalise MaxConcurrent: zero value → 1 (MVH single-threaded default).
+	// Normalise MaxConcurrent: zero value → 1 (default single-threaded behavior when unset).
 	maxConcurrent := cfg.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1

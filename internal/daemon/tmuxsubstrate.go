@@ -274,15 +274,19 @@ func killProcessWithGrace(pid int, grace time.Duration) {
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
-// Wait blocks until the tmux window hosting the subprocess is gone. It polls
-// WindowPanePID at 500ms intervals; when the PID disappears or the window is
-// gone (ErrNoSession / non-zero failure), Wait returns.
+// Wait blocks until the hosted process exits. It polls liveness at 500ms
+// intervals and returns once the process is gone.
 //
-// If ctx is cancelled before the window exits, Wait returns ctx.Err().
+// When a pane PID was captured at SpawnWindow time (s.pid > 0), Wait polls
+// process liveness directly via kill(pid, 0). This decouples liveness checking
+// from tmux's name-resolution logic, which falls back silently to the session's
+// active pane when the window name is no longer found — causing an infinite
+// loop when Kill has already destroyed the window (hk-smuku).
 //
-// This is a best-effort MVH implementation. A production implementation
-// should use a PID-existence check (syscall.Kill(pid, 0)) or a side-channel
-// completion signal from the hook-bridge socket.
+// When s.pid == 0 (PID lookup failed at spawn time), Wait falls back to the
+// WindowPanePID adapter call so that tests without real PIDs continue to work.
+//
+// If ctx is cancelled before the process exits, Wait returns ctx.Err().
 func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
 	s.waitOnce.Do(func() {
 		s.waitDone = make(chan struct{})
@@ -296,7 +300,15 @@ func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
 	}
 }
 
-// runWait polls until the tmux window/process exits, then populates outcome.
+// processDead reports whether the process with the given pid is no longer
+// alive in the OS process table. It uses kill(pid, 0): ESRCH means gone,
+// any other result means still running.
+func processDead(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err != nil // ESRCH when gone; EPERM means alive but unowned
+}
+
+// runWait polls until the hosted process/window exits, then populates outcome.
 func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	defer close(s.waitDone)
 
@@ -315,17 +327,33 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			s.outcomeReady.Store(true)
 			return
 		case <-ticker.C:
-			_, err := s.adapter.WindowPanePID(ctx, s.handle)
-			if err != nil {
-				// Window or session gone — process has exited.
-				s.outcome = handler.Outcome{
-					ExitCode: 0,
-					Duration: time.Since(startedAt),
+			if s.pid > 0 {
+				// Fast path: check OS process table directly. This avoids the
+				// tmux display-message fallback that returns the active-pane PID
+				// when the window name is no longer resolvable (hk-smuku).
+				if processDead(s.pid) {
+					s.outcome = handler.Outcome{
+						ExitCode: 0,
+						Duration: time.Since(startedAt),
+					}
+					s.outcomeReady.Store(true)
+					return
 				}
-				s.outcomeReady.Store(true)
-				return
+				// Process still alive — continue polling.
+			} else {
+				// Slow path: PID unknown; fall back to WindowPanePID.
+				_, err := s.adapter.WindowPanePID(ctx, s.handle)
+				if err != nil {
+					// Window or session gone — treat as process exited.
+					s.outcome = handler.Outcome{
+						ExitCode: 0,
+						Duration: time.Since(startedAt),
+					}
+					s.outcomeReady.Store(true)
+					return
+				}
+				// Window still alive — continue polling.
 			}
-			// Window still alive — continue polling.
 		}
 	}
 }

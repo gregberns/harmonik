@@ -48,7 +48,7 @@ type fakeTmuxAdapter struct {
 }
 
 func (f *fakeTmuxAdapter) ProbeTmux(_ context.Context) error                { return nil }
-func (f *fakeTmuxAdapter) ListSessions(_ context.Context) ([]string, error)  { return nil, nil }
+func (f *fakeTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { return nil, nil }
 func (f *fakeTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -447,6 +447,64 @@ func TestTmuxSubstrateSession_Stdout_AlwaysNil(t *testing.T) {
 
 	if stdout := sess.Stdout(); stdout != nil {
 		t.Errorf("SubstrateSession.Stdout(): expected nil, got %T", stdout)
+	}
+}
+
+// TestTmuxSubstrateSession_Wait_ReturnAfterExternalKill verifies that Wait
+// returns promptly (within 3 seconds) after the hosted process is killed
+// externally, even when the fake adapter's WindowPanePID would return no error
+// (simulating the tmux active-pane fallback bug described in hk-smuku).
+//
+// The test injects the real child PID via panePIDResult so that s.pid > 0 and
+// the fast kill(pid,0) path is exercised. panePIDErr is intentionally left nil
+// so that the WindowPanePID fallback would loop forever if the fast path were
+// absent — proving the fix works.
+func TestTmuxSubstrateSession_Wait_ReturnAfterExternalKill(t *testing.T) {
+	t.Parallel()
+
+	// Spawn a long-lived subprocess as a stand-in for a claude process.
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep subprocess: %v", err)
+	}
+	childPID := cmd.Process.Pid
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	// panePIDErr is nil — WindowPanePID would return a live-looking PID forever,
+	// simulating the tmux active-pane fallback. The fix must NOT consult it.
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win")},
+		panePIDResult:      childPID,
+		panePIDErr:         nil,
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: "hk-win",
+		Cwd:        t.TempDir(),
+		Argv:       []string{"sleep", "60"},
+	}
+
+	sess, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	// Kill the child process externally (bypassing Kill() — simulating HC-056
+	// KillWindow path that already destroyed the window but Wait is still running).
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill child externally: %v", err)
+	}
+	_ = cmd.Wait() // reap zombie
+
+	// Wait must return within 3 seconds; without the fix it would hang forever.
+	waitCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := sess.Wait(waitCtx); err != nil {
+		t.Errorf("SubstrateSession.Wait: expected nil after process exit, got: %v", err)
 	}
 }
 

@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.6
+version: 0.7
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -47,6 +47,7 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 - The handler-process responsibility for emitting timer-driven `agent_heartbeat` while Claude is alive.
 - Failure-mode classification: relay-can't-dial-socket, daemon-not-ready-retry-exhausted, malformed hook payload, missing `.harmonik/review.json` at Stop in reviewer phase.
 - Twin-parity rules: `harmonik-twin-claude` emits the same wire-format NDJSON sequence the bridge would synthesize from Claude, WITHOUT going through the relay subcommand.
+- The per-launch task-delivery artifact `${workspace_path}/.harmonik/agent-task.md`: atomic-write discipline, reserved name, content shape by phase, gitignore hygiene, and re-attach semantics.
 
 ### 2.2 Out of scope
 
@@ -386,6 +387,62 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+### 4.11 Per-launch task artifact
+
+#### CHB-028 — `agent-task.md` as the daemon-to-claude task-delivery file
+
+**Purpose.** The daemon MUST materialize a task artifact at `${workspace_path}/.harmonik/agent-task.md` before launching any `claude-code` session. This file is the normative daemon→claude task-delivery channel under the tmux substrate (per [process-lifecycle.md §4.7 PL-021b]). It is the mechanism by which harmonik hands an implementer or reviewer a concrete unit of work before exec'ing Claude.
+
+**Reserved name.** The filename `agent-task.md` under `${workspace_path}/.harmonik/` is reserved for harmonik's exclusive use. No user-authored file, no operator-side config, and no agent-written output MAY occupy or overwrite this path. The daemon treats a pre-existing `agent-task.md` at materialization time as a fatal structural error (`ErrStructural`, sub_reason `task_file_collision`); it MUST NOT exec Claude and MUST emit `agent_failed` per [handler-contract.md §4.6 HC-024].
+
+**NOT `.claude/CLAUDE.md` or `CLAUDE.md`.** The task artifact MUST NOT be written to `CLAUDE.md`, `.claude/CLAUDE.md`, or any path that Claude Code's settings-hierarchy auto-discovery would treat as a global system prompt. The operator's existing `CLAUDE.md` in the worktree MUST remain unmodified. `agent-task.md` is a per-launch sidecar; Claude is expected to read it as an ordinary file, directed by a pane-paste kick-off message (per the mechanism defined in the forthcoming B2 + B8 spec amendments).
+
+**Materialization timing.** The daemon MUST write `agent-task.md` AFTER [workspace-model.md §4.1 WM-003] (worktree creation) and BEFORE exec'ing Claude via the tmux substrate. The write ordering relative to `.claude/settings.json` materialization (CHB-002) is: both MUST be complete and fsynced before the tmux substrate receives the `SubstrateSpawn` call. The parent directory `${workspace_path}/.harmonik/` is created (if absent) as part of the workspace-creation step; `agent-task.md` does not introduce a new directory.
+
+**Atomic-write discipline.** The write MUST follow the same atomic discipline as [workspace-model.md §4.7 WM-026]:
+
+1. Construct the full file content in memory.
+2. Write to a sibling temp file at `${workspace_path}/.harmonik/agent-task.tmp-<pid>`.
+3. `fsync(2)` the temp file.
+4. `rename(2)` the temp file to `${workspace_path}/.harmonik/agent-task.md` (POSIX rename is atomic).
+5. `fsync(2)` the parent directory `${workspace_path}/.harmonik/` to durably record the rename.
+
+A power loss after step 4 without step 5 MUST NOT leave a partial or missing task file visible to Claude. The fsync-parent step is required on all supported platforms (Darwin, Linux).
+
+**Content shape.** The content is a UTF-8 Markdown document. The daemon MUST include all of the following fields in every task file, regardless of phase:
+
+```
+# Harmonik Task
+
+bead_id: <HARMONIK_BEAD_ID value, or "none" if not bead-tied>
+title: <bead title, or run_id if not bead-tied>
+phase: <one of: implementer-initial | implementer-resume | reviewer>
+iteration: <integer; 1-based; LaunchSpec.iteration_count>
+run_id: <HARMONIK_RUN_ID>
+workspace_path: <absolute path to workspace root>
+
+## Task Description
+
+<bead body verbatim, or operator-provided task string if not bead-tied; MUST NOT be empty>
+
+## Prior-Iteration Context
+
+<present only when phase = implementer-resume or phase = reviewer; omitted entirely when phase = implementer-initial>
+```
+
+For `phase = implementer-resume`: the Prior-Iteration Context section MUST include the path to the reviewer's verdict file from the immediately preceding iteration: `reviewer-feedback: ${workspace_path}/.harmonik/review.iter-<N-1>.json` where `<N-1>` is the previous iteration ordinal (1-indexed, matching WM-027a archival naming). It SHOULD also include a human-readable summary of the prior verdict's `verdict` field and `notes` string so that Claude does not need to parse JSON to understand its immediate next action.
+
+For `phase = reviewer`: the Prior-Iteration Context section MUST include the base and head commit SHAs for the diff under review: `review_base_sha: <sha>` and `review_head_sha: <sha>`. The daemon derives these from the task-branch tip at reviewer-launch time (HEAD of the task branch after the implementer's last commit) relative to the task-branch fork point (the `parent_commit` field on the Workspace record per WM-026).
+
+**Gitignore hygiene.** `${workspace_path}/.harmonik/agent-task.md` MUST be excluded from checkpoint commits per [workspace-model.md §4.3 WM-013e]. The daemon MUST add the line `.harmonik/agent-task.md` (or the glob `.harmonik/agent-task*`) to the worktree's `.gitignore` set at materialization time, in the same atomic-write pass as the file itself. The task artifact is workflow-control state, not work product; it MUST NOT appear in squash-merge commits per WM-019.
+
+**Re-launch (re-attach) semantics.** If the daemon restarts mid-session and finds an existing `agent-task.md` in the worktree, it MUST NOT treat this as a `task_file_collision`. The re-attach path is identified by the daemon having already persisted `claude_session_id` (CHB-023) and the workspace being in `leased` state with an active session. On re-attach, the daemon MUST NOT overwrite the existing `agent-task.md`; the file is idempotent for a given `(run_id, phase, iteration)` tuple and serves as a durable record of the task handed to the prior session.
+
+**Invariant.** The presence of a durable `agent-task.md` at `${workspace_path}/.harmonik/agent-task.md` is a prerequisite for any Claude exec under the tmux substrate. The daemon MUST assert this file exists and is non-empty after the atomic write and before issuing the `SubstrateSpawn` call. An empty or absent file after the write step is a fatal structural error.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
 ## 5. Invariants
 
 #### CHB-INV-001 — Two-contributor session
@@ -448,6 +505,8 @@ Bridge-specific failure modes route through `agent_failed{class, sub_reason}` pe
 | `claude_<error_type>` | per §4.5.CHB-013 | Mapped from StopFailure.error_type |
 | `bridge_partial_write` | ErrTransient | Relay process terminated after socket open but before envelope completion; daemon received EOF on an unidentified connection. Recovery: handler Wait-return CHB-020 "no outcome_emitted" branch fires per §4.6.CHB-027. |
 | `bridge_settings_shadowed` | ErrStructural | `.claude/settings.local.json` shadows bridge hooks per §4.9.CHB-024 |
+| `task_file_collision` | ErrStructural | Pre-existing `agent-task.md` found at materialization time when NOT on the re-attach path per §4.11.CHB-028 |
+| `task_file_empty` | ErrStructural | `agent-task.md` is absent or empty after atomic write per §4.11.CHB-028 |
 
 ## 9. Cross-references
 
@@ -463,8 +522,9 @@ Bridge-specific failure modes route through `agent_failed{class, sub_reason}` pe
 - [workspace-model.md §4.1 WM-003] — worktree creation gate.
 - [workspace-model.md §4.3 WM-013e] — gitignore hygiene.
 - [workspace-model.md §4.4 WM-016] — workspace_leased event ordering.
-- [workspace-model.md §4.7 WM-026, WM-027a] — sidecar atomic-write discipline; reviewer verdict artifact path.
+- [workspace-model.md §4.7 WM-026, WM-027a] — sidecar atomic-write discipline; reviewer verdict artifact path; atomic-write discipline reused verbatim by CHB-028.
 - [workspace-model.md §4.7a WM-040a] — claude-code settings.json materialization (new in this kerf).
+- [workspace-model.md §4.3 WM-013e] — gitignore hygiene set; CHB-028 `agent-task.md` exclusion uses the same mechanism.
 - [process-lifecycle.md §4.5 PL-017a] — relay subprocesses as grandchildren of the daemon (new in this kerf).
 - [execution-model.md §4.3 EM-012, EM-015d] — Run.context durability for claude_session_id.
 - [execution-model.md §4.5 EM-023a] — durable-transition checkpoint-commit class.
@@ -486,6 +546,7 @@ A handler implementation claiming `claude-code` conformance MUST satisfy:
 - CHB-023 (daemon-side claude_session_id durability before Claude exec).
 - CHB-024 (startup verification that bridge hooks are not shadowed by settings.local.json).
 - CHB-025 (daemon last-received-wins dedup for `outcome_emitted` across multi-turn Stop firings).
+- CHB-028 (per-launch task artifact: `agent-task.md` materialized atomically before Claude exec).
 
 Scenario tests MUST cover:
 
@@ -520,5 +581,6 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | 2026-05-13 | 0.2 | agent (hk-w5vra.8) | CHB-025: Stop-hook dedup gate — daemon last-received-wins for `outcome_emitted`; relay-side gate (option a) rejected; §4.5 CHB-013 Stop row updated to reference CHB-025; §4.10 added; conformance updated. |
 | 2026-05-13 | 0.3 | agent (hk-w5vra.10) | CHB-026: concurrent-connection serialization rule — per-connection FIFO, across-connection unordered (Rule C). Matches current `RunSocketListener` topology; no code change required. Twin-parity implication added. |
 | 2026-05-13 | 0.4 | agent (hk-w5vra.9) | CHB-027: daemon silent-drop on orphan relay connection (relay OOM-killed after socket open, before envelope write). §8 error taxonomy entry added: `bridge_partial_write` (ErrTransient). Doc-only; no code change required. |
-| 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` at MVH the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
 | 2026-05-13 | 0.5 | agent (hk-gql20.4) | Decision record: no CHB-028 clause filed. The bridge-integration initiative (`hk-gql20`) evaluated whether the tmux substrate required an amendment to CHB. Conclusion: no amendment is needed. Twin parity remains at the wire-format level (CHB-021 and CHB-022 are unchanged); the substrate — tmux panes as the execution environment for Claude subprocesses — is orthogonal to the hook-relay and progress-stream contracts defined here. Tmux substrate obligations are captured in [workspace-model.md WM-002a] and [handler-contract.md HC-054]. Source: `.kerf/projects/gregberns-harmonik/bridge-integration/05-specs/claude-hook-bridge-amendments.md`. |
+| 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` at MVH the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
+| 2026-05-13 | 0.7 | agent (hk-yrplz) | CHB-028: per-launch task artifact — `${workspace_path}/.harmonik/agent-task.md` as the normative daemon→claude task-delivery channel under the tmux substrate. §4.11 added. Atomic-write discipline per WM-026. Reserved name (NOT CLAUDE.md). Content shape by phase (implementer-initial, implementer-resume, reviewer). Prior-iteration pointers for resume and reviewer phases. Gitignore hygiene, re-attach semantics, and task_file_collision / task_file_empty error sub-reasons added to §8. §2.1 scope and §9 cross-references updated. Conformance checklist updated. Refs: hk-yrplz. |

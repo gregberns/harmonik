@@ -194,6 +194,22 @@ A tier-1 input that names an unknown mode (a `workflow:<mode>` label whose `<mod
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### EM-012b — Model/effort resolution precedence
+
+The daemon's claim path MUST resolve a run's `(model, effort)` pair (the `ModelPreference` sealed into the Run record per §6.1) by walking the following tiers in order and selecting the first tier that produces a non-empty value:
+
+1. **Per-task.** The bead's `model:<alias>` label AND the optional `effort:<level>` label. `effort` is a closed enum: accepted values are `low`, `medium`, `high`, `xhigh`, `max`. If the bead carries more than one `model:<alias>` label or more than one `effort:<level>` label, the daemon MUST treat tier 1 as absent AND MUST emit `bead_label_conflict` per [event-model.md §8.8] before continuing the walk. An unrecognised `effort:<value>` label MUST cause tier 1 to be treated as absent AND MUST emit `bead_label_conflict` with the offending label recorded in the payload. `model` and `effort` are resolved independently within tier 1: if a `model:<alias>` label is present but no `effort:<level>` label is present, only `model` is taken from tier 1; the walk for `effort` continues to tier 2.
+2. **Per-project.** `.harmonik/config.yaml` `agents.<agent_type>.model` and `agents.<agent_type>.effort`. The resolution function MUST tolerate absence of the file or of the relevant key at MVH and pass through to the next tier for any absent component. A parse error on a present file MUST cause the daemon to refuse to start.
+3. **Per-agent-type compiled default.** A static map keyed by `core.AgentType` providing a `(model, effort)` pair. Lives adjacent to the handler adapter wiring; entries are normative for the binding they describe and additive over time.
+4. **Built-in fallback.** Empty for both fields — the handler tool applies its own default.
+
+`model` and `effort` are resolved independently: each walks the tier list separately, and the first non-empty value wins for that field. Resolution MUST run exactly once per run at claim time. The resolved `(model, effort)` pair MUST be sealed into the Run record as a `ModelPreference` descriptor (per §6.1) before any node in the run is dispatched and MUST NOT be re-evaluated for the lifetime of the run. The resolved pair MUST be surfaced on the `run_started` event payload per [event-model.md §8.1] for downstream consumers.
+
+The `ModelPreference` descriptor is opaque to harmonik below the descriptor layer: harmonik validates the **shape** of `model` (see §6.1 for the normative invariants), not its value. Handler-side launch failure is the authoritative compatibility check for whether the resolved model is accepted by the underlying tool.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 #### EM-013 — Run ID propagates as commit trailer and event field
 
 The `run_id` of a run MUST appear as the `Harmonik-Run-ID` trailer on every checkpoint commit for that run (per §4.4) and as the `run_id` field on every event scoped to the run (per [event-model.md §4.1]). The run_id is the join key across git, Beads (via optional `Harmonik-Bead-ID` trailer — see [beads-integration.md §4.6 BI-018] and §4.3.EM-014), and JSONL.
@@ -783,6 +799,7 @@ RECORD Run:
     workflow_id        : UUID                 -- resolved workflow
     workflow_version   : String               -- pinned version at dispatch time
     workflow_mode      : WorkflowMode         -- one of {single, review-loop, dot}; resolved at claim per §4.3.EM-012a; immutable for run lifetime; defaults to `single`
+    model_preference   : ModelPreference      -- (model, effort) pair sealed at claim per §4.3.EM-012b; passed to every handler via LaunchSpec per [handler-contract.md §4.10 HC-055a]
     input              : WorkspaceRef         -- workspace reference per [workspace-model.md §4.1]
     bead_id            : BeadID | None        -- present when tied to a bead (see [beads-integration.md §4.3 BI-008])
     state              : State                -- current state
@@ -796,6 +813,23 @@ ENUM WorkflowMode:
     single                      -- one-handler-per-node default (Core MVH); applies to ordinary workflow graphs
     review-loop                 -- hardcoded two-node implementer→reviewer cycle per §4.3.EM-015d; cap-3 per §4.3.EM-015e
     dot                         -- general workflow-graph walker; reserved for post-MVH; out of scope for Core MVH conformance
+```
+
+```
+RECORD ModelPreference:
+    model  : String | None   -- opaque to harmonik below the descriptor layer; shape-validated (non-empty when present,
+                             --   matches ^[A-Za-z0-9._:/-]+$, max 128 chars); value-validated by the handler at launch;
+                             --   None when resolution chain produced empty (tier 4 built-in fallback)
+    effort : EffortLevel | None  -- closed enum (see below); None when resolution chain produced empty
+```
+
+```
+ENUM EffortLevel:
+    low
+    medium
+    high
+    xhigh
+    max
 ```
 
 ```
@@ -1213,6 +1247,7 @@ Default-if-unresolved: (resolved)
 
 | 2026-05-12 | 0.4.1 | foundation-author | Replace EM-015d's `claude -p ... --output-format json` post-launch capture mechanism for `claude_session_id` with the bridge-aligned pre-exec capture path: handler mints UUIDv7 and reports via `handler_capabilities` per [claude-hook-bridge.md §4.7 CHB-018] / [handler-contract.md §4.10 HC-045c]; daemon persists via the durable-checkpoint discipline of [claude-hook-bridge.md §4.6 CHB-023] (a §4.5.EM-023a-class transition completing BEFORE the handler is permitted to exec Claude). Glossary entry for `claude_session_id` updated to match. No requirement IDs added, renumbered, or retired. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.0 | foundation-author | Workflow-modes kerf integration (C2). Introduces `workflow_mode ∈ {single, review-loop, dot}` as a first-class Run-record field (EM-012 amended; §6.1 Run RECORD adds `workflow_mode`; new ENUM `WorkflowMode`). New EM-012a declares the four-tier mode-resolution precedence (per-bead label → project config → daemon default → built-in `single`); tier-1 conflicts and unknown-mode labels treat tier 1 as absent and emit `bead_label_conflict` per [event-model.md §8.8.6]. New EM-015d describes `review-loop` as a hardcoded two-node sub-case of the workflow-graph model (`implementer → reviewer → {APPROVE: close, REQUEST_CHANGES: implementer, BLOCK: close-needs-attention, iteration-cap: close-needs-attention, no-progress: close-needs-attention}`), with the single-`run_id`-across-iterations rule, the same-Claude-session-resumed-across-implementer-iterations rule (via `claude --resume <claude_session_id>`), and per-iteration event emissions (`implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `review_loop_cycle_complete`). New EM-015e declares the hardcoded iteration cap of 3 at MVH, the four early-exit conditions (APPROVE / REQUEST_CHANGES-with-iterations-remaining / cap-hit / BLOCK / no-progress diff-hash), and routes cap-hit / BLOCK / no-progress to the `needs-attention` close path (operator-drained per [operator-nfr.md §4.3]). EM-012 amended to enumerate the four reserved `context` keys under `review-loop` (`iteration_count`, `last_verdict`, `claude_session_id`, `last_diff_hash`). §3 Glossary adds entries for `workflow_mode`, `claude_session_id` (with explicit disambiguation from harmonik's `session_id` event field), `iteration_count`, and `needs-attention`. §6.5 co-owned events updated to list the six new review-loop events and note that `run_started` / `run_completed` / `run_failed` payloads now carry `workflow_mode`. No prior requirement IDs renumbered or retired; the additions are strictly additive over v0.3.3. Status remains `reviewed`. |
+| 2026-05-14 | 0.4.1 | agent (hk-7zvh4) | **Model-selection spec amendment: 4-tier model/effort resolution chain.** New **EM-012b** (§4.3) — model/effort resolution precedence, mirroring EM-012a's tier-list structure: tier 1 per-task bead labels (`model:<alias>`, `effort:<level>`), tier 2 per-project `.harmonik/config.yaml`, tier 3 per-agent-type compiled default, tier 4 empty built-in fallback. `model` and `effort` are resolved independently (each walks tiers separately). Tier-1 multi-label conflict and unrecognised `effort` value both treat tier 1 as absent and emit `bead_label_conflict`. Sealed into Run record as `ModelPreference` at claim time; value-opacity invariant stated (harmonik validates shape not value; handler-side launch failure is authoritative). **§6.1 Run RECORD** gains `model_preference : ModelPreference`. **ModelPreference RECORD** and **EffortLevel ENUM** added to §6.1. No prior requirement IDs renumbered or retired; strictly additive over v0.4.0. Refs: hk-7zvh4, hk-cfhj2. |
 
 ## A. Appendices
 

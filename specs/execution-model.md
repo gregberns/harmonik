@@ -256,7 +256,7 @@ The cycle MUST observe:
 
      The write MUST use the atomic temp-write + rename + `fsync(parent_dir)` discipline of [workspace-model.md §4.7 WM-026]. The temp file MUST be created in the same directory (`.harmonik/`) so the rename is within the same filesystem. The file MUST exist and be readable before step 2 executes; the daemon MUST treat a failure to create the file as a daemon-side error and route the run per [handler-contract.md §4.6] failure handling without launching the implementer-resume.
 
-  2. **Paste-inject the read instruction.** Only AFTER the file from step 1 exists on disk (i.e., the atomic rename in step 1 has completed), the daemon MUST inject the following instruction into the resumed Claude pane via the tmux paste mechanism defined by [process-lifecycle.md §4.3 PL-021b-PASTE] (to be specified by bead hk-wuyn1's amendment of EM-015d):
+  2. **Paste-inject the read instruction.** Only AFTER the file from step 1 exists on disk (i.e., the atomic rename in step 1 has completed), the daemon MUST inject the following instruction into the resumed Claude pane via the tmux paste mechanism defined by [process-lifecycle.md §4.3 PL-021b-PASTE] (specified by EM-015d-RIA step 3 for the reviewer launch; the same mechanism applies here for the implementer-resume):
 
      > Before continuing, read `.harmonik/reviewer-feedback.iter-<N-1>.md` in your worktree. It contains the prior reviewer's verdict, flags, and notes for iteration `<N-1>`. Address every flag marked `REQUEST_CHANGES` before proceeding.
 
@@ -265,6 +265,34 @@ The cycle MUST observe:
   The `reviewer-feedback.iter-<N-1>.md` file MUST be excluded from checkpoint commits via the [workspace-model.md §4.7 WM-013e] `.gitignore` hygiene set; it is workflow-control state, not work product. The file is NOT removed after the run; it persists in the worktree for post-run inspection.
 
   Tags (sub-clause EM-015d-RFD): mechanism
+  Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+- **Reviewer input artifact (EM-015d-RIA).** Before launching the reviewer pane for any iteration (including iteration 1), the daemon MUST write the reviewer input artifact at `${workspace_path}/.harmonik/review-target.md` (path normative per [workspace-model.md §6.2 WM-RIA-001]). This file is the reviewer's sole structured context source; the reviewer is told via paste-inject (per the PL-021b-PASTE mechanism) to read it and produce `review.json` per [claude-hook-bridge.md §4.5 CHB-014]. The daemon MUST execute the following ordered steps:
+
+  1. **Write `review-target.md` atomically.** The daemon MUST write `${workspace_path}/.harmonik/review-target.md` containing:
+     - a header line: `# Review target — bead <bead_id>, iteration <N>` followed by a blank line;
+     - **Bead context section** (`## Bead`): the bead's `id`, `title`, and full `body` as stored in the Beads ledger at the time of reviewer launch; no truncation;
+     - **Diff section** (`## Diff range`): the base SHA (`Run.context.parent_commit` or the run's task-branch creation point) and the head SHA (current `HEAD` of the task branch at the moment the reviewer is launched), formatted as:
+       ```
+       base: <base_sha>
+       head: <head_sha>
+       ```
+     - **Prior verdicts section** (`## Prior verdicts`) (OMITTED when `iteration_count = 1`): for each prior iteration `k` from 1 to `iteration_count - 1`, a sub-heading `### Iteration <k>` followed by the path reference `Verdict file: .harmonik/review.iter-<k>.json` and the one-line summary `verdict: <VERDICT>  flags: <flags-list or "(none)">  notes: <first 200 chars of notes field, truncated with "…" if longer>`. The full text is in the archived verdict file; the summary line is a navigation aid only.
+     - **Reviewer-tier hints section** (`## Hints`) (MAY be empty; omit section entirely if no hints apply): any operator-configured reviewer-tier hints supplied via the run's `LaunchSpec.reviewer_hints` field (string); MUST be reproduced verbatim if present.
+
+     The write MUST use the atomic temp-write + rename + `fsync(parent_dir)` discipline of [workspace-model.md §4.7 WM-026]. The temp file MUST be created in the same directory (`.harmonik/`) so the rename is within the same filesystem. The file MUST overwrite any prior-iteration `review-target.md` from the same run (the daemon re-generates it fresh for each reviewer launch; no append). The file MUST exist and be readable before step 2 executes; the daemon MUST treat a failure to create the file as a daemon-side error and route the run per [handler-contract.md §4.6] failure handling without launching the reviewer.
+
+  2. **Spawn the reviewer pane.** Only AFTER the file from step 1 exists on disk (i.e., the atomic rename in step 1 has completed), the daemon MUST spawn the reviewer pane via `tmux new-window` per [process-lifecycle.md §4.3 PL-021b]. The pane MUST be observable (i.e., `WindowPanePID` returns a non-zero PID) before step 3 executes.
+
+  3. **Paste-inject the start instruction.** Only AFTER the pane from step 2 is live, the daemon MUST inject the following instruction into the reviewer pane via the tmux paste mechanism defined by [process-lifecycle.md §4.3 PL-021b-PASTE]:
+
+     > Read `.harmonik/review-target.md` in this worktree. It contains the bead context, the diff range to review, and any prior-iteration verdicts. Produce your verdict by writing `.harmonik/review.json` conforming to the agent-reviewer schema v1.
+
+     The **ordering invariant** is: **file exists → pane live → paste-inject fires**. No step may execute before its predecessor completes. If the paste-inject fails (tmux error, pane gone), the daemon MUST log the failure and route the run per [handler-contract.md §4.6] failure handling.
+
+  `review-target.md` MUST be excluded from checkpoint commits via the [workspace-model.md §4.7 WM-013e] `.gitignore` hygiene set; it is workflow-control state, not work product. The file is NOT removed after the run; it persists in the worktree for post-run inspection. Each reviewer launch overwrites the prior iteration's file; only the current iteration's content is live. The archived per-iteration verdict files (`review.iter-<N>.json`) are the durable record; `review-target.md` is ephemeral within a run.
+
+  Tags (sub-clause EM-015d-RIA): mechanism
   Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 The `review-loop` cycle is NOT a sub-workflow per §4.8; the `EM-034` sub-workflow-expansion rule does not apply. Sub-workflow nodes MAY appear inside a node-level workflow whose `workflow_mode = single`, but `review-loop` itself is mode-driven, not graph-driven.

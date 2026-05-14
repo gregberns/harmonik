@@ -350,6 +350,10 @@ The workspace manager MUST ensure that the backing repository's root `.gitignore
 .harmonik/events/
 .harmonik/review.json
 .harmonik/review.iter-*.json
+.harmonik/review-target.md
+.harmonik/reviewer-feedback.iter-*.md
+.harmonik/agent-task.md
+.harmonik/agent-task.tmp-*
 .claude/settings.json
 ```
 
@@ -836,6 +840,7 @@ Type aliases: `CommitSHA`, `BeadID`, and `HandlerRef` are defined in the owning 
 | `${workspace_path}/.harmonik/review.json` | reviewer agent writes; S06 archives per §4.7.WM-027a | Reviewer verdict for the current iteration of a `review-loop` run; conforms to the `agent-reviewer` JSON verdict schema v1; excluded from checkpoint commits via WM-013e. |
 | `${workspace_path}/.harmonik/review.iter-<N>.json` | S06 (per-iteration archive) | Archived reviewer verdict for prior iteration `<N>` (1-indexed; iteration cap = 3 per [execution-model.md §4.3]); written by the daemon's atomic rename of the prior `.harmonik/review.json` before the next reviewer launch per §4.7.WM-027a; excluded from checkpoint commits via WM-013e. |
 | `${workspace_path}/.harmonik/reviewer-feedback.iter-<N>.md` | S06 (per-iteration write) | Reviewer-feedback delivery file written by the daemon before launching `implementer-resume` for iteration `N+1`; contains verdict, flags, full notes, and diff_summary from the iteration-`N` reviewer pass; atomic write per WM-026; excluded from checkpoint commits via WM-013e; persists post-run; governed by [execution-model.md §4.3 EM-015d-RFD]. |
+| `${workspace_path}/.harmonik/review-target.md` | S06 (per-reviewer-launch write) | Reviewer input artifact written by the daemon atomically (WM-026) before each reviewer pane is spawned; contains bead id+title+body, base+head SHAs, prior-verdict summaries (iteration ≥ 2), and optional reviewer-tier hints; overwritten fresh per reviewer launch; excluded from checkpoint commits via WM-013e; persists post-run; governed by [execution-model.md §4.3 EM-015d-RIA]. Tag: WM-RIA-001. |
 | `${workspace_path}/.harmonik/agent-task.md` | S06 writes; claude-code agent reads | Per-launch task artifact per [claude-hook-bridge.md §4.11 CHB-028]. Daemon materializes atomically (WM-026 discipline) before each Claude exec; reserved name — MUST NOT be overwritten by agents or operators. Excluded from checkpoint commits via WM-013e. |
 | `${workspace_path}/.harmonik/agent-task.tmp-<pid>` | S06 (transient) | Transient temp file during atomic task-artifact write per CHB-028; orphans removed by startup sweep alongside other `.tmp-<pid>` files. |
 | (`<integration branch>`) | S06 (target of merge) | Integration branch is a git branch, NOT a worktree. No separate on-disk directory is created by this spec; the task-branch squash-merge lands on this branch's tip per §4.5.WM-019. |

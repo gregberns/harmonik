@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-14 main — v38. PHASE 1 ACHIEVED: harmonik operational. Smoke from main HEAD `7247d5c` reaches OPERATIONAL GREEN in 24.1s (claude runs in tmux substrate, reads agent-task.md, edits + commits, daemon /quit-injects on commit detection, Stop hook fires, bead_closed via run_completed). 11 umbrella fixes landed this session. Main is **62 commits ahead of origin/main**, NOT pushed. -->
+<!-- PP-TRIAL:v2 2026-05-14 main — v39. Operational-green pushed to origin (HEAD `3a5d36a`). 9 design beads filed across branching, model selection, scenario testing. User aligned on plan; **branching is the next active work item**. Working tree clean. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -12,7 +12,7 @@ Per-return acknowledgment is ≤2 lines. Full session summary lives at `/session
 
 PHASE 2 IS UNBLOCKED (NEW v38). With harmonik operational you CAN now dispatch beads via the daemon instead of via the Agent tool — file a bead with `br create`, start harmonik against the project, watch it execute. Trade-off: harmonik overhead is ~30s+ per bead vs sub-agent's seconds; use it when (a) durability matters, (b) the work spans sessions, (c) tmux inspectability matters, or (d) parallel `--max-concurrent N` amortizes the overhead. For trivial inline work, sub-agent dispatch still wins.
 
-IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers this session ran self-review APPROVE BUT NEVER COMMITTED in their worktree. The orchestrator had to commit-on-behalf. Briefs MUST end with "COMMIT EXPLICITLY (`git add` + `git commit`) before exiting" and the orchestrator MUST verify the commit landed before merging. If diff is uncommitted, the orchestrator stages + commits on behalf using `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.
+IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers in the v38 session ran self-review APPROVE BUT NEVER COMMITTED in their worktree. The orchestrator had to commit-on-behalf. Briefs MUST end with "COMMIT EXPLICITLY (`git add` + `git commit`) before exiting" and the orchestrator MUST verify the commit landed before merging. If diff is uncommitted, the orchestrator stages + commits on behalf using `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.
 
 WORKTREE TASK-INJECTION LEAK (v36, ONGOING). Implementer edits leak into main's working tree as uncommitted changes. Workaround: `git stash push -m "v36-leak ..." && git merge --ff-only <branch> && git stash drop`. Never commit the leaked main-tree edits as a separate commit — the proper changes arrive via the worktree branch merge.
 
@@ -64,83 +64,42 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
       git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v38 used ~30% — heavy session with 11 umbrella fixes + 8 smoke runs.
+CONTEXT BUDGET (orchestrator). ~700 k effective. v38 used ~30% — heavy session.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v38, 2026-05-14)
+# Where we are (v39, 2026-05-14)
 
-**Main at `7247d5c`. Nothing in flight. 62 commits ahead of origin, NOT pushed. Working tree clean.**
+**Main at `3a5d36a`, pushed to origin. Nothing in flight. Working tree clean.**
 
-## Phase 1 — operational harmonik — ACHIEVED
+Phase 1 (operational harmonik) landed and is pushed. Phase 2 (orchestrator dispatches via harmonik instead of via the Agent tool) is unblocked but not demonstrated. Phase 3 (DOT-defined bead processes) not started. See `docs/dogfood-smoke-run-2026-05-14-operational-green.md` for the milestone evidence and the 11-fix table.
 
-`docs/dogfood-smoke-run-2026-05-14-operational-green.md` — independent confirmation, smoke from main HEAD reaches GREEN in 24.1 seconds. Claude runs in the daemon's tmux substrate, reads agent-task.md, edits the file, commits the work, and the bead closes — zero human input.
+## What just happened in v39 (this short session)
 
-The mechanism (see [[harmonik-operational-milestone]] memory):
-1. Daemon spawns claude in a tmux pane inside a per-bead worktree.
-2. `.harmonik/agent-task.md` written with bead body + a `## Session Completion` section instructing claude to `/quit` after committing.
-3. Settings.json materialised with `permissions.allow` (no per-tool dialogs).
-4. Trust pre-seeded in `~/.claude.json` under the canonical (EvalSymlinks) worktree path.
-5. After welcome splash dismisses (`SendEnterToLastPane` + 750ms `splashDismissDelay`), the daemon paste-injects the kick-off via stored pane-ID target.
-6. Claude reads the task, does the work, commits.
-7. `pasteInjectQuitOnCommit` goroutine polls worktree HEAD every 500ms; on commit-change it sends `/quit Enter` to the pane via `tmux send-keys`.
-8. Stop hook fires, daemon receives outcome via hook-relay socket, `sess.Wait` unblocks, bead closes.
+The user reviewed the Phase 1 milestone, signed off on pushing 63 commits to origin, and raised three forward threads. Three Opus research agents went out and filed **9 new design beads** capturing the design space (no implementation):
 
-## 11 umbrella fixes landed this session
+- **Branching (`hk-8m91i` epic + `hk-oe6zt`, `hk-icgp1`, `hk-zy9s3` children).** Found a real bug: spec WM-005 says the worktree branches from "the integration branch" but code branches from raw HEAD. User clarified the actual flow: each bead carries a `start_from` (cut here) and a `lands_on` (merge here) — usually the same, but they can differ, and multiple integration branches can be in flight simultaneously. Carrier: `.harmonik/branching.yaml` for project defaults + structured `## Branching` section in bead body for per-bead override.
+- **Model selection (`hk-cfhj2` epic + `hk-xo03m`, `hk-bfvk7` children).** 4-tier resolution chain (bead → per-project → per-agent-type default → daemon default), mirroring EM-012a. User added: harmonik passes a *structured model preference descriptor* to the handler; the handler validates against what its underlying tool accepts. Harmonik does NOT keep a closed enum of model names — future harnesses (Codex, pi) can take arbitrary model strings.
+- **Scenario testing (`hk-wuu5h` epic + `hk-cno1z`, `hk-8ys88`, `hk-mg1ya`, `hk-4tttc` children).** Twin already exists (`cmd/harmonik-twin-claude`, YAML-script driven, NDJSON over UDS). Covers 7 of 11 umbrella fixes today; 4 need twin extensions. User clarified the twin's job is **behavioral parity, not visual parity** — no TUI rendering, but it MUST read the worktree's `.claude/settings.json` and call the hook commands the same shape real claude would.
 
-| Bead | Commit | What |
-|---|---|---|
-| hk-lj1p9.3 | f6cd256 | EnsureWorktreeTrust env override + sidecar flock |
-| hk-tjl40 | 2104168 | Wire RunSocketListener into daemon.Start |
-| hk-smuku | e430807 | Wait uses stored per-pane PID + syscall.Kill |
-| hk-lj1p9.4 | f79b2a8 | SetAgentReadyCallback + pasteInjectOnLaunch wired |
-| hk-yngq2 | ff79246 | Use stable pane ID (%NNNN) for tmux pane target |
-| hk-o5eww | e8fd1df | EvalSymlinks worktreePath before trust key |
-| hk-zchbu | ff2bc6f | Paste-inject moves to AFTER waitAgentReady |
-| hk-rf4ux | cec27e6 | SendEnterToLastPane + 750ms splashDismissDelay |
-| hk-53y35 | cec27e6 | permissions.allow in materialized settings.json |
-| hk-cmybm | cbc4725 | Daemon-side /quit injection on commit detection |
+# Next session — START HERE
 
-Smoke iteration map: v3 RED (no task) → v4 RED (socket) → v5 RED (Wait deadlock) → v6 RED (callback) → v7 RED (pane target) → v8 RED (trust path) → v9 RED (paste ordering) → v10 RED (splash race + permissions) → v11 functional-GREEN, operational-RED (Stop hook) → v13 implementer-self-GREEN → operational-green confirmation 2026-05-14 GREEN.
+**Active work item: branching (`hk-8m91i` epic).** Sequence within the epic:
 
-# TOP PRIORITY NEXT SESSION
+1. Spec amendment to `specs/workspace-model.md §WM-005`. Make the `start_from` / `lands_on` asymmetry explicit. Spec authoring is user-shaping per the directives block — DRAFT for the user, do not silently land normative text. The plain-language description in v38's bead body (search `hk-8m91i`) is the source. A few questions the user has already answered — re-read v38 chat history or the bead notes if available.
 
-1. **Push to origin** if the user signs off. Main is 62 commits ahead. `git push origin main`.
+2. Then `hk-oe6zt` — daemon worktree factory reads `start_from`. Code-only impl after spec lands.
 
-2. **Phase 2 demonstration.** File a real, scoped, dispatchable bead in `harmonik`'s own ledger or a scratch project. Run `harmonik` against it. Observe the operational queue executing work without sub-agent fan-out. Candidate beads (already ready in `br ready`):
-   - `hk-872` Beads Integration spec implementation (epic — pick a child)
-   - `hk-b3f` Execution Model spec implementation (epic — pick a child)
-   - File a NEW small task (e.g. "Add a copy of marker.txt under docs/ for QA" or similar bounded scope).
+3. Then `hk-zy9s3` — `.harmonik/branching.yaml` schema + loader.
 
-3. **Phase 3 (DOT-defined bead processes)** — multi-session feature. Start with a kerf spec-first pass:
-   - `kerf new dot-workflow --jig spec`
-   - Frame: replace hardcoded `reviewloop.go` cycle (implementer→reviewer→loop-or-exit) with a DOT-graph driver. Each node = a phase; each edge labelled with the predicate that fires it (`APPROVE`, `REQUEST_CHANGES`, `BLOCK`, `iteration < cap`).
-   - Touch on: DOT grammar choice (custom subset vs full graphviz), node-type registry, transition predicate evaluator, claude-side per-node task-file generation.
-   - Cross-ref [[harmonik-workflow-composition]] (Gas Town formula/molecule/convoy vocabulary as candidate).
+4. Then `hk-icgp1` — landing-strategy selector (merge vs cherry-pick).
 
-4. **Close the operational-caveats list** documented in `docs/dogfood-smoke-run-2026-05-14-operational-green.md`:
-   - `noopRequestHandler` (hk-tjl40 stub) — implement real `EmitOutcome`/`ClaimNext` so the agent can post outcomes via the socket without relying on Stop hook.
-   - Reviewloop's implementer-phase paste-inject (line ~272 of reviewloop.go) — still uses the old ordering. Re-test with a review-loop bead and apply the hk-zchbu reorder if it surfaces.
-   - Multi-bead concurrent re-validation (`--max-concurrent 4`) hasn't been smoked end-to-end since the umbrella landed.
-
-5. **Reviewer-loop end-to-end code** (carried over from v37 — but now lower priority than Phase 2/3). Specs exist (EM-015d-RFD + EM-015d-RIA + review-target.md write). The impl phase is built; the reviewer-phase code (write review-target.md, paste-inject for reviewer, read reviewer-feedback on resume) is the gap.
+After branching closes: scenario testing (`hk-wuu5h`), then first real Phase 2 demo, then model selection, then DOT. The user said model can slip later if needed.
 
 # Files to open first
 
-1. **HANDOFF.md** (this).
-2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — the milestone evidence.
-3. `internal/daemon/pasteinject.go` — where `pasteInjectQuitOnCommit` lives.
-4. `internal/workspace/agenttask_chb028.go` — where the `## Session Completion` instruction is appended.
-5. `specs/claude-hook-bridge.md §4.11 CHB-028` — the spec amendment for the quit-on-commit mechanism.
-
-# Pre-existing flakes — still known, still not blocking
-
-- `TestT4_ReopenThenRedispatch` — git-I/O contention; passes in isolation.
-- `TestT5_RedactionHC031ByFieldName` in `internal/t5probe`.
-- `internal/specaudit` failures.
-
-# Caveats from the milestone doc
-
-- The terminal event is `run_completed`, not a dedicated `bead_closed` event type. CHB and event-model specs talk about `bead_closed`; the actual implementation emits `run_completed` with `success=true` and the workloop interprets that as the bead-close signal. Spec terminology can be reconciled in a future pass (low priority).
-- The `pasteInjectQuitOnCommit` polling interval is 500ms with a 10-minute timeout — fine for the smoke but worth observing on long-running real beads. May surface as a hk-cmybm follow-up if beads take > 10 minutes.
-- Implementer commit discipline: most implementers in this session needed orchestrator commit-on-behalf. The protocol amendment (commit explicitly) is in this HANDOFF's directives; the implementer-protocol.md file should be amended next session to make this enforceable.
+1. `HANDOFF.md` (this).
+2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — the milestone artifact.
+3. `specs/workspace-model.md` §WM-005, WM-019 — the branching spec being amended.
+4. `internal/daemon/workloop.go` lines ~904-942 (`productionWorktreeFactory`, `resolveHEAD`) — where the bug actually lives.
+5. `br show hk-8m91i --format json` — branching epic with the design analysis embedded.

@@ -32,6 +32,16 @@ import (
 // OnPanic controls what the bus does when the consumer's goroutine panics.
 // The three policies (recover_and_log / quarantine_consumer / fail_daemon)
 // are specified by OQ-EV-007.
+//
+// # Declared emission surface (EV-010 acyclicity)
+//
+// DeclaredEmitTypes lists every EventType this consumer's Handler may emit
+// back to the bus. The bus uses this at subscription-registration time to
+// verify acyclicity across synchronous consumers: if a synchronous consumer
+// subscribed to T declares it emits U, and another synchronous consumer
+// subscribed to U (directly or transitively) emits T, the registration MUST
+// fail-closed with a typed error (EV-010). Non-synchronous consumers are not
+// subject to the acyclicity check. Nil/empty means "emits nothing".
 type Subscription struct {
 	// ConsumerID is the opaque identifier for this consumer, unique per bus.
 	// The bus enforces uniqueness at Subscribe() time. Required (non-empty).
@@ -45,6 +55,14 @@ type Subscription struct {
 	// EventPattern specifies which event types this consumer receives.
 	// Wildcard ("*") or an explicit set of EventType strings per §6.1.
 	EventPattern EventPattern
+
+	// DeclaredEmitTypes lists every EventType this consumer's Handler MAY
+	// emit back to the bus. Used by the bus at registration time to verify
+	// acyclicity across synchronous consumers (EV-010 / EV-INV-003).
+	// Nil or empty means "emits nothing". Only consulted for synchronous consumers.
+	//
+	// Spec ref: specs/event-model.md §4.2 EV-010, §5.3 EV-INV-003.
+	DeclaredEmitTypes []EventType
 
 	// Since is the optional replay offset event_id. When non-nil, the bus
 	// replays JSONL events strictly after this event_id before live delivery

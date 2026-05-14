@@ -464,11 +464,66 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	return nil
 }
 
+// ErrDuplicateSynchronousConsumer is the typed configuration error returned
+// by Subscribe when a second synchronous consumer registers for an event type
+// that already has one. At most one synchronous consumer per event type is
+// permitted per EV-014 / EV-INV-003.
+//
+// Spec ref: specs/event-model.md §4.2 EV-014; §5.3 EV-INV-003.
+type ErrDuplicateSynchronousConsumer struct {
+	// ConflictingConsumerID is the consumer ID that was already registered.
+	ConflictingConsumerID string
+	// IncomingConsumerID is the consumer ID that triggered the conflict.
+	IncomingConsumerID string
+	// EventType is a representative event type string where the conflict was
+	// detected. For wildcard subscriptions the value is "*".
+	EventType string
+}
+
+func (e *ErrDuplicateSynchronousConsumer) Error() string {
+	return fmt.Sprintf(
+		"eventbus: EV-014 / EV-INV-003: duplicate synchronous consumer for event type %q: "+
+			"existing=%q incoming=%q; at most one synchronous consumer per event type is permitted",
+		e.EventType, e.ConflictingConsumerID, e.IncomingConsumerID,
+	)
+}
+
+// ErrSynchronousConsumerCycle is the typed configuration error returned by
+// Subscribe when a synchronous consumer's DeclaredEmitTypes would introduce a
+// re-dispatch cycle among synchronous consumers (EV-010 acyclicity clause).
+//
+// Spec ref: specs/event-model.md §4.2 EV-010; §5.3 EV-INV-003.
+type ErrSynchronousConsumerCycle struct {
+	// IncomingConsumerID is the consumer that triggered the cycle.
+	IncomingConsumerID string
+	// CyclePath is the sequence of consumer IDs that form the cycle,
+	// starting and ending at IncomingConsumerID.
+	CyclePath []string
+}
+
+func (e *ErrSynchronousConsumerCycle) Error() string {
+	return fmt.Sprintf(
+		"eventbus: EV-010 / EV-INV-003: synchronous consumer %q would introduce a "+
+			"re-dispatch cycle; acyclicity check fail-closed; cycle path: %v",
+		e.IncomingConsumerID, e.CyclePath,
+	)
+}
+
 // Subscribe registers a consumer with the bus.
+//
+// For synchronous consumers, Subscribe enforces two registration-time invariants:
+//
+//  1. Cardinality ≤ 1 per event type (EV-014 / EV-INV-003): if an existing
+//     synchronous consumer's EventPattern overlaps with sub.EventPattern, Subscribe
+//     returns [*ErrDuplicateSynchronousConsumer].
+//
+//  2. Acyclicity of declared emission surfaces (EV-010 / EV-INV-003): if
+//     sub.DeclaredEmitTypes would introduce a re-dispatch cycle among synchronous
+//     consumers, Subscribe returns [*ErrSynchronousConsumerCycle].
 //
 // Returns a typed error if called after Seal (EV-009).
 //
-// Spec ref: specs/event-model.md §6.1, §4.2 EV-009.
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-009, EV-010, EV-014; §5.3 EV-INV-003.
 func (b *busImpl) Subscribe(sub core.Subscription) (core.Subscription, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -476,8 +531,145 @@ func (b *busImpl) Subscribe(sub core.Subscription) (core.Subscription, error) {
 	if b.sealed {
 		return core.Subscription{}, fmt.Errorf("eventbus: Subscribe called after Seal (EV-009): consumer %q", sub.ConsumerID)
 	}
+
+	// Registration-time invariant checks for synchronous consumers (EV-014, EV-010).
+	if sub.ConsumerClass == core.ConsumerClassSynchronous {
+		// Check 1 — EV-014 cardinality: at most one synchronous consumer per event type.
+		if err := b.checkSyncCardinality(sub); err != nil {
+			return core.Subscription{}, err
+		}
+
+		// Check 2 — EV-010 acyclicity: DeclaredEmitTypes MUST NOT form a
+		// re-dispatch cycle among synchronous consumers.
+		if err := b.checkSyncAcyclicity(sub); err != nil {
+			return core.Subscription{}, err
+		}
+	}
+
 	b.subscriptions = append(b.subscriptions, sub)
 	return sub, nil
+}
+
+// checkSyncCardinality enforces EV-014 / EV-INV-003: at most one synchronous
+// consumer per event type. Called under b.mu.
+func (b *busImpl) checkSyncCardinality(incoming core.Subscription) error {
+	for _, existing := range b.subscriptions {
+		if existing.ConsumerClass != core.ConsumerClassSynchronous {
+			continue
+		}
+		// Detect overlap between existing.EventPattern and incoming.EventPattern.
+		// Overlap exists when both patterns can match the same event type:
+		//   - wildcard ∩ anything → overlap
+		//   - explicit ∩ explicit → check set intersection
+		conflictType, overlaps := syncPatternOverlap(existing.EventPattern, incoming.EventPattern)
+		if overlaps {
+			return &ErrDuplicateSynchronousConsumer{
+				ConflictingConsumerID: existing.ConsumerID,
+				IncomingConsumerID:    incoming.ConsumerID,
+				EventType:             conflictType,
+			}
+		}
+	}
+	return nil
+}
+
+// syncPatternOverlap reports whether two EventPatterns can match the same event
+// type. Returns a representative conflicting type string and true when they overlap.
+// For wildcard-vs-anything, returns "*". For explicit-vs-explicit, returns a
+// member of the intersection set.
+func syncPatternOverlap(a, b core.EventPattern) (string, bool) {
+	if a.Wildcard || b.Wildcard {
+		// Wildcard overlaps with everything.
+		return "*", true
+	}
+	// Both explicit: check for intersection.
+	for t := range a.Types {
+		if _, ok := b.Types[t]; ok {
+			return t, true
+		}
+	}
+	return "", false
+}
+
+// checkSyncAcyclicity enforces EV-010 / EV-INV-003: synchronous consumers MUST
+// NOT form a re-dispatch cycle via their DeclaredEmitTypes. Called under b.mu.
+//
+// A cycle exists when following the edges:
+//
+//	syncConsumer.EventPattern → syncConsumer.DeclaredEmitTypes → (next syncConsumer) → …
+//
+// produces a path that eventually re-reaches a consumer whose pattern matches
+// one of the event types the incoming consumer subscribes to.
+//
+// The check is conservative: for wildcard patterns, all declared emit types are
+// treated as potential subscribers to avoid false negatives.
+func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
+	if len(incoming.DeclaredEmitTypes) == 0 {
+		return nil // emits nothing → cannot form a cycle
+	}
+
+	// Build the set of all synchronous consumers (existing + incoming) for DFS.
+	// incoming is included so the DFS can detect direct self-cycles.
+	allSync := make([]core.Subscription, 0, len(b.subscriptions)+1)
+	allSync = append(allSync, incoming)
+	for _, s := range b.subscriptions {
+		if s.ConsumerClass == core.ConsumerClassSynchronous {
+			allSync = append(allSync, s)
+		}
+	}
+
+	// DFS from each of incoming's DeclaredEmitTypes to check for a path back
+	// to the incoming consumer itself.
+	//
+	// The cycle condition: incoming declares it emits type T → some existing sync
+	// consumer A subscribes to T and declares it emits type U → … → eventually
+	// some consumer emits a type that matches incoming's EventPattern. This means
+	// an Emit on that final type would re-dispatch to incoming, completing the cycle.
+	//
+	// visited tracks consumer IDs already explored in the current DFS to avoid
+	// infinite loops. path records the current DFS path for error reporting.
+	var dfs func(emitType core.EventType, visited map[string]bool, path []string) []string
+	dfs = func(emitType core.EventType, visited map[string]bool, path []string) []string {
+		// First check: does emitType itself match the incoming consumer's subscription?
+		// If yes, a direct re-dispatch cycle is detected.
+		if incoming.EventPattern.MatchesType(string(emitType)) {
+			return append(path, incoming.ConsumerID)
+		}
+
+		// Find existing synchronous consumers that subscribe to emitType and
+		// follow their declared emissions.
+		for _, s := range allSync {
+			if s.ConsumerID == incoming.ConsumerID {
+				continue
+			}
+			if !s.EventPattern.MatchesType(string(emitType)) {
+				continue
+			}
+			if visited[s.ConsumerID] {
+				continue
+			}
+			visited[s.ConsumerID] = true
+			// Follow s's declared emissions transitively.
+			for _, nextEmit := range s.DeclaredEmitTypes {
+				if cyclePath := dfs(nextEmit, visited, append(path, s.ConsumerID)); cyclePath != nil {
+					return cyclePath
+				}
+			}
+		}
+		return nil
+	}
+
+	visited := map[string]bool{incoming.ConsumerID: true}
+	for _, emitType := range incoming.DeclaredEmitTypes {
+		path := []string{incoming.ConsumerID}
+		if cyclePath := dfs(emitType, visited, path); cyclePath != nil {
+			return &ErrSynchronousConsumerCycle{
+				IncomingConsumerID: incoming.ConsumerID,
+				CyclePath:          cyclePath,
+			}
+		}
+	}
+	return nil
 }
 
 // Seal closes the subscription-registration window.

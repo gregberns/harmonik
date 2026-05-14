@@ -33,6 +33,7 @@ package eventbus_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1109,6 +1110,158 @@ func TestBusImplWithSink_NilSinkDoesNotPanicOnObserverPanic(t *testing.T) {
 		t.Fatalf("Drain: %v", err)
 	}
 	// Reaching here without panic satisfies the nil-sink safety contract.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EV-INV-003 / EV-014 / EV-010: synchronous consumer invariants (hk-hqwn.49)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBusImplSubscribe_DuplicateSynchronousConsumerReturnsError is the
+// cardinality sensor for hk-hqwn.49.
+//
+// Contract under test (EV-014 / EV-INV-003):
+//
+// At most ONE synchronous consumer per event type is permitted. If a second
+// synchronous consumer registers for an event type already claimed by an
+// existing synchronous consumer, Subscribe MUST return a typed
+// [*eventbus.ErrDuplicateSynchronousConsumer] configuration error before Seal.
+//
+// Method: register a first synchronous consumer on a named event type; then
+// register a second synchronous consumer whose pattern overlaps the first.
+// Confirm Subscribe returns *ErrDuplicateSynchronousConsumer. The bus MUST NOT
+// be sealed for the second registration (the error fires at registration time).
+//
+// Spec ref: specs/event-model.md §4.2 EV-014; §5.3 EV-INV-003.
+// Bead ref: hk-hqwn.49.
+func TestBusImplSubscribe_DuplicateSynchronousConsumerReturnsError(t *testing.T) {
+	t.Parallel()
+
+	const syncEventType core.EventType = "test.hqwn49.sync.v1"
+
+	bus := eventbus.NewBusImpl()
+
+	firstSub := core.Subscription{
+		ConsumerID:    "hqwn49-sync-first",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{string(syncEventType): {}},
+		},
+		OnPanic: core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error { return nil },
+	}
+
+	if _, err := bus.Subscribe(firstSub); err != nil {
+		t.Fatalf("Subscribe (first sync consumer): %v; want nil", err)
+	}
+
+	secondSub := core.Subscription{
+		ConsumerID:    "hqwn49-sync-second",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{string(syncEventType): {}},
+		},
+		OnPanic: core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, _ core.Event) error { return nil },
+	}
+
+	_, err := bus.Subscribe(secondSub)
+	if err == nil {
+		t.Fatal("Subscribe (second sync consumer for same event type) returned nil error; " +
+			"want *eventbus.ErrDuplicateSynchronousConsumer (EV-014 / EV-INV-003)")
+	}
+
+	var dupErr *eventbus.ErrDuplicateSynchronousConsumer
+	if !errors.As(err, &dupErr) {
+		t.Errorf("Subscribe returned %T (%v); want *eventbus.ErrDuplicateSynchronousConsumer "+
+			"(EV-014 typed configuration error / EV-INV-003)", err, err)
+		return
+	}
+
+	if dupErr.IncomingConsumerID != secondSub.ConsumerID {
+		t.Errorf("ErrDuplicateSynchronousConsumer.IncomingConsumerID = %q, want %q",
+			dupErr.IncomingConsumerID, secondSub.ConsumerID)
+	}
+	if dupErr.ConflictingConsumerID != firstSub.ConsumerID {
+		t.Errorf("ErrDuplicateSynchronousConsumer.ConflictingConsumerID = %q, want %q",
+			dupErr.ConflictingConsumerID, firstSub.ConsumerID)
+	}
+}
+
+// TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError is
+// the acyclicity sensor for hk-hqwn.49.
+//
+// Contract under test (EV-010 / EV-INV-003):
+//
+// A synchronous consumer MUST NOT emit events that would re-dispatch to itself
+// (directly or transitively). The registration path MUST verify acyclicity
+// across declared emission surfaces and fail-closed on cycles.
+//
+// Method: register a synchronous consumer A subscribed to event type X that
+// declares it emits event type Y; then register a synchronous consumer B
+// subscribed to Y that declares it emits X (completing the cycle A→B→A).
+// The second Subscribe call MUST return [*eventbus.ErrSynchronousConsumerCycle].
+//
+// Spec ref: specs/event-model.md §4.2 EV-010; §5.3 EV-INV-003.
+// Bead ref: hk-hqwn.49.
+func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *testing.T) {
+	t.Parallel()
+
+	const (
+		eventTypeX core.EventType = "test.hqwn49.acyclic.x.v1"
+		eventTypeY core.EventType = "test.hqwn49.acyclic.y.v1"
+	)
+
+	bus := eventbus.NewBusImpl()
+
+	// Consumer A: subscribes to X, declares it emits Y.
+	consumerA := core.Subscription{
+		ConsumerID:    "hqwn49-acyclic-A",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{string(eventTypeX): {}},
+		},
+		DeclaredEmitTypes: []core.EventType{eventTypeY},
+		OnPanic:           core.OnPanicRecoverAndLog,
+		Handler:           func(_ context.Context, _ core.Event) error { return nil },
+	}
+
+	if _, err := bus.Subscribe(consumerA); err != nil {
+		t.Fatalf("Subscribe (consumer A, emits Y from X): %v; want nil", err)
+	}
+
+	// Consumer B: subscribes to Y, declares it emits X — completing the cycle.
+	// Registration MUST fail-closed with ErrSynchronousConsumerCycle.
+	consumerB := core.Subscription{
+		ConsumerID:    "hqwn49-acyclic-B",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{string(eventTypeY): {}},
+		},
+		DeclaredEmitTypes: []core.EventType{eventTypeX},
+		OnPanic:           core.OnPanicRecoverAndLog,
+		Handler:           func(_ context.Context, _ core.Event) error { return nil },
+	}
+
+	_, err := bus.Subscribe(consumerB)
+	if err == nil {
+		t.Fatal("Subscribe (consumer B completing X→Y→X cycle) returned nil error; " +
+			"want *eventbus.ErrSynchronousConsumerCycle (EV-010 fail-closed / EV-INV-003)")
+	}
+
+	var cycleErr *eventbus.ErrSynchronousConsumerCycle
+	if !errors.As(err, &cycleErr) {
+		t.Errorf("Subscribe returned %T (%v); want *eventbus.ErrSynchronousConsumerCycle "+
+			"(EV-010 acyclicity typed error / EV-INV-003)", err, err)
+		return
+	}
+
+	if cycleErr.IncomingConsumerID != consumerB.ConsumerID {
+		t.Errorf("ErrSynchronousConsumerCycle.IncomingConsumerID = %q, want %q",
+			cycleErr.IncomingConsumerID, consumerB.ConsumerID)
+	}
+	if len(cycleErr.CyclePath) == 0 {
+		t.Error("ErrSynchronousConsumerCycle.CyclePath is empty; want non-empty path showing the cycle")
+	}
 }
 
 // busImplFixtureJSONLPath returns a temporary file path for use as a JSONL log.

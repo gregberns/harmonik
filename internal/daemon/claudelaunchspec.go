@@ -11,6 +11,7 @@ package daemon
 //   - CheckSettingsLocalJSON — fail-fast if settings.local.json shadows hooks (CHB-024).
 //   - ClaudeEnvVars — CHB-006 env-var set.
 //   - argv construction — --session-id or --resume per CHB-008 (OQ3: allow-list).
+//     Appends --model and --effort when claudeRunCtx fields are non-empty (HC-055a).
 //   - CheckForbiddenFlags — deny-list guard (CHB-007).
 //   - PreExecMessages — 4 ordered pre-exec progress messages (CHB-018).
 //
@@ -21,9 +22,10 @@ package daemon
 //
 // Spec refs:
 //   - specs/claude-hook-bridge.md §4.2 CHB-006..009, §4.7 CHB-018..019, §4.9 CHB-024.
-//   - specs/handler-contract.md §4.2 HC-055 (flag allow-list), §4.2 HC-005 (LaunchSpec delivery).
+//   - specs/handler-contract.md §4.2 HC-055 (flag allow-list), §4.10 HC-055a (ModelPreference invariants).
+//   - specs/execution-model.md §4.3 EM-012b (model/effort resolution chain).
 //
-// Bead: hk-gql20.13
+// Bead: hk-gql20.13, hk-xo03m
 
 import (
 	"context"
@@ -120,6 +122,19 @@ type claudeRunCtx struct {
 	// reviewHeadSHA is the head commit SHA for the diff under review.
 	// Set only for phase = reviewer; empty otherwise.
 	reviewHeadSHA string
+
+	// model is the resolved model alias from the ModelPreference descriptor
+	// (EM-012b / HC-055a). When non-empty, --model <model> is appended to argv.
+	// The value must satisfy the shape constraint ^[A-Za-z0-9._:/-]+$ and be
+	// ≤ 128 chars; violation returns *ModelPreferenceError before LaunchSpec is built.
+	// Empty means no model flag is emitted (tool default).
+	model string
+
+	// effort is the resolved effort level from the ModelPreference descriptor
+	// (EM-012b / HC-055a). When non-empty, --effort <effort> is appended to argv.
+	// Must be one of {low, medium, high, xhigh, max}; empty means no flag emitted.
+	// Violation returns *ModelPreferenceError before LaunchSpec is built.
+	effort string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -158,8 +173,8 @@ type claudeRunArtifacts struct {
 //  1. MintClaudeSessionID — mint fresh or reuse (CHB-008/009).
 //  2. DeriveCIaudeTranscriptPath — session log location for CHB-018 step 2.
 //  3. MaterializeClaudeSettings — atomic hook-bridge settings file (CHB-001..005).
-//  3a. EnsureWorktreeTrust — pre-seed ~/.claude.json trust entry (CHB-029/WM-040b).
-//  3b. WriteAgentTask — atomic agent-task.md write (CHB-028).
+//     3a. EnsureWorktreeTrust — pre-seed ~/.claude.json trust entry (CHB-029/WM-040b).
+//     3b. WriteAgentTask — atomic agent-task.md write (CHB-028).
 //  4. CheckSettingsLocalJSON — fail-fast on settings.local.json shadow (CHB-024).
 //  5. Build ClaudeEnvConfig and call ClaudeEnvVars — CHB-006 env.
 //  6. Build argv — --session-id or --resume per CHB-008 (OQ3 allow-list).
@@ -283,13 +298,34 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 	env := handler.ClaudeEnvVars(cfg)
 
-	// Step 6 — Build argv (OQ3 allow-list: only --session-id or --resume).
+	// Step 6 — Validate ModelPreference fields (HC-055a) before argv construction.
+	// Invalid model or effort → typed *ModelPreferenceError; do NOT silently drop.
+	if rc.model != "" {
+		if err := validateModel(rc.model); err != nil {
+			return handler.LaunchSpec{}, claudeRunArtifacts{}, err
+		}
+	}
+	if rc.effort != "" {
+		if err := validateEffort(rc.effort); err != nil {
+			return handler.LaunchSpec{}, claudeRunArtifacts{}, err
+		}
+	}
+
+	// Step 6b — Build argv (OQ3 allow-list: --session-id or --resume, then optional
+	// --model and --effort per HC-055a).
 	// CHB-008: use --resume <uuid> for implementer-resume, --session-id <uuid> otherwise.
+	// Ordering per HC-055a: --session-id first, then --model, then --effort.
 	var args []string
 	if mintRes.ResumeMode {
 		args = []string{"--resume", mintRes.ClaudeSessionID}
 	} else {
 		args = []string{"--session-id", mintRes.ClaudeSessionID}
+	}
+	if rc.model != "" {
+		args = append(args, "--model", rc.model)
+	}
+	if rc.effort != "" {
+		args = append(args, "--effort", rc.effort)
 	}
 
 	// Step 7 — Deny-list guard (CHB-007).

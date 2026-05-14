@@ -249,6 +249,12 @@ func ExportedResolveWorkflowMode(
 	return resolveWorkflowMode(ctx, bead, daemonDefault, bus)
 }
 
+// ExportedModelPreferenceError is a type alias for ModelPreferenceError so tests
+// in package daemon_test can use errors.As without importing internal types.
+//
+// Bead ref: hk-xo03m.
+type ExportedModelPreferenceError = ModelPreferenceError
+
 // ExportedBuildLaunchSpecImplementerInitial exposes buildLaunchSpecImplementerInitial
 // for tests in package daemon_test. See launchspecbuild.go for semantics.
 func ExportedBuildLaunchSpecImplementerInitial(base handlercontract.LaunchSpec, iterationCount int) (handlercontract.LaunchSpec, error) {
@@ -470,7 +476,7 @@ func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID co
 // ExportedClaudeRunCtx is the exported shape of claudeRunCtx for tests.
 // Fields mirror claudeRunCtx verbatim with exported names.
 //
-// Bead ref: hk-gql20.13.
+// Bead ref: hk-gql20.13, hk-xo03m.
 type ExportedClaudeRunCtx struct {
 	RunID             core.RunID
 	BeadID            string
@@ -486,6 +492,14 @@ type ExportedClaudeRunCtx struct {
 	// real hook wiring.
 	DaemonBinaryPath string
 	BaseEnv          []string
+	// Model is the resolved model alias from ModelPreference (HC-055a / EM-012b).
+	// Non-empty → --model <value> appended to argv. Must satisfy ^[A-Za-z0-9._:/-]+$, ≤128 chars.
+	// Empty → no flag emitted.
+	Model string
+	// Effort is the resolved effort level from ModelPreference (HC-055a / EM-012b).
+	// Non-empty → --effort <value> appended to argv. Must be one of {low,medium,high,xhigh,max}.
+	// Empty → no flag emitted.
+	Effort string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -518,6 +532,8 @@ func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx)
 		handlerBinary:     rc.HandlerBinary,
 		daemonBinaryPath:  rc.DaemonBinaryPath,
 		baseEnv:           rc.BaseEnv,
+		model:             rc.Model,
+		effort:            rc.Effort,
 	}
 	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
 	if err != nil {

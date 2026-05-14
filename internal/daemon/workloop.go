@@ -195,6 +195,7 @@ type workLoopDeps struct {
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
+
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -556,7 +557,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// single mode (default MVH): one-shot implementer dispatch.
 	if workflowMode == core.WorkflowModeReviewLoop {
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, wtPath, headSHA)
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
@@ -591,6 +592,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		handlerBinary:     deps.handlerBinary,
 		daemonBinaryPath:  deps.daemonBinaryPath,
 		baseEnv:           deps.handlerEnv,
+		beadTitle:         beadRecord.Title,
+		beadDescription:   beadRecord.Description,
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {
@@ -634,18 +637,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
-
-	// Step 4a: register an agent_ready callback on the hook store so that
-	// relay-synthesized agent_ready messages (CHB-013 SessionStart → agent_ready)
-	// are forwarded into the per-run tap and become visible to waitAgentReady.
-	// The callback emits agent_ready on both the bus and the tap channel.
-	// tapCtx is a best-effort context: we use the outer ctx; if it has been
-	// cancelled by the time SessionStart arrives, the emit is silently dropped
-	// (waitAgentReady will already be returning ctx.Err()).
-	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
-		_ = tap.Emit(ctx, core.EventTypeAgentReady, nil)
-	})
-
 	// Use deps.adapterRegistry when available; fall back to a fresh empty
 	// registry when nil. NewHandler panics on nil registry.
 	tapRegistry := deps.adapterRegistry
@@ -664,12 +655,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
-
-	// Paste-inject: deliver kick-off message to the pane (hk-zrj83, PL-021d).
-	// No-op when the substrate is nil (exec.CommandContext path) or does not
-	// implement pasteInjecter.  rc.phase is empty for single-mode; that maps
-	// to the implementer-initial kick-off ("read agent-task.md and begin").
-	pasteInjectOnLaunch(ctx, spec.Substrate, artifacts.claudeSessionID, rc.phase, rc.iterationCount, rc.workspacePath)
 
 	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
 	hbDone := make(chan struct{})

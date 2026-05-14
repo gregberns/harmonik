@@ -86,6 +86,40 @@ type claudeRunCtx struct {
 	// which MUST already include HARMONIK_PROJECT_HASH per PL-006a. CHB-006
 	// vars are appended (or overwrite) by ClaudeEnvVars.
 	baseEnv []string
+
+	// beadTitle is the human-readable bead title from the Beads ledger.
+	// Used to populate the "title:" header in the CHB-028 agent-task.md.
+	// When empty, beadID is substituted.
+	beadTitle string
+
+	// beadDescription is the bead body verbatim from the Beads ledger.
+	// Used to populate the "## Task Description" section in agent-task.md
+	// per CHB-028. When empty, a placeholder is used so the file is never
+	// structurally empty.
+	beadDescription string
+
+	// agentTaskReAttach signals that this launch is on the re-attach path
+	// (daemon restart mid-session). When true, WriteAgentTask skips collision
+	// check and returns nil if agent-task.md already exists (CHB-028
+	// re-launch semantics).
+	agentTaskReAttach bool
+
+	// priorVerdictFile is the absolute path to the archived reviewer verdict
+	// for the immediately preceding iteration (.harmonik/review.iter-<N-1>.json).
+	// Set only for phase = implementer-resume; empty otherwise.
+	priorVerdictFile string
+
+	// priorVerdictSummary is a short human-readable summary of the prior
+	// verdict. Set only for phase = implementer-resume; empty otherwise.
+	priorVerdictSummary string
+
+	// reviewBaseSHA is the base commit SHA for the diff under review.
+	// Set only for phase = reviewer; empty otherwise.
+	reviewBaseSHA string
+
+	// reviewHeadSHA is the head commit SHA for the diff under review.
+	// Set only for phase = reviewer; empty otherwise.
+	reviewHeadSHA string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -124,6 +158,8 @@ type claudeRunArtifacts struct {
 //  1. MintClaudeSessionID — mint fresh or reuse (CHB-008/009).
 //  2. DeriveCIaudeTranscriptPath — session log location for CHB-018 step 2.
 //  3. MaterializeClaudeSettings — atomic hook-bridge settings file (CHB-001..005).
+//  3a. EnsureWorktreeTrust — pre-seed ~/.claude.json trust entry (CHB-029/WM-040b).
+//  3b. WriteAgentTask — atomic agent-task.md write (CHB-028).
 //  4. CheckSettingsLocalJSON — fail-fast on settings.local.json shadow (CHB-024).
 //  5. Build ClaudeEnvConfig and call ClaudeEnvVars — CHB-006 env.
 //  6. Build argv — --session-id or --resume per CHB-008 (OQ3 allow-list).
@@ -155,6 +191,49 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	if err := workspace.MaterializeClaudeSettings(rc.workspacePath, rc.daemonBinaryPath, sessionLogPath); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: MaterializeClaudeSettings: %w", err)
+	}
+
+	// Step 3a — Pre-seed ~/.claude.json with worktree trust (CHB-029 / WM-040b).
+	// MUST be after MaterializeClaudeSettings and BEFORE SubstrateSpawn.
+	// Failure is a fatal structural error: an un-trusted session blocks indefinitely.
+	if err := workspace.EnsureWorktreeTrust(rc.workspacePath); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: EnsureWorktreeTrust: %w", err)
+	}
+
+	// Step 3b — Write per-launch task artifact (CHB-028).
+	// MUST be after MaterializeClaudeSettings + EnsureWorktreeTrust and BEFORE SubstrateSpawn.
+	// The file carries the bead description for the phase. When rc.beadDescription is empty
+	// (e.g. bead has no body), use the bead title so the file is never structurally empty.
+	taskBody := rc.beadDescription
+	if taskBody == "" {
+		taskBody = rc.beadTitle
+	}
+	if taskBody == "" {
+		// Last resort: use the bead ID so CHB-028's non-empty invariant is always satisfied.
+		taskBody = rc.beadID
+	}
+	taskTitle := rc.beadTitle
+	if taskTitle == "" {
+		taskTitle = rc.beadID
+	}
+	agentTaskPayload := workspace.AgentTaskPayload{
+		BeadID:              rc.beadID,
+		Title:               taskTitle,
+		Phase:               string(rc.phase),
+		Iteration:           rc.iterationCount,
+		RunID:               core.RunID(rc.runID).String(),
+		WorkspacePath:       rc.workspacePath,
+		Body:                taskBody,
+		PriorVerdictFile:    rc.priorVerdictFile,
+		PriorVerdictSummary: rc.priorVerdictSummary,
+		ReviewBaseSHA:       rc.reviewBaseSHA,
+		ReviewHeadSHA:       rc.reviewHeadSHA,
+		ReAttach:            rc.agentTaskReAttach,
+	}
+	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: WriteAgentTask: %w", err)
 	}
 
 	// Step 4 — Fail-fast if settings.local.json shadows bridge hooks (CHB-024).

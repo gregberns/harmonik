@@ -106,13 +106,15 @@ type reviewLoopState struct {
 // runReviewLoop executes the review-loop dispatch cycle for a single bead run.
 //
 // Parameters:
-//   - ctx       — caller context; cancellation propagates into all sub-calls.
-//   - deps      — work-loop dependency bundle.
-//   - runID     — the run's stable identifier (used for event scoping via EmitWithRunID).
-//   - beadID    — the bead being executed (reserved for future logging; bead transitions
+//   - ctx             — caller context; cancellation propagates into all sub-calls.
+//   - deps            — work-loop dependency bundle.
+//   - runID           — the run's stable identifier (used for event scoping via EmitWithRunID).
+//   - beadID          — the bead being executed (reserved for future logging; bead transitions
 //     are owned by runWorkLoop after runReviewLoop returns).
-//   - wtPath    — absolute path of the git worktree created for this run.
-//   - parentSHA — the git commit SHA at which the worktree was created; used as the
+//   - beadTitle       — bead title from the Beads ledger; threaded into CHB-028 agent-task.md.
+//   - beadDescription — bead body from the Beads ledger; threaded into CHB-028 agent-task.md.
+//   - wtPath          — absolute path of the git worktree created for this run.
+//   - parentSHA       — the git commit SHA at which the worktree was created; used as the
 //     <parent> argument for diff-hash computation per EM-015e.
 //
 // Returns a reviewLoopResult describing the terminal outcome. A context cancellation
@@ -123,6 +125,8 @@ func runReviewLoop(
 	deps workLoopDeps,
 	runID core.RunID,
 	beadID core.BeadID,
+	beadTitle string,
+	beadDescription string,
 	wtPath string,
 	parentSHA string,
 ) reviewLoopResult {
@@ -171,6 +175,10 @@ func runReviewLoop(
 			handlerBinary:     deps.handlerBinary,
 			daemonBinaryPath:  deps.daemonBinaryPath,
 			baseEnv:           deps.handlerEnv,
+			beadTitle:         beadTitle,
+			beadDescription:   beadDescription,
+			// priorVerdictFile and priorVerdictSummary are populated below for
+			// implementer-resume phases (iteration ≥ 2) once state.lastVerdictNotes is known.
 		}
 		implSpec, implArtifacts, implSpecErr := buildClaudeLaunchSpec(ctx, implRC)
 		if implSpecErr != nil {
@@ -259,11 +267,6 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-
-		// Paste-inject: kick-off message to the implementer pane (hk-zrj83, PL-021d).
-		// Phase is implementer-initial (iter=1) or implementer-resume (iter≥2).
-		// No-op when deps.substrate is nil or does not implement pasteInjecter.
-		pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID, implRC.phase, state.iterationCount, wtPath)
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
@@ -365,6 +368,8 @@ func runReviewLoop(
 			handlerBinary:     deps.handlerBinary,
 			daemonBinaryPath:  deps.daemonBinaryPath,
 			baseEnv:           deps.handlerEnv,
+			beadTitle:         beadTitle,
+			beadDescription:   beadDescription,
 		}
 		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
 		if revSpecErr != nil {
@@ -405,10 +410,6 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-
-		// Paste-inject: kick-off message to the reviewer pane (hk-zrj83, PL-021d).
-		// No-op when deps.substrate is nil or does not implement pasteInjecter.
-		pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID, handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
 		// the configured timeout, same as the implementer phase.

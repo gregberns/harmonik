@@ -291,7 +291,7 @@ func ExportedRunReviewLoop(
 	wtPath string,
 	parentSHA string,
 ) ReviewLoopResultExported {
-	r := runReviewLoop(ctx, deps, runID, beadID, wtPath, parentSHA)
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA)
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),

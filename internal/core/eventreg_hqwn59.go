@@ -21,7 +21,7 @@ package core
 // §8.7 Daemon/operator lifecycle event registrations are in registerDaemonLifecycleEvents().
 // §8.8 Bus/observability event registrations are in registerBusEvents().
 //
-// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.77.
+// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78.
 
 func init() {
 	registerRunLifecycle()
@@ -226,10 +226,7 @@ func registerDaemonLifecycleEvents() {
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event
-// payload constructors that are currently unblocked.
-//
-// NOTE: redaction_failed (§8.8.5) is blocked on hk-hqwn.45 (Redaction registry)
-// and will be registered when that blocker bead is closed.
+// payload constructors.
 //
 // Durability classes per §8.8 table:
 //   - metric (§8.8.1):               L (lossy-tail-ok, §8.9(g) escape-hatch exception)
@@ -237,11 +234,13 @@ func registerDaemonLifecycleEvents() {
 //   - dead_letter_enqueued (§8.8.3): O (ordinary, bus-internal)
 //   - bus_overflow (§8.8.4):         O (ordinary; promoted to F via direct-JSONL-append
 //     fallback when reservation slot is exhausted per EV-011a)
+//   - redaction_failed (§8.8.5):     O (ordinary, bus-internal; ON-022 fail-closed redactor)
 func registerBusEvents() {
 	mustRegister("metric", func() EventPayload { return &MetricPayload{} })
 	mustRegister("consumer_failed", func() EventPayload { return &ConsumerFailedPayload{} })
 	mustRegister("dead_letter_enqueued", func() EventPayload { return &DeadLetterEnqueuedPayload{} })
 	mustRegister("bus_overflow", func() EventPayload { return &BusOverflowPayload{} })
+	mustRegister("redaction_failed", func() EventPayload { return &RedactionFailedPayload{} })
 }
 
 // registerReviewLoopEvents registers all §8.1a review-loop cycle and §8.8.6

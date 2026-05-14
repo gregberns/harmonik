@@ -8,13 +8,10 @@ import "github.com/google/uuid"
 //   - consumer_failed      (§8.8.2)
 //   - dead_letter_enqueued (§8.8.3)
 //   - bus_overflow         (§8.8.4)
-//
-// NOTE: redaction_failed (§8.8.5) is blocked on hk-hqwn.45 (Redaction registry)
-// and is declared in a separate bead (hk-hqwn.59.78) to be implemented once that
-// blocker bead is closed.
+//   - redaction_failed     (§8.8.5)
 //
 // Spec ref: specs/event-model.md §8.8, §6.3.
-// Bead refs: hk-hqwn.59.74, hk-hqwn.59.75, hk-hqwn.59.76, hk-hqwn.59.77.
+// Bead refs: hk-hqwn.59.74, hk-hqwn.59.75, hk-hqwn.59.76, hk-hqwn.59.77, hk-hqwn.59.78.
 
 // ---------------------------------------------------------------------------
 // Enum types for §8.8 payload discriminators
@@ -298,6 +295,72 @@ func (p BusOverflowPayload) Valid() bool {
 		return false
 	}
 	if !p.ShedPolicy.Valid() {
+		return false
+	}
+	return true
+}
+
+// RedactionFailedPayload is the typed event payload for the redaction_failed
+// event (event-model.md §8.8.5).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — operator-observability and audit; the
+// fail-closed redactor emits this before aborting the redaction-violating
+// emission per ON-022).
+//
+// Emitted by the bus (bus-internal) when the redaction registry (EV-035)
+// fails to apply to an event payload. The fail-closed redactor MUST emit
+// redaction_failed before aborting the emission. The run_id field is optional
+// because redaction failures may occur outside a run context (e.g., during
+// bus-internal event processing).
+//
+// Emission co-ownership: bus-internal per §6.5. Emission rules in
+// operator-nfr.md §4.7 ON-022.
+//
+// # Payload fields (event-model.md §8.8.5)
+//
+//   - event_type  — the §8 event type string of the event whose redaction failed
+//   - run_id      — optional RunID of the run in whose context the emission was attempted
+//   - error_class — typed error class of the redaction failure
+//   - failed_at   — RFC 3339 wall-clock timestamp at the moment of redaction failure
+type RedactionFailedPayload struct {
+	// EventType is the §8 event type string of the event whose redaction failed.
+	// Required (non-empty).
+	EventType EventType `json:"event_type"`
+
+	// RunID is the optional RunID of the run in whose context the emission was
+	// attempted. Nil when the redaction failure occurs outside a run context.
+	// Corresponds to run_id? in event-model.md §8.8.5.
+	RunID *RunID `json:"run_id,omitempty"`
+
+	// ErrorClass is the typed error class of the redaction failure.
+	// Required; must be a valid ErrorCategory constant per §8.8.5 ON-022.
+	ErrorClass ErrorCategory `json:"error_class"`
+
+	// FailedAt is the RFC 3339 wall-clock timestamp at the moment of redaction
+	// failure. Required (non-empty).
+	FailedAt string `json:"failed_at"`
+}
+
+// Valid reports whether p is a well-formed RedactionFailedPayload.
+//
+// Rules per event-model.md §8.8.5:
+//   - EventType must be non-empty (Valid EventType).
+//   - ErrorClass must be a valid ErrorCategory constant.
+//   - FailedAt must be non-empty.
+//   - RunID is optional; when non-nil, must not be uuid.Nil.
+func (p RedactionFailedPayload) Valid() bool {
+	if !p.EventType.Valid() {
+		return false
+	}
+	if p.RunID != nil && uuid.UUID(*p.RunID) == uuid.Nil {
+		return false
+	}
+	if !p.ErrorClass.Valid() {
+		return false
+	}
+	if p.FailedAt == "" {
 		return false
 	}
 	return true

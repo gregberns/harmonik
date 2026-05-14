@@ -65,12 +65,19 @@ type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
 
-	// lastHandleMu guards lastHandle.
+	// lastHandleMu guards lastHandle and lastPaneID.
 	lastHandleMu sync.Mutex
 	// lastHandle is the WindowHandle of the most recently spawned window.
 	// Set by SpawnWindow; read by WriteLastPane.  Zero value means no window
 	// has been spawned yet.
 	lastHandle tmux.WindowHandle
+	// lastPaneID is the stable tmux pane identifier (e.g. "%1964") for the
+	// first pane of the most recently spawned window. Captured once by
+	// SpawnWindow via WindowPaneID; used by WriteLastPane as the pane target
+	// instead of the slash-bearing "session:window-name.0" form (hk-yngq2).
+	// Empty string means the lookup failed; WriteLastPane falls back to the
+	// legacy handle+".0" form in that case.
+	lastPaneID string
 }
 
 // Compile-time assertions.
@@ -154,9 +161,20 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		pid = 0
 	}
 
-	// Record the handle so WriteLastPane can reference it.
+	// Retrieve the stable pane ID ("%NNNN") immediately so WriteLastPane can
+	// address the pane without constructing a slash-bearing target string.
+	// Failure is non-fatal; WriteLastPane falls back to handle+".0" when empty.
+	// (hk-yngq2: window name is a worktree path with slashes — tmux cannot parse
+	// "session:path/to/dir.0" as a pane target; "%NNNN" is always slash-free.)
+	paneID := ""
+	if id, paneIDErr := s.adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
+		paneID = id
+	}
+
+	// Record the handle and pane ID so WriteLastPane can reference them.
 	s.lastHandleMu.Lock()
 	s.lastHandle = outcome.Handle
+	s.lastPaneID = paneID
 	s.lastHandleMu.Unlock()
 
 	sess := &tmuxSubstrateSession{
@@ -170,25 +188,40 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // WriteLastPane delivers payload to the first pane of the most recently spawned
 // window using the PL-021d load-buffer + paste-buffer sequence.
 //
-// paneTarget is derived from the stored WindowHandle by appending ".0" (the
-// first pane index in a single-pane window). bufferName MUST match the format
-// "harmonik-<session-id>-<purpose>" required by PL-021d.
+// The pane target is the stable pane ID captured at SpawnWindow time (e.g.
+// "%1964"). Pane IDs are slash-free and remain valid regardless of the window
+// name — critical when the window name is a filesystem path (hk-yngq2).
+//
+// Falls back to "handle.0" only when the pane ID lookup failed at spawn time
+// (legacy behaviour for test doubles that do not implement WindowPaneID).
+//
+// bufferName MUST match the format "harmonik-<session-id>-<purpose>" required
+// by PL-021d.
 //
 // Returns [tmux.ErrStructural] when no window has been spawned yet.
 //
 // Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
-// Bead ref: hk-zrj83.
+// Bead ref: hk-zrj83, hk-yngq2.
 func (s *tmuxSubstrate) WriteLastPane(ctx context.Context, bufferName string, payload []byte) error {
 	s.lastHandleMu.Lock()
 	handle := s.lastHandle
+	paneID := s.lastPaneID
 	s.lastHandleMu.Unlock()
 
 	if handle == "" {
 		return fmt.Errorf("daemon: tmuxSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
-	// The pane target for the first pane of a window is "<handle>.0".
-	// handle format is "session:window-name" (per osadapter.go NewWindowIn).
-	paneTarget := string(handle) + ".0"
+
+	// Prefer the stable pane ID ("%NNNN") captured at spawn time. This is
+	// slash-free and works even when the window name is a filesystem path.
+	// Fall back to "handle.0" only when paneID is empty (e.g. in test doubles
+	// that return "" from WindowPaneID).
+	var paneTarget string
+	if paneID != "" {
+		paneTarget = paneID
+	} else {
+		paneTarget = string(handle) + ".0"
+	}
 	return s.adapter.WriteToPane(ctx, bufferName, paneTarget, payload)
 }
 

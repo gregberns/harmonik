@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,15 @@ type fakeTmuxAdapter struct {
 	// panePIDErr is returned by WindowPanePID when non-nil.
 	panePIDErr error
 
+	// paneIDResult is returned by WindowPaneID. When empty string, WriteLastPane
+	// falls back to the legacy handle+".0" form. Set to a "%NNNN" value to
+	// exercise the pane-ID fast path (hk-yngq2).
+	paneIDResult string
+
+	// writeToPaneTarget records the paneTarget passed to the most recent
+	// WriteToPane call. Used by slash-path tests (hk-yngq2).
+	writeToPaneTarget string
+
 	// killWindowErr is returned by KillWindow when non-nil.
 	killWindowErr error
 
@@ -66,6 +76,13 @@ func (f *fakeTmuxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) 
 	}
 	return f.panePIDResult, nil
 }
+
+// WindowPaneID returns paneIDResult when set, or "" to trigger the
+// handle+".0" fallback in WriteLastPane (hk-yngq2).
+func (f *fakeTmuxAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
+	return f.paneIDResult, nil
+}
+
 func (f *fakeTmuxAdapter) KillSession(_ context.Context, _ string) error { return nil }
 
 // LoadBuffer is a no-op stub to satisfy the [tmux.Adapter] interface.
@@ -77,8 +94,9 @@ func (f *fakeTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error { re
 // SendKeysLiteral is a no-op stub to satisfy the [tmux.Adapter] interface.
 func (f *fakeTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
 
-// WriteToPane is a no-op stub to satisfy the [tmux.Adapter] interface.
-func (f *fakeTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
+// WriteToPane records the paneTarget and returns nil.
+func (f *fakeTmuxAdapter) WriteToPane(_ context.Context, _, paneTarget string, _ []byte) error {
+	f.writeToPaneTarget = paneTarget
 	return nil
 }
 
@@ -505,6 +523,111 @@ func TestTmuxSubstrateSession_Wait_ReturnAfterExternalKill(t *testing.T) {
 	defer cancel()
 	if err := sess.Wait(waitCtx); err != nil {
 		t.Errorf("SubstrateSession.Wait: expected nil after process exit, got: %v", err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — WriteLastPane pane-ID addressing (hk-yngq2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestTmuxSubstrate_WriteLastPane_UsesPaneID verifies that WriteLastPane passes
+// the stable pane ID (e.g. "%1964") captured at SpawnWindow time as the
+// paneTarget to WriteToPane, rather than constructing "session:window-name.0".
+//
+// This is the hk-yngq2 regression: when the window name is a filesystem path
+// containing slashes, the "session:path/to/dir.0" form cannot be parsed by tmux
+// and paste-buffer exits 1. Using the pane ID directly avoids the issue.
+func TestTmuxSubstrate_WriteLastPane_UsesPaneID(t *testing.T) {
+	t.Parallel()
+
+	const wantPaneID = "%1964"
+	// Window name is a slash-bearing worktree path — the real production case.
+	const slashWindowName = "/private/var/folders/s9/tmp.kjv2d1cswF/.harmonik/worktrees/019e2565-8fac-79f2"
+	handle := tmux.WindowHandle("smoke-1778743872:" + slashWindowName)
+
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: handle},
+		panePIDResult:      1234,
+		paneIDResult:       wantPaneID, // Simulate tmux returning "%1964".
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: slashWindowName,
+		Cwd:        t.TempDir(),
+		Argv:       []string{"claude"},
+	}
+
+	_, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	// Cast to pasteInjecter to access WriteLastPane.
+	pi, ok := substrate.(interface {
+		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
+	})
+	if !ok {
+		t.Fatal("substrate does not implement WriteLastPane; check daemon.pasteInjecter interface")
+	}
+
+	const bufferName = "harmonik-01hwxyz-abc123-task"
+	if err := pi.WriteLastPane(t.Context(), bufferName, []byte("Please read .harmonik/agent-task.md")); err != nil {
+		t.Fatalf("WriteLastPane: %v", err)
+	}
+
+	// Verify that WriteToPane was called with the pane ID, not with a slash-bearing string.
+	if fake.writeToPaneTarget != wantPaneID {
+		t.Errorf("WriteLastPane paneTarget = %q; want %q (pane ID, not slash-bearing handle+.0)",
+			fake.writeToPaneTarget, wantPaneID)
+	}
+	// Sanity-check: the target must NOT contain slashes (the bug being fixed).
+	if strings.Contains(fake.writeToPaneTarget, "/") {
+		t.Errorf("WriteLastPane paneTarget %q contains slashes — tmux cannot parse it as a pane target",
+			fake.writeToPaneTarget)
+	}
+}
+
+// TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID verifies that
+// WriteLastPane falls back to "handle.0" when WindowPaneID returned "" at
+// spawn time (e.g. test doubles that do not implement the new method).
+func TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID(t *testing.T) {
+	t.Parallel()
+
+	handle := tmux.WindowHandle("test-session:hk-simple-win")
+	fake := &fakeTmuxAdapter{
+		newWindowInOutcome: tmux.Outcome{Handle: handle},
+		panePIDResult:      1,
+		paneIDResult:       "", // Simulate empty pane ID — triggers fallback.
+	}
+	substrate := tmuxSubstrateFixtureNew(t, fake)
+
+	spawn := handler.SubstrateSpawn{
+		WindowName: "hk-simple-win",
+		Cwd:        t.TempDir(),
+		Argv:       []string{"claude"},
+	}
+
+	_, err := substrate.SpawnWindow(t.Context(), spawn)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+
+	pi, ok := substrate.(interface {
+		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
+	})
+	if !ok {
+		t.Fatal("substrate does not implement WriteLastPane")
+	}
+
+	if err := pi.WriteLastPane(t.Context(), "harmonik-01hwxyz-abc123-task", []byte("hello")); err != nil {
+		t.Fatalf("WriteLastPane: %v", err)
+	}
+
+	// With empty pane ID, fall back to handle+".0".
+	wantFallback := string(handle) + ".0"
+	if fake.writeToPaneTarget != wantFallback {
+		t.Errorf("WriteLastPane fallback paneTarget = %q; want %q", fake.writeToPaneTarget, wantFallback)
 	}
 }
 

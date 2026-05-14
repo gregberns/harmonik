@@ -46,6 +46,11 @@ type pasteInjectFixtureAdapter struct {
 
 	// newWindowInOutcome is returned by NewWindowIn.
 	newWindowInOutcome tmux.Outcome
+
+	// paneIDResult is returned by WindowPaneID. When empty, WindowPaneID
+	// returns "" (triggering the handle+".0" fallback in WriteLastPane).
+	// Set to a "%NNNN" value to exercise the pane-ID fast path (hk-yngq2).
+	paneIDResult string
 }
 
 type pasteInjectFixtureWriteToPane struct {
@@ -71,6 +76,13 @@ func (a *pasteInjectFixtureAdapter) WindowPanePID(_ context.Context, _ tmux.Wind
 	return 1234, nil
 }
 func (a *pasteInjectFixtureAdapter) KillSession(_ context.Context, _ string) error { return nil }
+
+// WindowPaneID returns paneIDResult when set, or "" to trigger the
+// handle+".0" fallback in WriteLastPane.
+func (a *pasteInjectFixtureAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
+	return a.paneIDResult, nil
+}
+
 func (a *pasteInjectFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }

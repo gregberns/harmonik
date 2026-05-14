@@ -169,6 +169,19 @@ type Adapter interface {
 	// Returns [*ErrTmuxFailure] when display-message fails.
 	WindowPanePID(ctx context.Context, handle WindowHandle) (int, error)
 
+	// WindowPaneID returns the stable pane identifier (e.g. "%1964") for the
+	// first pane of the window identified by handle. Pane IDs are assigned by
+	// tmux at pane-creation time, are stable across window renames, and contain
+	// no slashes — making them safe for use as pane targets in commands like
+	// paste-buffer and send-keys when the window name is a filesystem path.
+	//
+	// Returns [ErrNoSession] when the session is gone.
+	// Returns [*ErrTmuxFailure] when display-message fails.
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — pane target must be
+	// slash-free; pane ID is the canonical form (hk-yngq2).
+	WindowPaneID(ctx context.Context, handle WindowHandle) (string, error)
+
 	// KillSession destroys the named tmux session and all windows it contains.
 	// Returns nil if the session has already been destroyed (idempotent).
 	//

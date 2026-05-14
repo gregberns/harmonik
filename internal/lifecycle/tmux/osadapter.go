@@ -195,6 +195,31 @@ func (OSAdapter) WindowPanePID(ctx context.Context, handle WindowHandle) (int, e
 	return pid, nil
 }
 
+// WindowPaneID returns the stable pane identifier (e.g. "%1964") for the first
+// pane of the window identified by handle.
+//
+// Uses `tmux display-message -p -t <handle> '#{pane_id}'`.
+//
+// Returns [ErrNoSession] when the session is gone.
+// Returns [*ErrTmuxFailure] when display-message fails.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — pane ID as slash-free pane
+// target (hk-yngq2).
+func (OSAdapter) WindowPaneID(ctx context.Context, handle WindowHandle) (string, error) {
+	target := string(handle)
+	//nolint:gosec // G204: target is a WindowHandle constructed from validated session/window names
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-p", "-t", target, "#{pane_id}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if isNoSessionErr(out) {
+			return "", ErrNoSession
+		}
+		return "", &ErrTmuxFailure{Op: "display-message", ExitCode: exitCodeOf(err), Stderr: outStr}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // KillSession destroys the named tmux session and all windows it contains.
 // Returns nil if the session has already been destroyed (idempotent).
 //

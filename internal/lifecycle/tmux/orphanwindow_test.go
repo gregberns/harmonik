@@ -105,6 +105,11 @@ func (a *orphanWindowFixtureAdapter) WindowPanePID(_ context.Context, _ WindowHa
 	return 0, nil
 }
 
+// WindowPaneID is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) WindowPaneID(_ context.Context, _ WindowHandle) (string, error) {
+	return "", nil
+}
+
 // KillSession is not exercised by window-sweep tests; returns nil.
 func (a *orphanWindowFixtureAdapter) KillSession(_ context.Context, _ string) error {
 	return nil

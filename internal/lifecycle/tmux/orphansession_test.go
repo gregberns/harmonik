@@ -124,6 +124,11 @@ func (a *orphanSessionFixtureAdapter) WriteToPane(_ context.Context, _, _ string
 	return nil
 }
 
+// WindowPaneID is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanSessionFixtureAdapter) WindowPaneID(_ context.Context, _ WindowHandle) (string, error) {
+	return "", nil
+}
+
 // orphanSessionFixtureNewAdapter constructs a fresh fake adapter.
 func orphanSessionFixtureNewAdapter(sessions map[string][]string) *orphanSessionFixtureAdapter {
 	return &orphanSessionFixtureAdapter{sessions: sessions}

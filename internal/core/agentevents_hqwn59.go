@@ -524,6 +524,99 @@ func (p SkillsProvisionedPayload) Valid() bool {
 	return true
 }
 
+// SessionLogLocationPayload is the typed event payload for the
+// session_log_location event (event-model.md §8.3.7).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — session-log-pipeline audit; the audit subsystem
+// uses this event to join handler-written session logs to the CASS index per
+// workspace-model.md §4.7).
+//
+// Emitted by the handler subprocess via the daemon watcher early in the session
+// (after handler_capabilities, before skills_provisioned/agent_ready). The
+// session-log directory pre-exists at emission time; this event announces its
+// path per handler-contract.md §4.2.HC-010.
+//
+// # Payload fields (event-model.md §8.3.7)
+//
+//   - run_id      — the run in whose context the session log is located
+//   - session_id  — handler-assigned session identifier (UUIDv7, opaque outside handler layer)
+//   - node_id     — the workflow node that this agent instance is executing
+//   - agent_type  — the conformance class of the handler subprocess (AR-025)
+//   - log_path    — absolute filesystem path to the session-log directory
+//   - log_format  — log format identifier string
+//   - bead_id     — optional bead identifier when the run is bead-tied (EM-014)
+type SessionLogLocationPayload struct {
+	// RunID is the run in whose context the session log is located.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// SessionID is the handler-assigned session identifier. Required (non-empty).
+	// UUIDv7 per handler-contract.md §4.1; opaque to non-handler consumers.
+	SessionID SessionID `json:"session_id"`
+
+	// NodeID is the workflow node that this agent instance is executing.
+	// Required (non-empty).
+	NodeID NodeID `json:"node_id"`
+
+	// AgentType is the conformance class of the handler subprocess.
+	// Required; must satisfy AgentType.Valid() per AR-025 / AR-027.
+	AgentType AgentType `json:"agent_type"`
+
+	// LogPath is the absolute filesystem path to the session-log directory
+	// pre-created by the workspace manager per workspace-model.md §4.7.
+	// Required (non-empty).
+	LogPath string `json:"log_path"`
+
+	// LogFormat is the log format identifier string for this session log.
+	// Required (non-empty).
+	// TODO(hk-hqwn.59.27): promote to a typed LogFormat alias when the
+	// log-format vocabulary is enumerated per event-model.md §8.3.7 and
+	// workspace-model.md §4.7.
+	LogFormat string `json:"log_format"`
+
+	// BeadID is the optional bead identifier when the run is bead-tied per
+	// execution-model.md §4.3.EM-014. Nil when the run has no bead tie.
+	// Non-nil must be non-empty.
+	BeadID *BeadID `json:"bead_id,omitempty"`
+}
+
+// Valid reports whether p is a well-formed SessionLogLocationPayload.
+//
+// Rules per event-model.md §8.3.7:
+//   - RunID must not be uuid.Nil.
+//   - SessionID must be non-empty.
+//   - NodeID must be non-empty.
+//   - AgentType must satisfy AgentType.Valid().
+//   - LogPath must be non-empty.
+//   - LogFormat must be non-empty.
+//   - BeadID, when non-nil, must dereference to a non-empty value.
+func (p SessionLogLocationPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.SessionID == "" {
+		return false
+	}
+	if p.NodeID == "" {
+		return false
+	}
+	if !p.AgentType.Valid() {
+		return false
+	}
+	if p.LogPath == "" {
+		return false
+	}
+	if p.LogFormat == "" {
+		return false
+	}
+	if p.BeadID != nil && *p.BeadID == "" {
+		return false
+	}
+	return true
+}
+
 // HandlerCapabilitiesPayload is the typed event payload for the
 // handler_capabilities event (event-model.md §8.3.9).
 //

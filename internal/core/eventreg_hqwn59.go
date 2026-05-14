@@ -101,19 +101,20 @@ func registerControlPoints() {
 //   - agent_output_chunk (§8.3.3):       L (lossy-tail-ok — per-chunk statistical aggregate)
 //   - agent_failed (§8.3.5):             O (ordinary — handler lifecycle observability)
 //   - agent_rate_limit_status (§8.3.6):  O (ordinary — rate-limit lifecycle observability)
+//   - session_log_location (§8.3.7):     O (ordinary — session-log-pipeline audit)
 //   - skills_provisioned (§8.3.8):       O (ordinary — skill-injection audit and observability)
 //   - handler_capabilities (§8.3.9):     O (ordinary — version-negotiation observability)
 //
-// Note: §8.3.4 (agent_completed), §8.3.7 (session_log_location),
-// §8.3.10 (agent_warning_silent_hang), §8.3.11 (agent_resumed_after_warning),
-// §8.3.12 (agent_soft_terminating), and §8.3.13 (agent_hard_terminating) are registered
-// by other implementer waves (future waves).
+// Note: §8.3.4 (agent_completed), §8.3.10 (agent_warning_silent_hang),
+// §8.3.11 (agent_resumed_after_warning), §8.3.12 (agent_soft_terminating), and
+// §8.3.13 (agent_hard_terminating) are registered by other implementer waves (future waves).
 func registerAgentEvents() {
 	mustRegister("agent_started", func() EventPayload { return &AgentStartedPayload{} })
 	mustRegister("agent_ready", func() EventPayload { return &AgentReadyPayload{} })
 	mustRegister("agent_output_chunk", func() EventPayload { return &AgentOutputChunkPayload{} })
 	mustRegister("agent_failed", func() EventPayload { return &AgentFailedPayload{} })
 	mustRegister("agent_rate_limit_status", func() EventPayload { return &AgentRateLimitStatusPayload{} })
+	mustRegister("session_log_location", func() EventPayload { return &SessionLogLocationPayload{} })
 	mustRegister("skills_provisioned", func() EventPayload { return &SkillsProvisionedPayload{} })
 	mustRegister("handler_capabilities", func() EventPayload { return &HandlerCapabilitiesPayload{} })
 	mustRegister("launch_initiated", func() EventPayload { return &LaunchInitiatedPayload{} })

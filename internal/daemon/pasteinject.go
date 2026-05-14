@@ -35,11 +35,39 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
+
+// splashDismissDelay is the grace period between the Enter keypress (splash
+// dismiss) and the paste-buffer write (kick-off message delivery).  The
+// Claude Code welcome splash needs ~400–600ms to animate away and transition
+// the terminal to the REPL input state; 750ms provides a conservative margin.
+//
+// Bead: hk-rf4ux.
+const splashDismissDelay = 750 * time.Millisecond
+
+// enterSender is an optional interface for tmux-backed Substrates that can
+// send a bare Enter keypress to the last spawned pane via
+// `tmux send-keys -t <pane> Enter` (NOT the -l literal form).
+//
+// This is the mechanism used to dismiss the Claude Code welcome splash before
+// paste-inject, per the hk-rf4ux fix.  The splash is a React/ink TUI that
+// processes key events; paste-buffer operates in bracketed-paste mode on
+// modern terminals, which means literal bytes in the paste payload (including
+// '\n') are not dispatched as key events.  Only send-keys without -l can
+// generate a true Enter keypress that the TUI key-event handler sees.
+//
+// Bead: hk-rf4ux.
+type enterSender interface {
+	// SendEnterToLastPane sends a bare "Enter" key to the most recently
+	// spawned window's first pane.  Returns a non-nil error if no window
+	// has been spawned yet or if the underlying send-keys call fails.
+	SendEnterToLastPane(ctx context.Context) error
+}
 
 // pasteInjectMsgs holds the phase-specific kick-off messages delivered to the
 // pane after spawn.  Newline-terminated so the pane receives a complete line
@@ -90,17 +118,48 @@ func pasteInjectOnLaunch(
 	}
 }
 
+// splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.
+// Used after SendEnterToLastPane to give the Claude Code welcome splash time
+// to animate away before the paste-buffer write arrives (hk-rf4ux).
+func splashDismissWait(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(splashDismissDelay):
+	}
+}
+
 // pasteInjectImplementerInitial delivers the task kick-off message for the
 // implementer-initial (and single-mode) phase.
 //
 // Buffer purpose slug: "task" → buffer name "harmonik-<session-id>-task".
 // Kick-off message: directs Claude to read .harmonik/agent-task.md.
+//
+// Splash-dismiss (hk-rf4ux): before writing the kick-off payload, an Enter
+// keypress is sent via SendEnterToLastPane (tmux send-keys Enter, NOT -l
+// literal) to dismiss the Claude Code welcome splash.  The splash is a
+// React/ink TUI that processes key events; paste-buffer operates in
+// bracketed-paste mode, meaning '\n' in the payload is NOT dispatched as an
+// Enter key event.  The send-keys form bypasses bracketed-paste mode.
+// A 750ms delay between Enter and paste allows the splash animation to
+// complete and the REPL input state to activate before the message arrives.
 func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) {
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFile(taskFile); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial: %v (skipping inject)\n", err)
 		return
 	}
+
+	// Dismiss the welcome splash with an Enter keypress before the paste (hk-rf4ux).
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			// Non-fatal: log and proceed; the paste may still succeed if the
+			// splash has already auto-dismissed.
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial SendEnterToLastPane: %v\n", err)
+		}
+		// Wait for splash to dismiss before delivering the paste.
+		splashDismissWait(ctx)
+	}
+
 	bufName := bufferName(claudeSessID, "task")
 	msg := "Please read .harmonik/agent-task.md and begin.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
@@ -117,6 +176,14 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 // skipped with a stderr log (non-fatal).
 func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string) {
 	// Inject 1: task file.
+	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume SendEnterToLastPane: %v\n", err)
+		}
+		splashDismissWait(ctx)
+	}
+
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFile(taskFile); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume task: %v (skipping task inject)\n", err)
@@ -158,6 +225,15 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer: %v (skipping inject)\n", err)
 		return
 	}
+
+	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer SendEnterToLastPane: %v\n", err)
+		}
+		splashDismissWait(ctx)
+	}
+
 	bufName := bufferName(claudeSessID, "review")
 	msg := "Read .harmonik/review-target.md in this worktree." +
 		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +

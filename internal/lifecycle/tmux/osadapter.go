@@ -356,6 +356,29 @@ func (OSAdapter) SendKeysLiteral(ctx context.Context, paneTarget, text string) e
 	return nil
 }
 
+// SendKeysEnter sends a bare "Enter" key event to paneTarget via
+// `tmux send-keys -t <paneTarget> Enter`.
+//
+// Unlike SendKeysLiteral (which uses -l and sends raw bytes through
+// bracketed-paste mode), this sends the tmux key-name "Enter" via the
+// terminal's key-event path.  TUI applications (such as Claude Code's
+// React/ink welcome splash) see it as a real keypress and can dismiss
+// themselves in response.
+//
+// This is the hk-rf4ux splash-dismiss mechanism.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys Enter (splash dismiss).
+// Bead: hk-rf4ux.
+func (OSAdapter) SendKeysEnter(ctx context.Context, paneTarget string) error {
+	// paneTarget is a daemon-managed pane address (e.g. "%NNNN"), not user input.
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paneTarget, "Enter")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ErrTmuxFailure{Op: "send-keys-enter", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
 // WriteToPane is the preferred high-level helper for daemon→pane writes. It
 // executes the full PL-021d sequence:
 //

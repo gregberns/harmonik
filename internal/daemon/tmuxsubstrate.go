@@ -83,6 +83,7 @@ type tmuxSubstrate struct {
 // Compile-time assertions.
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
 var _ pasteInjecter = (*tmuxSubstrate)(nil)
+var _ enterSender = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
 // creates new windows in sessionName.
@@ -183,6 +184,39 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		pid:     pid,
 	}
 	return sess, nil
+}
+
+// SendEnterToLastPane sends a bare "Enter" key event to the first pane of the
+// most recently spawned window via `tmux send-keys -t <pane> Enter`.
+//
+// This bypasses bracketed-paste mode so that TUI applications (e.g. Claude
+// Code's React/ink welcome splash) receive it as a real keypress.
+//
+// Implements the [enterSender] interface (pasteinject.go) used by
+// pasteInjectOnLaunch to dismiss the splash before the kick-off message
+// arrives (hk-rf4ux).
+//
+// Returns [tmux.ErrStructural] (wrapped) when no window has been spawned yet.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys Enter.
+// Bead: hk-rf4ux.
+func (s *tmuxSubstrate) SendEnterToLastPane(ctx context.Context) error {
+	s.lastHandleMu.Lock()
+	handle := s.lastHandle
+	paneID := s.lastPaneID
+	s.lastHandleMu.Unlock()
+
+	if handle == "" {
+		return fmt.Errorf("daemon: tmuxSubstrate.SendEnterToLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+
+	var paneTarget string
+	if paneID != "" {
+		paneTarget = paneID
+	} else {
+		paneTarget = string(handle) + ".0"
+	}
+	return s.adapter.SendKeysEnter(ctx, paneTarget)
 }
 
 // WriteLastPane delivers payload to the first pane of the most recently spawned

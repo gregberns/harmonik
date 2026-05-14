@@ -233,6 +233,23 @@ type Adapter interface {
 	// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys -l fallback.
 	SendKeysLiteral(ctx context.Context, paneTarget, text string) error
 
+	// SendKeysEnter sends a bare "Enter" key event to paneTarget via
+	// `tmux send-keys -t <paneTarget> Enter`.
+	//
+	// Unlike [SendKeysLiteral] (which uses -l and sends raw bytes), this
+	// command sends the tmux key-name "Enter", which is dispatched as a real
+	// key event through the terminal's key-event path.  This bypasses
+	// bracketed-paste mode so that TUI applications (e.g. Claude Code's
+	// React/ink welcome splash) see it as a keypress rather than a pasted
+	// character.
+	//
+	// Primary use case: dismiss the Claude Code welcome splash before the
+	// paste-inject step (hk-rf4ux).
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys Enter (splash dismiss).
+	// Bead: hk-rf4ux.
+	SendKeysEnter(ctx context.Context, paneTarget string) error
+
 	// WriteToPane executes the full PL-021d write sequence: LoadBuffer + PasteBuffer
 	// + structured-log emission (daemon_pane_write at INFO level).
 	//

@@ -94,6 +94,9 @@ func (f *fakeTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error { re
 // SendKeysLiteral is a no-op stub to satisfy the [tmux.Adapter] interface.
 func (f *fakeTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
 
+// SendKeysEnter is a no-op stub to satisfy the [tmux.Adapter] interface.
+func (f *fakeTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error { return nil }
+
 // WriteToPane records the paneTarget and returns nil.
 func (f *fakeTmuxAdapter) WriteToPane(_ context.Context, _, paneTarget string, _ []byte) error {
 	f.writeToPaneTarget = paneTarget

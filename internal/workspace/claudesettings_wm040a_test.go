@@ -605,3 +605,135 @@ func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
 		}
 	}
 }
+
+// TestWM040a_PermissionsAllowPresent verifies that MaterializeClaudeSettings
+// writes a "permissions.allow" array containing the standard harmonik tool set
+// per workspace-model.md §4.7a WM-040a (hk-53y35 amendment).
+//
+// Per-tool permission dialogs block unattended daemon operation; pre-authorizing
+// the standard Claude Code tool set via settings.json is the spec-compliant
+// alternative to the deny-listed --dangerously-skip-permissions flag.
+//
+// Spec ref: workspace-model.md §4.7a WM-040a; claude-hook-bridge.md §4.2 CHB-007.
+// Bead: hk-53y35.
+func TestWM040a_PermissionsAllowPresent(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("TestWM040a_PermissionsAllowPresent: MaterializeClaudeSettings: %v", err)
+	}
+
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	m := claudeSettingsFixtureReadJSON(t, settingsPath)
+
+	// Assert: top-level "permissions" key is present and is an object.
+	permRaw, ok := m["permissions"]
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPresent: no top-level 'permissions' key in settings.json")
+	}
+	permMap, ok := permRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions' is not an object, got %T", permRaw)
+	}
+
+	// Assert: permissions.allow is present and is an array.
+	allowRaw, ok := permMap["allow"]
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions.allow' key absent")
+	}
+	allowArr, ok := allowRaw.([]interface{})
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions.allow' is not an array, got %T", allowRaw)
+	}
+
+	// Assert: each expected tool appears in the array.
+	wantTools := harmonikAllowedTools
+	allowSet := make(map[string]bool, len(allowArr))
+	for _, v := range allowArr {
+		if s, ok := v.(string); ok {
+			allowSet[s] = true
+		}
+	}
+	for _, want := range wantTools {
+		wantStr, ok2 := want.(string)
+		if !ok2 {
+			continue
+		}
+		if !allowSet[wantStr] {
+			t.Errorf("TestWM040a_PermissionsAllowPresent: tool %q absent from permissions.allow", wantStr)
+		}
+	}
+
+	// Assert: dangerouslySkipPermissions is NOT present (spec-forbidden, CHB-007).
+	if _, ok := m["dangerouslySkipPermissions"]; ok {
+		t.Errorf("TestWM040a_PermissionsAllowPresent: dangerouslySkipPermissions present; must not be set (CHB-007 deny-list)")
+	}
+}
+
+// TestWM040a_PermissionsAllowPreservedOnMerge verifies that when an existing
+// settings.json already has a permissions.allow key, MaterializeClaudeSettings
+// does not overwrite it (user wins).
+//
+// Spec ref: workspace-model.md §4.7a WM-040a; claude-hook-bridge.md CHB-004.
+// Bead: hk-53y35.
+func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: MkdirAll: %v", err)
+	}
+
+	// Write settings with a user-defined permissions.allow list.
+	userAllow := []interface{}{"MyCustomTool"}
+	userSettings := map[string]interface{}{
+		"hooks": map[string]interface{}{},
+		"permissions": map[string]interface{}{
+			"allow": userAllow,
+		},
+	}
+	raw, err := json.Marshal(userSettings)
+	if err != nil {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: json.Marshal: %v", err)
+	}
+	//nolint:gosec // G306: 0644 matches existing test fixture conventions in this file
+	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: WriteFile: %v", err)
+	}
+
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: MaterializeClaudeSettings: %v", err)
+	}
+
+	m := claudeSettingsFixtureReadJSON(t, settingsPath)
+	permRaw, ok := m["permissions"]
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: 'permissions' key absent after merge")
+	}
+	permMap, ok := permRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: 'permissions' not an object")
+	}
+	allowRaw, ok := permMap["allow"]
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: 'permissions.allow' absent after merge")
+	}
+	allowArr, ok := allowRaw.([]interface{})
+	if !ok {
+		t.Fatalf("TestWM040a_PermissionsAllowPreservedOnMerge: 'permissions.allow' not an array")
+	}
+	// The user's "MyCustomTool" must still be present.
+	found := false
+	for _, v := range allowArr {
+		if v == "MyCustomTool" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("TestWM040a_PermissionsAllowPreservedOnMerge: user tool 'MyCustomTool' was overwritten; must be preserved")
+	}
+}

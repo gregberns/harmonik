@@ -588,6 +588,21 @@ The write MUST follow the atomic-write discipline of WM-026: temp file + fsync +
 
 If a `.claude/settings.json` file already exists in the worktree at materialization time (inherited from the cloned repo's state), the workspace manager MUST attempt a merge per [claude-hook-bridge.md §4.1 CHB-004]: the bridge-required hook entries are APPENDED to the existing event-type arrays. On malformed-JSON or merge-incompatible existing content, the workspace manager MUST OVERWRITE and log a warning line to the session log noting the displacement. No new bus event is emitted at MVH (the bridge introduces zero new event types per [claude-hook-bridge.md §4]); post-MVH operators MAY route this through an existing observability surface.
 
+**Permissions pre-authorization (hk-53y35).** The materialized settings.json MUST include a top-level `"permissions"` object with an `"allow"` array containing the standard Claude Code tool set:
+
+```json
+{
+  "permissions": {
+    "allow": ["Read", "Write", "Edit", "Bash", "Glob", "Grep",
+               "WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "Task"]
+  }
+}
+```
+
+This pre-authorization suppresses per-tool confirmation dialogs that would block unattended daemon operation. MCP tools are excluded (more conservative; can be added via project-level settings if needed). `dangerouslySkipPermissions` and `--dangerously-skip-permissions` MUST NOT be used; they are deny-listed by [claude-hook-bridge.md §4.2 CHB-007] and [handler-contract.md §4.9 HC-055]. On merge with an existing settings.json that already has a `permissions.allow` key, the existing user allow-list is preserved (user wins; no merge/append to the allow array).
+
+Cross-ref: [claude-hook-bridge.md §4.12 CHB-029] (trust pre-seed companion). Bead: hk-53y35.
+
 For workspaces that will NOT host a claude-code agent session, this requirement is a no-op.
 
 Tags: mechanism
@@ -1316,6 +1331,7 @@ Default-if-unresolved: Out-of-scope at MVH. Post-MVH support is an additive exte
 | 2026-04-25 | 0.4.2 | foundation-author | OQ-RC-011 resolution: extended §4.9.WM-036's verdict-disposition table from six rows to seven by adding the `no-op-accept` row introduced into the reconciliation Verdict enum at RC v0.3.0 (per [reconciliation/schemas.md §6.1 Verdict] and [reconciliation/schemas.md §6.2 Verdict-execution table]); the new row codifies the no-workspace-action disposition (record the verdict; clear any non-`none` `interrupt_state` per §4.10.WM-040 if reconciliation had previously marked the workspace interrupted; outer run continues per [reconciliation/spec.md §8.12]) consistent with RC's mechanical semantics that `no-op-accept` performs no mechanical action beyond `reconciliation_verdict_executed` emission and the verdict-executed commit. Updated WM-036 lead-in prose from "six-value verdict enum" to "seven-value verdict enum (per RC-020 as amended in RC v0.3.0)" and appended an OQ-RC-011 resolution citation to the trailing paragraph. No new WM IDs, no invariant changes, no schema changes; ID FREEZE preserved. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.3 | foundation-author | Add §4.7a Claude-code settings.json materialization (WM-040a, gap-filler after existing WM-040 to avoid collision with WM-038 / WM-039 / WM-040 interrupt-state requirements) covering atomic-write discipline, merge-with-existing semantics, and gitignore-hygiene extension. Overwrite-on-malformed logs to the session log; no new bus event is introduced (zero-new-event-types invariant of [claude-hook-bridge.md]). Companion to [claude-hook-bridge.md] new spec. No prior requirement IDs renumbered. Status remains `reviewed`. |
 | 2026-05-13 | 0.4.5 | agent (hk-fdyip) | **WM-040b added: worktree auto-trust pre-seed (§4.7b).** For every claude-code workspace, the daemon MUST pre-seed `~/.claude.json` projects[worktreePath].hasTrustDialogAccepted=true before exec'ing Claude, so the interactive trust dialog is suppressed in daemon-spawned tmux panes. Ordering: after WM-003 + WM-040a, before SubstrateSpawn. Atomic temp+rename write; idempotent; preserves all other ~/.claude.json content. Failure → ErrStructural / trust_seed_failed / agent_failed (no exec on failure). Rejected alternatives documented: --permission-mode and --dangerously-skip-permissions are deny-listed in HC-055 / CHB-007; .claude/settings.local.json does not carry startup trust state. Companion: claude-hook-bridge.md §4.12 CHB-029. Code: internal/workspace/claudetrust_wm040b.go. No prior requirement IDs renumbered. Status remains `reviewed`. |
+| 2026-05-14 | 0.4.6 | agent (hk-53y35) | **WM-040a amended: permissions.allow pre-authorization added.** The materialized settings.json MUST now include a top-level `"permissions": {"allow": [...]}` array with the standard Claude Code tool set (Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, NotebookEdit, TodoWrite, Task). Per-tool permission dialogs block unattended daemon operation; this is the spec-compliant alternative to the deny-listed --dangerously-skip-permissions flag (CHB-007 / HC-055). On merge, existing user `permissions.allow` is preserved. Cross-ref: claude-hook-bridge.md §4.12 CHB-029. Code: internal/workspace/claudesettings_wm040a.go. No prior requirement IDs renumbered. Status remains `reviewed`. |
 
 ## A. Appendices
 

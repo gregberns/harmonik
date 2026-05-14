@@ -188,8 +188,20 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 	return nil
 }
 
+// harmonikAllowedTools is the set of Claude Code tools pre-authorized for
+// harmonik-spawned panes per workspace-model.md §4.7a WM-040a (hk-53y35
+// amendment) and claude-hook-bridge.md §4.12 CHB-029.
+//
+// These are blanket allows (no path restrictions). MCP tools are deliberately
+// excluded — they can be added per-project if needed.
+var harmonikAllowedTools = []interface{}{
+	"Read", "Write", "Edit", "Bash", "Glob", "Grep",
+	"WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "Task",
+}
+
 // buildBridgeOnlySettings returns a settings map containing only the
-// bridge-required hook entries per CHB-003.
+// bridge-required hook entries per CHB-003, plus the permissions.allow
+// pre-authorization array per WM-040a (hk-53y35).
 // daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
 func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	hooks := make(map[string]interface{}, len(bridgeEventKinds))
@@ -198,6 +210,9 @@ func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"hooks": hooks,
+		"permissions": map[string]interface{}{
+			"allow": harmonikAllowedTools,
+		},
 	}
 }
 
@@ -240,6 +255,32 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 	}
 
 	merged["hooks"] = hooksMap
+
+	// Inject permissions.allow unless the existing settings already declare a
+	// permissions.allow key. If permissions is absent or has no "allow" key,
+	// write the harmonik defaults. Existing user allows are preserved if already
+	// present (user settings win; harmonik adds only when the slot is empty).
+	//
+	// Spec ref: workspace-model.md §4.7a WM-040a (hk-53y35 amendment).
+	permRaw, hasPerm := merged["permissions"]
+	if !hasPerm || permRaw == nil {
+		merged["permissions"] = map[string]interface{}{
+			"allow": harmonikAllowedTools,
+		}
+	} else if permMap, ok := permRaw.(map[string]interface{}); ok {
+		if _, hasAllow := permMap["allow"]; !hasAllow {
+			// Clone to avoid mutating the original.
+			newPerm := make(map[string]interface{}, len(permMap)+1)
+			for k, v := range permMap {
+				newPerm[k] = v
+			}
+			newPerm["allow"] = harmonikAllowedTools
+			merged["permissions"] = newPerm
+		}
+		// else: user already has permissions.allow — leave it as-is.
+	}
+	// If permissions is present but not a map (unexpected shape), leave it alone.
+
 	return merged
 }
 

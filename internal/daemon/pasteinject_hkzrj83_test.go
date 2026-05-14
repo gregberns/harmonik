@@ -90,6 +90,7 @@ func (a *pasteInjectFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) 
 func (a *pasteInjectFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+func (a *pasteInjectFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error { return nil }
 func (a *pasteInjectFixtureAdapter) WriteToPane(_ context.Context, bufferName, paneTarget string, payload []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -119,6 +119,11 @@ func (a *orphanSessionFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ st
 	return nil
 }
 
+// WriteToPane is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanSessionFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
+
 // orphanSessionFixtureNewAdapter constructs a fresh fake adapter.
 func orphanSessionFixtureNewAdapter(sessions map[string][]string) *orphanSessionFixtureAdapter {
 	return &orphanSessionFixtureAdapter{sessions: sessions}

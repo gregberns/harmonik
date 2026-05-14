@@ -125,6 +125,11 @@ func (a *orphanWindowFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ str
 	return nil
 }
 
+// WriteToPane is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
+
 // orphanWindowFixtureRemoveWindow removes windowName from the session's window list.
 func (a *orphanWindowFixtureAdapter) orphanWindowFixtureRemoveWindow(session, windowName string) {
 	windows := a.sessions[session]

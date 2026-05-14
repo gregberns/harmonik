@@ -219,6 +219,19 @@ type Adapter interface {
 	//
 	// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys -l fallback.
 	SendKeysLiteral(ctx context.Context, paneTarget, text string) error
+
+	// WriteToPane executes the full PL-021d write sequence: LoadBuffer + PasteBuffer
+	// + structured-log emission (daemon_pane_write at INFO level).
+	//
+	// bufferName MUST match the format `harmonik-<session-id>-<purpose>`.
+	// paneTarget is the tmux pane address (e.g. "session:window.0").
+	// payload is the content to deliver.
+	//
+	// Prefer WriteToPane over calling LoadBuffer+PasteBuffer separately whenever
+	// full daemon_pane_write audit compliance (including payload_bytes) is required.
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — full write sequence + structured-log audit.
+	WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

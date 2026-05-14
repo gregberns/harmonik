@@ -195,7 +195,6 @@ type workLoopDeps struct {
 	// Spec ref: specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
-
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -653,6 +652,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
+
+	// Paste-inject: deliver kick-off message to the pane (hk-zrj83, PL-021d).
+	// No-op when the substrate is nil (exec.CommandContext path) or does not
+	// implement pasteInjecter.  rc.phase is empty for single-mode; that maps
+	// to the implementer-initial kick-off ("read agent-task.md and begin").
+	pasteInjectOnLaunch(ctx, spec.Substrate, artifacts.claudeSessionID, rc.phase, rc.iterationCount, rc.workspacePath)
 
 	// Step 5: start CHB-019 heartbeat goroutine.  Daemon-owned per OQ5 resolution.
 	hbDone := make(chan struct{})

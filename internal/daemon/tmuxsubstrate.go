@@ -29,6 +29,31 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
+// ──────────────────────────────────────────────────────────────────────────────
+// pasteInjecter — optional interface for tmux-backed substrates
+// ──────────────────────────────────────────────────────────────────────────────
+
+// pasteInjecter is the optional interface implemented by tmux-backed Substrates.
+//
+// After SpawnWindow returns (the pane is live), callers may check whether the
+// substrate also implements pasteInjecter and, if so, call WriteLastPane to
+// deliver an initial instruction to the pane via the PL-021d paste mechanism.
+//
+// The method name WriteLastPane reflects that the target pane is the most
+// recently spawned window — not an arbitrary pane. This matches the MVH
+// usage pattern (one window per dispatch at MaxConcurrent=1). Post-MVH
+// parallel dispatch will require a pane-handle API; for now this is sufficient.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
+// Bead ref: hk-zrj83.
+type pasteInjecter interface {
+	// WriteLastPane delivers payload to the pane of the most recently spawned
+	// window.  bufferName MUST follow the "harmonik-<session-id>-<purpose>"
+	// format required by PL-021d.  Returns a non-nil error if no window has
+	// been spawned yet or if the underlying WriteToPane call fails.
+	WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
+}
+
 // tmuxSubstrate implements handler.Substrate using a tmux.Adapter.
 //
 // The daemon composition root builds one tmuxSubstrate per daemon lifetime and
@@ -39,10 +64,18 @@ import (
 type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
+
+	// lastHandleMu guards lastHandle.
+	lastHandleMu sync.Mutex
+	// lastHandle is the WindowHandle of the most recently spawned window.
+	// Set by SpawnWindow; read by WriteLastPane.  Zero value means no window
+	// has been spawned yet.
+	lastHandle tmux.WindowHandle
 }
 
-// Compile-time assertion: tmuxSubstrate implements handler.Substrate.
+// Compile-time assertions.
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
+var _ pasteInjecter = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
 // creates new windows in sessionName.
@@ -121,12 +154,42 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		pid = 0
 	}
 
+	// Record the handle so WriteLastPane can reference it.
+	s.lastHandleMu.Lock()
+	s.lastHandle = outcome.Handle
+	s.lastHandleMu.Unlock()
+
 	sess := &tmuxSubstrateSession{
 		adapter: s.adapter,
 		handle:  outcome.Handle,
 		pid:     pid,
 	}
 	return sess, nil
+}
+
+// WriteLastPane delivers payload to the first pane of the most recently spawned
+// window using the PL-021d load-buffer + paste-buffer sequence.
+//
+// paneTarget is derived from the stored WindowHandle by appending ".0" (the
+// first pane index in a single-pane window). bufferName MUST match the format
+// "harmonik-<session-id>-<purpose>" required by PL-021d.
+//
+// Returns [tmux.ErrStructural] when no window has been spawned yet.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
+// Bead ref: hk-zrj83.
+func (s *tmuxSubstrate) WriteLastPane(ctx context.Context, bufferName string, payload []byte) error {
+	s.lastHandleMu.Lock()
+	handle := s.lastHandle
+	s.lastHandleMu.Unlock()
+
+	if handle == "" {
+		return fmt.Errorf("daemon: tmuxSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+	// The pane target for the first pane of a window is "<handle>.0".
+	// handle format is "session:window-name" (per osadapter.go NewWindowIn).
+	paneTarget := string(handle) + ".0"
+	return s.adapter.WriteToPane(ctx, bufferName, paneTarget, payload)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

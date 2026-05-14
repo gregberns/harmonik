@@ -260,6 +260,11 @@ func runReviewLoop(
 			return result
 		}
 
+		// Paste-inject: kick-off message to the implementer pane (hk-zrj83, PL-021d).
+		// Phase is implementer-initial (iter=1) or implementer-resume (iter≥2).
+		// No-op when deps.substrate is nil or does not implement pasteInjecter.
+		pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID, implRC.phase, state.iterationCount, wtPath)
+
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
 		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
@@ -400,6 +405,10 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+
+		// Paste-inject: kick-off message to the reviewer pane (hk-zrj83, PL-021d).
+		// No-op when deps.substrate is nil or does not implement pasteInjecter.
+		pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID, handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
 		// the configured timeout, same as the implementer phase.

@@ -129,7 +129,6 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-kqdpf.1.
 	WorktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
-
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -477,7 +476,7 @@ type ExportedClaudeRunCtx struct {
 	// hook command materialization (hk-kqdpf.6). Empty in tests that don't need
 	// real hook wiring.
 	DaemonBinaryPath string
-	BaseEnv           []string
+	BaseEnv          []string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -606,4 +605,31 @@ func ExportedWaitWithSocketGrace(
 ) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
 	outcome, ei := waitWithSocketGrace(ctx, store, watcher, sess, runID, claudeSessID)
 	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// paste-inject test seams (hk-zrj83)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
+// daemon_test.
+//
+// Bead ref: hk-zrj83.
+func ExportedPasteInjectOnLaunch(
+	ctx context.Context,
+	substrate handler.Substrate,
+	claudeSessID string,
+	phase handlercontract.ReviewLoopPhase,
+	iterCount int,
+	wtPath string,
+) {
+	pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath)
+}
+
+// ExportedBufferName exposes the bufferName helper for tests in package
+// daemon_test.
+//
+// Bead ref: hk-zrj83.
+func ExportedBufferName(sessionID, purpose string) string {
+	return bufferName(sessionID, purpose)
 }

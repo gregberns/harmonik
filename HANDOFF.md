@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-12 main — v35. Hook-bridge build COMPLETE on main. 10 beads closed this session under hk-w5vra umbrella (.1 rename, .2 claude-twin, .3 hook-relay, .4 settings.json, .5 handler responsibilities, .6 daemon session_id, .8/.9/.10 spec amendments, .11 daemon dedup). Only .7 (real-claude re-smoke) remains. Main is 30+ commits ahead of origin; NOT pushed. -->
+<!-- PP-TRIAL:v2 2026-05-13 main — v37. Audit-umbrella hk-lj1p9 corpus complete (all 10 children closed). 14 commits added; main at 3ee426c, ~29 commits ahead of origin (NOT pushed). One critical follow-up OPEN: hk-lj1p9.3 (P0) — EnsureWorktreeTrust writes to real ~/.claude.json; concurrent tests corrupted user config (manually repaired in-session). DO NOT run `go test ./internal/daemon/` until that bead is fixed. Smoke v4 has not run yet. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -26,6 +26,8 @@ BEFORE reading any spec or code. Verify base via `git log --oneline -5`. Without
 
 The `.5` and `.11` dispatches this session included the rebase instruction and ff-merged cleanly. Earlier dispatches (`.2`, `.8`, `.9`, `.10`) didn't and required manual diff extraction. **Always include this in implementer briefs.**
 
+WORKTREE TASK-INJECTION LEAK (NEW v36). In v36 the .6 and .8 implementers' edits leaked into main's working tree (not committed) — symptom: stash chains accumulate during merge dance. The worktree branches' commits were correct; main's WORKING TREE picked up duplicate uncommitted edits. Cause unknown (Agent SDK bug?). Workaround: stash-then-merge as routine; drop stashes after the worktree branch ff-merges cleanly. Never commit the leaked main-tree edits as a separate commit — the proper changes arrive via the worktree branch merge.
+
 TRUST `br ready` BUT VERIFY (HARD RULE — three checks).
 `br ready` is NOT authoritative for "the corpus is drained." Three orthogonal filters can hide dispatchable work:
 
@@ -35,8 +37,10 @@ TRUST `br ready` BUT VERIFY (HARD RULE — three checks).
        br doctor --repair
   3. **Stale `defer_until` (L-017).** Clear via `br update <id> --defer ""`.
 
+`br doctor --repair` MUTATES `.gitignore` (NEW v36). It silently strips the `.beads/*` ignore line, which then makes `git status` show the entire `.beads/.br_history/` dir as untracked. Always `git checkout -- .gitignore` after running `br doctor --repair`.
+
 DON'T ASK — EXECUTE.
-On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question (user's standing directive; memory `feedback_resume_continue_directive`). Sub-agents inherit via `.claude/implementer-protocol.md`. Orchestrator on genuine ambiguity: decide and document.
+On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question (user's standing directive; memory `feedback_resume_continue_directive`). Sub-agents inherit via `.claude/implementer-protocol.md`. Orchestrator on genuine ambiguity: decide and document. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections.
 
 IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
 `.claude/implementer-protocol.md` (updated 2026-05-10) is authoritative. Key rules: (a) implementer CLOSES OWN BEADS via `br close` after each commit, (b) implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming, (c) implementer DOES NOT ASK questions back.
@@ -56,6 +60,9 @@ BEAD PICKING — POST-AUDIT SCOPE.
 - Same-package-different-file = parallel-safe.
 - Same-file conflict → serialize via per-bead dispatch.
 
+SPEC-FIRST AUDIT BEFORE BIG INITIATIVES (NEW v36).
+v36 lesson: three smokes RED'd in succession because no one read the specs end-to-end before grinding on plumbing. The bridge code faithfully implemented what CHB and HC specified — those specs simply never defined a daemon→claude task-delivery channel. **Before opening a new initiative, dispatch a research agent (Opus, no code, no smokes) to audit the relevant specs and produce a written gap list.** Templated brief: see hk-lj1p9 audit dispatch on 2026-05-13.
+
 STANDING CONVENTIONS (full version: `.claude/implementer-protocol.md`).
 - Bead body wins over docs; spec wins over bead body for normative content.
 - Typed-alias deferral: real follow-up bead via `br create`, ID substituted into godoc BEFORE commit.
@@ -69,8 +76,8 @@ REVIEWER TIER DISCIPLINE.
 INLINE-AMEND CEILING.
 Trivial single-line text fix, literal one-line code fix, mechanical multi-line refactor → orchestrator inline-amends, no fix-agent. Above ~3 mechanical edits in 1 file → spawn fix-agent on existing worktree.
 
-CWD DISCIPLINE (NEW v35).
-Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. When a worktree is removed under your shell's cwd, the shell stays in that removed dir. ALWAYS prefix bash commands with absolute paths.
+CWD DISCIPLINE (NEW v35; REINFORCED v37).
+Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. When a worktree is removed under your shell's cwd, the shell stays in that removed dir. ALWAYS prefix bash commands with absolute paths. v37 also bit on `go build ./...` running in a stale worktree dir whose files were never updated — verify `pwd` returns /Users/gb/github/harmonik before any build/test command.
 
 MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
@@ -93,88 +100,64 @@ REBASE-SKIP for duplicate-bead commits. When a long-running OLD-protocol impleme
 
 `br update -d` does NOT exist — use `--description` or `--body`. `--notes` adds without overwriting. `br update --defer ""` clears `defer_until` (see L-017). `br create` flags: `-p` priority, `--labels "a,b,c"`, `--parent <id>`.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop. v34→v35 used ~60% of the budget — heavy session.
+CONTEXT BUDGET (orchestrator). ~700 k effective. At ~500 k, finish in-flight stream cleanly, write fresh HANDOFF, stop. v34→v35 used ~60% of the budget — heavy session. v36 used ~26%. v37 used ~29%.
+
+DO NOT RUN `go test ./internal/daemon/` UNTIL hk-lj1p9.3 IS FIXED (HARD RULE — NEW v37).
+hk-fdyip's `EnsureWorktreeTrust` (internal/workspace/claudetrust_wm040b.go) writes to the literal user-home `~/.claude.json`. Concurrent test daemons (T11 throughput, parallel review-loop tests) race on that single file, producing torn writes — verified empirically in v37: user config got `Extra data: line 3917 column 1` corruption and 273 stale `/worktrees/` entries were accumulated from prior runs. The orchestrator manually repaired ~/.claude.json (`~/.claude.json.bak.before-repair` exists as safety net). Until hk-lj1p9.3 lands an env-var-based config-path override + advisory flock, running the daemon test suite will re-corrupt the file. Individual non-concurrent tests are safe: `go test ./internal/daemon/ -run "^TestT6_10BeadSequentialDrain$" -count=1` works.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v35, 2026-05-12)
+# Where we are (v37, 2026-05-13)
 
-Main at `f285d2b`. **Nothing in flight.** Stream is drained except `.7` (re-smoke). Working tree on `spec/claude-hook-bridge` branch with user's pre-session WIP (.gitignore, CLAUDE.md, research/planning-protocols/STATUS.md, untracked .beads/) preserved.
+Main at `3ee426c`. **Nothing in flight.** ~29 commits ahead of origin (NOT pushed). Working tree clean except `~/.claude.json.bak.before-repair` (untracked safety backup of the user's repaired claude config; safe to keep or delete).
 
-## The big win this session
+## What landed this session — the audit-umbrella corpus
 
-**The hook-bridge is feature-complete.** Bead `hk-w5vra` is the umbrella for "claude doesn't speak harmonik's NDJSON protocol" — the protocol-translation gap that caused the original RED smoke. The user authored a 456-line spec for the bridge mid-session (`specs/claude-hook-bridge.md`, CHB-001..027 across v0.1→v0.4), and 10 beads landed under it:
+Umbrella **hk-lj1p9** (claude session lifecycle + bidirectional messaging, filed by v36's audit) is **fully built end-to-end**. All 10 children closed:
 
-| Bead | Commit | What |
+| Bead | Kind | What |
 |---|---|---|
-| `hk-keb6o` | `0534c0b` (pre-session) | Wire LaunchSpec JSON to subprocess stdin (HC-005) |
-| `.1` | `e84da74` | Rename old generic-but-named-claude twin to `harmonik-twin-generic` |
-| `.2` | `12ed9db` | Build new `harmonik-twin-claude` mirroring real-claude lifecycle (CHB-021/022) |
-| `.3` | `f44f8fe` | Implement `harmonik hook-relay <event-kind>` subcommand (CHB-010..017) |
-| `.4` | `fb1bb8c` | Materialize `.claude/settings.json` in workspace (CHB-001..005) |
-| `.5` | `ea4464f` | Claude-code handler-process responsibilities (CHB-006..009, 018..020, 024) |
-| `.6` | `1b88110` | Daemon persists `claude_session_id` to `Run.context` before claude exec (CHB-023) |
-| `.8` | `b38c441` | Spec amendment: CHB-025 Stop-hook dedup gate (daemon last-wins) |
-| `.9` | `405a517` | Spec amendment: CHB-027 orphan-connection silent-drop + §8 `bridge_partial_write` entry |
-| `.10` | `feb6494` | Spec amendment: CHB-026 concurrent-socket serialization rule (per-conn FIFO, across unordered) |
-| `.11` | `f285d2b` | Daemon side: CHB-025 last-received-wins dedup for `outcome_emitted` |
+| hk-yrplz | spec | CHB-028 — `.harmonik/agent-task.md` per-launch task artifact |
+| hk-ultyu | spec | PL-021d — `tmux load-buffer` + `paste-buffer` daemon→pane write mechanism |
+| hk-9rfwz | spec | EM-015d-RFD — reviewer-feedback file delivered before impl-resume |
+| hk-wuyn1 | spec | EM-015d-RIA — review-target.md reviewer input artifact |
+| hk-p63bz | spec | CHB-013/CHB-018/HC-039/HC-041/HC-056 reframe — agent_ready relay-synthesized from SessionStart |
+| hk-igbx8 | code | `tmux.Adapter` extended: `LoadBuffer`, `PasteBuffer`, `SendKeysLiteral`, `WriteToPane` |
+| hk-fdyip | code+spec | CHB-029 — worktree auto-trust pre-seed of `~/.claude.json` |
+| hk-9ow36 | code | Daemon writes `.harmonik/agent-task.md` before each claude launch (CHB-028) |
+| hk-zrj83 | code | Daemon paste-injects "read your task file" after pane spawn (phase-aware) |
+| hk-1rocd | code | `agent_ready` observation switches to relay-synthesized claude signal |
 
-Plus a spec-review pass (`df06fb9`) that surfaced the 3 spec-amendment beads (.8/.9/.10).
+Three post-merge follow-up beads filed: `.1` (T6 hang — closed; root cause was missing MkdirAll, not agent_ready semantics as orchestrator first hypothesized), `.2` (CHB-028 collision was a spec-author oversight — closed; phase transitions now overwrite the file), **`.3` (P0, OPEN — see directives block above)**.
 
-# TOP PRIORITY NEXT SESSION — `hk-w5vra.7` re-smoke
+# TOP PRIORITY NEXT SESSION — fix hk-lj1p9.3, then smoke v4
 
-Same procedure as the original (RED) smoke `hk-1n0cw.2`: isolated scratch beads dir, one disposable bead, run hk against the real `claude` CLI. With the bridge now in place this should be GREEN. Procedure documented in the bead body — `br show hk-w5vra.7`.
+1. **Fix hk-lj1p9.3** (P0). Parameterize EnsureWorktreeTrust to honor a `HARMONIK_CLAUDE_CONFIG_PATH` (or `CLAUDE_CONFIG_HOME`) env var; tests set it to a `t.TempDir()` path. Add a file-level advisory `flock` around the read-modify-write so even in-process concurrent daemons don't tear. Optional: prune stale `projects[]` entries pointing to non-existent paths during each write, to keep the user config from growing without bound.
 
-**OPEN THIS SESSION IN tmux** (user's standing reminder). The user wants to attach to the tmux panes of the Claude subprocesses hk spawns. Running the orchestrator session inside tmux is the prerequisite. Figure out the inspect-the-subprocess-pane workflow early.
+2. **Re-run `go test ./internal/daemon/`** after the fix — confirm `TestT6_10BeadSequentialDrain`, the 4 ReviewLoop tests, and `TestThroughput_TenBeadsAtMaxFour` all pass. (Other failures should be the same pre-existing flakes: `T4_Reopen`, `T5_Redaction`, `specaudit`.)
 
-If the smoke surfaces gaps: file follow-up beads under `hk-w5vra` and iterate. If GREEN: close `hk-w5vra` and `hk-1n0cw` epics; remove the `next-init` label from any remaining beads or rotate to a new initiative.
+3. **Run smoke v4** — the truth-teller for the umbrella. Single foreground daemon, single bead, real `claude` CLI. Document at `docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v4.md` following the v3 template. The v3 RED was load-bearing precisely because no task ever reached claude; that path now exists. Either GREEN (umbrella achievement validated) or surfaces a smaller downstream gap.
 
-# After re-smoke is GREEN: DOT slow-roll
+4. **Push to origin** if smoke v4 GREEN. Main is ~29 commits ahead; user-gated push.
 
-User's plan: slow-roll DOT (the third workflow dispatch mode, currently an empty spec slot per commit `caf4b57`).
+5. **Next initiative after that:** reviewer-loop end-to-end code. Specs exist (EM-015d-RFD + EM-015d-RIA + review-target.md write); the impl phase is built; the reviewer-phase code (write review-target.md, paste-inject for reviewer, read reviewer-feedback on resume) is the gap. That's the gate to dogfooding actual review-loop workflows.
 
-1. Run ONE DOT task end-to-end; review logs, output, full result.
-2. If clean, run TWO DOT tasks IN SERIES; review.
-3. If clean, run TWO DOT tasks IN PARALLEL; review.
-4. Then scale further.
+# What changed in `~/.claude.json` (safe to ignore, but logged here)
 
-**DOT experiments to try once basic rollout works:**
-- Multi-agent arrangements — including one node being the ralph (review-loop) loop.
-- Add deterministic steps to a DOT graph — e.g., a node that checks whether the implementer's branch is off current `main`, and if not, sends a message back to the implementer agent to update/rebase.
+The user's real claude config was corrupted by v37 test runs and manually repaired in-session by truncating to the first valid JSON object. The file now has ~273 stale `/worktrees/` entries from prior test runs (each test daemon adds one). Functional; bloat-only. A `~/.claude.json.bak.before-repair` exists as untracked backup. Once hk-lj1p9.3 lands, the test pollution stops; the bloat can be cleaned separately if it ever matters.
 
-Before any DOT implementation work: open question whether to kerf-plan it (`kerf new dot-workflow-mode --jig spec`) or write a roadmap-first (like `POST_MVH_PARALLELISM_ROADMAP.md`). User hasn't decided.
+# Files to open first
 
-# Carry-forward reminders for the NEXT session
-
-**tmux integration** — test the tmux implementation hk already has.
-
-**Daemonization** — submit-work-and-walk-away model: detached process, pidfile, socket, JSON-RPC operator control per locked decision 2026-05-08.
-
-**Push to origin.** Main is 30+ commits ahead of `origin/main` and NOT pushed. User decides when to push; orchestrator should NOT auto-push.
-
-# Tech debt filed this session
-
-- **harmonik-twin-claude duplicates ~80% of harmonik-twin-generic** (version.go, scriptdriver.go, wire.go, wire_test.go, wire_ndjson_test.go, scriptdriver_test.go, silentHang_hc026_test.go, crashRecov_hc024_test.go, main_test.go). Right move = refactor to an internal package both binaries import. NOT urgent; the two binaries diverge in `main.go` (twin-claude has --scenario), `scenarios.go` (new), `e2e_chb021_test.go` (new). File a follow-up bead when the duplication starts to bite.
-- **Isolated-worktree stale-base bug.** The Agent SDK cuts worktrees from `ecbe43e` rather than current main; cause unknown. Mitigation = rebase-first in brief (now a hard rule). Probably worth a bug report to the SDK if reproducible.
+1. **HANDOFF.md** (this).
+2. `br show hk-lj1p9.3` — the P0 fix you're about to dispatch.
+3. `internal/workspace/claudetrust_wm040b.go` — the file to amend.
+4. `specs/claude-hook-bridge.md` §4.12 CHB-029 — the trust-pre-seed spec; may need a small amendment to mention the env-var override.
+5. `docs/dogfood-smoke-run-2026-05-13-bridge-substrate-v3.md` — the v3 RED you'll follow the structure of for v4.
 
 # Pre-existing flakes — still known, still not blocking
 
 - `TestT4_ReopenThenRedispatch` — git-I/O contention; passes in isolation.
-- `TestWorkLoop_FailedHandlerReopensBead` — same root cause.
 - `TestT5_RedactionHC031ByFieldName` in `internal/t5probe`.
-- `TestSession_Outcome_StderrTail` / `TestSession_Outcome_NonZeroExit` in `internal/handler` — confirmed pre-existing on main during `hk-keb6o` work.
-- `internal/specaudit` failures — pre-existing on main (multiple beads this session confirmed).
+- `internal/specaudit` failures.
 
-# Files to open first (next session)
-
-1. **This file (HANDOFF.md)** — you're reading it.
-2. `docs/orchestration-learnings.md` — friction log; consider appending the worktree-stale-base bug.
-3. `specs/claude-hook-bridge.md` (v0.4) — the spec the implementation realizes.
-4. `docs/dogfood-smoke-trace.md` and `docs/dogfood-smoke-run-2026-05-12.md` — the RED baseline.
-5. `internal/handler/claudehandler_chb006_024.go` — `.5`'s handler-process implementation; the new behavior the smoke will exercise.
-6. `cmd/harmonik-twin-claude/` — the new claude twin.
-7. `br show hk-w5vra.7` — the re-smoke bead body.
-
-# Blocking question for the user
-
-None. Re-smoke `.7` is the dispatchable next step; if GREEN, DOT slow-roll. User wanted to be hands-on for the re-smoke (per next-init guidance), so don't auto-dispatch — confirm at session start.
+NEW post-umbrella failures (all symptoms of hk-lj1p9.3): `TestReviewLoopCycleComplete_Blocked`, `TestReviewLoop_HappyPath_APPROVE` (only when run concurrently with siblings), `TestReviewLoopCycleComplete_Approved`, `TestReviewLoop_CapHit`, `TestThroughput_TenBeadsAtMaxFour`. All will resolve when EnsureWorktreeTrust is isolated.

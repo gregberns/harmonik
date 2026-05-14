@@ -88,9 +88,19 @@ func Register(reg *handlercontract.AdapterRegistry) error {
 // DetectReady reports whether event is the agent_ready signal for a
 // Claude Code session (handler-contract.md §4.9.HC-041).
 //
-// Returns true ONLY when event.Type is "agent_ready".  MUST NOT synthesize
-// ready-state from any other signal (HC-041 hard rule).
+// Returns true ONLY when event.Type is "agent_ready".  MUST NOT return true
+// for "launch_initiated" (the handler pre-exec precursor per CHB-018 step 4)
+// or any other signal (HC-041 hard rule).
+//
+// Under the interactive (tmux) substrate, the satisfying event is a relay-
+// synthesized agent_ready carrying provenance = "claude_session_start" per
+// CHB-013 / HC-039.  This adapter accepts that provenance value as valid;
+// the Type field alone is the gate here.
 func (ClaudeCodeAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
+	// Explicitly reject launch_initiated — it MUST NOT satisfy ready-state.
+	if event.Type == handlercontract.ProgressMsgTypeLaunchInitiated {
+		return false
+	}
 	return event.Type == handlercontract.ProgressMsgTypeAgentReady
 }
 

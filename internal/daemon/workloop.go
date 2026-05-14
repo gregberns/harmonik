@@ -634,6 +634,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
+
+	// Step 4a: register an agent_ready callback on the hook store so that
+	// relay-synthesized agent_ready messages (CHB-013 SessionStart → agent_ready)
+	// are forwarded into the per-run tap and become visible to waitAgentReady.
+	// The callback emits agent_ready on both the bus and the tap channel.
+	// tapCtx is a best-effort context: we use the outer ctx; if it has been
+	// cancelled by the time SessionStart arrives, the emit is silently dropped
+	// (waitAgentReady will already be returning ctx.Err()).
+	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
+		_ = tap.Emit(ctx, core.EventTypeAgentReady, nil)
+	})
+
 	// Use deps.adapterRegistry when available; fall back to a fresh empty
 	// registry when nil. NewHandler panics on nil registry.
 	tapRegistry := deps.adapterRegistry

@@ -495,6 +495,7 @@ var knownProgressMsgTypes = map[ProgressMsgType]struct{}{
 	ProgressMsgTypeSessionLogLocation:    {},
 	ProgressMsgTypeSkillsProvisioned:     {},
 	ProgressMsgTypeOutcomeEmitted:        {},
+	ProgressMsgTypeLaunchInitiated:       {},
 }
 
 // isKnownProgressMsgType reports whether msgType is one of the 12 required

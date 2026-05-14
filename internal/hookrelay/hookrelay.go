@@ -194,7 +194,7 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 		return 1
 	}
 
-	// CHB-013: SessionStart and SessionEnd are no-op at MVH.
+	// SessionEnd is no-op; SessionStart synthesizes agent_ready (not a no-op).
 	if noOp {
 		return 0
 	}
@@ -233,8 +233,11 @@ func buildMessage(eventKind string, inp hookInput, e Env, _ time.Time) (
 ) {
 	switch eventKind {
 	case "SessionStart":
-		// CHB-013: no-op at MVH; ready-state is handler-emitted.
-		return "", nil, true, nil
+		// CHB-013 (as amended by hk-p63bz): relay synthesizes agent_ready with
+		// provenance="claude_session_start" on first SessionStart receipt.
+		// This is the first claude-originated lifecycle signal under the tmux
+		// substrate and is the correct ready-state indicator (HC-039 / HC-041).
+		return buildSessionStartMessage(e)
 
 	case "SessionEnd":
 		// CHB-013: no-op; handler emits agent_completed on Wait-return.
@@ -252,6 +255,30 @@ func buildMessage(eventKind string, inp hookInput, e Env, _ time.Time) (
 
 	// Unreachable: knownEventKinds check already handled unknowns.
 	return "", nil, true, nil
+}
+
+// buildSessionStartMessage synthesizes agent_ready with provenance="claude_session_start"
+// on receipt of a SessionStart hook, per CHB-013 (as amended by hk-p63bz).
+//
+// This is the first claude-originated lifecycle signal under the interactive
+// (tmux) substrate and satisfies the HC-039 ready-state gate.  The daemon's
+// waitAgentReady will observe this event and unblock work dispatch.
+//
+// Source detection: the relay does not currently distinguish between
+// startup and resume SessionStart sources at the wire level; both synthesize
+// agent_ready with provenance="claude_session_start" per CHB-013.
+func buildSessionStartMessage(e Env) (
+	msgType string, payload json.RawMessage, noOp bool, err error,
+) {
+	pl, marshalErr := json.Marshal(map[string]interface{}{
+		"session_id":   e.HandlerSessionID,
+		"capabilities": []string{},
+		"provenance":   "claude_session_start",
+	})
+	if marshalErr != nil {
+		return "", nil, false, fmt.Errorf("bridge_malformed_hook_payload: marshal agent_ready payload: %w", marshalErr)
+	}
+	return "agent_ready", pl, false, nil
 }
 
 // buildStopMessage handles the Stop hook → outcome_emitted mapping per CHB-013.

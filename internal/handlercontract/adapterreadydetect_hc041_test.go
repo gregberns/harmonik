@@ -133,6 +133,8 @@ func TestReadyDetect_ReturnsFalseForNonAgentReadyEvents(t *testing.T) {
 		handlercontract.ProgressMsgTypeSessionLogLocation,
 		handlercontract.ProgressMsgTypeAgentHeartbeat,
 		handlercontract.ProgressMsgTypeOutcomeEmitted,
+		// HC-041 hard rule: launch_initiated MUST NOT satisfy ready-state (hk-p63bz).
+		handlercontract.ProgressMsgTypeLaunchInitiated,
 	}
 
 	adapter := readyDetectFixtureAdapter{}

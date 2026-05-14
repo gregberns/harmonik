@@ -84,6 +84,17 @@ const (
 	// it into the outcome_emitted bus event.  After this message the subprocess
 	// MUST exit within T_shutdown (§4.2.HC-008a).
 	ProgressMsgTypeOutcomeEmitted ProgressMsgType = "outcome_emitted"
+
+	// ProgressMsgTypeLaunchInitiated is the pre-exec precursor emitted by the
+	// handler-process BEFORE exec'ing Claude per CHB-018 step 4 (interactive
+	// substrate path). It signals that the handler is about to exec Claude but
+	// does NOT indicate that Claude is ready to accept work — that signal is
+	// the relay-synthesized agent_ready on first SessionStart hook receipt per
+	// CHB-013 / HC-039.
+	//
+	// Adapters MUST NOT return true from DetectReady on receipt of this message
+	// per HC-041.
+	ProgressMsgTypeLaunchInitiated ProgressMsgType = "launch_initiated"
 )
 
 // NDJSONMaxLineLenBytes is the maximum byte length of a single NDJSON-framed

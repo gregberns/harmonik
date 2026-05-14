@@ -145,16 +145,45 @@ func TestHookRelay_UnknownEventKind_NoOp(t *testing.T) {
 	}
 }
 
-func TestHookRelay_SessionStart_NoOp(t *testing.T) {
+func TestHookRelay_SessionStart_SynthesizesAgentReady(t *testing.T) {
 	t.Parallel()
 
-	// CHB-013: SessionStart is no-op at MVH.
+	// CHB-013 (as amended by hk-p63bz): SessionStart synthesizes agent_ready
+	// with provenance="claude_session_start" and sends it to the daemon socket.
+	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
 	e := hookRelayFixtureEnv(t.TempDir())
+	e.DaemonSocket = sockPath
 	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("SessionStart", stdin, &stderr, &e)
 	if code != 0 {
 		t.Errorf("SessionStart: exit %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	// The relay should have sent an agent_ready message to the socket.
+	select {
+	case msgBytes := <-received:
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(msgBytes, &msg); err != nil {
+			t.Fatalf("SessionStart: unmarshal sent message: %v", err)
+		}
+		var msgType string
+		if err := json.Unmarshal(msg["type"], &msgType); err != nil {
+			t.Fatalf("SessionStart: unmarshal type field: %v", err)
+		}
+		if msgType != "agent_ready" {
+			t.Errorf("SessionStart: message type = %q; want %q", msgType, "agent_ready")
+		}
+		// Verify payload carries provenance="claude_session_start".
+		var payload map[string]interface{}
+		if err := json.Unmarshal(msg["payload"], &payload); err != nil {
+			t.Fatalf("SessionStart: unmarshal payload: %v", err)
+		}
+		if payload["provenance"] != "claude_session_start" {
+			t.Errorf("SessionStart: payload.provenance = %v; want %q", payload["provenance"], "claude_session_start")
+		}
+	default:
+		t.Error("SessionStart: no message received on socket; expected agent_ready")
 	}
 }
 

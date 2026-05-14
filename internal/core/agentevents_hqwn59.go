@@ -117,6 +117,12 @@ type AgentReadyPayload struct {
 	// Capabilities is the list of capability strings advertised by this agent.
 	// Required (non-nil; may be empty slice if no capabilities are declared).
 	Capabilities []string `json:"capabilities"`
+
+	// Provenance is the source of the agent_ready signal.  Set to
+	// "claude_session_start" when the message was synthesized by the
+	// hook-relay on first SessionStart receipt (CHB-013 / HC-039 under the
+	// tmux substrate).  Empty for conventional handler subprocess emission.
+	Provenance string `json:"provenance,omitempty"`
 }
 
 // Valid reports whether p is a well-formed AgentReadyPayload.
@@ -133,6 +139,53 @@ func (p AgentReadyPayload) Valid() bool {
 		return false
 	}
 	if p.Capabilities == nil {
+		return false
+	}
+	return true
+}
+
+// LaunchInitiatedPayload is the typed event payload for the launch_initiated
+// event.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — handler lifecycle observability).
+//
+// Emitted by the handler-process as the pre-exec precursor (CHB-018 step 4)
+// under the interactive (tmux) substrate.  Signals that the handler is about
+// to exec Claude Code but does NOT indicate ready-state.
+//
+// # Payload fields
+//
+//   - run_id            — the run in whose context the launch is occurring
+//   - session_id        — handler-assigned session identifier
+//   - claude_session_id — the Claude session ID minted or reused for this launch
+//   - phase             — launch phase (e.g. "single", "implementer-initial")
+type LaunchInitiatedPayload struct {
+	// RunID is the run in whose context the launch is occurring.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// SessionID is the handler-assigned session identifier. Required (non-empty).
+	SessionID SessionID `json:"session_id"`
+
+	// ClaudeSessionID is the Claude Code session identifier minted or reused
+	// by the handler subprocess for this launch. Required (non-empty).
+	ClaudeSessionID string `json:"claude_session_id"`
+
+	// Phase is the launch phase string. Empty when unknown.
+	Phase string `json:"phase,omitempty"`
+}
+
+// Valid reports whether p is a well-formed LaunchInitiatedPayload.
+func (p LaunchInitiatedPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.SessionID == "" {
+		return false
+	}
+	if p.ClaudeSessionID == "" {
 		return false
 	}
 	return true

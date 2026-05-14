@@ -513,7 +513,7 @@ func TestPreExecMessages_FourMessages(t *testing.T) {
 		handlercontract.ProgressMsgTypeHandlerCapabilities,
 		handlercontract.ProgressMsgTypeSessionLogLocation,
 		handlercontract.ProgressMsgTypeSkillsProvisioned,
-		handlercontract.ProgressMsgTypeAgentReady,
+		handlercontract.ProgressMsgTypeLaunchInitiated, // CHB-018 step 4: launch_initiated (not agent_ready) per hk-p63bz
 	}
 
 	for i, raw := range msgs {
@@ -595,22 +595,31 @@ func TestPreExecMessages_SkillsProvisioned_EmptySkillsWhenNil(t *testing.T) {
 	}
 }
 
-// TestPreExecMessages_AgentReady_HasSessionID verifies agent_ready carries
-// the session ID.
-func TestPreExecMessages_AgentReady_HasSessionID(t *testing.T) {
+// TestPreExecMessages_LaunchInitiated_HasSessionID verifies launch_initiated
+// (CHB-018 step 4) carries the session ID and claude_session_id.
+// Per hk-p63bz the handler emits launch_initiated pre-exec, not agent_ready.
+// agent_ready is synthesized by the relay on first SessionStart receipt (CHB-013).
+func TestPreExecMessages_LaunchInitiated_HasSessionID(t *testing.T) {
 	t.Parallel()
 	const sessID = "sess-005"
-	msgs, err := handler.PreExecMessages("run-005", sessID, "node-005", "cs-005", "/log", nil)
+	const claudeSessID = "cs-005"
+	msgs, err := handler.PreExecMessages("run-005", sessID, "node-005", claudeSessID, "/log", nil)
 	if err != nil {
 		t.Fatalf("PreExecMessages: %v", err)
 	}
 
-	var ar handlercontract.AgentReadyMsg
-	if err := json.Unmarshal(msgs[3], &ar); err != nil {
-		t.Fatalf("unmarshal agent_ready: %v", err)
+	var li handlercontract.LaunchInitiatedMsg
+	if err := json.Unmarshal(msgs[3], &li); err != nil {
+		t.Fatalf("unmarshal launch_initiated: %v", err)
 	}
-	if ar.SessionID != sessID {
-		t.Errorf("agent_ready.session_id = %q; want %q", ar.SessionID, sessID)
+	if li.Type != handlercontract.ProgressMsgTypeLaunchInitiated {
+		t.Errorf("launch_initiated.type = %q; want %q", li.Type, handlercontract.ProgressMsgTypeLaunchInitiated)
+	}
+	if li.SessionID != sessID {
+		t.Errorf("launch_initiated.session_id = %q; want %q", li.SessionID, sessID)
+	}
+	if li.ClaudeSessionID != claudeSessID {
+		t.Errorf("launch_initiated.claude_session_id = %q; want %q", li.ClaudeSessionID, claudeSessID)
 	}
 }
 

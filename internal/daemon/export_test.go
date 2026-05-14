@@ -394,6 +394,9 @@ func (s *synthHookStore) WaitForOutcome(_ context.Context, _, _ string) (json.Ra
 	return nil, nil
 }
 
+// SetAgentReadyCallback is a no-op: synthHookStore does not simulate relay events.
+func (s *synthHookStore) SetAgentReadyCallback(_, _ string, _ func()) {}
+
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {
 	s.RegisterHookSession(runID, claudeSessionID)
@@ -444,6 +447,12 @@ func ExportedHookWaitForOutcome(ctx context.Context, s *hookSessionStore, runID,
 // hook-relay envelopes through a running socket listener (hk-gql20.21).
 func ExportedHookStoreOf(deps workLoopDeps) hookStoreIface {
 	return deps.hookStore
+}
+
+// ExportedHookSetAgentReadyCallback exposes SetAgentReadyCallback for tests
+// (hk-1rocd: relay-synthesized agent_ready dispatch path).
+func ExportedHookSetAgentReadyCallback(s *hookSessionStore, runID, claudeSessionID string, cb func()) {
+	s.SetAgentReadyCallback(runID, claudeSessionID, cb)
 }
 
 // ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.

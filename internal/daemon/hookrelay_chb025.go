@@ -90,6 +90,12 @@ type hookSession struct {
 	// closed is set to true by CloseHookSession when cmd.Wait() returns.
 	// Any incoming relay message targeting a closed session returns unknown_session.
 	closed bool
+
+	// agentReadyCallback is called (non-nil only) when an agent_ready relay
+	// message is received for this session.  Set by SetAgentReadyCallback after
+	// RegisterHookSession; used by the work loop to forward relay-synthesized
+	// agent_ready into the per-run event tap so waitAgentReady can observe it.
+	agentReadyCallback func()
 }
 
 // hookStoreIface is the interface over hook-session state used by the work loop
@@ -103,6 +109,14 @@ type hookStoreIface interface {
 	CloseHookSession(runID, claudeSessionID string)
 	LatestOutcome(runID, claudeSessionID string) *json.RawMessage
 	WaitForOutcome(ctx context.Context, runID, claudeSessionID string) (json.RawMessage, error)
+
+	// SetAgentReadyCallback registers a callback that is called (once) when the
+	// daemon socket receives an agent_ready relay message for (runID,
+	// claudeSessionID).  The callback is invoked from the socket-acceptor goroutine
+	// and MUST be non-blocking.  Used by the work loop to forward relay-synthesized
+	// agent_ready into the per-run event tap so waitAgentReady can observe it
+	// (CHB-013 / HC-039).
+	SetAgentReadyCallback(runID, claudeSessionID string, cb func())
 }
 
 // hookSessionStore is the daemon-wide registry of active hook-relay sessions.
@@ -142,6 +156,24 @@ func (s *hookSessionStore) RegisterHookSession(runID, claudeSessionID string) {
 	defer s.mu.Unlock()
 	if _, exists := s.sessions[key]; !exists {
 		s.sessions[key] = &hookSession{}
+	}
+}
+
+// SetAgentReadyCallback sets a callback on the session identified by (runID,
+// claudeSessionID). The callback is called from the socket-acceptor goroutine
+// when an agent_ready relay message is received for that session.
+//
+// Called from the work loop goroutine after RegisterHookSession and after the
+// per-run event tap has been created (so the callback can safely forward to the
+// tap channel).
+//
+// If the session is not registered the call is a no-op.
+func (s *hookSessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb func()) {
+	key := hookSessionKey{runID: runID, claudeSessionID: claudeSessionID}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[key]; ok && sess != nil {
+		sess.agentReadyCallback = cb
 	}
 }
 
@@ -273,6 +305,22 @@ func (s *hookSessionStore) updateOutcome(runID, claudeSessionID string, payload 
 	return true, "ok"
 }
 
+// notifyAgentReady invokes the agentReadyCallback for (runID, claudeSessionID)
+// if one has been registered. The callback is invoked outside the mutex to
+// avoid lock inversion; it is read under the mutex then called after unlock.
+func (s *hookSessionStore) notifyAgentReady(runID, claudeSessionID string) {
+	key := hookSessionKey{runID: runID, claudeSessionID: claudeSessionID}
+	s.mu.Lock()
+	var cb func()
+	if sess, ok := s.sessions[key]; ok && sess != nil {
+		cb = sess.agentReadyCallback
+	}
+	s.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
+}
+
 // HandleHookRelay implements HookRelayHandler. It is called from the socket
 // acceptor goroutine for each hook-relay connection.
 func (s *hookSessionStore) HandleHookRelay(env hookRelayEnvelope) hookRelayAckMsg {
@@ -314,10 +362,15 @@ func (s *hookSessionStore) dispatchHookRelayEnvelope(env hookRelayEnvelope) hook
 		}
 		return hookRelayAckMsg{Status: "ok"}
 
+	case "agent_ready":
+		// CHB-013 (hk-p63bz): relay-synthesized agent_ready on first SessionStart
+		// receipt.  Forward to the per-run event tap via the registered callback
+		// so waitAgentReady can observe it (HC-039 / HC-041).
+		s.notifyAgentReady(env.RunID, env.ClaudeSessionID)
+		return hookRelayAckMsg{Status: "ok"}
+
 	default:
 		// Any other known or future message type is accepted without state update.
-		// The daemon may ignore heartbeats, agent_ready, etc. at MVH; future beads
-		// will add routing for additional types as needed.
 		return hookRelayAckMsg{Status: "ok"}
 	}
 }

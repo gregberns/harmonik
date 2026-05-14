@@ -116,6 +116,7 @@ func registerAgentEvents() {
 	mustRegister("agent_rate_limit_status", func() EventPayload { return &AgentRateLimitStatusPayload{} })
 	mustRegister("skills_provisioned", func() EventPayload { return &SkillsProvisionedPayload{} })
 	mustRegister("handler_capabilities", func() EventPayload { return &HandlerCapabilitiesPayload{} })
+	mustRegister("launch_initiated", func() EventPayload { return &LaunchInitiatedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

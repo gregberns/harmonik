@@ -13,7 +13,7 @@
 //     reuse from LaunchSpec for implementer-resume; passed via --session-id or --resume.
 //   - CHB-009: reviewer always mints fresh, never inherits prior reviewer session.
 //   - CHB-018: pre-Claude-exec emission order: handler_capabilities →
-//     session_log_location → skills_provisioned → agent_ready.
+//     session_log_location → skills_provisioned → launch_initiated.
 //   - CHB-019: timer-driven agent_heartbeat{phase:"reasoning"} every 300 s while Claude alive.
 //   - CHB-020: terminal-event mapping on cmd.Wait() return (3 branches).
 //   - CHB-024: fail-fast if .claude/settings.local.json shadows bridge hooks.
@@ -300,7 +300,7 @@ func CheckSettingsLocalJSON(workspacePath string) error {
 // PreExecMessages returns the 4 ordered progress-stream messages that the claude-code
 // handler-process MUST emit BEFORE exec'ing Claude per CHB-018.
 //
-// Order: handler_capabilities → session_log_location → skills_provisioned → agent_ready.
+// Order: handler_capabilities → session_log_location → skills_provisioned → launch_initiated.
 //
 // Parameters:
 //   - runID, sessionID, workflowID, nodeID — IDs to embed in the messages.
@@ -310,6 +310,11 @@ func CheckSettingsLocalJSON(workspacePath string) error {
 //
 // Returns a slice of 4 compact JSON lines (no trailing newline on each; the caller
 // appends '\n' when writing them to the progress stream socket).
+//
+// Note: step 4 emits launch_initiated (not agent_ready).  Under the interactive
+// (tmux) substrate, agent_ready is synthesized by the hook-relay on first
+// SessionStart receipt per CHB-013 / HC-039.  launch_initiated MUST NOT
+// satisfy the ready-state gate per HC-041.
 //
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-018.
 func PreExecMessages(
@@ -362,18 +367,21 @@ func PreExecMessages(
 		return nil, fmt.Errorf("handler: PreExecMessages: marshal skills_provisioned: %w: %w", err, ErrStructural)
 	}
 
-	// 4. agent_ready (CHB-018 step 4, HC-039).
-	arMsg := handlercontract.AgentReadyMsg{
-		Type:         handlercontract.ProgressMsgTypeAgentReady,
-		SessionID:    sessionID,
-		Capabilities: []string{},
+	// 4. launch_initiated (CHB-018 step 4, HC-039).
+	// Under the interactive (tmux) substrate the handler emits launch_initiated
+	// here (not agent_ready).  The relay synthesizes agent_ready on first
+	// SessionStart receipt per CHB-013 / HC-039.
+	liMsg := handlercontract.LaunchInitiatedMsg{
+		Type:            handlercontract.ProgressMsgTypeLaunchInitiated,
+		SessionID:       sessionID,
+		ClaudeSessionID: claudeSessionID,
 	}
-	arBytes, err := json.Marshal(arMsg)
+	liBytes, err := json.Marshal(liMsg)
 	if err != nil {
-		return nil, fmt.Errorf("handler: PreExecMessages: marshal agent_ready: %w: %w", err, ErrStructural)
+		return nil, fmt.Errorf("handler: PreExecMessages: marshal launch_initiated: %w: %w", err, ErrStructural)
 	}
 
-	return [][]byte{hcBytes, sllBytes, spBytes, arBytes}, nil
+	return [][]byte{hcBytes, sllBytes, spBytes, liBytes}, nil
 }
 
 // ExportedOutcomeEmittedPayload is the partial shape we need from outcome_emitted

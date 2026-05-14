@@ -67,6 +67,9 @@ func (f *fakeTmuxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) 
 	return f.panePIDResult, nil
 }
 func (f *fakeTmuxAdapter) KillSession(_ context.Context, _ string) error { return nil }
+func (f *fakeTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
+func (f *fakeTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error       { return nil }
+func (f *fakeTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error   { return nil }
 
 // LoadBuffer is a no-op stub to satisfy the [tmux.Adapter] interface.
 func (f *fakeTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }

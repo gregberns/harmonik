@@ -149,6 +149,94 @@ func TestHookSessionStore_StalePostCloseArrival(t *testing.T) {
 // Test 3: Socket round-trip — outcome_emitted ACK and unknown_session
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Test: agent_ready relay dispatch triggers callback (hk-1rocd / CHB-013)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestHookSessionStore_AgentReadyDispatch_TriggersCallback verifies that when
+// the daemon socket receives an agent_ready relay message, the registered
+// agentReadyCallback is called.  This is the relay-synthesized agent_ready
+// path (CHB-013 / HC-039) that allows waitAgentReady to observe a
+// claude-originated ready signal rather than a daemon self-emission.
+func TestHookSessionStore_AgentReadyDispatch_TriggersCallback(t *testing.T) {
+	const runID = "run-agent-ready-01"
+	const sessionID = "claude-sess-agent-ready-01"
+
+	store := daemon.ExportedNewHookSessionStore()
+	daemon.ExportedHookRegister(store, runID, sessionID)
+
+	// Register a callback.
+	called := make(chan struct{}, 1)
+	daemon.ExportedHookSetAgentReadyCallback(store, runID, sessionID, func() {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+	})
+
+	// Dispatch agent_ready.
+	env := hookRelayFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
+	status, _ := daemon.ExportedHookDispatch(store, env)
+	if status != "ok" {
+		t.Errorf("agent_ready dispatch: status=%q, want ok", status)
+	}
+
+	// Callback should have been called.
+	select {
+	case <-called:
+		// expected
+	default:
+		t.Error("agent_ready dispatch: callback was NOT called; relay-synthesized agent_ready must trigger the callback")
+	}
+}
+
+// TestHookSessionStore_AgentReadyDispatch_NoCallbackIsNoOp verifies that
+// dispatching agent_ready without a registered callback is a safe no-op.
+func TestHookSessionStore_AgentReadyDispatch_NoCallbackIsNoOp(t *testing.T) {
+	const runID = "run-agent-ready-noop-01"
+	const sessionID = "claude-sess-agent-ready-noop-01"
+
+	store := daemon.ExportedNewHookSessionStore()
+	daemon.ExportedHookRegister(store, runID, sessionID)
+
+	// No callback registered — dispatch must return ok without panicking.
+	env := hookRelayFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
+	status, _ := daemon.ExportedHookDispatch(store, env)
+	if status != "ok" {
+		t.Errorf("agent_ready no-callback dispatch: status=%q, want ok", status)
+	}
+}
+
+// TestHookSessionStore_LaunchInitiated_IsNoOp verifies that launch_initiated
+// messages (handler pre-exec precursor per CHB-018) are accepted without any
+// state change.  They MUST NOT trigger the agent_ready callback (HC-041).
+func TestHookSessionStore_LaunchInitiated_IsNoOp(t *testing.T) {
+	const runID = "run-launch-initiated-01"
+	const sessionID = "claude-sess-launch-initiated-01"
+
+	store := daemon.ExportedNewHookSessionStore()
+	daemon.ExportedHookRegister(store, runID, sessionID)
+
+	// Register a callback — it must NOT fire on launch_initiated.
+	callbackFired := false
+	daemon.ExportedHookSetAgentReadyCallback(store, runID, sessionID, func() {
+		callbackFired = true
+	})
+
+	env := hookRelayFixtureMakeEnvelope(runID, sessionID, "launch_initiated", nil)
+	status, _ := daemon.ExportedHookDispatch(store, env)
+	if status != "ok" {
+		t.Errorf("launch_initiated dispatch: status=%q, want ok", status)
+	}
+	if callbackFired {
+		t.Error("launch_initiated dispatch: agent_ready callback was fired; it MUST NOT fire for launch_initiated (HC-041)")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 3: Socket round-trip — outcome_emitted ACK and unknown_session
+// ─────────────────────────────────────────────────────────────────────────────
+
 // TestHookSessionStore_SocketRoundTrip verifies the full socket path:
 // 1. A hook-relay envelope is written to a real Unix domain socket.
 // 2. The daemon reads it and returns a hookRelayAckMsg with status "ok".

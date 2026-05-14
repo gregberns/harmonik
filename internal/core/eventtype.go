@@ -181,6 +181,14 @@ const (
 	// EventTypeAgentHardTerminating is the agent_hard_terminating event type (§8.3.13).
 	// Durability class: O.
 	EventTypeAgentHardTerminating EventType = "agent_hard_terminating"
+
+	// EventTypeLaunchInitiated is the launch_initiated event type.
+	// Emitted by the handler-process pre-exec (CHB-018 step 4) under the
+	// interactive (tmux) substrate.  Signals that the handler is about to exec
+	// Claude but does NOT indicate ready-state — that is the relay-synthesized
+	// agent_ready on first SessionStart receipt (CHB-013 / HC-039).
+	// Durability class: O.
+	EventTypeLaunchInitiated EventType = "launch_initiated"
 )
 
 // ---------------------------------------------------------------------------

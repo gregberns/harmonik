@@ -8,7 +8,7 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.8
+version: 0.9
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -443,6 +443,43 @@ For `phase = reviewer`: the Prior-Iteration Context section MUST include the bas
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
+### 4.12 Worktree auto-trust pre-seed
+
+#### CHB-029 — Pre-seed `~/.claude.json` with worktree trust before exec
+
+**Problem.** When Claude Code starts in a directory it has not seen before, it displays an interactive "Trust this directory?" dialog on the terminal. With no human at the keyboard (daemon-spawned tmux pane), this dialog blocks indefinitely and HC-056 fires.
+
+**Mechanism.** Claude Code persists trust acceptance in `~/.claude.json` under a top-level `"projects"` map keyed by the absolute directory path. The entry shape that suppresses the dialog is:
+
+```json
+{
+  "projects": {
+    "<worktree_path>": {
+      "hasTrustDialogAccepted": true
+    }
+  }
+}
+```
+
+Harmonik MUST write this entry to `~/.claude.json` before exec'ing Claude in the worktree pane. This is a user-level file (not worktree-scoped) and is the only known suppression mechanism that survives `--session-id` flag use (the alternatives — `--permission-mode` and `--dangerously-skip-permissions` — are deny-listed per [handler-contract.md §4.9 HC-055] and [claude-hook-bridge.md §4.2 CHB-007]).
+
+**Ordering.** The `~/.claude.json` write MUST occur AFTER WM-003 (worktree creation) and WM-040a (settings.json materialization) and BEFORE `SubstrateSpawn` (the tmux new-window call that starts Claude). The ordering invariant for CHB-028's materialization window — worktree creation → materialize settings + trust → Claude exec — is extended to include the trust write.
+
+**Idempotency.** The write MUST be idempotent: if the entry is already present and `hasTrustDialogAccepted` is already `true`, no write is performed. On re-attach (daemon restart mid-session), the entry is already present and the call is a no-op.
+
+**Atomicity.** The `~/.claude.json` write MUST use an atomic temp-file + rename pattern (same WM-026 discipline as settings.json) to avoid corruption when concurrent daemon instances write to the same user config. The temp file MUST be sibling to `~/.claude.json` (e.g., `~/.claude.json.tmp-<pid>`).
+
+**Failure handling.** If the write fails for any reason (read error, parse error, marshal error, rename error), the daemon MUST NOT exec Claude. The error is surfaced as an `ErrStructural` with `sub_reason: trust_seed_failed` and `agent_failed` is emitted. An un-seeded launch would block rather than hang silently.
+
+**Existing entry preservation.** The write MUST NOT remove or modify any other key in `~/.claude.json` or any other entry in the `projects` map. The merge is additive: only `hasTrustDialogAccepted` is set on the worktree's entry; all other fields in the entry (if pre-existing) are retained.
+
+**Scope note.** This is the user-operator machine running the daemon, not the worktree itself. No worktree-local file is written by this step. The entry persists after the run completes; cleanup is acceptable but not required at MVH (orphaned trust entries are cosmetically inert).
+
+Cross-refs: [workspace-model.md §4.7b WM-040b] (spec side of the same requirement), [handler-contract.md §4.9 HC-055] (deny-list excluding --permission-mode), [handler-contract.md §4.9 HC-056] (agent_ready timeout triggered by blocked trust prompt), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags including --dangerously-skip-permissions).
+
+Tags: mechanism, security-relevant
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ## 5. Invariants
 
 #### CHB-INV-001 — Two-contributor session
@@ -547,6 +584,7 @@ A handler implementation claiming `claude-code` conformance MUST satisfy:
 - CHB-024 (startup verification that bridge hooks are not shadowed by settings.local.json).
 - CHB-025 (daemon last-received-wins dedup for `outcome_emitted` across multi-turn Stop firings).
 - CHB-028 (per-launch task artifact: `agent-task.md` materialized atomically before Claude exec).
+- CHB-029 (worktree auto-trust: `~/.claude.json` pre-seeded with `hasTrustDialogAccepted: true` before Claude exec).
 
 Scenario tests MUST cover:
 
@@ -585,3 +623,4 @@ Post-MVH evolution to stream-json + `--include-hook-events` is possible without 
 | 2026-05-13 | 0.6 | agent (hk-gql20.25) | Bridge-integration spec review findings (MINOR + MEDIUM). **MINOR:** v0.5 changelog citation corrected: `HC-026a` → `HC-054` (Session.Attach pty contract; the prior cite was the heartbeat obligation, not the pty contract intended). **MEDIUM (CHB-019):** Added cross-reference note to §4.7 CHB-019 stating that for `agent_type=claude-code` at MVH the daemon MAY emit `agent_heartbeat` on the handler-process's behalf per HC-057; daemon-emitted heartbeats satisfy CHB-019 without constituting a protocol violation. Refs: hk-gql20.25. |
 | 2026-05-13 | 0.7 | agent (hk-yrplz) | CHB-028: per-launch task artifact — `${workspace_path}/.harmonik/agent-task.md` as the normative daemon→claude task-delivery channel under the tmux substrate. §4.11 added. Atomic-write discipline per WM-026. Reserved name (NOT CLAUDE.md). Content shape by phase (implementer-initial, implementer-resume, reviewer). Prior-iteration pointers for resume and reviewer phases. Gitignore hygiene, re-attach semantics, and task_file_collision / task_file_empty error sub-reasons added to §8. §2.1 scope and §9 cross-references updated. Conformance checklist updated. Refs: hk-yrplz. |
 | 2026-05-13 | 0.8 | agent (hk-p63bz) | **agent_ready semantics reframed for the interactive (tmux) substrate.** CHB-013: `SessionStart {source: startup}` and `SessionStart {source: resume}` rows updated — relay now synthesizes `agent_ready` (with `provenance: "claude_session_start"`) on first hook receipt rather than being a no-op. This makes `agent_ready` a claude-originated signal rather than a daemon self-emission. CHB-018: step 4 changed from `agent_ready` self-emission to `launch_initiated` precursor; added normative rationale explaining that `agent_ready` is gated on relay receipt under the tmux substrate. §2.1 scope bullet updated to reflect `launch_initiated` (not `agent_ready`) as the pre-exec handler emission. Coexists with CHB-028 (task artifact, hk-yrplz). Refs: hk-p63bz. |
+| 2026-05-13 | 0.9 | agent (hk-fdyip) | **CHB-029: worktree auto-trust pre-seed.** §4.12 added. The daemon MUST pre-seed `~/.claude.json` projects[worktreePath].hasTrustDialogAccepted=true before exec'ing Claude in a daemon-spawned tmux pane; without this the interactive trust dialog blocks indefinitely and HC-056 fires. Mechanism: atomic temp-file+rename write to user-level ~/.claude.json. Ordering: after WM-003 + WM-040a, before SubstrateSpawn. Failure: ErrStructural / trust_seed_failed / agent_failed. Alternatives rejected: --permission-mode and --dangerously-skip-permissions are deny-listed in HC-055 and CHB-007. Companion: workspace-model.md §4.7b WM-040b. Code: internal/workspace/claudetrust_wm040b.go. Refs: hk-fdyip. |

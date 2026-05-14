@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,17 @@ type NewWindowIn struct {
 // Adapter interface
 // ──────────────────────────────────────────────────────────────────────────────
 
+// bufferNameRe is the compiled regex for validating tmux buffer names used by
+// the daemon pane-write mechanism. The required format is:
+//
+//	harmonik-<session-id>-<purpose>
+//
+// where <session-id> and <purpose> are lowercase alphanumeric slugs with
+// optional internal hyphens.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — buffer-name discipline.
+var bufferNameRe = regexp.MustCompile(`^harmonik-[a-z0-9-]+-[a-z0-9-]+$`)
+
 // Adapter is the tmux window-management interface consumed by the daemon and
 // the handler launch path.
 //
@@ -166,6 +178,47 @@ type Adapter interface {
 	// Spec ref: process-lifecycle.md §4.2 PL-006 — session-level orphan sweep
 	// kills each matching session via tmux kill-session.
 	KillSession(ctx context.Context, sessionName string) error
+
+	// LoadBuffer loads payload into the named tmux buffer via
+	// `tmux load-buffer -b <bufferName> -` (reading from stdin).
+	//
+	// bufferName MUST match the format `harmonik-<session-id>-<purpose>`
+	// (validated by [bufferNameRe]); returns [ErrStructural] on malformed input.
+	//
+	// Callers MUST follow LoadBuffer with [PasteBuffer] (preferred) or delete
+	// the buffer manually to avoid buffer accumulation. For full audit compliance
+	// with the daemon_pane_write structured-log event use [OSAdapter.WriteToPane],
+	// which combines load, paste, and logging in one call.
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
+	LoadBuffer(ctx context.Context, bufferName string, payload []byte) error
+
+	// PasteBuffer pastes the named buffer into paneTarget and deletes the buffer
+	// atomically via `tmux paste-buffer -b <bufferName> -t <paneTarget> -d`.
+	// The -d flag satisfies the cleanup obligation (PL-021d §cleanup) in one shot.
+	//
+	// bufferName MUST match the format `harmonik-<session-id>-<purpose>`
+	// (validated by [bufferNameRe]); returns [ErrStructural] on malformed input.
+	//
+	// For full audit compliance (daemon_pane_write structured log with
+	// payload_bytes) use [OSAdapter.WriteToPane] instead.
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
+	PasteBuffer(ctx context.Context, bufferName, paneTarget string) error
+
+	// SendKeysLiteral sends text literally to paneTarget via
+	// `tmux send-keys -l -t <paneTarget> <text>`.
+	//
+	// This is the PL-021d fallback path: ONLY use for payloads strictly shorter
+	// than 512 bytes with no newline characters. For all other payloads use
+	// [LoadBuffer] + [PasteBuffer] (the preferred path per PL-021d). The bare
+	// send-keys form (without -l) is FORBIDDEN for daemon-injected payloads
+	// because it interprets shell metacharacters.
+	//
+	// Returns [ErrStructural] when text exceeds 512 bytes or contains a newline.
+	//
+	// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys -l fallback.
+	SendKeysLiteral(ctx context.Context, paneTarget, text string) error
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -177,6 +230,17 @@ type Adapter interface {
 // path; the daemon MUST surface this as ON §8 exit code 22 (ntm-unavailable)
 // when tmux is a required dependency.
 var ErrTmuxMissing = errors.New("tmux: binary not found in PATH")
+
+// ErrStructural is returned when a caller-supplied parameter violates a
+// structural invariant enforced before any tmux invocation occurs. Examples:
+// a buffer name that does not match the required harmonik- prefix format
+// (PL-021d buffer-name discipline), or a [SendKeysLiteral] payload that
+// exceeds 512 bytes or contains a newline.
+//
+// Callers can check for this sentinel with [errors.Is]:
+//
+//	if errors.Is(err, ErrStructural) { /* fix the caller */ }
+var ErrStructural = errors.New("tmux: structural invariant violated")
 
 // ErrNoSession is returned by window operations when the target tmux session
 // does not exist. Callers that received the session name from [Adapter.ListSessions]

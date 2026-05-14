@@ -104,6 +104,21 @@ func (a *orphanSessionFixtureAdapter) KillSession(_ context.Context, sessionName
 	return nil
 }
 
+// LoadBuffer is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanSessionFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
+// PasteBuffer is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanSessionFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// SendKeysLiteral is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanSessionFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // orphanSessionFixtureNewAdapter constructs a fresh fake adapter.
 func orphanSessionFixtureNewAdapter(sessions map[string][]string) *orphanSessionFixtureAdapter {
 	return &orphanSessionFixtureAdapter{sessions: sessions}

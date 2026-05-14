@@ -606,6 +606,252 @@ func TestOSAdapter_ErrTmuxFailureError(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// OSAdapter.LoadBuffer tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestOSAdapter_LoadBuffer_HappyPath verifies that LoadBuffer returns nil when
+// the fake tmux exits 0.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_LoadBuffer_HappyPath(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, nil, 0)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.LoadBuffer(context.Background(), "harmonik-01abcdef1234-task", []byte("hello pane"))
+	if err != nil {
+		t.Errorf("LoadBuffer happy path: unexpected error: %v", err)
+	}
+}
+
+// TestOSAdapter_LoadBuffer_InvalidBufferName verifies that LoadBuffer returns
+// ErrStructural (wrapped) when the buffer name does not match the required format.
+func TestOSAdapter_LoadBuffer_InvalidBufferName(t *testing.T) {
+	t.Parallel()
+
+	cases := []string{
+		"",
+		"bad",
+		"harmonik-",
+		"harmonik-abc",
+		"HARMONIK-abc-task",
+		"harmonik_abc_task",
+	}
+	a := OSAdapter{}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := a.LoadBuffer(context.Background(), name, []byte("payload"))
+			if !errors.Is(err, ErrStructural) {
+				t.Errorf("LoadBuffer invalid name %q: want ErrStructural, got %v", name, err)
+			}
+		})
+	}
+}
+
+// TestOSAdapter_LoadBuffer_TmuxFailure verifies that LoadBuffer returns
+// *ErrTmuxFailure when the fake tmux exits non-zero.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_LoadBuffer_TmuxFailure(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"load error"}, 1)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.LoadBuffer(context.Background(), "harmonik-01abcdef1234-task", []byte("payload"))
+	var tf *ErrTmuxFailure
+	if !errors.As(err, &tf) {
+		t.Errorf("LoadBuffer tmux-failure: want *ErrTmuxFailure, got %T: %v", err, err)
+	}
+	if tf != nil && tf.Op != "load-buffer" {
+		t.Errorf("LoadBuffer tmux-failure: tf.Op = %q, want %q", tf.Op, "load-buffer")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// OSAdapter.PasteBuffer tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestOSAdapter_PasteBuffer_HappyPath verifies that PasteBuffer returns nil
+// when the fake tmux exits 0.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_PasteBuffer_HappyPath(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, nil, 0)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.PasteBuffer(context.Background(), "harmonik-01abcdef1234-task", "harmonik-proj-session:task-window.0")
+	if err != nil {
+		t.Errorf("PasteBuffer happy path: unexpected error: %v", err)
+	}
+}
+
+// TestOSAdapter_PasteBuffer_InvalidBufferName verifies that PasteBuffer returns
+// ErrStructural (wrapped) for malformed buffer names.
+func TestOSAdapter_PasteBuffer_InvalidBufferName(t *testing.T) {
+	t.Parallel()
+
+	a := OSAdapter{}
+	err := a.PasteBuffer(context.Background(), "bad-name", "session:window.0")
+	if !errors.Is(err, ErrStructural) {
+		t.Errorf("PasteBuffer invalid name: want ErrStructural, got %v", err)
+	}
+}
+
+// TestOSAdapter_PasteBuffer_TmuxFailure verifies that PasteBuffer returns
+// *ErrTmuxFailure when the fake tmux exits non-zero.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_PasteBuffer_TmuxFailure(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"paste error"}, 1)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.PasteBuffer(context.Background(), "harmonik-01abcdef1234-task", "session:window.0")
+	var tf *ErrTmuxFailure
+	if !errors.As(err, &tf) {
+		t.Errorf("PasteBuffer tmux-failure: want *ErrTmuxFailure, got %T: %v", err, err)
+	}
+	if tf != nil && tf.Op != "paste-buffer" {
+		t.Errorf("PasteBuffer tmux-failure: tf.Op = %q, want %q", tf.Op, "paste-buffer")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// OSAdapter.SendKeysLiteral tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestOSAdapter_SendKeysLiteral_HappyPath verifies that SendKeysLiteral returns
+// nil for a short, newline-free payload.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_SendKeysLiteral_HappyPath(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, nil, 0)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.SendKeysLiteral(context.Background(), "session:window.0", "hello")
+	if err != nil {
+		t.Errorf("SendKeysLiteral happy path: unexpected error: %v", err)
+	}
+}
+
+// TestOSAdapter_SendKeysLiteral_TooLong verifies that SendKeysLiteral returns
+// ErrStructural when the payload is ≥ 512 bytes.
+func TestOSAdapter_SendKeysLiteral_TooLong(t *testing.T) {
+	t.Parallel()
+
+	longText := strings.Repeat("x", 512)
+	a := OSAdapter{}
+	err := a.SendKeysLiteral(context.Background(), "session:window.0", longText)
+	if !errors.Is(err, ErrStructural) {
+		t.Errorf("SendKeysLiteral too-long: want ErrStructural, got %v", err)
+	}
+}
+
+// TestOSAdapter_SendKeysLiteral_ContainsNewline verifies that SendKeysLiteral
+// returns ErrStructural when the payload contains a newline character.
+func TestOSAdapter_SendKeysLiteral_ContainsNewline(t *testing.T) {
+	t.Parallel()
+
+	a := OSAdapter{}
+	err := a.SendKeysLiteral(context.Background(), "session:window.0", "line1\nline2")
+	if !errors.Is(err, ErrStructural) {
+		t.Errorf("SendKeysLiteral newline: want ErrStructural, got %v", err)
+	}
+}
+
+// TestOSAdapter_SendKeysLiteral_TmuxFailure verifies that SendKeysLiteral
+// returns *ErrTmuxFailure when the fake tmux exits non-zero.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_SendKeysLiteral_TmuxFailure(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"send-keys error"}, 1)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	err := a.SendKeysLiteral(context.Background(), "session:window.0", "hello")
+	var tf *ErrTmuxFailure
+	if !errors.As(err, &tf) {
+		t.Errorf("SendKeysLiteral tmux-failure: want *ErrTmuxFailure, got %T: %v", err, err)
+	}
+	if tf != nil && tf.Op != "send-keys" {
+		t.Errorf("SendKeysLiteral tmux-failure: tf.Op = %q, want %q", tf.Op, "send-keys")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// parseBufferNameComponents unit tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestParseBufferNameComponents verifies that parseBufferNameComponents
+// correctly extracts session-id and purpose from valid buffer names.
+func TestParseBufferNameComponents(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		input    string
+		wantSID  string
+		wantPurp string
+	}{
+		{"harmonik-01hwxyz-abc123-task", "01hwxyz-abc123", "task"},
+		{"harmonik-sessionid-phase-msg", "sessionid-phase", "msg"},
+		{"harmonik-abc-feedback", "abc", "feedback"},
+		{"harmonik-s-p", "s", "p"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			t.Parallel()
+			sid, purp := parseBufferNameComponents(tc.input)
+			if sid != tc.wantSID {
+				t.Errorf("parseBufferNameComponents(%q): session-id = %q, want %q", tc.input, sid, tc.wantSID)
+			}
+			if purp != tc.wantPurp {
+				t.Errorf("parseBufferNameComponents(%q): purpose = %q, want %q", tc.input, purp, tc.wantPurp)
+			}
+		})
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// bufferNameRe validation tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestBufferNameRe verifies the regex accepts valid names and rejects malformed ones.
+func TestBufferNameRe(t *testing.T) {
+	t.Parallel()
+
+	valid := []string{
+		"harmonik-01hwxyz-abc123-task",
+		"harmonik-sessionid-phase-msg",
+		"harmonik-abc123-feedback",
+		"harmonik-abc-def-ghi",
+	}
+	invalid := []string{
+		"",
+		"harmonik-",
+		"harmonik-abc",
+		"HARMONIK-abc-task",
+		"harmonik_abc_task",
+		"bad-name",
+		"harmonik-ABC-task",
+	}
+
+	for _, name := range valid {
+		if !bufferNameRe.MatchString(name) {
+			t.Errorf("bufferNameRe: want match for %q, got no match", name)
+		}
+	}
+	for _, name := range invalid {
+		if bufferNameRe.MatchString(name) {
+			t.Errorf("bufferNameRe: want no match for %q, got match", name)
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Interface compliance
 // ──────────────────────────────────────────────────────────────────────────────
 

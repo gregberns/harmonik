@@ -8,7 +8,7 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.4
+version: 0.4.5
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-13
@@ -592,6 +592,39 @@ For workspaces that will NOT host a claude-code agent session, this requirement 
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+### 4.7b Worktree auto-trust pre-seed
+
+#### WM-040b — Pre-seed `~/.claude.json` trust before Claude exec
+
+**Purpose.** Claude Code shows an interactive "Trust this directory?" dialog when launched in a directory it has not seen before. A daemon-spawned tmux pane has no human at the keyboard; the dialog blocks indefinitely and [handler-contract.md §4.9 HC-056] fires.
+
+**Mechanism.** Claude Code reads per-project trust state from `~/.claude.json` under a top-level `"projects"` map keyed by absolute directory path. Setting `hasTrustDialogAccepted: true` on the worktree path entry suppresses the dialog. This is the mechanism Claude Code uses after the operator clicks "Yes" in an interactive session; harmonik pre-seeds it before Claude starts.
+
+**Obligation.** For every workspace that will host a `claude-code` agent session, the daemon MUST call `EnsureWorktreeTrust(worktreePath)` (or equivalent) AFTER WM-003 (worktree creation) and WM-040a (settings.json materialization) and BEFORE exec'ing Claude via the tmux substrate (`SubstrateSpawn`). The ordering is:
+
+1. WM-003 — `git worktree add`
+2. WM-040a — materialize `.claude/settings.json`
+3. **WM-040b** — pre-seed `~/.claude.json` trust entry ← this requirement
+4. CHB-028 — materialize `.harmonik/agent-task.md`
+5. `SubstrateSpawn` — exec Claude in tmux pane
+
+**Atomicity.** The write MUST use an atomic temp-file + rename discipline (same WM-026 pattern) to guard against concurrent daemon instances writing to the same `~/.claude.json`. The temp file MUST be a sibling of `~/.claude.json` (e.g., `~/.claude.json.tmp-<pid>`).
+
+**Idempotency.** If the entry is already present and `hasTrustDialogAccepted` is already `true`, no write is performed. This covers the re-attach path (daemon restart mid-session).
+
+**Preservation.** The write MUST NOT remove or modify any other key in `~/.claude.json` or any other entry in its `projects` map. The merge is additive.
+
+**Failure.** If the write fails, the daemon MUST NOT exec Claude. The error is surfaced as `ErrStructural` with `sub_reason: trust_seed_failed`; `agent_failed` is emitted. An un-seeded launch blocks silently rather than failing fast.
+
+**Rejected alternatives.** `--dangerously-skip-permissions` and `--permission-mode` are forbidden by [handler-contract.md §4.9 HC-055] and [claude-hook-bridge.md §4.2 CHB-007]. The `.claude/settings.local.json` file in the worktree does not carry trust state that suppresses the startup dialog.
+
+**Scope.** This is the user-operator machine running the daemon, not the worktree itself. The `~/.claude.json` entry persists after the run; cleanup is acceptable but not required at MVH (orphaned entries are cosmetically inert).
+
+Cross-refs: [claude-hook-bridge.md §4.12 CHB-029] (authoritative requirement; WM-040b is the workspace-model side of the same contract). Code: `internal/workspace/claudetrust_wm040b.go`.
+
+Tags: mechanism, security-relevant
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.8 Failed-run worktree persistence
 
@@ -1282,6 +1315,7 @@ Default-if-unresolved: Out-of-scope at MVH. Post-MVH support is an additive exte
 | 2026-05-13 | 0.4.4 | bridge-integration | **WM-002a added (hk-gql20.2).** New clause directly after WM-002 specifying the deterministic tmux window-name convention for agent processes launched under the PL-021b direct-tmux substrate. Pure function of `(bead_id, phase, iteration_count, project_hash, owns_session)`; single-mode → bare `bead_id`; review-loop → `bead_id/i<n>` or `bead_id/r<n>`; $TMUX-reuse mode prefixes `hk-<hash6>-` as the sweep sentinel for PL-021c. Truncation rule preserves suffix when name > 64 bytes via `<bead_id[:56]>~<hash[:8]><suffix>`. Cross-refs PL-021b, PL-006a, WM-002, BI-017. No existing WM IDs renumbered. Status remains `reviewed`. |
 | 2026-04-25 | 0.4.2 | foundation-author | OQ-RC-011 resolution: extended §4.9.WM-036's verdict-disposition table from six rows to seven by adding the `no-op-accept` row introduced into the reconciliation Verdict enum at RC v0.3.0 (per [reconciliation/schemas.md §6.1 Verdict] and [reconciliation/schemas.md §6.2 Verdict-execution table]); the new row codifies the no-workspace-action disposition (record the verdict; clear any non-`none` `interrupt_state` per §4.10.WM-040 if reconciliation had previously marked the workspace interrupted; outer run continues per [reconciliation/spec.md §8.12]) consistent with RC's mechanical semantics that `no-op-accept` performs no mechanical action beyond `reconciliation_verdict_executed` emission and the verdict-executed commit. Updated WM-036 lead-in prose from "six-value verdict enum" to "seven-value verdict enum (per RC-020 as amended in RC v0.3.0)" and appended an OQ-RC-011 resolution citation to the trailing paragraph. No new WM IDs, no invariant changes, no schema changes; ID FREEZE preserved. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.3 | foundation-author | Add §4.7a Claude-code settings.json materialization (WM-040a, gap-filler after existing WM-040 to avoid collision with WM-038 / WM-039 / WM-040 interrupt-state requirements) covering atomic-write discipline, merge-with-existing semantics, and gitignore-hygiene extension. Overwrite-on-malformed logs to the session log; no new bus event is introduced (zero-new-event-types invariant of [claude-hook-bridge.md]). Companion to [claude-hook-bridge.md] new spec. No prior requirement IDs renumbered. Status remains `reviewed`. |
+| 2026-05-13 | 0.4.5 | agent (hk-fdyip) | **WM-040b added: worktree auto-trust pre-seed (§4.7b).** For every claude-code workspace, the daemon MUST pre-seed `~/.claude.json` projects[worktreePath].hasTrustDialogAccepted=true before exec'ing Claude, so the interactive trust dialog is suppressed in daemon-spawned tmux panes. Ordering: after WM-003 + WM-040a, before SubstrateSpawn. Atomic temp+rename write; idempotent; preserves all other ~/.claude.json content. Failure → ErrStructural / trust_seed_failed / agent_failed (no exec on failure). Rejected alternatives documented: --permission-mode and --dangerously-skip-permissions are deny-listed in HC-055 / CHB-007; .claude/settings.local.json does not carry startup trust state. Companion: claude-hook-bridge.md §4.12 CHB-029. Code: internal/workspace/claudetrust_wm040b.go. No prior requirement IDs renumbered. Status remains `reviewed`. |
 
 ## A. Appendices
 

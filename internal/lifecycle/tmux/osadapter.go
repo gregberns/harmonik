@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -245,6 +246,145 @@ func (OSAdapter) EnsureSession(ctx context.Context, name, workDir string) error 
 		return &ErrTmuxFailure{Op: "new-session", ExitCode: exitCodeOf(err), Stderr: outStr}
 	}
 	return nil
+}
+
+// LoadBuffer loads payload into the named tmux buffer via
+// `tmux load-buffer -b <bufferName> -` (reading payload from stdin).
+//
+// bufferName MUST match the format `harmonik-<session-id>-<purpose>`; returns
+// [ErrStructural] (wrapped) when the name is malformed.
+//
+// Callers MUST follow this with [PasteBuffer] or a manual `tmux delete-buffer`
+// to avoid buffer accumulation. For the full load+paste+structured-log audit
+// sequence use [WriteToPane].
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — step 2 (load-buffer).
+func (OSAdapter) LoadBuffer(ctx context.Context, bufferName string, payload []byte) error {
+	if !bufferNameRe.MatchString(bufferName) {
+		return fmt.Errorf("%w: buffer name %q does not match required format harmonik-<session-id>-<purpose>",
+			ErrStructural, bufferName)
+	}
+	//nolint:gosec // G204: bufferName is validated against a strict regex above
+	cmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", bufferName, "-")
+	cmd.Stdin = bytes.NewReader(payload)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ErrTmuxFailure{Op: "load-buffer", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
+// PasteBuffer pastes the named buffer into paneTarget and deletes it
+// atomically via `tmux paste-buffer -b <bufferName> -t <paneTarget> -d`.
+// The -d flag satisfies the PL-021d cleanup obligation in one shot.
+//
+// bufferName MUST match the format `harmonik-<session-id>-<purpose>`; returns
+// [ErrStructural] (wrapped) when the name is malformed.
+//
+// For full daemon_pane_write audit compliance with payload_bytes use
+// [WriteToPane] instead.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — step 3+4 (paste-buffer -d).
+func (OSAdapter) PasteBuffer(ctx context.Context, bufferName, paneTarget string) error {
+	if !bufferNameRe.MatchString(bufferName) {
+		return fmt.Errorf("%w: buffer name %q does not match required format harmonik-<session-id>-<purpose>",
+			ErrStructural, bufferName)
+	}
+	//nolint:gosec // G204: bufferName is validated above; paneTarget is a daemon-managed pane address
+	cmd := exec.CommandContext(ctx, "tmux", "paste-buffer", "-b", bufferName, "-t", paneTarget, "-d")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ErrTmuxFailure{Op: "paste-buffer", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
+// SendKeysLiteral sends text literally to paneTarget via
+// `tmux send-keys -l -t <paneTarget> <text>`.
+//
+// This is the PL-021d fallback path. Use ONLY when text is strictly shorter
+// than 512 bytes and contains no newline characters; for all other payloads
+// use [LoadBuffer]+[PasteBuffer] (or [WriteToPane]). The bare send-keys form
+// (without -l) is FORBIDDEN for daemon-injected payloads because it interprets
+// shell metacharacters.
+//
+// Returns [ErrStructural] (wrapped) when text exceeds 512 bytes or contains a
+// newline.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys -l fallback.
+func (OSAdapter) SendKeysLiteral(ctx context.Context, paneTarget, text string) error {
+	const maxBytes = 512
+	if len(text) >= maxBytes {
+		return fmt.Errorf("%w: SendKeysLiteral payload length %d exceeds 512-byte limit; use LoadBuffer+PasteBuffer instead",
+			ErrStructural, len(text))
+	}
+	if strings.ContainsRune(text, '\n') {
+		return fmt.Errorf("%w: SendKeysLiteral payload contains a newline; use LoadBuffer+PasteBuffer instead",
+			ErrStructural)
+	}
+	//nolint:gosec // G204: paneTarget is a daemon-managed pane address; text is validated above
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-l", "-t", paneTarget, text)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ErrTmuxFailure{Op: "send-keys", ExitCode: exitCodeOf(err), Stderr: strings.TrimSpace(string(out))}
+	}
+	return nil
+}
+
+// WriteToPane is the preferred high-level helper for daemon→pane writes. It
+// executes the full PL-021d sequence:
+//
+//  1. LoadBuffer — load payload into the named tmux buffer.
+//  2. PasteBuffer — paste the buffer into paneTarget (deleting it atomically).
+//  3. Emit a daemon_pane_write structured log entry at INFO level.
+//
+// bufferName MUST match the format `harmonik-<session-id>-<purpose>`. The
+// session-id and purpose components are parsed from bufferName for the
+// structured-log fields.
+//
+// Use WriteToPane in preference to calling LoadBuffer+PasteBuffer separately
+// whenever full daemon_pane_write audit compliance (including payload_bytes) is
+// required.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d — full write sequence + structured-log audit.
+func (a OSAdapter) WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error {
+	if err := a.LoadBuffer(ctx, bufferName, payload); err != nil {
+		return err
+	}
+	if err := a.PasteBuffer(ctx, bufferName, paneTarget); err != nil {
+		return err
+	}
+	// Parse session-id and purpose from "harmonik-<session-id>-<purpose>".
+	// bufferName format was already validated by LoadBuffer.
+	sessionID, purpose := parseBufferNameComponents(bufferName)
+	slog.InfoContext(ctx, "daemon_pane_write",
+		"session_id", sessionID,
+		"pane_target", paneTarget,
+		"buffer_name", bufferName,
+		"purpose", purpose,
+		"payload_bytes", len(payload),
+	)
+	return nil
+}
+
+// parseBufferNameComponents extracts the session-id and purpose components
+// from a buffer name of the form "harmonik-<session-id>-<purpose>".
+// It assumes the name has already been validated by [bufferNameRe].
+//
+// The session-id is everything between the first and last hyphen-delimited
+// segment (i.e., everything after "harmonik-" and before the trailing purpose
+// slug). The purpose is the last hyphen-delimited segment.
+func parseBufferNameComponents(bufferName string) (sessionID, purpose string) {
+	// Strip the "harmonik-" prefix.
+	const prefix = "harmonik-"
+	rest := bufferName[len(prefix):]
+	// The purpose is the last segment; everything before it is the session-id.
+	idx := strings.LastIndexByte(rest, '-')
+	if idx < 0 {
+		// Should not happen given a valid buffer name, but be defensive.
+		return rest, ""
+	}
+	return rest[:idx], rest[idx+1:]
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

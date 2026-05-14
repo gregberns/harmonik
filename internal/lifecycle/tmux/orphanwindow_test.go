@@ -110,6 +110,21 @@ func (a *orphanWindowFixtureAdapter) KillSession(_ context.Context, _ string) er
 	return nil
 }
 
+// LoadBuffer is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
+// PasteBuffer is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// SendKeysLiteral is a no-op stub to satisfy the [Adapter] interface.
+func (a *orphanWindowFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // orphanWindowFixtureRemoveWindow removes windowName from the session's window list.
 func (a *orphanWindowFixtureAdapter) orphanWindowFixtureRemoveWindow(session, windowName string) {
 	windows := a.sessions[session]

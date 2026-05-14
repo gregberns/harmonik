@@ -2,10 +2,22 @@ package workspace
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
+
+// setTempClaudeConfig redirects defaultClaudeGlobalConfigPath to a
+// temp-dir-scoped path for the duration of the test. This prevents any test
+// from touching the real ~/.claude.json on the developer's machine.
+func setTempClaudeConfig(t *testing.T) string {
+	t.Helper()
+	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", cfgPath)
+	return cfgPath
+}
 
 // TestWM040b_FreshConfig verifies that EnsureWorktreeTrust creates a new
 // ~/.claude.json with a trusted project entry when the file does not exist.
@@ -182,5 +194,99 @@ func TestWM040b_MalformedConfigFails(t *testing.T) {
 	err := ensureWorktreeTrustAt(worktreePath, cfgPath)
 	if err == nil {
 		t.Fatal("WM-040b malformed: expected error, got nil")
+	}
+}
+
+// TestWM040b_EnvVarOverride verifies that HARMONIK_CLAUDE_CONFIG_PATH redirects
+// EnsureWorktreeTrust away from the real ~/.claude.json.
+// Not parallel: uses t.Setenv (env mutation requires serial execution).
+func TestWM040b_EnvVarOverride(t *testing.T) {
+	cfgPath := setTempClaudeConfig(t)
+	worktreePath := filepath.Join(t.TempDir(), "worktrees", "run-envvar")
+
+	if err := EnsureWorktreeTrust(worktreePath); err != nil {
+		t.Fatalf("WM-040b env-override: EnsureWorktreeTrust: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is a temp path set by t.Setenv
+	if err != nil {
+		t.Fatalf("WM-040b env-override: ReadFile: %v", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("WM-040b env-override: Unmarshal: %v", err)
+	}
+	projects, ok := cfg["projects"].(map[string]interface{})
+	if !ok {
+		t.Fatal("WM-040b env-override: projects map missing")
+	}
+	entry, ok := projects[worktreePath].(map[string]interface{})
+	if !ok {
+		t.Fatalf("WM-040b env-override: entry missing for %s", worktreePath)
+	}
+	trusted, ok := entry["hasTrustDialogAccepted"].(bool)
+	if !ok || !trusted {
+		t.Error("WM-040b env-override: hasTrustDialogAccepted not true")
+	}
+}
+
+// TestEnsureWorktreeTrust_ConcurrentWrites verifies that N goroutines each
+// calling EnsureWorktreeTrust with a distinct worktree path against the same
+// config file all land their entries without corruption. The flock serializes
+// RMW cycles; the final config MUST parse cleanly and contain all N entries.
+// Not parallel: uses t.Setenv (env mutation requires serial execution).
+func TestEnsureWorktreeTrust_ConcurrentWrites(t *testing.T) {
+	const N = 16
+
+	cfgPath := setTempClaudeConfig(t)
+	baseDir := t.TempDir()
+
+	worktreePaths := make([]string, N)
+	for i := 0; i < N; i++ {
+		worktreePaths[i] = filepath.Join(baseDir, fmt.Sprintf("run-%02d", i))
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = EnsureWorktreeTrust(worktreePaths[idx])
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("WM-040b concurrent: goroutine %d: %v", i, err)
+		}
+	}
+
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is a temp path set by t.Setenv
+	if err != nil {
+		t.Fatalf("WM-040b concurrent: ReadFile: %v", err)
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("WM-040b concurrent: Unmarshal (config corrupted?): %v", err)
+	}
+
+	projects, ok := cfg["projects"].(map[string]interface{})
+	if !ok {
+		t.Fatal("WM-040b concurrent: projects map missing")
+	}
+
+	for _, p := range worktreePaths {
+		entry, ok := projects[p].(map[string]interface{})
+		if !ok {
+			t.Errorf("WM-040b concurrent: entry missing for %s", p)
+			continue
+		}
+		trusted, ok := entry["hasTrustDialogAccepted"].(bool)
+		if !ok || !trusted {
+			t.Errorf("WM-040b concurrent: hasTrustDialogAccepted not true for %s", p)
+		}
 	}
 }

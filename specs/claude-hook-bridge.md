@@ -475,6 +475,8 @@ Harmonik MUST write this entry to `~/.claude.json` before exec'ing Claude in the
 
 **Scope note.** This is the user-operator machine running the daemon, not the worktree itself. No worktree-local file is written by this step. The entry persists after the run completes; cleanup is acceptable but not required at MVH (orphaned trust entries are cosmetically inert).
 
+**Test isolation and concurrency.** The implementation MUST honor `HARMONIK_CLAUDE_CONFIG_PATH` (full file path) or `CLAUDE_CONFIG_HOME` (directory; config file is `<dir>/.claude.json`) environment variable overrides so that unit and integration tests can redirect writes to a temp path and never touch the real `~/.claude.json`. Precedence: `HARMONIK_CLAUDE_CONFIG_PATH` > `CLAUDE_CONFIG_HOME` > `~/.claude.json`. The implementation MUST hold a blocking exclusive advisory flock (`LOCK_EX`) on a sidecar lockfile (`<cfgPath>.lock`) across the entire read-modify-write cycle to serialize concurrent daemon instances writing to the same config file. The sidecar pattern is required: locking the target file directly would interfere with the atomic rename. The sidecar MUST be created with `O_CREATE|O_RDWR` (mode `0600`) if it does not yet exist; the lock is released when the file descriptor is closed after the rename completes.
+
 Cross-refs: [workspace-model.md §4.7b WM-040b] (spec side of the same requirement), [handler-contract.md §4.9 HC-055] (deny-list excluding --permission-mode), [handler-contract.md §4.9 HC-056] (agent_ready timeout triggered by blocked trust prompt), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags including --dangerously-skip-permissions).
 
 Tags: mechanism, security-relevant

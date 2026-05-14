@@ -519,14 +519,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// the run's lifetime. See moderesolve.go.
 	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
 
-	// Resolve HEAD as the parent commit to avoid racing with operator activity
-	// in the main worktree per workspace-model.md §4.1 WM-003.
-	headSHA, headErr := resolveHEAD(ctx, deps.projectDir)
+	// Resolve the parent commit (start_from SHA) for worktree creation per
+	// WM-005b / BI-009b. resolveParentCommit parses the bead's ## Branching
+	// section and resolves start_from to a commit SHA; it falls back to HEAD
+	// when the section is absent or start_from is not set. If start_from is
+	// present but names a ref that does not exist locally, the error is
+	// surfaced as a typed StartFromRefError and the bead is reopened.
+	headSHA, headErr := resolveParentCommit(ctx, deps.projectDir, string(beadID), beadRecord.Description)
 	if headErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveHEAD for bead %s: %v (reopening)\n", beadID, headErr)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-			fmt.Sprintf("resolve HEAD failed: %v", headErr))
+			fmt.Sprintf("resolve start_from failed: %v", headErr))
 		return
 	}
 

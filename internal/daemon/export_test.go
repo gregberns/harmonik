@@ -620,6 +620,31 @@ func ExportedWaitWithSocketGrace(
 // paste-inject test seams (hk-zrj83)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// branching test seams (hk-oe6zt)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedBranchingConfig is the exported shape of BranchingConfig for tests.
+//
+// Bead ref: hk-oe6zt.
+type ExportedBranchingConfig = BranchingConfig
+
+// ExportedParseBranchingSection exposes parseBranchingSection for tests in
+// package daemon_test. See branching.go for semantics.
+//
+// Bead ref: hk-oe6zt.
+func ExportedParseBranchingSection(beadBody string) (BranchingConfig, error) {
+	return parseBranchingSection(beadBody)
+}
+
+// ExportedResolveParentCommit exposes resolveParentCommit for tests in package
+// daemon_test. See branching.go for semantics.
+//
+// Bead ref: hk-oe6zt.
+func ExportedResolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody string) (string, error) {
+	return resolveParentCommit(ctx, repoRoot, beadID, beadBody)
+}
+
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.
 //

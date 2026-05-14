@@ -2,7 +2,7 @@
 // Code handler. The daemon's handler subsystem subprocess-launches this
 // binary in scenario tests and CI in place of a real Claude Code session.
 //
-// # Scope (hk-ahvq.48.1, hk-ahvq.48.3, hk-ahvq.48.4, hk-w5vra.2)
+// # Scope (hk-ahvq.48.1, hk-ahvq.48.3, hk-ahvq.48.4, hk-w5vra.2, hk-e66ht)
 //
 // This scaffold covers:
 //   - Flag parsing: --socket-path (LaunchSpec.SocketPath per §6.1),
@@ -10,13 +10,20 @@
 //     --script-path (YAML script file for scenario-mode per §4.6.HC-026a /
 //     §4.8.HC-036; schema documented in scriptdriver.go),
 //     --scenario (canned scenario name per CHB-021 §10; emits to stdout when
-//     --socket-path is absent), and --version (prints the build-time
-//     commit-hash stamp per HC-043).
+//     --socket-path is absent),
+//     --worktree-path (path to the worktree; twin reads .claude/settings.json
+//     from this directory at startup per hk-e66ht / audit items 1+2), and
+//     --version (prints the build-time commit-hash stamp per HC-043).
 //   - Unix-domain-socket dial-back to the daemon per §4.10.HC-044 /
 //     §4.10.HC-045.
 //   - Stdout fallback: when --scenario is set without --socket-path the twin
 //     writes NDJSON to os.Stdout, matching the handler.Launch stdout-watcher
 //     topology (CHB-022).
+//   - Settings.json reader: when --worktree-path is set the twin reads
+//     <worktree-path>/.claude/settings.json and emits twin_settings_loaded
+//     with permissions_present and stop_hook_present fields (hk-e66ht).
+//   - Stop hook caller: YAML script step "call_stop_hook" executes the loaded
+//     Stop hook command and emits twin_hook_called (hk-e66ht).
 //   - Clean exit (exit code 1) when preconditions fail.
 //   - Build-time commit-hash stamp via -ldflags (hk-ahvq.48.4); the
 //     commitHash variable is declared in version.go.
@@ -44,7 +51,8 @@
 //
 // Cite: specs/handler-contract.md §4.6.HC-026a, §4.8.HC-036,
 // §4.10.HC-043, §4.10.HC-044, §4.10.HC-045, §6.1;
-// specs/claude-hook-bridge.md §4.8.CHB-021, §4.8.CHB-022, §10.
+// specs/claude-hook-bridge.md §4.8.CHB-021, §4.8.CHB-022, §10;
+// docs/twin-parity-audit-2026-05-14.md §4 items 1+2 (hk-e66ht).
 package main
 
 import (
@@ -110,6 +118,15 @@ func run() int {
 	// Cite: specs/claude-hook-bridge.md §4.8.CHB-021, §10.
 	scenarioName := fs.String("scenario", "", "canned scenario name (CHB-021 §10; optional; implies stdout when --socket-path is absent)")
 
+	// --worktree-path: absolute path to the project worktree that this twin
+	// session is running against (hk-e66ht / audit items 1+2).
+	// When set, the twin reads <worktree-path>/.claude/settings.json at startup
+	// and emits twin_settings_loaded. The path is also used as cwd for hook
+	// subprocesses so that relative-path hook commands resolve correctly.
+	// Optional: when absent, twin_settings_loaded is NOT emitted and the
+	// call_stop_hook script step will error if used.
+	worktreePath := fs.String("worktree-path", "", "absolute path to the project worktree; twin reads .claude/settings.json from here (hk-e66ht; optional)")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// flag.ContinueOnError: parse errors are already printed to stderr by
 		// the flag package; just exit with a non-zero code.
@@ -155,6 +172,22 @@ func run() int {
 		}
 	}
 
+	// Load settings.json when --worktree-path is supplied (hk-e66ht).
+	// The settings are loaded before the socket connection is opened so that
+	// any malformed-JSON error can be reported before wire-protocol negotiation.
+	// twin_settings_loaded is emitted on the wire AFTER the output writer is
+	// established (below), so we stash the result in a variable here.
+	var loadedSettings *cloneSettings
+	if *worktreePath != "" {
+		var settingsErr error
+		loadedSettings, settingsErr = loadCloneSettings(*worktreePath)
+		if settingsErr != nil {
+			// Malformed JSON → error + exit 1 per bead error policy.
+			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: settings.json: %v\n", settingsErr)
+			return 1
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -194,7 +227,29 @@ func run() int {
 	// heartbeats.
 	if scriptFile != nil {
 		emitter := newWireEmitter(out)
-		if err := runScript(ctx, emitter, scriptFile); err != nil {
+
+		// Emit twin_settings_loaded when --worktree-path was supplied (hk-e66ht).
+		// loadedSettings is non-nil iff --worktree-path was set and settings.json
+		// was valid (or absent — absent produces a zero-value cloneSettings).
+		// When --worktree-path was NOT set, we do not emit this message at all:
+		// the feature is opt-in, and existing scenarios without the flag continue
+		// to work unchanged.
+		if *worktreePath != "" && loadedSettings != nil {
+			if err := emitter.emitTwinSettingsLoaded(
+				loadedSettings.permissionsPresent,
+				loadedSettings.stopHookPresent,
+				loadedSettings.stopHookCommand,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "harmonik-twin-claude: emit twin_settings_loaded: %v\n", err)
+				return 1
+			}
+		}
+
+		cfg := scriptRunConfig{
+			settings:     loadedSettings,
+			worktreePath: *worktreePath,
+		}
+		if err := runScript(ctx, emitter, scriptFile, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: script-driver: %v\n", err)
 			return 1
 		}

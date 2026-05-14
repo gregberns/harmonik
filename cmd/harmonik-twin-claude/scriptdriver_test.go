@@ -365,7 +365,7 @@ func TestRunScriptWallClockIgnoresTimestamps(t *testing.T) {
 
 	start := time.Now()
 	ctx := context.Background()
-	if err := runScript(ctx, e, sf); err != nil {
+	if err := runScript(ctx, e, sf, scriptRunConfig{}); err != nil {
 		t.Fatalf("runScript: %v", err)
 	}
 	elapsed := time.Since(start)
@@ -392,7 +392,7 @@ func TestRunScriptEmptyMessages(t *testing.T) {
 	e, buf := twinScriptFixtureEmitter(t)
 
 	sf := &ScriptFile{HeartbeatMode: heartbeatModeWallClock, Messages: nil}
-	if err := runScript(context.Background(), e, sf); err != nil {
+	if err := runScript(context.Background(), e, sf, scriptRunConfig{}); err != nil {
 		t.Fatalf("runScript: %v", err)
 	}
 	if buf.Len() != 0 {
@@ -418,7 +418,7 @@ func TestRunScriptScriptedModeZeroDelay(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := runScript(context.Background(), e, sf); err != nil {
+	if err := runScript(context.Background(), e, sf, scriptRunConfig{}); err != nil {
 		t.Fatalf("runScript: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
@@ -445,7 +445,7 @@ func TestRunScriptScriptedModeDelay(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := runScript(context.Background(), e, sf); err != nil {
+	if err := runScript(context.Background(), e, sf, scriptRunConfig{}); err != nil {
 		t.Fatalf("runScript: %v", err)
 	}
 	elapsed := time.Since(start)
@@ -476,7 +476,7 @@ func TestRunScriptContextCancellation(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := runScript(ctx, e, sf)
+	err := runScript(ctx, e, sf, scriptRunConfig{})
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -506,7 +506,7 @@ func TestRunScriptWallClockContextCancellation(t *testing.T) {
 		},
 	}
 
-	err := runScript(ctx, e, sf)
+	err := runScript(ctx, e, sf, scriptRunConfig{})
 	if err == nil {
 		t.Fatal("runScript: expected error on pre-cancelled context, got nil")
 	}

@@ -71,6 +71,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// scriptRunConfig carries optional state needed by advanced script steps.
+// Zero value is valid: advanced steps that require populated fields will emit
+// an error wire message when those fields are absent.
+type scriptRunConfig struct {
+	// emitter is the wire emitter used by runScript to emit messages.
+	// Set by runScript before calling emitScriptMessage.
+	emitter *wireEmitter
+
+	// settings holds the parsed .claude/settings.json, or nil when
+	// --worktree-path was not supplied or settings could not be loaded.
+	settings *cloneSettings
+
+	// worktreePath is the operator-supplied --worktree-path value.
+	// Used as cwd when executing hook commands.
+	worktreePath string
+}
+
 // twinScriptFixture — per-bead helper prefix for test helpers in this file.
 // (Actual test helpers are in scriptdriver_test.go; the prefix is declared here
 // as a godoc anchor per implementer-protocol.md §Helper-prefix discipline.)
@@ -183,6 +200,11 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 // Script-driver loop
 // ────────────────────────────────────────────────────────────────────────────
 
+// callStopHookStep is the type constant for the YAML step that invokes the
+// loaded Stop hook. Declared as a constant so tests and callers can reference
+// it without magic strings.
+const callStopHookStep = "call_stop_hook"
+
 // runScript drives the wireEmitter through the ordered message list in sf.
 //
 // For each ScriptMessage:
@@ -191,11 +213,15 @@ func loadScriptFile(path string) (*ScriptFile, error) {
 //     emitting.  This implements the HC-026a scripted-mode carve-out.
 //   - If sf.HeartbeatMode is "wall_clock", relative timestamps are ignored
 //     and messages are emitted immediately in declaration order.
+//   - If the message type is "call_stop_hook", the driver executes the Stop
+//     hook loaded at startup and emits twin_hook_called instead of the raw
+//     message type (cfg.settings must be non-nil and stopHookPresent).
 //
 // runScript returns the first emit error encountered, or ctx.Err() if the
 // context is cancelled before the stream completes.
-func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile) error {
+func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRunConfig) error {
 	scripted := sf.HeartbeatMode == heartbeatModeScripted
+	cfg.emitter = e
 
 	for i, msg := range sf.Messages {
 		// Respect relative delay in scripted mode only.
@@ -215,10 +241,47 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile) error {
 			}
 		}
 
+		// call_stop_hook is a special step handled by the script runner, not
+		// emitted verbatim. It executes the loaded Stop hook and emits
+		// twin_hook_called with the exit code and duration.
+		if msg.Type == callStopHookStep {
+			if err := runCallStopHook(ctx, e, cfg); err != nil {
+				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
+			}
+			continue
+		}
+
 		if err := emitScriptMessage(e, msg); err != nil {
 			return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 		}
 	}
+	return nil
+}
+
+// runCallStopHook handles the call_stop_hook script step.
+//
+// Error policy per bead spec:
+//   - cfg.settings nil (--worktree-path never set) → emit twin_error + return error (caller exits 1).
+//   - settings loaded but stopHookPresent false → emit twin_error + return error (caller exits 1).
+//   - Hook executed and exits non-zero → emit twin_hook_called with code, no error (do NOT exit twin).
+func runCallStopHook(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) error {
+	if cfg.settings == nil {
+		// Settings were never loaded (--worktree-path not supplied).
+		_ = e.emitTwinError("call_stop_hook: settings not loaded (--worktree-path was not supplied)")
+		return fmt.Errorf("call_stop_hook: settings not loaded; --worktree-path is required for this step")
+	}
+	if !cfg.settings.stopHookPresent {
+		// Settings were loaded but no Stop hook was found.
+		_ = e.emitTwinError("call_stop_hook: no Stop hook command found in .claude/settings.json")
+		return fmt.Errorf("call_stop_hook: no Stop hook command in settings.json")
+	}
+
+	exitCode, durationMs := callStopHook(ctx, cfg.settings.stopHookCommand, cfg.worktreePath)
+	if err := e.emitTwinHookCalled("Stop", exitCode, durationMs); err != nil {
+		return fmt.Errorf("call_stop_hook: emit twin_hook_called: %w", err)
+	}
+	// Non-zero exit code is reported but does not fail the script step per bead
+	// error policy (real claude doesn't exit on non-zero hook exit either).
 	return nil
 }
 

@@ -446,6 +446,92 @@ func (e *wireEmitter) emitAgentFailed(
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Twin-extension message types (hk-e66ht: settings.json reader + Stop hook)
+// ────────────────────────────────────────────────────────────────────────────
+
+// emitTwinSettingsLoaded emits a twin_settings_loaded message.
+//
+// Emitted once at startup after reading (or attempting to read)
+// --worktree-path/.claude/settings.json. Provides visibility into whether the
+// twin found the permissions field and Stop hook command.
+//
+// Fields:
+//   - permissions_present: bool — true when dangerouslyAllowedPermissions key present.
+//   - stop_hook_present:   bool — true when at least one Stop hook command found.
+//   - stop_hook_command:   string — first Stop hook command, truncated to 200 chars.
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 1 (Fix 9) + item 2 (Fix 11b).
+func (e *wireEmitter) emitTwinSettingsLoaded(permissionsPresent, stopHookPresent bool, stopHookCommand string) error {
+	// Truncate stop_hook_command for log-readability per bead spec.
+	const maxCmdLen = 200
+	if len(stopHookCommand) > maxCmdLen {
+		stopHookCommand = stopHookCommand[:maxCmdLen]
+	}
+	type msg struct {
+		Type               string `json:"type"`
+		PermissionsPresent bool   `json:"permissions_present"`
+		StopHookPresent    bool   `json:"stop_hook_present"`
+		StopHookCommand    string `json:"stop_hook_command"`
+	}
+	return e.emit(msg{
+		Type:               "twin_settings_loaded",
+		PermissionsPresent: permissionsPresent,
+		StopHookPresent:    stopHookPresent,
+		StopHookCommand:    stopHookCommand,
+	})
+}
+
+// emitTwinHookCalled emits a twin_hook_called message.
+//
+// Emitted after executing a hook command on script cue. Carries the hook type
+// (always "Stop" for this bead), the exit code, and the duration.
+//
+// Hook exit code non-zero does NOT cause the twin to exit — the daemon-side
+// outcome handler decides what to do with the code per CHB.
+//
+// Fields:
+//   - hook_type:   string — always "Stop" in this bead; extensible for future hook types.
+//   - exit_code:   int    — OS exit code returned by the hook process.
+//   - duration_ms: int    — wall-clock duration of the hook execution in milliseconds.
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 2 (Fix 11b).
+func (e *wireEmitter) emitTwinHookCalled(hookType string, exitCode, durationMs int) error {
+	type msg struct {
+		Type       string `json:"type"`
+		HookType   string `json:"hook_type"`
+		ExitCode   int    `json:"exit_code"`
+		DurationMs int    `json:"duration_ms"`
+	}
+	return e.emit(msg{
+		Type:       "twin_hook_called",
+		HookType:   hookType,
+		ExitCode:   exitCode,
+		DurationMs: durationMs,
+	})
+}
+
+// emitTwinError emits a twin_error message.
+//
+// Emitted when the twin encounters an unrecoverable internal error that should
+// be visible on the wire stream (e.g., call_stop_hook without a prior settings
+// load, or malformed settings.json). The caller exits 1 after emitting this.
+//
+// Fields:
+//   - reason: string — short human-readable description of the error.
+//
+// Cite: hk-e66ht error policy.
+func (e *wireEmitter) emitTwinError(reason string) error {
+	type msg struct {
+		Type   string `json:"type"`
+		Reason string `json:"reason"`
+	}
+	return e.emit(msg{
+		Type:   "twin_error",
+		Reason: reason,
+	})
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Control-message reader (daemon-to-handler direction)
 // ────────────────────────────────────────────────────────────────────────────
 

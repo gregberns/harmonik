@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-14 main — v39. Operational-green pushed to origin (HEAD `3a5d36a`). 9 design beads filed across branching, model selection, scenario testing. User aligned on plan; **branching is the next active work item**. Working tree clean. -->
+<!-- PP-TRIAL:v2 2026-05-14 main — v40. Three epics closed in one session: branching (hk-8m91i), scenario-testing (hk-wuu5h), model-selection (hk-cfhj2). 14 commits on main pushed to origin (HEAD `952f7eb`). 1 commit on side branch `ci-workflows-hk-4tttc` AWAITING USER PUSH (OAuth token lacks workflow scope). Phase 2 first-real-demo is the next obvious step. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -36,6 +36,10 @@ TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
 DON'T ASK — EXECUTE.
 On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections.
 
+PUSH AUTONOMY (v40 2026-05-14). User lifted the "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation. Destructive-op rules (force-push, reset --hard, branch -D, --no-verify) STILL require confirmation; only the routine push step is lifted.
+
+CI-WORKFLOW PUSH CAVEAT (v40 2026-05-14). The orchestrator's OAuth token lacks GitHub `workflow` scope — pushes that modify `.github/workflows/*` files are REJECTED at remote. Process: keep workflow-file changes on a side branch (`ci-workflows-<bead>`), surface to user, user pushes manually. Do NOT include workflow-file changes in main pushes.
+
 IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
 `.claude/implementer-protocol.md` is authoritative. (a) Implementer CLOSES OWN BEADS via `br close` after each commit. (b) Implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming. (c) Implementer DOES NOT ASK questions back. (d) **Implementer COMMITS EXPLICITLY** (v38 reinforcement).
 
@@ -68,38 +72,45 @@ CONTEXT BUDGET (orchestrator). ~700 k effective. v38 used ~30% — heavy session
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v39, 2026-05-14)
+# Where we are (v40, 2026-05-14)
 
-**Main at `3a5d36a`, pushed to origin. Nothing in flight. Working tree clean.**
+**Main at `952f7eb`, pushed to origin. Working tree dirty only with HANDOFF + beads.jsonl session-end churn. One side branch `ci-workflows-hk-4tttc` awaits user push (OAuth scope).**
 
-Phase 1 (operational harmonik) landed and is pushed. Phase 2 (orchestrator dispatches via harmonik instead of via the Agent tool) is unblocked but not demonstrated. Phase 3 (DOT-defined bead processes) not started. See `docs/dogfood-smoke-run-2026-05-14-operational-green.md` for the milestone evidence and the 11-fix table.
+Phase 1 (operational harmonik) shipped in v38. v40 closed three Phase-2-prerequisite epics in parallel:
 
-## What just happened in v39 (this short session)
+- **Branching (`hk-8m91i`)** — closed. 5 children landed: spec amendment to WM-005/005b/006/008/019 + new BI-009b parse contract; new `internal/branching` package for `.harmonik/branching.yaml` defaults; daemon factory now cuts worktrees from the bead's `start_from` ref instead of raw HEAD; landing-strategy selector adds cherry-pick alongside squash; full WM-005b resolution chain wired at claim time.
+- **Scenario-testing (`hk-wuu5h`)** — closed. 5 children + 1 spec-doc follow-up: twin parity audit doc (5 fixes twin-feasible today, 4 extension-needed, 2 real-claude-only); twin extended with `--worktree-path`, settings.json reader, Stop hook caller, `commit_on_cue`, `startup_delay_ms`; scenario harness at `test/scenario/` boots daemon+twin and asserts event sequences for 5 fixes; CI workflows for PR-tier smoke and nightly full suite (side-branched pending push).
+- **Model selection (`hk-cfhj2`)** — closed. 3 children landed: spec amendment EM-012b (4-tier resolution chain) + HC-055a (ModelPreference invariant, value-opacity); `claudelaunchspec.go` accepts `--model`/`--effort` with shape validation; `.harmonik/config.yaml` loader + tier-3 compiled defaults + claim-time resolution wired into `claudeRunCtx`.
 
-The user reviewed the Phase 1 milestone, signed off on pushing 63 commits to origin, and raised three forward threads. Three Opus research agents went out and filed **9 new design beads** capturing the design space (no implementation):
+## CI push pending (operator action required)
 
-- **Branching (`hk-8m91i` epic + `hk-oe6zt`, `hk-icgp1`, `hk-zy9s3` children).** Found a real bug: spec WM-005 says the worktree branches from "the integration branch" but code branches from raw HEAD. User clarified the actual flow: each bead carries a `start_from` (cut here) and a `lands_on` (merge here) — usually the same, but they can differ, and multiple integration branches can be in flight simultaneously. Carrier: `.harmonik/branching.yaml` for project defaults + structured `## Branching` section in bead body for per-bead override.
-- **Model selection (`hk-cfhj2` epic + `hk-xo03m`, `hk-bfvk7` children).** 4-tier resolution chain (bead → per-project → per-agent-type default → daemon default), mirroring EM-012a. User added: harmonik passes a *structured model preference descriptor* to the handler; the handler validates against what its underlying tool accepts. Harmonik does NOT keep a closed enum of model names — future harnesses (Codex, pi) can take arbitrary model strings.
-- **Scenario testing (`hk-wuu5h` epic + `hk-cno1z`, `hk-8ys88`, `hk-mg1ya`, `hk-4tttc` children).** Twin already exists (`cmd/harmonik-twin-claude`, YAML-script driven, NDJSON over UDS). Covers 7 of 11 umbrella fixes today; 4 need twin extensions. User clarified the twin's job is **behavioral parity, not visual parity** — no TUI rendering, but it MUST read the worktree's `.claude/settings.json` and call the hook commands the same shape real claude would.
+The branch `ci-workflows-hk-4tttc` contains commit `4022bca` which adds `.github/workflows/ci.yml` (PR-tier scenario smoke) and `scenario-nightly.yml` (nightly full suite). The orchestrator's OAuth token cannot push workflow files (no `workflow` scope). **Run `git push origin ci-workflows-hk-4tttc` from your own shell, then merge that branch into main locally and push** (or open a PR from it). Until then, scenario tests still run locally but CI does not enforce them.
+
+## v40 process notes
+
+- The "ask before push" constraint is lifted (HANDOFF directive PUSH AUTONOMY). CI-workflow caveat is the only remaining gate.
+- Recurring friction: CWD drifts into agent worktrees during long bash chains — `cd /Users/gb/github/harmonik && pwd` recovery pattern used repeatedly. Worth a directive note for the next agent.
+- Beads parent-child-as-blocker gridlock (L-011) hit twice in v40 — once for branching children, once for model children. Sqlite-flip `blocks → related` for parent edges remains the standard recovery.
 
 # Next session — START HERE
 
-**Active work item: branching (`hk-8m91i` epic).** Sequence within the epic:
+**Phase 2 first-real-demo.** Phase 1 proved harmonik can drive a real claude end-to-end on one bead (operational green). Phase 2 swaps the orchestrator's dispatch substrate: instead of the Agent tool spawning sub-agents, the orchestrator files real beads and runs the harmonik daemon against them. The branching/model/scenario infrastructure that just landed is the prerequisite stack — branching gives team-friendly base/target refs, model selection lets each bead pick its harness model, scenario tests give regression coverage.
 
-1. Spec amendment to `specs/workspace-model.md §WM-005`. Make the `start_from` / `lands_on` asymmetry explicit. Spec authoring is user-shaping per the directives block — DRAFT for the user, do not silently land normative text. The plain-language description in v38's bead body (search `hk-8m91i`) is the source. A few questions the user has already answered — re-read v38 chat history or the bead notes if available.
+The pragmatic first demo: pick a small concrete bead, dispatch it through harmonik daemon with `start_from: main`, `lands_on: main`, `model: sonnet`, `effort: high`, watch the resulting JSONL stream and merge commit on main. If that round-trips end-to-end, file a parallel pair of beads and run `harmonik --max-concurrent 2`. That's the proof point for Phase 2 entry.
 
-2. Then `hk-oe6zt` — daemon worktree factory reads `start_from`. Code-only impl after spec lands.
-
-3. Then `hk-zy9s3` — `.harmonik/branching.yaml` schema + loader.
-
-4. Then `hk-icgp1` — landing-strategy selector (merge vs cherry-pick).
-
-After branching closes: scenario testing (`hk-wuu5h`), then first real Phase 2 demo, then model selection, then DOT. The user said model can slip later if needed.
+Open follow-ups (not blocking):
+- Phase 2 demo bead — pick one and run it (no bead filed yet — file at session start).
+- DOT-defined node graphs (Phase 3).
+- Twin paste-receipt + reject-input-before-ready (audit items 4+5) — small twin extensions, low priority since current scenarios don't exercise them yet.
 
 # Files to open first
 
 1. `HANDOFF.md` (this).
-2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — the milestone artifact.
-3. `specs/workspace-model.md` §WM-005, WM-019 — the branching spec being amended.
-4. `internal/daemon/workloop.go` lines ~904-942 (`productionWorktreeFactory`, `resolveHEAD`) — where the bug actually lives.
-5. `br show hk-8m91i --format json` — branching epic with the design analysis embedded.
+2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — Phase 1 milestone.
+3. `docs/twin-parity-audit-2026-05-14.md` — twin coverage map; informs which scenarios the daemon-driven demo can rely on.
+4. `specs/workspace-model.md` §WM-005b — bead-level branching contract (new).
+5. `specs/execution-model.md` §EM-012b — model-selection resolution chain (new).
+6. `internal/branching/branching.go` — project-defaults loader.
+7. `internal/daemon/branching.go` — bead-body parser + resolution-chain wiring.
+8. `internal/daemon/projectconfig.go` + `modelpreference.go` — model resolution.
+9. `test/scenario/scenarios_test.go` — 5 baseline scenarios that should keep passing as the daemon evolves.

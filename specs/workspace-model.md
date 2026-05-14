@@ -217,7 +217,7 @@ Tags: mechanism
 
 #### WM-005 — Task branch naming convention
 
-Every run's task branch MUST be named `run/<run_id>`. The branch is created off the current integration branch (§4.2.WM-006) at worktree-create time. Checkpoint commits per [execution-model.md §4.5 EM-023] land on this branch only.
+Every run's task branch MUST be named `run/<run_id>`. The branch is created from the `start_from` commit resolved per §4.2.WM-005b at worktree-create time. Checkpoint commits per [execution-model.md §4.5 EM-023] land on this branch only.
 
 Tags: mechanism
 
@@ -227,9 +227,26 @@ Sub-workflow expansion per [execution-model.md §4.8 EM-034] does NOT create add
 
 Tags: mechanism
 
+#### WM-005b — Per-bead branching fields: `start_from`, `target_branch`, and `landing_strategy`
+
+A bead MAY carry per-bead branching configuration in a `## Branching` section of its description body, parsed by the daemon at claim time per [beads-integration.md §4.3 BI-009b]. Three fields are recognised:
+
+- **`start_from`** — the git ref (branch name or commit SHA) from which the task branch is cut. When present, the daemon resolves `start_from` to a commit SHA via `git rev-parse <start_from>` and passes the resulting SHA as `<parent_commit>` to `git worktree add -b` per §4.1.WM-003. When absent, the daemon falls back to the project-level default in `.harmonik/branching.yaml` (if present), and then to the spec-level default: the tip of the `harmonik/integration` branch (or `main` when the project-level `.harmonik/branching.yaml` sets `start_from: main`). The resolved `start_from` commit SHA MUST be recorded in the `Workspace` record's `parent_commit` field per §6.1.
+
+- **`target_branch`** — the git branch onto which the squash-merge or cherry-pick landing per §4.5.WM-019 is executed. When present, `target_branch` overrides the WM-006 integration-branch derivation for this run. When absent, the daemon falls back to the project-level default in `.harmonik/branching.yaml` (if present), and then to the WM-006 branch name derivation (parent-bead-derived `harmonik/integration/<parent_bead_id_refsafe>` or the default `harmonik/integration`). Ref-name validation per WM-006a applies regardless of whether `target_branch` comes from the bead body or the WM-006 derivation.
+
+- **`landing_strategy`** — controls how the task branch's commits land on `target_branch`. Accepted values: `squash` (default) and `cherry-pick`. See §4.5.WM-019b for semantics. When absent, the project-level default in `.harmonik/branching.yaml` applies; if also absent there, the built-in default is `squash`.
+
+Resolution precedence for all three fields (highest → lowest): per-bead `## Branching` section → project-level `.harmonik/branching.yaml` defaults → spec-level defaults declared in this rule. The daemon resolves the three fields once at claim time; the resolved values are stored in the `Workspace` record and remain fixed for the run's lifetime. Operator edits to `.harmonik/branching.yaml` take effect on the NEXT claimed bead, not the current run.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 #### WM-006 — Integration branch naming convention
 
-The default integration branch MUST be named `harmonik/integration`. When a run has a parent-bead context visible to the dependency-graph query per [beads-integration.md §4.5 BI-014], its task branch MUST target a derived branch named `harmonik/integration/<parent_bead_id_refsafe>`, where `<parent_bead_id_refsafe>` is the bead ID transformed to satisfy git's ref-name constraints per WM-006a. The exact transformation template is operator-configurable per OQ-WM-002; the default is verbatim bead-ID substitution. When a run has no parent-bead context, its merge target is determined by WM-008.
+The default integration branch MUST be named `harmonik/integration`. When a run has a parent-bead context visible to the dependency-graph query per [beads-integration.md §4.5 BI-014], its task branch MUST target a derived branch named `harmonik/integration/<parent_bead_id_refsafe>`, where `<parent_bead_id_refsafe>` is the bead ID transformed to satisfy git's ref-name constraints per WM-006a. The exact transformation template is operator-configurable per OQ-WM-002; the default is verbatim bead-ID substitution. When a run has no parent-bead context, the spec-level default target is `harmonik/integration`.
+
+This rule declares the spec-level default derivation. The per-bead `target_branch` field per §4.2.WM-005b and the project-level `.harmonik/branching.yaml` default each take precedence over this derivation when present; the full resolution order is defined in WM-005b. Ref-name validation per WM-006a applies to any target branch name regardless of its source.
 
 Tags: mechanism
 
@@ -250,11 +267,13 @@ The system MUST use a three-level branching model: (a) node commits land on the 
 
 Tags: mechanism
 
-#### WM-008 — Small-scope collapse — operator-policy gated merge target for parentless runs
+#### WM-008 — Retired in favour of WM-005b
 
-When a run has no parent-bead relationship in Beads (per [beads-integration.md §4.5 BI-014]), the task branch's merge target MUST be determined by operator policy per [operator-nfr.md §4.3] with two allowed values: `integration` (squash-merge to `harmonik/integration`, the default) or `main` (squash-merge directly to main — the small-scope-collapse shape). Absent an operator override, the default MUST be `integration` (consistent with WM-006). The decision is deterministic on the configured policy value; no cognition participates. The policy knob's precedence layer and reload semantics are tracked in OQ-WM-002.
+**Retired (v0.5.0).** The operator-policy-gated merge-target knob for parentless runs (`integration` vs `main`) is superseded by the per-bead `target_branch` and project-level `.harmonik/branching.yaml` mechanism declared in §4.2.WM-005b. Operators who previously relied on the two-value `integration`/`main` operator-policy enum MUST migrate to setting `target_branch: main` (or `target_branch: harmonik/integration`) in `.harmonik/branching.yaml` as the project default, with per-bead overrides via the `## Branching` body section. The policy knob tracked in OQ-WM-002 is now resolved by the WM-005b precedence chain; OQ-WM-002 remains open for the integration-branch template operator-configurability question (not retired by this change).
 
-Tags: mechanism
+Do NOT reuse the WM-008 ID. Do NOT implement the retired operator-policy enum.
+
+Tags: retired
 
 #### WM-009 — Branch naming is stable across a harmonik version
 
@@ -426,11 +445,11 @@ Every workflow that produces a merge-back MUST declare the merge step as a workf
 
 Tags: mechanism
 
-#### WM-019 — Task branch squash-merges onto integration branch with one commit per task
+#### WM-019 — Task branch lands onto `target_branch` with one commit per task
 
-The merge-back operation MUST produce exactly one commit on the integration branch per completed task. The merge MUST be implemented as `git merge --squash --strategy=ort <task_branch>` followed by `git commit` on the integration branch (or an equivalent porcelain-level sequence that preserves identical tree-and-trailer semantics). The `--strategy=ort` pin is REQUIRED to fix the merge algorithm across git versions; `ort` is the default for `git merge` since git 2.34 (see WM-ENV-002 minimum version pin) and explicit specification prevents an older or differently-configured site from silently falling back to `recursive` with different conflict resolution semantics.
+The merge-back operation MUST produce exactly one commit on the run's `target_branch` (resolved per §4.2.WM-005b) per completed task. For runs whose `landing_strategy` is `squash` (the default), the merge MUST be implemented as `git merge --squash --strategy=ort <task_branch>` followed by `git commit` on `target_branch` (or an equivalent porcelain-level sequence that preserves identical tree-and-trailer semantics). For runs whose `landing_strategy` is `cherry-pick`, see §4.5.WM-019b. The `--strategy=ort` pin is REQUIRED on the squash path to fix the merge algorithm across git versions; `ort` is the default for `git merge` since git 2.34 (see WM-ENV-002 minimum version pin) and explicit specification prevents an older or differently-configured site from silently falling back to `recursive` with different conflict resolution semantics.
 
-**Commit message synthesis.** The integration-branch commit message is synthesized by the merge node (the non-agentic orchestrator path or the agentic merge-node handler per §4.5.WM-018a). The message body MUST include a summary of the task-branch's checkpoint commit set — at minimum the first-line subject of each checkpoint, concatenated in commit order — so the squashed commit remains human-readable as a condensed task narrative. The message MUST carry trailers: `Harmonik-Run-ID: <run_id>` and, when the run is bead-tied, `Harmonik-Bead-ID: <bead_id>` per [execution-model.md §4.4 EM-017]. The trailer set is NOT copied verbatim from the final checkpoint; it is re-synthesized from the run's invariant identifiers (which are equivalent in practice, since every checkpoint on a single task branch shares these two trailers per WM-INV-003).
+**Commit message synthesis.** The landing commit message is synthesized by the merge node (the non-agentic orchestrator path or the agentic merge-node handler per §4.5.WM-018a). The message body MUST include a summary of the task-branch's checkpoint commit set — at minimum the first-line subject of each checkpoint, concatenated in commit order — so the squashed commit remains human-readable as a condensed task narrative. The message MUST carry trailers: `Harmonik-Run-ID: <run_id>` and, when the run is bead-tied, `Harmonik-Bead-ID: <bead_id>` per [execution-model.md §4.4 EM-017]. The trailer set is NOT copied verbatim from the final checkpoint; it is re-synthesized from the run's invariant identifiers (which are equivalent in practice, since every checkpoint on a single task branch shares these two trailers per WM-INV-003).
 
 **Author and committer identity.** The squashed commit's `author` MUST be set to the LaunchSpec identity of the merge-node's implementer (when §4.5.WM-018a uses the agentic variant, author = `implementer_handler_ref.identifier` string; see [handler-contract.md §6.1] for the identifier shape), OR to the daemon identity when §4.5.WM-018a uses the non-agentic orchestrator-dispatched variant. The squashed commit's `committer` MUST be the daemon identity in both variants: `Harmonik Daemon <no-reply@harmonik.local>` or the operator-configured override per [operator-nfr.md §4.3]. The author/committer split makes the provenance of the content (author) distinct from the provenance of the merge operation itself (committer).
 
@@ -439,18 +458,33 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### WM-019a — Merge executes outside the main worktree
 
-The merge operation (§4.5.WM-019) MUST NOT execute `git checkout` against the integration branch in a worktree concurrently used by operator activity. Two mechanisms are accepted:
+The merge operation (§4.5.WM-019) MUST NOT execute `git checkout` against `target_branch` in a worktree concurrently used by operator activity. Two mechanisms are accepted:
 
-(a) **`--ignore-other-worktrees` flag.** The merge node MAY run `git checkout --ignore-other-worktrees <integration_branch>` against the merge-staging area. This flag tells git to proceed even if another worktree has the branch checked out; harmonik's lease model (WM-010) guarantees that no other harmonik worktree holds the integration branch, but operators running their own main worktree may.
+(a) **`--ignore-other-worktrees` flag.** The merge node MAY run `git checkout --ignore-other-worktrees <target_branch>` against the merge-staging area. This flag tells git to proceed even if another worktree has the branch checked out; harmonik's lease model (WM-010) guarantees that no other harmonik worktree holds `target_branch`, but operators running their own main worktree may.
 
-(b) **Scratch merge-worktree (PREFERRED).** The merge node creates a dedicated short-lived worktree at `<repo>/.harmonik/worktrees/merge-<merge_id>/` (where `<merge_id>` is a UUIDv7 minted for the merge operation), executes the merge inside that worktree, and removes the worktree after the merge commit is created. Lifecycle: (i) `git worktree add -b merge-<merge_id> <merge_path> <integration_tip>`; (ii) `git merge --squash --strategy=ort <task_branch>`; (iii) resolve conflicts per WM-024 if present; (iv) `git commit` with trailers per WM-019; (v) `git push <integration_tip>` to the integration branch (or equivalent ref-update); (vi) `git worktree remove --force <merge_path>` and `git worktree prune`; (vii) delete the transient `merge-<merge_id>` branch. The scratch-worktree path is owned by WM (see §6.2) and is NOT leased — it has no lease-lock file and does not participate in the §4.3 lease state machine. The scratch worktree's `merge_id` is distinct from any `run_id`; scratch worktrees are never classified as orphan workspaces by WM-003a.
+(b) **Scratch merge-worktree (PREFERRED).** The merge node creates a dedicated short-lived worktree at `<repo>/.harmonik/worktrees/merge-<merge_id>/` (where `<merge_id>` is a UUIDv7 minted for the merge operation), executes the merge inside that worktree, and removes the worktree after the merge commit is created. Lifecycle: (i) `git worktree add -b merge-<merge_id> <merge_path> <target_branch_tip>`; (ii) `git merge --squash --strategy=ort <task_branch>` (squash path) or `git cherry-pick` sequence (cherry-pick path per WM-019b); (iii) resolve conflicts per WM-024 if present; (iv) `git commit` with trailers per WM-019; (v) `git push <target_branch_tip>` to `target_branch` (or equivalent ref-update); (vi) `git worktree remove --force <merge_path>` and `git worktree prune`; (vii) delete the transient `merge-<merge_id>` branch. The scratch-worktree path is owned by WM (see §6.2) and is NOT leased — it has no lease-lock file and does not participate in the §4.3 lease state machine. The scratch worktree's `merge_id` is distinct from any `run_id`; scratch worktrees are never classified as orphan workspaces by WM-003a.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+#### WM-019b — Landing strategy selector: `squash` vs `cherry-pick`
+
+The `landing_strategy` field (resolved per §4.2.WM-005b) selects how the task branch's commits land on `target_branch`. Two values are accepted:
+
+- **`squash`** (default). The merge node executes the `git merge --squash --strategy=ort` sequence per §4.5.WM-019. The result is exactly one synthesised commit on `target_branch` whose tree is the merged result of the full task branch. Conflict detection applies per WM-020; conflict resolution per §4.6.WM-024. Provenance is preserved via the `Harmonik-Run-ID` and `Harmonik-Bead-ID` trailers in the synthesised commit message per WM-019.
+
+- **`cherry-pick`**. The merge node executes `git cherry-pick <first_checkpoint>..<task_branch_tip>` (range-form, exclusive lower bound) against `target_branch`, preserving each checkpoint commit as an individual commit on `target_branch`. The `--strategy=ort` flag MUST be passed to each cherry-pick invocation. Each cherry-picked commit MUST retain the `Harmonik-Run-ID` and `Harmonik-Bead-ID` trailers from the source checkpoint; the committer MUST be rewritten to the daemon identity per WM-019's author/committer rule. Cherry-pick is appropriate when `target_branch` is shared by multiple sibling runs whose commits need to interleave. Conflict detection and escalation per WM-020 and §4.6 apply to each cherry-pick step individually.
+
+A run whose `landing_strategy` is `cherry-pick` and whose task branch carries no checkpoint commits (an all-mechanical branch) MUST NOT attempt the cherry-pick; it MUST escalate directly per WM-022a's all-mechanical escalation path, treating the empty cherry-pick set as a conflict-equivalent condition.
+
+The scratch merge-worktree approach of §4.5.WM-019a option (b) SHOULD be used for cherry-pick landings as well, to avoid mutating the operator's main worktree.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 #### WM-020 — Squash-merge is non-fast-forward by construction
 
-A squash-merge (§4.5.WM-019) is non-fast-forward by its nature: `git merge --squash` produces a single new commit on the integration branch whose tree equals the merged result but whose parent is the integration-branch tip (not the task-branch tip). The integration-branch tip therefore ADVANCES to a new commit containing the squashed content; the task-branch tip is UNCHANGED and is NOT an ancestor of the new integration-branch tip. The phrasing "not fast-forward-only" used in prior WM drafts is retired — under squash a fast-forward is not representable, so qualifying the merge as "not ff-only" is vacuous.
+A squash-merge (§4.5.WM-019) is non-fast-forward by its nature: `git merge --squash` produces a single new commit on `target_branch` whose tree equals the merged result but whose parent is the `target_branch` tip (not the task-branch tip). The `target_branch` tip therefore ADVANCES to a new commit containing the squashed content; the task-branch tip is UNCHANGED and is NOT an ancestor of the new `target_branch` tip. The phrasing "not fast-forward-only" used in prior WM drafts is retired — under squash a fast-forward is not representable, so qualifying the merge as "not ff-only" is vacuous.
 
 Conflict markers in the index are real and MUST be resolved per §4.6 before the merge commit is created. Detection of conflicts is mechanical per §4.5.WM-018a (non-zero exit from `git merge --squash`, or conflict markers visible in `git status --porcelain`).
 

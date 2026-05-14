@@ -155,6 +155,31 @@ The allowed-mode enum (`{single, review-loop, dot}`) is owned by [execution-mode
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### BI-009b — `## Branching` bead-body parse contract
+
+A bead MAY declare per-bead branching configuration in a `## Branching` section of its description body. The daemon MUST parse this section at claim time using the following rules:
+
+**Detection.** The `## Branching` section is present if the bead's description (as returned by `br show <id> --format json`, field `description`) contains the exact heading `## Branching` (ATX-style, level-2) on a line by itself. The section extends from the line after the heading to the next `## ` heading (or end of description). The daemon MUST scan the description string for this heading exactly once per claim; no caching across claims.
+
+**Content shape.** The body of the `## Branching` section MUST be a fenced YAML block delimited by ` ```yaml ` and ` ``` ` (with no leading spaces on the fence lines). The YAML block carries zero or more of the following keys:
+
+```yaml
+start_from: <git-ref>        # optional; branch name or commit SHA
+target_branch: <git-ref>     # optional; branch name
+landing_strategy: <value>    # optional; "squash" | "cherry-pick"
+```
+
+All keys are optional. Unrecognised keys MUST be silently ignored (forward-compatibility). The YAML block MUST be parseable as a flat key-value mapping (no nested structure); a malformed YAML block MUST be treated as a parse error per the error rule below.
+
+**Extraction.** The daemon MUST extract the three values and store them as the resolved `start_from`, `target_branch`, and `landing_strategy` inputs into the WM-005b precedence chain. A key present but with a null or empty-string value MUST be treated as absent (falls through to the next precedence tier).
+
+**Error handling.** If the `## Branching` section is present but its YAML block is absent, malformed (YAML parse error), or contains a `landing_strategy` value outside `{squash, cherry-pick}`, the daemon MUST emit a `bead_body_parse_error` observability event per [event-model.md §8.8] (with structured-log fallback per [operator-nfr.md §4.9 ON-035]), MUST surface the bead to the dispatch loop with the `## Branching` fields treated as absent (falling through to project-level and spec-level defaults per WM-005b), and MUST NOT refuse to dispatch the bead. The structured-log record MUST include `subsystem=beads-adapter`, level=warn, the `bead_id`, and a `parse_error` field describing the failure.
+
+**Agents.** Agents MUST NOT modify the `## Branching` section of a bead description from within a workflow run. This prohibition is enforced by the same intra-run write discipline as BI-010c; the Beads-CLI skill per §4.9.BI-027 MUST document it.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.4 Harmonik write surface — terminal transitions only
 
 #### BI-010 — Harmonik writes to Beads ONLY at terminal workflow transitions

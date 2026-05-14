@@ -621,7 +621,7 @@ func ExportedWaitWithSocketGrace(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// branching test seams (hk-oe6zt)
+// branching test seams (hk-oe6zt, hk-umxx4)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedBranchingConfig is the exported shape of BranchingConfig for tests.
@@ -629,12 +629,26 @@ func ExportedWaitWithSocketGrace(
 // Bead ref: hk-oe6zt.
 type ExportedBranchingConfig = BranchingConfig
 
+// ExportedErrProjectBranchingConfig is a type alias for ErrProjectBranchingConfig
+// so tests in package daemon_test can use errors.As without importing internal types.
+//
+// Bead ref: hk-umxx4.
+type ExportedErrProjectBranchingConfig = ErrProjectBranchingConfig
+
 // ExportedParseBranchingSection exposes parseBranchingSection for tests in
 // package daemon_test. See branching.go for semantics.
 //
 // Bead ref: hk-oe6zt.
 func ExportedParseBranchingSection(beadBody string) (BranchingConfig, error) {
 	return parseBranchingSection(beadBody)
+}
+
+// ExportedResolveBranching exposes resolveBranching for tests in package daemon_test.
+// See branching.go for semantics.
+//
+// Bead ref: hk-umxx4.
+func ExportedResolveBranching(ctx context.Context, beadBody, projectRoot string) (BranchingConfig, error) {
+	return resolveBranching(ctx, beadBody, projectRoot)
 }
 
 // ExportedResolveParentCommit exposes resolveParentCommit for tests in package

@@ -43,6 +43,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/gregberns/harmonik/internal/branching"
 )
 
 // BranchingConfig holds the per-bead branching fields extracted from the
@@ -65,6 +67,93 @@ type BranchingConfig struct {
 	// Empty means absent → spec-level default is "squash".
 	// Consumed by hk-icgp1 (landing strategy).
 	LandingStrategy string
+}
+
+// Spec-level defaults per WM-005b (lowest precedence in the three-tier chain).
+// These constants live here so callers outside branching.go need not import the
+// spec text to know what the defaults are.
+const (
+	specDefaultStartFrom       = "main"
+	specDefaultLandsOn         = "main"
+	specDefaultLandingStrategy = "squash"
+)
+
+// ErrProjectBranchingConfig is the typed error returned by resolveBranching
+// when the project-level .harmonik/branching.yaml is present but malformed.
+// Malformed YAML is operator-detectable and must NOT silently fall back to
+// spec defaults (judgment call per hk-umxx4 brief).
+type ErrProjectBranchingConfig struct {
+	Cause error
+}
+
+func (e *ErrProjectBranchingConfig) Error() string {
+	return fmt.Sprintf("daemon: project branching config error: %v", e.Cause)
+}
+
+func (e *ErrProjectBranchingConfig) Unwrap() error { return e.Cause }
+
+// resolveBranching applies the WM-005b three-tier precedence chain and returns
+// a fully-merged BranchingConfig:
+//
+//  1. Bead body (parseBranchingSection) — highest precedence.
+//  2. Project defaults (.harmonik/branching.yaml via branching.LoadCached).
+//  3. Spec defaults (start_from=main, lands_on=main, landing_strategy=squash).
+//
+// Tier-1 parse errors: if the ## Branching section is present but malformed,
+// the bead-body fields are treated as absent per BI-009b §Error handling and a
+// structured-log warning is emitted. Tier-1 parse errors are NOT propagated to
+// the caller.
+//
+// Tier-2 load errors: if .harmonik/branching.yaml is present but malformed,
+// resolveBranching returns a wrapped *ErrProjectBranchingConfig. This is
+// fail-fast behaviour: a malformed project config is operator-detectable and
+// MUST NOT silently fall through to spec defaults.
+//
+// Tier-2 file absent: branching.LoadCached returns zero-value Defaults + nil
+// error; resolveBranching continues to tier-3 spec defaults for any field not
+// set by tier-1.
+//
+// Spec ref: specs/workspace-model.md §4.2 WM-005b.
+// Bead: hk-umxx4.
+func resolveBranching(ctx context.Context, beadBody, projectRoot string) (BranchingConfig, error) {
+	// Tier 1: bead body.
+	beadCfg, parseErr := parseBranchingSection(beadBody)
+	if parseErr != nil {
+		// BI-009b §Error handling: malformed section → warn + treat as absent.
+		// The caller's bead ID is not available here; structured-log without it.
+		slog.WarnContext(ctx, "bead_body_parse_error",
+			"subsystem", "beads-adapter",
+			"parse_error", parseErr.Error(),
+		)
+		// beadCfg is zero-value; all fields fall through.
+	}
+
+	// Tier 2: project-level .harmonik/branching.yaml defaults.
+	projDefaults, loadErr := branching.LoadCached(projectRoot)
+	if loadErr != nil {
+		// Fail-fast: malformed YAML is operator-detectable.
+		return BranchingConfig{}, &ErrProjectBranchingConfig{Cause: loadErr}
+	}
+
+	// Merge: bead-body fields win; project defaults fill unset slots; spec
+	// defaults fill anything still unset.
+	merged := BranchingConfig{
+		StartFrom:       firstNonEmpty(beadCfg.StartFrom, projDefaults.StartFrom, specDefaultStartFrom),
+		LandsOn:         firstNonEmpty(beadCfg.LandsOn, projDefaults.LandsOn, specDefaultLandsOn),
+		LandingStrategy: firstNonEmpty(beadCfg.LandingStrategy, string(projDefaults.LandingStrategy), specDefaultLandingStrategy),
+	}
+	return merged, nil
+}
+
+// firstNonEmpty returns the first non-empty string from vals.
+// If all are empty, returns "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // branchingYAMLShape is the flat key-value shape of the fenced YAML block per
@@ -258,56 +347,43 @@ func gitRevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 // WM-005b. It is the integration point called by beadRunOne before passing the
 // SHA to the worktreeFactory.
 //
-// Precedence (highest → lowest):
+// Precedence via resolveBranching (highest → lowest):
 //  1. Per-bead start_from from the `## Branching` section (BI-009b).
-//  2. Spec-level default: HEAD of the project repository (WM-003).
+//  2. Project-level default from .harmonik/branching.yaml (WM-005b tier 2).
+//  3. Spec-level default: "main" (WM-005b).
 //
-// Project-level `.harmonik/branching.yaml` default (tier 2 in WM-005b) is
-// OUT OF SCOPE for this bead (hk-zy9s3, dispatched in parallel).
+// When start_from resolves to "main" (from any tier) and "main" exists locally,
+// the returned SHA is the tip of refs/heads/main. When start_from is not
+// resolvable, a *StartFromRefError is returned — the bead is reopened by the
+// caller (fail-fast; no silent fallback per WM-005b).
 //
-// When start_from is present but the ref cannot be resolved locally, this
-// function returns a *StartFromRefError — the bead is reopened by the caller.
-// This is intentional fail-fast behaviour: a user who explicitly named a ref
-// expects it to resolve; silent fallback to HEAD would silently mis-branch.
+// When .harmonik/branching.yaml is present but malformed, resolveBranching
+// returns an *ErrProjectBranchingConfig — the bead is reopened (fail-fast;
+// operator must fix the config before beads can be dispatched).
 //
-// When the ## Branching section is present but malformed, the function emits a
-// structured-log warning (BI-009b §Error handling), treats start_from as absent,
-// and falls back to HEAD.
+// When the ## Branching section is present but malformed, resolveBranching
+// emits a structured-log warning and treats bead-body fields as absent; it
+// falls through to project and spec defaults (BI-009b §Error handling).
 func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody string) (string, error) {
-	cfg, parseErr := parseBranchingSection(beadBody)
-	if parseErr != nil {
-		// BI-009b §Error handling: malformed section → warn + fall through to
-		// spec-level default. Do NOT refuse to dispatch the bead.
-		slog.WarnContext(ctx, "bead_body_parse_error",
-			"subsystem", "beads-adapter",
-			"bead_id", beadID,
-			"parse_error", parseErr.Error(),
-		)
-		// cfg is zero-value; StartFrom is "".
+	cfg, resolveErr := resolveBranching(ctx, beadBody, repoRoot)
+	if resolveErr != nil {
+		// Fail-fast: project config malformed → surface to caller for bead reopen.
+		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
 	}
 
-	if cfg.StartFrom != "" {
-		sha, err := resolveStartFrom(ctx, repoRoot, cfg.StartFrom)
-		if err != nil {
-			// Fail-fast: explicit start_from ref that cannot be resolved → surface
-			// error to caller for bead reopen. Do NOT silently fall back to HEAD.
-			return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
-		}
-		return sha, nil
+	// cfg.StartFrom is always non-empty after resolveBranching (spec default "main"
+	// fills any unset tier). Resolve the ref to a commit SHA.
+	sha, err := resolveStartFrom(ctx, repoRoot, cfg.StartFrom)
+	if err != nil {
+		// Fail-fast: start_from ref cannot be resolved locally.
+		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
 	}
-
-	// No start_from (absent or fell through): use HEAD per WM-003 / spec-level
-	// default. Mirrors the pre-bead-branching behaviour of beadRunOne.
-	return resolveHEAD(ctx, repoRoot)
+	return sha, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Landing strategy — hk-icgp1
 // ─────────────────────────────────────────────────────────────────────────────
-
-// defaultLandsOn is the spec-level default target branch per WM-005b when
-// lands_on is absent from both the bead body and the project config.
-const defaultLandsOn = "main"
 
 // LandsOnRefError is the typed error returned by landTaskBranch when the
 // resolved lands_on ref cannot be found in the local repository. Mirrors the
@@ -325,20 +401,16 @@ func (e *LandsOnRefError) Error() string {
 
 func (e *LandsOnRefError) Unwrap() error { return e.Cause }
 
-// resolveLandsOn returns the effective target ref for the merge-back, applying
-// the WM-005b precedence chain:
-//
-//  1. Per-bead LandsOn from BranchingConfig (BI-009b).
-//  2. Spec-level default: "main" (WM-005b).
-//
-// Project-level .harmonik/branching.yaml default (tier 2) is handled by a
-// separate call site (hk-umxx4); this function receives the already-resolved
-// cfg and falls through only to the spec default.
+// resolveLandsOn returns the effective target ref for the merge-back.
+// It receives a BranchingConfig that has already been merged by resolveBranching
+// (all three tiers applied), so cfg.LandsOn is always non-empty. The fallback
+// to specDefaultLandsOn is retained as a safety net for callers that supply an
+// ad-hoc BranchingConfig directly (e.g. in tests).
 func resolveLandsOn(cfg BranchingConfig) string {
 	if cfg.LandsOn != "" {
 		return cfg.LandsOn
 	}
-	return defaultLandsOn
+	return specDefaultLandsOn
 }
 
 // landTaskBranch executes the merge-back from taskBranch onto the target ref

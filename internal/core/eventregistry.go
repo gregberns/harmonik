@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
 	"sync"
 )
 
@@ -45,8 +47,13 @@ var ErrDuplicateEventType = errors.New("core: event type already registered")
 // TODO(hk-hqwn.41/EV-034a): source_subsystem identifier registration is a
 // separate concern; see EV-034a. Not implemented here.
 //
-// TODO(hk-hqwn.41/EV-036): compile-time secret-prefix scan of registered
-// payload types (EV-036) is a separate bead; not implemented here.
+// secretPrefixRe is the EV-036 / HC-031 common-prefix regex. Any struct field
+// whose exported name matches this regex on a registered payload type MUST cause
+// ScanRegisteredPayloadsForSecretFields to return ErrSecretPrefixField.
+//
+// Spec ref: event-model.md §4.10 EV-036; handler-contract.md §4.7 HC-031.
+var secretPrefixRe = regexp.MustCompile(`(?i)(secret|token|password|api[_-]?key|auth)`)
+
 type eventRegistry struct {
 	mu           sync.Mutex
 	constructors map[string]func() EventPayload // TODO(hk-hqwn.59.82): hoist registry key from string to EventType when the enum lands. Non-breaking — string-constant assignment to EventType is assignable.
@@ -112,4 +119,80 @@ func (e Event) DecodePayload() (EventPayload, error) {
 		return nil, err
 	}
 	return payload, nil
+}
+
+// ErrSecretPrefixField is the typed configuration error returned by
+// ScanRegisteredPayloadsForSecretFields when a registered payload struct
+// has an exported field whose name matches the secret-prefix rule.
+//
+// Spec ref: event-model.md §4.10 EV-036 — "any registered payload type
+// whose struct field names match the secret-prefix rule MUST cause startup
+// to fail with a typed configuration error."
+var ErrSecretPrefixField = errors.New("core: registered payload type has secret-prefix field name")
+
+// scanConstructors is the core implementation of the EV-036 structural check.
+// It scans every constructor in ctors, instantiates each payload via reflection,
+// and returns the first ErrSecretPrefixField violation found, or nil when clean.
+//
+// Non-struct payloads (e.g., map types) are skipped. Unexported fields are
+// skipped (they cannot be set via JSON unmarshaling and carry no JSON key name).
+//
+// Separated from ScanRegisteredPayloadsForSecretFields so that tests can supply
+// a local constructor map without touching the global registry.
+func scanConstructors(ctors map[string]func() EventPayload) error {
+	for typeName, ctor := range ctors {
+		instance := ctor()
+		if instance == nil {
+			continue
+		}
+		rt := reflect.TypeOf(instance)
+		// Dereference pointer to get the underlying struct type.
+		for rt.Kind() == reflect.Ptr {
+			rt = rt.Elem()
+		}
+		if rt.Kind() != reflect.Struct {
+			continue
+		}
+		for i := range rt.NumField() {
+			field := rt.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			if secretPrefixRe.MatchString(field.Name) {
+				return fmt.Errorf("%w: event type %q has field %q matching secret-prefix rule",
+					ErrSecretPrefixField, typeName, field.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// ScanRegisteredPayloadsForSecretFields scans every constructor registered in
+// the global event-type registry and inspects the concrete struct type it
+// produces via reflection. Any exported struct field whose name matches the
+// EV-036 secret-prefix rule (`(?i)(secret|token|password|api[_-]?key|auth)`)
+// causes the function to return a non-nil error wrapping ErrSecretPrefixField.
+//
+// The intent is daemon-startup use: call ScanRegisteredPayloadsForSecretFields
+// after all RegisterEventType calls complete and before the bus is sealed. A
+// non-nil return means a payload author accidentally named a field after a
+// secret-class concept; the daemon MUST refuse to start (EV-036).
+//
+// Non-struct payloads (e.g., map types) are skipped; the check is structural
+// and only applies to exported fields on struct types.
+//
+// Returns nil when all registered payload types are clean.
+// Returns an error wrapping ErrSecretPrefixField on the first violation found.
+//
+// Spec ref: event-model.md §4.10 EV-036.
+// Bead ref: hk-hqwn.52.
+func ScanRegisteredPayloadsForSecretFields() error {
+	r := globalEventRegistry
+	r.mu.Lock()
+	snapshot := make(map[string]func() EventPayload, len(r.constructors))
+	for k, v := range r.constructors {
+		snapshot[k] = v
+	}
+	r.mu.Unlock()
+	return scanConstructors(snapshot)
 }

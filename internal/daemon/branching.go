@@ -1,6 +1,7 @@
 package daemon
 
-// branching.go — per-bead branching configuration parser and ref resolver.
+// branching.go — per-bead branching configuration parser, ref resolver, and
+// task-branch landing helper.
 //
 // Implements beads-integration.md §4.3 BI-009b parse contract:
 // reads the `## Branching` section from a bead description body, extracts the
@@ -11,6 +12,15 @@ package daemon
 // resolveStartFrom converts a start_from git ref (branch name or SHA) to the
 // commit SHA used as <parent_commit> in git worktree add -b.
 //
+// Implements workspace-model.md §4.5 WM-019b landing strategy selector:
+// landTaskBranch dispatches to squash-merge or cherry-pick based on
+// BranchingConfig.LandingStrategy, defaulting to squash.
+//
+// NOTE on vocabulary: the bead body YAML key is `target_branch` (BI-009b), but
+// the spec and Go identifier use `lands_on` / LandsOn throughout (WM-005b,
+// WM-019b). The YAML struct tag preserves the bead-body key; all Go identifiers
+// use the spec vocabulary.
+//
 // NOTE on stale bead vocabulary: the bead body for hk-oe6zt uses the old key
 // `base_branch` (pre-spec terminology). The spec (WM-005b, BI-009b) now uses
 // `start_from`. Per implementer-protocol.md PATH-DISCREPANCY RULE (spec
@@ -20,11 +30,12 @@ package daemon
 //
 // Spec refs:
 //   - specs/beads-integration.md §4.3 BI-009b
-//   - specs/workspace-model.md §4.2 WM-005b, WM-003
+//   - specs/workspace-model.md §4.2 WM-005b, WM-003, §4.5 WM-019, WM-019b
 //
-// Bead: hk-oe6zt.
+// Beads: hk-oe6zt (parser + start_from resolver), hk-icgp1 (landing selector).
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -44,15 +55,15 @@ type BranchingConfig struct {
 	// branch is cut per WM-005b. Empty means absent → fall through to next tier.
 	StartFrom string
 
-	// TargetBranch is the git branch onto which the task branch is landed per
-	// WM-005b. Empty means absent → WM-006 derivation applies.
-	// OUT OF SCOPE for hk-oe6zt — field parsed but not consumed by the factory
-	// in this bead. Consumed by hk-icgp1 (landing strategy, wave-2).
-	TargetBranch string
+	// LandsOn is the git branch onto which the task branch is landed per WM-005b
+	// (spec vocabulary; bead body YAML key is target_branch per BI-009b).
+	// Empty means absent → spec-level default is "main" per WM-005b.
+	// Consumed by hk-icgp1 (landing strategy).
+	LandsOn string
 
 	// LandingStrategy controls squash vs cherry-pick landing per WM-019b.
-	// OUT OF SCOPE for hk-oe6zt — field parsed but not consumed by the factory
-	// in this bead. Consumed by hk-icgp1 (landing strategy, wave-2).
+	// Empty means absent → spec-level default is "squash".
+	// Consumed by hk-icgp1 (landing strategy).
 	LandingStrategy string
 }
 
@@ -62,7 +73,7 @@ type BranchingConfig struct {
 // when Decoder.KnownFields is not called).
 type branchingYAMLShape struct {
 	StartFrom       string `yaml:"start_from"`
-	TargetBranch    string `yaml:"target_branch"`
+	LandsOn         string `yaml:"target_branch"` // bead body key is target_branch; spec vocab is lands_on
 	LandingStrategy string `yaml:"landing_strategy"`
 }
 
@@ -139,7 +150,7 @@ func parseBranchingSection(beadBody string) (BranchingConfig, error) {
 
 	return BranchingConfig{
 		StartFrom:       shape.StartFrom,
-		TargetBranch:    shape.TargetBranch,
+		LandsOn:         shape.LandsOn,
 		LandingStrategy: shape.LandingStrategy,
 	}, nil
 }
@@ -288,4 +299,207 @@ func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody string)
 	// No start_from (absent or fell through): use HEAD per WM-003 / spec-level
 	// default. Mirrors the pre-bead-branching behaviour of beadRunOne.
 	return resolveHEAD(ctx, repoRoot)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Landing strategy — hk-icgp1
+// ─────────────────────────────────────────────────────────────────────────────
+
+// defaultLandsOn is the spec-level default target branch per WM-005b when
+// lands_on is absent from both the bead body and the project config.
+const defaultLandsOn = "main"
+
+// LandsOnRefError is the typed error returned by landTaskBranch when the
+// resolved lands_on ref cannot be found in the local repository. Mirrors the
+// StartFromRefError shape per the brief's judgment-call directive.
+type LandsOnRefError struct {
+	// Ref is the lands_on value after WM-005b resolution.
+	Ref string
+	// Cause is the underlying git error from the last rev-parse attempt.
+	Cause error
+}
+
+func (e *LandsOnRefError) Error() string {
+	return fmt.Sprintf("daemon: lands_on ref %q not found in local repository: %v", e.Ref, e.Cause)
+}
+
+func (e *LandsOnRefError) Unwrap() error { return e.Cause }
+
+// resolveLandsOn returns the effective target ref for the merge-back, applying
+// the WM-005b precedence chain:
+//
+//  1. Per-bead LandsOn from BranchingConfig (BI-009b).
+//  2. Spec-level default: "main" (WM-005b).
+//
+// Project-level .harmonik/branching.yaml default (tier 2) is handled by a
+// separate call site (hk-umxx4); this function receives the already-resolved
+// cfg and falls through only to the spec default.
+func resolveLandsOn(cfg BranchingConfig) string {
+	if cfg.LandsOn != "" {
+		return cfg.LandsOn
+	}
+	return defaultLandsOn
+}
+
+// landTaskBranch executes the merge-back from taskBranch onto the target ref
+// resolved from cfg per WM-005b / WM-019b. It operates inside mergeWorktreeDir
+// (a scratch merge-worktree created by the caller per WM-019a option (b)).
+//
+// Dispatch:
+//   - cfg.LandingStrategy == "cherry-pick" → cherryPickLanding (WM-019b).
+//   - cfg.LandingStrategy == "" or "squash" → squashLanding (WM-019, default).
+//
+// The landing target ref is resolved via resolveLandsOn and validated to exist
+// locally. If the ref cannot be found, a *LandsOnRefError is returned (fail-fast
+// per the brief's judgment-call: explicit lands_on must resolve; no silent fallback).
+//
+// On merge conflict (non-zero git exit or conflict markers in status output) the
+// error is returned as-is for the caller to surface via the WM-020 / WM-024
+// conflict path — no new conflict route is invented here.
+//
+// Spec refs: WM-019, WM-019b, WM-020.
+// Bead: hk-icgp1.
+func landTaskBranch(ctx context.Context, repoRoot, mergeWorktreeDir, taskBranch, runID, beadID string, cfg BranchingConfig) error {
+	landsOn := resolveLandsOn(cfg)
+
+	// Validate that lands_on resolves locally (fail-fast per judgment call).
+	_, err := gitRevParse(ctx, repoRoot, "refs/heads/"+landsOn)
+	if err != nil {
+		// Try bare ref (explicit SHA or full refspec).
+		_, err2 := gitRevParse(ctx, repoRoot, landsOn)
+		if err2 != nil {
+			return &LandsOnRefError{Ref: landsOn, Cause: err2}
+		}
+	}
+
+	switch cfg.LandingStrategy {
+	case "cherry-pick":
+		return cherryPickLanding(ctx, repoRoot, mergeWorktreeDir, taskBranch, landsOn, runID, beadID)
+	default:
+		// "" or "squash" → squash (preserves existing behaviour, default per WM-019b).
+		return squashLanding(ctx, repoRoot, mergeWorktreeDir, taskBranch, landsOn, runID, beadID)
+	}
+}
+
+// squashLanding implements the squash merge-back per WM-019:
+//
+//	git merge --squash --strategy=ort <taskBranch>
+//	git commit -m "<synthesized message with trailers>"
+//
+// The merge executes inside mergeWorktreeDir (a scratch worktree checked out at
+// landsOn per WM-019a option (b)). The synthesized commit carries
+// Harmonik-Run-ID and Harmonik-Bead-ID trailers per WM-019.
+//
+// Non-zero exit from git merge is returned as an error; the caller surfaces this
+// via the WM-020 conflict path.
+func squashLanding(ctx context.Context, repoRoot, mergeWorktreeDir, taskBranch, landsOn, runID, beadID string) error {
+	// Step 1: git merge --squash --strategy=ort <taskBranch>
+	mergeCmd := exec.CommandContext(ctx, "git", "merge", "--squash", "--strategy=ort", taskBranch)
+	mergeCmd.Dir = mergeWorktreeDir
+	mergeOut, mergeErr := mergeCmd.CombinedOutput()
+	if mergeErr != nil {
+		return fmt.Errorf("daemon: squashLanding: git merge --squash %s onto %s: %w\n%s",
+			taskBranch, landsOn, mergeErr, mergeOut)
+	}
+
+	// Step 2: git commit with synthesized message + Harmonik trailers per WM-019.
+	msg := synthesizeMergeCommitMessage(taskBranch, runID, beadID)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
+	commitCmd.Dir = mergeWorktreeDir
+	commitOut, commitErr := commitCmd.CombinedOutput()
+	if commitErr != nil {
+		return fmt.Errorf("daemon: squashLanding: git commit after squash of %s: %w\n%s",
+			taskBranch, commitErr, commitOut)
+	}
+	return nil
+}
+
+// cherryPickLanding implements the cherry-pick landing per WM-019b:
+//
+//	git cherry-pick --strategy=ort <startCommit>..<taskBranch>
+//
+// The range form (exclusive lower bound) walks all checkpoint commits on
+// taskBranch that are not reachable from the merge-base of taskBranch and
+// landsOn. Per WM-019b, each cherry-picked commit retains the
+// Harmonik-Run-ID and Harmonik-Bead-ID trailers from the source checkpoint;
+// the committer is rewritten to the daemon identity (this is git's default
+// behaviour when cherry-picking: author is preserved, committer is the person
+// running the command — here the daemon process identity).
+//
+// WM-019b: "The `--strategy=ort` flag MUST be passed to each cherry-pick
+// invocation." The cherry-pick range form passes it once and git applies it
+// to all commits in the range.
+//
+// WM-019b: an all-mechanical task branch (no checkpoint commits) MUST NOT
+// attempt cherry-pick; it escalates directly. We detect this by checking
+// whether the cherry-pick range is empty before running the command.
+//
+// Conflict detection and escalation per WM-020 apply per-commit. Non-zero exit
+// from git cherry-pick is returned as an error for the caller's WM-024 path.
+func cherryPickLanding(ctx context.Context, repoRoot, mergeWorktreeDir, taskBranch, landsOn, runID, beadID string) error {
+	// Find the merge-base of taskBranch and landsOn. The cherry-pick range
+	// starts from the merge-base (exclusive) to avoid replaying commits that
+	// are already on landsOn.
+	mergeBaseCmd := exec.CommandContext(ctx, "git", "merge-base", landsOn, taskBranch)
+	mergeBaseCmd.Dir = repoRoot
+	mergeBaseOut, mergeBaseErr := mergeBaseCmd.Output()
+	if mergeBaseErr != nil {
+		return fmt.Errorf("daemon: cherryPickLanding: git merge-base %s %s: %w",
+			landsOn, taskBranch, mergeBaseErr)
+	}
+	mergeBase := strings.TrimRight(string(mergeBaseOut), "\n")
+
+	// Check for empty range: if taskBranch tip == merge-base, there are no
+	// commits to cherry-pick (all-mechanical branch). Escalate directly per WM-019b.
+	taskTipCmd := exec.CommandContext(ctx, "git", "rev-parse", taskBranch)
+	taskTipCmd.Dir = repoRoot
+	taskTipOut, taskTipErr := taskTipCmd.Output()
+	if taskTipErr != nil {
+		return fmt.Errorf("daemon: cherryPickLanding: git rev-parse %s: %w", taskBranch, taskTipErr)
+	}
+	taskTip := strings.TrimRight(string(taskTipOut), "\n")
+
+	if taskTip == mergeBase {
+		return fmt.Errorf("daemon: cherryPickLanding: task branch %q has no commits beyond merge-base with %q (all-mechanical branch); must escalate per WM-019b",
+			taskBranch, landsOn)
+	}
+
+	// Cherry-pick the range mergeBase..taskBranch (exclusive lower bound) with
+	// --strategy=ort per WM-019b. The range form handles multiple commits in
+	// commit order.
+	pickCmd := exec.CommandContext(ctx, "git", "cherry-pick", "--strategy=ort",
+		mergeBase+".."+taskBranch)
+	pickCmd.Dir = mergeWorktreeDir
+	pickOut, pickErr := pickCmd.CombinedOutput()
+	if pickErr != nil {
+		return fmt.Errorf("daemon: cherryPickLanding: git cherry-pick --strategy=ort %s..%s onto %s: %w\n%s",
+			mergeBase, taskBranch, landsOn, pickErr, pickOut)
+	}
+
+	// Log the run/bead provenance that WM-019b requires each cherry-picked
+	// commit to retain. The trailers were already present on the source
+	// checkpoint commits per EM-017; cherry-pick preserves them natively.
+	// We emit a structured-log line here for observability.
+	slog.InfoContext(ctx, "cherry_pick_landing_complete",
+		"task_branch", taskBranch,
+		"lands_on", landsOn,
+		"run_id", runID,
+		"bead_id", beadID,
+	)
+	return nil
+}
+
+// synthesizeMergeCommitMessage builds the squash-merge commit message per WM-019.
+//
+// The message carries a brief summary line plus Harmonik-Run-ID and
+// Harmonik-Bead-ID trailers. When beadID is empty the bead trailer is omitted.
+func synthesizeMergeCommitMessage(taskBranch, runID, beadID string) string {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "squash(%s): task branch landing\n", taskBranch)
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "Harmonik-Run-ID: %s\n", runID)
+	if beadID != "" {
+		fmt.Fprintf(&b, "Harmonik-Bead-ID: %s\n", beadID)
+	}
+	return b.String()
 }

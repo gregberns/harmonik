@@ -101,7 +101,7 @@ func TestParseBranchingSection_SectionAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseBranchingSection: unexpected error for absent section: %v", err)
 	}
-	if cfg.StartFrom != "" || cfg.TargetBranch != "" || cfg.LandingStrategy != "" {
+	if cfg.StartFrom != "" || cfg.LandsOn != "" || cfg.LandingStrategy != "" {
 		t.Errorf("parseBranchingSection: expected zero-value BranchingConfig; got %+v", cfg)
 	}
 }
@@ -134,8 +134,8 @@ func TestParseBranchingSection_AllFields(t *testing.T) {
 	if cfg.StartFrom != "main" {
 		t.Errorf("StartFrom = %q; want %q", cfg.StartFrom, "main")
 	}
-	if cfg.TargetBranch != "harmonik/integration" {
-		t.Errorf("TargetBranch = %q; want %q", cfg.TargetBranch, "harmonik/integration")
+	if cfg.LandsOn != "harmonik/integration" {
+		t.Errorf("LandsOn = %q; want %q", cfg.LandsOn, "harmonik/integration")
 	}
 	if cfg.LandingStrategy != "cherry-pick" {
 		t.Errorf("LandingStrategy = %q; want %q", cfg.LandingStrategy, "cherry-pick")
@@ -195,8 +195,8 @@ func TestParseBranchingSection_NullValueTreatedAsAbsent(t *testing.T) {
 	if cfg.StartFrom != "" {
 		t.Errorf("StartFrom: expected empty (null treated as absent); got %q", cfg.StartFrom)
 	}
-	if cfg.TargetBranch != "" {
-		t.Errorf("TargetBranch: expected empty (null treated as absent); got %q", cfg.TargetBranch)
+	if cfg.LandsOn != "" {
+		t.Errorf("LandsOn: expected empty (null treated as absent); got %q", cfg.LandsOn)
 	}
 }
 

@@ -645,6 +645,30 @@ func ExportedResolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody
 	return resolveParentCommit(ctx, repoRoot, beadID, beadBody)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// landing strategy test seams (hk-icgp1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedLandsOnRefError is a type alias for LandsOnRefError so tests in
+// package daemon_test can use errors.As without importing internal types.
+//
+// Bead ref: hk-icgp1.
+type ExportedLandsOnRefError = LandsOnRefError
+
+// ExportedResolveLandsOn exposes resolveLandsOn for tests in package daemon_test.
+//
+// Bead ref: hk-icgp1.
+func ExportedResolveLandsOn(cfg BranchingConfig) string {
+	return resolveLandsOn(cfg)
+}
+
+// ExportedLandTaskBranch exposes landTaskBranch for tests in package daemon_test.
+//
+// Bead ref: hk-icgp1.
+func ExportedLandTaskBranch(ctx context.Context, repoRoot, mergeWorktreeDir, taskBranch, runID, beadID string, cfg BranchingConfig) error {
+	return landTaskBranch(ctx, repoRoot, mergeWorktreeDir, taskBranch, runID, beadID, cfg)
+}
+
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.
 //

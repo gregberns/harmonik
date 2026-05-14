@@ -8,7 +8,7 @@ import "testing"
 func staleVerdictPayloadFixture(t *testing.T) StaleVerdictPayload {
 	t.Helper()
 	return StaleVerdictPayload{
-		SnapshotToken: SnapshotToken{
+		Snapshot: SnapshotToken{
 			GitHeadHash:         "abc123def456",
 			BeadsAuditEntryID:   "audit-001",
 			CapturedAtTimestamp: "2026-05-08T00:00:00Z",
@@ -52,9 +52,9 @@ func TestStaleVerdictPayloadValid_InvalidSnapshotToken(t *testing.T) {
 	t.Parallel()
 
 	p := staleVerdictPayloadFixture(t)
-	p.SnapshotToken = SnapshotToken{} // zero value: all fields empty
+	p.Snapshot = SnapshotToken{} // zero value: all fields empty
 	if p.Valid() {
-		t.Error("Valid() = true with zero SnapshotToken, want false")
+		t.Error("Valid() = true with zero Snapshot, want false")
 	}
 }
 
@@ -62,9 +62,9 @@ func TestStaleVerdictPayloadValid_EmptySnapshotGitHeadHash(t *testing.T) {
 	t.Parallel()
 
 	p := staleVerdictPayloadFixture(t)
-	p.SnapshotToken.GitHeadHash = ""
+	p.Snapshot.GitHeadHash = ""
 	if p.Valid() {
-		t.Error("Valid() = true with empty SnapshotToken.GitHeadHash, want false")
+		t.Error("Valid() = true with empty Snapshot.GitHeadHash, want false")
 	}
 }
 
@@ -72,9 +72,9 @@ func TestStaleVerdictPayloadValid_EmptySnapshotBeadsAuditEntryID(t *testing.T) {
 	t.Parallel()
 
 	p := staleVerdictPayloadFixture(t)
-	p.SnapshotToken.BeadsAuditEntryID = ""
+	p.Snapshot.BeadsAuditEntryID = ""
 	if p.Valid() {
-		t.Error("Valid() = true with empty SnapshotToken.BeadsAuditEntryID, want false")
+		t.Error("Valid() = true with empty Snapshot.BeadsAuditEntryID, want false")
 	}
 }
 
@@ -82,9 +82,9 @@ func TestStaleVerdictPayloadValid_EmptySnapshotCapturedAtTimestamp(t *testing.T)
 	t.Parallel()
 
 	p := staleVerdictPayloadFixture(t)
-	p.SnapshotToken.CapturedAtTimestamp = ""
+	p.Snapshot.CapturedAtTimestamp = ""
 	if p.Valid() {
-		t.Error("Valid() = true with empty SnapshotToken.CapturedAtTimestamp, want false")
+		t.Error("Valid() = true with empty Snapshot.CapturedAtTimestamp, want false")
 	}
 }
 

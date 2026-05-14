@@ -463,7 +463,7 @@ func TestRC024_StaleVerdictPayloadIsValidForBothReasons(t *testing.T) {
 			t.Parallel()
 
 			payload := StaleVerdictPayload{
-				SnapshotToken:       tok,
+				Snapshot:            tok,
 				CurrentGitHeadHash:  "snap0024-new",
 				CurrentBeadsAuditID: "audit-rc76-024-new",
 				DivergenceReason:    reason,

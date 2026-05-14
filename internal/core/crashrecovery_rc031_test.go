@@ -385,7 +385,7 @@ func TestRC031_StalenessCheckPayload_SnapshotTokenFields(t *testing.T) {
 	// Simulate a StaleVerdictPayload that would be emitted on crash-d recovery.
 	// Both snapshot-at-dispatch and current-at-execution fields must be present.
 	payload := StaleVerdictPayload{
-		SnapshotToken: SnapshotToken{
+		Snapshot: SnapshotToken{
 			GitHeadHash:         "abc123",
 			BeadsAuditEntryID:   "audit-001",
 			CapturedAtTimestamp: "2026-05-01T00:00:00Z",
@@ -1019,7 +1019,7 @@ func TestRC031_StalenessCheckPath_GitAdvanced(t *testing.T) {
 	t.Parallel()
 
 	payload := StaleVerdictPayload{
-		SnapshotToken: SnapshotToken{
+		Snapshot: SnapshotToken{
 			GitHeadHash:         "abc123",
 			BeadsAuditEntryID:   "audit-001",
 			CapturedAtTimestamp: "2026-05-01T00:00:00Z",
@@ -1044,7 +1044,7 @@ func TestRC031_StalenessCheckPath_BeadsAdvanced(t *testing.T) {
 	t.Parallel()
 
 	payload := StaleVerdictPayload{
-		SnapshotToken: SnapshotToken{
+		Snapshot: SnapshotToken{
 			GitHeadHash:         "abc123",
 			BeadsAuditEntryID:   "audit-001",
 			CapturedAtTimestamp: "2026-05-01T00:00:00Z",

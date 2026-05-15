@@ -349,3 +349,12 @@ Items 2 and 3 are bug-level. Item 1 is a feature gap with an existing bead (hk-i
 - `hk-icecw` (P1) — `harmonik run <bead-id>` subcommand. Most-impactful unblock.
 - `hk-yjsk8` (P1) — br close 10s timeout fix. Removes false-fail noise.
 - Re-investigate `daemon_orphan_sweep` policy: `stale_intents_observed=4` with zero action is the smoking gun.
+
+### Tracking beads
+
+Filed 2026-05-15 from this dogfood run:
+
+- `hk-rp48p` (P1, bug) — Daemon claim-path ignores priority order — claimed P1 IN_PROGRESS stale bead instead of P0 ready bead
+- `hk-jvzc2` (P1, bug) — Daemon writes uncommitted .gitignore + .claude/settings.json edits into parent repo's working tree
+- `hk-44w19` (P2, bug) — SIGTERM to harmonik daemon doesn't propagate to child claude/tmux windows
+- `hk-sc3o4` (P1, bug) — Orphan-sweep: stale_intents_observed=4 but bead_in_progress_reset=0 — PL-006 gap

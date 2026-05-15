@@ -68,6 +68,79 @@ This spec is normative for the claude-code agent type only. Other agent types ma
 
 ## 4. Normative requirements
 
+### 4.a Subsystem envelope
+
+#### CHB-ENV-001 — Envelope declaration
+
+Envelope for the claude-hook-bridge subsystem per [/Users/gb/github/harmonik/specs/architecture.md §4.0 AR-053]. The bridge is the deterministic translation layer between Claude Code's native lifecycle (settings.json hooks, `--session-id`, transcripts) and harmonik's handler-contract progress-stream wire protocol; it is the MVH realization of S05 (Hook System) for `agent_type = claude-code`. It has two emitter roles — the handler-process (long-lived) and the hook-relay subprocess (short-lived, one per Claude hook firing) — that together write NDJSON progress-stream messages to the daemon's Unix domain socket, both keyed by `(run_id, claude_session_id)`.
+
+(a) Events produced (progress-stream messages emitted by handler-process and relay-subprocess; the bridge introduces zero new bus event types per §1; all entries are existing progress-stream messages whose schemas are owned by [/Users/gb/github/harmonik/specs/handler-contract.md §4.2] and [/Users/gb/github/harmonik/specs/event-model.md §8.1, §8.3]):
+  - `handler_capabilities` — handler-process; emission rule §4.7 CHB-018 step 1 (carries `claude_session_id`); schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.2 HC-009].
+  - `session_log_location` — handler-process; emission rule §4.7 CHB-018 step 2; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3.7].
+  - `skills_provisioned` — handler-process; emission rule §4.7 CHB-018 step 3; schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.11].
+  - `agent_ready` — handler-process; emission rule §4.7 CHB-018 step 4; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1].
+  - `agent_heartbeat` — handler-process timer (§4.7 CHB-019, every 300 s) AND relay subprocess (§4.5 CHB-013, on Notification hooks); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3].
+  - `outcome_emitted` — relay subprocess; emission rule §4.5 CHB-013 (Stop, StopFailure non-rate-limit), §4.10 CHB-025 (daemon last-received-wins dedup); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1a].
+  - `agent_rate_limited` — relay subprocess; emission rule §4.5 CHB-013 (StopFailure rate_limit); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.3].
+  - `agent_completed` — handler-process on `cmd.Wait()` return; emission rule §4.7 CHB-020; schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1].
+  - `agent_failed` — handler-process on `cmd.Wait()` return OR settings-shadow check failure; emission rules §4.7 CHB-020, §4.9 CHB-024, §4.6 CHB-027 (daemon-side fallback for partial-write); schema in [/Users/gb/github/harmonik/specs/event-model.md §8.1].
+  - `launch_initiated` — handler-process pre-exec emission (cross-referenced in §1 scope); schema in [/Users/gb/github/harmonik/specs/handler-contract.md §4.2].
+
+(b) Events consumed:
+  - Claude Code hook events (`SessionStart`, `Stop`, `SessionEnd`, `StopFailure`, `Notification`) — out-of-process inputs delivered via Claude's settings.json hook mechanism (§4.1 CHB-003); not bus events. The relay subprocess reads each as JSON-on-stdin per §4.4 CHB-012.
+  - `outcome_emitted` — the handler-process observes its own session's `outcome_emitted` (looped back via the daemon watcher) to drive terminal-event derivation on Wait-return per §4.7 CHB-020.
+  - `daemon_not_ready{reason=unknown_run_id}` — typed-error response on the daemon socket; the relay consumes this to drive its retry loop per §4.6 CHB-016; schema in [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.2 PL-003b].
+
+(c) Types introduced (cross-subsystem; the bridge is wire-format-only, introducing no new payload records — all message types are owned by handler-contract / event-model; the entries below are bridge-internal contracts that appear at cross-subsystem boundaries):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `.claude/settings.json` hooks block (§4.1 CHB-003) | mechanism | `io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` (on-disk artifact) |
+  | `${workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) | mechanism | `io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` (on-disk artifact) |
+  | `HARMONIK_*` env-var schema (§4.2 CHB-006) | mechanism | baseline |
+  | `claude_session_id` (UUIDv7; cross-subsystem identifier carried on `handler_capabilities`, on `Run.context.claude_session_id` per CHB-023, and on the per-message envelope) | mechanism | baseline |
+  | `bridge_*` stderr error codes (`bridge_session_id_mismatch`, `bridge_event_kind_mismatch`, `bridge_daemon_startup_window_exceeded`, `bridge_partial_write`, `bridge_settings_shadowed`) | mechanism | baseline |
+  | `WorkspaceRef` (consumed from [/Users/gb/github/harmonik/specs/execution-model.md §6.1]) | mechanism | baseline |
+  | `LaunchSpec` (consumed from [/Users/gb/github/harmonik/specs/handler-contract.md §4.2]) | mechanism | baseline |
+
+(d) Handlers implemented: none. The bridge is not a handler-contract handler; it is the wire-protocol translation layer that the `claude-code` handler-process uses internally to translate Claude's native hook lifecycle into the handler-contract progress-stream. The `claude-code` handler itself is declared in [/Users/gb/github/harmonik/specs/handler-contract.md]; this spec is normative for that handler's internal bridge surface only.
+
+(e) State owned:
+  - `${workspace_path}/.claude/settings.json` (§4.1) — materialized per workspace; daemon owns writes.
+  - `${workspace_path}/.harmonik/agent-task.md` (§4.11 CHB-028) — materialized per launch; daemon owns writes; reserved name.
+  - In-process per-session `latestOutcome` field on the daemon's per-session watcher (§4.10 CHB-025) — bounded to the open session window from first `outcome_emitted` until `cmd.Wait()` returns.
+  - `Run.context.claude_session_id` durability is consumed but NOT owned here ([/Users/gb/github/harmonik/specs/execution-model.md §4.3 EM-012, EM-015d]); CHB-023 names the persistence-ordering rule, not the storage home.
+  - Beyond these on-disk artifacts and the watcher field, the bridge owns no persistent state; it is a stateless translation surface.
+
+(f) Control points provided: none. The bridge is a mechanism-tagged subsystem; its operations are not gate/hook/guard/budget points per [/Users/gb/github/harmonik/specs/control-points.md §4.1]. The Claude hook firings the relay consumes (`Stop`, `SessionEnd`, etc.) are Claude-internal lifecycle signals, not harmonik control points.
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-018` N-1 schema compatibility (the env-var schema §4.2 CHB-006 is additive-only; the hooks-block content §4.1 CHB-003 is versioned implicitly by the `args` form).
+  - Inherited: `ON-027` graceful-shutdown ordering (the handler-process's Wait-return terminal-event emission per §4.7 CHB-020 participates in the daemon shutdown drain).
+  - Inherited: `HC-INV-002` (twin-blind daemon) per §4.8 CHB-022; the daemon-side code carries zero `if isTwin` / `if relay` branches.
+  - Inherited: `HC-INV-004` (pre-exec emission ordering) per §4.7 CHB-018.
+  - Inherited: `HC-INV-006` (exactly one terminal event per session) per §4.7 CHB-020.
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `materialize_settings_json` (§4.1 CHB-001 / CHB-002) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `merge_user_settings` (§4.1 CHB-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `materialize_agent_task` (§4.11 CHB-028) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `set_env_vars` (§4.2 CHB-006) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `mint_or_resume_claude_session_id` (§4.3 CHB-008 / CHB-009) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `hook_relay_translate` (§4.4 CHB-010, §4.5 CHB-013, §4.6 CHB-015) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `reviewer_verdict_file_read` (§4.5 CHB-014) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `daemon_socket_dial_and_send` (§4.6 CHB-015 / CHB-016) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent` |
+  | `daemon_last_received_wins_dedup` (§4.10 CHB-025) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `handler_pre_exec_emission` (§4.7 CHB-018) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `handler_timer_heartbeat` (§4.7 CHB-019) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `handler_terminal_emission_on_wait_return` (§4.7 CHB-020) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `settings_shadow_verification` (§4.9 CHB-024) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `twin_emit_wire_format` (§4.8 CHB-021) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+
+Tags: mechanism
+
 ### 4.1 Settings.json materialization
 
 #### CHB-001 — `.claude/settings.json` path and ownership

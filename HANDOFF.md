@@ -41,7 +41,9 @@ TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
 `br ready --format json` ALSO drops `labels` (br v0.1.45). Fixed in 93aeaae via ShowBead hydration in workloop. Don't add a parallel fix.
 
 DON'T ASK — EXECUTE.
-On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections. (v43 refinement: SMALL spec amendments may dispatch without check-in; only check in for SIGNIFICANT/architectural changes.)
+On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`.
+
+**Spec text is NOT a blanket exception.** Default for spec edits is DISPATCH. Only check in for SIGNIFICANT/architectural changes per the threshold below (line ~49). When a failing test requires a missing section/needle/wording-fix in a spec, that is hygiene — dispatch without check-in. v45 incident: orchestrator queued an AR-013 envelope-section add (literally "1 new section" required by an existing test) as if it were architectural; user had to redirect. Don't repeat.
 
 ACTIVE DISPATCH — DON'T PARK THE STREAM (v44, L-018). Three sub-patterns of the above, all observed in the v43 session as moments where the orchestrator stalled on questions whose answers were in scope:
 - **Critical-path serialized?** Pull from the broader ready queue and dispatch non-conflicting parallel work — don't ask "keep pulling or hold?"

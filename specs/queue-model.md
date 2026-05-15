@@ -289,6 +289,76 @@ The persisted `queue.json` envelope MUST NOT exceed 1 MiB (1048576 bytes) after 
 
 ## 4. Identity
 
+### 4.a Subsystem envelope
+
+#### QM-ENV-001 — Envelope declaration
+
+Envelope for the queue-model subsystem per [/Users/gb/github/harmonik/specs/architecture.md §4.0 AR-053]. The queue-model is a daemon-owned, singleton, orchestrator-side subsystem; it owns the queue envelope, group/item records, the `.harmonik/queue.json` persistence file, validation, the group state machine, and the queue lifecycle states.
+
+(a) Events produced:
+  - `queue_submitted` — emission rule §8.1; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.1]. Class F.
+  - `queue_group_started` — emission rule §8.1, §8.2 step 3; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.2]. Class O.
+  - `queue_group_completed` — emission rule §8.2, §5.9 QM-033 (durable landmark); payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.3]. Class F.
+  - `queue_paused` — emission rule §8.3 (`reason: group_failure`), §8.5 (`reason: operator_drain`); payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.4]. Class F.
+  - `queue_appended` — emission rule §7.3; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.5]. Class O.
+  - `queue_item_deferred_for_ledger_dep` — emission rule §2.8, §6.5 QM-025; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.6]. Class O.
+  - `queue_item_reconciled` — emission rule §3.2a QM-002a; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.7]. Class F.
+  - `infrastructure_unavailable{failed_prerequisite: queue_write_error}` — emission rule §3.1 QM-001 (I/O error path); payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.7.15] (the event type itself is event-model-owned; queue is one of several emitters).
+
+(b) Events consumed:
+  - `run_started`, `run_completed`, `run_failed` — the dispatcher's per-run terminal events drive per-item status transitions (`dispatched → completed | failed`) per §2.7 and §5; payload schemas in [/Users/gb/github/harmonik/specs/event-model.md §8.1]. Queue-model populates the OPTIONAL `queue_id` / `queue_group_index` fields on these payloads per QM-011 / QM-012 (co-ownership per [/Users/gb/github/harmonik/specs/event-model.md §6.5]).
+  - `operator_pausing`, `operator_paused`, `operator_stopping`, `operator_resuming` — drive queue-level `active ↔ paused-by-drain` transitions per §8.5 and [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3, §4.7 ON-027]; payload schemas in [/Users/gb/github/harmonik/specs/event-model.md §8.7].
+  - `bead_closed` (informative, v0.1 polling-only) — the dispatcher polls Beads ledger state for `deferred-for-ledger-dep` items per §2.8; v0.2 may consume an explicit event.
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `Queue` (§2.1) | mechanism | baseline |
+  | `QueueStatus` (§2.2 ENUM) | mechanism | baseline |
+  | `Group` (§2.3) | mechanism | baseline |
+  | `GroupKind` (§2.4 ENUM) | mechanism | baseline |
+  | `GroupStatus` (§2.5 ENUM) | mechanism | baseline |
+  | `Item` (§2.6) | mechanism | baseline |
+  | `ItemStatus` (§2.7 ENUM) | mechanism | baseline |
+  | `QueueSubmitRequest` / `QueueSubmitResponse` (§2.10) | mechanism | baseline |
+  | `QueueAppendRequest` / `QueueAppendResponse` (§2.10) | mechanism | baseline |
+  | `QueueStatusResponse` (§2.10) | mechanism | baseline |
+  | `QueueDryRunRequest` / `QueueDryRunResponse` (§2.10) | mechanism | baseline |
+  | `queue_id` (UUIDv7) field on `run_started` / `run_completed` / `run_failed` (co-owned with [event-model.md §8.10]) | mechanism | baseline |
+  | `BeadID` (consumed from [/Users/gb/github/harmonik/specs/beads-integration.md §4.6]) | mechanism | baseline |
+
+(d) Handlers implemented: none. The queue-model is a daemon-singleton subsystem; it does not expose a handler. The JSON-RPC surface (`queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`) is carried over the daemon's Unix socket per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a] — that is a transport surface, not a handler-contract handler.
+
+(e) State owned:
+  - `Queue` record (§2.1) — daemon-singleton; in-memory authority.
+  - `.harmonik/queue.json` (§2.9, §3) — on-disk crash-recovery sync; atomic-write per §3.1 QM-001.
+  - `Group` and `Item` records (§2.3, §2.6) — wholly contained in the `Queue` envelope; lifecycle ownership per §5 (group state machine), §2.7 (item status), §8 (queue lifecycle).
+  - `Run` records are consumed but NOT owned here ([/Users/gb/github/harmonik/specs/execution-model.md §6.1]).
+
+(f) Control points provided: none. The queue-model is a mechanism-tagged subsystem; its operations are not gate/hook/guard/budget points per [/Users/gb/github/harmonik/specs/control-points.md §4.1]. Operator-control state transitions that affect the queue (pause/drain/resume) are inherited from [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3].
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-018` N-1 schema compatibility (§3.2 applies it to `queue.json`'s `schema_version`).
+  - Inherited: `ON-027` graceful-shutdown ordering (§8.5 transitions the queue to `paused-by-drain` on operator pause/stop; the dispatcher drains in-flight items per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.7 ON-027]).
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `queue_submit_accept` (§6, §8.1) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `queue_append_accept` (§6.5 QM-024, §7.3) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `queue_status_read` (§2.10) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `queue_dry_run` (§6.11a, §2.10) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `persist_queue_json` (§3.1 QM-001) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `unlink_queue_json` (§3.3 QM-003) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `startup_load_queue` (§3.2 QM-002) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `startup_cross_check` (§3.2a QM-002a) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `group_advance` (§5, §8.2) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `item_defer_for_ledger_dep` (§2.8) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `queue_pause` / `queue_resume_on_drain` (§8.3, §8.5) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+
+Tags: mechanism
+
 ### 4.1 QM-010 — `queue_id` minting
 
 `queue_id` is a UUIDv7 minted by the daemon at the moment a `queue-submit` request passes validation (§6) and is accepted. The `queue_id` MUST NOT be client-supplied; any client-supplied value in the request is ignored. The minted `queue_id` is returned in the JSON-RPC response and carried on every queue-lifecycle event per [/Users/gb/github/harmonik/specs/event-model.md §8.10].

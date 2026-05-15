@@ -42,6 +42,13 @@ TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
 DON'T ASK — EXECUTE.
 On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections. (v43 refinement: SMALL spec amendments may dispatch without check-in; only check in for SIGNIFICANT/architectural changes.)
 
+ACTIVE DISPATCH — DON'T PARK THE STREAM (v44, L-018). Three sub-patterns of the above, all observed in the v43 session as moments where the orchestrator stalled on questions whose answers were in scope:
+- **Critical-path serialized?** Pull from the broader ready queue and dispatch non-conflicting parallel work — don't ask "keep pulling or hold?"
+- **Bead body offers design candidates?** Pick the one most consistent with current code, state a one-sentence rationale, dispatch it, and note "respond before commit if you want a different one." Don't park.
+- **Spec/refinement threshold:** ≤1 new section, cross-ref fix, or wording-gap close → dispatch. New contract, normative field rename, or reversal of a locked decision → check in.
+- **Informational planning-agent output** (roadmap, triage, audit) → synthesize and continue dispatching; only pause when the output explicitly surfaces a user-decision.
+- **Dispatch updates end with the next action you're taking, not a question.** If two paths are equally valid, pick the throughput-maximizing one and name it — the user will redirect if wrong.
+
 PUSH AUTONOMY (v40 2026-05-14). User lifted the "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation. Destructive-op rules (force-push, reset --hard, branch -D, --no-verify) STILL require confirmation; only the routine push step is lifted.
 
 NO CI (v41 2026-05-14). User explicitly does NOT want GitHub Actions. The `ci-workflows-hk-4tttc` side branch was dropped in v41 and `.github/workflows/` does NOT exist in main. Do not propose CI workflow files in future work. Scenario tests run locally only.

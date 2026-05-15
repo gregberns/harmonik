@@ -244,3 +244,22 @@ Kept terse on purpose — three-paragraph entries, not essays.
 **Fix applied.** Cleared via `br update <id> --defer ""`. After clearing the 8 affected beads, `br ready` immediately reflected the 3 root-unblocked beads (zs0.8, zs0.17, zs0.25) plus the previously-visible sx9r.22 + i0tw.15. Net: 5 dispatchable MVH tasks; 8 more chained behind them. HANDOFF directives' L-011 paragraph should be amended in a future session to add a third check: `br list --json` for nonempty `defer_until` on any bead with `status=open`.
 
 **Product input.** Beads' filtering surfaces (`ready`, `stats`, status flags, defer_until field) are independent and don't cross-validate. Harmonik's daemon-side dispatch queue should expose a single "is this dispatchable right now" predicate rather than three orthogonal filters that compose by accident. The bootstrap can't fix Beads, but the daemon's wrapping layer can normalize.
+
+---
+
+### L-018 — Stalling on in-scope questions ("active dispatch") <a name="l-018"></a>
+
+**Observed 2026-05-15 (session v43 transcript mining, prior session db8d1c56).** The session was user-judged "incredibly effective, low friction" yet still produced five distinct moments where the orchestrator paused to ask the user something it could have decided itself. The pattern: present competent analysis, then defer the obvious next action back to the user.
+
+Concrete moments:
+1. Critical path serialized — orchestrator asked "keep pulling from the broader queue, or hold?" Answer was in scope: dispatch non-conflicting parallel work.
+2. Three spec-authoring beads on the bench — orchestrator listed all three and asked which to file. User had to add "remove constraints when small changes are needed."
+3. Bead body offered three design candidates — orchestrator listed them and waited for a pick. Candidate 3 was clearly most consistent with existing `--dangerously-skip-permissions` usage.
+4. Roadmap-drafting agent dispatched — orchestrator said it would pause for read before further dispatch. The output was informational, not decision-surfacing.
+5. Dispatch-update message ended with "Want me to keep pulling?" after a clean block-chain analysis.
+
+**Fix applied.** Added the **ACTIVE DISPATCH — DON'T PARK THE STREAM** directive paragraph to HANDOFF.md with five sub-rules, written as guidelines not policies per user preference (rules must include the *why* and the trigger condition; "fewer + more compact" was the user constraint). Existing DON'T ASK — EXECUTE was untouched but the new paragraph extends it from "resume-time say-back" to mid-session dispatch behavior.
+
+**Why this matters.** The friction was not loud — the user answered each question in one short message. But every question consumed a user turn, broke the orchestrator's stream cadence, and slowed throughput. The compound cost is real even when no individual stall is dramatic.
+
+**Product input.** Sub-agent dispatch could be the place this rule is encoded structurally — an implementer that finishes a bead and finds a dispatchable sibling shouldn't need the orchestrator to wake up, decide, and re-dispatch. STREAM-NOT-WAVES is the orchestrator-level expression; a daemon-level dispatcher could make it a property of the system instead of a behavior of the orchestrator.

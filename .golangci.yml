@@ -112,6 +112,14 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
   
+        # Queue: core only at scaffold time. eventbus import added by T12 (hk-hn363)
+        # when queue-lifecycle events are wired. Spec ref: specs/queue-model.md §1.
+        queue:
+          files: ["**/internal/queue/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+
         # BI-004: The handler subsystem MUST NOT import internal/brcli.
         # The daemon invokes br directly (as a subprocess via the brcli adapter);
         # agents invoke br only through the Beads-CLI skill injected at launch time

@@ -135,6 +135,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-kqdpf.1.
 	WorktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
+
+	// QueueStore, when non-nil, enables the queue-pull dispatch path in
+	// runWorkLoop per execution-model.md §7.4 (TS-1). When nil the loop uses
+	// the br-ready poll fallback (backward-compat for tests that don't use queues).
+	//
+	// Bead ref: hk-45ude.
+	QueueStore *QueueStore
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -224,6 +231,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		substrate:           p.Substrate,
 		agentReadyTimeout:   p.AgentReadyTimeout,
 		projectCfg:          p.ProjectCfg,
+		queueStore:          p.QueueStore,
 	}
 }
 
@@ -816,6 +824,23 @@ func ExportedNewQueueStore() *QueueStore {
 // Bead ref: hk-nvrvp.
 func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
 	return newWorkLoopDeps(cfg, bus, workflowModeDefault, registry, store)
+}
+
+// ExportedEvaluateGroupAdvanceWithOutcome exposes evaluateGroupAdvanceWithOutcome
+// for tests in package daemon_test. Drives EM-015f group-advance evaluation
+// directly without running a full work loop cycle.
+//
+// Bead ref: hk-45ude.
+func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueID string, groupIndex int, itemIdx int, success bool) {
+	evaluateGroupAdvanceWithOutcome(ctx, deps, queueID, groupIndex, itemIdx, success)
+}
+
+// ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the
+// active queue after work-loop cycles in hk-45ude queue-dispatch tests.
+//
+// Bead ref: hk-45ude.
+func ExportedQueueStoreOf(deps workLoopDeps) *QueueStore {
+	return deps.queueStore
 }
 
 // ExportedProjectCfgOf returns the projectCfg field from deps for inspection.

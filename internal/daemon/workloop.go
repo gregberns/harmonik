@@ -48,6 +48,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -205,6 +206,17 @@ type workLoopDeps struct {
 	// Spec ref: specs/execution-model.md §4.3 EM-012b.
 	// Bead ref: hk-bfvk7.
 	projectCfg ProjectConfig
+
+	// queueStore is the daemon-singleton holder for the active *queue.Queue.
+	// When non-nil and a queue is loaded, the dispatch loop pulls work from the
+	// active queue group rather than polling br ready. When nil or when no queue
+	// is loaded, the loop falls back to the br-ready poll path (backward-compat
+	// for tests that do not use queues).
+	//
+	// Spec ref: specs/execution-model.md §7.4 (TS-1 dispatch loop); §4.3.EM-015f
+	// (group-advance gate).
+	// Bead ref: hk-45ude.
+	queueStore *QueueStore
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -325,6 +337,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		projectCfg:          cfg.ProjectCfg,
+		queueStore:          nil, // populated by daemon.Start after wiring QueueStore (hk-45ude)
 	}, nil
 }
 
@@ -340,18 +353,24 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 // Each iteration of the outer poll loop:
 //  1. Check context cancellation.
 //  2. If runRegistry.Len() >= maxConcurrent: sleep and retry (at capacity).
-//  3. Poll Ready beads.
-//  4. If none, sleep workloopPollInterval and retry.
-//  5. Pick beads[0], generate RunID, claim it.
-//  6. Spawn goroutine: Register → dispatch (worktree+handler) → Unregister.
+//  3. Queue-pull path (when queueStore is set and has an active queue):
+//     3a. If queue status is paused or completed, idle-wait.
+//     3b. Get the active group's eligible items via EligibleItems().
+//     3c. Pick the first eligible item, claim it, and dispatch.
+//     (EM-015f group-advance evaluation fires in the goroutine on run completion.)
+//  4. Fallback br-ready poll (when no queue is loaded): poll br ready; if none
+//     sleep and retry. This path preserves backward compatibility for tests and
+//     single-bead dispatch that do not use the queue surface.
+//  5. Spawn goroutine: Register → dispatch (worktree+handler) → Unregister.
 //
 // Goroutine dispatch path:
 //  1. resolveHEAD + CreateWorktree.
-//  2. emitRunStarted.
+//  2. emitRunStarted (with optional queue_id + queue_group_index).
 //  3. Route to mode-specific driver (review-loop or single).
 //  4. CloseBead or ReopenBead based on outcome.
-//  5. removeWorktree.
-//  6. Unregister from runRegistry.
+//  5. On queue-dispatched run: update item status + evaluate EM-015f group advance.
+//  6. removeWorktree.
+//  7. Unregister from runRegistry.
 //
 // At MaxConcurrent=1 the loop is semantically equivalent to the prior serial
 // implementation: only one goroutine is ever in-flight, so the poll loop
@@ -360,6 +379,10 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 // Shutdown: when ctx is cancelled the outer loop exits immediately. The
 // embedded WaitGroup wg waits for all in-flight goroutines to drain before
 // runWorkLoop returns, satisfying the per-run Drain guarantee (hk-fx6zl).
+//
+// Spec ref: specs/execution-model.md §7.4 (TS-1 dispatch loop pseudocode);
+// §4.3.EM-015f (group-advance gate).
+// Bead ref: hk-45ude.
 func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
@@ -402,39 +425,170 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
-		// Step 3: poll the ledger for ready beads.
-		readyRecords, err := deps.brAdapter.Ready(ctx)
-		if err != nil {
-			// Treat poll errors as transient: log and backoff.
-			if ctx.Err() != nil {
-				wg.Wait()
-				return nil
+		// Step 3: dispatch source — queue-pull or br-ready fallback.
+		//
+		// When queueStore is set and has an active queue, pull from the head of
+		// the active group per execution-model.md §7.4 (TS-1). The br-ready
+		// poll path is the backward-compatible fallback for tests and single-bead
+		// dispatch that do not use the queue surface (spec: daemon MUST NOT fall
+		// back to br ready when a queue is loaded, per EM-015f).
+		//
+		// Bead ref: hk-45ude.
+
+		var (
+			beadRecord      core.BeadRecord
+			queueItemIndex  int // item index within the group (-1 = no queue)
+			queueIDField    *string
+			queueGroupIdxFd *int
+		)
+		queueItemIndex = -1 // sentinel: not queue-dispatched
+
+		if deps.queueStore != nil {
+			q := deps.queueStore.Queue()
+			if q != nil {
+				// Queue is loaded: check its status per §7.4 pseudocode.
+				switch q.Status {
+				case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
+					// Queue is paused or completed — no dispatch; idle-wait.
+					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						wg.Wait()
+						return nil
+					}
+					continue
+				}
+
+				// Find the active group and its eligible items.
+				var activeGroup *queue.Group
+				for i := range q.Groups {
+					if q.Groups[i].Status == queue.GroupStatusActive {
+						activeGroup = &q.Groups[i]
+						break
+					}
+				}
+				if activeGroup == nil {
+					// No active group yet (all pending or all terminal) — idle-wait.
+					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						wg.Wait()
+						return nil
+					}
+					continue
+				}
+
+				items := queue.EligibleItems(activeGroup)
+				if len(items) == 0 {
+					// All items dispatched or deferred — wait for group progress.
+					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						wg.Wait()
+						return nil
+					}
+					continue
+				}
+
+				// Pick the first eligible item.
+				item := items[0]
+				// Find the item's index within the group for post-run update.
+				itemIdx := -1
+				for j := range activeGroup.Items {
+					if activeGroup.Items[j].BeadID == item.BeadID && activeGroup.Items[j].Status == queue.ItemStatusPending {
+						itemIdx = j
+						break
+					}
+				}
+				if itemIdx < 0 {
+					// Item not found (stale reference) — retry.
+					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						wg.Wait()
+						return nil
+					}
+					continue
+				}
+
+				// Stamp item as dispatched under the write lock.
+				{
+					lq := deps.queueStore.LockForMutation()
+					// Re-fetch the group and item under the write lock to prevent TOCTOU.
+					liveQ := lq.Queue()
+					if liveQ == nil {
+						lq.Done()
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							wg.Wait()
+							return nil
+						}
+						continue
+					}
+					// Locate the same group and item in the live snapshot.
+					foundItem := false
+					for gi := range liveQ.Groups {
+						if liveQ.Groups[gi].Status != queue.GroupStatusActive {
+							continue
+						}
+						if liveQ.Groups[gi].GroupIndex != activeGroup.GroupIndex {
+							continue
+						}
+						if itemIdx < len(liveQ.Groups[gi].Items) &&
+							liveQ.Groups[gi].Items[itemIdx].BeadID == item.BeadID &&
+							liveQ.Groups[gi].Items[itemIdx].Status == queue.ItemStatusPending {
+							runUUIDStr := "" // filled after uuid generation below
+							liveQ.Groups[gi].Items[itemIdx].Status = queue.ItemStatusDispatched
+							liveQ.Groups[gi].Items[itemIdx].RunID = &runUUIDStr // placeholder; updated after
+							_ = runUUIDStr                                      // suppress lint
+							foundItem = true
+						}
+					}
+					if !foundItem {
+						lq.Done()
+						// Already dispatched by a concurrent path — retry.
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							wg.Wait()
+							return nil
+						}
+						continue
+					}
+					lq.SetQueue(liveQ)
+					lq.Done()
+				}
+
+				beadRecord = core.BeadRecord{BeadID: item.BeadID}
+				queueItemIndex = itemIdx
+				qID := q.QueueID
+				gIdx := activeGroup.GroupIndex
+				queueIDField = &qID
+				queueGroupIdxFd = &gIdx
 			}
-			// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
-			// misconfiguration (hk-c1ln2: silent-failure fix).
-			fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				wg.Wait()
-				return nil
-			}
-			continue
 		}
 
-		// Step 4: nothing ready — sleep and retry.
-		if len(readyRecords) == 0 {
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				wg.Wait()
-				return nil
+		var beadID core.BeadID
+		if queueItemIndex < 0 {
+			// No queue active — fall back to br-ready poll.
+			readyRecords, err := deps.brAdapter.Ready(ctx)
+			if err != nil {
+				// Treat poll errors as transient: log and backoff.
+				if ctx.Err() != nil {
+					wg.Wait()
+					return nil
+				}
+				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
+				// misconfiguration (hk-c1ln2: silent-failure fix).
+				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
+				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+					wg.Wait()
+					return nil
+				}
+				continue
 			}
-			continue
-		}
 
-		// Step 5: pick first ready bead, generate RunID, claim it.
-		// Labels (including any workflow:<mode> per BI-009a) are available on
-		// the record for workflow-mode resolution (BI-013); mode-resolution
-		// dispatch is implemented in T-WM-009.
-		beadRecord := readyRecords[0]
-		beadID := beadRecord.BeadID
+			if len(readyRecords) == 0 {
+				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+					wg.Wait()
+					return nil
+				}
+				continue
+			}
+
+			// Pick first ready bead; labels carry workflow:<mode> for mode resolution.
+			beadRecord = readyRecords[0]
+		}
+		beadID = beadRecord.BeadID
 
 		runUUID, uuidErr := uuid.NewV7()
 		if uuidErr != nil {
@@ -444,42 +598,57 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 		runID := core.RunID(runUUID)
 
+		// Patch the placeholder RunID string in the queue item now that we have it.
+		if queueItemIndex >= 0 && deps.queueStore != nil {
+			lq := deps.queueStore.LockForMutation()
+			liveQ := lq.Queue()
+			if liveQ != nil {
+				for gi := range liveQ.Groups {
+					if liveQ.Groups[gi].Status != queue.GroupStatusActive {
+						continue
+					}
+					if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
+						continue
+					}
+					if queueItemIndex < len(liveQ.Groups[gi].Items) &&
+						liveQ.Groups[gi].Items[queueItemIndex].Status == queue.ItemStatusDispatched {
+						runIDStr := runID.String()
+						liveQ.Groups[gi].Items[queueItemIndex].RunID = &runIDStr
+					}
+				}
+				lq.SetQueue(liveQ)
+			}
+			lq.Done()
+		}
+
 		claimTID, tidErr := deps.tidGen.Next()
 		if tidErr != nil {
 			wg.Wait()
 			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
 		}
 
-		// Pre-claim status guard (hk-p4xbw): read the bead's current status and
-		// skip dispatch if it is no longer "open".  This is the harmonik-side
-		// guard against double-dispatch when two concurrent work loops both
-		// observe the same bead from Ready before either has claimed it.
-		//
-		// TOCTOU note: a competing loop could claim the bead in the window
-		// between ShowBead and ClaimBead below.  In that case ClaimBead still
-		// proceeds and br returns exit 0 (br v0.1.45 does not reject a second
-		// concurrent claim); the claim semaphore (hk-e61c3.3) ensures this
-		// window is narrow.  Cross-daemon double-dispatch is deferred to the
-		// upstream br patch (option 2, out of scope).
-		showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
-		if showErr != nil {
-			if ctx.Err() != nil {
-				return nil
+		if queueItemIndex < 0 {
+			// br-ready path: pre-claim status guard (hk-p4xbw).
+			// Queue-path items are already exclusively owned by this loop
+			// (set to dispatched under write lock), so the guard is skipped.
+			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+			if showErr != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
+				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+					return nil
+				}
+				continue
 			}
-			fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
+			if showRecord.Status != core.CoarseStatusOpen {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
+				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+					return nil
+				}
+				continue
 			}
-			continue
-		}
-		if showRecord.Status != core.CoarseStatusOpen {
-			// Bead was claimed (or otherwise transitioned) by a competing loop.
-			// Skip dispatch — the other loop owns this bead.
-			fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				return nil
-			}
-			continue
 		}
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
@@ -501,6 +670,24 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				return nil
 			}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
+			// On queue-path: revert the item back to pending so the loop can retry.
+			if queueItemIndex >= 0 && deps.queueStore != nil {
+				lq := deps.queueStore.LockForMutation()
+				liveQ := lq.Queue()
+				if liveQ != nil {
+					for gi := range liveQ.Groups {
+						if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
+							continue
+						}
+						if queueItemIndex < len(liveQ.Groups[gi].Items) {
+							liveQ.Groups[gi].Items[queueItemIndex].Status = queue.ItemStatusPending
+							liveQ.Groups[gi].Items[queueItemIndex].RunID = nil
+						}
+					}
+					lq.SetQueue(liveQ)
+				}
+				lq.Done()
+			}
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
 				wg.Wait()
 				return nil
@@ -508,7 +695,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
-		// Step 6: Register the run and spawn a goroutine to handle it end-to-end.
+		// Capture queue context for the goroutine (may be nil for non-queue dispatch).
+		capturedQueueID := queueIDField
+		capturedQueueGroupIdx := queueGroupIdxFd
+		capturedItemIndex := queueItemIndex
+
+		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
 		// claim the next bead immediately (up to effectiveMax).
 		deps.runRegistry.Register(runID, &RunHandle{
@@ -516,11 +708,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)
-		go func(runID core.RunID, beadRecord core.BeadRecord) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int) {
 			defer wg.Done()
 			defer deps.runRegistry.Unregister(runID)
-			beadRunOne(ctx, deps, runID, beadRecord)
-		}(runID, beadRecord)
+			// runSucceeded is set by the emitDone closure inside beadRunOne
+			// and read here after beadRunOne returns for EM-015f group-advance.
+			var runSucceeded bool
+			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded)
+			// EM-015f: after run terminal, evaluate queue group advance.
+			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
+				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
+			}
+		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex)
 	}
 }
 
@@ -533,9 +732,32 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // (UUID generation, worktree setup) are surfaced to stderr and cause the bead
 // to be reopened rather than aborting the daemon.
 //
-// Bead ref: hk-e61c3.2.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord) {
+// queueID and queueGroupIndex are optional: when non-nil they are stamped into
+// run_started / run_completed / run_failed payloads per EM-015a/EM-015b and
+// QM-011/QM-012. They are nil for non-queue-dispatched runs.
+//
+// runSucceeded is a non-nil output pointer (provided by the goroutine wrapper in
+// runWorkLoop) that is set by emitDone when the run emits its terminal event.
+// The caller reads it after beadRunOne returns to drive the EM-015f group-advance
+// evaluation. When nil (legacy callers), success is not tracked.
+//
+// Bead ref: hk-e61c3.2, hk-45ude.
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool) {
 	beadID := beadRecord.BeadID
+
+	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
+	// every run_completed / run_failed event emitted from this function. Using a
+	// closure avoids threading the optional queue fields through every call site.
+	// It also records the success outcome via runSucceeded for EM-015f tracking.
+	//
+	// Spec ref: specs/execution-model.md §4.3.EM-015b; QM-011/QM-012.
+	// Bead ref: hk-45ude.
+	emitDone := func(success bool, summary string) {
+		if runSucceeded != nil {
+			*runSucceeded = success
+		}
+		emitRunCompleted(ctx, deps.bus, runID, success, summary, queueID, queueGroupIndex)
+	}
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
 	// Four-tier precedence: per-bead label → project config (no-op) →
@@ -588,8 +810,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		defer wtCleanup()
 	}
 
-	// Emit run_started.
-	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath)
+	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
+	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//
@@ -604,15 +826,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if rlResult.success {
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
-				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitRunCompleted(ctx, deps.bus, runID, true, rlResult.summary)
+				emitDone(true, rlResult.summary)
 			}
 		} else {
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, rlResult.needsAttention); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, closeErr)
 			}
-			emitRunCompleted(ctx, deps.bus, runID, false, rlResult.summary)
+			emitDone(false, rlResult.summary)
 		}
 		return
 	}
@@ -653,7 +875,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("build launch spec error: %v", specErr))
-		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("build launch spec error: %v", specErr))
+		emitDone(false, fmt.Sprintf("build launch spec error: %v", specErr))
 		return
 	}
 
@@ -699,7 +921,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("launch error: %v", launchErr))
-		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("launch error: %v", launchErr))
+		emitDone(false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
 
@@ -805,7 +1027,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually\n",
 						beadID, runID.String(), reopenErr)
 				}
-				emitRunCompleted(ctx, deps.bus, runID, false, "agent_ready_timeout")
+				emitDone(false, "agent_ready_timeout")
 				return
 			}
 			// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
@@ -896,16 +1118,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("merge-failed (agent_completed): %s", mergeRes.reason))
+			emitDone(false, fmt.Sprintf("merge-failed (agent_completed): %s", mergeRes.reason))
 		} else {
 			// Merge succeeded (or no-change); proceed with CloseBead.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
-				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
 				emitBeadClosed(ctx, deps.bus, runID, beadID)
-				emitRunCompleted(ctx, deps.bus, runID, true, "agent_completed: stop-hook outcome")
+				emitDone(true, "agent_completed: stop-hook outcome")
 			}
 		}
 
@@ -923,16 +1145,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("merge-failed (auto-close): %s", mergeRes.reason))
+			emitDone(false, fmt.Sprintf("merge-failed (auto-close): %s", mergeRes.reason))
 		} else {
 			// Merge succeeded (or no-change); proceed with CloseBead.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
-				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
 				emitBeadClosed(ctx, deps.bus, runID, beadID)
-				emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+				emitDone(true, "auto-close: exit=0")
 			}
 		}
 
@@ -950,7 +1172,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
 		}
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-		emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("auto-reopen: %s", failReason))
+		emitDone(false, fmt.Sprintf("auto-reopen: %s", failReason))
 	}
 }
 
@@ -1067,28 +1289,40 @@ func emitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, r
 // work loop.  Full RunStartedPayload requires WorkflowID / WorkflowVersion
 // which are post-MVH; we emit a raw map so the event is observable without
 // requiring a valid RunStartedPayload.Valid() call.
+//
+// QueueID and QueueGroupIndex are optional: set when the run was dispatched
+// from a queue submission per QM-011 / QM-012 (EM-015a).
 type workloopRunStartedPayload struct {
-	RunID         string `json:"run_id"`
-	BeadID        string `json:"bead_id"`
-	WorkspacePath string `json:"workspace_path"`
-	StartedAt     string `json:"started_at"`
+	RunID           string  `json:"run_id"`
+	BeadID          string  `json:"bead_id"`
+	WorkspacePath   string  `json:"workspace_path"`
+	StartedAt       string  `json:"started_at"`
+	QueueID         *string `json:"queue_id,omitempty"`
+	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
 }
 
 // workloopRunCompletedPayload is the minimal run_completed / run_failed payload
 // emitted by the work loop.
+//
+// QueueID and QueueGroupIndex are optional: set when the run was dispatched
+// from a queue submission per QM-011 / QM-012 (EM-015b).
 type workloopRunCompletedPayload struct {
-	RunID   string `json:"run_id"`
-	Success bool   `json:"success"`
-	Summary string `json:"summary"`
-	EndedAt string `json:"ended_at"`
+	RunID           string  `json:"run_id"`
+	Success         bool    `json:"success"`
+	Summary         string  `json:"summary"`
+	EndedAt         string  `json:"ended_at"`
+	QueueID         *string `json:"queue_id,omitempty"`
+	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
 }
 
-func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string) {
+func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int) {
 	pl := workloopRunStartedPayload{
-		RunID:         runID.String(),
-		BeadID:        string(beadID),
-		WorkspacePath: wtPath,
-		StartedAt:     time.Now().UTC().Format(time.RFC3339),
+		RunID:           runID.String(),
+		BeadID:          string(beadID),
+		WorkspacePath:   wtPath,
+		StartedAt:       time.Now().UTC().Format(time.RFC3339),
+		QueueID:         queueID,
+		QueueGroupIndex: queueGroupIndex,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
@@ -1097,12 +1331,14 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
 }
 
-func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string) {
+func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string, queueID *string, queueGroupIndex *int) {
 	pl := workloopRunCompletedPayload{
-		RunID:   runID.String(),
-		Success: success,
-		Summary: summary,
-		EndedAt: time.Now().UTC().Format(time.RFC3339),
+		RunID:           runID.String(),
+		Success:         success,
+		Summary:         summary,
+		EndedAt:         time.Now().UTC().Format(time.RFC3339),
+		QueueID:         queueID,
+		QueueGroupIndex: queueGroupIndex,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
@@ -1113,6 +1349,101 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 		eventType = core.EventTypeRunFailed
 	}
 	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run that
+// the run's success outcome from the goroutine wrapper in runWorkLoop.
+//
+// It marks the queue item terminal (completed/failed), calls AdvanceGroup, and
+// emits the resulting group events. If the group transitions to complete-success,
+// it also activates the next group (pending → active). If complete-with-failures,
+// it marks the queue status as paused-by-failure.
+//
+// Spec ref: specs/execution-model.md §4.3.EM-015f.
+// Bead ref: hk-45ude.
+func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueID string, groupIndex int, itemIdx int, success bool) {
+	if deps.queueStore == nil {
+		return
+	}
+
+	lq := deps.queueStore.LockForMutation()
+	defer lq.Done()
+
+	q := lq.Queue()
+	if q == nil || q.QueueID != queueID {
+		return
+	}
+
+	// Locate the target group.
+	groupPos := -1
+	for i := range q.Groups {
+		if q.Groups[i].GroupIndex == groupIndex {
+			groupPos = i
+			break
+		}
+	}
+	if groupPos < 0 || itemIdx >= len(q.Groups[groupPos].Items) {
+		return
+	}
+
+	// Mark the item terminal.
+	if success {
+		q.Groups[groupPos].Items[itemIdx].Status = queue.ItemStatusCompleted
+	} else {
+		q.Groups[groupPos].Items[itemIdx].Status = queue.ItemStatusFailed
+	}
+
+	// Evaluate group-advance gate (EM-015f all-terminal rule).
+	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, queueID, time.Now())
+	if advErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup queueID=%s groupIndex=%d: %v\n",
+			queueID, groupIndex, advErr)
+		lq.SetQueue(q)
+		return
+	}
+
+	// Apply new group status.
+	q.Groups[groupPos].Status = newStatus
+
+	// If group reached complete-with-failures → queue transitions to paused-by-failure.
+	if newStatus == queue.GroupStatusCompleteWithFailures {
+		q.Status = queue.QueueStatusPausedByFailure
+	}
+
+	// If group reached complete-success → activate the next group.
+	if newStatus == queue.GroupStatusCompleteSuccess {
+		for i := range q.Groups {
+			if q.Groups[i].Status == queue.GroupStatusPending {
+				nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, time.Now())
+				if nextErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup next group queueID=%s groupIndex=%d: %v\n",
+						queueID, q.Groups[i].GroupIndex, nextErr)
+				} else {
+					q.Groups[i].Status = nextStatus
+					events = append(events, nextEvents...)
+				}
+				break
+			}
+		}
+	}
+
+	lq.SetQueue(q)
+
+	// Emit the queued events after releasing the lock is not possible here
+	// since we deferred Done. Emit before Done releases the lock: event
+	// ordering is maintained because no other mutation can race (we hold the
+	// write lock). The bus.Emit calls are non-blocking per EV-002a.
+	for _, evt := range events {
+		raw, err := json.Marshal(evt.Payload)
+		if err != nil {
+			raw = evt.Payload
+		}
+		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

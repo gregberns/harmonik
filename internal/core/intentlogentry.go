@@ -30,20 +30,25 @@ import (
 // non-breaking and do not require a migration release; renaming or removing fields
 // is breaking and must bump SchemaVersion.
 type IntentLogEntry struct {
-	// IdempotencyKey is the stable composite key "<run_id>:<transition_id>:<op>"
-	// per beads-integration.md §4.10 BI-029. Required (non-empty).
+	// IdempotencyKey is the stable composite key per beads-integration.md §4.10 BI-029.
+	// For claim/close/reopen: "<run_id>:<transition_id>:<op>".
+	// For reset (BI-010d): "<project_hash>:<bead_id>:reset:<daemon_start_ns>".
+	// Required (non-empty).
 	IdempotencyKey string `json:"idempotency_key"`
 
 	// RunID is the UUIDv7 identifier of the harmonik run driving this write.
-	// Must not be uuid.Nil.
+	// Must not be uuid.Nil — EXCEPT for TerminalOpReset entries, which are issued
+	// by the daemon startup orphan-sweep (BI-010d) and carry no associated run.
 	RunID RunID `json:"run_id"`
 
 	// TransitionID is the UUIDv7 identifier of the transition at which this
-	// write is emitted. Must not be uuid.Nil.
+	// write is emitted. Must not be uuid.Nil — EXCEPT for TerminalOpReset entries
+	// (same exception as RunID; see BI-010d).
 	TransitionID TransitionID `json:"transition_id"`
 
 	// Op is the terminal operation to be issued to Beads.
-	// One of: claim, close, reopen.
+	// One of: claim, close, reopen, reset.
+	// Spec ref: specs/beads-integration.md §6.1 ENUM TerminalOp; §4.4 BI-010d (reset).
 	Op TerminalOp `json:"op"`
 
 	// BeadID is the target bead identifier (opaque per BI-008a).
@@ -55,6 +60,7 @@ type IntentLogEntry struct {
 	//   claim  -> in_progress
 	//   close  -> closed
 	//   reopen -> open
+	//   reset  -> open  (BI-010d)
 	// Must be a valid CoarseStatus.
 	IntendedPostState CoarseStatus `json:"intended_post_state"`
 
@@ -107,22 +113,31 @@ func ReadIntentLogEntry(path string) (IntentLogEntry, error) {
 //
 // Rules:
 //   - IdempotencyKey is non-empty
-//   - RunID is not uuid.Nil
-//   - TransitionID is not uuid.Nil
+//   - RunID is not uuid.Nil (EXCEPT when Op == TerminalOpReset: reset is issued
+//     by the daemon startup orphan-sweep, not by an in-flight run; RunID and
+//     TransitionID are zero-valued per BI-010d)
+//   - TransitionID is not uuid.Nil (same exception as RunID for TerminalOpReset)
 //   - Op satisfies Op.Valid()
 //   - BeadID is non-empty
 //   - IntendedPostState satisfies IntendedPostState.Valid()
 //   - RequestedAt is non-zero
 //   - SchemaVersion is > 0
+//
+// Spec ref: specs/beads-integration.md §4.4 BI-010d; §6.1 RECORD IntentLogEntry.
 func (e IntentLogEntry) Valid() bool {
 	if e.IdempotencyKey == "" {
 		return false
 	}
-	if uuid.UUID(e.RunID) == uuid.Nil {
-		return false
-	}
-	if uuid.UUID(e.TransitionID) == uuid.Nil {
-		return false
+	// BI-010d: reset is a startup-only write with no associated run or transition.
+	// RunID and TransitionID are zero-valued for reset entries; all other ops require
+	// non-nil UUIDs.
+	if e.Op != TerminalOpReset {
+		if uuid.UUID(e.RunID) == uuid.Nil {
+			return false
+		}
+		if uuid.UUID(e.TransitionID) == uuid.Nil {
+			return false
+		}
 	}
 	if !e.Op.Valid() {
 		return false

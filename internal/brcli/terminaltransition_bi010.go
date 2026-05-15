@@ -10,10 +10,11 @@ import (
 
 // terminaltransition_bi010.go — BI-010 terminal-transition write surface.
 //
-// Implements the three terminal-transition write methods on Adapter:
+// Implements the four terminal-transition write methods on Adapter:
 //   - ClaimBead  — claim:  open → in_progress   (run_started dispatch)
 //   - CloseBead  — close:  in_progress → closed  (run_completed + merge)
 //   - ReopenBead — reopen: closed → open         (reopen-bead verdict / transient failure)
+//   - ResetBead  — reset:  in_progress → open    (daemon startup orphan-sweep per BI-010d)
 //
 // Each method follows the BI-030 idempotency protocol (steps 1–6):
 //  1. Build IntentLogEntry.
@@ -26,13 +27,14 @@ import (
 // br argv:
 //   - claim:  `br update <bead_id> --claim`   (atomic assignee=actor + status=in_progress)
 //   - close:  `br close <bead_id>`
-//   - reopen: `br reopen <bead_id>`
+//   - reopen: `br update <bead_id> --status open`
+//   - reset:  `br update <bead_id> --status open`
 //
 // All writes route through RunWithDBLockedRetry (BI-025c retry discipline).
 // The transition kind is CommandKindWrite (10s default timeout).
 //
-// Spec refs: specs/beads-integration.md §4.4 BI-010; §4.10 BI-029, BI-030,
-// BI-031; §6.1 RECORD IntentLogEntry.
+// Spec refs: specs/beads-integration.md §4.4 BI-010; §4.4 BI-010d (reset);
+// §4.10 BI-029, BI-030, BI-031; §6.1 RECORD IntentLogEntry.
 
 // IntentLogDir is the adapter-owned intent-log directory path relative to the
 // .harmonik/ directory. Production callers derive the absolute path via
@@ -288,4 +290,110 @@ func (a *Adapter) ReopenBead(
 		core.CoarseStatusOpen,
 		args,
 	)
+}
+
+// ResetBead issues the BI-010d reset write: in_progress → open.
+//
+// ResetBead is issued exclusively by the daemon startup orphan-sweep (PL-006
+// extended per hk-iuaed.2) to reset stale in_progress beads belonging to this
+// project. It MUST NOT be called from an in-flight run.
+//
+// The idempotency key for a reset write is distinct from other terminal ops:
+//
+//	<project_hash>:<bead_id>:reset:<daemon_start_ns>
+//
+// daemonStartNS scopes the key to a single daemon lifetime. Two restarts of the
+// same daemon on the same project produce distinct keys, preventing a surviving
+// intent file from one restart from being misclassified as ambiguous by the
+// BI-031 crash-recovery scan of the next restart.
+//
+// The br argv is `br update <bead_id> --status open` — the same form used by
+// ReopenBead — because `br update --status open` is the only `br` command that
+// reliably transitions any active state (including in_progress) to open.
+//
+// The full BI-030 intent-log protocol is applied. The IntentLogEntry written has
+// zero-valued RunID and TransitionID fields (valid per IntentLogEntry.Valid() when
+// Op == TerminalOpReset) because a startup-sweep reset has no associated run or
+// transition.
+//
+// Conflict handling follows the same BI-031 status-check protocol as
+// claim/close/reopen: BrConflict retries through the status-check before reissue.
+//
+// Spec: beads-integration.md §4.4 BI-010d; §4.4 BI-010a (reset row);
+// §4.10 BI-029, BI-030; §6.1 ENUM TerminalOp.
+func (a *Adapter) ResetBead(
+	ctx context.Context,
+	intentLogDir string,
+	cfg TimeoutConfig,
+	beadID core.BeadID,
+	projectHash core.ProjectHash,
+	daemonStartNS int64,
+) error {
+	ikey := core.ResetBeadIdempotencyKey(projectHash, beadID, daemonStartNS)
+
+	// BI-030 step 1: build IntentLogEntry for reset.
+	// RunID and TransitionID are zero-valued: a startup-sweep reset has no
+	// associated in-flight run or transition. IntentLogEntry.Valid() permits
+	// zero UUIDs when Op == TerminalOpReset per BI-010d.
+	entry := core.IntentLogEntry{
+		IdempotencyKey:    ikey,
+		Op:                core.TerminalOpReset,
+		BeadID:            beadID,
+		IntendedPostState: core.CoarseStatusOpen,
+		RequestedAt:       time.Now().UTC(),
+		SchemaVersion:     IntentLogEntrySchemaVersion,
+	}
+	if !entry.Valid() {
+		return fmt.Errorf("brcli.ResetBead: constructed IntentLogEntry failed Valid(): %+v", entry)
+	}
+
+	// BI-030 steps 1–2: write intent file to temp + fsync(temp_fd).
+	tmpPath, err := WriteIntentLogTmp(intentLogDir, entry)
+	if err != nil {
+		return fmt.Errorf("brcli.ResetBead: write intent tmp: %w", err)
+	}
+
+	// BI-030 step 3: rename(2) temp → canonical path.
+	_, err = RenameIntentLogTmpToFinal(tmpPath, intentLogDir, ikey)
+	if err != nil {
+		_ = intentLogUnlinkFile(tmpPath) //nolint:errcheck // best-effort cleanup; rename failed
+		return fmt.Errorf("brcli.ResetBead: rename intent to final: %w", err)
+	}
+
+	// BI-030 step 4: fsync(parent_dir_fd) — durability before subprocess.
+	if err := FsyncIntentLogParentDir(intentLogDir); err != nil {
+		return fmt.Errorf("brcli.ResetBead: fsync intent dir: %w", err)
+	}
+
+	// BI-030 step 5: invoke `br update <bead_id> --status open`.
+	// Uses the same argv as ReopenBead: `br update --status open` is the only
+	// br command that reliably transitions in_progress → open (hk-wdeen).
+	result, err := a.RunWithDBLockedRetry(
+		ctx,
+		cfg,
+		CommandKindWrite,
+		DBLockedRetryMax,
+		DBLockedRetryBase,
+		DBLockedRetryCap,
+		"update", string(beadID), "--status", "open",
+	)
+	if err != nil {
+		// Subprocess not launched; intent file retained for BI-031 recovery.
+		return fmt.Errorf("brcli.ResetBead: br exec: %w", err)
+	}
+	if result.BrErr != BrOK {
+		// br returned a non-zero exit code; intent file retained for BI-031 recovery.
+		return fmt.Errorf("brcli.ResetBead: br update --status open failed: %s (exit %d): stderr=%q",
+			result.BrErr, result.ExitCode, result.Stderr)
+	}
+
+	// BI-030 step 6: delete intent file + fsync(parent_dir_fd) on success.
+	if err := DeleteIntentLogAndSyncParent(intentLogDir, ikey); err != nil {
+		// Non-fatal: the write succeeded; the stale intent file will be
+		// resolved as a no-op by the BI-031 status-check-before-reissue
+		// protocol on next startup.
+		return fmt.Errorf("brcli.ResetBead: delete intent file: %w", err)
+	}
+
+	return nil
 }

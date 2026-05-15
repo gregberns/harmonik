@@ -7,11 +7,15 @@ package daemon_test
 // MaxConcurrent=4 and asserts:
 //
 //  1. All 10 beads close cleanly.
-//  2. Wall-clock < 3× the sequential baseline (a separate sub-test with
-//     MaxConcurrent=1 is timed; the parallel run is compared to that ratio).
+//  2. Per-bead wall-clock < 3× a per-bead sequential baseline (a separate
+//     sub-run with MaxConcurrent=1 over a smaller N is timed; per-bead
+//     averages are compared so the ratio is meaningful regardless of N).
 //  3. go test -race is clean.
 //  4. JSONL contains exactly 10 distinct run_started events with 10 distinct
 //     run_id values (verified via eventbus.Filter per hk-e61c3.5 / row 10).
+//
+// Perf (hk-l6dsb): sequential baseline uses N=3 and runs concurrently with
+// the parallel run in an independent project dir; net wall-clock ~17 s.
 //
 // Metrics emission (roadmap §4): sqlite_lock_retries, in_flight_count fields
 // are OUT OF SCOPE for this bead.  Populating new event fields is separate work.
@@ -33,6 +37,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,15 +298,29 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 	realBrPath := throughputFixtureLocateBr(t)
 	handlerScript := throughputFixtureSleepHandlerScript(t)
 
-	const beadCount = 10
-
-	// ── Sequential baseline (MaxConcurrent=1) ─────────────────────────────────
+	// Bead body invariant: 10 beads at MaxConcurrent=4 close cleanly with no
+	// starvation, and the parallel run is < 3× a sequential baseline.
 	//
-	// Expected sequential time: 10 × 0.3 s = 3.0 s (plus overhead).
-	// Expected parallel time:   ceil(10/4) × 0.3 s ≈ 0.9 s (plus overhead).
+	// Perf note (hk-l6dsb): the parallel run is the invariant — it must use
+	// beadCount=10.  The sequential baseline only provides a ratio reference;
+	// running it at the same N=10 doubled wall-clock for no extra coverage
+	// (the ratio is dominated by per-bead claim/close overhead, ~4 s/bead).
+	// Use seqBeadCount=3 for the baseline (still measures per-bead overhead at
+	// MaxConcurrent=1) and run sequential + parallel sub-runs concurrently in
+	// independent project dirs.  Net: ~57 s → ~17 s with the same assertions.
+	const beadCount = 10
+	const seqBeadCount = 3
+
+	// ── Setup both project fixtures up-front ──────────────────────────────────
+	//
+	// Expected sequential time:  3 × 0.3 s = 0.9 s of handler work + ~3 × claim/close overhead.
+	// Expected parallel time:    ceil(10/4) × 0.3 s ≈ 0.9 s of handler work + parallel claim/close.
 	// Ratio budget: < 3× (bead body requirement).
 	seqProjectDir, seqJSONLPath, seqBrWrapper := throughputFixtureSetupProject(t, realBrPath, "t11b")
-	seqBeadIDs := throughputFixtureCreateBeads(t, seqBrWrapper, beadCount)
+	seqBeadIDs := throughputFixtureCreateBeads(t, seqBrWrapper, seqBeadCount)
+
+	parProjectDir, parJSONLPath, parBrWrapper := throughputFixtureSetupProject(t, realBrPath, "t11p")
+	parBeadIDs := throughputFixtureCreateBeads(t, parBrWrapper, beadCount)
 
 	seqCfg := daemon.Config{
 		ProjectDir:    seqProjectDir,
@@ -311,13 +330,6 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerEnv:    nil,
 		MaxConcurrent: 1,
 	}
-	seqElapsed := throughputFixtureRunDaemon(t, seqCfg, seqBrWrapper, seqBeadIDs)
-	t.Logf("sequential: %d beads MaxConcurrent=1 wall_clock=%v", beadCount, seqElapsed)
-
-	// ── Parallel run (MaxConcurrent=4) ────────────────────────────────────────
-	parProjectDir, parJSONLPath, parBrWrapper := throughputFixtureSetupProject(t, realBrPath, "t11p")
-	parBeadIDs := throughputFixtureCreateBeads(t, parBrWrapper, beadCount)
-
 	parCfg := daemon.Config{
 		ProjectDir:    parProjectDir,
 		JSONLLogPath:  parJSONLPath,
@@ -326,18 +338,46 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerEnv:    nil,
 		MaxConcurrent: 4,
 	}
-	parElapsed := throughputFixtureRunDaemon(t, parCfg, parBrWrapper, parBeadIDs)
+
+	// ── Run sequential baseline and parallel run concurrently ─────────────────
+	//
+	// The two runs use independent project dirs / JSONL paths / wrapper scripts,
+	// so they share no state.  Running them concurrently cuts wall-clock from
+	// (seq + par) to max(seq, par).
+	var (
+		seqElapsed time.Duration
+		parElapsed time.Duration
+		wg         sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		seqElapsed = throughputFixtureRunDaemon(t, seqCfg, seqBrWrapper, seqBeadIDs)
+	}()
+	go func() {
+		defer wg.Done()
+		parElapsed = throughputFixtureRunDaemon(t, parCfg, parBrWrapper, parBeadIDs)
+	}()
+	wg.Wait()
+
+	t.Logf("sequential: %d beads MaxConcurrent=1 wall_clock=%v", seqBeadCount, seqElapsed)
 	t.Logf("parallel: %d beads MaxConcurrent=4 wall_clock=%v", beadCount, parElapsed)
 
-	// ── Assert wall-clock ratio < 3× sequential baseline ──────────────────────
+	// ── Assert wall-clock ratio < 3× sequential per-bead baseline ─────────────
+	//
+	// Normalize: the parallel run does beadCount beads; the sequential baseline
+	// does seqBeadCount beads.  Compare per-bead averages so the ratio is
+	// meaningful across different N values.
 	const ratioLimit = 3.0
 	if seqElapsed > 0 {
-		ratio := float64(parElapsed) / float64(seqElapsed)
-		t.Logf("throughput ratio: parallel/sequential = %.2f (limit %.1f×)", ratio, ratioLimit)
+		seqPerBead := float64(seqElapsed) / float64(seqBeadCount)
+		parPerBead := float64(parElapsed) / float64(beadCount)
+		ratio := parPerBead / seqPerBead
+		t.Logf("throughput ratio: parallel/sequential per-bead = %.2f (limit %.1f×)", ratio, ratioLimit)
 		if ratio >= ratioLimit {
-			t.Errorf("parallel run took %.2f× the sequential baseline (limit %.1f×); "+
-				"parallel=%v sequential=%v; concurrent dispatch not providing speedup",
-				ratio, ratioLimit, parElapsed, seqElapsed)
+			t.Errorf("parallel per-bead took %.2f× the sequential per-bead baseline (limit %.1f×); "+
+				"parallel=%v (N=%d) sequential=%v (N=%d); concurrent dispatch not providing speedup",
+				ratio, ratioLimit, parElapsed, beadCount, seqElapsed, seqBeadCount)
 		}
 	}
 

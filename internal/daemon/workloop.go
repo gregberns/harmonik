@@ -56,6 +56,17 @@ import (
 // ready queue is empty.
 const workloopPollInterval = 2 * time.Second
 
+// agentReadyKillReapTimeout is the maximum time to wait for watcher.Done()
+// after Kill() in the HC-056 agent_ready_timeout path. Kill() itself sends
+// SIGTERM then SIGKILL (3 s grace); this additional 10 s covers watcher
+// teardown after SIGKILL lands. If the watcher does not exit within this
+// window, reaping is abandoned and the bead is still reopened — the stuck
+// watcher goroutine will eventually unblock when ctx is cancelled.
+//
+// Spec ref: specs/handler-contract.md §4.9 HC-056.
+// Bead ref: hk-do7te.
+const agentReadyKillReapTimeout = 10 * time.Second
+
 // workLoopDeps bundles the injectable dependencies of the work loop.  All
 // fields are required (non-nil).  Use newWorkLoopDeps to construct the
 // production set from daemon.Config.
@@ -1013,7 +1024,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					beadID, runID.String(), readyErr)
 				_ = sess.Kill(ctx)
 				if watcher != nil {
-					<-watcher.Done()
+					// Wait for the watcher goroutine to exit, but do not block
+					// indefinitely — agentReadyKillReapTimeout guards against a
+					// hung watcher after SIGKILL. The bead is still reopened even
+					// if reaping times out; the watcher goroutine will unblock
+					// when the outer ctx is eventually cancelled.
+					// Bead ref: hk-do7te.
+					select {
+					case <-watcher.Done():
+					case <-time.After(agentReadyKillReapTimeout):
+						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
+							beadID, runID.String())
+					}
 				}
 				_ = sess.Wait(ctx)
 				reopenTID, _ := deps.tidGen.Next()

@@ -503,7 +503,16 @@ func runReviewLoop(
 					fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
 						beadID, state.iterationCount, runID.String(), revReadyErr)
 					_ = revSess.Kill(ctx)
-					<-revWatcher.Done()
+					// Wait for the reviewer watcher goroutine to exit with a
+					// deadline — agentReadyKillReapTimeout prevents indefinite
+					// blocking if the killed subprocess does not cooperate.
+					// Bead ref: hk-do7te.
+					select {
+					case <-revWatcher.Done():
+					case <-time.After(agentReadyKillReapTimeout):
+						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+							beadID, state.iterationCount, runID.String())
+					}
 					_ = revSess.Wait(ctx)
 					if deps.hookStore != nil {
 						deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)

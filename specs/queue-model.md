@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-14
+last-updated: 2026-05-15
 depends-on:
   - architecture
   - execution-model
@@ -134,6 +134,8 @@ ENUM ItemStatus:
 
 When an item is at the head of dispatch eligibility but its bead has an open `blocks` edge in the Beads ledger (per [/Users/gb/github/harmonik/specs/beads-integration.md §4.3 BI-006]), the daemon MUST set the item's `status` to `deferred-for-ledger-dep` and emit `queue_item_deferred_for_ledger_dep` per [/Users/gb/github/harmonik/specs/event-model.md §8.10]. When the blocking bead closes, the dispatcher MUST re-evaluate and transition the item back to `pending`. No event is emitted on the deferred → pending transition; the next dispatch attempt is the observable signal.
 
+The dispatcher MUST re-evaluate `deferred-for-ledger-dep` items on every dispatch-loop tick per [/Users/gb/github/harmonik/specs/execution-model.md §7.4]. No separate wakeup mechanism is required in v0.1; v0.2 may add `bead_closed`-event-driven wakeup as an optimization.
+
 The `deferred-for-ledger-dep` state is NOT terminal for the purposes of §5 group-advance computation: a group containing an item in `deferred-for-ledger-dep` is NOT all-terminal, and the group MUST NOT advance until that item resolves and reaches `completed` or `failed`. If a blocker never closes (operator inaction, blocker bead tombstoned without resolution), the group remains `active` indefinitely; the orchestrator observes via `queue-status` and may decide to address the blocker via Beads or accept indefinite hold. v0.1 ships no timeout on deferred items.
 
 ### 2.9 On-disk JSON representation
@@ -181,6 +183,70 @@ Example envelope (informative; non-normative):
 }
 ```
 
+### 2.10 JSON-RPC request/response payload schemas
+
+The four queue methods (`queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`) are carried over the daemon's Unix socket per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]. This section defines the normative request and response payload shapes. The transport framing (NDJSON, 1 MiB cap, error-code block) is owned by PL-003a; this section owns the field-level wire contract.
+
+#### RECORD QueueSubmitRequest
+
+```
+RECORD QueueSubmitRequest:
+  groups          : List<Group>   -- one or more groups; field schemas per §2.3
+  schema_version  : Integer = 1   -- MUST equal 1; forward-incompatible value refuses per QM-002
+```
+
+Clients MUST NOT supply `queue_id`, `submitted_at`, `status`, or any item's `run_id` or `status` field. Those fields are daemon-minted at accept time. Any client-supplied value for those fields is silently ignored by the daemon.
+
+#### RECORD QueueSubmitResponse
+
+```
+RECORD QueueSubmitResponse:
+  queue_id        : UUID          -- daemon-minted UUIDv7 per QM-010
+  status          : QueueStatus   -- always "active" on a successful submit
+  group_count     : Integer       -- count of groups accepted (equals len(QueueSubmitRequest.groups))
+```
+
+#### RECORD QueueAppendRequest
+
+```
+RECORD QueueAppendRequest:
+  queue_id        : UUID          -- identity guard; rejected if it does not match the active queue_id
+  group_index     : Integer       -- 0-based index of the target stream group
+  bead_ids        : List<BeadID>  -- beads to append; validated per QM-020..QM-024
+```
+
+#### RECORD QueueAppendResponse
+
+```
+RECORD QueueAppendResponse:
+  appended_count      : Integer         -- number of items accepted and appended
+  new_tail_indices    : List<Integer>   -- 0-based item indices of the newly appended items within the target group
+```
+
+#### RECORD QueueStatusResponse
+
+```
+RECORD QueueStatusResponse:
+  queue           : Queue | null        -- the Queue envelope per §2.1, or null when no queue is loaded
+```
+
+`queue` is null when the daemon has no active queue (file absent, queue-completed and unlinked per QM-003). `queue-status` MUST NOT mutate state or emit events per QM-057.
+
+#### RECORD QueueDryRunRequest
+
+Same shape as `QueueSubmitRequest` (identical field set; the method name differs). The daemon routes the request through the full validation pipeline (§6) without persisting state or emitting events.
+
+#### RECORD QueueDryRunResponse
+
+```
+RECORD QueueDryRunResponse:
+  resolved_queue          : Queue                             -- the would-be Queue envelope as it would exist post-submit
+  ledger_dep_notices      : List<{bead_id, blocker_bead_id}> -- items that would start in deferred-for-ledger-dep per QM-025
+  parallelism_narrowed    : Bool                              -- true when ledger_dep_notices is non-empty
+```
+
+`QueueDryRunResponse` is returned on validation success. On validation failure the dry-run returns the same typed JSON-RPC error as `queue-submit` would, with the same error code per §6.11a.
+
 ## 3. Persistence
 
 The in-memory queue object is the runtime authority. The on-disk file `.harmonik/queue.json` is the crash-recovery sync; it MUST always reflect the in-memory state at every mutation boundary.
@@ -191,15 +257,27 @@ Every queue mutation MUST persist via the WM-026 atomic-write discipline per [/U
 
 The mutations subject to QM-001 are: queue-submit accept, queue-append accept, group-status transition (per §5), item-status transition (per §2.7), queue-status transition (per §8).
 
+On any I/O error during the atomic-write sequence (write, fsync, rename, fsync of parent directory), the daemon MUST treat the queue as inconsistent: refuse further queue mutations, emit `infrastructure_unavailable{failed_prerequisite: queue_write_error}` per [/Users/gb/github/harmonik/specs/event-model.md §8.7.15], and transition to `degraded` state per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.8 PL-010]. Operator recovery is `harmonik stop` followed by restart; the queue state on disk is indeterminate after a failed atomic write and MUST NOT be auto-recovered.
+
 ### 3.2 QM-002 — Read on startup
 
-The daemon MUST read `.harmonik/queue.json` at [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.1 PL-005 step 8a], alongside `daemon.state` and `daemon.upgrading`. Three outcomes:
+The daemon MUST read `.harmonik/queue.json` at [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.1 PL-005 step 8a], alongside `daemon.state` and `daemon.upgrading`. v0.1 supports reading `schema_version ∈ {1}`. Any other value is forward-incompatible per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.1 PL-005 step 8a] and refuses startup with exit code 2. Three outcomes:
 
 - **File exists and parses**: the queue is loaded with its persisted `status` and all groups/items as written. The daemon emits no synthetic event for the load itself; existing event history in `events.jsonl` is the audit record.
 - **File absent**: the daemon starts with no queue object. `queue-status` calls return `queue_not_active` until the next `queue-submit` accept.
 - **File present but unparseable**: the file is treated as absent (no queue loaded), with a structured-log warning matching the [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.1 PL-005] precedent for corrupt markers. The file is NOT auto-deleted; operator inspection comes first.
 
 If the loaded queue's `status` is `paused-by-failure` or `paused-by-drain`, the queue MUST remain in that status; no auto-resume across daemon restart in v0.1.
+
+### 3.2a QM-002a — Startup cross-check against Beads ledger
+
+After loading `queue.json` successfully per QM-002, the daemon MUST cross-check item statuses against the live Beads ledger. For every item whose `status` is `dispatched` in `queue.json`, the daemon MUST query `br show <bead_id>` per [/Users/gb/github/harmonik/specs/beads-integration.md §4.5]. If the Beads ledger shows the bead as `open` (i.e., a prior `br update` claim-write succeeded for the queue but the corresponding Beads status write failed and the item was left `dispatched` in queue.json without Beads reflecting it), the daemon MUST:
+
+1. Revert the item's status to `pending` in the in-memory queue envelope.
+2. Persist the corrected queue envelope via QM-001 atomic write before proceeding.
+3. Emit a `queue_item_reconciled` event per [/Users/gb/github/harmonik/specs/event-model.md §8.10] with `reason: claim_write_lost`.
+
+This check MUST run before the daemon reaches `ready` state and before any dispatch-loop tick that could re-dispatch an item. The reconciliation action maps to Cat 3 per [/Users/gb/github/harmonik/specs/reconciliation/spec.md §8] (claim-write-lost store disagreement). In v0.1 the daemon executes the revert directly rather than routing through the reconciliation investigator, because the correction is fully deterministic (ledger says `open` → item reverts to `pending`).
 
 ### 3.3 QM-003 — Removal on completion
 
@@ -414,6 +492,23 @@ Additions to this enum require a corresponding allocation in the JSON-RPC error-
 
 Validation checks within a single request MUST be evaluated in the order: QM-027 (single active queue, submit-only) → QM-024 (append target validity, append-only) → QM-020 (existence) → QM-021 (status) → QM-022 (no double dispatch) → QM-023 (duplicates) → QM-026 (size). QM-025 (parallelism-narrowed) is evaluated last as an informational pass and emits its events only after the request is accepted; it never produces a validation failure. The first failing rule short-circuits and returns its typed error; the daemon MUST NOT report multiple validation failures from a single request.
 
+### 6.11a QM-029b — Validation reason to JSON-RPC error-code mapping
+
+Each `QueueValidationReason` enum value maps to a specific JSON-RPC error code in the `-32010..-32019` range reserved for `queue-model` per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]. The mapping follows the QM-029a evaluation sequence:
+
+| JSON-RPC error code | `QueueValidationReason`      | Corresponding check |
+|---------------------|------------------------------|---------------------|
+| `-32010`            | `queue_already_active`       | QM-027              |
+| `-32011`            | `append_target_invalid`      | QM-024 (target kind/status wrong) |
+| `-32012`            | `queue_not_advancing`        | QM-024 (queue paused)             |
+| `-32013`            | `bead_not_found`             | QM-020              |
+| `-32014`            | `bead_not_open`              | QM-021              |
+| `-32015`            | `bead_already_dispatched`    | QM-022              |
+| `-32016`            | `duplicate_bead_id`          | QM-023              |
+| `-32017`            | `queue_too_large`            | QM-026              |
+
+Error codes `-32018` and `-32019` are reserved for future `QueueValidationReason` additions within the v0.1 error-code block. Each code is a stable wire constant; additions require a spec amendment and a corresponding entry in this table. The `message` field of the JSON-RPC error carries the typed-error shape per the PL-003b `<error_type>{...}` convention; the `code` field is the numeric value in this table.
+
 ## 7. Append Semantics
 
 ### 7.1 QM-040 — Stream-only target
@@ -573,7 +668,7 @@ The validation pipeline (§6) MUST run against an immutable snapshot of the in-m
 
 | Spec | Section | Nature of impact |
 |---|---|---|
-| [/Users/gb/github/harmonik/specs/event-model.md] | §8.10 (new) | Owns the six queue-lifecycle event payloads; this spec cites them by name and reason-enum but does not define payload schemas. |
+| [/Users/gb/github/harmonik/specs/event-model.md] | §8.10 (new) | Owns the six queue-lifecycle event payloads plus the new `queue_item_reconciled` event (row 8.10.7) added in v0.1.1 per QM-002a; this spec cites them by name and reason-enum but does not define payload schemas. |
 | [/Users/gb/github/harmonik/specs/event-model.md] | §6.4 row 1 | OPTIONAL `queue_id` / `queue_group_index` fields added to `run_started` / `run_completed` / `run_failed` per QM-011, QM-012. |
 | [/Users/gb/github/harmonik/specs/process-lifecycle.md] | §4.4 (new/extended) | Owns the `queue-submit` / `queue-append` / `queue-status` / `queue-dry-run` JSON-RPC method surface and Unix-socket transport. |
 | [/Users/gb/github/harmonik/specs/process-lifecycle.md] | §4.1 PL-005 step 8a | Reads `.harmonik/queue.json` per QM-002 alongside `daemon.state` / `daemon.upgrading`. |
@@ -600,5 +695,19 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments surfaced by 3-reviewer parallel pass on the extqueue v0.1 spec commit (e228bc3):
+
+1. **§2.10 (new) — JSON-RPC request/response payload schemas.** Normative RECORD definitions for `QueueSubmitRequest`, `QueueSubmitResponse`, `QueueAppendRequest`, `QueueAppendResponse`, `QueueStatusResponse`, `QueueDryRunRequest`, and `QueueDryRunResponse`. Clarifies daemon-minted vs. client-supplied fields.
+
+2. **§6.11a (new) — QM-029b validation reason to error-code mapping.** Table mapping all 8 `QueueValidationReason` enum values to specific JSON-RPC error codes in the `-32010..-32017` range, with `-32018`/`-32019` reserved.
+
+3. **§2.8 — Deferred-item re-evaluation trigger.** Added normative sentence requiring the dispatcher to re-evaluate `deferred-for-ledger-dep` items on every dispatch-loop tick per execution-model.md §7.4. Notes v0.2 optimization deferral.
+
+4. **§3.2 (QM-002) — schema_version supported-read-set.** v0.1 supports `schema_version ∈ {1}`; any other value refuses startup with exit code 2.
+
+5. **§3.2a (new) — QM-002a startup cross-check against Beads ledger.** At startup, after loading queue.json, the daemon MUST cross-check `dispatched` items against Beads. If Beads shows `open`, the item reverts to `pending` via QM-001 atomic write and emits `queue_item_reconciled{reason: claim_write_lost}`.
+
+6. **§3.1 (QM-001) — I/O error behavior.** On any I/O error in the atomic-write sequence, the daemon MUST refuse further mutations, emit `infrastructure_unavailable{failed_prerequisite: queue_write_error}`, and transition to `degraded` state. Operator recovery is `harmonik stop` + restart.
 
 v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog.md.

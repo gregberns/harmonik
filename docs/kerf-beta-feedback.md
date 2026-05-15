@@ -290,3 +290,62 @@ Pass-2 (decompose) of the `phase-3-dot` spec work. Following a clean pass-1 (`01
 - The review-criteria list in `kerf show` was exactly the right reviewer-instruction surface. When the Agent tool *is* available, this would directly drive a useful sub-agent prompt.
 - Pass-2's "what done looks like" criteria mapped cleanly onto the audit-derived problem space — no impedance mismatch between the spec-jig's generic prompts and this work's concrete content.
 
+
+---
+
+## 2026-05-15: Phase-2 dogfood #2 — hk-cd92e (worktree task-injection leak)
+
+Second Phase-2 harmonik-dispatch attempt. Target bead `hk-cd92e` (worktree
+task-injection leak / agent-task.md to gitignored path). Run did not produce a
+clean dogfood — bead's underlying fix is already shipped, and bead selection
+went sideways. Closing the bead as already-fixed; capturing daemon-side friction
+here.
+
+### What ran
+
+- Bumped hk-cd92e P3 → P0; `br ready --priority 0` showed it as sole P0 ready.
+- Pushed commit `f786e1e` (priority bump).
+- Built `/tmp/hk-dogfood2` from `./cmd/harmonik` (clean build, 8.6MB binary).
+- Launched `/tmp/hk-dogfood2 --project /Users/gb/github/harmonik --max-concurrent 1` inside tmux session `harmonik` (PID 72208).
+- Daemon ran ~50s before I SIGTERM'd it on confirming wrong-bead claim.
+- Two commits landed on main during the daemon's brief life (78addb3, ca6026c) — appear to be recovered orphan work from previous crashed runs (13:17, 13:22).
+
+### What I expected vs what happened
+
+- **Expected:** Daemon claims hk-cd92e (sole P0 ready), spawns claude in worktree, claude observes the agent-task.md leak, fixes it, commits.
+- **Happened:** Daemon claimed `hk-a0htu` (P1 IN_PROGRESS — different bead entirely). agent-task.md was already written to `.harmonik/agent-task.md` (gitignored path) — the fix hk-cd92e describes is already deployed in the daemon's worktree-bootstrap.
+
+### Disposition
+
+- hk-cd92e closed as already-fixed with evidence: `.harmonik/agent-task.md` path observed in run worktree `.harmonik/worktrees/019e2d6d-e8f7-772f-9469-24eda2eac0f7/`.
+- hk-a0htu reset from in_progress → open (daemon killed mid-run).
+
+### Friction items (NEW vs Track 1)
+
+- **MAJOR — Stale-bead-by-priority selection bypass.** `br ready --priority 0` returned only hk-cd92e (P0), but daemon claimed hk-a0htu (P1, IN_PROGRESS, no P0 label). Suggests daemon resumes IN_PROGRESS beads (or has its own ranking) without consulting `br ready` priority ordering. Means **operators cannot reliably steer the daemon by raising bead priority** — the Phase-2 dogfood mechanism the brief uses (bump-P0 → expect-claim) is unreliable.
+- **MAJOR — Orphan-sweep does not catch stale IN_PROGRESS.** `daemon_orphan_sweep_completed` event: `bead_in_progress_reset=0, locks_cleared=0, stale_intents_observed=4`. hk-a0htu was IN_PROGRESS from the 13:17 crashed run and was not reset. Daemon then re-picked it. The `stale_intents_observed=4` count is non-zero with no action taken.
+- **MAJOR — `br close` 10s timeout fails runs that succeeded.** Visible in event log for runs 13:17 and 13:22: `run_failed: close-error: br subprocess wall-clock timeout (10s): brcli: Unavailable` AFTER `outcome_emitted` showed `approved`. This is the hk-yjsk8 bug observed live, twice in 12 minutes. The work landed (commits 78addb3 + ca6026c on main, attributed to "Claude Sonnet 4.6") but the runs were marked FAILED. **Run-state and reality diverge.**
+- **MAJOR — Daemon dirties parent repo's working tree on launch.** Pre-run, `git status` in `/Users/gb/github/harmonik` showed `.gitignore` modified (added `.harmonik/agent-task*` and `.claude/settings.json`). I stashed it. The same diff reappeared in the run worktree's `.gitignore` — confirming the daemon's worktree-bootstrap (or some hook) writes that change without committing it. Friction-item is: **modification leaks into the parent repo's worktree under some condition.** The brief expected "Clean tree" — this trips operators who follow the brief literally.
+- **MINOR — Tmux window orphaned on SIGTERM.** Killing the daemon with SIGTERM stopped the daemon process but left tmux window 2 (containing the live claude session) running. Had to `tmux kill-window` manually. Daemon shutdown is not propagating to child claude sessions / tmux windows.
+- **NIT — No documented invocation in HANDOFF.md.** The canonical `hk --project <dir> --max-concurrent N` pattern is only documented inside a smoke-run dogfood doc (`dogfood-smoke-run-2026-05-15-bridge-substrate.md`). HANDOFF mentions the mechanism existence but not the exact invocation. Bead `hk-icecw` ("Add `harmonik run <bead-id>` subcommand") would address this entirely.
+
+### Carry-over from Track 1 (still present)
+
+- `br sync --flush-only` race / timeout (manifests now as the `br close` 10s timeout). Same family.
+- No way to scope harmonik to a specific bead id (workaround: priority-bump didn't work this run — see MAJOR-1).
+
+### Phase-2 dogfooding readiness verdict
+
+**Not ready to scale.** Three specific blockers, in priority order:
+
+1. **Bead-selection determinism** — operators must be able to specify exactly which bead a daemon will claim. Either `harmonik run <bead-id>` (hk-icecw) lands, or the daemon's claim path is documented and guaranteed to match `br ready --priority 0` ordering. Without this, the dogfood loop is non-deterministic.
+2. **`br close` 10s timeout / hk-yjsk8** — every successful run currently mis-reports as `run_failed`. Until this is fixed, "did the run succeed?" requires inspecting commits, not the events stream. Severely undermines the value proposition of harmonik-as-dispatcher.
+3. **Orphan-sweep coverage gap** — sweep observed 4 stale intents and reset 0 beads. Stale IN_PROGRESS rows accumulate and steer future runs. Bug PL-006 was supposed to fix this; it hasn't, at least not for the case observed here.
+
+Items 2 and 3 are bug-level. Item 1 is a feature gap with an existing bead (hk-icecw). All three are tractable; none require redesign. Once they land, Phase-2 scale-up is plausible.
+
+### Suggested next-session targets
+
+- `hk-icecw` (P1) — `harmonik run <bead-id>` subcommand. Most-impactful unblock.
+- `hk-yjsk8` (P1) — br close 10s timeout fix. Removes false-fail noise.
+- Re-investigate `daemon_orphan_sweep` policy: `stale_intents_observed=4` with zero action is the smoking gun.

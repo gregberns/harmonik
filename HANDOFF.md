@@ -1,5 +1,7 @@
 <!-- PP-TRIAL:v2 2026-05-14 extqueue-v0.1-specs — v42. Whole 8-pass kerf cycle for extqueue v0.1 landed on a feature branch. 6 spec files (1 new + 5 edits) authored via 22 sub-agent invocations across research/design/draft/review rounds. Branch `extqueue-v0.1-specs` pushed; main is unchanged. PR not opened. -->
 
+Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order from current state to fully operational.
+
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
 ROLE. You are the orchestrator. Delegate substantively. Keep the main thread minimal.

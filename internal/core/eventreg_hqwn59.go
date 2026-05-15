@@ -1,6 +1,6 @@
 package core
 
-// eventreg_hqwn59.go — startup-time registration of §8.1.* through §8.8.*
+// eventreg_hqwn59.go — startup-time registration of §8.1.* through §8.10.*
 // payload types into the global event registry per EV-032 / EV-034.
 //
 // Spec ref: specs/event-model.md §6.3 EV-032, §4.9 EV-034.
@@ -12,16 +12,17 @@ package core
 // Tags: mechanism
 // Durability classes per §8 table: F = fsync-boundary, O = ordinary, L = lossy.
 //
-// §8.1 Run lifecycle event registrations are in registerRunLifecycle().
-// §8.2 Control-point lifecycle event registrations are in registerControlPoints().
-// §8.3 Agent/handler lifecycle event registrations are in registerAgentEvents().
-// §8.4 Budget lifecycle event registrations are in registerBudgetEvents().
-// §8.5 Workspace lifecycle event registrations are in registerWorkspaceEvents().
-// §8.6 Reconciliation lifecycle event registrations are in registerReconciliationEvents().
-// §8.7 Daemon/operator lifecycle event registrations are in registerDaemonLifecycleEvents().
-// §8.8 Bus/observability event registrations are in registerBusEvents().
+// §8.1  Run lifecycle event registrations are in registerRunLifecycle().
+// §8.2  Control-point lifecycle event registrations are in registerControlPoints().
+// §8.3  Agent/handler lifecycle event registrations are in registerAgentEvents().
+// §8.4  Budget lifecycle event registrations are in registerBudgetEvents().
+// §8.5  Workspace lifecycle event registrations are in registerWorkspaceEvents().
+// §8.6  Reconciliation lifecycle event registrations are in registerReconciliationEvents().
+// §8.7  Daemon/operator lifecycle event registrations are in registerDaemonLifecycleEvents().
+// §8.8  Bus/observability event registrations are in registerBusEvents().
+// §8.10 Queue lifecycle event registrations are in registerQueueEvents().
 //
-// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78.
+// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78, hk-yslws.
 
 func init() {
 	registerRunLifecycle()
@@ -33,6 +34,7 @@ func init() {
 	registerDaemonLifecycleEvents()
 	registerBusEvents()
 	registerReviewLoopEvents()
+	registerQueueEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors.
@@ -262,6 +264,27 @@ func registerReviewLoopEvents() {
 	mustRegister("no_progress_detected", func() EventPayload { return &NoProgressDetectedPayload{} })
 	mustRegister("review_loop_cycle_complete", func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
 	mustRegister("bead_label_conflict", func() EventPayload { return &BeadLabelConflictPayload{} })
+}
+
+// registerQueueEvents registers all §8.10 queue lifecycle event payload
+// constructors (extqueue v0.1, hk-yslws).
+//
+// Durability classes per §8.10 table:
+//   - queue_submitted                    (§8.10.1): F (fsync-boundary — loss orphans the execution plan per EV-016)
+//   - queue_group_started                (§8.10.2): O (ordinary — reconstructible from predecessor queue_group_completed + queue.json)
+//   - queue_group_completed              (§8.10.3): F (fsync-boundary — group-boundary advance landmark per EV-016)
+//   - queue_paused                       (§8.10.4): F (fsync-boundary — hard execution stop landmark per EV-016)
+//   - queue_appended                     (§8.10.5): O (ordinary — reconstructible from queue.json mutation history)
+//   - queue_item_deferred_for_ledger_dep (§8.10.6): O (ordinary — reconstructible from ledger state + queue.json)
+//   - queue_item_reconciled              (§8.10.7): F (fsync-boundary — correction MUST be durable before re-dispatch per §8.10.7)
+func registerQueueEvents() {
+	mustRegister("queue_submitted", func() EventPayload { return &QueueSubmittedPayload{} })
+	mustRegister("queue_group_started", func() EventPayload { return &QueueGroupStartedPayload{} })
+	mustRegister("queue_group_completed", func() EventPayload { return &QueueGroupCompletedPayload{} })
+	mustRegister("queue_paused", func() EventPayload { return &QueuePausedPayload{} })
+	mustRegister("queue_appended", func() EventPayload { return &QueueAppendedPayload{} })
+	mustRegister("queue_item_deferred_for_ledger_dep", func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
+	mustRegister("queue_item_reconciled", func() EventPayload { return &QueueItemReconciledPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -870,11 +871,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	switch {
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
-		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+		// §4.12.EM-052: merge run-branch to main before CloseBead.
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID)
+		if !mergeRes.noChange && !mergeRes.success {
+			// EM-053: non-FF or push failure → reopen.
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("merge-failed (agent_completed): %s", mergeRes.reason))
 		} else {
-			emitRunCompleted(ctx, deps.bus, runID, true, "agent_completed: stop-hook outcome")
+			// Merge succeeded (or no-change); proceed with CloseBead.
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
+				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+			} else {
+				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitRunCompleted(ctx, deps.bus, runID, true, "agent_completed: stop-hook outcome")
+			}
 		}
 
 	case socketOutcome == nil && ei.exitCode == 0 && !watcherFailed:
@@ -883,11 +898,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// MVH twin-blind runs.
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
-		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
-			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+		// §4.12.EM-052: merge run-branch to main before CloseBead.
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID)
+		if !mergeRes.noChange && !mergeRes.success {
+			// EM-053: non-FF or push failure → reopen.
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
+			emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("merge-failed (auto-close): %s", mergeRes.reason))
 		} else {
-			emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+			// Merge succeeded (or no-change); proceed with CloseBead.
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
+				emitRunCompleted(ctx, deps.bus, runID, false, fmt.Sprintf("close-error: %v", closeErr))
+			} else {
+				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitRunCompleted(ctx, deps.bus, runID, true, "auto-close: exit=0")
+			}
 		}
 
 	default:
@@ -1067,4 +1096,156 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 		eventType = core.EventTypeRunFailed
 	}
 	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mergeRunBranchToMain — Step 9 merge-to-main helper (§4.12.EM-052/EM-053)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mergeOutcome carries the result of mergeRunBranchToMain so the caller can
+// decide which terminal event sequence to emit.
+type mergeOutcome struct {
+	// success is true when the merge-and-push completed without error.
+	success bool
+	// reason is the failure reason for emit/logging when success is false.
+	reason string
+	// noChange is true when the run-branch has no commits beyond its merge-base
+	// with main, i.e. the agent made no commits. The caller proceeds to CloseBead
+	// normally (no merge required).
+	noChange bool
+}
+
+// mergeRunBranchToMainPayload is the JSON payload for outcome_emitted and
+// bead_closed events emitted during the merge-to-main sequence.
+type mergeRunBranchToMainPayload struct {
+	RunID  string `json:"run_id"`
+	BeadID string `json:"bead_id"`
+	Kind   string `json:"kind"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// beadClosedPayload is the JSON payload for the bead_closed event.
+type beadClosedPayload struct {
+	RunID  string `json:"run_id"`
+	BeadID string `json:"bead_id"`
+}
+
+// mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
+//
+//  1. Resolve run-branch tip.
+//  2. Fast-forward check (non-FF → EM-053 reopen path).
+//  3. git update-ref refs/heads/main <tip>.
+//  4. git push origin main.
+//
+// Returns a mergeOutcome. The caller is responsible for all event emission
+// and the CloseBead call; this function is a pure git-operation helper.
+//
+// Spec ref: specs/execution-model.md §4.12 EM-052, EM-053.
+// Bead: hk-ftyvo.
+func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID) mergeOutcome {
+	runBranch := workspace.TaskBranchName(runID.String())
+
+	// Step 1: resolve run-branch tip.
+	runTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
+	runTipCmd.Dir = projectDir
+	runTipOut, err := runTipCmd.Output()
+	if err != nil {
+		// Branch does not exist — no commits were made; treat as no-change.
+		return mergeOutcome{noChange: true}
+	}
+	runTip := strings.TrimRight(string(runTipOut), "\n")
+
+	// Step 1b: check whether the run-branch has commits beyond its fork point
+	// from main.  If mainSHA == runTip the agent made no commits; treat as no-change.
+	mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
+	mainTipCmd.Dir = projectDir
+	mainTipOut, err := mainTipCmd.Output()
+	if err != nil {
+		return mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("git rev-parse main: %v", err),
+		}
+	}
+	mainTip := strings.TrimRight(string(mainTipOut), "\n")
+
+	if mainTip == runTip {
+		// Run-branch tip == main tip: no commits were made by the agent.
+		return mergeOutcome{noChange: true}
+	}
+
+	// Step 2: fast-forward check.  main MUST be an ancestor of runTip.
+	// git merge-base --is-ancestor <main> <runTip> exits 0 iff main ⊆ runTip.
+	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
+	isAncCmd.Dir = projectDir
+	if err := isAncCmd.Run(); err != nil {
+		// Non-FF: main has diverged from the run-branch.
+		return mergeOutcome{
+			success: false,
+			reason:  "non_ff_merge: main advanced concurrently",
+		}
+	}
+
+	// Step 3: fast-forward main to runTip.
+	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/main", runTip)
+	updateRefCmd.Dir = projectDir
+	if out, err := updateRefCmd.CombinedOutput(); err != nil {
+		return mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("git update-ref main: %v\n%s", err, out),
+		}
+	}
+
+	// Step 4: push origin main.
+	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", "main")
+	pushCmd.Dir = projectDir
+	if out, err := pushCmd.CombinedOutput(); err != nil {
+		// Push failed — roll back the local update-ref so the repo is consistent.
+		// Best-effort rollback: if it fails the operator will see main pointing to
+		// runTip without a matching remote; reconciliation (Cat 3 / EM-INV-005) will
+		// catch this on the next startup.
+		rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/main", mainTip)
+		rollbackCmd.Dir = projectDir
+		_ = rollbackCmd.Run()
+		return mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("push_failed: %v\n%s", err, out),
+		}
+	}
+
+	return mergeOutcome{success: true}
+}
+
+// emitOutcomeEmitted emits an outcome_emitted event with the given kind and
+// optional reason. kind is "approved" on success, "rejected" on failure.
+//
+// Spec ref: specs/execution-model.md §4.12.EM-052, EM-053.
+// Bead: hk-ftyvo.
+func emitOutcomeEmitted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, kind, reason string) {
+	pl := mergeRunBranchToMainPayload{
+		RunID:  runID.String(),
+		BeadID: string(beadID),
+		Kind:   kind,
+		Reason: reason,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeOutcomeEmitted, b)
+}
+
+// emitBeadClosed emits a bead_closed event after a successful CloseBead call.
+//
+// Spec ref: specs/execution-model.md §4.12.EM-052.
+// Bead: hk-ftyvo.
+func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID) {
+	pl := beadClosedPayload{
+		RunID:  runID.String(),
+		BeadID: string(beadID),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
 }

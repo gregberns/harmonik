@@ -65,6 +65,12 @@ const (
 	// EventTypeNodeDispatchRequested is the node_dispatch_requested event type (§8.1.11).
 	// Durability class: O.
 	EventTypeNodeDispatchRequested EventType = "node_dispatch_requested"
+
+	// EventTypeBeadClosed is the bead_closed event type (§4.12.EM-052).
+	// Emitted after CloseBead succeeds on a success branch, before run_completed.
+	// Durability class: F.
+	// Refs: hk-ftyvo.
+	EventTypeBeadClosed EventType = "bead_closed"
 )
 
 // ---------------------------------------------------------------------------

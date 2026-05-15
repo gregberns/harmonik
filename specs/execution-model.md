@@ -730,6 +730,74 @@ The daemon MUST accept `max_concurrent` as a startup-time integer ≥ 1 (default
 
 Tags: configuration
 
+## 4.12 Run-branch merge-to-main
+
+The two success branches in Step 9 of the daemon's single-run dispatch path (the
+`ProgressMsgTypeAgentCompleted` branch and the `socketOutcome==nil && exit=0 &&
+!watcherFailed` heuristic branch) omit merging the agent's commits onto `main`
+before closing the bead. This section fills that gap.
+
+#### EM-052 — Merge run-branch to main on success
+
+On both success branches (§4.3 Step 9 branch 1 — `agent_completed`; §4.3 Step 9
+branch 2 — `exit=0` heuristic), the daemon MUST execute the following ordered
+steps BEFORE calling `CloseBead`:
+
+1. **Resolve run-branch tip.** Resolve the current tip SHA of the run-branch
+   `run/<run_id>` via `git rev-parse refs/heads/run/<run_id>` in the project
+   repository root. If the run-branch has no commits beyond the HEAD that was
+   current at dispatch time, the daemon MUST treat the run as no-change and
+   proceed to step 5 (skip merge, still close bead).
+
+2. **Fast-forward check.** Resolve the current tip SHA of `main` via
+   `git rev-parse refs/heads/main`. If `main` is an ancestor of the run-branch
+   tip (i.e., the merge is a fast-forward), proceed to step 3. If `main` is NOT
+   an ancestor (non-FF — a concurrent push occurred), the daemon MUST NOT merge;
+   instead it MUST invoke `ReopenBead` with reason `non_ff_merge: main advanced
+   concurrently` and emit `outcome_emitted{kind=rejected, reason=non_ff_merge}`
+   (per EM-053 below), then `run_failed`, and return without closing the bead.
+
+3. **Fast-forward main.** Update `refs/heads/main` to the run-branch tip via
+   `git update-ref refs/heads/main <run_branch_tip_sha>` in the project
+   repository root.
+
+4. **Push origin main.** Execute `git push origin main` from the project
+   repository root (per push-autonomy directive). A push failure MUST NOT leave
+   the bead closed; if push fails, the daemon MUST reopen the bead with reason
+   `push_failed: <error>` and emit `outcome_emitted{kind=rejected,
+   reason=push_failed}`, then `run_failed`.
+
+5. **Emit outcome and close.** Emit `outcome_emitted{kind=approved}` via the
+   event bus. Then call `CloseBead`. On `CloseBead` error, emit `run_failed`
+   (not `run_completed`) as for the existing close-error path.
+
+6. **Emit bead_closed.** After `CloseBead` succeeds, emit `bead_closed` via the
+   event bus, carrying `run_id` and `bead_id`.
+
+7. **Emit run_completed.** Emit `run_completed{success:true}` as the final event.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+Refs: hk-ftyvo
+
+#### EM-053 — Non-FF and push-failure reopen path
+
+When step 2 of §4.12.EM-052 detects a non-fast-forward condition, OR when step 4
+detects a push failure, the daemon MUST:
+
+1. Emit `outcome_emitted{kind=rejected, reason=<"non_ff_merge"|"push_failed">}`
+   via the event bus.
+2. Call `ReopenBead` with a descriptive reason string.
+3. Emit `run_failed` (not `run_completed`).
+4. Return without calling `CloseBead` or emitting `bead_closed`.
+
+The run-branch tip commit is preserved intact; the operator can inspect the work
+and retry or merge manually.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+Refs: hk-ftyvo
+
 ## 5. Invariants
 
 #### EM-INV-001 — Git is the state-reconstruction source
@@ -1225,7 +1293,7 @@ Failure classes are emitted as payload fields on run_failed events per [event-mo
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement in EM-001 through EM-046 (including sub-requirements EM-012a, EM-015a, EM-015b, EM-015c, EM-015d, EM-015e, EM-015f, EM-017a, EM-018a, EM-020a, EM-023a, EM-024a, EM-025a, EM-031a, EM-034a, EM-034b, EM-034c, EM-036a, EM-041a, EM-042a, EM-043a, EM-046a, EM-046b) and EM-049 through EM-051 (concurrency primitives, §4.11) and invariants EM-INV-001, EM-INV-004, and EM-INV-005 (the three invariants surviving the §5 selection test; EM-INV-002, EM-INV-003, EM-INV-006 are retired). For `workflow_mode = single` (the default per §4.3.EM-012a built-in fallback), the cascade (§4.10), checkpoint cadence (§4.5), and sub-workflow composition (§4.8) apply unchanged. For `workflow_mode = review-loop`, the hardcoded two-node cycle of §4.3.EM-015d MUST be observed; the cap and early-exit rules of §4.3.EM-015e MUST be enforced; the six review-loop events of §6.5 MUST be emitted. `workflow_mode = dot` is reserved for post-MVH and is NOT required for Core MVH conformance. Dispatch input MUST be the active queue per §7.4; daemon fallback to `br ready` is non-conforming.
+**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement in EM-001 through EM-046 (including sub-requirements EM-012a, EM-015a, EM-015b, EM-015c, EM-015d, EM-015e, EM-015f, EM-017a, EM-018a, EM-020a, EM-023a, EM-024a, EM-025a, EM-031a, EM-034a, EM-034b, EM-034c, EM-036a, EM-041a, EM-042a, EM-043a, EM-046a, EM-046b) and EM-049 through EM-053 (concurrency primitives §4.11, merge-to-main §4.12) and invariants EM-INV-001, EM-INV-004, and EM-INV-005 (the three invariants surviving the §5 selection test; EM-INV-002, EM-INV-003, EM-INV-006 are retired). For `workflow_mode = single` (the default per §4.3.EM-012a built-in fallback), the cascade (§4.10), checkpoint cadence (§4.5), and sub-workflow composition (§4.8) apply unchanged. For `workflow_mode = review-loop`, the hardcoded two-node cycle of §4.3.EM-015d MUST be observed; the cap and early-exit rules of §4.3.EM-015e MUST be enforced; the six review-loop events of §6.5 MUST be emitted. `workflow_mode = dot` is reserved for post-MVH and is NOT required for Core MVH conformance. Dispatch input MUST be the active queue per §7.4; daemon fallback to `br ready` is non-conforming.
 
 **Post-MVH extensions.** Failure-commit emission (deferred per §4.5.EM-025) and `recoverable-non-idempotent` node-type defaults (§4.2.EM-010) are additive extensions to Core MVH; neither is required to claim Core MVH conformance. The `workflow_mode = dot` general workflow-graph walker is a post-MVH extension; the EM-012a precedence walk's tolerance for `workflow:dot` labels is normative at MVH (label resolution must not crash), but no MVH dispatcher is obligated to drive a `dot` run. Runtime mutation of `max_concurrent` (§4.11.EM-051) is a post-MVH extension.
 
@@ -1244,6 +1312,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EM-038 — EM-040 (validation).** Validator unit tests for every failure mode listed in EM-038, including sub-workflow-reference cycle detection and missing `start_node_id` / empty `terminal_node_ids`.
 - **EM-041 — EM-046, EM-046a, EM-046b (edge selection, backtracking, cycles).** Edge-cascade unit tests enumerating every precedence case; cycle-cap tests verifying `compilation_loop` failure at cap (disjoint from `structural`); traversal-counter recovery across restart verified by re-derivation from git log; rollback-transition tests verifying new `transition_id` and unchanged earlier commit; no-matching-edge scenario produces `structural` failure with reason `no_outgoing_edge_matches` (EM-046a); gate-deny enters `gate-pending` and waits for gate-resolution signal (EM-042a); RETRY re-dispatches the same node with context_updates applied pre-redispatch and fails as `transient` at retry-cap exhaustion (EM-046b).
 - **EM-049 — EM-051 (concurrency primitives).** Capacity-gate tests: with `max_concurrent = K` and a wave of N > K items, verify at most K runs are in-flight at any instant; verify slot-release on terminal triggers next dispatch (EM-049). Claim-serialization tests: concurrent ClaimBead writes are serialized through the token-pool of size `max_concurrent` (EM-050). Configuration tests: `--max-concurrent` accepts integer ≥ 1, defaults to 1, is sealed at startup (EM-051).
+- **EM-052 — EM-053 (merge-to-main on success).** Integration test: simulate a successful run on a worktree branch (`run/<run_id>`) with one commit; verify (a) `refs/heads/main` advances to the run-branch tip after Step 9 success branch executes, (b) a push-origin-main attempt is made, (c) `outcome_emitted{kind=approved}` event is emitted before `bead_closed`, (d) `bead_closed` event is emitted after `CloseBead`, (e) `run_completed{success:true}` is the final lifecycle event. Non-FF test: place an out-of-ancestry commit on `main` after the worktree branch is cut; verify (f) `ReopenBead` is called, (g) `outcome_emitted{kind=rejected, reason=non_ff_merge}` is emitted, (h) `CloseBead` is NOT called (EM-053).
 
 Migration to `[testing.md §<layer>]` cross-references occurs within one revision cycle once testing.md lands; this obligation is tracked in OQ-EM-003.
 
@@ -1318,6 +1387,7 @@ Default-if-unresolved: (resolved)
 | 2026-05-12 | 0.4.0 | foundation-author | Workflow-modes kerf integration (C2). Introduces `workflow_mode ∈ {single, review-loop, dot}` as a first-class Run-record field (EM-012 amended; §6.1 Run RECORD adds `workflow_mode`; new ENUM `WorkflowMode`). New EM-012a declares the four-tier mode-resolution precedence (per-bead label → project config → daemon default → built-in `single`); tier-1 conflicts and unknown-mode labels treat tier 1 as absent and emit `bead_label_conflict` per [event-model.md §8.8.6]. New EM-015d describes `review-loop` as a hardcoded two-node sub-case of the workflow-graph model (`implementer → reviewer → {APPROVE: close, REQUEST_CHANGES: implementer, BLOCK: close-needs-attention, iteration-cap: close-needs-attention, no-progress: close-needs-attention}`), with the single-`run_id`-across-iterations rule, the same-Claude-session-resumed-across-implementer-iterations rule (via `claude --resume <claude_session_id>`), and per-iteration event emissions (`implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `review_loop_cycle_complete`). New EM-015e declares the hardcoded iteration cap of 3 at MVH, the four early-exit conditions (APPROVE / REQUEST_CHANGES-with-iterations-remaining / cap-hit / BLOCK / no-progress diff-hash), and routes cap-hit / BLOCK / no-progress to the `needs-attention` close path (operator-drained per [operator-nfr.md §4.3]). EM-012 amended to enumerate the four reserved `context` keys under `review-loop` (`iteration_count`, `last_verdict`, `claude_session_id`, `last_diff_hash`). §3 Glossary adds entries for `workflow_mode`, `claude_session_id` (with explicit disambiguation from harmonik's `session_id` event field), `iteration_count`, and `needs-attention`. §6.5 co-owned events updated to list the six new review-loop events and note that `run_started` / `run_completed` / `run_failed` payloads now carry `workflow_mode`. No prior requirement IDs renumbered or retired; the additions are strictly additive over v0.3.3. Status remains `reviewed`. |
 | 2026-05-12 | 0.4.1 | foundation-author | Replace EM-015d's `claude -p ... --output-format json` post-launch capture mechanism for `claude_session_id` with the bridge-aligned pre-exec capture path: handler mints UUIDv7 and reports via `handler_capabilities` per [claude-hook-bridge.md §4.7 CHB-018] / [handler-contract.md §4.10 HC-045c]; daemon persists via the durable-checkpoint discipline of [claude-hook-bridge.md §4.6 CHB-023] (a §4.5.EM-023a-class transition completing BEFORE the handler is permitted to exec Claude). Glossary entry for `claude_session_id` updated to match. No requirement IDs added, renumbered, or retired. Status remains `reviewed`. |
 | 2026-05-14 | 0.4.1 | agent (hk-7zvh4) | **Model-selection spec amendment: 4-tier model/effort resolution chain.** New **EM-012b** (§4.3) — model/effort resolution precedence, mirroring EM-012a's tier-list structure: tier 1 per-task bead labels (`model:<alias>`, `effort:<level>`), tier 2 per-project `.harmonik/config.yaml`, tier 3 per-agent-type compiled default, tier 4 empty built-in fallback. `model` and `effort` are resolved independently (each walks tiers separately). Tier-1 multi-label conflict and unrecognised `effort` value both treat tier 1 as absent and emit `bead_label_conflict`. Sealed into Run record as `ModelPreference` at claim time; value-opacity invariant stated (harmonik validates shape not value; handler-side launch failure is authoritative). **§6.1 Run RECORD** gains `model_preference : ModelPreference`. **ModelPreference RECORD** and **EffortLevel ENUM** added to §6.1. No prior requirement IDs renumbered or retired; strictly additive over v0.4.0. Refs: hk-7zvh4, hk-cfhj2. |
+| 2026-05-14 | 0.5.1 | agent (hk-ftyvo) | **Merge-to-main on success: §4.12, EM-052, EM-053.** Adds new §4.12 (Run-branch merge-to-main) with two normative requirements. EM-052: on both Step 9 success branches the daemon MUST fast-forward `refs/heads/main` to the run-branch tip, push origin main, emit `outcome_emitted{kind=approved}`, call `CloseBead`, emit `bead_closed`, then `run_completed`. EM-053: on non-FF or push failure, the daemon MUST emit `outcome_emitted{kind=rejected}`, call `ReopenBead`, emit `run_failed`, and NOT close the bead. §10.1 Core MVH conformance extended to EM-049 through EM-053; §10.2 adds test obligation for EM-052–EM-053. New requirement IDs: EM-052, EM-053. No prior IDs renumbered or retired. Refs: hk-ftyvo. |
 | 2026-05-14 | 0.5.0 | foundation-author | extqueue v0.1: dispatch-loop pulls from execution queue (TS-1); EM-015f group-advance gate (TS-2); run_* payloads carry optional queue_id/queue_group_index (TS-3); §4.11 concurrency formalization (TS-4); §7.1 INFORMATIVE updated (TS-5); §7.4 pick_one MVH-era prose dropped (TS-6). §7.4 main-loop replaces `ready_beads → pick_one` block with a queue-pull block keyed on the active queue per [queue-model.md §3 QM-002]; daemon MUST NOT fall back to `br ready`. New EM-015f (§4.3) gates queue-group advance on all-terminal; `complete-success` advances the queue, `complete-with-failures` transitions the queue to `paused-by-failure` and emits `queue_paused`. EM-015a and EM-015b extended with optional `queue_id` and `queue_group_index` payload fields per [event-model.md §8.10] when the run originated from a queued dispatch. §6.1 Run RECORD gains optional `queue_id : QueueID | None` and `queue_group_index : QueueGroupIndex | None`; both are sealed at dispatch. New §4.11 (Concurrency) lands the previously code-only concurrency primitives as normative requirements: EM-049 (in-flight-run capacity gate at `max_concurrent`), EM-050 (claim-write serialization token-pool of size `max_concurrent`), EM-051 (`--max-concurrent` configuration, ≥ 1, default 1, sealed at startup). §7.1 INFORMATIVE clarifies that the queue-group state machine of [queue-model.md §5] layers above the per-run state machine; the two do not share transitions. MVH-era `pick_one` policy prose retired with the §7.4 replacement. §6.5 co-owned events lists the six queue-lifecycle event names per [event-model.md §8.10]. §2.2 declares queue-model out-of-scope; §9.3 adds queue-model and process-lifecycle §4.1 co-references. §10.1 Core MVH conformance extended to require EM-015f and EM-049 through EM-051; §10.2 adds test obligations for EM-015f and EM-049 — EM-051. New requirement IDs: EM-015f, EM-049, EM-050, EM-051. No prior IDs renumbered or retired. |
 
 ## A. Appendices

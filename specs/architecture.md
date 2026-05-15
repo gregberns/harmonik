@@ -217,6 +217,14 @@ Tags: mechanism
 
 When a downstream spec (foundation sibling or subsystem) discovers a gap in a foundation spec, the downstream agent MUST write an amendment proposal of at least one paragraph describing the gap and the proposed change. The amendment MUST be reviewed by at least two foundation-review personas (architect and critic at minimum). If accepted, the foundation spec is revised; the revision MUST trigger re-review of every subsystem spec that cited the affected foundation spec. If rejected, the downstream spec MUST adapt within existing foundation constraints.
 
+**Reviewer persona definitions (minimum two required).**
+
+- **Architect persona.** Evaluates structural soundness: whether the proposed change preserves or violates cross-cutting invariants (four-axis classification, ZFC test, mechanism/cognition boundary, subsystem envelope, centralized-controller principle, three-artifact separation). Determines material-change status per AR-021. Produces a verdict of `accept | reject | revise` with a written rationale that names every cross-cutting invariant affected. The architect persona is the authority for material-change determination when those two roles coincide on a single reviewer invocation.
+
+- **Critic persona.** Evaluates fitness-for-purpose: whether the proposed change solves the stated gap without over-reaching, whether the gap could instead be resolved within existing foundation constraints (making an amendment unnecessary), and whether the proposal introduces hidden downstream obligations (subsystem specs that must change, new cross-subsystem contracts, new out-of-process actors). Produces a verdict of `accept | reject | revise` with a written rationale that names every downstream spec anticipated to require re-review if the amendment is accepted.
+
+Both personas are cognition-tagged reviewer steps; their invocation MUST follow the delegation path declared in AR-021. A single reviewer subagent MAY satisfy both personas in a single invocation if the invocation prompt addresses both evaluation lenses and the verdict document is structured to distinguish the structural and fitness-for-purpose findings.
+
 Tags: mechanism
 
 #### AR-021 — Amendment authority

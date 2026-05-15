@@ -265,3 +265,28 @@ kerf triage --ack                              # baseline advanced to 2026-05-15
 
 - Decide cohort strategy for the 137 still-untriaged beads. Strongest signals: `spec:reconciliation` (8), `scope:bootstrap`-without-codename (sizable). Likely needs a new `reconciliation` work + a `bootstrap` work, or relabel beads with `codename:*`. Latter is one-shot, former is more works.
 - Pin or relabel the lone `codename:imrest` bead — archived work shouldn't leave orphans.
+
+---
+
+## 2026-05-15: kerf phase-3-dot pass-2 (decompose) dogfood
+
+Pass-2 (decompose) of the `phase-3-dot` spec work. Following a clean pass-1 (`01-problem-space.md` already landed). Output: `02-components.md` (215 lines) + `decompose-review.md`. Status advanced `decompose -> research`.
+
+### Friction items (this pass)
+
+1. **MAJOR — reviewer-sub-agent path unavailable in deferred-tool harness.** The spec jig's pass-2 contract hard-requires "spawn a review sub-agent ... up to 3 review rounds, save findings to `decompose-review.md`." In this harness session the `Agent` tool is not in the deferred-tools list — it is genuinely absent, not merely lazy-loaded. Workaround: structured re-read against the explicit review-criteria checklist (documented as a limitation inside `decompose-review.md`). Kerf's instructions need a fallback path for harnesses without sub-agent dispatch — e.g. "single-agent reviewers must use a fresh context window and explicitly document the gap." Today the jig silently assumes Agent-tool availability.
+
+2. **MAJOR — pass-2 instructions name the output as `02-components.md` but pass-1 landed as `01-problem-space.md` (full word "problem-space", not abbreviated).** The agent inferred consistency by emitting `02-components.md` literally, but the naming convention is `NN-<pass-name>.md` with the pass-name string drawn from the jig — and `kerf show` doesn't print the canonical filename anywhere for an agent to confirm. Recommend `kerf show <codename>` print `**Pass 2: Decompose (decompose)** Output: 02-components.md` with a copy-pasteable canonical name in a fixed location. (Today it does say "Output: 02-components.md" but only in mid-paragraph; easy to miss.)
+
+3. **MINOR — review-criteria duplication.** The `kerf show` output prints the review-criteria checklist twice in slightly different framings (once in "What done looks like:" and once in "Review Criteria"). Agents have to read both to know whether they overlap or differ. Recommend a single normative source ("Done = reviewer APPROVE on these N criteria: ...") so the agent doesn't have to cross-check.
+
+4. **MINOR — `kerf show` doesn't list which prior-pass files exist on the bench.** To find `01-problem-space.md` the agent must already know its path. `kerf show phase-3-dot` *does* list `Files: 01-problem-space.md spec.yaml` at the bottom, which is good, but the path (`~/.kerf/projects/.../phase-3-dot/`) is not printed alongside. Agent has to remember it.
+
+5. **NIT — `kerf status <codename> <next>` transition prints the full next-pass instruction block.** Useful when continuing immediately; noisy when scripted (e.g. CI advancing status as part of a larger workflow). Recommend a `--quiet` flag for the script path.
+
+### What worked well
+
+- Pass-1 → pass-2 → status-advance flow was clean and natural. The dependency between passes is well-modeled (pass-2 reads pass-1's artifact by name).
+- The review-criteria list in `kerf show` was exactly the right reviewer-instruction surface. When the Agent tool *is* available, this would directly drive a useful sub-agent prompt.
+- Pass-2's "what done looks like" criteria mapped cleanly onto the audit-derived problem space — no impedance mismatch between the spec-jig's generic prompts and this work's concrete content.
+

@@ -457,3 +457,38 @@ const (
 	// is treated as absent and the precedence walk continues.
 	EventTypeBeadLabelConflict EventType = "bead_label_conflict"
 )
+
+// ---------------------------------------------------------------------------
+// §8.10 Queue lifecycle event types (extqueue v0.1)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeQueueSubmitted is the queue_submitted event type (§8.10.1).
+	// Durability class: F.
+	EventTypeQueueSubmitted EventType = "queue_submitted"
+
+	// EventTypeQueueGroupStarted is the queue_group_started event type (§8.10.2).
+	// Durability class: O.
+	EventTypeQueueGroupStarted EventType = "queue_group_started"
+
+	// EventTypeQueueGroupCompleted is the queue_group_completed event type (§8.10.3).
+	// Durability class: F.
+	EventTypeQueueGroupCompleted EventType = "queue_group_completed"
+
+	// EventTypeQueuePaused is the queue_paused event type (§8.10.4).
+	// Durability class: F.
+	EventTypeQueuePaused EventType = "queue_paused"
+
+	// EventTypeQueueAppended is the queue_appended event type (§8.10.5).
+	// Durability class: O.
+	EventTypeQueueAppended EventType = "queue_appended"
+
+	// EventTypeQueueItemDeferredForLedgerDep is the queue_item_deferred_for_ledger_dep
+	// event type (§8.10.6). Durability class: O.
+	EventTypeQueueItemDeferredForLedgerDep EventType = "queue_item_deferred_for_ledger_dep"
+
+	// EventTypeQueueItemReconciled is the queue_item_reconciled event type (§8.10.7).
+	// Durability class: F — loss could silently re-dispatch a reverted item per EV-016.
+	// Added in QM-002a v0.1.1.
+	EventTypeQueueItemReconciled EventType = "queue_item_reconciled"
+)

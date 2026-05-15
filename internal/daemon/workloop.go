@@ -639,9 +639,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		if queueItemIndex < 0 {
-			// br-ready path: pre-claim status guard (hk-p4xbw).
-			// Queue-path items are already exclusively owned by this loop
-			// (set to dispatched under write lock), so the guard is skipped.
+			// br-ready path: pre-claim status guard (hk-p4xbw) + label hydration
+			// (hk-a0htu).
+			//
+			// ShowBead serves two purposes here:
+			//   1. Guard: confirm the bead is still open before claiming (TOCTOU
+			//      window is acceptable per the claim-semaphore note above).
+			//   2. Label hydration: `br ready --format json` (br v0.1.45) does not
+			//      include the `labels` field, so BeadRecord.Labels from Ready() is
+			//      always nil.  ShowBead returns the full record including labels;
+			//      we overwrite beadRecord.Labels so resolveWorkflowMode (tier-1)
+			//      and ResolveModelPreference can read per-bead overrides correctly.
+			//
+			// Queue-path items are already exclusively owned by this loop (set to
+			// dispatched under write lock), so the guard is skipped there; their
+			// label hydration is handled below after the claim write.
 			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
 			if showErr != nil {
 				if ctx.Err() != nil {
@@ -660,6 +672,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				continue
 			}
+			// Hydrate labels from the full ShowBead record (hk-a0htu).
+			beadRecord.Labels = showRecord.Labels
 		}
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
@@ -704,6 +718,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				return nil
 			}
 			continue
+		}
+
+		// Queue-path label hydration (hk-a0htu): queue Item carries only BeadID;
+		// call ShowBead now (after claim) to populate Labels for resolveWorkflowMode
+		// and ResolveModelPreference.  The br-ready path hydrated labels earlier
+		// from its pre-claim ShowBead response; this block handles the queue path.
+		// Hydration failure is non-fatal: log to stderr and proceed with nil labels
+		// (resolveWorkflowMode falls through to tier-3/4 as before the fix).
+		if queueItemIndex >= 0 {
+			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+			if showErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead label-hydrate %s error (labels nil, falling through): %v\n", beadID, showErr)
+			} else {
+				beadRecord.Labels = showRecord.Labels
+			}
 		}
 
 		// Capture queue context for the goroutine (may be nil for non-queue dispatch).

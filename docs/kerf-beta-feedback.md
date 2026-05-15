@@ -186,6 +186,30 @@ Not exercised — out of scope per beta brief.
 
 ---
 
+## 2026-05-15: kerf new + spec-pass-1 dogfood
+
+Dogfood of `kerf new phase-3-dot --jig spec` plus pass-1 (problem-space) authoring + status advance. Mostly smooth — single-command setup worked end-to-end.
+
+### What worked
+
+1. **`kerf new <codename> --jig spec` ran clean** on first try. Output included the work path, the full 8-pass overview, and the pass-1 instructions inline. Agent did not need a second command to know what to do. — POSITIVE.
+2. **`kerf show <codename>` is consistent with `kerf new`'s instructions.** Both surfaced the same pass-1 "what to do / what done looks like" block. No instruction drift. — POSITIVE.
+3. **`kerf status <codename> decompose` advanced status and immediately printed pass-2 instructions.** One command, two useful outputs. — POSITIVE.
+
+### Friction items
+
+1. **No `kerf review <codename>` command for spawning a review sub-agent.** The pass-2 instruction block mentions "spawn a review sub-agent with: 02-components.md, 01-problem-space.md, ..." but `kerf` itself does not orchestrate this. Agent has to do it out-of-band (Agent/Task tool) — but in a sub-agent context, Agent is not always loaded by default, only via ToolSearch, and may not be available at all. Either kerf should ship a `kerf review` command that fires the canned review prompt, or the instruction block should acknowledge "use whatever review primitive your harness exposes; fresh-context re-read is an acceptable substitute." — MAJOR (blocks the pass-1 review gate when Agent tool isn't loaded).
+2. **Pass-1 instructions do not enumerate the output file's section structure.** Pass 1 says "save to `01-problem-space.md`" with bullets on *what to cover* but no template / skeleton. An agent without prior kerf experience has to invent the structure. Two different agents will produce wildly different layouts. — MINOR. Consider shipping an `01-problem-space.md.template` alongside the jig spec.
+3. **`kerf new` does not surface that `.kerf/{codename}/` on the bench (under `~/.kerf/projects/{id}/`) is the working directory, not anything in the repo.** The path is printed once but easy to miss. Agents writing files relative to the repo root would silently produce orphan files. CLAUDE.md mentions this but kerf's own output should reinforce it. — MINOR.
+
+### Surprises
+
+1. **`kerf show` lists `Files: spec.yaml` even before pass-1 artifact exists.** Reasonable — that's the jig metadata — but a new agent might mistake it for the pass-1 output filename. Consider grouping `Files:` by category (jig-meta vs. pass-output). — MINOR.
+
+---
+
+---
+
 ## 2026-05-15: work bead_filter bootstrap
 
 Goal: unblock `kerf next` by attaching the 4 existing works to their codename-label cohorts.

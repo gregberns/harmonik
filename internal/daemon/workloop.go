@@ -872,7 +872,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID)
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -899,7 +899,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID)
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -1130,19 +1130,32 @@ type beadClosedPayload struct {
 	BeadID string `json:"bead_id"`
 }
 
+// workingTreeRefreshFailedPayload is the JSON payload for the
+// working_tree_refresh_failed event (§4.12.EM-054).
+type workingTreeRefreshFailedPayload struct {
+	RunID  string `json:"run_id"`
+	BeadID string `json:"bead_id,omitempty"`
+	Error  string `json:"error"`
+}
+
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
 //
 //  1. Resolve run-branch tip.
 //  2. Fast-forward check (non-FF → EM-053 reopen path).
 //  3. git update-ref refs/heads/main <tip>.
 //  4. git push origin main.
+//  5. git reset --hard HEAD (working-tree refresh, EM-054).
 //
 // Returns a mergeOutcome. The caller is responsible for all event emission
 // and the CloseBead call; this function is a pure git-operation helper.
 //
-// Spec ref: specs/execution-model.md §4.12 EM-052, EM-053.
-// Bead: hk-ftyvo.
-func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID) mergeOutcome {
+// The bus and beadID parameters are used only for the EM-054 refresh path:
+// if git reset --hard HEAD fails, a working_tree_refresh_failed event is
+// emitted and the function still returns success=true (the merge succeeded).
+//
+// Spec ref: specs/execution-model.md §4.12 EM-052, EM-053, EM-054.
+// Bead: hk-ftyvo, hk-4goy3.
+func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID) mergeOutcome {
 	runBranch := workspace.TaskBranchName(runID.String())
 
 	// Step 1: resolve run-branch tip.
@@ -1212,6 +1225,36 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		}
 	}
 
+	// Step 5: refresh project working tree to match HEAD (EM-054).
+	//
+	// git reset --hard HEAD re-syncs both the index and the working tree to the
+	// new HEAD (which is now the run-branch tip). This eliminates the "modified"
+	// state that appears in git status when update-ref advances HEAD without
+	// touching the working tree files.
+	//
+	// Uncommitted-changes policy (EM-054): if the working tree has uncommitted
+	// changes, log a warning and still reset. The daemon owns the project working
+	// tree during operation; the operator is expected to keep it clean.
+	//
+	// Refresh-failure policy (EM-054): if git reset --hard HEAD fails, the merge
+	// is already durable. Log a warning, emit working_tree_refresh_failed, and
+	// return success=true so the caller proceeds to CloseBead normally.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusCmd.Dir = projectDir
+	if statusOut, statusErr := statusCmd.Output(); statusErr == nil && len(statusOut) > 0 {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: uncommitted changes in project working tree before refresh (bead %s run %s):\n%s",
+			beadID, runID.String(), statusOut)
+	}
+
+	resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD")
+	resetCmd.Dir = projectDir
+	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
+		// Refresh failed — merge succeeded; emit event and continue.
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git reset --hard HEAD failed (bead %s run %s): %v\n%s",
+			beadID, runID.String(), resetErr, out)
+		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, resetErr)
+	}
+
 	return mergeOutcome{success: true}
 }
 
@@ -1232,6 +1275,25 @@ func emitOutcomeEmitted(ctx context.Context, bus handlercontract.EventEmitter, r
 		return
 	}
 	_ = bus.Emit(ctx, core.EventTypeOutcomeEmitted, b)
+}
+
+// emitWorkingTreeRefreshFailed emits a working_tree_refresh_failed event when
+// git reset --hard HEAD fails after a successful merge-to-main (EM-054).
+// The event is informational: the merge is already durable.
+//
+// Spec ref: specs/execution-model.md §4.12 EM-054.
+// Bead: hk-4goy3.
+func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, refreshErr error) {
+	pl := workingTreeRefreshFailedPayload{
+		RunID:  runID.String(),
+		BeadID: string(beadID),
+		Error:  refreshErr.Error(),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
 }
 
 // emitBeadClosed emits a bead_closed event after a successful CloseBead call.

@@ -71,6 +71,14 @@ const (
 	// Durability class: F.
 	// Refs: hk-ftyvo.
 	EventTypeBeadClosed EventType = "bead_closed"
+
+	// EventTypeWorkingTreeRefreshFailed is the working_tree_refresh_failed event
+	// type (§4.12.EM-054). Emitted when git reset --hard HEAD fails after a
+	// successful merge-to-main. The merge itself succeeded; this event is
+	// informational — the daemon continues to CloseBead normally.
+	// Durability class: O.
+	// Refs: hk-4goy3.
+	EventTypeWorkingTreeRefreshFailed EventType = "working_tree_refresh_failed"
 )
 
 // ---------------------------------------------------------------------------

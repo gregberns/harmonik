@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-15 main — v46. Row 5 fully closed (hk-kqdpf.5 GREEN); Row 6 closed (hk-iuaed.4 orphan-sweep landed, 1421 lines, 15 tests green). 15 commits past v45. Bead-graph cleanup: 11 CHB blocks→removed (3 impl beads unblocked), 5 orphan-parents linked, 37 SUBSUMED closed. Phase 2/3 NORTH STAR still not exercised — see "What's actually missing" below. -->
+<!-- PP-TRIAL:v2 2026-05-15 main — v47. Phase 2 EXERCISED (twice — hk-iuaed.6 + hk-cd92e). 2 of 3 Phase-2 blockers fixed (hk-yjsk8 br-close retry; hk-jvzc2 .gitignore leak). kerf phase-3-dot work opened, passes 1-3 done, pass-4 D3 design landed (Framing A: control-point dropped from node-type taxonomy, 5→4 types). 15 kerf-upstream beads filed from beta-test. AGENTS.md kerf section refreshed. 18 commits past v46. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order. Cross-project working-style rules: `~/.claude/CLAUDE.md`.
 
@@ -87,72 +87,98 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
 If a branch is lost (e.g. worktree dir gone before merge): `git reflog --all | grep worktree-agent-<id>` then `git cherry-pick <SHA>`.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v45 used ~60% across heavy parallel dispatch (~25 implementers, 6 explorers, 4 hygiene agents, 30 commits). v46 used ~24% on a lighter dispatch load (15 commits, 12 sub-agents, no worktrees).
+CONTEXT BUDGET (orchestrator). ~700 k effective. v45 used ~60% across heavy parallel dispatch (~25 implementers, 6 explorers, 4 hygiene agents, 30 commits). v46 used ~24% on a lighter dispatch load (15 commits, 12 sub-agents, no worktrees). v47 used ~38% across 12 background sub-agents (2 harmonik dogfoods, 5 phase-3-dot research agents, 4 worktree implementers, 1 pass-3 finalizer, 1 pass-4 design) — 18 commits.
+
+HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (v47 NEW). 2 of 5 phase-3-dot research sub-agents (R3, R4) hit a system-prompt rule blocking `.md` writes for "findings/analysis/summary" files — they returned content inline. Orchestrator (main thread) persisted via `Write` tool. Same friction hit pass-3 finalizer's SUMMARY.md (Bash heredoc fallback). When dispatching kerf-pass sub-agents that must write `.md` artifacts, expect ~40% to hit this and plan for orchestrator persistence. Tracked as kerf-upstream feedback item.
+
+KERF IS IN BETA (v47 NEW). New kerf surface (`kerf next`, `kerf triage`, `kerf pin`, `kerf work edit`, `kerf map`, `kerf areas`) landed and was exercised. 15 kerf-upstream bugs filed in `br` (`label:kerf-upstream`). Feedback log: `docs/kerf-beta-feedback.md`. Convention pointer: root `KERF-FEEDBACK.md`. **Use kerf next as the queue feed once `bead_filter` clauses cover the corpus; ad-hoc workflows still need `br ready` for unattached beads.** Current state: only `claude-hook-bridge` work has a filter; 137 beads still untriaged.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v46, 2026-05-15)
+# Where we are (v47, 2026-05-15)
 
-**Main at `9779f72`. All work pushed. Working tree clean. 15 commits past v45 (a48e3ef).**
+**Main at `1c5f525`. All work pushed. Working tree clean. 18 commits past v46 (9779f72).**
 
 ## Headline outcomes
 
-1. **Roadmap Row 5 FULLY CLOSED.** `hk-kqdpf.5` smoke GREEN at `f24ff5f` — substrate active end-to-end. Epic `hk-kqdpf` closed; meta-epic `hk-1n0cw` closed.
-2. **Roadmap Row 6 (imrest) CLOSED.** `hk-iuaed.4` orphan-sweep impl landed at `9779f72` — 1421 lines, 4-branch exclusion logic, 13 unit + 2 integration tests, all green. Follow-up `hk-11xkn` filed for the audit-log `actor=project_hash` provenance gap (MVH unreachability tracked, not silently shipped). `hk-iuaed.6` sensor remains open — needs corpus scan + harness, prep already done.
-3. **Bead-graph structural cleanup.** 11 CHB spec-text `blocks` edges removed (3 impl beads `hk-crf9a`/`hk-lj848`/`hk-pcvw8` unblocked). 5 orphan-parents linked. blocked_count 125 → 106. 37 deferred SUBSUMED. 30 hygiene labels.
-4. **AGENTS.md is now canonical.** CLAUDE.md symlinks → AGENTS.md (per agent-configuration spec). 154 lines still over the 120 cap — trim is deferred.
-5. **AR-013 §4.a envelopes added** to `specs/queue-model.md` and `specs/claude-hook-bridge.md`. `TestAR013EnvelopeDeclaration` green. `hk-wywsm`/`hk-g3iyl` closed.
-6. **Process tightenings**: L-019 (dispatch-priority ordering), L-020 (queue-with-context discipline) added. L-003/L-013 retired into L-015. HANDOFF.md spec-text-check-in rule clarified (hygiene ≠ architectural — explicitly excludes test-driven section adds).
-7. **TestThroughput_TenBeadsAtMaxFour 57s→16s** — daemon test budget back inside the 120s suite limit.
+1. **Phase 2 EXERCISED (north-star milestone).** Two harmonik dogfood runs:
+   - **Dogfood #1** — `hk-iuaed.6` (sensor bead) dispatched via harmonik. Real claude session wrote 449 lines of Go (`bi010d_*_test.go` ×2, 4 tests green), committed, daemon auto-merged to main at `dcd7f7e`. **First bead in project history dispatched VIA harmonik, not via sub-agents.**
+   - **Dogfood #2** — `hk-cd92e` (P3 .gitignore-path bug) targeted. Daemon claimed wrong bead (`hk-a0htu`) despite priority bump — exposed claim-path priority bug. Bead body's fix was already present in code (closed as already-fixed). Run produced rich friction signal.
+2. **2 of 3 Phase-2 blockers fixed.**
+   - **`hk-yjsk8` fixed** at `fb809b0` — br-close timeout now retries on `BrUnavailable` (3 attempts, 10/20/40s backoff). 2 regression tests green. Prevents the bead-stuck-IN_PROGRESS pattern.
+   - **`hk-jvzc2` fixed** at `1c5f525` — daemon no longer mutates parent repo's `.gitignore` + `.claude/settings.json` per-run. 4 per-launch writes removed; non-mutation contract pinned by byte-equality tests.
+   - **`hk-icecw` still open** — `harmonik run <bead-id>` subcommand (P1 feature). Biggest remaining Phase-2 blocker. Without it, dogfooding requires priority-bump-and-pray which dogfood #2 proved unreliable.
+3. **kerf phase-3-dot work — passes 1, 2, 3 done; pass-4 in progress (D3 landed).**
+   - **Pass 1** problem-space: 6 audit gaps + 5 drift items absorbed. Reviewer APPROVE.
+   - **Pass 2** decomposition: 5 spec components identified (C1 workflow-graph.md new, C2 execution-model dot mode, C3 handler-contract Outcome, C4 control-points binding, C5 examples/*.dot). Reviewer APPROVE.
+   - **Pass 3** research: 5 component findings + cross-cutting SUMMARY.md with 20-row decision matrix. Pass-3 also identified 3 already-resolved items not needing pass-4 (EM-046a, §8 6-class taxonomy, EM-005a kind extension).
+   - **Pass 4 D3 landed at `0f7deb5`** — control-point dropped from node-type taxonomy. 5 types → 4 types (`agentic | non-agentic | gate | sub-workflow`). Framing A chosen because CP-005's per-Kind trigger table is structurally disjoint and only Gate maps to a node-shaped slot.
+4. **Audit drift fixes landed.** 5 docs refreshed at `5492cdb`: orchestrator-core.md (Attractor mischaracterization), concepts/kilroy.md (counts), QUESTIONS.md (resolution notes), components/external/kilroy.md (Kilroy+Attractor + harmonik divergence), foundation/OVERVIEW.md (DOT-in-specs clarification).
+5. **kerf bootstrap + beta-test surface fully exercised.** `kerf init` ran; `bead_filter` configured for `claude-hook-bridge` work (137 beads still untriaged). `kerf next` now returns ranked beads. 15 kerf-upstream beads filed (`label:kerf-upstream`).
+6. **AGENTS.md kerf section refreshed** at `6bd03bc`. New surface documented: kerf next/triage/pin/work edit/map/areas + agent-loop pattern + beta-test caveat. Root `KERF-FEEDBACK.md` pointer added.
+7. **9 new friction beads from dogfooding** (5 from #1, 4 from #2). Top P1 unfixed: `hk-icecw` (harmonik run subcommand), `hk-rp48p` (daemon claims wrong bead vs priority), `hk-sc3o4` (orphan-sweep observes=4 reset=0 — PL-006 gap), `hk-lgtq2` (Cat 3a auto-reconciler).
 
-## What's actually missing (NORTH STAR audit — user-raised at handoff)
+## NORTH STAR status (refreshed)
 
-Per memory `project_harmonik_north_star.md`, the three phases are:
-1. **Phase 1 (operational smoke GREEN):** ✅ achieved 2026-05-14 (v40 milestone). Harmonik can run claude end-to-end on a bead with zero human input.
-2. **Phase 2 (orchestrator dispatches VIA harmonik, not sub-agents):** ⚠️ technically unblocked since v38 (see directive paragraph "PHASE 2 IS UNBLOCKED"). **Has not actually been exercised in v45 or v46.** Every commit this session was dispatched via the Claude Code Agent tool, not via `br create` + `harmonik run`. The mechanics exist; the habit hasn't shifted.
-3. **Phase 3 (DOT-defined bead processes):** ❌ Not started. No DOT files exist that describe agent-flow processes. No harmonik feature consumes a DOT. This is the strategic gap and the one closest to the product thesis ("composable agentic orchestration").
-
-The recent session work has all been operational hardening (smoke runs, orphan-sweep, scenario tests, bead hygiene). It's necessary but it's all *foundation* — the visible part of the product still doesn't exist.
+1. **Phase 1 (operational smoke GREEN):** ✅ achieved v40 (2026-05-14).
+2. **Phase 2 (orchestrator dispatches VIA harmonik):** ⚠️ EXERCISED but **not yet ready to scale**. Dogfood #2 verdict: 3 blockers (1 of 3 fixed, 1 of 3 fixed, 1 of 3 — `hk-icecw` harmonik-run subcommand — still open). The mechanics work; the developer-experience needs `hk-icecw` to land before this becomes default.
+3. **Phase 3 (DOT-defined bead processes):** ⏳ **STARTED.** kerf work `phase-3-dot` consolidates the audit gaps into a structured 5-component plan; passes 1-3 done; pass-4 (design) has 1 decision landed (D3), ~6-10 remaining (D2 failure_class placement, D1/D4/D5 cluster, D6/D8/D12 cluster, D9/D10/D11 schema-versioning cluster).
 
 # Next session — START HERE
 
-## Sub-goal A (this is the real one)
+## Sub-goal A (highest-leverage): land `hk-icecw` (harmonik run subcommand)
 
-Begin Phase 2/3 transition. Concrete first steps:
+The Phase-2 scale blocker. Until `harmonik run <bead-id>` exists, dogfooding requires priority-bump tricks that dogfood #2 proved unreliable. Estimate: 1-2 implementer beads. This unlocks all future dogfooding.
 
-1. **Dogfood a single bead through harmonik instead of sub-agent dispatch.** Pick a small, fully-spec'd ready bead (e.g. `hk-iuaed.6` sensor — already prepped, no architectural risk). File the brief as a bead, run `harmonik` against it locally, observe end-to-end. The friction encountered is the most-valuable signal in the project right now.
-2. **Identify the DOT shape.** No DOT format exists yet for bead processes. Drafting the first sketch — even informally — unblocks Phase 3 thinking. What does a DOT describing "implementer → review → merge" look like? Where do branch points (REQUEST_CHANGES → fix-and-resubmit) live? What's the equivalent of an `if` node? Spawn a planning agent to propose 2–3 candidate DOT schemas.
-3. **Frame the next user check-in.** Before scaling Phase 2, the user should see one harmonik-dispatched bead complete and weigh in on whether the experience is product-shaping (this is one of the few user-decision moments).
+`br show hk-icecw` for the brief. Probably also wants a `--one-shot` semantic so the daemon exits after the target bead reaches terminal (covers `hk-ajchp` simultaneously).
 
-## Sub-goal B (operational, continue if A blocked)
+## Sub-goal B: continue phase-3-dot pass-4 design
 
-Same as v45's tail: triage Row 7 CHB corpus, work through `hk-a8bg.*` ControlPoint spec beads (highest PageRank in current triage), continue sensor implementations as their target impls land.
+Pass-4 has 1 decision down (D3), ~7 remaining. Suggested order from `03-research/SUMMARY.md`:
+
+1. **D2** — `failure_class` placement on Outcome (lean: top-level field on FAIL). Unblocks D1/D4/D8.
+2. **D1 + D4 + D5 cluster** — edge-condition LHS whitelist, failure_class as condition-LHS, condition dialect. Closes G2 end-to-end.
+3. **D6 + D8 + D12 cluster** — verdict surfacing, `context_updates` typing, terminal-node differentiation. Required before review-loop.dot can be written.
+4. **D9 + D10 + D11 cluster** — schema versioning + repo convention. Parallel-lane; closes G6.
+
+Bench: `~/.kerf/projects/gregberns-harmonik/phase-3-dot/04-design/`. Pass-5 (spec drafts) is after all design decisions land.
+
+## Sub-goal C: continue Phase-2 dogfooding once `hk-icecw` lands
+
+Use `kerf next` to pick a real ready bead, file the brief, `harmonik run <id>`. Capture friction. Address any new blockers as found.
+
+## Sub-goal D (operational, parallel): keep landing P1 Phase-2 blockers
+
+Still open: `hk-rp48p` (priority claim bug — likely subsumed by hk-icecw); `hk-sc3o4` (orphan-sweep PL-006 gap); `hk-lgtq2` (Cat 3a auto-reconciler); `hk-44w19` (SIGTERM propagation P2). Lower urgency than A, but real correctness work.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `ROADMAP.md` (11-row plan — Rows 5+6+8 now done; Rows 7/9/10/11 remain).
-3. `~/.claude/CLAUDE.md` + project `AGENTS.md` (working-style + project-specific).
-4. `docs/orchestration-learnings.md` (L-019, L-020 are newest).
-5. `~/.claude/projects/-Users-gb-github-harmonik/memory/MEMORY.md` (project memory; auto-loaded).
+2. `KERF-FEEDBACK.md` (root pointer) → `docs/kerf-beta-feedback.md` (the log).
+3. `ROADMAP.md` (Phase 3 is now in motion via phase-3-dot kerf work).
+4. `~/.claude/CLAUDE.md` + project `AGENTS.md` (refreshed kerf section).
+5. `docs/orchestration-learnings.md`.
+6. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/03-research/SUMMARY.md` (the cross-cutting design-decision matrix).
 
 ## Plain-English glossary
 
-- **Phase 1/2/3** — the project's north-star sequence: operational smoke → orchestrator-via-harmonik → DOT-defined processes. Phase 1 done; 2 unexercised; 3 unstarted.
-- **DOT bead processes** — the unstated product thesis: workflow graphs (like Graphviz DOT) that describe how a bead should be processed by agents (which nodes, which decision points). Not yet implemented or even sketched.
-- `hk-iuaed.6` — sensor bead, prep done (read-only corpus scan returned zero violations), ready to implement.
-- `hk-iuaed.4` — PL-006 orphan-sweep impl, landed at 9779f72.
-- `hk-kqdpf.5` — final bridge-followup, smoke GREEN, landed at f24ff5f.
-- `hk-11xkn` — follow-up tracking the audit-log provenance gap discovered while implementing hk-iuaed.4.
-- "L-019/L-020" — newest entries in orchestration-learnings.md (dispatch-priority; queue-with-context discipline).
-- "SUBSUMED" — bead's spec text already landed in earlier commit; close as hygiene.
+- **Phase 1/2/3** — north-star sequence: operational smoke → orchestrator-via-harmonik → DOT-defined processes. Phase 1 done; 2 exercised + ~30% blockers fixed; 3 started.
+- **DOT bead processes** — workflow graphs (Graphviz DOT) describing how a bead is processed by agents. `phase-3-dot` kerf work is the structured planning for this. Pass-4 design in progress.
+- **Framing A (D3)** — control-point is NOT a node-type; it's a policy primitive bound via `*_ref` attributes. 5→4 type taxonomy: `agentic | non-agentic | gate | sub-workflow`.
+- **kerf next** — new kerf command returning ranked actionable beads; the agent-between-tools loop reads this and dispatches via harmonik. Currently only `claude-hook-bridge` work has a `bead_filter`; other works show 0 attached beads.
+- `hk-icecw` — P1 Phase-2 blocker, `harmonik run <bead-id>` subcommand. Biggest remaining unfix.
+- `hk-yjsk8` — br-close retry, fixed at fb809b0.
+- `hk-jvzc2` — .gitignore mutation per-run, fixed at 1c5f525.
+- `hk-rp48p` — daemon claim-path ignores priority (dogfood #2 finding).
+- `hk-sc3o4` — orphan-sweep observed-but-not-reset (PL-006 gap).
+- "Pass 1-7" — kerf spec-jig passes: problem-space → decompose → research → change-design → spec-drafts → integration → tasks.
 
 ## Question that blocks the next session
 
-None operational. **Strategic:** does the user want to lean into Phase 2 dogfooding immediately, or finish more of the Row 7 / Row 9 foundation first? Default per directives is execute — start Phase 2 dogfooding (sub-goal A) without asking.
+None operational. **Strategic ask once `hk-icecw` lands**: should the next dogfood target be a P1 bug or a Phase-3-dot spec-draft bead? Default per directives is execute — pick the next ready bead from `kerf next` and continue.
 
 ## Known-failing tests (pre-existing, NOT blocking)
 
 - `TestWorkLoop_FailedHandlerReopensBead`, `TestWorkLoop_TwoConcurrentBeads` (pre-existing flaky under full-suite parallel load).
-- `TestBI010c_SpecContainsWorkflowLabelDiscipline` in brcli (pre-existing).
-- `TestPidfileRelease_AllowsReacquire` (passes alone, flakes under parallel load — observed in hk-zixbp fix).
+- `TestBI010c_SpecContainsWorkflowLabelDiscipline` in brcli (pre-existing — confirmed unrelated to v47 work).
+- `TestPidfileRelease_AllowsReacquire` (passes alone, flakes under parallel load).

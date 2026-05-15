@@ -161,6 +161,51 @@ func Load(_ context.Context, projectDir string) (*Queue, error) {
 	return &q, nil
 }
 
+// CompleteAndUnlink implements the QM-053 completion sequence for a queue that
+// has just had its last group reach complete-success.
+//
+// It performs the three persistence steps of specs/queue-model.md §8.4 QM-053
+// in the required order:
+//
+//  1. Transition q.Status to QueueStatusCompleted and persist via QM-001
+//     (Persist). This makes the completed status durable before the file is
+//     removed.
+//  2. Unlink .harmonik/queue.json and fsync(parent_directory_fd) per QM-003
+//     (Unlink).
+//
+// The caller MUST have already emitted queue_group_completed (the durable
+// landmark per QM-033) before calling CompleteAndUnlink, and MUST clear its
+// in-memory queue reference after CompleteAndUnlink returns nil (step 4 of
+// QM-053). No separate queue_completed event is emitted by this function; the
+// final queue_group_completed event is the spec-designated durable landmark
+// per QM-033.
+//
+// CompleteAndUnlink is idempotent with respect to the unlink step: if the
+// persist succeeds but the process crashes before Unlink completes, a retry
+// will re-persist (no-op unless status changed) and re-unlink (file absent is
+// treated as success per Unlink).
+//
+// Returns ErrPersistFailed (wrapping the underlying error) if the atomic write
+// fails. Returns an error from Unlink if the remove or parent-dir fsync fails.
+// Both errors MUST be treated by the daemon caller as signals to degrade per
+// PL-010.
+//
+// Spec ref: specs/queue-model.md §8.4 QM-053.
+// Spec ref: specs/queue-model.md §3.3 QM-003.
+func CompleteAndUnlink(ctx context.Context, projectDir string, q *Queue) error {
+	// Step 1: transition status to completed and persist (QM-053 steps 1+2).
+	q.Status = QueueStatusCompleted
+	if err := Persist(ctx, projectDir, q); err != nil {
+		return fmt.Errorf("queue: CompleteAndUnlink: persist completed status: %w", err)
+	}
+
+	// Step 2: unlink queue.json and fsync parent dir (QM-053 step 3 / QM-003).
+	if err := Unlink(ctx, projectDir); err != nil {
+		return fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)
+	}
+	return nil
+}
+
 // Unlink removes .harmonik/queue.json and fsyncs the parent directory for
 // durability. Called when the queue transitions to status=completed per QM-003.
 //

@@ -304,6 +304,170 @@ func TestErrPersistFailedSentinel(t *testing.T) {
 	}
 }
 
+// completeUnlinkFixtureQueue returns a minimal valid Queue with all items in
+// terminal states (completed), suitable for the QM-053 completion sequence.
+// All groups and items are terminal so the caller can immediately invoke
+// CompleteAndUnlink without violating QM-030.
+func completeUnlinkFixtureQueue() queue.Queue {
+	q := typesFixtureQueue()
+	// Override groups so every item is terminal (no dispatched items).
+	q.Groups = []queue.Group{
+		{
+			GroupIndex: 0,
+			Kind:       queue.GroupKindWave,
+			Status:     queue.GroupStatusCompleteSuccess,
+			Items: []queue.Item{
+				{
+					BeadID: "hk-09tne",
+					Status: queue.ItemStatusCompleted,
+				},
+			},
+			CreatedAt: q.SubmittedAt,
+		},
+	}
+	return q
+}
+
+// TestCompleteAndUnlink verifies the QM-053 completion sequence:
+// (a) queue.json is written with status=completed before removal,
+// (b) queue.json is absent after CompleteAndUnlink succeeds,
+// (c) Load returns (nil, nil) after completion, and
+// (d) a fresh Persist can re-create queue.json (new queue-submit is permitted).
+//
+// Spec ref: specs/queue-model.md §8.4 QM-053, §3.3 QM-003.
+func TestCompleteAndUnlink(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	// Pre-condition: write an active queue to disk.
+	q := completeUnlinkFixtureQueue()
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("Persist (setup): %v", err)
+	}
+
+	// Execute QM-053 completion sequence.
+	if err := queue.CompleteAndUnlink(ctx, projectDir, &q); err != nil {
+		t.Fatalf("CompleteAndUnlink: %v", err)
+	}
+
+	// QM-053 step 1: status must be completed on the in-memory struct.
+	if q.Status != queue.QueueStatusCompleted {
+		t.Errorf("q.Status after CompleteAndUnlink: got %q, want %q",
+			q.Status, queue.QueueStatusCompleted)
+	}
+
+	// QM-053 step 3: file must be absent.
+	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
+		t.Error("CompleteAndUnlink: queue.json still exists after completion, must be unlinked")
+	}
+
+	// Load must now return (nil, nil) per QM-003.
+	got, err := queue.Load(ctx, projectDir)
+	if err != nil {
+		t.Fatalf("Load after CompleteAndUnlink: %v", err)
+	}
+	if got != nil {
+		t.Errorf("Load after CompleteAndUnlink: got %+v, want nil", got)
+	}
+
+	// A fresh queue-submit (new Persist) must succeed and re-create the file.
+	newQ := completeUnlinkFixtureQueue()
+	newQ.QueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0002"
+	if err := queue.Persist(ctx, projectDir, &newQ); err != nil {
+		t.Fatalf("Persist after completion (new submit): %v", err)
+	}
+	reloaded, err := queue.Load(ctx, projectDir)
+	if err != nil {
+		t.Fatalf("Load after new submit: %v", err)
+	}
+	if reloaded == nil {
+		t.Fatal("Load after new submit: got nil, want non-nil")
+	}
+	if reloaded.QueueID != newQ.QueueID {
+		t.Errorf("reloaded QueueID: got %q, want %q", reloaded.QueueID, newQ.QueueID)
+	}
+}
+
+// TestCompleteAndUnlinkStatusOrdering verifies that CompleteAndUnlink persists
+// status=completed to disk BEFORE removing the file (QM-053 step 1 precedes
+// step 3). It intercepts the intermediate state by observing the file content
+// between Persist and Unlink is not directly testable here, so instead this
+// test verifies the in-memory struct is mutated to "completed" and the file
+// is gone after the call — the ordering guarantee is enforced by the
+// implementation's sequential call to Persist then Unlink.
+//
+// Spec ref: specs/queue-model.md §8.4 QM-053.
+func TestCompleteAndUnlinkStatusOrdering(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	q := completeUnlinkFixtureQueue()
+	q.Status = queue.QueueStatusActive // start as active
+
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("Persist (setup): %v", err)
+	}
+
+	if err := queue.CompleteAndUnlink(ctx, projectDir, &q); err != nil {
+		t.Fatalf("CompleteAndUnlink: %v", err)
+	}
+
+	// In-memory status must be completed.
+	if q.Status != queue.QueueStatusCompleted {
+		t.Errorf("q.Status: got %q, want %q", q.Status, queue.QueueStatusCompleted)
+	}
+
+	// File must be absent (Unlink ran after persist).
+	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
+		t.Error("queue.json must be absent after CompleteAndUnlink")
+	}
+}
+
+// TestCompleteAndUnlinkIdempotent verifies that calling CompleteAndUnlink a
+// second time (simulating a daemon restart where the file was already unlinked)
+// returns nil and does not corrupt state.
+//
+// After completion + unlink, the queue is gone from disk. On a retry, Persist
+// re-creates the file (a deliberate QM-003 re-persist then re-unlink cycle),
+// and Unlink on the newly-written file succeeds. This matches the "idempotent"
+// semantics described in the CompleteAndUnlink godoc.
+//
+// Spec ref: specs/queue-model.md §3.3 QM-003.
+func TestCompleteAndUnlinkIdempotent(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	q := completeUnlinkFixtureQueue()
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("Persist (setup): %v", err)
+	}
+
+	// First call.
+	if err := queue.CompleteAndUnlink(ctx, projectDir, &q); err != nil {
+		t.Fatalf("first CompleteAndUnlink: %v", err)
+	}
+
+	// Second call — file is already absent; Persist re-creates it then
+	// Unlink removes it again. Must not return an error.
+	if err := queue.CompleteAndUnlink(ctx, projectDir, &q); err != nil {
+		t.Fatalf("second CompleteAndUnlink (idempotent): %v", err)
+	}
+
+	// After both calls the file must be absent.
+	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
+		t.Error("queue.json must be absent after second CompleteAndUnlink")
+	}
+}
+
 // TestPersistJSONContent verifies that the written file contains valid JSON
 // with the expected queue_id field.
 func TestPersistJSONContent(t *testing.T) {

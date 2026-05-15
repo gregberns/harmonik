@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // HookRelayHandler is the interface the daemon registers to process hook-relay
@@ -58,7 +60,14 @@ type SocketRequest struct {
 // On success: Ok=true, Result carries the op-specific payload.
 // On failure: Ok=false, Error carries a human-readable message.
 //
+// For queue operations that produce typed JSON-RPC validation errors per
+// specs/queue-model.md §6.11a QM-029b, ErrorCode carries the numeric error
+// code from the -32010..-32019 range. ErrorCode is zero for all non-queue
+// operations and for queue operations that succeed or fail with an internal
+// (non-validation) error.
+//
 // Spec ref: MVH_ROADMAP row #5.
+// Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method error codes).
 type SocketResponse struct {
 	// Ok is true when the operation succeeded.
 	Ok bool `json:"ok"`
@@ -68,6 +77,10 @@ type SocketResponse struct {
 
 	// Error carries a human-readable error message on failure.
 	Error string `json:"error,omitempty"`
+
+	// ErrorCode carries the JSON-RPC error code for typed queue validation
+	// errors (specs/queue-model.md §6.11a QM-029b). Zero for all other errors.
+	ErrorCode int `json:"error_code,omitempty"`
 }
 
 // OutcomeRequest is the parsed body of an "emit-outcome" request.
@@ -100,6 +113,32 @@ type RequestHandler interface {
 	ClaimNext(ctx context.Context, role string) (json.RawMessage, error)
 }
 
+// QueueHandler is the interface the daemon registers to process queue
+// JSON-RPC requests received over the Unix socket.
+//
+// Each method receives the raw JSON bytes of the request params and returns
+// the JSON-encoded response bytes plus a typed *queue.RPCError on failure.
+// This keeps the socket transport layer decoupled from the queue request/
+// response RECORD types; the concrete adapter (queueHandlerAdapter in
+// socket.go) handles encode/decode.
+//
+// A nil QueueHandler causes all queue-* op requests to return an error response.
+//
+// Spec ref: specs/queue-model.md §2.10, §6; specs/process-lifecycle.md §4.4 PL-003a.
+type QueueHandler interface {
+	// HandleQueueSubmit dispatches a queue-submit request.
+	HandleQueueSubmit(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueAppend dispatches a queue-append request.
+	HandleQueueAppend(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueStatus dispatches a queue-status request (no params needed).
+	HandleQueueStatus(ctx context.Context) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueDryRun dispatches a queue-dry-run request.
+	HandleQueueDryRun(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+}
+
 // noopRequestHandler is a minimal RequestHandler that rejects every request
 // with a clear error. It is used at MVH where the real claim-next / emit-outcome
 // wiring is deferred to a follow-up bead. Hook-relay envelopes never reach
@@ -120,8 +159,8 @@ func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMes
 // RunSocketListener binds a Unix-domain socket at sockPath, sets its
 // permissions to 0600, and accepts connections until ctx is cancelled.
 // Each connection is handled in its own goroutine: one JSON request is
-// read, dispatched to h or hr, and one JSON response is written before the
-// connection is closed.
+// read, dispatched to h, hr, or qh, and one JSON response is written before
+// the connection is closed.
 //
 // Stale socket removal: if a file already exists at sockPath (e.g. from a
 // previously crashed daemon), it is removed before binding so that the new
@@ -131,15 +170,19 @@ func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMes
 // RunSocketListener returns nil when ctx is cancelled and the listener
 // closes cleanly. It returns a non-nil error only on bind failure.
 //
-// Dispatch: if the connection's JSON payload contains a non-empty "type" field,
-// the message is routed to hr (HookRelayHandler) as a hookRelayEnvelope; otherwise
-// it is routed to h (RequestHandler) as a SocketRequest. hr may be nil, in which
-// case hook-relay messages are rejected with a bad_envelope response.
+// Dispatch rules:
+//   - Non-empty "type" field → hook-relay envelope, dispatched to hr
+//     (HookRelayHandler); hr may be nil (bad_envelope response).
+//   - Op ∈ {"queue-submit","queue-append","queue-status","queue-dry-run"}
+//     → queue request, dispatched to qh (QueueHandler); qh may be nil
+//     (error response with code -32099).
+//   - All other ops → dispatched to h (RequestHandler).
 //
 // Spec ref: MVH_ROADMAP row #5 — "Production Unix socket listener …
 // request loop for emit-outcome / claim-next from agent subprocesses."
 // Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
-func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler) error {
+// Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method set).
+func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, qh ...QueueHandler) error {
 	// Remove a stale socket file left by a previously crashed daemon.
 	// Ignore the error: if the file doesn't exist, Remove returns an error
 	// which we discard intentionally.
@@ -162,6 +205,11 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
 	}()
 
+	var queueHandler QueueHandler
+	if len(qh) > 0 {
+		queueHandler = qh[0]
+	}
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -172,7 +220,7 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler)
 	}
 }
 
@@ -180,6 +228,9 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 // appropriate handler:
 //   - If the decoded JSON has a non-empty "type" field → hook-relay envelope,
 //     dispatched to hr (HookRelayHandler); response is a hookRelayAckMsg.
+//   - If op ∈ {"queue-submit","queue-append","queue-status","queue-dry-run"}
+//     → queue request, dispatched to qh (QueueHandler); response is a
+//     SocketResponse with optional ErrorCode per QM-029b.
 //   - Otherwise → SocketRequest, dispatched to h (RequestHandler); response is
 //     a SocketResponse.
 //
@@ -187,7 +238,7 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -262,6 +313,30 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: true, Result: result}
 		}
 
+	// -----------------------------------------------------------------------
+	// Queue control-surface methods (specs/process-lifecycle.md §4.4 PL-003a)
+	// -----------------------------------------------------------------------
+
+	case "queue-submit":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueSubmit(ctx, reEncoded)
+		})
+
+	case "queue-append":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueAppend(ctx, reEncoded)
+		})
+
+	case "queue-status":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueStatus(ctx)
+		})
+
+	case "queue-dry-run":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueDryRun(ctx, reEncoded)
+		})
+
 	default:
 		resp = SocketResponse{
 			Ok:    false,
@@ -270,6 +345,32 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 	}
 
 	writeSocketResponse(conn, resp)
+}
+
+// handleQueueOp dispatches a single queue operation to qh and converts the
+// result to a SocketResponse. If qh is nil, returns an error response.
+//
+// The fn closure calls the appropriate QueueHandler method; the closure
+// receives the handler so callers do not repeat the nil check.
+//
+// Spec ref: specs/queue-model.md §6.11a QM-029b (error codes in ErrorCode field).
+func handleQueueOp(_ context.Context, qh QueueHandler, fn func(QueueHandler) (json.RawMessage, *queue.RPCError)) SocketResponse {
+	if qh == nil {
+		return SocketResponse{
+			Ok:        false,
+			ErrorCode: -32099,
+			Error:     "daemon: QueueHandler not registered",
+		}
+	}
+	result, rpcErr := fn(qh)
+	if rpcErr != nil {
+		return SocketResponse{
+			Ok:        false,
+			ErrorCode: rpcErr.Code,
+			Error:     rpcErr.Message,
+		}
+	}
+	return SocketResponse{Ok: true, Result: result}
 }
 
 // writeHookRelayAck serialises ack as NDJSON and writes it to conn.

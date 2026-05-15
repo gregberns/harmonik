@@ -785,6 +785,19 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 	return deps.handlerEnv
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// QueueStore test seams (hk-j808w)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedNewQueueStore exposes newQueueStore for tests in package daemon_test.
+// QueueStore and its methods (SetQueue, Queue, ClearQueue, LockForMutation) are
+// exported; only the constructor is unexported.
+//
+// Bead ref: hk-j808w.
+func ExportedNewQueueStore() *QueueStore {
+	return newQueueStore()
+}
+
 // ExportedNewWorkLoopDepsWithStore exposes newWorkLoopDeps for tests in package
 // daemon_test. The hookStore parameter is typed as *hookSessionStore (an exported
 // concrete type via HookSessionStoreExported alias) so that callers in daemon_test

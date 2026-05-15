@@ -43,6 +43,19 @@ type RunCompletedPayload struct {
 	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
 	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
 	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
+
+	// QueueID is the daemon-minted UUIDv7 (as a string) identifying the queue
+	// submission from which this run was dispatched per queue-model.md §4.2
+	// QM-011 and event-model.md §6.3. Nil when the run was not dispatched from
+	// the queue surface (foreground / single-bead / reconciliation-issued runs).
+	// TODO: replace *string with a typed QueueID alias once that alias is minted
+	// (tracked in hk-gkljz follow-up; see implementer-protocol.md §Typed-alias-deferral).
+	QueueID *string `json:"queue_id,omitempty"`
+
+	// QueueGroupIndex identifies the group within the queue from which this run
+	// was dispatched per queue-model.md §4.3 QM-012 and event-model.md §6.3.
+	// Nil under the same conditions as QueueID.
+	QueueGroupIndex *int `json:"queue_group_index,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunCompletedPayload.
@@ -141,6 +154,19 @@ type RunFailedPayload struct {
 	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
 	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
 	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
+
+	// QueueID is the daemon-minted UUIDv7 (as a string) identifying the queue
+	// submission from which this run was dispatched per queue-model.md §4.2
+	// QM-011 and event-model.md §6.3. Nil when the run was not dispatched from
+	// the queue surface (foreground / single-bead / reconciliation-issued runs).
+	// TODO: replace *string with a typed QueueID alias once that alias is minted
+	// (tracked in hk-gkljz follow-up; see implementer-protocol.md §Typed-alias-deferral).
+	QueueID *string `json:"queue_id,omitempty"`
+
+	// QueueGroupIndex identifies the group within the queue from which this run
+	// was dispatched per queue-model.md §4.3 QM-012 and event-model.md §6.3.
+	// Nil under the same conditions as QueueID.
+	QueueGroupIndex *int `json:"queue_group_index,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunFailedPayload.

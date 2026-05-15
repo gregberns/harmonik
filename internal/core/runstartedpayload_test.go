@@ -354,3 +354,70 @@ func TestRunStartedPayload_EmissionOrderSensor(t *testing.T) {
 		t.Error("standalone payload should have nil BeadID (no Beads claim for non-bead-tied run)")
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// QueueID / QueueGroupIndex field tests — QM-011 / QM-012 (hk-gkljz)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// runstartedFixtureQueueID returns a canonical queue_id string for queue-field tests.
+func runstartedFixtureQueueID() string {
+	return "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001"
+}
+
+// TestRunStartedPayload_QueueFieldsOmittedWhenNil verifies that when QueueID
+// and QueueGroupIndex are nil the JSON output omits both keys (omitempty),
+// preserving backward compatibility for non-queue-dispatched runs per
+// queue-model.md §4.2 QM-011, §4.3 QM-012, and event-model.md §6.3.
+func TestRunStartedPayload_QueueFieldsOmittedWhenNil(t *testing.T) {
+	t.Parallel()
+
+	p := runstartedFixture(t)
+	p.QueueID = nil
+	p.QueueGroupIndex = nil
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+	if _, ok := m["queue_id"]; ok {
+		t.Error("queue_id present in JSON when QueueID is nil, want omitted")
+	}
+	if _, ok := m["queue_group_index"]; ok {
+		t.Error("queue_group_index present in JSON when QueueGroupIndex is nil, want omitted")
+	}
+}
+
+// TestRunStartedPayload_QueueFieldsRoundTrip verifies that when QueueID and
+// QueueGroupIndex are set, JSON marshal/unmarshal preserves their values per
+// QM-011, QM-012, and event-model.md §6.3.
+func TestRunStartedPayload_QueueFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	p := runstartedFixture(t)
+	qid := runstartedFixtureQueueID()
+	gidx := 1
+	p.QueueID = &qid
+	p.QueueGroupIndex = &gidx
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var got RunStartedPayload
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if got.QueueID == nil || *got.QueueID != qid {
+		t.Errorf("QueueID: got %v, want %q", got.QueueID, qid)
+	}
+	if got.QueueGroupIndex == nil || *got.QueueGroupIndex != gidx {
+		t.Errorf("QueueGroupIndex: got %v, want %d", got.QueueGroupIndex, gidx)
+	}
+}

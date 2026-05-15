@@ -150,15 +150,12 @@ func TestWM040a_CleanWorkspaceMaterialization(t *testing.T) {
 		t.Errorf("WM-040a: disableAllHooks key present in output; MUST be stripped")
 	}
 
-	// Assert: CHB-005 — .claude/settings.json in worktree .gitignore.
+	// hk-jvzc2: MaterializeClaudeSettings MUST NOT create or modify .gitignore.
+	// CHB-005 hygiene is an operator-setup obligation; per-launch writes leaked
+	// into the parent repo's working tree across dogfood runs.
 	gitignorePath := filepath.Join(workspacePath, ".gitignore")
-	//nolint:gosec // G304: controlled test path
-	giData, err := os.ReadFile(gitignorePath)
-	if err != nil {
-		t.Fatalf("WM-040a: .gitignore not created by CHB-005 hygiene: %v", err)
-	}
-	if !gitignoreLinePresent(string(giData), ClaudeSettingsWorktreeGitignoreLine) {
-		t.Errorf("WM-040a: CHB-005: .gitignore missing %q", ClaudeSettingsWorktreeGitignoreLine)
+	if _, err := os.Stat(gitignorePath); !os.IsNotExist(err) {
+		t.Errorf("hk-jvzc2: MaterializeClaudeSettings created .gitignore (stat err=%v); MUST be operator-managed", err)
 	}
 }
 
@@ -347,42 +344,54 @@ func TestWM040a_DisableAllHooksStripped(t *testing.T) {
 	}
 }
 
-// TestWM040a_GitignoreIdempotent verifies that calling MaterializeClaudeSettings
-// twice does not duplicate the .claude/settings.json line in the worktree
-// .gitignore per CHB-005.
+// TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore verifies that
+// MaterializeClaudeSettings does NOT create or modify any .gitignore (the
+// hk-jvzc2 contract). CHB-005 hygiene is an operator-setup obligation.
 //
-// Spec ref: claude-hook-bridge.md CHB-005 (idempotency).
-func TestWM040a_GitignoreIdempotent(t *testing.T) {
+// A pre-existing operator-managed .gitignore at the workspace path MUST be
+// left byte-for-byte identical across multiple Materialize calls.
+func TestHkJvzc2_MaterializeClaudeSettingsDoesNotTouchGitignore(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
-
-	// First call.
-	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
-		t.Fatalf("WM-040a gitignore idempotent: first call: %v", err)
-	}
-	// Second call.
-	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
-		t.Fatalf("WM-040a gitignore idempotent: second call: %v", err)
-	}
-
 	gitignorePath := filepath.Join(workspacePath, ".gitignore")
-	//nolint:gosec // G304: controlled test path
-	data, err := os.ReadFile(gitignorePath)
+
+	// Seed a pre-existing operator-style .gitignore.
+	preExisting := "# operator setup\n.harmonik/\n.claude/settings.json\n"
+	if err := os.WriteFile(gitignorePath, []byte(preExisting), 0o644); err != nil {
+		t.Fatalf("seed .gitignore: %v", err)
+	}
+	preStat, err := os.Stat(gitignorePath)
 	if err != nil {
-		t.Fatalf("WM-040a gitignore idempotent: ReadFile .gitignore: %v", err)
+		t.Fatalf("stat seeded .gitignore: %v", err)
 	}
 
-	// Count occurrences of the line.
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == ClaudeSettingsWorktreeGitignoreLine {
-			count++
-		}
+	// Two back-to-back Materialize calls.
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("hk-jvzc2: MaterializeClaudeSettings #1: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("WM-040a gitignore idempotent: line %q appears %d times in .gitignore; want exactly 1",
-			ClaudeSettingsWorktreeGitignoreLine, count)
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("hk-jvzc2: MaterializeClaudeSettings #2: %v", err)
+	}
+
+	// Assert: byte-identical content.
+	//nolint:gosec // G304: controlled test path
+	postData, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read post-call .gitignore: %v", err)
+	}
+	if string(postData) != preExisting {
+		t.Errorf("hk-jvzc2: .gitignore was mutated by MaterializeClaudeSettings:\nwant:\n%q\ngot:\n%q",
+			preExisting, string(postData))
+	}
+
+	// Assert: size unchanged (defensive cross-check).
+	postStat, err := os.Stat(gitignorePath)
+	if err != nil {
+		t.Fatalf("stat post-call .gitignore: %v", err)
+	}
+	if preStat.Size() != postStat.Size() {
+		t.Errorf("hk-jvzc2: .gitignore size changed from %d to %d", preStat.Size(), postStat.Size())
 	}
 }
 

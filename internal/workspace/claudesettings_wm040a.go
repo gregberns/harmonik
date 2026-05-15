@@ -90,11 +90,12 @@ func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGrou
 //
 // # Gitignore hygiene (CHB-005)
 //
-// After writing the settings file, MaterializeClaudeSettings ensures
-// ".claude/settings.json" is present in the worktree's .gitignore
-// (${workspace_path}/.gitignore), adding it if absent. The worktree
-// .gitignore write is simple append-only (no git commit required — the
-// worktree is a task branch and the daemon owns its commit sequence).
+// MaterializeClaudeSettings does NOT mutate any .gitignore (hk-jvzc2). The
+// CHB-005 hygiene rule is now an operator-setup obligation: the parent repo's
+// root .gitignore MUST cover .claude/settings.json before the daemon runs.
+// Earlier revisions appended the entry to the worktree .gitignore per launch;
+// that silent edit surfaced as uncommitted churn in the parent repo's working
+// tree across dogfood runs (hk-cd92e, hk-jvzc2).
 //
 // # Atomic write (WM-026 / CHB-002)
 //
@@ -180,11 +181,11 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 
 	_ = overwrote // consumed via sessionLogPath warning above
 
-	// CHB-005: ensure .claude/settings.json is in the worktree's .gitignore.
-	if err := ensureWorktreeGitignore(workspacePath, ClaudeSettingsWorktreeGitignoreLine); err != nil {
-		return fmt.Errorf("workspace: MaterializeClaudeSettings: gitignore hygiene: %w", err)
-	}
-
+	// CHB-005 gitignore hygiene is now an operator-setup obligation (hk-jvzc2):
+	// the parent repo's root .gitignore MUST cover .claude/settings.json before
+	// the daemon runs. The daemon no longer mutates the worktree .gitignore
+	// per-launch — silent edits surfaced as uncommitted churn in the parent
+	// repo's working tree across dogfood runs (hk-cd92e, hk-jvzc2).
 	return nil
 }
 
@@ -361,52 +362,9 @@ func atomicWriteWithParentFsync(path string, content []byte) error {
 	return d.Close()
 }
 
-// ensureWorktreeGitignore ensures that line appears in
-// ${workspacePath}/.gitignore, appending it if absent.
-// The worktree .gitignore (not the repo root .gitignore) is a plain file
-// owned by git inside the task branch; we append without a git commit because
-// the daemon manages task-branch commits through its own checkpoint sequence.
-func ensureWorktreeGitignore(workspacePath, line string) error {
-	gitignorePath := filepath.Join(workspacePath, ".gitignore")
-
-	existing := ""
-	//nolint:gosec // G304: path is constructed from workspacePath + ".gitignore", not user input
-	data, err := os.ReadFile(gitignorePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("ReadFile worktree .gitignore: %w", err)
-	}
-	if err == nil {
-		existing = string(data)
-	}
-
-	if gitignoreLinePresent(existing, line) {
-		return nil // idempotent
-	}
-
-	// Append the line.
-	var sb strings.Builder
-	if existing != "" && !strings.HasSuffix(existing, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString(line)
-	sb.WriteString("\n")
-
-	f, err := os.OpenFile(gitignorePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("OpenFile worktree .gitignore: %w", err)
-	}
-	if _, err := f.WriteString(sb.String()); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("WriteString worktree .gitignore: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("Sync worktree .gitignore: %w", err)
-	}
-	return f.Close()
-}
-
 // gitignoreLinePresent reports whether line appears on its own line in content.
+// Retained as a test helper after hk-jvzc2 removed the per-launch worktree
+// .gitignore-append path; the function continues to back assertion-only callers.
 func gitignoreLinePresent(content, line string) bool {
 	for _, l := range strings.Split(content, "\n") {
 		if strings.TrimSpace(l) == line {

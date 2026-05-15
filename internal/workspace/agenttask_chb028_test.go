@@ -328,15 +328,26 @@ func TestCHB028_ReviewerPhase(t *testing.T) {
 	}
 }
 
-// TestCHB028_GitignoreUpdated verifies that WriteAgentTask adds the
-// .harmonik/agent-task* gitignore line to the worktree .gitignore.
-func TestCHB028_GitignoreUpdated(t *testing.T) {
+// TestHkJvzc2_WriteAgentTaskDoesNotTouchGitignore verifies that WriteAgentTask
+// does NOT create or modify a .gitignore at the workspace path. Per hk-jvzc2,
+// .harmonik/agent-task* exclusion is an operator-setup obligation (covered by
+// the parent repo's root .gitignore which already lists /.harmonik/). Earlier
+// revisions of WriteAgentTask appended the entry per-launch; that silent edit
+// leaked into the parent repo's working tree across dogfood runs.
+func TestHkJvzc2_WriteAgentTaskDoesNotTouchGitignore(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	workspacePath := filepath.Join(dir, "workspace")
 	harmonikDir := filepath.Join(workspacePath, ".harmonik")
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
+	}
+
+	// Seed a pre-existing operator-style .gitignore so we can assert byte-equality.
+	gitignorePath := filepath.Join(workspacePath, ".gitignore")
+	seed := "# operator setup\n.harmonik/\n"
+	if err := os.WriteFile(gitignorePath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("seed .gitignore: %v", err)
 	}
 
 	payload := AgentTaskPayload{
@@ -350,16 +361,16 @@ func TestCHB028_GitignoreUpdated(t *testing.T) {
 	}
 
 	if err := WriteAgentTask(workspacePath, payload); err != nil {
-		t.Fatalf("WriteAgentTask (gitignore): %v", err)
+		t.Fatalf("WriteAgentTask: %v", err)
 	}
 
-	gitignorePath := filepath.Join(workspacePath, ".gitignore")
+	//nolint:gosec // G304: controlled test path
 	data, err := os.ReadFile(gitignorePath)
 	if err != nil {
 		t.Fatalf("ReadFile .gitignore: %v", err)
 	}
-	if !strings.Contains(string(data), AgentTaskGitignoreLine) {
-		t.Errorf("CHB-028 gitignore: missing %q in .gitignore:\n%s", AgentTaskGitignoreLine, string(data))
+	if string(data) != seed {
+		t.Errorf("hk-jvzc2: WriteAgentTask mutated .gitignore:\nwant:\n%q\ngot:\n%q", seed, string(data))
 	}
 }
 

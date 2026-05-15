@@ -177,10 +177,13 @@ const ReviewTargetGitignoreLine = ".harmonik/review-target.md"
 //
 // # Gitignore hygiene
 //
-// Appends .harmonik/agent-task* to the worktree .gitignore if absent, in the
-// same function call (though not in the same atomic operation as the file write;
-// the gitignore append is idempotent and best-effort tolerant per WM-013e
-// worktree scope).
+// WriteAgentTask does NOT mutate any .gitignore (hk-jvzc2). Excluding
+// .harmonik/agent-task* from commits is an operator setup obligation: the
+// parent repo's root .gitignore MUST already cover .harmonik/* (the worktree
+// inherits this on `git worktree add`). Earlier revisions of this function
+// appended the entry to the worktree .gitignore per launch; that silent edit
+// surfaced as uncommitted churn in the parent repo's working tree across
+// dogfood runs (hk-cd92e, hk-jvzc2).
 //
 // # Post-write assertion
 //
@@ -237,11 +240,10 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 		return fmt.Errorf("%w: file is zero bytes after write at %q", ErrTaskFileEmpty, target)
 	}
 
-	// Gitignore hygiene: ensure .harmonik/agent-task* is excluded from commits.
-	if err := ensureWorktreeGitignore(workspacePath, AgentTaskGitignoreLine); err != nil {
-		return fmt.Errorf("workspace: WriteAgentTask: gitignore hygiene: %w", err)
-	}
-
+	// Gitignore hygiene is an operator-setup obligation (hk-jvzc2): the parent
+	// repo's root .gitignore MUST cover .harmonik/* before the daemon runs. The
+	// daemon no longer mutates the worktree .gitignore per-launch — silent edits
+	// leaked into the parent repo's working tree across dogfood runs.
 	return nil
 }
 
@@ -346,7 +348,8 @@ type ReviewerFeedbackPayload struct {
 // only after this file exists on disk may the paste-inject occur.
 //
 // Uses the WM-026 atomic temp-write + rename + fsync(parent_dir) discipline.
-// Appends .harmonik/reviewer-feedback* to the worktree .gitignore if absent.
+// Does NOT mutate the worktree .gitignore (hk-jvzc2); operator setup MUST
+// cover .harmonik/* in the parent repo's root .gitignore.
 func WriteReviewerFeedback(payload ReviewerFeedbackPayload) error {
 	target := ReviewerFeedbackPath(payload.WorkspacePath, payload.PriorIteration)
 	content := buildReviewerFeedbackContent(payload)
@@ -355,11 +358,8 @@ func WriteReviewerFeedback(payload ReviewerFeedbackPayload) error {
 		return fmt.Errorf("workspace: WriteReviewerFeedback: atomic write %q: %w", target, err)
 	}
 
-	// Gitignore hygiene.
-	if err := ensureWorktreeGitignore(payload.WorkspacePath, ReviewerFeedbackGitignoreLine); err != nil {
-		return fmt.Errorf("workspace: WriteReviewerFeedback: gitignore hygiene: %w", err)
-	}
-
+	// Gitignore hygiene is an operator-setup obligation (hk-jvzc2); no per-run
+	// worktree-.gitignore edit happens here.
 	return nil
 }
 
@@ -463,7 +463,8 @@ type ReviewTargetPriorVerdict struct {
 // iteration's review-target.md is not archived.
 //
 // Uses the WM-026 atomic temp-write + rename + fsync(parent_dir) discipline.
-// Appends .harmonik/review-target.md to the worktree .gitignore if absent.
+// Does NOT mutate the worktree .gitignore (hk-jvzc2); operator setup MUST
+// cover .harmonik/* in the parent repo's root .gitignore.
 func WriteReviewTarget(payload ReviewTargetPayload) error {
 	target := ReviewTargetPath(payload.WorkspacePath)
 	content := buildReviewTargetContent(payload)
@@ -472,11 +473,8 @@ func WriteReviewTarget(payload ReviewTargetPayload) error {
 		return fmt.Errorf("workspace: WriteReviewTarget: atomic write %q: %w", target, err)
 	}
 
-	// Gitignore hygiene.
-	if err := ensureWorktreeGitignore(payload.WorkspacePath, ReviewTargetGitignoreLine); err != nil {
-		return fmt.Errorf("workspace: WriteReviewTarget: gitignore hygiene: %w", err)
-	}
-
+	// Gitignore hygiene is an operator-setup obligation (hk-jvzc2); no per-run
+	// worktree-.gitignore edit happens here.
 	return nil
 }
 

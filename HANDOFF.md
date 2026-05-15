@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-15 main — v45. T80/T81/T82 scenario tests merged → Roadmap Row 8 GATE PASSED. Bridge-integration epic hk-gql20 CLOSED (Row 5 P0 done). 75 beads closed across the session (242 → 167 open). Cross-project ~/.claude/CLAUDE.md synthesized + v44 ACTIVE DISPATCH directive added. -->
+<!-- PP-TRIAL:v2 2026-05-15 main — v46. Row 5 fully closed (hk-kqdpf.5 GREEN); Row 6 closed (hk-iuaed.4 orphan-sweep landed, 1421 lines, 15 tests green). 15 commits past v45. Bead-graph cleanup: 11 CHB blocks→removed (3 impl beads unblocked), 5 orphan-parents linked, 37 SUBSUMED closed. Phase 2/3 NORTH STAR still not exercised — see "What's actually missing" below. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order. Cross-project working-style rules: `~/.claude/CLAUDE.md`.
 
@@ -15,6 +15,10 @@ Per-return acknowledgment is ≤2 lines. Full session summary lives at `/session
 PHASE 2 IS UNBLOCKED (NEW v38). With harmonik operational you CAN now dispatch beads via the daemon instead of via the Agent tool — file a bead with `br create`, start harmonik against the project, watch it execute. Trade-off: harmonik overhead is ~30s+ per bead vs sub-agent's seconds; use it when (a) durability matters, (b) the work spans sessions, (c) tmux inspectability matters, or (d) parallel `--max-concurrent N` amortizes the overhead. For trivial inline work, sub-agent dispatch still wins.
 
 IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers in the v38 session ran self-review APPROVE BUT NEVER COMMITTED in their worktree. The orchestrator had to commit-on-behalf. Briefs MUST end with "COMMIT EXPLICITLY (`git add` + `git commit`) before exiting" and the orchestrator MUST verify the commit landed before merging. If diff is uncommitted, the orchestrator stages + commits on behalf using `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.
+
+AGENTS IN BACKGROUND (v46 NEW). When dispatching ≥2 parallel sub-agents, pass `run_in_background: true` on every Agent call. Do NOT wait for them inline — the orchestrator's value is dispatching breadth, blocking on foreground returns drops parallelism well below the 5–7 target. Completion notifications fire automatically; no polling.
+
+QUEUE WITH CONTEXT (v46 NEW, L-020). Two rules: (1) Don't queue minor/hygiene work to the user — test-driven fixes, internal renames, corrections, hygiene closures are dispatch-without-asking. The threshold for queueing is "does this change product direction or affect users/agents irreversibly?" (2) When queuing IS warranted, the surface MUST carry plain-English what + why-queued + concrete options-with-consequences. A label like "X drafts (A/B/C)" without context is not a decidable surface — it wastes a user turn.
 
 WORKTREE TASK-INJECTION LEAK (v36, ONGOING). Implementer edits leak into main's working tree as uncommitted changes. Workaround: `git stash push -m "v36-leak ..." && git merge --ff-only <branch> && git stash drop`. Never commit the leaked main-tree edits as a separate commit — the proper changes arrive via the worktree branch merge.
 
@@ -83,71 +87,72 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
 If a branch is lost (e.g. worktree dir gone before merge): `git reflog --all | grep worktree-agent-<id>` then `git cherry-pick <SHA>`.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v45 used ~60% across heavy parallel dispatch (~25 implementers, 6 explorers, 4 hygiene agents, 30 commits).
+CONTEXT BUDGET (orchestrator). ~700 k effective. v45 used ~60% across heavy parallel dispatch (~25 implementers, 6 explorers, 4 hygiene agents, 30 commits). v46 used ~24% on a lighter dispatch load (15 commits, 12 sub-agents, no worktrees).
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v45, 2026-05-15)
+# Where we are (v46, 2026-05-15)
 
-**Main at `a8b6568`. All work pushed to origin. Working tree clean (1 in-progress bead per `br stats` — verify after pull). Big session — 24 commits.**
+**Main at `9779f72`. All work pushed. Working tree clean. 15 commits past v45 (a48e3ef).**
 
 ## Headline outcomes
 
-1. **Roadmap Row 5 (bridge-integration) CLOSED.** Epic `hk-gql20` closed at `a8b6568` after take-2 review-loop dogfood smoke went GREEN. Same session: epic `hk-lj1p9` (claude session lifecycle) closed at `10d4bf5` after hygiene confirmed all 20 children done. Phase 0 epic `hk-ahvq` also closed via the orphan-hygiene pass.
-2. **Roadmap Row 8 (Phase 2 multi-bead E2E) GATE PASSED.** T80 (`hk-8vokz` queue lifecycle, 676 lines), T81 (`hk-2gqua` paused-by-failure, 517 lines), T82 (`hk-30wgn` crash recovery, 565 lines) all merged green at `e46fc5b` / `384f7a2` / `8201de3`. `internal/scenario/...` package fully green.
-3. **Cross-project working-style synthesis.** `~/.claude/CLAUDE.md` now holds 7 cross-project guidelines (keep moving, delegate, plain English, compact, review gate, etc.) distilled from the v43 friction-mine + the parallel kerf-project mine. Harmonik's `CLAUDE.md` adds a one-line pointer + keeps project-specific bits.
-4. **v44 directive added + L-018 in orchestration-learnings.** ACTIVE DISPATCH paragraph in HANDOFF directives block — "don't park the stream" with 5 sub-rules. L-018 captures the 5 concrete moments justifying it.
-5. **Big hygiene reckoning.** 75 beads closed (242 → 167 Open). Extqueue v0.1: 11 SUBSUMED beads closed in the first sweep (`71044e1`) — handoff v43 said "landed" but `br close` had never run. Then Row 9 sweep closed 2 more (`35a22b7`). Then individual implementers found ~10 more SUBSUMED while doing real spec-amend work. Pattern: spec content already lived in commit `6bc2e57` (claude-hook-bridge spec corpus finalize) but the corresponding tracking beads were orphaned. See new directive paragraph "SUBSUMED BEADS ARE COMMON" above.
-6. **imrest (Row 6) major progress.** `hk-iuaed.2` (PL-006 orphan-reset spec, `a1d281c`), `hk-iuaed.3` (BI adapter ResetBead op — `internal/brcli/resetbead_bi010d_test.go` + 588-line impl, `60c8170`), `hk-iuaed.5` (EV §8.7.14 confirm + catch-up of 5 additive fields, `bedd5a5`) all landed. `hk-iuaed.4` (PL-006 sweep impl) and `.6` (sensor) are now unblocked and dispatchable.
-7. **Other code landings**: `hk-do7te` agent_ready timeout (`e19de6a` — adds 10s reap-after-Kill in workloop + reviewloop), `hk-a0htu` labels-gap fix in workloop (`93aeaae` — ShowBead hydration after Ready), `hk-zs0.21` AR-020 amendment-proposal procedure with architect+critic personas (`0d2bcd5`), `hk-sx9r.24` 7 upgrade sub-rules ON-020b–h (`cca00f5`), `hk-sx9r.27` ON-022 secrets binding test (`2af7dfa`), `hk-sx9r.69` ON-INV-001 N-1 compat sensor harness (`5856de2`).
-8. **Orphan-parent hygiene.** 3 parent-child edges added (`3697cc0`): hk-do7te → hk-kqdpf, hk-4goy3 → hk-kqdpf, hk-6x7dw → hk-hqwn. hk-7uasg has an existing `related` edge to hk-qo08q — needs manual upgrade to parent-child if desired.
-9. **ROADMAP audit.** All 15 open epics covered by existing rows (`b736d9d` removed closed `hk-lj1p9` from Row 5). No new rows needed.
+1. **Roadmap Row 5 FULLY CLOSED.** `hk-kqdpf.5` smoke GREEN at `f24ff5f` — substrate active end-to-end. Epic `hk-kqdpf` closed; meta-epic `hk-1n0cw` closed.
+2. **Roadmap Row 6 (imrest) CLOSED.** `hk-iuaed.4` orphan-sweep impl landed at `9779f72` — 1421 lines, 4-branch exclusion logic, 13 unit + 2 integration tests, all green. Follow-up `hk-11xkn` filed for the audit-log `actor=project_hash` provenance gap (MVH unreachability tracked, not silently shipped). `hk-iuaed.6` sensor remains open — needs corpus scan + harness, prep already done.
+3. **Bead-graph structural cleanup.** 11 CHB spec-text `blocks` edges removed (3 impl beads `hk-crf9a`/`hk-lj848`/`hk-pcvw8` unblocked). 5 orphan-parents linked. blocked_count 125 → 106. 37 deferred SUBSUMED. 30 hygiene labels.
+4. **AGENTS.md is now canonical.** CLAUDE.md symlinks → AGENTS.md (per agent-configuration spec). 154 lines still over the 120 cap — trim is deferred.
+5. **AR-013 §4.a envelopes added** to `specs/queue-model.md` and `specs/claude-hook-bridge.md`. `TestAR013EnvelopeDeclaration` green. `hk-wywsm`/`hk-g3iyl` closed.
+6. **Process tightenings**: L-019 (dispatch-priority ordering), L-020 (queue-with-context discipline) added. L-003/L-013 retired into L-015. HANDOFF.md spec-text-check-in rule clarified (hygiene ≠ architectural — explicitly excludes test-driven section adds).
+7. **TestThroughput_TenBeadsAtMaxFour 57s→16s** — daemon test budget back inside the 120s suite limit.
 
-## Stream / dispatch state at handoff time
+## What's actually missing (NORTH STAR audit — user-raised at handoff)
 
-- Stream drained — no implementer agents running.
-- `br stats`: Open 167, In Progress 1 (likely stale — re-check on resume), Blocked 128, Ready 50, Deferred 38, Closed 1092.
+Per memory `project_harmonik_north_star.md`, the three phases are:
+1. **Phase 1 (operational smoke GREEN):** ✅ achieved 2026-05-14 (v40 milestone). Harmonik can run claude end-to-end on a bead with zero human input.
+2. **Phase 2 (orchestrator dispatches VIA harmonik, not sub-agents):** ⚠️ technically unblocked since v38 (see directive paragraph "PHASE 2 IS UNBLOCKED"). **Has not actually been exercised in v45 or v46.** Every commit this session was dispatched via the Claude Code Agent tool, not via `br create` + `harmonik run`. The mechanics exist; the habit hasn't shifted.
+3. **Phase 3 (DOT-defined bead processes):** ❌ Not started. No DOT files exist that describe agent-flow processes. No harmonik feature consumes a DOT. This is the strategic gap and the one closest to the product thesis ("composable agentic orchestration").
 
-## Plain-English glossary (what the codes mean)
-
-- `hk-iuaed` — imrest epic: separating "bead in_progress" (activity marker, recoverable) from close/reopen (truth claim). Row 6 on the roadmap.
-- `hk-kqdpf.5` — single remaining bridge-followup task: re-run dogfood smoke with substrate + bridge wired (P0). Only thing keeping Row 5 from full closure now that hk-gql20 is done.
-- `hk-qo08q` — claude-hook-bridge spec corpus implementation epic (Row 7).
-- `hk-sx9r` — operator-NFR spec implementation (Row 9).
-- `hk-zs0.*` — architecture spec amendments under epic hk-b3f (Row 9).
-- "SUBSUMED" — bead's spec text already landed in earlier commit; closing as hygiene rather than re-doing work.
+The recent session work has all been operational hardening (smoke runs, orphan-sweep, scenario tests, bead hygiene). It's necessary but it's all *foundation* — the visible part of the product still doesn't exist.
 
 # Next session — START HERE
 
-## Immediate plan (in order)
+## Sub-goal A (this is the real one)
 
-1. **Dispatch `hk-kqdpf.5`** (P0 remaining bridge-followup) — re-run dogfood smoke with substrate + bridge wired. Now that hk-gql20 closed via the review-loop smoke, this one should also be GREEN. Closing it closes the bridge-followup epic and lets Row 5 be fully checked off. Operational agent (not worktree-isolated) similar to the gql20.24 smoke pattern in `af7aa914bdf4ee1da`'s output.
-2. **Dispatch `hk-iuaed.4`** (P1 sweep impl, now unblocked by .2/.3/.5) — extend PL-006 orphan-sweep with stale-in_progress reset using the new ResetBead adapter op. Then `hk-iuaed.6` (sensor — depends on .4).
-3. **Dispatch a deferred-clear sweep** — 38 beads sit in deferred state per `br stats`. Some are valid post-MVH parks; others are stale `defer_until` blockers (L-017). A small agent can scan and clear the stale ones — high ROI on ready-queue depth.
+Begin Phase 2/3 transition. Concrete first steps:
 
-## Subsequent waves
+1. **Dogfood a single bead through harmonik instead of sub-agent dispatch.** Pick a small, fully-spec'd ready bead (e.g. `hk-iuaed.6` sensor — already prepped, no architectural risk). File the brief as a bead, run `harmonik` against it locally, observe end-to-end. The friction encountered is the most-valuable signal in the project right now.
+2. **Identify the DOT shape.** No DOT format exists yet for bead processes. Drafting the first sketch — even informally — unblocks Phase 3 thinking. What does a DOT describing "implementer → review → merge" look like? Where do branch points (REQUEST_CHANGES → fix-and-resubmit) live? What's the equivalent of an `if` node? Spawn a planning agent to propose 2–3 candidate DOT schemas.
+3. **Frame the next user check-in.** Before scaling Phase 2, the user should see one harmonik-dispatched bead complete and weigh in on whether the experience is product-shaping (this is one of the few user-decision moments).
 
-- **Roadmap Row 7 (CHB spec corpus)** — hk-qo08q has ~15 open code-implementation children per the Row 9 sweep report. Triage with `bv --robot-triage --graph-root hk-qo08q` and dispatch in parallel; many are likely independent CHB-NNN req beads.
-- **Roadmap Row 5 final close** — once hk-kqdpf.5 lands, close the `hk-kqdpf` epic itself; both Row 5 epics will be done.
-- **Roadmap Row 8 fold-up** — hk-1n0cw (smoke epic) is a meta-parent with 2 open children (hk-w5vra closed, hk-do7te closed via this session). Verify hk-1n0cw can now close.
-- **Roadmap Row 6 close-out** — once hk-iuaed.4 + .6 land, the imrest epic closes (Row 6 done).
+## Sub-goal B (operational, continue if A blocked)
+
+Same as v45's tail: triage Row 7 CHB corpus, work through `hk-a8bg.*` ControlPoint spec beads (highest PageRank in current triage), continue sensor implementations as their target impls land.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `ROADMAP.md` (11-row plan).
-3. `~/.claude/CLAUDE.md` (cross-project working style — auto-loaded by every session).
-4. `docs/orchestration-learnings.md` (read on resume; L-018 is newest).
-5. `docs/dogfood-smoke-run-2026-05-15-review-loop-take2.md` — GREEN smoke run that closed hk-gql20.
+2. `ROADMAP.md` (11-row plan — Rows 5+6+8 now done; Rows 7/9/10/11 remain).
+3. `~/.claude/CLAUDE.md` + project `AGENTS.md` (working-style + project-specific).
+4. `docs/orchestration-learnings.md` (L-019, L-020 are newest).
+5. `~/.claude/projects/-Users-gb-github-harmonik/memory/MEMORY.md` (project memory; auto-loaded).
+
+## Plain-English glossary
+
+- **Phase 1/2/3** — the project's north-star sequence: operational smoke → orchestrator-via-harmonik → DOT-defined processes. Phase 1 done; 2 unexercised; 3 unstarted.
+- **DOT bead processes** — the unstated product thesis: workflow graphs (like Graphviz DOT) that describe how a bead should be processed by agents (which nodes, which decision points). Not yet implemented or even sketched.
+- `hk-iuaed.6` — sensor bead, prep done (read-only corpus scan returned zero violations), ready to implement.
+- `hk-iuaed.4` — PL-006 orphan-sweep impl, landed at 9779f72.
+- `hk-kqdpf.5` — final bridge-followup, smoke GREEN, landed at f24ff5f.
+- `hk-11xkn` — follow-up tracking the audit-log provenance gap discovered while implementing hk-iuaed.4.
+- "L-019/L-020" — newest entries in orchestration-learnings.md (dispatch-priority; queue-with-context discipline).
+- "SUBSUMED" — bead's spec text already landed in earlier commit; close as hygiene.
 
 ## Question that blocks the next session
 
-None. Continue executing per directives + roadmap.
+None operational. **Strategic:** does the user want to lean into Phase 2 dogfooding immediately, or finish more of the Row 7 / Row 9 foundation first? Default per directives is execute — start Phase 2 dogfooding (sub-goal A) without asking.
 
 ## Known-failing tests (pre-existing, NOT blocking)
 
-- `TestAR013EnvelopeDeclaration` in specaudit (cosmetic spec hygiene).
-- `TestON027DrainStep1StopPullingQueue/check-4` (cosmetic wording).
 - `TestWorkLoop_FailedHandlerReopensBead`, `TestWorkLoop_TwoConcurrentBeads` (pre-existing flaky under full-suite parallel load).
-- `TestBI010c_SpecContainsWorkflowLabelDiscipline` in brcli (pre-existing; noted in hk-iuaed.3 dispatch report).
-- `TestThroughput_TenBeadsAtMaxFour` is slow (~57s) and times out full suite at 120s — not a regression.
+- `TestBI010c_SpecContainsWorkflowLabelDiscipline` in brcli (pre-existing).
+- `TestPidfileRelease_AllowsReacquire` (passes alone, flakes under parallel load — observed in hk-zixbp fix).

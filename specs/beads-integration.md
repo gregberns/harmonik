@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.4.1
+version: 0.5.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-04-26
+last-updated: 2026-05-14
 depends-on:
   - architecture
   - execution-model
@@ -22,12 +22,13 @@ depends-on:
   - process-lifecycle
   - operator-nfr
   - reconciliation
+  - queue-model
 ---
 ```
 
 ## 1. Purpose
 
-This spec defines harmonik's integration with Beads — the external SQLite-backed task ledger that owns bead content, typed dependency edges, coarse lifecycle status, stable bead IDs, and atomic-claim semantics. It binds together the Beads references scattered across other foundation specs and names the normative surfaces that are load-bearing across the system: access model (`br` CLI only), write discipline (terminal transitions only), read queries, bead-ID propagation, store-authority rules, version-pin + adapter layer, and the adapter idempotency contract.
+This spec defines harmonik's integration with Beads — the external SQLite-backed task ledger that owns bead content, typed dependency edges, coarse lifecycle status, stable bead IDs, and atomic-claim semantics. It binds together the Beads references scattered across other foundation specs and names the normative surfaces that are load-bearing across the system: access model (`br` CLI only), write discipline (terminal transitions only), read queries, submit-time validation read surface, bead-ID propagation, store-authority rules, version-pin + adapter layer, and the adapter idempotency contract.
 
 It exists as a standalone spec because the integration shape is cross-cutting and load-bearing (locked decision #13 per [docs/foundation/problem-space.md §Locked decisions]).
 
@@ -39,7 +40,8 @@ It exists as a standalone spec because the integration shape is cross-cutting an
 - `br` CLI as the sole access surface; rejection of `br serve` (Beads's MCP server).
 - Set of Beads-managed data: bead content, typed dependency edges, coarse status, stable IDs, atomic-claim semantics.
 - Harmonik write surface restricted to terminal lifecycle transitions (claim / close / reopen).
-- Harmonik read surface: ready-work query, dependency graph, bead-detail, reconciliation queries.
+- Harmonik read surface: ready-work query (orchestrator-facing), dependency graph, bead-detail, reconciliation queries.
+- Submit-time validation read surface consumed by the daemon's queue-submit / queue-append / queue-dry-run accept path.
 - Bead-ID propagation into run metadata, checkpoint trailers, event payloads, and session-log metadata.
 - Store-authority rules for git-vs-Beads-vs-JSONL disagreements.
 - Version-pin policy and the `br`-CLI adapter layer that absorbs breakage.
@@ -54,6 +56,7 @@ It exists as a standalone spec because the integration shape is cross-cutting an
 - Run metadata definition and run-ID allocation — owned by [execution-model.md §4.3].
 - Checkpoint commit trailer format (shape of `Harmonik-Bead-ID`) — owned by [execution-model.md §6.2]; this spec owns WHEN the trailer is populated.
 - Event payload shapes — owned by [event-model.md §6.3]; this spec owns WHEN bead-scoped events are emitted.
+- Queue data model, group lifecycle, validation rules, queue persistence — owned by [queue-model.md]; this spec owns only the Beads-read surface consumed during validation.
 
 ## 3. Glossary
 
@@ -63,6 +66,7 @@ It exists as a standalone spec because the integration shape is cross-cutting an
 - **`br`-CLI adapter** — the thin harmonik module that translates typed queries and writes into `br` subprocess invocations and parses `br` output. (see §4.8, §4.10)
 - **idempotency key** — the deterministic string `<run_id>:<transition_id>:<op>` identifying one terminal-transition write. (see §4.10)
 - **intent log** — the on-disk record of a pending terminal-transition write at `.harmonik/beads-intents/<idempotency_key>.json`, written before the `br` call and deleted after success. (see §4.10)
+- **submit-time validation read** — an adapter `br show` read performed during `queue-submit` / `queue-append` / `queue-dry-run` accept, used to validate the referenced beads against the live ledger. (see §4.5a)
 - **Beads-CLI skill** — the skill package declaring the `br` command surface, output formats, and harmonik-specific write discipline; delivered to agents per [handler-contract.md §4.11]. (see §4.9)
 
 ## 4. Normative requirements
@@ -94,7 +98,7 @@ Tags: mechanism
 
 #### BI-004 — Daemon invokes `br` directly; agents invoke `br` via the Beads-CLI skill
 
-The daemon MUST invoke `br` as a direct subprocess for its read queries (§4.5) and its terminal-transition writes (§4.4). Agents MUST invoke `br` through the Beads-CLI skill delivered via the handler-contract skill-injection mechanism per [handler-contract.md §4.11] and [control-points.md §4.11]. An agent MUST NOT bypass the skill to access `br` directly, and the handler MUST NOT provision `br` outside the skill path.
+The daemon MUST invoke `br` as a direct subprocess for its read queries (§4.5, §4.5a) and its terminal-transition writes (§4.4). Agents MUST invoke `br` through the Beads-CLI skill delivered via the handler-contract skill-injection mechanism per [handler-contract.md §4.11] and [control-points.md §4.11]. An agent MUST NOT bypass the skill to access `br` directly, and the handler MUST NOT provision `br` outside the skill path.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -117,9 +121,9 @@ Tags: mechanism
 
 Beads's `Status` enum is owned and extended by Beads itself; harmonik MUST NOT redefine, narrow, or otherwise constrain it. Harmonik's WRITE surface (§4.4 BI-010) is restricted to the five-value subset `{open, in_progress, closed, deferred, tombstone}` — these are the only statuses harmonik may transition a bead INTO via `br` writes. Harmonik MUST NOT introduce finer-grained statuses by writing additional values.
 
-Harmonik's READ surface (§4.5 BI-013, BI-014, BI-015, BI-016) MUST tolerate any status Beads exposes, including values outside the write subset. As of Beads v0.1.45, the live `Status` enum is `{open, in_progress, blocked, deferred, draft, closed, tombstone, pinned}`. Statuses outside the harmonik write subset (`blocked`, `draft`, `pinned` at v0.1.45; future values via Beads's evolution) are treated as pass-through: the adapter MUST parse them, expose them to consumers as the literal Beads value, and MUST NOT map them onto write-subset values. Future Beads `Status` extensions are accepted automatically by the read surface; the write surface's five-value enum is amended only via this spec's amendment protocol.
+Harmonik's READ surface (§4.5 BI-013, BI-014, BI-015, BI-016; §4.5a BI-013b, BI-013c) MUST tolerate any status Beads exposes, including values outside the write subset. As of Beads v0.1.45, the live `Status` enum is `{open, in_progress, blocked, deferred, draft, closed, tombstone, pinned}`. Statuses outside the harmonik write subset (`blocked`, `draft`, `pinned` at v0.1.45; future values via Beads's evolution) are treated as pass-through: the adapter MUST parse them, expose them to consumers as the literal Beads value, and MUST NOT map them onto write-subset values. Future Beads `Status` extensions are accepted automatically by the read surface; the write surface's five-value enum is amended only via this spec's amendment protocol.
 
-`draft` specifically is the harmonik-side readiness mechanism for loaded but not-yet-dispatchable beads (per the decompose-to-tasks discipline). The dispatch loop (BI-013 ready-work) MUST exclude `draft`-status beads, which is the native semantic of `br ready`.
+`draft` specifically is the harmonik-side readiness mechanism for loaded but not-yet-dispatchable beads (per the decompose-to-tasks discipline). Submit-time validation per §4.5a BI-013b MUST reject any `bead_id` whose live status is `draft`, mapping the rejection through [queue-model.md §6 QM-021]. `br ready`'s native exclusion of `draft`-status beads remains available to orchestrator agents using the Beads-CLI skill per §4.9 BI-027.
 
 Intra-run workflow state lives in harmonik's git checkpoint trail and JSONL event log per §4.4 (NOT in additional Beads statuses).
 
@@ -148,7 +152,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, review-loop, dot}`. The label's presence asserts a per-task workflow-mode override; its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`). The bead-level label is the highest-precedence input in the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3].
 
-A bead carrying two or more `workflow:<...>` labels is malformed. The `br`-CLI adapter (§4.8) MUST treat this as a hard read-error on the ready-work query (BI-013) and the bead-detail query (BI-015): the adapter MUST emit a `bead_label_conflict` observability event per [event-model.md §8.8.6] (with structured-log fallback per [operator-nfr.md §4.9 ON-035]: on event-bus emission failure the adapter MUST emit a structured-log record with `subsystem=beads-adapter`, level=error, naming the offending `bead_id` and the colliding label set), MUST surface the bead to the dispatch loop with `workflow_mode = <unresolved>`, and the daemon MUST fall back to the next-lower precedence tier rather than dispatch under an ambiguous mode.
+A bead carrying two or more `workflow:<...>` labels is malformed. The `br`-CLI adapter (§4.8) MUST treat this as a hard read-error on the ready-work query (BI-013), the bead-detail query (BI-015), and the submit-time validation read (§4.5a BI-013b): the adapter MUST emit a `bead_label_conflict` observability event per [event-model.md §8.8.6] (with structured-log fallback per [operator-nfr.md §4.9 ON-035]: on event-bus emission failure the adapter MUST emit a structured-log record with `subsystem=beads-adapter`, level=error, naming the offending `bead_id` and the colliding label set), MUST surface the bead with `workflow_mode = <unresolved>`, and the daemon MUST fall back to the next-lower precedence tier rather than dispatch under an ambiguous mode.
 
 The allowed-mode enum (`{single, review-loop, dot}`) is owned by [execution-model.md §4.3]; this requirement cites it by reference.
 
@@ -213,7 +217,7 @@ The following table binds harmonik run-level events to Beads coarse-status trans
 
 **`deferred` and `tombstone` are operator-facing states harmonik does NOT write at MVH.**
 
-- A bead in `deferred` or `tombstone` status MUST NOT appear in BI-013 ready-work query results; the adapter's ready-work filter MUST exclude them.
+- A bead in `deferred` or `tombstone` status MUST be rejected by submit-time validation per §4.5a BI-013b (mapping through [queue-model.md §6 QM-021]); `br ready`'s native exclusion of these statuses remains available to orchestrator agents per §4.9 BI-027.
 - Harmonik MUST treat an in-flight run whose bead's status transitions to `tombstone` mid-run (observed via reconciliation's periodic re-read) as a Cat 3 reconciliation flag per [reconciliation/spec.md §8.4].
 - A bead transitioning to `deferred` mid-run is treated identically (Cat 3) until OQ-BI-004 settles operator-deferred-mid-run semantics.
 
@@ -250,20 +254,20 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 ### 4.5 Harmonik read surface
 
-#### BI-013 — Ready-work query
+#### BI-013 — Ready-work query (orchestrator-facing)
 
-The daemon MUST be able to query the set of beads whose dependencies are satisfied and whose status is `open` via `br ready` (or its equivalent command). The ready-work query result is the input to the daemon's dispatch loop.
+The orchestrator agent uses `br ready` (or its equivalent command) to discover the set of beads whose dependencies are satisfied and whose status is `open`. The query's result is an input to the orchestrator's queue-planning surface per [queue-model.md §1 — Scope and terms]. The daemon MUST NOT consume `br ready` as a dispatch input; the daemon's dispatch input is the submitted queue per [queue-model.md §8 QM submit].
 
-The ready-work response payload MUST surface each bead's labels array — including any `workflow:<mode>` label per BI-009a — so the daemon's claim path can extract and apply the per-task workflow-mode override at dispatch time. This is a read-path observation that exploits the existing `br ... --format json` label exposure (per BI-025b); no new query surface is introduced.
+When the orchestrator (or any agent) invokes `br ready`, the response payload MUST surface each bead's labels array — including any `workflow:<mode>` label per BI-009a — so the orchestrator's planning surface can extract and apply the per-task workflow-mode override at submit time. This is a read-path observation that exploits the existing `br ... --format json` label exposure (per BI-025b); no new query surface is introduced. The daemon re-reads the bead at submit-validation time per §4.5a BI-013b; that read also surfaces labels.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
-#### BI-013a — Ready-work query excludes `needs-attention` beads
+#### BI-013a — `needs-attention` beads are rejected at submit-time
 
-The `br`-CLI adapter's ready-work query (BI-013) MUST exclude beads carrying a `needs-attention` label from the dispatchable set, even when their `coarse_status` is `open`. The `needs-attention` label is set by the daemon when a `review-loop` run hits the iteration cap per [execution-model.md §4.3] (and by analogous operator-drain semantics per [operator-nfr.md §4.3]); its presence asserts that operator triage is required before the bead may be re-dispatched. The exclusion MUST be applied at adapter read time so the daemon's dispatch loop never observes a `needs-attention`-labeled bead as ready.
+Beads carrying a `needs-attention` label MUST NOT be accepted into a submitted queue. The submit-time validation contract of §4.5a (BI-013b) MUST reject any `bead_id` whose live record carries the label, returning a typed validation failure per [queue-model.md §6 QM-021]. The `br`-CLI adapter's `br ready` output remains a faithful ledger view — it MAY include `needs-attention` beads if Beads itself returns them — and downstream consumers (orchestrator agents, operator tooling) are responsible for filtering them per their own policy.
 
-An operator who clears the `needs-attention` label restores the bead to the dispatchable set on the next ready-work query; no special-case re-claim path is needed.
+The label is set by the daemon when a `review-loop` run hits the iteration cap per [execution-model.md §4.3] (and by analogous operator-drain semantics per [operator-nfr.md §4.3]); its presence asserts that operator triage is required before re-dispatch. An operator who clears the label restores the bead to the submittable set on the next queue-submit.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -296,6 +300,28 @@ On daemon startup, the orphan sweep of [process-lifecycle.md §4.2 PL-006] MUST 
 Cross-spec coordination request to PL: extend PL-006 orphan-sweep enumeration to include `br` subprocesses (alongside tmux sessions, worktree locks, agent subprocesses, and intent files). Tracked as new OQ-BI-010.
 
 Tags: mechanism
+
+### 4.5a Submit-time validation read surface
+
+Under extqueue, the daemon's dispatch input is the externally-submitted queue per [queue-model.md §8 QM submit]. Before a queue-submit (or queue-append, or queue-dry-run) is accepted, the daemon MUST validate every referenced bead against the live ledger. This section names the daemon's read surface for that validation; the rules themselves (existence, status, no-double-dispatch, no-duplicate, append-target validity, parallelism-narrowed surfacing) live in [queue-model.md §6 QM-020..QM-026] and are NOT restated here.
+
+#### BI-013b — Submit-time bead read uses `br show`
+
+For every `bead_id` named in a `queue-submit` / `queue-append` / `queue-dry-run` request, the adapter MUST invoke `br show <bead_id> --format json` (per BI-025b) and parse the result. The read is subject to the BI-025c 5 s read-timeout discipline and the BI-025a `BrError` taxonomy. The parsed record supplies the inputs the validation rules of [queue-model.md §6 QM-020 (existence)], [queue-model.md §6 QM-021 (status)], and [queue-model.md §6 QM-022 (no-double-dispatch)] consume. The label set on the returned record is the input the validation rule of §4.5 BI-013a (`needs-attention` rejection) consumes.
+
+The validation MUST NOT mutate Beads. Submit-time reads are read-only; BI-INV-001 continues to apply.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### BI-013c — Pre-claim status re-read
+
+Between the dispatcher's selection of a queue item and the `claim` write to Beads, the daemon MUST re-read the bead's status via `br show <bead_id>` and confirm `status = open`. If the re-read returns a non-open status, the daemon MUST skip the claim, emit `bead_claim_skipped{bead_id, observed_status, reason="status_changed_between_select_and_claim"}` per [event-model.md §8.8], and return the item to its group with status `deferred-for-ledger-dep` per [queue-model.md §6 QM-022] (when the change indicates an external claim by another daemon process — disallowed per BI-009 and §4.8a BI-025e operator note — or a status flip to `closed` / `tombstone` / `deferred`).
+
+This requirement names the ShowBead pre-claim guard previously carried as implementation-only in the daemon workloop. Under extqueue, the guard is load-bearing for the queue's exactly-once dispatch guarantee per [queue-model.md §6 QM-022] and warrants a normative anchor.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.6 Bead-ID propagation
 
@@ -380,7 +406,7 @@ Tags: mechanism
 
 #### BI-024a — `br --version` handshake
 
-The adapter MUST invoke `br --version` at daemon startup (during PL-005 step 4, the Cat 0 prerequisite pre-check (where Beads/`br` availability is verified). The handshake completes BEFORE the step 6 `br ready` query so that step 6 does not run against an incompatible `br` version) and compare the parsed version against the pinned version declared in the harmonik release manifest per BI-024. The version output MUST match the regex `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`. A version mismatch outside the compatibility window of BI-026, OR an unparseable output, MUST fail daemon startup with exit code 8 (`beads-unavailable` per [operator-nfr.md §8]) and emit `daemon_startup_failed{failure_mode="br-version-incompatible"}`.
+The adapter MUST invoke `br --version` at daemon startup (during PL-005 step 4, the Cat 0 prerequisite pre-check where Beads/`br` availability is verified). The handshake MUST complete BEFORE the daemon accepts its first `queue-submit` RPC per [process-lifecycle.md §4.4 PL-003a], so that submit-time validation (§4.5a BI-013b) does not run against an incompatible `br` version. The adapter MUST compare the parsed version against the pinned version declared in the harmonik release manifest per BI-024. The version output MUST match the regex `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`. A version mismatch outside the compatibility window of BI-026, OR an unparseable output, MUST fail daemon startup with exit code 8 (`beads-unavailable` per [operator-nfr.md §8]) and emit `daemon_startup_failed{failure_mode="br-version-incompatible"}`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -401,7 +427,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-025c — `br` subprocess timeout discipline
 
-Every adapter invocation of `br` MUST be bounded by a subprocess wall-clock timeout: 5 s for read commands (default; operator-tunable per [operator-nfr.md §4.9]), 10 s for write commands (default; operator-tunable). Timeout expiry MUST classify as `BrUnavailable`. The 5s read timeout aligns with PL-005 step 6's `br ready` 5s constraint.
+Every adapter invocation of `br` MUST be bounded by a subprocess wall-clock timeout: 5 s for read commands (default; operator-tunable per [operator-nfr.md §4.9]), 10 s for write commands (default; operator-tunable). Timeout expiry MUST classify as `BrUnavailable`. The 5 s read-command default applies to all adapter reads, including the submit-time `br show` per §4.5a BI-013b.
 
 On timeout expiry, the adapter MUST terminate the `br` subprocess via the standard SIGTERM-then-SIGKILL discipline of [handler-contract.md §4.3 HC-018]: send SIGTERM, wait up to 5 seconds for the subprocess to exit, send SIGKILL if still running, then `cmd.Wait()` to reap. The watcher goroutine per [process-lifecycle.md §4.5 PL-014]'s `cmd.Wait()` reap discipline applies. A SIGTERM-then-SIGKILL'd subprocess MUST classify as `BrUnavailable` (NOT `BrOther`); the adapter's intent log retains the entry for crash-recovery per BI-031.
 
@@ -424,7 +450,7 @@ Tags: mechanism
 
 #### BI-025e — Concurrent `br` invocation discipline
 
-The adapter MAY invoke `br` concurrently from multiple daemon goroutines. SQLite WAL mode (the default for the pinned Beads SQLite fork) accommodates concurrent processes; SQLite itself serializes writes via WAL discipline. The adapter MUST NOT introduce additional serialization (no adapter-side mutex on `br` invocations) — concurrent reads (BI-013, BI-014, BI-015, BI-016) and writes (BI-010 claim/close/reopen) are permitted in parallel. On concurrent-write contention, `br` returns `BrDbLocked`; the adapter retries per BI-025c retry policy.
+The adapter MAY invoke `br` concurrently from multiple daemon goroutines. SQLite WAL mode (the default for the pinned Beads SQLite fork) accommodates concurrent processes; SQLite itself serializes writes via WAL discipline. The adapter MUST NOT introduce additional serialization (no adapter-side mutex on `br` invocations) — concurrent reads (BI-013, BI-014, BI-015, BI-016, BI-013b, BI-013c) and writes (BI-010 claim/close/reopen) are permitted in parallel. On concurrent-write contention, `br` returns `BrDbLocked`; the adapter retries per BI-025c retry policy.
 
 Operators running multiple harmonik daemons against the SAME Beads SQLite store is unsupported per [process-lifecycle.md §4.1] (per-project daemon model); detection of multi-daemon-same-Beads is tracked as OQ-BI-012.
 
@@ -449,6 +475,8 @@ Tags: mechanism
 ### 4.10 `br`-adapter idempotency — terminal-transition writes
 
 > INFORMATIVE — Intent-log directory ownership. `.harmonik/beads-intents/` is BI-owned. Operator-nfr clean-install / cleanup protocols MUST preserve this directory and any intent files for crash recovery; cite [operator-nfr.md §4.10] coordination.
+
+> INFORMATIVE — Intent-log scope is unchanged under extqueue. The intent-log discipline of BI-029 / BI-030 covers ONLY terminal-transition writes to Beads (`op ∈ {claim, close, reopen}`). Queue submissions, appends, removes, pauses, and resumes are daemon-internal state mutations that are NOT Beads writes; they are persisted under the separate `.harmonik/queue.json` discipline of [queue-model.md §3 QM-001..QM-003]. The two on-disk contracts coexist in `.harmonik/` and are independent. BI-INV-001 ("no intra-run writes") continues to apply to Beads writes only; it does NOT constrain queue mutations.
 
 #### BI-029 — Terminal-transition writes carry a deterministic idempotency key
 
@@ -521,7 +549,7 @@ Tags: mechanism
 
 #### BI-INV-001 — No intra-run writes to Beads
 
-No harmonik code path MAY write to Beads at any run transition other than (i) the three terminal transitions named in §4.4 BI-010 / BI-010a (claim, close, reopen), or (ii) the reconciliation-driven writes in BI-010b. Intermediate node outcomes, per-transition state changes, failure classes, and hook fire events MUST never produce a `br` status write.
+No harmonik code path MAY write to Beads at any run transition other than (i) the three terminal transitions named in §4.4 BI-010 / BI-010a (claim, close, reopen), or (ii) the reconciliation-driven writes in BI-010b. Intermediate node outcomes, per-transition state changes, failure classes, and hook fire events MUST never produce a `br` status write. Queue mutations per [queue-model.md §3 QM-001..QM-003] are NOT Beads writes and are NOT constrained by this invariant.
 
 Tags: mechanism
 Sensor: corpus-wide reviewer-persona scan asserts no `br <state-change>` invocation appears outside the §4.10 adapter module; §10.2 BI-002 / BI-012 contract test asserts that the only `os/exec` site with `br` argv is the adapter; §10.2 cross-spec scenario test injects a non-terminal node and asserts no `br` write fires.
@@ -667,6 +695,7 @@ This spec's requirements drive inclusion of the `bead_id` field on the following
 - `run_failed` — `bead_id` present iff the run is bead-bound.
 - `checkpoint_written` — `bead_id` present iff the run is bead-bound.
 - `store_divergence_detected` — carries `bead_id` when divergence is scoped to a specific bead.
+- `bead_claim_skipped` — carries `bead_id`, `observed_status`, and `reason` per §4.5a BI-013c.
 
 This spec is normative for WHEN `bead_id` appears on a payload; [event-model.md §6.3] is normative for the shape of each event.
 
@@ -698,6 +727,9 @@ The adapter is the producer of `BrError`; reconciliation detectors are the prima
 - **[handler-contract.md §4.11]** — skill-injection mechanism; the Beads-CLI skill (§4.9) is delivered via that surface. Target spec pending bootstrap; this citation tracks forward.
 - **[control-points.md §4.11]** — skill-declaration surface where the Beads-CLI skill is declared. Target spec pending bootstrap.
 - **[control-points.md §6.3]** — YAML policy where per-role exclusions of the Beads-CLI skill are recorded (§4.9.BI-028). Target spec pending bootstrap.
+- **[queue-model.md §6 QM-020..QM-026]** — validation rules consumed by the §4.5a submit-time validation read surface; this spec owns the read mechanics, queue-model owns the rules.
+- **[queue-model.md §8 QM submit]** — queue-submit lifecycle that consumes BI-013b reads; queue-submit is the daemon's dispatch input, not `br ready`.
+- **[process-lifecycle.md §4.4 PL-003a]** — first-`queue-submit` gate consumed by the BI-024a `br --version` handshake ordering requirement.
 
 ### 9.2 Reverse dependencies
 
@@ -720,7 +752,7 @@ The adapter is the producer of `BrError`; reconciliation detectors are the prima
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement BI-001 through BI-032 and every invariant BI-INV-001 through BI-INV-004. No requirement is deferred at MVH.
+**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement BI-001 through BI-032 (including BI-013b, BI-013c) and every invariant BI-INV-001 through BI-INV-004. No requirement is deferred at MVH.
 
 **Post-MVH extensions.** None declared at this time. Future additions (e.g., a harmonik-side Beads read-through cache with bounded staleness, a second adapter for a non-Beads ledger) are additive and would be tracked as new requirements.
 
@@ -731,7 +763,8 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **BI-001 — BI-004 (selection + access model).** Build-time dependency-manifest tests verify the pinned Beads version matches the adapter's compatibility declaration; integration tests verify no code path links Beads as a library.
 - **BI-005 — BI-009 (Beads-managed data).** Contract tests against a live `br` binary at the pinned version verify that `title`, `description`, `type`, edges, and status behave as declared; atomic-claim tests spawn two concurrent claim attempts and verify only one succeeds.
 - **BI-010 — BI-012 (write surface).** End-to-end scenario tests dispatch a run, observe exactly one claim write, reach terminal success + merge, observe exactly one close write, and verify no intermediate `br` status-change invocations appear in the subprocess trace.
-- **BI-013 — BI-016 (read surface).** Unit tests cover the adapter's translation of typed queries into `br` invocations and parsing of `br` output; reconciliation-query tests replay a crash scenario and verify read-only access.
+- **BI-013 — BI-016 (read surface).** Unit tests cover the adapter's translation of typed queries into `br` invocations and parsing of `br` output; reconciliation-query tests replay a crash scenario and verify read-only access. BI-013a tests verify that a `needs-attention`-labeled bead is rejected at submit time per §4.5a BI-013b (NOT filtered at `br ready` read time).
+- **BI-013b — BI-013c (submit-time validation read surface).** Contract tests against a live `br` binary verify that `br show` returns the fields consumed by [queue-model.md §6 QM-020..QM-022] validation; pre-claim-guard tests inject a status flip between dispatcher selection and claim and verify `bead_claim_skipped` emission with no claim write.
 - **BI-017 — BI-020 (bead-ID propagation).** Cross-spec tests inspect a bead-bound run's git checkpoint trail, event stream, and session logs to verify `bead_id` appears on every expected surface; a non-bead-bound-run test verifies the field is absent everywhere.
 - **BI-021 — BI-023 (store-authority rules).** Scenario tests inject a git-vs-Beads divergence (Beads `closed`, no merge commit) and verify the divergence surfaces as a Cat 3 classification; JSONL-driven override attempts are rejected.
 - **BI-024 — BI-026 (version-pin + adapter).** Release-engineering tests verify the adapter module is the sole importer of `br` subprocess helpers; a mock-Beads test simulates a breaking surface change and verifies that only the adapter module changes.
@@ -742,7 +775,7 @@ Migration to `[testing.md §<layer>]` cross-references occurs within one revisio
 
 ### 10.3 Excluded conformance claims
 
-- This spec does NOT grant conformance over: Beads's own internal behavior (owned by the Beads project); the skill-injection mechanism (owned by [handler-contract.md §4.11]); reconciliation category classification or detector implementation (owned by [reconciliation/spec.md]); operator-CLI wrappers over Beads queries (owned by [operator-nfr.md §4.4]).
+- This spec does NOT grant conformance over: Beads's own internal behavior (owned by the Beads project); the skill-injection mechanism (owned by [handler-contract.md §4.11]); reconciliation category classification or detector implementation (owned by [reconciliation/spec.md]); operator-CLI wrappers over Beads queries (owned by [operator-nfr.md §4.4]); queue data model, group lifecycle, and validation rules (owned by [queue-model.md]).
 - This spec does NOT guarantee any performance or throughput bounds on `br` invocation; those are operator-observable in [operator-nfr.md §4.8] and are not requirements of this spec.
 
 ## 11. Open questions
@@ -855,6 +888,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 | 2026-04-24 | 0.3.0 | foundation-author | R1 review integration (implementer + cross-spec-architect + critic). Front-matter expansion: added `spec-category: foundation-cross-cutting`; expanded `depends-on` to the full normative-dependency set (architecture, execution-model, event-model, handler-contract, control-points, workspace-model, process-lifecycle, operator-nfr, reconciliation), preserving the EM↔BI mutual-dependency-by-direction pattern. **§4.4 closed deferred/tombstone hole:** added BI-010a status-mapping table binding harmonik run-level events (`run_started`/`run_completed`/`run_failed`/reopen-bead verdict/Cat 3c auto-resolver/operator cancel) to Beads coarse-status transitions, and BI-010b carve-out for reconciliation-driven writes (Cat 3a/3b/3c auto-resolvers route through the §4.8 adapter and §4.10 idempotency contract; their emission corresponds to `reconciliation_verdict_executed`, not `run_completed`). Updated BI-INV-001 to reference both BI-010a and BI-010b. **§4.8a `br` CLI surface contract (NEW):** BI-024a `br --version` handshake, BI-025a exit-code taxonomy (mandatory `BrError` classification + `store_divergence_detected` on unrecognized codes), BI-025b mandatory `--format json` (text-output parsing forbidden), BI-025c subprocess timeout discipline (5s read / 10s write defaults, operator-tunable), BI-025d stderr capture obligation. **§6.1a `BrError` enum + exit-code mapping table** (illustrative; pinned-version surface is authoritative). **§8 (NEW) Error and failure taxonomy** mapping each `BrError` value to a reconciliation category and routing. **BI-031 reframed:** Beads-idempotency-independent status-check-before-reissue protocol replaces the prior "Beads's own idempotency" assertion; BI-031b adds `br show` JSON-consistency dependency with `BrSchemaMismatch` divergence emission. **AR-042 sensors:** added `Sensor:` line to all four invariants; BI-INV-004 reshaped (not retired) with widened cross-subsystem span (Cat 3a detector + adapter unit tests + cross-spec out-of-band-write scenario). **BI-008a bead-ID scoping** added (project-scoped, opaque, no parsing/minting/rewriting). **§A.4 reverse-drift migration map** publishing legacy `[beads-integration.md §10.N]` → current `§4.N` anchors. **MUST/SHOULD cleanups:** BI-005 cache-as-authoritative MUST tightened; BI-021 dropped redundant "within its domain"; BI-024 replaced "typically accompanied by an adapter change" with "MUST be accompanied" for backwards-incompatible changes. **New OQs:** OQ-BI-004 (operator-cancel Beads transition), OQ-BI-005 (cross-project bead-ID scoping), OQ-BI-006 (task-ingestion edge-write authority), OQ-BI-007 (Beads-CLI skill capability partition). **Informative additions:** §4.7 Cat 3a/3c auto-resolver actions in BI terms; §4.10 intent-log directory ownership note (operator-nfr clean-install/cleanup MUST preserve `.harmonik/beads-intents/`). **Citation re-grep verified:** zero legacy-anchor matches in this spec body as of v0.3.0 (the v0.2.1 cleanup pass landed the migrations; the only grep hits are inside the v0.2.1 revision-history row's narrative description of work-already-done). Status remains `draft` pending R2 review (skeptic + crash-adversary + adapter-author). All inserts use letter-suffix IDs (BI-008a, BI-010a/b, BI-024a, BI-025a–d, BI-031b) to preserve topical grouping; numeric IDs unchanged. |
 | 2026-04-24 | 0.4.0 | foundation-author | R2 review integration (skeptic + crash-adversary + adapter-author). **A1 (EV vocabulary alignment):** Replaced 3 fabricated `divergence_kind` enum values (`br_unrecognized_exit_code` in BI-025a, `beads_status_unexpected` in BI-031, `beads_schema_drift` in BI-031b) with `divergence_inconclusive` emissions per [event-model.md §8.6.10] with `reason=authority_unavailable` per EV-023a single-authority semantics. **A2 (event removal):** Replaced fabricated `bead_terminal_transition_recovered` event in BI-031 with a structured-log emission per [operator-nfr.md §4.9 ON-035] at level=info; adapter recovery is observability surface, not a state-mutation event. **B (BI-031 step 3 + step 4 expansion):** Step 3 disambiguation via `br audit-log --filter-idempotency-key` match (3i = harmonik-side authorship confirmed → no-op recovery + structured-log; 3ii = audit-log unavailable or no match → emit `divergence_inconclusive`, retain intent file for Cat 3a auto-resolver). Step 4 error-handling branch covering `BrConflict` (re-execute step 3 with new state), `BrDbLocked` (exponential backoff 100ms→1s × 3 retries), `BrUnavailable` (daemon-degraded routing per ON-037; PL-010 retry), `BrSchemaMismatch` (`divergence_inconclusive` per BI-031b), `BrOther` (Cat 6b operator-escalation per [reconciliation/spec.md §8.11]). **C (BI-030 atomicity tightened):** Temp+rename+fsync(temp)+fsync(parent_dir) on create AND fsync(parent_dir) on delete; matches WM-026 sidecar discipline. Closes APFS / ext4-data=ordered power-loss vulnerabilities. **D (BI-025c subprocess termination):** SIGTERM-then-SIGKILL discipline via HC-018 pattern; `cmd.Wait()` reap per PL-014; SIGTERM-then-SIGKILL'd subprocess classifies as `BrUnavailable` (NOT `BrOther`). **E (BI-014a NEW):** Orphan `br` subprocess sweep on daemon startup to prevent SQLite WAL lock contention; cross-spec coordination request to PL R3 to extend PL-006 orphan-sweep enumeration. **F (PL-005 step number fix):** BI-024a corrected from "PL-005 step 6" to "PL-005 step 4 Cat 0 pre-check" — version handshake belongs in step 4, not after the step 6 `br ready` query. **G (failure_class enum alignment):** BI-010a aligned to EM §8 canonical enum values `{transient, structural, deterministic, canceled, budget_exhausted, compilation_loop}`; dropped fabricated `recoverable`; mapped `deterministic`/`budget_exhausted` rows; `canceled` row added (no Beads write at MVH per OQ-BI-004). **H (IntentLogEntry schema):** §6.1 IntentLogEntry record gains `intended_post_state: CoarseStatus` field, derivable from (op, current_pre_state). **I (compatibility-window definition):** BI-024 mechanically defines the compatibility window as exact-match at MVH (`isCompatible(pinned, observed) ≡ pinned == observed`); semver-range widening tracked as OQ-BI-011. **J (BI-025d stderr robustness):** 1 MiB capture cap with explicit truncation suffix; explicit handling of warnings-on-success / Rust panic / argparse / partial-on-timeout cases. **K (BI-031 trigger consolidation):** BI-031 trigger consolidated as adapter-driven on startup (NOT reconciliation-driven via Cat 3a); the layering between adapter startup recovery and reconciliation Cat 3a is documented (Cat 3a is the post-emergence detection layer for divergences the adapter could not resolve). **L (BI-025e NEW):** Concurrent `br` invocation discipline — concurrency permitted; SQLite WAL serializes; no adapter-side mutex; OQ-BI-012 tracks multi-daemon-same-Beads detection. **M1 (adapter logging):** Informative note appended after BI-025e — adapter logs route through ON-035 with `subsystem=beads-adapter`. **M2 (unit-test seam):** BI-025 amended to expose injectable `br` binary path via constructor parameter for testability. **M3 (backpressure):** BI-031 amended — adapter MUST emit `daemon_degraded{reason=infrastructure_unavailable}` per [event-model.md §8.7.5] when intent-log directory exceeds 100 entries. **N (new OQs):** OQ-BI-008 (EV vocabulary extension for adapter-specific divergences), OQ-BI-009 (`br audit-log` idempotency-key query support), OQ-BI-010 (PL-006 orphan-sweep extension), OQ-BI-011 (compatibility-window widening post-MVH), OQ-BI-012 (multi-daemon-same-Beads detection), OQ-BI-013 (ENOSPC during intent-write routing), OQ-BI-014 (DB corruption vs schema-skew disambiguation). Cross-spec coordination requests: PL R3 should extend PL-006 orphan-sweep to enumerate `br` subprocesses (OQ-BI-010); EV may add `divergence_kind` enum values for adapter-specific divergences post-MVH (OQ-BI-008); RC R3 may align Cat 3a detection text with BI-031's status-check protocol (concurrent RC R2 integration is also addressing this). BI IDs frozen at v0.4.0. |
 | 2026-04-26 | 0.4.1 | foundation-author | Reconciliation patch: BI-007's "fixed five-valued enum" claim was factually wrong about Beads's exposed surface — live `br` v0.1.45 reports `Status.enum` of 8 values: `{open, in_progress, blocked, deferred, draft, closed, tombstone, pinned}` (from `br --json schema`). Two-surface reframe per the decompose-to-tasks discipline-author's option (c): WRITE surface stays the five-value subset `{open, in_progress, closed, deferred, tombstone}` (harmonik MUST NOT transition INTO additional values via `br` writes); READ surface tolerates whatever Beads exposes (consumers pass through `blocked`, `draft`, `pinned`, and future Beads extensions; do NOT map them onto write-subset values). `draft` specifically becomes harmonik's readiness-workflow mechanism — the dispatch loop's BI-013 ready-work query natively excludes `draft` via `br ready`, so loaded-but-not-yet-dispatchable beads use this Beads-native idiom rather than a synthetic harmonik-side discriminator. §6.1 schemas split: `CoarseStatus` is now the Beads-owned extensible 8+-value read enum; `HarmonikWriteStatus` (NEW) is the 5-value write subset. `BeadRecord.status` field-comment updated to cite the read surface. §3 glossary entry updated to match. No requirement IDs renumbered or retired; BI IDs remain FROZEN. Cross-spec coordination requested: none — this is a self-contained spec correction. Status remains `reviewed`. (Surfaced by the 2026-04-25 decompose-to-tasks discipline reviewer pass; F2 finding.) |
+| 2026-05-14 | 0.5.0 | foundation-author | extqueue amendments (kerf `extqueue`). **A (BI-013 demoted):** `br ready` is no longer a daemon dispatch input; it becomes an orchestrator-facing tool feeding the queue-planning surface per [queue-model.md §1]. The daemon's dispatch input is the submitted queue per [queue-model.md §8 QM submit]; the label-exposure clause is preserved but consumed at submit time, not at daemon dispatch. **B (BI-013a relocated):** `needs-attention` exclusion moves from adapter read-time filtering on `br ready` to submit-time validation rejection per §4.5a BI-013b mapped through [queue-model.md §6 QM-021]; `br ready` output remains a faithful ledger view. **C (BI-024a re-anchored):** `br --version` handshake now ordered against the first `queue-submit` RPC per [process-lifecycle.md §4.4 PL-003a]; the "BEFORE step 6 `br ready`" anchor is retired. **D (BI-025c re-anchored):** 5 s read-timeout default is restated as covering all adapter reads including §4.5a BI-013b submit-time `br show`; the "aligns with PL-005 step 6's `br ready` 5s constraint" anchor is retired. **E (§4.5a NEW — Submit-time validation read surface):** BI-013b (submit-time bead read uses `br show`, citing [queue-model.md §6 QM-020..QM-022]) and BI-013c (pre-claim status re-read, formerly the hk-p4xbw guard living implementation-only in the daemon workloop; now load-bearing for the queue's exactly-once dispatch guarantee per [queue-model.md §6 QM-022]). **F (BI-007 prose cleanup):** the "dispatch loop (BI-013 ready-work) MUST exclude `draft`-status beads" parenthetical is replaced with a submit-time validation duty per §4.5a BI-013b + an orchestrator-side affordance via `br ready`. **G (§4.10 informative scope note):** explicit informative note that the intent-log discipline of BI-029/BI-030 covers ONLY terminal-transition writes; queue mutations per [queue-model.md §3 QM-001..QM-003] are NOT Beads writes and are NOT constrained by BI-INV-001. The BI-INV-001 body also gains a corresponding clarifying sentence. **Co-references added:** §4.4 BI-010a `deferred`/`tombstone` bullet now points to §4.5a BI-013b rather than the retired adapter ready-work filter. §6.4 co-owned event payloads gains `bead_claim_skipped` (per §4.5a BI-013c). §9.1 depends-on gains queue-model.md and process-lifecycle.md §4.4 PL-003a. §10.1 conformance profile updated to include BI-013b/BI-013c. §10.2 test obligations gain a new bullet for BI-013b / BI-013c. §10.3 conformance exclusions add queue-model ownership. The `enqueue` operator command (legacy reference) is retired; no surviving references in this spec. BI IDs frozen at v0.5.0 (additive: BI-013b, BI-013c; no renumbering, no retirement). |
 
 ## A. Appendices
 
@@ -878,10 +912,10 @@ Sibling specs MAY still cite this spec at legacy `[beads-integration.md §10.N]`
 | `[beads-integration.md §10.2]` | `§4.2` (BI-002–BI-004) | `br` CLI as sole access surface |
 | `[beads-integration.md §10.3]` | `§4.3` (BI-005–BI-009) | Beads-managed data |
 | `[beads-integration.md §10.4]` | `§4.4` (BI-010–BI-012; BI-010a status table; BI-010b reconciliation writes) | Terminal-transition writes |
-| `[beads-integration.md §10.5]` | `§4.5` (BI-013–BI-016) | Read surface |
+| `[beads-integration.md §10.5]` | `§4.5` (BI-013–BI-016) / `§4.5a` (BI-013b, BI-013c) | Read surface / submit-time validation read surface |
 | `[beads-integration.md §10.6]` | `§4.6` (BI-017–BI-020) | Bead-ID propagation |
 | `[beads-integration.md §10.7]` | `§4.7` (BI-021–BI-023) | Store-authority rules |
-| `[beads-integration.md §10.8]` / `[beads-integration.md §10.8a]` | `§4.8` (BI-024–BI-026) / `§4.8a` (BI-024a, BI-025a–BI-025d) | Adapter layer / `br` surface contract |
+| `[beads-integration.md §10.8]` / `[beads-integration.md §10.8a]` | `§4.8` (BI-024–BI-026) / `§4.8a` (BI-024a, BI-025a–BI-025e) | Adapter layer / `br` surface contract |
 | `[beads-integration.md §10.9]` | `§4.9` (BI-027–BI-028) | Beads-CLI skill |
 | `[beads-integration.md §10.10]` | `§4.10` (BI-029–BI-032; BI-031b) | Idempotency contract |
 

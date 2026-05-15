@@ -8,10 +8,10 @@ requirement-prefix: EV
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.4.0
+version: 0.5.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-12
+last-updated: 2026-05-14
 depends-on:
   - architecture
   - execution-model
@@ -275,6 +275,23 @@ A candidate event type is accepted into §8 if and only if **all** of:
 - (h) Paired-phase lifecycles (pending/resolved, active/cleared) MUST NOT split into two event types; use a single type with a `status` field. Existing merges: `agent_rate_limit_status`, `workspace_merge_status`, `operator_pause_status`. Emitters of status-carrying events MUST emit only on `status` transitions (entry into a new phase); successive emissions with identical `status` for the same scoped entity are forbidden — this rule prevents keepalive-style re-emission that would force consumers back into the correlation-deduplication logic the merge was designed to eliminate. The `changed_at` field MUST carry millisecond resolution to distinguish rapid transitions. §8.9(h) applies to paired-phase *lifecycles* only; gate verdicts (`gate_allowed` / `gate_denied` / `gate_escalated`) are terminal-distinct outcomes, not sequential phases of the same lifecycle, and remain split per control-points §6.5.
 
 The `agent_output_chunk` and `budget_accrual` types remain fine-grained in MVH because the improvement-loop subsystem requires per-chunk cost attribution and mid-run signals; collapsing them to summary events would lose information. A log-level / filter mechanism for suppressing chunk events at consumer boundaries is a future refinement slot.
+
+### 8.10 Queue lifecycle
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.10.1 | `queue_submitted` | F | queue | audit, observability, orchestrator-core | `queue_id`, `submitted_at`, `group_count`, `total_bead_count`, `schema_version` (queue.json) |
+| 8.10.2 | `queue_group_started` | O | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `group_kind` (enum: `wave` / `stream`), `item_count`, `started_at` |
+| 8.10.3 | `queue_group_completed` | F | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `final_status` (enum: `complete-success` / `complete-with-failures`), `success_count`, `fail_count`, `completed_at` |
+| 8.10.4 | `queue_paused` | F | queue | audit, observability, orchestrator-core, operator-observability | `queue_id`, `group_index`, `fail_count`, `paused_at`, `reason` (enum: `group_failure` / `operator_drain`) |
+| 8.10.5 | `queue_appended` | O | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `appended_bead_ids` (String[]), `appended_at` |
+| 8.10.6 | `queue_item_deferred_for_ledger_dep` | O | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `bead_id`, `blocker_bead_id`, `detected_at` |
+
+> Section Axes (§8.10 Queue lifecycle): All §8.10 event emissions are mechanism-tagged. Class F entries (`queue_submitted`, `queue_group_completed`, `queue_paused`) are fsync-backed because loss orphans the queue's execution plan, the group-boundary advance decision, or the hard pause landmark respectively (per EV-016). Class O entries (`queue_group_started`, `queue_appended`, `queue_item_deferred_for_ledger_dep`) are best-effort: each is reconstructible from a sibling class-F landmark (group_started from the predecessor's `queue_group_completed` plus queue.json; appended from queue.json mutation history; deferred from ledger state plus queue.json). Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+> Emission ordering (§8.10). For a single queue's lifecycle the emission order MUST be: (a) `queue_submitted` (one); (b) immediately followed by `queue_group_started{group_index:0}` plus any `queue_item_deferred_for_ledger_dep` events arising from submit-time validation per [queue-model.md §6 QM-025]; (c) per dispatched bead, the §8.1 chain `run_started{queue_id, queue_group_index} → … → run_completed{queue_id, queue_group_index}` OR `run_failed{queue_id, queue_group_index}` carries per-item lifecycle (no separate `queue_item_*` emission exists); (d) when every item in the active group reaches a terminal state, `queue_group_completed`; (e) if any item in that group failed, `queue_paused{reason:group_failure}` MUST follow `queue_group_completed` in that emission order (group_completed first, paused second); (f) otherwise, `queue_group_started{group_index:N+1}` follows; (g) `queue_appended` MAY interleave at any time on a stream group whose status is `pending` or `active` per [queue-model.md §7]. The §8.1 terminal `run_completed` / `run_failed` for the last item of a group MUST precede `queue_group_completed` for that group, never follow it.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ## 4. Normative requirements
 
@@ -740,7 +757,24 @@ workflow_version: <String>
 bead_id: <String> | null
 workspace_path: <String>
 input_ref: <String>
+queue_id: <String> | null              # UUIDv7 as string; populated when the run was dispatched from a queued submission per §8.10 / [queue-model.md §4]
+queue_group_index: <Integer> | null    # populated alongside queue_id; identifies the group within the queue
 ```
+
+The `queue_id` and `queue_group_index` fields are OPTIONAL additive fields per §6.4 row 1; older readers ignore them. The fields are populated only when the run was dispatched from a queued submission; foreground / single-bead invocations leave both null. The same optional pair appears on `run_completed` and `run_failed` below.
+
+#### `run_completed`
+
+```yaml
+run_id: <UUID>
+terminal_state_id: <UUID>
+ended_at: <Timestamp>
+summary: <String> | null
+queue_id: <String> | null              # UUIDv7 as string; populated when the run was dispatched from a queued submission per §8.10
+queue_group_index: <Integer> | null    # populated alongside queue_id
+```
+
+The `queue_id` / `queue_group_index` pair is OPTIONAL per §6.4 row 1 and carries the same semantics as on `run_started`.
 
 #### `run_failed`
 
@@ -751,7 +785,11 @@ failure_class: <FailureClass>   # coarse bucket per execution-model.md §8
 error_category: <ErrorCategory> | null  # narrow sentinel per handler-contract.md §4.5 when the failure originated from a handler; absent for orchestrator-originated failures
 ended_at: <Timestamp>
 reason: <String>
+queue_id: <String> | null              # UUIDv7 as string; populated when the run was dispatched from a queued submission per §8.10
+queue_group_index: <Integer> | null    # populated alongside queue_id
 ```
+
+The `queue_id` / `queue_group_index` pair is OPTIONAL per §6.4 row 1 and carries the same semantics as on `run_started`.
 
 `failure_class` is the coarse bucket; `error_category` is the narrow sentinel when present. Consumers SHOULD key on `failure_class` for bucket-level decisions and on `error_category` for handler-origin detail. `error_category` is absent for orchestrator-originated failures (e.g., `compilation_loop`) that have no handler-origin sentinel.
 
@@ -991,6 +1029,74 @@ detected_at: <Timestamp>
 
 Emitted by the daemon's claim path per [execution-model.md §4.3 EM-012a] when tier-1 mode resolution encounters either multiple `workflow:<mode>` labels on a single bead or a single label naming an unknown mode value. The event does not gate the run's dispatch; the precedence walk falls through to tier 2 / 3 / 4.
 
+#### `queue_submitted`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+submitted_at: <Timestamp>
+group_count: <Integer>
+total_bead_count: <Integer>
+schema_version: <Integer>                # version of the queue.json document per [queue-model.md §2]; distinct from the event envelope schema_version per EV-028
+```
+
+Per §6.4 conventions every new payload starts at envelope `schema_version: 1`; the `schema_version` field above is the queue.json document version surfaced for consumers (the envelope-level `schema_version` lives on the §6.1 envelope, not in this payload).
+
+#### `queue_group_started`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+group_index: <Integer>
+group_kind: <enum: wave | stream>        # per [queue-model.md §2]
+item_count: <Integer>
+started_at: <Timestamp>
+```
+
+#### `queue_group_completed`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+group_index: <Integer>
+final_status: <enum: complete-success | complete-with-failures>   # per [queue-model.md §5]
+success_count: <Integer>
+fail_count: <Integer>
+completed_at: <Timestamp>
+```
+
+#### `queue_paused`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+group_index: <Integer>
+fail_count: <Integer>
+paused_at: <Timestamp>
+reason: <String>                         # enum: group_failure | operator_drain — per [queue-model.md §5, §8]
+```
+
+`reason` is an exhaustive enum at MVH (`group_failure` is the v0.1 pause-by-failure path; `operator_drain` is the operator-initiated drain path). New variants require an EV-027 amendment. v0.1 ships no `queue-resume` operation; `queue_resumed` is reserved for v0.2 per the design rationale (see §A.3).
+
+#### `queue_appended`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+group_index: <Integer>
+appended_bead_ids: <String[]>
+appended_at: <Timestamp>
+```
+
+Emitted on stream-group mutation per [queue-model.md §7]; ignored on wave groups (a wave group's contents are immutable post-submit).
+
+#### `queue_item_deferred_for_ledger_dep`
+
+```yaml
+queue_id: <String>                       # UUIDv7 as string per [queue-model.md §4 QM-010..012]
+group_index: <Integer>
+bead_id: <String>
+blocker_bead_id: <String>
+detected_at: <Timestamp>
+```
+
+Informational observability of submit-time and dispatch-time ledger-dependency deferrals per [queue-model.md §6 QM-020..026]. The ledger remains the authority for `blocks` edges; loss is tolerable because the dispatcher re-evaluates eligibility from ledger state on each dispatch tick.
+
 Remaining per-type payloads follow the same pattern: field names listed in §8 columns, Go types resolved against the registry per EV-032. Outstanding: full YAML for the remaining ~41 types lands within one revision cycle per OQ-EV-005.
 
 ### 6.4 Schema evolution — breaking-change table
@@ -1024,6 +1130,7 @@ This spec owns the payload SHAPE for every type in §8. The WHEN of each emissio
 - Reconciliation events (§8.6): emission rules in [reconciliation/spec.md §4.1, §4.3, §4.5]. The new entries §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a), §8.6.12 `reconciliation_detector_panic` (RC-020b), and §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a) are RC-emission-owned. §8.6.14 `bead_terminal_transition_recovered` is **(post-MVH)** per OQ-BI-008 and reserved for future BI-adapter emission; no MVH emitter exists.
 - Operator / daemon events (§8.7): emission rules in [operator-nfr.md §6.5, §7.3] and [process-lifecycle.md §6.2, §8.6]. The new entries §8.7.16 `operator_command_failed` (ON-013a) and §8.7.17 `operator_escalation_cleared` (ON; companion to RC-emitted `operator_escalation_required`) are ON-emission-owned.
 - Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`, `redaction_failed`) and free-call (`metric`). The new entry §8.8.5 `redaction_failed` (ON-022 fail-closed redactor) is bus-internal; the redactor MUST emit it before aborting the redaction-violating emission. The new entry §8.8.6 `bead_label_conflict` (per [execution-model.md §4.3 EM-012a]) is emitted by the daemon's claim path on tier-1 mode-resolution conflicts.
+- Queue-lifecycle events (§8.10): emission rules in [queue-model.md §4 QM-010..012 (identity), §6 QM-020..026 (validation), §7 (append semantics), §8 (lifecycle)]. All six entries (`queue_submitted`, `queue_group_started`, `queue_group_completed`, `queue_paused`, `queue_appended`, `queue_item_deferred_for_ledger_dep`) are queue-emission-owned; this spec is normative for their payload shape, ordering rule, and durability class. The optional `queue_id` / `queue_group_index` payload fields on `run_started` / `run_completed` / `run_failed` are co-owned: this spec normatively declares their placement and typing per §6.3; [queue-model.md §8] declares when and how the dispatcher populates them.
 
 ## 7. Protocols and state machines
 
@@ -1217,6 +1324,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 | 2026-05-06 | 0.3.4 | foundation-author | Coordination patch landing 3 CP-emitted events that CP §6.5 / §7.1 / §4.7.CP-034b / §4.8.CP-041 declare but EV §8 was missing. **Taxonomy additions (3 new §8.2 control-point-lifecycle rows, no renumbering of pre-existing entries):** §8.2.10 `control_points_registration_started` (companion to existing §8.2.9 `control_points_registered`; the pair brackets the CP §7.1 registration batch — absence of the trailing event paired with a prior registration_started of the same `batch_id` signals a crashed-mid-registration batch); §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041 envelope-hash mismatch on persisted-verdict replay; reconciliation Cat 6 input); §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b cost-ceiling abort; durability class `F` because the abort and the event are a durability pair — the event MUST reach JSONL durability before the evaluator wrapper returns control). **§6.3 payload schema added** for `policy_expression_exceeded_cost` declaring `bound_fired ∈ {ast_steps, wall_clock}` discriminator and per-abort `io_determinism ∈ {deterministic, best-effort}` tag (load-bearing per CP-034b; re-adding post-MVH would be breaking). **§6.5 co-ownership map** updated to enumerate the 3 new CP-emission-owned entries. Mirrors the CP v0.2.0 changelog's "added to §6.5" note that never landed in EV. No EV requirement IDs added/renamed/retired; no pre-existing §8 entries renumbered; status remains `reviewed`. |
 | 2026-04-25 | 0.3.3 | foundation-author | Coordination patch wave landing R2 cross-spec items filed against EV by ON, RC, BI overnight 2026-04-24. **Taxonomy additions (7 new event-type IDs in gaps; no renumbering of pre-existing entries):** §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a `flock(LOCK_EX|LOCK_NB)` second-dispatch dedup); §8.6.12 `reconciliation_detector_panic` (RC-020b per-detector `recover()` barrier); §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a Cat 3b retry cap N=5); §8.6.14 `bead_terminal_transition_recovered` **(post-MVH)** reserved per OQ-BI-008 with explicit "no MVH emitter; structured-log via ON-035 at MVH" annotation block; §8.7.16 `operator_command_failed` (ON-013a panic-barrier emission carrying `command` + `failure_class` + optional `run_id`); §8.7.17 `operator_escalation_cleared` (ON companion to RC-emitted `operator_escalation_required`, carrying `clearance_reason` enum); §8.8.5 `redaction_failed` (ON-022 fail-closed redactor, bus-internal). **Daemon-shutdown durability confirmed F (resolves OQ-PL-012 — recorded here; OQ lives in PL).** §8.7.3 `daemon_shutdown` row already carried `F`; the durability-class statement is now load-bearing as the prior-cycle SIGTERM-receipt landmark for ON-033 RTO reconstruction. **Monotonic companion fields on §8.7.2/§8.7.3:** added `ready_at_ns_since_boot` (uint64) and `shutdown_at_ns_since_boot` (uint64) per ON-033, with concrete §6.3 payload schemas declaring both fields REQUIRED and explicitly noting boot-transition / SIGKILL `rto_undefined` carve-outs. **`daemon_degraded` reason enum promoted from informative (`/ other`) to exhaustive** with 6 values: `rto_breach`, `reconstruction_notify`, `clock_regression` (EV-002c), `cat0_post_ready` (RC-012a carve-out), `infrastructure_unavailable`, `silent_hang_aggregate` (ON-040 aggregator); concrete §6.3 payload added; §8.7.5 row updated; future variants require an EV-027 amendment. **`divergence_kind` post-MVH extension note** added under the §6.3 `store_divergence_detected` block: the MVH enum stays closed; adapter-specific values are reserved for a future revision per OQ-BI-008; no concrete adapter-specific values added in this revision. **§6.5 co-ownership map** updated to enumerate the 6 new MVH-active emitters (RC: §8.6.11–13; ON: §8.7.16–17 + bus-internal §8.8.5) and to mark §8.6.14 explicitly post-MVH. **§9.3 cross-references** added: ON-022 (`redaction_failed`), ON-013a (`operator_command_failed`), ON-033 (RTO consumer of monotonic fields), RC-002a / RC-020b / RC-026a / RC-012a, BI §4.10 + OQ-BI-008. No EV requirement IDs added/renamed/retired; no §8 entries renumbered; status remains `reviewed`. |
 
+| 2026-05-14 | 0.5.0 | foundation-author | External-queue kerf integration (`extqueue`). **Taxonomy additions (6 new cross-bus event types in new §8.10 Queue-lifecycle cohort):** §8.10.1 `queue_submitted` (F; loss orphans the execution plan), §8.10.2 `queue_group_started` (O; reconstructible from the predecessor group's `queue_group_completed` plus queue.json), §8.10.3 `queue_group_completed` (F; group-boundary advance landmark), §8.10.4 `queue_paused` (F; hard execution stop, `reason ∈ {group_failure, operator_drain}`), §8.10.5 `queue_appended` (O; stream-group mutation observability), §8.10.6 `queue_item_deferred_for_ledger_dep` (O; informational submit/dispatch-time deferrals). All six additions are queue-emission-owned (`source_subsystem = github.com/harmonik/internal/queue`, registered per EV-034a). The six additions are the EV-027 foundation-amendment scope for the external-queue kerf. **Dropped candidates** (per EV-016a tandem-emission rule and §8.9(c) granularity criterion): `queue_item_dispatched` (reconstructible from `run_started{queue_id, queue_group_index}`); `queue_item_completed` / `queue_item_failed` (tandem with `run_completed` / `run_failed` per EV-016a; the F-class run event is the durable landmark). `queue_resumed` is reserved for v0.2 alongside the `queue-resume` operation. **§6.3 payload-schema additions on existing types:** OPTIONAL additive fields `queue_id: <String> | null` (UUIDv7 as string) and `queue_group_index: <Integer> | null` added to `run_started`, `run_completed`, `run_failed` payloads per §6.4 row 1 (non-breaking; older readers ignore unknown fields per §6.4 reader obligation). Pattern mirrors the v0.4 `workflow_mode` precedent. **§6.3 payload schemas:** concrete YAML added for all six §8.10 entries; `queue_paused.reason` is an exhaustive enum at MVH. **§8.10 ordering rule** normatively pins the lifecycle emission order: `queue_submitted → queue_group_started{0} → per-item run_* chain → queue_group_completed → [queue_paused{group_failure}] OR queue_group_started{N+1}`; the terminal `run_completed`/`run_failed` for the last item of a group MUST precede `queue_group_completed` for that group. **§6.5 co-ownership map** updated to enumerate the six new queue-emission-owned entries plus the co-owned `queue_id` / `queue_group_index` fields on §8.1 run-lifecycle events. No prior event-type identifiers renumbered or retired; no EV requirement IDs added, renamed, or retired (the rule additions are §8.10 ordering and payload-field rules, not new top-level EV-NNN requirements). Status remains `reviewed`. |
 | 2026-05-12 | 0.4.0 | foundation-author | Workflow-modes kerf integration (C3). **Taxonomy additions (7 new cross-bus event types):** new §8.1a Review-loop cycle subsection adds six event types — §8.1a.1 `implementer_resumed` (O), §8.1a.2 `reviewer_launched` (O), §8.1a.3 `reviewer_verdict` (F; promoted from class O because the verdict gates terminal routing of the run — loss would orphan a closed-or-needs-attention task), §8.1a.4 `iteration_cap_hit` (O), §8.1a.5 `no_progress_detected` (O), §8.1a.6 `review_loop_cycle_complete` (F). §8.8.6 adds `bead_label_conflict` (O), emitted by the daemon's claim path on tier-1 mode-resolution conflicts per [execution-model.md §4.3 EM-012a]. All seven additions are the EV-027 foundation-amendment scope for the workflow-modes kerf. **§8.1 `workflow_mode` payload-field rule:** new normative note declaring that `run_started` / `run_completed` / `run_failed` payloads carry an optional `workflow_mode ∈ {single, review-loop, dot}` field (additive, backward-compatible) and that every §8.1a review-loop event payload carries the field as REQUIRED. **§3 Glossary additions:** `WorkflowMode` (enum cross-referenced to [execution-model.md §6.1]) and `claude_session_id` (the Claude Code session identifier; explicitly disambiguated from harmonik's `session_id` event field which is the handler-minted UUIDv7). **§6.3 payload schemas:** concrete YAML added for all six §8.1a entries plus §8.8.6 `bead_label_conflict`. The §8.1a.3 `reviewer_verdict` payload reuses the `agent-reviewer` JSON schema v1 fields verbatim (`schema_version`, `verdict`, `flags`, `notes`); no parallel schema is introduced per the locked decision. The `prior_verdict_summary` field on `implementer_resumed` is derived by front-truncating the prior reviewer's `notes` at 256 UTF-8 bytes. **§8.1a ordering rule** normatively pins the emit order within an iteration (`implementer_resumed → reviewer_launched → reviewer_verdict`; or `no_progress_detected → review_loop_cycle_complete` early-exit; or terminal `review_loop_cycle_complete` before §8.1 `run_completed`/`run_failed`). **§6.5 co-ownership map** updated to enumerate the new orchestrator-core-emission-owned entries plus the bus-internal `bead_label_conflict`. **Conformance (§10.1)** expanded to include the seven new event types in Core MVH. No prior event-type identifiers renumbered or retired; no EV requirement IDs added, renamed, or retired (the rule additions are payload-field rules and ordering rules on §8.1 / §8.1a, not new top-level EV-NNN requirements). Status remains `reviewed`. |
 
 ## A. Appendices

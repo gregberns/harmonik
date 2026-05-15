@@ -1,12 +1,16 @@
 package specaudit_test
 
-// hk-sx9r.33 binding test — ON-027 step 1: orchestrator stops pulling new tasks from the queue.
+// hk-sx9r.33 binding test — ON-027 step 1: daemon stops advancing the queue.
 //
 // Spec ref: specs/operator-nfr.md §4.7 ON-027.
 //
 // ON-027 states: on stop --graceful or SIGTERM (and on pause/upgrade per the
 // drain-gate of ON-008), the daemon MUST execute the shutdown/drain sequence in
-// strict step order. Step 1: orchestrator stops pulling new tasks from the queue.
+// strict step order. Step 1 (per extqueue v0.4.2): the daemon stops advancing
+// the queue — no new dispatches are issued from the active group, and the
+// queue's status field transitions to `paused-by-drain` per
+// [queue-model.md §5]. (Reworded from the legacy "orchestrator stops pulling
+// new tasks from the queue" phrasing.)
 // Per ON-027a, each step's completion MUST be marked durably before the next step
 // begins; on crash mid-drain, restart resumes from the next-uncompleted step.
 //
@@ -19,7 +23,7 @@ package specaudit_test
 //  1. ON-027 heading is present in specs/operator-nfr.md.
 //  2. "stop --graceful" is declared as a drain trigger.
 //  3. "SIGTERM" is declared as a drain trigger.
-//  4. "stop pulling new tasks from the queue" is declared as drain step 1.
+//  4. "stops advancing the queue" is declared as drain step 1.
 //  5. Step ordering is declared (each step completing before the next begins).
 //  6. "drain-timeout" escalation is named as the out-of-bound handling path.
 //  7. Tags: mechanism is present in the ON-027 body window.
@@ -29,7 +33,7 @@ package specaudit_test
 //   - ON-027 heading missing.
 //   - stop --graceful absent.
 //   - SIGTERM absent.
-//   - Step-1 stop-pulling-queue wording absent.
+//   - Step-1 stop-advancing-queue wording absent.
 //   - Step ordering declaration absent.
 //   - drain-timeout escalation absent.
 //   - Tags: mechanism missing.
@@ -175,12 +179,15 @@ func TestON027DrainStep1StopPullingQueue(t *testing.T) {
 		},
 		{
 			id:     "4",
-			label:  "step1-stop-pulling-new-tasks-from-queue",
-			needle: "pulling new tasks from the queue",
-			detail: "ON-027 body must declare 'pulling new tasks from the queue' as step 1 " +
-				"(expected phrase 'pulling new tasks from the queue'); this is the first " +
-				"drain step: the orchestrator's dispatch loop stops issuing new br-ready " +
-				"queries, preventing any new run from being dispatched during drain",
+			label:  "step1-stop-advancing-queue",
+			needle: "stops advancing the queue",
+			detail: "ON-027 body must declare 'stops advancing the queue' as step 1 " +
+				"(expected phrase 'stops advancing the queue'); this is the first " +
+				"drain step: per extqueue (v0.4.2), the daemon stops issuing new " +
+				"dispatches from the active group, the queue's status field transitions " +
+				"to 'paused-by-drain' per [queue-model.md §5], and no new run is " +
+				"dispatched during drain. (Reworded v0.4.2 from the legacy " +
+				"'orchestrator stops pulling new tasks from the queue' phrasing.)",
 		},
 		{
 			id:     "5",

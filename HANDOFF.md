@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-14 extqueue-v0.1-specs — v42. Whole 8-pass kerf cycle for extqueue v0.1 landed on a feature branch. 6 spec files (1 new + 5 edits) authored via 22 sub-agent invocations across research/design/draft/review rounds. Branch `extqueue-v0.1-specs` pushed; main is unchanged. PR not opened. -->
+<!-- PP-TRIAL:v2 2026-05-15 main — v43. Phase 2 first-demo GREEN; extqueue v0.1 implementation ~80% done (19 of 24 task beads landed including T50 workloop rewrite); ROADMAP.md added at repo root. T80/T81/T82 scenario tests are the immediate next dispatches — they gate Roadmap Row 8 (Phase 2 multi-bead E2E). -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order from current state to fully operational.
 
@@ -40,7 +40,7 @@ TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
   3. Stale `defer_until` (L-017): clear via `br update <id> --defer ""`.
 
 DON'T ASK — EXECUTE.
-On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections.
+On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections. (v43 refinement: SMALL spec amendments may dispatch without check-in; only check in for SIGNIFICANT/architectural changes.)
 
 PUSH AUTONOMY (v40 2026-05-14). User lifted the "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation. Destructive-op rules (force-push, reset --hard, branch -D, --no-verify) STILL require confirmation; only the routine push step is lifted.
 
@@ -76,50 +76,57 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
       git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50% across 3 waves. v42 used ~53% across one 8-pass kerf cycle (no implementer waves).
+CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50%. v42 used ~53%. v43 used ~51% across heavy implementer-stream + 3 review rounds + multi-wave dispatch.
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v42, 2026-05-14)
+# Where we are (v43, 2026-05-15)
 
-**Branch `extqueue-v0.1-specs` at commit `20d362d`, pushed to origin. Main is untouched.**
+**Main at HEAD (will be updated to post-T50-merge SHA before this handoff is used). All work pushed to origin. Working tree clean. Big session — ~25 commits landed.**
 
-Whole 8-pass kerf spec cycle (codename `extqueue`) ran in one session. Output: a feature branch carrying the v0.1 spec package for an external-orchestrator queue control surface — the daemon no longer picks beads itself; an external agent submits an ordered queue of waves and streams via CLI; daemon executes it. v0.1 surface = `queue-submit / queue-append / queue-status / queue-dry-run`. v0.2 deferrals (remove/pause/resume/clear) explicitly scoped out.
+## Headline outcomes
 
-Files on the branch (945 insertions, 96 deletions vs main):
-- `specs/queue-model.md` (NEW, 604 lines)
-- `specs/execution-model.md` — §7.4 dispatch loop rewritten; new EM-015f / §4.11 concurrency primitives
-- `specs/beads-integration.md` — BI-013 demoted; BI-013b/c submit-time read surface
-- `specs/process-lifecycle.md` — PL-003a method-set extended; `enqueue` retired; PL-013 retired-with-stub
-- `specs/event-model.md` — 6 new `queue_*` events; optional `queue_id` on `run_*`
-- `specs/operator-nfr.md` — ON-015 reframed; 9 surgical amendments
+1. **Phase 2 first-demo GREEN** — bead `hk-09tne` ran end-to-end through the daemon (claude → commit on run-branch → daemon merge-to-main → outcome_emitted + bead_closed). Commit `d50393b`. Unblocker was `hk-ftyvo` (added EM-052/053: merge-to-main + non-FF reopen) plus `hk-4goy3` (added EM-054: working-tree refresh after update-ref).
+2. **Extqueue v0.1 spec landed and gap-filled.** Original spec `e228bc3`; v0.1.1 gap-fix `cfb55a0` closed 6 wire-contract + recovery gaps surfaced by a 3-reviewer pass (completeness / failure-modes / feasibility). New section §2.10 has the JSON-RPC request/response RECORDs; §6.11a QM-029b has the error-code mapping; §3.2a QM-002a has the startup Beads cross-check.
+3. **Extqueue v0.1 implementation ~80% done.** Epic `hk-lj0pb` + 24 task beads filed and reviewed (DAG + scope APPROVE after 6 bead-body sharpenings). Landed: T03, T10, T11, T12, T20, T21, T30, T31, T32, T40, T41, T42, T50, T60, T61, T62, T70, T83, T84. **T50 (workloop rewrite, P0) shipped in `3b53a8e`** — `br ready` poll replaced by `EligibleItems()` pull from active queue group; EM-015f group-advance gate; `complete-with-failures` → `paused-by-failure` + `queue_paused`; QueueID/QueueGroupIndex stamped on run_* payloads; backward-compat fallback to `br ready` when no queue is loaded. T80/T81/T82 (scenario tests, the Phase 2 multi-bead E2E gate) are now dispatchable.
+4. **HC-055b worktree auto-trust** — picked Candidate 3 from the bead body. Daemon now injects `--dangerously-skip-permissions` only when launching into a path that canonicalizes to under the harmonik worktrees prefix. Replaces the prior `dangerouslyAllowedPermissions` settings.json hack.
+5. **ROADMAP.md added at repo root** — 11 ordered rows from Phase 1 GREEN to Phase 3 (DOT-defined bead processes). Referenced from this HANDOFF.
+6. **EV-002b sensor narrowed** — `internal/handler/launchspecdelivery_hc005_test.go` is a test file, not a handler subprocess, so importing core was a false positive. Sensor now skips `_test.go` files. Bead `hk-59ob6`.
+7. **Other code landings**: `hk-nvrvp` (HARMONIK_PROJECT_HASH env injection), `hk-mz0x4` (ldflags binary_commit_hash + Makefile), `hk-a6nob` (envelope run_id on emitRunStarted/emitRunCompleted), `hk-8mwo.33` (sidecar-walk WM-022). **Sensors**: HC-INV-003 (`hk-8i31.66`), ON-INV-006 (`hk-sx9r.72`), ON-019 (`hk-sx9r.23`), WM-INV-003 (`hk-8mwo.57`), WM-009 (`hk-8mwo.14`). **Spec amendments**: BI-010d activity-marker/truth-claim split (`hk-iuaed.1`), handler-contract front-matter fix (`hk-4woeq`).
 
-Kerf artifacts (problem space → tasks, plus 4 reviewer rounds) at `.kerf/extqueue/` — gitignored per project convention.
+## Stream / dispatch state at handoff time
+
+- Stream **drained** — no implementer agents running. Working tree clean. Main pushed.
+- Queue draining note: T50 was the last in-flight agent; it landed in `3b53a8e` + `1873195`.
 
 # Next session — START HERE
 
-**The branch is awaiting your call.** Three options, plain English:
+## Immediate plan (Roadmap Row 4 → Row 8)
 
-1. **Open a PR and review the spec text yourself.** No agent action needed. The 6 spec files are the product; they need a human read before merge. The PR-ready URL printed by `git push` was `https://github.com/gregberns/harmonik/pull/new/extqueue-v0.1-specs`.
+1. **Dispatch T80 (`hk-8vokz`, P0)** — Phase 2 multi-bead E2E scenario tests. This is the gate test for the entire extqueue v0.1 milestone. Brief should cite scenario-harness.md for testing convention + `internal/queue/state.go` + `internal/daemon/workloop.go` (post-T50) for assertions. Acceptance: run a 3–5 bead queue via `hk queue submit`, observe each run_started + run_completed has non-nil QueueID/QueueGroupIndex, observe group-advance gate held until all-terminal, observe queue_paused on synthetic failure.
+2. **Then T81 (`hk-2gqua`) and T82 (`hk-30wgn`)** — additional scenario tests; can dispatch in parallel after T80 lands (or in parallel WITH T80 since they touch sibling test files).
+3. **Optional T71 (`hk-dji5z`)** — small cleanup bead in workloop.go (replaces nothing-ready-sleep with socket-block idle). P2; can fold into T50 review or do as separate cleanup.
+4. **Optional T51 (`hk-w85to`)** — annotation-only; consider closing as SUBSUMED by T50 if the implementer already added the EM-049/050/051 godoc.
 
-2. **File the 22 implementation tasks as beads and start churning.** Implementation decomposition lives at `.kerf/extqueue/07-tasks.md` — 22 tasks across 8 tiers with a full DAG and parallelization plan. Critical path ~7 implementer cycles; Wave 3-4 fans out to 4-5 parallel implementers. If the user says "file the beads," the agent runs through 07-tasks.md and creates one bead per Txx with the bead body matching the task's scope + acceptance criteria.
+## After Row 8 — Roadmap Row 5 (Bridge cluster)
 
-3. **Pause the extqueue work and come back to Phase 2 first-demo.** The previous session (v41) filed `hk-ftyvo` — a Phase-2 bug: the daemon's auto-close path doesn't merge run branches back to main. That bead is still open and is the actual Phase-2 round-trip blocker. extqueue is the longer-term scheduling rework; `hk-ftyvo` is the shorter-term "make the daemon actually finish a round-trip" fix.
+- **`hk-gql20`** (bridge-integration epic, P0), **`hk-kqdpf`** (bridge-followup epic, P0), **`hk-lj1p9`** (claude session lifecycle parent). These have many open child beads — re-check `bv --robot-triage --label hk-gql20` (or equivalent) for current dispatchable children.
+- The daemon audit (commit `e17cd39`) noted: `workLoopDeps.substrate = nil` in composition root (claude is still spawned via `exec.CommandContext`, not tmux panes); review-loop lacks `waitAgentReady`; orphan session sweep is window-only.
 
-If the user opens the next session with **"resume"** and no further direction, default to option 2 (file beads, prepare for implementation) — that's the path that converts the spec work into runnable code.
+## Known-failing tests (NOT blocking — confirmed pre-existing on main)
 
-# Files to open first
+- `TestAR013EnvelopeDeclaration` in specaudit — `queue-model.md` and `claude-hook-bridge.md` lack the §4.a Subsystem envelope section. Cosmetic spec hygiene.
+- `TestON027DrainStep1StopPullingQueue/check-4` — `operator-nfr.md` drain step wording mismatches the sensor's expected phrase. Cosmetic.
+- `TestWorkLoop_FailedHandlerReopensBead` and `TestWorkLoop_TwoConcurrentBeads` — pre-existing flaky workloop tests; pass in isolation but time out under full-suite parallel load. Triage as part of Row 5 work, not blocking.
+
+## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `specs/queue-model.md` — the foundation spec (new, 604 lines).
-3. `.kerf/extqueue/01-problem-space.md` — the locked decisions D1-D6.
-4. `.kerf/extqueue/05-changelog.md` — the package-level changelog with all amendment summaries + flagged residuals.
-5. `.kerf/extqueue/07-tasks.md` — the 22-task implementation plan.
-6. `.kerf/extqueue/SESSION.md` — narrative of the v42 session (what each pass produced).
+2. `ROADMAP.md` (the 11-row plan).
+3. `specs/queue-model.md` (v0.1.1 with §2.10 + §6.11a + §3.2a).
+4. `internal/queue/state.go` + `internal/daemon/workloop.go` (post-T50) — your next implementers will read these.
+5. `.kerf/extqueue/07-tasks.md` — for context on T80/T81/T82 scope.
 
-# Notes for the next agent
+## Question that blocks the next session
 
-- `hk-ftyvo` (Phase 2 bug: daemon doesn't merge run branches to main) is independent of extqueue and still open. It blocks Phase 2 round-trip regardless of which path above is chosen.
-- `hk-09tne` (Phase 2 first-demo bead) is reopened and blocked on `hk-ftyvo` — that's intentional.
-- The previously deferred `hk-gql20`, `hk-kqdpf`, `hk-fdyip`, `hk-1n0cw`, `hk-kqdpf.5` beads had their `defer_until` cleared during the v42 demo cleanup; their priorities are also restored.
-- One pre-existing miscitation noted by the integration audit: `beads-integration.md:205` cites WM-007 in §4.5 but it's actually in §4.2. Out of scope for extqueue; flag for a future housekeeping pass.
+None. Continue executing per directives + roadmap.

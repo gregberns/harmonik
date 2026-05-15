@@ -7,9 +7,10 @@
 .kerf/*
 !.kerf/project-identifier
 
-# Beads task ledger — track only the JSONL export, ignore SQLite DB / WAL / locks
+# Beads task ledger — track only the JSONL export and test fixtures; ignore SQLite DB / WAL / locks
 .beads/*
 !.beads/issues.jsonl
+!.beads/queue-test-fixtures/
 
 # Go build outputs and test artifacts (build-practices.md §Git hygiene)
 /bin/

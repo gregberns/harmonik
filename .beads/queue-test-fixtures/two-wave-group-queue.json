@@ -1,0 +1,13 @@
+{
+  "_fixture": "two-wave-group-queue",
+  "_description": "Fixture descriptor for the end-to-end queue lifecycle scenario test (T80, hk-8vokz). Describes a 2-wave-group queue with 2 items in group 0 and 1 item in group 1. Used by internal/scenario/queue_lifecycle_test.go to assert: (a) group 0 dispatches both items in parallel; (b) group 1 activates only after group 0 is all-terminal; (c) queue.json is unlinked after group 1 completes.",
+  "_spec_ref": "specs/queue-model.md §8 (QM-050..QM-053), §8.10 emission ordering",
+  "group_0": {
+    "kind": "wave",
+    "bead_ids": ["hk-qtfix-g0-item0", "hk-qtfix-g0-item1"]
+  },
+  "group_1": {
+    "kind": "wave",
+    "bead_ids": ["hk-qtfix-g1-item0"]
+  }
+}

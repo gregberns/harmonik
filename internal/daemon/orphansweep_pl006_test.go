@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
@@ -335,5 +336,179 @@ func TestPL006_RunOrphanSweep_AllCounters(t *testing.T) {
 	}
 	if result.ReconciliationLocksRemoved != 1 {
 		t.Errorf("PL-006 run all-counters: ReconciliationLocksRemoved = %d, want 1", result.ReconciliationLocksRemoved)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PL-006 sixth bullet — stale in_progress bead reset (hk-iuaed.4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// hkIuaed4FakeBeadLedger is a fake InFlightBeadLedger that returns a fixed
+// list of in_progress beads.
+type hkIuaed4FakeBeadLedger struct {
+	beads []core.BeadRecord
+}
+
+func (f *hkIuaed4FakeBeadLedger) ListInFlightBeads(_ context.Context) ([]core.BeadRecord, error) {
+	return f.beads, nil
+}
+
+// hkIuaed4FakeBeadResetter is a fake BeadResetter that records calls.
+type hkIuaed4FakeBeadResetter struct {
+	called []core.BeadID
+}
+
+func (f *hkIuaed4FakeBeadResetter) ResetBead(
+	_ context.Context,
+	_ string,
+	_ brcli.TimeoutConfig,
+	beadID core.BeadID,
+	_ core.ProjectHash,
+	_ int64,
+) error {
+	f.called = append(f.called, beadID)
+	return nil
+}
+
+// hkIuaed4FakeProvenance establishes ownership for the supplied bead IDs.
+type hkIuaed4FakeProvenance struct {
+	owns map[core.BeadID]bool
+}
+
+func (f *hkIuaed4FakeProvenance) Owns(_ context.Context, beadID core.BeadID) (bool, error) {
+	return f.owns[beadID], nil
+}
+
+// hkIuaed4Bead constructs a valid in_progress BeadRecord.
+func hkIuaed4Bead(id string) core.BeadRecord {
+	return core.BeadRecord{
+		BeadID:        core.BeadID(id),
+		Title:         "test " + id,
+		BeadType:      "task",
+		Status:        core.CoarseStatusInProgress,
+		AuditTrailRef: id,
+	}
+}
+
+// TestPL006_RunOrphanSweep_BeadInProgressReset verifies the integration of the
+// PL-006 sixth-bullet bead-reset sweep into RunOrphanSweep: a stale
+// in_progress bead reported by the ledger is reset, BeadInProgressReset is
+// populated on OrphanSweepResult, and the field surfaces on the
+// daemon_orphan_sweep_completed payload via ToPayload().
+//
+// This is the acceptance test for hk-iuaed.4: the daemon orphan-sweep emits
+// daemon_orphan_sweep_completed with bead_in_progress_reset >= 1 when a stale
+// in_progress bead is owned by this project and meets none of the PL-006
+// exclusion conditions.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet; event-model.md
+// §8.7.14 (additive payload field).
+// Bead ref: hk-iuaed.4.
+func TestPL006_RunOrphanSweep_BeadInProgressReset(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	hash := lifecycle.ComputeProjectHash(projectDir)
+	daemonStart := time.Now()
+
+	const beadID = core.BeadID("hk-iuaed4-stale-bead-001")
+
+	ledger := &hkIuaed4FakeBeadLedger{beads: []core.BeadRecord{hkIuaed4Bead(string(beadID))}}
+	resetter := &hkIuaed4FakeBeadResetter{}
+
+	cfg := OrphanSweepConfig{
+		HandlerLister:      &daemonOrphanSweepFakeHandlerLister{},
+		BrLister:           &daemonOrphanSweepFakeBrLister{},
+		BeadLedger:         ledger,
+		BeadResetter:       resetter,
+		BeadProvenance:     &hkIuaed4FakeProvenance{owns: map[core.BeadID]bool{beadID: true}},
+		MergeCommitScanner: nil, // no merge commit
+		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		DaemonStartNS:      daemonStart.UnixNano(),
+	}
+
+	result, err := RunOrphanSweep(t.Context(), projectDir, hash, daemonStart, cfg)
+	if err != nil {
+		// git worktree prune failure from non-git dir is expected.
+		t.Logf("PL-006 bead-reset: RunOrphanSweep error (possibly worktree prune): %v", err)
+	}
+
+	if result.BeadInProgressReset != 1 {
+		t.Errorf("PL-006 bead-reset: BeadInProgressReset = %d, want 1", result.BeadInProgressReset)
+	}
+	if len(resetter.called) != 1 || resetter.called[0] != beadID {
+		t.Errorf("PL-006 bead-reset: ResetBead called=%v, want [%s]", resetter.called, beadID)
+	}
+
+	// Payload field surfaces.
+	payload := result.ToPayload()
+	if payload.BeadInProgressReset != 1 {
+		t.Errorf("PL-006 bead-reset: payload.BeadInProgressReset = %d, want 1", payload.BeadInProgressReset)
+	}
+	if !payload.Valid() {
+		t.Error("PL-006 bead-reset: payload.Valid() = false, want true")
+	}
+}
+
+// TestPL006_RunOrphanSweep_BeadInProgressReset_SkipsExclusions verifies that
+// a stale in_progress bead with a pending close intent (exclusion b) is NOT
+// reset even when provenance is established. Confirms exclusion plumbing
+// reaches RunOrphanSweep correctly.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet exclusion (b).
+func TestPL006_RunOrphanSweep_BeadInProgressReset_SkipsExclusions(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	hash := lifecycle.ComputeProjectHash(projectDir)
+	daemonStart := time.Now()
+
+	const beadID = core.BeadID("hk-iuaed4-stale-bead-002")
+
+	// Seed a close intent for this bead in the canonical intent-log dir so
+	// ScanIntentLog detects exclusion (b).
+	intentLogDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	//nolint:gosec // G301: 0755 matches existing conventions
+	if err := os.MkdirAll(intentLogDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll intent log dir: %v", err)
+	}
+	closeIntent := fmt.Sprintf(`{
+		"schema_version":1,
+		"idempotency_key":"019e2cfe-f419-7e30-88c5-3e6fdbf0abf2:019e2cfe-f419-7e30-88c5-3e6fdbf0abf3:close",
+		"run_id":"019e2cfe-f419-7e30-88c5-3e6fdbf0abf2",
+		"transition_id":"019e2cfe-f419-7e30-88c5-3e6fdbf0abf3",
+		"op":"close",
+		"bead_id":%q,
+		"intended_post_state":"closed",
+		"requested_at":%q
+	}`, string(beadID), time.Now().UTC().Format(time.RFC3339Nano))
+	closeIntentPath := filepath.Join(intentLogDir, string(beadID)+"_close.json")
+	if err := os.WriteFile(closeIntentPath, []byte(closeIntent), 0o600); err != nil {
+		t.Fatalf("WriteFile close intent: %v", err)
+	}
+
+	ledger := &hkIuaed4FakeBeadLedger{beads: []core.BeadRecord{hkIuaed4Bead(string(beadID))}}
+	resetter := &hkIuaed4FakeBeadResetter{}
+
+	cfg := OrphanSweepConfig{
+		HandlerLister:  &daemonOrphanSweepFakeHandlerLister{},
+		BrLister:       &daemonOrphanSweepFakeBrLister{},
+		BeadLedger:     ledger,
+		BeadResetter:   resetter,
+		BeadProvenance: &hkIuaed4FakeProvenance{owns: map[core.BeadID]bool{beadID: true}},
+		IntentLogDir:   intentLogDir,
+		DaemonStartNS:  daemonStart.UnixNano(),
+	}
+
+	result, err := RunOrphanSweep(t.Context(), projectDir, hash, daemonStart, cfg)
+	if err != nil {
+		t.Logf("PL-006 bead-reset exclusion-b: RunOrphanSweep error (possibly worktree prune): %v", err)
+	}
+
+	if result.BeadInProgressReset != 0 {
+		t.Errorf("PL-006 bead-reset exclusion (b): BeadInProgressReset = %d, want 0", result.BeadInProgressReset)
+	}
+	if len(resetter.called) != 0 {
+		t.Errorf("PL-006 bead-reset exclusion (b): ResetBead called despite close intent: %v", resetter.called)
 	}
 }

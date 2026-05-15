@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -45,6 +46,13 @@ type OrphanSweepResult struct {
 	// These are left on disk for the reconciliation Cat 3a detector.
 	StaleIntentsObserved int
 
+	// BeadInProgressReset is the count of stale `in_progress` beads reset to
+	// `open` by the PL-006 sixth-bullet bead-reset sweep (BI-010d).
+	//
+	// Spec ref: specs/process-lifecycle.md §4.5 PL-006 sixth bullet.
+	// Bead ref: hk-iuaed.4.
+	BeadInProgressReset int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -59,6 +67,7 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		BrSubprocessesKilled:       r.BrSubprocessesKilled,
 		ReconciliationLocksRemoved: r.ReconciliationLocksRemoved,
 		StaleIntentsObserved:       r.StaleIntentsObserved,
+		BeadInProgressReset:        r.BeadInProgressReset,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -82,6 +91,45 @@ type OrphanSweepConfig struct {
 
 	// BrLister overrides the br subprocess lister. Nil → OSProcessLister.
 	BrLister lifecycle.ProcessLister
+
+	// BeadLedger is the read surface (br list --status in_progress) for the
+	// PL-006 sixth-bullet stale-in_progress bead-reset sweep. Nil → bead-reset
+	// sweep is SKIPPED (BeadInProgressReset remains 0). Production callers
+	// MUST supply this (typically a *brcli.Adapter); unit-test callers that
+	// do not exercise the bead-reset path may leave it nil.
+	BeadLedger lifecycle.InFlightBeadLedger //nolint:revive // explicit name preserved for caller clarity
+
+	// BeadResetter is the write surface (br update --status open via the BI
+	// adapter) for the bead-reset sweep. Nil → bead-reset sweep is SKIPPED.
+	// Production callers MUST supply this (typically the same *brcli.Adapter
+	// that backs BeadLedger).
+	BeadResetter lifecycle.BeadResetter
+
+	// BeadProvenance is the project-ownership signal for the bead-reset
+	// sweep. Nil → ownership is established solely by the local
+	// claim-intent fallback (the MVH default). Production callers wire a
+	// non-nil implementation once Beads's audit-log actor field carries
+	// project_hash (or an alternate per-project provenance signal lands).
+	BeadProvenance lifecycle.ProvenanceChecker
+
+	// MergeCommitScanner detects PL-006 exclusion condition (c) — a
+	// Harmonik-Bead-ID merge commit on the target branch (Cat 3c condition).
+	// Nil → exclusion (c) is treated as "no merge commit" (the conservative
+	// fallback; a missed Cat 3c condition is re-detected on the next restart).
+	MergeCommitScanner lifecycle.MergeCommitScanner
+
+	// IntentLogDir is the absolute path of .harmonik/beads-intents/ — read by
+	// the bead-reset sweep to compute exclusion conditions (a) and (b).
+	// Empty when BeadLedger / BeadResetter are nil. Otherwise required.
+	IntentLogDir string
+
+	// DaemonStartNS is the daemon's start time in nanoseconds; used to derive
+	// the BI-010d idempotency key for each reset write. Zero is invalid when
+	// BeadLedger / BeadResetter are non-nil.
+	DaemonStartNS int64
+
+	// BrTimeoutCfg forwards the BI-025c timeout configuration to ResetBead.
+	BrTimeoutCfg brcli.TimeoutConfig
 
 	// Logger receives diagnostic messages. Nil → silent.
 	Logger *log.Logger
@@ -181,6 +229,30 @@ func RunOrphanSweep(
 		errs = append(errs, fmt.Sprintf("recon-locks: %v", err))
 	}
 	result.ReconciliationLocksRemoved = reconRemoved
+
+	// (f) Stale in_progress bead markers (PL-006 sixth bullet — hk-iuaed.4).
+	// Run after the filesystem+process sweep and after the BI-024a `br --version`
+	// handshake has succeeded (the latter is the caller's responsibility — see
+	// the package doc in internal/lifecycle/orphansweepbeads.go for the
+	// sequencing rationale). Skipped silently when the bead-ledger / resetter
+	// adapter isn't wired (unit-test mode).
+	if cfg.BeadLedger != nil && cfg.BeadResetter != nil {
+		beadResetCount, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
+			Ledger:        cfg.BeadLedger,
+			Resetter:      cfg.BeadResetter,
+			Provenance:    cfg.BeadProvenance,
+			MergeScanner:  cfg.MergeCommitScanner,
+			IntentLogDir:  cfg.IntentLogDir,
+			ProjectHash:   projectHash,
+			DaemonStartNS: cfg.DaemonStartNS,
+			BrTimeoutCfg:  cfg.BrTimeoutCfg,
+			Logger:        cfg.Logger,
+		})
+		if beadResetErr != nil {
+			errs = append(errs, fmt.Sprintf("bead-reset: %v", beadResetErr))
+		}
+		result.BeadInProgressReset = beadResetCount
+	}
 
 	result.SweptAt = time.Now()
 

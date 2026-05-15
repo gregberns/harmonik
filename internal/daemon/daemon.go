@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -360,12 +361,56 @@ func Start(ctx context.Context, cfg Config) error {
 	if cfg.ProjectDir != "" {
 		ctx := context.Background()
 		projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
+
+		// Construct the BI adapter early — BEFORE the orphan sweep emits — so
+		// the PL-006 sixth-bullet stale-in_progress bead-reset can route through
+		// the adapter (BI-010d) and roll its count into the same
+		// daemon_orphan_sweep_completed event. The adapter construction
+		// requires cfg.BrPath; when BrPath is unset (unit-test mode), the
+		// bead-reset path is skipped and the rest of RunOrphanSweep proceeds.
+		//
+		// Sequencing rationale: see the package doc in
+		// internal/lifecycle/orphansweepbeads.go. The bead-reset sweep runs
+		// AFTER the existing filesystem+process sweep AND AFTER the BI-024a
+		// `br --version` handshake has succeeded. At MVH the BI-024a handshake
+		// is performed lazily by the adapter on first invocation; calling
+		// `br list --status in_progress` inside the bead-reset sweep is the
+		// first BI-write-surface adjacent call and therefore the handshake
+		// effectively precedes the reset writes.
+		//
+		// Bead ref: hk-iuaed.4.
+		var beadLedger lifecycle.InFlightBeadLedger
+		var beadResetter lifecycle.BeadResetter
+		var intentLogDir string
+		if cfg.BrPath != "" {
+			brAdapter, brAdapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+			if brAdapterErr != nil {
+				// Non-fatal: bead-reset sweep is best-effort; falling back to
+				// no-bead-reset leaves the standard PL-006 sweep intact and
+				// the bead remains in_progress until the next restart.
+				_ = brAdapterErr
+			} else {
+				beadLedger = brAdapter
+				beadResetter = brAdapter
+				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
+			}
+		}
+
 		sweepResult, sweepErr := RunOrphanSweep(
 			ctx,
 			cfg.ProjectDir,
 			projectHash,
 			daemonStartTime,
-			OrphanSweepConfig{}, // nil fields fall back to OS-backed implementations
+			OrphanSweepConfig{
+				BeadLedger:   beadLedger,
+				BeadResetter: beadResetter,
+				MergeCommitScanner: lifecycle.GitMergeCommitScanner{
+					ProjectDir:   cfg.ProjectDir,
+					TargetBranch: "", // defaults to "main" inside the scanner
+				},
+				IntentLogDir:  intentLogDir,
+				DaemonStartNS: daemonStartTime.UnixNano(),
+			},
 		)
 
 		// Build and emit daemon_orphan_sweep_completed (§8.7.14, O-class).

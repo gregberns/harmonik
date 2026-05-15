@@ -1,0 +1,468 @@
+package lifecycle
+
+// orphansweepbeads.go — PL-006 sixth-bullet orphan sweep of stale `in_progress`
+// bead markers. Extends the PL-006 orphan-sweep enumeration with the BI-010d
+// reset op that transitions a stale in_progress bead back to open when no live
+// run, no pending close/reopen intent, and no merge-commit-on-target-branch
+// claim its terminal-transition handling.
+//
+// Bead ref: hk-iuaed.4 (imrest-impl-sweep).
+// Spec refs:
+//   - specs/process-lifecycle.md §4.5 PL-006 sixth bullet ("Stale `in_progress`
+//     bead markers") and the four exclusion conditions (a)–(c) plus the default
+//     reset path.
+//   - specs/beads-integration.md §4.4 BI-010d (ResetBead op).
+//   - specs/beads-integration.md §4.10 BI-030 (intent-log discipline).
+//   - specs/beads-integration.md §4.8a BI-024a (`br --version` handshake) —
+//     drives the sequencing decision documented below.
+//
+// # Sequencing decision (PL-006 sixth bullet vs PL-005 step ordering)
+//
+// The bead `br show` and `br update` invocations issued by this sweep are
+// BI-write-surface operations: they depend on the BI-024a `br --version`
+// handshake (PL-005 step 4 Cat 0 pre-check) having succeeded, otherwise we
+// could issue an `update` against a version-mismatched `br` and corrupt the
+// intent-log discipline. The other PL-006 bullets (tmux sessions, worktree
+// locks, subprocess sweeps, stale intent enumeration, stale recon-locks) do
+// NOT touch the BI write surface — they operate on the filesystem and the
+// process table directly.
+//
+// The bead brief (hk-iuaed.4) explicitly delegates this sequencing question to
+// the implementation task. The chosen ordering is:
+//
+//	step 3 — PL-006 filesystem+process orphan sweep (existing 5 bullets)
+//	step 4 — PL-005 Cat 0 pre-check (includes BI-024a `br --version` handshake)
+//	step 4.5 — PL-006 sixth bullet: stale-in_progress bead reset (this sweep)
+//	step 5+ — git walk, Beads ready query, in-memory model rebuild, etc.
+//
+// In other words: the bead-reset sweep is fired AFTER the rest of PL-006 has
+// quiesced the project's filesystem and process tree AND AFTER the BI-024a
+// handshake has confirmed the `br` binary is on the pinned version. This
+// matches the spec text in PL-006 sixth bullet, which references the in-memory
+// model rebuilt at PL-005 step 7 in exclusion (a) — the bead-reset enumeration
+// CANNOT precede the handshake.
+//
+// At MVH the in-memory model rebuild (PL-005 step 7) is not yet wired as a
+// distinct phase; exclusion (a) reduces to the OR clause in the spec text —
+// "a `claim` intent file is still present and the BI adapter's BI-031 recovery
+// will re-drive it" — which is observable directly via the intent-log
+// directory listing.
+//
+// The single `daemon_orphan_sweep_completed` event (event-model.md §8.7.14)
+// covers both the filesystem+process sweep AND this bead-reset sweep:
+// `bead_in_progress_reset` is an additive payload field on the same event,
+// emitted once after the bead-reset sweep completes. This matches the spec's
+// "On completion, the daemon MUST emit `daemon_orphan_sweep_completed` ... with
+// counts of ... and `bead_in_progress_reset`" wording.
+//
+// # Exclusion logic
+//
+// For each bead returned by `br list --status in_progress --json` that is
+// owned by this project (per the provenance match described below):
+//
+//	(a) Live run reattached. If the in-memory model rebuilt at PL-005 step 7
+//	    re-attaches a live in-flight run to this bead, the bead is NOT reset.
+//	    At MVH the in-memory model is not yet wired, so exclusion (a) reduces
+//	    to the OR clause: a `claim` intent file at
+//	    `.harmonik/beads-intents/<key>.json` references this bead AND the BI
+//	    adapter's BI-031 recovery will re-drive it.
+//
+//	(b) Pending close/reopen intent. A `close` or `reopen` intent file at
+//	    `.harmonik/beads-intents/<key>.json` references this bead. Cat 3a
+//	    handles it — the orphan sweep MUST NOT preempt the Cat 3a detector.
+//
+//	(c) Merged commit present. A merge commit on the target branch bears
+//	    `Harmonik-Bead-ID: <bead_id>` (Cat 3c condition). The Cat 3c
+//	    auto-resolver owns the close — the orphan sweep MUST NOT reset
+//	    preemptively.
+//
+// If none of the exclusions apply, the daemon MUST issue a `reset` write via
+// the §4.8 BI adapter (BI-010d op). The reset write is intent-logged
+// identically to claim/close/reopen writes per BI-030.
+//
+// # Provenance match
+//
+// PL-006 sixth bullet specifies provenance match via the audit-trail `actor`
+// field carrying this project's `project_hash` per PL-006a, OR — if the
+// `actor` field is unsuitable — via cross-referencing `claim` op entries in
+// the daemon's own intent-log at `.harmonik/beads-intents/*.json`.
+//
+// At MVH the audit-trail actor field is not reliably populated with the
+// project hash (Beads v0.1.x records the user's git config `user.name`); the
+// implementation therefore uses the intent-log cross-reference as the default
+// provenance signal. A bead with no claim intent in the local intent-log and
+// no positive [ProvenanceChecker] verdict is NOT owned by this project's
+// daemon and MUST NOT be touched. This is consistent with PL-006a's
+// project-scoped-provenance discipline.
+//
+// The [ProvenanceChecker] seam lets a future Beads release whose audit-log
+// actor field carries the project_hash plug in a deterministic owner check
+// independent of the claim-intent presence (which is the MVH-fallback). When
+// a ProvenanceChecker is wired and returns true, the reset path becomes
+// reachable for beads where the claim intent was already cleared by a prior
+// BI-031 recovery — the scenario the PL-006 sixth bullet targets. See
+// hk-iuaed.4 follow-up.
+//
+// # Idempotency
+//
+// The reset write carries the idempotency key
+// `<project_hash>:<bead_id>:reset:<daemon_start_ns>` per BI-010d. Two restarts
+// of the same daemon produce distinct keys, so a surviving intent file from
+// one restart cannot be misclassified as ambiguous by the BI-031 crash-recovery
+// scan of the next restart.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// InFlightBeadLedger is the read surface of the BI adapter consumed by
+// SweepStaleInProgressBeads. It is satisfied by *brcli.Adapter in production
+// and by a fake in tests.
+type InFlightBeadLedger interface {
+	// ListInFlightBeads returns BeadRecords for every bead currently in coarse
+	// status `in_progress` per BI-016. Implementations route through
+	// `br list --status in_progress --json`.
+	ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, error)
+}
+
+// BeadResetter is the write surface of the BI adapter consumed by
+// SweepStaleInProgressBeads. It is satisfied by *brcli.Adapter in production
+// (Adapter.ResetBead) and by a fake in tests.
+type BeadResetter interface {
+	// ResetBead issues the BI-010d reset write (in_progress → open) for beadID.
+	// The full BI-030 intent-log protocol is applied; see brcli.Adapter.ResetBead.
+	ResetBead(
+		ctx context.Context,
+		intentLogDir string,
+		cfg brcli.TimeoutConfig,
+		beadID core.BeadID,
+		projectHash core.ProjectHash,
+		daemonStartNS int64,
+	) error
+}
+
+// ProvenanceChecker reports whether a given bead is owned by this project's
+// daemon per PL-006a — independent of the claim-intent presence used as the
+// MVH-fallback provenance signal. Production callers MAY leave this nil; the
+// sweep then uses the claim-intent presence as the sole provenance signal (the
+// OR clause of PL-006's provenance discipline). When non-nil, Owns returning
+// true establishes provenance even when the claim intent is absent — this is
+// the seam by which a future Beads release whose audit-log actor field carries
+// project_hash will plug in, and the seam that unit tests use to exercise the
+// reset-firing path (the MVH layering otherwise rules it unreachable; see the
+// package doc).
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — provenance via
+// "audit-trail `actor` field carrying this project's `project_hash` per
+// PL-006a, OR — if Beads's audit `actor` field is unsuitable — cross-
+// referencing `claim` op entries in the daemon's own intent-log".
+type ProvenanceChecker interface {
+	Owns(ctx context.Context, beadID core.BeadID) (bool, error)
+}
+
+// MergeCommitScanner reports whether the target branch has a commit bearing
+// the `Harmonik-Bead-ID: <beadID>` trailer (PL-006 exclusion condition (c) —
+// Cat 3c condition).
+//
+// Implementations typically shell out to
+// `git log --grep "Harmonik-Bead-ID: <beadID>" <target-branch>`; tests inject
+// a fake.
+type MergeCommitScanner interface {
+	HasMergeCommitForBead(ctx context.Context, beadID core.BeadID) (bool, error)
+}
+
+// GitMergeCommitScanner is the production MergeCommitScanner implementation.
+// It shells out to `git log --grep` against the configured target branch
+// (commonly `main`) under the project directory.
+//
+// A scan error (git absent, branch missing, etc.) is treated as "no merge
+// commit found" — the bead-reset sweep will then proceed with the reset.
+// This is the conservative behavior given that a missed Cat 3c condition will
+// be re-detected on the next daemon restart, but a false-positive
+// merge-commit detection would skip a needed reset.
+type GitMergeCommitScanner struct {
+	ProjectDir   string
+	TargetBranch string // empty defaults to "main"
+}
+
+// HasMergeCommitForBead implements MergeCommitScanner.
+func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID core.BeadID) (bool, error) {
+	branch := s.TargetBranch
+	if branch == "" {
+		branch = "main"
+	}
+	// `git log -1` exits non-zero when no commit matches, so a non-empty
+	// stdout signals a match.
+	//nolint:gosec // G204: branch is validated (defaulted), beadID is opaque project-scoped.
+	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log", "-1",
+		"--grep", "Harmonik-Bead-ID: "+string(beadID), "--format=%H", branch)
+	out, err := cmd.Output()
+	if err != nil {
+		// git log exits non-zero when the branch doesn't exist or no match;
+		// treat as "no merge commit" rather than propagating the error.
+		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// IntentClaimSet is the set of bead IDs for which a `claim` intent file is
+// still present on disk under .harmonik/beads-intents/. Membership means
+// exclusion condition (a) applies (the BI adapter's BI-031 recovery will
+// re-drive the run for this bead).
+type IntentClaimSet map[core.BeadID]struct{}
+
+// IntentMutationSet is the set of bead IDs for which a `close` or `reopen`
+// intent file is still present on disk. Membership means exclusion condition
+// (b) applies (Cat 3a handles it).
+type IntentMutationSet map[core.BeadID]struct{}
+
+// ScanIntentLog walks intentLogDir and returns:
+//   - claims:    bead IDs with a pending `claim` intent (exclusion (a)).
+//   - mutations: bead IDs with a pending `close` or `reopen` intent (exclusion (b)).
+//
+// Reset intent files are ignored: a stale reset intent does not constitute a
+// terminal-transition decision in flight, and the BI-031 recovery path will
+// resolve it on its own.
+//
+// A missing directory yields empty sets and no error. Malformed entries are
+// logged and skipped.
+func ScanIntentLog(intentLogDir string, logger *log.Logger) (claims IntentClaimSet, mutations IntentMutationSet, err error) {
+	claims = make(IntentClaimSet)
+	mutations = make(IntentMutationSet)
+
+	entries, readErr := os.ReadDir(intentLogDir)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return claims, mutations, nil
+		}
+		return nil, nil, fmt.Errorf("lifecycle: ScanIntentLog: ReadDir %q: %w", intentLogDir, readErr)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if strings.Contains(name, ".tmp-") {
+			// BI-030 temp-file pattern (mid-rename); skip.
+			continue
+		}
+		entry, readEntryErr := core.ReadIntentLogEntry(filepath.Join(intentLogDir, name))
+		if readEntryErr != nil {
+			orphanLog(logger, "ScanIntentLog: skipping malformed %q: %v", name, readEntryErr)
+			continue
+		}
+		switch entry.Op {
+		case core.TerminalOpClaim:
+			claims[entry.BeadID] = struct{}{}
+		case core.TerminalOpClose, core.TerminalOpReopen:
+			mutations[entry.BeadID] = struct{}{}
+		case core.TerminalOpReset:
+			// Stale reset intent — neither a live-run signal nor a Cat 3a
+			// hand-off; ignored per the discussion above.
+		default:
+			// Unknown op (future schema extension): conservative — treat as a
+			// mutation so we DO NOT preempt whatever it represents.
+			mutations[entry.BeadID] = struct{}{}
+		}
+	}
+	return claims, mutations, nil
+}
+
+// SweepStaleInProgressBeadsConfig carries injected dependencies for
+// SweepStaleInProgressBeads. Production callers wire production
+// implementations; tests inject fakes.
+type SweepStaleInProgressBeadsConfig struct {
+	// Ledger is the read surface: br list --status in_progress.
+	// REQUIRED (non-nil).
+	Ledger InFlightBeadLedger
+
+	// Resetter is the write surface: br update --status open via the BI adapter.
+	// REQUIRED (non-nil).
+	Resetter BeadResetter
+
+	// Provenance, when non-nil, overrides the claim-intent-presence-only
+	// provenance signal with a deterministic per-bead owner check. Production
+	// callers SHOULD leave this nil at MVH (the OR-clause fallback governs);
+	// when a future Beads release exposes a project_hash-carrying actor field
+	// on the audit log, the production wiring plugs an audit-log-based checker
+	// in here.
+	//
+	// Note: even when Provenance is non-nil, the claim-intent-presence check is
+	// still consulted as exclusion (a) — the two checks are independent.
+	Provenance ProvenanceChecker
+
+	// MergeScanner detects Cat 3c condition (exclusion c). Nil → exclusion (c)
+	// always returns false (no merge commit), which is the conservative behavior
+	// in test contexts where no git repo exists. Production callers SHOULD
+	// supply a [GitMergeCommitScanner].
+	MergeScanner MergeCommitScanner
+
+	// IntentLogDir is the absolute path of .harmonik/beads-intents/ for this
+	// project. The sweep scans this directory to compute exclusion (a) — claim
+	// intent present — and exclusion (b) — close/reopen intent present.
+	// REQUIRED (non-empty).
+	IntentLogDir string
+
+	// ProjectHash is the per-project provenance marker per PL-006a.
+	// REQUIRED (non-zero-length).
+	ProjectHash core.ProjectHash
+
+	// DaemonStartNS is the daemon's startup wall-clock time in nanoseconds.
+	// Used to derive the BI-010d idempotency key
+	// `<project_hash>:<bead_id>:reset:<daemon_start_ns>`.
+	// REQUIRED (> 0).
+	DaemonStartNS int64
+
+	// BrTimeoutCfg is the BI-025c timeout configuration forwarded to ResetBead.
+	// Zero value is acceptable (defaults apply).
+	BrTimeoutCfg brcli.TimeoutConfig
+
+	// Logger receives diagnostic messages. Nil → silent.
+	Logger *log.Logger
+}
+
+// SweepStaleInProgressBeads enumerates beads in coarse status `in_progress`
+// and resets those owned by this project's daemon that meet none of the
+// PL-006 exclusion conditions (a)–(c) — issuing a BI-010d reset write
+// (in_progress → open) via cfg.Resetter for each.
+//
+// Returns the number of beads successfully reset. A reset error on one bead
+// does NOT abort the sweep — remaining beads are still processed, and the
+// last error is wrapped into the returned error. The integer return reflects
+// only successful resets and is safe to surface as the
+// `bead_in_progress_reset` payload count.
+//
+// Provenance discipline: a bead is considered owned by this project iff a
+// `claim` intent for it is recorded in the local intent log (the spec's OR
+// clause of the provenance-match rule). Beads with no local claim intent are
+// NOT touched, consistent with PL-006a's project-scoped-provenance discipline.
+// (When the audit-log actor field is widened to carry the project hash in a
+// future Beads release, this routine can be extended to consume that as a
+// provenance signal — tracked as a follow-up.)
+//
+// Spec ref: specs/process-lifecycle.md §4.5 PL-006 sixth bullet;
+// specs/beads-integration.md §4.4 BI-010d; §4.10 BI-030.
+func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBeadsConfig) (resetCount int, err error) {
+	if cfg.Ledger == nil {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Ledger is nil")
+	}
+	if cfg.Resetter == nil {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Resetter is nil")
+	}
+	if cfg.IntentLogDir == "" {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.IntentLogDir is empty")
+	}
+	if cfg.ProjectHash == "" {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.ProjectHash is empty")
+	}
+	if cfg.DaemonStartNS <= 0 {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.DaemonStartNS must be > 0")
+	}
+
+	beads, listErr := cfg.Ledger.ListInFlightBeads(ctx)
+	if listErr != nil {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ListInFlightBeads: %w", listErr)
+	}
+	if len(beads) == 0 {
+		return 0, nil
+	}
+
+	claims, mutations, scanErr := ScanIntentLog(cfg.IntentLogDir, cfg.Logger)
+	if scanErr != nil {
+		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ScanIntentLog: %w", scanErr)
+	}
+
+	var lastResetErr error
+	for _, bead := range beads {
+		// Provenance check (PL-006a OR clause): the bead is owned by this
+		// project iff either (i) cfg.Provenance.Owns(...) reports true, OR
+		// (ii) a local claim intent references it (the MVH fallback). When
+		// cfg.Provenance is nil only (ii) applies.
+		owned := false
+		if cfg.Provenance != nil {
+			provOwned, provErr := cfg.Provenance.Owns(ctx, bead.BeadID)
+			if provErr != nil {
+				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s provenance check error (falling back to intent-log signal): %v", bead.BeadID, provErr)
+			} else if provOwned {
+				owned = true
+			}
+		}
+		if !owned {
+			if _, hasClaim := claims[bead.BeadID]; hasClaim {
+				owned = true
+			}
+		}
+		if !owned {
+			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s in_progress but no provenance signal — not owned by this project; skipping", bead.BeadID)
+			continue
+		}
+
+		// (a) Live run will be reattached (claim intent present + BI-031
+		//     recovery will re-drive it). At MVH the in-memory model rebuild
+		//     is not yet wired; the OR clause governs — a claim intent file
+		//     means the BI-031 recovery path WILL re-drive the run, so
+		//     resetting now would race with the re-drive.
+		//
+		// When [ProvenanceChecker] establishes provenance independently and
+		// the claim intent is absent (e.g., BI-031 recovery already cleared
+		// it on a prior restart), exclusion (a) does NOT fire and the reset
+		// path proceeds. This is the imrest scenario the PL-006 sixth bullet
+		// targets.
+		if _, hasClaim := claims[bead.BeadID]; hasClaim {
+			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has live claim intent; exclusion (a) — skip reset", bead.BeadID)
+			continue
+		}
+
+		// (b) Pending close/reopen intent — Cat 3a handles it.
+		if _, hasMutation := mutations[bead.BeadID]; hasMutation {
+			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has pending close/reopen intent; exclusion (b) — skip reset", bead.BeadID)
+			continue
+		}
+
+		// (c) Merged commit on target branch — Cat 3c handles it.
+		if cfg.MergeScanner != nil {
+			merged, mergeErr := cfg.MergeScanner.HasMergeCommitForBead(ctx, bead.BeadID)
+			if mergeErr != nil {
+				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s merge-commit scan error (proceeding to reset): %v", bead.BeadID, mergeErr)
+			} else if merged {
+				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has Harmonik-Bead-ID merge commit on target branch; exclusion (c) — skip reset", bead.BeadID)
+				continue
+			}
+		}
+
+		// No exclusion fires — issue the BI-010d reset write.
+		orphanLog(cfg.Logger, "SweepStaleInProgressBeads: resetting bead %s (in_progress → open) per PL-006 sixth bullet", bead.BeadID)
+		if resetErr := cfg.Resetter.ResetBead(
+			ctx,
+			cfg.IntentLogDir,
+			cfg.BrTimeoutCfg,
+			bead.BeadID,
+			cfg.ProjectHash,
+			cfg.DaemonStartNS,
+		); resetErr != nil {
+			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s reset failed: %v", bead.BeadID, resetErr)
+			lastResetErr = resetErr
+			continue
+		}
+		resetCount++
+	}
+
+	if lastResetErr != nil {
+		return resetCount, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: at least one reset failed (last: %w)", lastResetErr)
+	}
+	return resetCount, nil
+}

@@ -761,6 +761,19 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// detector (RC-013). Required (must be >= 0).
 	StaleIntentsObserved int `json:"stale_intents_observed"`
 
+	// BeadInProgressReset is the count of stale `in_progress` beads reset to
+	// `open` by the PL-006 sixth-bullet bead-reset sweep (BI-010d). Required
+	// (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — "the daemon
+	// MUST emit `daemon_orphan_sweep_completed` ... with ... `bead_in_progress_reset`
+	// (count of `in_progress` beads reset to `open` by this sweep)."
+	// Cross-spec note: PL-006 sixth bullet declares this field as an additive
+	// payload extension to §8.7.14, consistent with the `tmux_windows_killed`
+	// precedent (PL-021c). EV §8.7.14 schema-bump confirmation is tracked as
+	// hk-iuaed.5.
+	BeadInProgressReset int `json:"bead_in_progress_reset"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`
@@ -797,6 +810,9 @@ func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.StaleIntentsObserved < 0 {
+		return false
+	}
+	if p.BeadInProgressReset < 0 {
 		return false
 	}
 	if p.SweptAt == "" {

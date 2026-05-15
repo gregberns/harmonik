@@ -183,3 +183,61 @@ Not exercised — out of scope per beta brief.
 - `kerf show <codename>` should print `bead_filter: (none)` slot rather than omitting it silently.
 - `kerf init` output should clearly label its two instruction blocks ("static" vs. "from `kerf setup`") and mention `kerf setup` as the regenerate-instructions command.
 - The instruction block should include `kerf next` and `kerf triage` prominently — these are the daily-use commands now.
+
+---
+
+## 2026-05-15: work bead_filter bootstrap
+
+Goal: unblock `kerf next` by attaching the 4 existing works to their codename-label cohorts.
+
+### Commands run (in order)
+
+```
+kerf list                                      # 4 works, all ready
+find ~/.kerf -name "*.yaml"                    # discovered ~/.kerf/projects/gregberns-harmonik/{work}/spec.yaml
+                                                # NOTE: file is spec.yaml, NOT work.yaml as the task brief assumed — minor doc drift
+br list --status=open --json                   # 168 issues
+br list --status=open --json | jq '.issues[].labels[]?' | grep '^codename:' | sort | uniq -c
+                                                # → 31 codename:claude-hook-bridge, 1 codename:imrest. THAT'S IT.
+kerf triage                                    # baseline: never. 168 untriaged.
+kerf next                                      # only warnings + 4 "clean: filter matches zero" — no ranked beads
+kerf work edit claude-hook-bridge --bead-filter-add 'label=codename:claude-hook-bridge'  # +43 beads (open+closed)
+kerf work edit extqueue           --bead-filter-add 'label=codename:extqueue'            # +0
+kerf work edit bridge-integration --bead-filter-add 'label=codename:bridge-integration'  # +0
+kerf work edit workflow-modes     --bead-filter-add 'label=codename:workflow-modes'      # +0
+kerf triage                                    # untriaged 168 → 137
+kerf next                                      # top 31 items are now ranked CHB beads — SUCCESS
+kerf triage --ack                              # baseline advanced to 2026-05-15T20:52:18Z
+```
+
+### Outcomes
+
+- `kerf next` ranked feed: **WORKING**. Top 5 IDs: `hk-7uasg`, `hk-pcgms`, `hk-cw56j`, `hk-s2vpx`, `hk-q7atz` — all `claude-hook-bridge`-attached integration / scenario beads.
+- Triage counts: **untriaged 168 → 137**; multi_matched 0; external_drift 0.
+- The 3 non-CHB works still attach 0 beads because **no bead in the corpus carries `codename:extqueue`, `codename:bridge-integration`, or `codename:workflow-modes`**. The task brief's premise ("168 untriaged collapse to ~4 codename:* cohorts") does not hold for this corpus — only one cohort exists.
+
+### Friction items (this session)
+
+1. **BLOCKER (premise mismatch).** Task brief assumed 4 codename:* cohorts map onto the 4 works. Actual corpus has only 1 codename cohort (`claude-hook-bridge`). `kerf next` is unblocked anyway because that one cohort produces 31 ranked beads — but 3 of the 4 work filters are decorative until future beads adopt the convention. The 137 still-untriaged beads need a *different* attachment strategy (probably `spec:reconciliation`, `scope:bootstrap`, etc.) or a new "reconciliation"/"bootstrap" work.
+2. **MAJOR.** `kerf work edit` reports `Now matches: N beads (was: 0)`, but the displayed count for claude-hook-bridge was **43** while `br list --status=open` shows 31. The delta (12) is closed beads. `kerf work edit` should disambiguate `open / closed` to avoid the confusing 43-vs-31-vs-137 arithmetic. The follow-on `Per-work bead health` line in triage does disambiguate (`31 open / 12 closed`), so this is purely the edit-confirmation message.
+3. **MAJOR.** Triage `suggest:` lines are *aggressively* wrong for cross-cutting labels. E.g. they propose `kerf new idempotency-non-idempotent --bead-filter 'label=axis:idempotency-non-idempotent'` — `axis:*` is a cross-cutting taxonomy, not a work cohort. Following these suggestions naively would create dozens of phantom works. The suggester should prefer `codename:` and `spec:` prefixes, and refuse to suggest `axis:`, `tag:`, `kind:`, `scope:` as new-work seeds.
+4. **MAJOR.** Triage `suggest` for the 1-bead `codename:imrest` cohort says `kerf new imrest` even though `imrest` is archived (`~/.kerf/archive/kerf-explore-b/imrest/`). The suggester has no awareness of archive state. Should at least say "(archived — consider unarchive or re-pin)".
+5. **MAJOR.** `kerf triage --ack` re-prints the **entire** triage report (including all 137 untriaged) before advancing baseline. Expected: terse confirmation `Baseline advanced to <timestamp>` only. Today, agents that pipe `--ack` output to logs get N×(137-line dump).
+6. **MAJOR.** A 5th work `phase-3-dot` appeared in the per-work health table during this session that I did not create. Likely a parallel agent's work. There is no `kerf list` flag to show works created by *other agents* / sessions vs. the bench-owner. Confusing for multi-agent dogfooding.
+7. **MAJOR (doc-drift).** Task brief said work configs live at `~/.kerf/projects/<id>/<work>/work.yaml`. Actual file is `spec.yaml`. The `--help` text on `kerf work edit` also says "edit a work's bead-attachment configuration" without naming the file — agent has to grep to find it.
+8. **MAJOR.** `kerf show <codename>` still doesn't print `bead_filter:` line (replicates earlier finding). After `kerf work edit` succeeds, `kerf show` is the obvious next call to verify — but it's silent. Had to `cat` spec.yaml directly.
+9. **MINOR.** `kerf work edit`'s "Now matches: N beads (was: 0 beads)." reads better as "Bead filter now matches N beads (open+closed). Previously: 0." — explicit about scope.
+10. **MINOR.** No `kerf work show <codename>` to dump the bead_filter for a single work without parsing yaml. `kerf triage`'s Per-work-bead-health table is the workaround.
+11. **NIT.** "Resolved bead_filter matches zero beads in the store" — the word `resolved` here means "after evaluation", but reads like "fixed". Rename to `evaluated`.
+12. **NIT.** `kerf triage --kind=multi_matched` ignores the flag when there are zero of that kind and prints the full report header anyway. Confusing — should print "no multi_matched items" and exit.
+
+### Not exercised
+
+- `kerf pin` — no need yet; all 137 still-untriaged beads need cohort-level filters, not 1:1 pins.
+- `kerf areas` / `kerf map` — out of scope.
+- `kerf localize` — `.kerf/`-vs-bench reconciliation deferred.
+
+### Next-session candidates
+
+- Decide cohort strategy for the 137 still-untriaged beads. Strongest signals: `spec:reconciliation` (8), `scope:bootstrap`-without-codename (sizable). Likely needs a new `reconciliation` work + a `bootstrap` work, or relabel beads with `codename:*`. Latter is one-shot, former is more works.
+- Pin or relabel the lone `codename:imrest` bead — archived work shouldn't leave orphans.

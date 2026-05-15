@@ -64,15 +64,11 @@ This is the central thesis: **deterministic skeleton, probabilistic organs.** Sl
 
 **Product input.** Process-of-record ambiguity is a design smell. In the harmonik product, transitions should be encoded as control points with one and only one authority — the rule shouldn't have to be re-read to know who closes a bead. The daemon's claim/close discipline is part of the deterministic skeleton; the implementer agent only emits a verdict, the daemon transitions state.
 
+See also L-007.
+
 ---
 
-### L-003 — Implementers stop short of the context budget <a name="l-003"></a>
-
-**Observed 2026-05-09.** Wave 1 + 2 implementers averaged 80–160 k tokens of a 250 k budget per dispatch. Some stopped after 12 k. Reason: each brief assigned a fixed bundle (e.g. "hk-sx9r.75–.79"); the implementer worked the bundle, found no instruction to claim more from `br ready`, and stopped. With 1/3 to 2/3 of dispatch budget unused per implementer, total session throughput was ~50% of what the budget allowed.
-
-**Fix applied.** `.claude/implementer-protocol.md` adds a HARD RULE section "Continue claiming until 250k": after each bead closes, scan `br ready` filtered to in-scope packages and claim the next ready bead; stop only on context exhaustion, queue empty, or hard blocker.
-
-**Product input.** Budget-utilization is a daemon-side metric that should drive implementer-agent loops natively. The agent shouldn't be told "claim more" — the daemon should keep feeding it work until the budget envelope tightens. This is one of the genuinely deterministic disciplines: there's no judgment call in "you have budget, queue is non-empty, claim the next one." Promote it to skeleton.
+### L-003 — RETIRED — merged into L-015 <a name="l-003"></a>
 
 ---
 
@@ -115,6 +111,8 @@ The summaries have value (the user uses them to sanity-check), but they're per-r
 **Observed 2026-05-09.** Multiple implementers and (earlier sessions) reviewers ended their reports with A/B questions back to the orchestrator: "should I implement X or close SUBSUMED?", "is this the right path?". The orchestrator can't answer (it dispatches and moves on), so the question silently becomes a stop. The user's standing memory `feedback_resume_continue_directive` covers the orchestrator's resume behavior; sub-agents needed the equivalent rule.
 
 **Fix applied.** `.claude/implementer-protocol.md` now carries an explicit "Don't ask questions back" section. HANDOFF v21 directives carry the rule for the orchestrator's own behavior under `/session-resume`.
+
+See also L-002 (bead-close ownership) as a specific historical instance of this general rule.
 
 **Product input.** Probabilistic agents at scale will always be tempted to defer. The harmonik product should make deferral structurally hard for normal-path beads (close-it-yourself transitions, judgment-call documentation in commit body) and structurally easy for the small fraction of beads that genuinely need human judgment (Cat-6 escalation, gate-pending). The current "ask the human" mode is a default that should be replaced with explicit escalation channels.
 
@@ -183,15 +181,7 @@ Kept terse on purpose — three-paragraph entries, not essays.
 
 ---
 
-### L-013 — Bead-claim race when sibling implementers share a vague scope <a name="l-013"></a>
-
-**Observed 2026-05-10 (session v22→v23).** Two implementers (`hqwn57` and `hqwn11`) both claimed and produced spec-corpus sensors for `hk-hqwn.11` (EV-008). Each had been dispatched with a brief whose scope read "continue claiming `kind:req` in `spec:event-model`" and overlapping ranges weren't partitioned. Two distinct sensor files landed targeting the same req. Resolved by deleting the redundant later file in `b8e2d73`.
-
-**What worked vs. what didn't.** The same session also dispatched §8 payload-struct work as `hqwn59a` (§8.1+§8.2), `hqwn59b` (§8.3–§8.6), `hqwn59c` (§8.7+§8.8) — explicit, non-overlapping numeric section ranges. Zero collisions on that lane. The collision lane used the vague "continue claiming kind:req in spec:event-model" phrasing.
-
-**Fix applied.** When two implementers operate in the same package/spec, the orchestrator brief MUST partition by an explicit non-overlapping key (section range, file glob, or req-id range) — never by a free-text "continue claiming" rule. Updated dispatch convention; future briefs cite the partition explicitly in the SCOPE line.
-
-**Product input.** A daemon-side dispatcher would atomically claim the bead at dispatch time (status flip + assignee stamp) so that even with overlapping rules, the second implementer's claim would no-op. The bootstrap process can't easily atomically-claim from two LLM sessions; the explicit partition is the workaround until the daemon ships.
+### L-013 — RETIRED — merged into L-015 <a name="l-013"></a>
 
 ---
 
@@ -207,9 +197,13 @@ Kept terse on purpose — three-paragraph entries, not essays.
 
 ---
 
-### L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers <a name="l-015"></a>
+### L-015 — Sub-agent must exit on assigned scope (subsumes L-003 budget-utilization and L-013 partition-collision) <a name="l-015"></a>
 
-**Observed 2026-05-10 (mid-session).** Two collisions in one session: (a) sx5860, dispatched on `hk-sx9r.58/.60` with continue-claim authorized within `spec:operator-nfr`, jumped spec boundaries and grabbed `hk-hqwn.8` from `spec:event-model` — exactly while the orchestrator was simultaneously dispatching the hqwn8 worktree on the same bead; (b) the L-013 race itself, with two implementers free-claiming `hk-hqwn.11` under overlapping "continue claiming `kind:req`" rules. User flagged the structural cause: the "Continue claiming until 250k" HARD RULE in `.claude/implementer-protocol.md` was a **main-thread** budget rule (orchestrator keeps the slot floor saturated until its own context approaches 250k) that had been copy-pasted into the implementer surface, where sub-agents dutifully enacted it.
+**Motivating context (the path from L-003 → L-013 → L-015).** L-003 (2026-05-09): implementers were stopping at 80–160 k of a 250 k budget after working their assigned bundle, so a HARD RULE landed in `.claude/implementer-protocol.md` saying "Continue claiming until 250k" — scan `br ready` after each close and grab the next in-scope bead. L-013 (2026-05-10): that free-claim rule produced a partition-collision race — two implementers each claimed `hk-hqwn.11` (EV-008) under the vague scope "continue claiming `kind:req` in `spec:event-model`" and landed duplicate sensor files (cleaned up in `b8e2d73`). A mitigation landed requiring orchestrator briefs to partition the lane with an explicit non-overlapping key (section range, file glob, or req-id range). That patched within-spec collisions but not cross-spec ones.
+
+**Observed 2026-05-10 (mid-session, the breaking case).** Two collisions in one session: (a) sx5860, dispatched on `hk-sx9r.58/.60` with continue-claim authorized within `spec:operator-nfr`, jumped spec boundaries and grabbed `hk-hqwn.8` from `spec:event-model` — exactly while the orchestrator was simultaneously dispatching the hqwn8 worktree on the same bead; (b) the L-013 race recurring on `hk-hqwn.11` despite the partition mitigation. User flagged the structural cause: the "Continue claiming until 250k" HARD RULE was a **main-thread** budget rule (orchestrator keeps the slot floor saturated until its own context approaches 250k) that had been copy-pasted into the implementer surface, where sub-agents dutifully enacted it. No brief partition could anticipate sx5860's cross-spec leap.
+
+**HARD RULE (now in `.claude/implementer-protocol.md`).** Scope = brief. Exit after. An implementer works exactly the bead(s) named in its brief's SCOPE line and exits, regardless of remaining context budget and regardless of what `br ready` shows post-close. No free-claiming, period.
 
 **Why the drift happened.** The 250k budget exists at the orchestrator level — it's the orchestrator's job to drain `br ready` until it approaches its own context ceiling, then write a fresh HANDOFF. Sub-agents are dispatched on a specific scope. When the rule landed in implementer-protocol.md, sub-agents (correctly reading the rule as authoritative) did exactly what the doc said: continued claiming after their assigned scope drained. The mitigation L-013 added (explicit per-brief partition lines) only patched within-spec collisions; sx5860's cross-spec leap was beyond what any brief partition could anticipate.
 
@@ -232,6 +226,8 @@ Kept terse on purpose — three-paragraph entries, not essays.
 **The only durable fix is the L-015 rule itself.** Once implementers stop free-claiming, this risk evaporates — a single-bead-and-exit implementer does its assigned work and reports back, and even if its bash sessions outlive the worktree, it has nothing to claim. The sx5860/mup11 cascades happened because they were dispatched *before* the L-015 fix landed mid-session; future sessions will not have OLD-protocol agents in flight.
 
 **Product input.** The harmonik daemon's dispatch lifecycle MUST encode terminal sub-agent boundaries: signal-on-merge, dispatch-id-scoped writes, and a session-level fence so an orphaned agent's late writes are rejected rather than silently absorbed. The bootstrap process can't easily kill agent processes; the daemon (which owns the sub-agent runtime) can.
+
+Note: L-015's exit-on-assigned-scope rule eliminates the conditions that produced L-016 — once sub-agents reliably exit, no stale writes accumulate. L-016 is conditionally obsolete; revisit if a violation reoccurs.
 
 ---
 
@@ -263,3 +259,22 @@ Concrete moments:
 **Why this matters.** The friction was not loud — the user answered each question in one short message. But every question consumed a user turn, broke the orchestrator's stream cadence, and slowed throughput. The compound cost is real even when no individual stall is dramatic.
 
 **Product input.** Sub-agent dispatch could be the place this rule is encoded structurally — an implementer that finishes a bead and finds a dispatchable sibling shouldn't need the orchestrator to wake up, decide, and re-dispatch. STREAM-NOT-WAVES is the orchestrator-level expression; a daemon-level dispatcher could make it a property of the system instead of a behavior of the orchestrator.
+
+---
+
+## L-019 — Dispatch-priority ordering under multi-lane concurrency
+
+Date: 2026-05-15
+Tags: orchestrator, beads, dispatch
+
+**Pattern.** With 100+ open beads and 5–7 parallel sub-agent slots, `br ready` returns more candidates than slots. FIFO ordering within the ready set is suboptimal — sibling beads have implicit sequencing (foundational before refine, impl before sensor, step-1 before step-N) that `br ready` doesn't see.
+
+**Rule.** When two non-overlapping beads are both dispatchable in the same package/spec:
+1. Prefer beads tagged `first-pass`/`foundational` before `refine`/`derive`.
+2. Sensors and invariants queue AFTER their target implementation bead.
+3. Multi-step beads (`-step-N` in title or body) queue in numeric order.
+4. Where tags and body-analysis disagree, prefer body-analysis.
+
+**Why this matters.** Out-of-order dispatch wastes a slot on work whose acceptance depends on a sibling not yet landed — the agent finishes, the sibling lands, and the original work needs touch-up. Cost: 1 extra agent cycle per inversion. Across a session of 8–12 dispatches, that's 1–2 wasted cycles.
+
+**Product input.** harmonik's daemon should compute a `dispatch-priority` per bead from these signals (label-prefix scan, sibling-graph traversal, body-token match) so `br ready --sorted` returns the orchestrator-preferred order without judgment calls in the main thread.

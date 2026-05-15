@@ -10,6 +10,7 @@
 4. **Four-axis determinism tagging** — Every cross-subsystem type/interface/evaluation point is tagged on LLM-freedom, I/O determinism, replay-safety, idempotency. (architecture §1.1, SC-10)
 5. **Search + verifier + traces required triple** — All three must exist; verification is a node type (not a subsystem), traces are durable AlphaGo decision records distinct from events. (architecture §1.3)
 6. **Three-artifact separation** — `spec`, `workflow graph`, `bead` are three distinct artifacts; none is a projection of another; "feature" is NOT a product primitive. (architecture §1.9)
+   - **Note on inline DOT in specs:** DOT fragments embedded inline in foundation specs (e.g., the snippets in `control-points.md`) are ILLUSTRATIVE only. Real workflows live in separate `.dot` files; their on-disk location is a convention to be settled by the phase-3-dot work. When readers see inline DOT alongside prose, treat it as an example of the shape — not as the workflow itself.
 
 ## Execution model
 

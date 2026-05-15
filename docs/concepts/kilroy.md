@@ -10,6 +10,8 @@ updated: 2026-04-13
 
 # Kilroy
 
+> This concept-digest is informational, not normative; consult `.kerf/recon/kilroy-findings.md` for the full reverse-spec.
+
 ## What It Is
 Kilroy is a graph-based agentic workflow engine where pipelines are defined as Graphviz DOT files. The graph IS the workflow -- no imperative control flow, no hidden routing logic. Pipelines are declarative, visual, version-controllable, and diffable.
 
@@ -31,7 +33,7 @@ Different node shapes map to different operations: codergen (code generation), w
 The same prompt sent to 3 different models, then results synthesized. Used for definition of done generation, planning, and review. Model stylesheets assign models to roles -- separation of model selection from workflow logic.
 
 ### Failure Classification + Cycle Detection
-Failure signatures are tracked to prevent infinite retry loops. Three failure classes: deterministic (will always fail -- skip), structural (needs different approach), transient_infra (retry). Cycle detection caps repeated traversals.
+Failure signatures are tracked to prevent infinite retry loops. Six failure classes: `transient_infra` (retry), `budget_exhausted` (retry with escalation), `compilation_loop` (retry / replan), `deterministic` (no retry -- auth/bad-request/model-not-found), `canceled` (no retry), `structural` (no retry -- validation/config). Cycle detection caps repeated traversals.
 
 ### Goal Gates
 Critical nodes that cannot be bypassed. The pipeline cannot exit until goal gates pass. This provides hard guarantees about workflow completion quality.
@@ -40,7 +42,7 @@ Critical nodes that cannot be bypassed. The pipeline cannot exit until goal gate
 Each parallel branch gets an isolated git worktree and forked context. Branches execute independently and merge results. No shared mutable state between parallel paths.
 
 ### Fidelity Modes
-Context management strategies for LLM nodes: full (everything), truncate (cut old content), compact (structured compression), summary (LLM-generated summary). Different nodes can use different strategies.
+Context management strategies for LLM nodes -- six modes: `full` (reuse session, complete history), `truncate` (fresh session, graph goal + run ID only), `compact` (fresh, bullet summary of completed stages), `summary:low` / `summary:medium` / `summary:high` (fresh, increasing detail; ~600 / ~1500 / ~3000 tokens). Resolution precedence: edge attribute → node attribute → graph default → `compact` fallback. Different nodes can use different strategies.
 
 ### Ingestion from Natural Language
 English requirements are converted to validated DOT pipelines via LLM. The system can bootstrap its own workflow definitions from human-language descriptions.

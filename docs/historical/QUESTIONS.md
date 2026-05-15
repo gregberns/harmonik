@@ -43,12 +43,14 @@ Questions are added as they surface during overnight work. Resolved questions ge
 
 ### Q-R1. Attractor mischaracterization in existing docs
 
+- **RESOLVED 2026-04-20:** Attractor is reframed as Kilroy's sibling in the same DOT-pipeline-runner family; orchestrator-core.md and components/external/kilroy.md updated to reflect that, with DTW references (Temporal/Restate/DBOS) flagged as separate, post-MVH-only references. Recon ground truth: `.kerf/recon/attractor-findings.md`.
 - **Why it's here** — Discovery during overnight recon: `/Users/gb/github/harmonik/docs/subsystems/orchestrator-core.md` line 52 calls Attractor a "spec for distributed workflow coordination; likely covers patterns we need around durable execution and replay." The Attractor repo itself describes Attractor as a **DOT-based pipeline runner** with JSON-snapshot durability and single-threaded traversal — functionally the same family as Kilroy, not a DTW engine. The existing framing is wrong and will mislead subsystem specs that try to use Attractor's "DTW patterns."
 - **My lean** — Straightforward fix: correct the orchestrator-core.md framing in a backlog task. No architectural decision needed.
 - **Blocks** — Nothing directly, but subsystem specs that read the incorrect framing may adopt Attractor-shaped patterns thinking they're getting distributed-durability. Flagging for visibility.
 
 ### Q-R2. Do we want a real DTW (distributed-durable-workflow) reference at all?
 
+- **RESOLVED 2026-04-20:** No DTW adoption for MVH (foundation locked decision #12). Single-machine, cheap re-execution, no irreversible side effects make Temporal/Restate/DBOS overkill; harmonik's JSONL events + git checkpoints + SQLite queue + restart reconciliation deliver durability without DTW overhead. References retained for post-MVH consideration only. Full resolution rationale recorded in the Resolved section below.
 - **Why it's here** — Follow-on from Q-R1. If Attractor is *not* a DTW reference, and the harmonik team's docs repeatedly gesture at "durable execution, replay, long-running orchestration," we either (a) don't actually need DTW semantics and the existing framing was overreach, or (b) we do need them and should study Temporal, Restate, or DBOS as real references. Architecture-critical because it shapes the orchestrator's persistence/replay model.
 - **What I've thought through** — Harmonik's current model (JSONL source-of-truth + git checkpoints per node) is *similar* to event-sourcing but is NOT a DTW in the Temporal sense (no deterministic replay with automatic compensation). If harmonik needs hours-long workflows that survive process restarts and resume exactly where they left off — yes DTW. If workflows complete within a single orchestrator lifetime and restart = abort-and-retry, no DTW.
 - **My lean** — (b) but lightweight: study Temporal's core model (event history, workflow as pure function of events, deterministic replay) and selectively adopt. Full DTW is over-engineering for MVH.
@@ -98,6 +100,7 @@ Questions are added as they surface during overnight work. Resolved questions ge
 
 ### Q-A2. Node contract scope: what does a node minimally provide?
 
+- **RESOLVED 2026-04-20:** Node contract synthesized from Kilroy + Attractor as `execute(node, context, graph, logs_root) -> Outcome` with explicit status enum (`success` / `partial_success` / `retry` / `fail` / `skipped`), `preferred_label`, `suggested_next_ids`, `context_updates`, and per-node `idempotency_class` tag. Handler-contract spec (foundation §4) and core-scope.md §Section 1 carry the normative form; the 5-node taxonomy is locked.
 - **Why it's here** — The node contract determines whether agents, twins, scripts, tests, and other primitives can coexist in the same graph. Consulting Kilroy and Attractor per user's instruction.
 - **What I've thought through** — Deferred to research pass; sub-agent will inventory Kilroy and Attractor node definitions and propose a synthesized contract.
 - **My lean** — Pending research.

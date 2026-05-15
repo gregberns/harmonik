@@ -14,7 +14,7 @@ Phase 1 reached OPERATIONAL GREEN on 2026-05-14: harmonik dispatches a bead to a
 | 2 | DONE | Phase 2 entry: first-demo round-trip | hk-09tne (closed) | Daemon merges run-branch to main and closes the bead autonomously. Achieved 2026-05-15. |
 | 3 | DONE | Post-MVH parallelism | hk-e61c3 (closed) | `--max-concurrent N` validated in t8/t11 throughput tests; capacity gate confirmed. |
 | 4 | IN PROGRESS | extqueue v0.1 implementation | hk-lj0pb (epic) + 22 task beads | External orchestrator submits an ordered wave queue; daemon executes it, decoupling bead selection from daemon internals. |
-| 5 | OPEN | Bridge completeness + session lifecycle | hk-lj1p9, hk-gql20, hk-kqdpf (P0 epics) | Close remaining gaps: tmux substrate wiring, dual-path collapse, review-loop task injection, worktree auto-trust (hk-fdyip P0). |
+| 5 | OPEN | Bridge completeness + session lifecycle | hk-gql20, hk-kqdpf (P0 epics) | Close remaining gaps: tmux substrate wiring, dual-path collapse, review-loop task injection. hk-lj1p9 (session lifecycle) closed 2026-05-15. |
 | 6 | OPEN | imrest — bead in_progress as activity marker | hk-iuaed | Spec + impl: decouple `br claim` (activity marker, recoverable) from close/reopen (truth claim); add orphan-reset sweep on restart. |
 | 7 | OPEN | CHB spec corpus implementation | hk-qo08q | Implement `specs/claude-hook-bridge.md` req-beads (CHB-NNN) including hook-relay subcommand, socket acceptor, and durable checkpoint. |
 | 8 | TESTING (gated) | Phase 2 multi-bead E2E smoke | hk-1n0cw | Run a 5–10 bead queue through harmonik at `--max-concurrent N`; observe completion stream and merge dance. |

@@ -27,6 +27,24 @@ This creates a work on the bench and shows the process to follow. The jig guides
     kerf square <codename>           Verify the work is complete
     kerf finalize <codename> --branch <name>  Package for implementation
 
+### Queue + work-attachment surface
+
+    kerf next                        Ranked feed of bead IDs ready to dispatch
+    kerf triage                      Drift report (suggested bead reattachments, stale links)
+    kerf triage --ack                Advance kerf's baseline after acting on the report
+    kerf pin <bead> <work>           Attach a bead to a kerf work
+    kerf work edit <codename>        Edit a work's bead-attachment config (bead_filter etc.)
+    kerf map                         Works grouped by area
+    kerf areas                       Manage areas (list/add/edit)
+
+### Agent loop pattern (informal)
+
+`kerf next` returns ranked bead IDs → orchestrator dispatches them via harmonik → on completion, `br close <id>` is invoked → `kerf triage --ack` advances kerf's baseline. kerf manages the queue and work-attachment; harmonik executes.
+
+### Beta-test caveat
+
+kerf is currently in **beta-test** in this project — harmonik is the first beta-tester of the new `kerf next` / `triage` / `pin` / `work edit` / `init` surface. Expect friction. Known issues at time of writing: `kerf next` may report empty for works lacking `bead_filter` clauses; `kerf init` emits stale + duplicated agent-instruction blocks; `kerf triage` mixes good and phantom suggestions. Log issues you encounter to [`docs/kerf-beta-feedback.md`](docs/kerf-beta-feedback.md) — see [`KERF-FEEDBACK.md`](KERF-FEEDBACK.md) for the convention.
+
 ### When to use kerf
 
 - New subsystems, cross-cutting spec changes → `kerf new --jig spec`

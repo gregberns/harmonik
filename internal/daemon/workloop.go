@@ -637,6 +637,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		beadDescription:   beadRecord.Description,
 		model:             resolvedModel,
 		effort:            resolvedEffort,
+		// worktreeRootPath is used by buildClaudeLaunchSpec to check whether the
+		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
+		// per HC-055b. Derived from projectDir via the standard worktree root formula.
+		worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {

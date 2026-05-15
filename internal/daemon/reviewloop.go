@@ -181,6 +181,9 @@ func runReviewLoop(
 			beadDescription:   beadDescription,
 			model:             resolvedModel,
 			effort:            resolvedEffort,
+			// worktreeRootPath enables --dangerously-skip-permissions for daemon-managed
+			// worktrees per HC-055b.
+			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 			// priorVerdictFile and priorVerdictSummary are populated below for
 			// implementer-resume phases (iteration ≥ 2) once state.lastVerdictNotes is known.
 		}
@@ -405,6 +408,9 @@ func runReviewLoop(
 			beadDescription:   beadDescription,
 			model:             resolvedModel,
 			effort:            resolvedEffort,
+			// worktreeRootPath enables --dangerously-skip-permissions for daemon-managed
+			// worktrees per HC-055b.
+			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 		}
 		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
 		if revSpecErr != nil {

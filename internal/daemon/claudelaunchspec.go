@@ -31,7 +31,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
@@ -135,6 +137,16 @@ type claudeRunCtx struct {
 	// Must be one of {low, medium, high, xhigh, max}; empty means no flag emitted.
 	// Violation returns *ModelPreferenceError before LaunchSpec is built.
 	effort string
+
+	// worktreeRootPath is the absolute path to the harmonik worktrees root
+	// directory (e.g. <projectDir>/.harmonik/worktrees). When non-empty,
+	// buildClaudeLaunchSpec checks whether workspacePath canonicalizes to a
+	// path under this prefix; if so, --dangerously-skip-permissions is added
+	// to argv per specs/handler-contract.md §4.10 HC-055b.
+	//
+	// When empty (e.g. in tests that do not need the flag), the path-check is
+	// skipped and the flag is not emitted.
+	worktreeRootPath string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -312,7 +324,7 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 
 	// Step 6b — Build argv (OQ3 allow-list: --session-id or --resume, then optional
-	// --model and --effort per HC-055a).
+	// --model and --effort per HC-055a, then --dangerously-skip-permissions per HC-055b).
 	// CHB-008: use --resume <uuid> for implementer-resume, --session-id <uuid> otherwise.
 	// Ordering per HC-055a: --session-id first, then --model, then --effort.
 	var args []string
@@ -326,6 +338,14 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 	if rc.effort != "" {
 		args = append(args, "--effort", rc.effort)
+	}
+	// HC-055b: emit --dangerously-skip-permissions iff workspacePath canonicalizes
+	// to a path under the harmonik worktrees root. This suppresses the interactive
+	// trust dialog in operator-daemon launches where the worktree is already
+	// operator-sanctioned. The path check is a positive-allowlist match; if
+	// EvalSymlinks fails for either path the flag is silently omitted.
+	if isHarmonikManagedWorktree(rc.workspacePath, rc.worktreeRootPath) {
+		args = append(args, "--dangerously-skip-permissions")
 	}
 
 	// Step 7 — Deny-list guard (CHB-007).
@@ -374,4 +394,33 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 
 	return spec, artifacts, nil
+}
+
+// isHarmonikManagedWorktree reports whether workspacePath canonicalizes to a
+// path under worktreeRootPath per specs/handler-contract.md §4.10 HC-055b.
+//
+// The check is a positive-allowlist match: both paths are resolved via
+// os.EvalSymlinks before comparison. If either resolution fails (e.g. the
+// directory has not yet been created) the function returns false and the caller
+// omits --dangerously-skip-permissions without error.
+//
+// An empty worktreeRootPath always returns false (tests that do not populate
+// the field should not receive the flag).
+func isHarmonikManagedWorktree(workspacePath, worktreeRootPath string) bool {
+	if worktreeRootPath == "" || workspacePath == "" {
+		return false
+	}
+	canonRoot, err := filepath.EvalSymlinks(worktreeRootPath)
+	if err != nil {
+		return false
+	}
+	canonWS, err := filepath.EvalSymlinks(workspacePath)
+	if err != nil {
+		return false
+	}
+	// Ensure the prefix includes a trailing separator so that a root path that
+	// is a prefix of another root path does not produce a false positive.
+	// E.g., /foo/bar must not match /foo/barbaz.
+	prefix := canonRoot + string(filepath.Separator)
+	return strings.HasPrefix(canonWS, prefix)
 }

@@ -595,6 +595,8 @@ Both `--model` and `--effort` are optional and are omitted entirely when the cor
 
 Operator-supplied additional arguments (`Config.HandlerArgs`) are appended after the allow-listed flags and forwarded verbatim. `Config.HandlerArgs` MUST be validated against the [claude-hook-bridge.md §4.2 CHB-007] deny-list before exec.
 
+The daemon also MUST add `--dangerously-skip-permissions` to argv when the launch CWD canonicalizes to a path under the harmonik-owned worktree root, per §4.10.HC-055b.
+
 The following flags MUST NOT be passed at MVH (in addition to the CHB-007 deny-list):
 
 - `--print` / `-p` — incompatible with interactive tmux substrate.
@@ -605,10 +607,27 @@ The following flags MUST NOT be passed at MVH (in addition to the CHB-007 deny-l
 
 A daemon that detects any of these flags in `Config.HandlerArgs` MUST refuse to launch with a structural `forbidden_claude_flag` error.
 
-Cross-refs: [claude-hook-bridge.md §4.2 CHB-006] (env), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags), [claude-hook-bridge.md §4.1 CHB-001..005] (settings.json materialization).
+Cross-refs: [claude-hook-bridge.md §4.2 CHB-006] (env), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags), [claude-hook-bridge.md §4.1 CHB-001..005] (settings.json materialization), §4.10.HC-055b (worktree path-check for `--dangerously-skip-permissions`).
 
 Tags: mechanism, security-relevant
 Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-055b — Worktree path-check for `--dangerously-skip-permissions`
+
+**Rationale:** Claude Code's interactive trust prompt is triggered when the CWD is not in the user's trusted-projects list. In an operator-managed daemon launch, the CWD is always a harmonik-owned worktree that has already been materialized and trust-seeded (CHB-029 / WM-040b). Passing `--dangerously-skip-permissions` in this context does not widen the security perimeter beyond what the operator has already sanctioned; it merely bypasses the interactive confirmation that would otherwise hang the unattended session. Operator-launched (human-at-keyboard) sessions MUST NOT receive this flag.
+
+**Path-check rule:** The daemon MUST perform the following check before adding `--dangerously-skip-permissions` to `argv`:
+
+1. Resolve `workspacePath` via `os.EvalSymlinks` to obtain `canonicalWorkspace`.
+2. Resolve the harmonik worktrees root (`<projectDir>/.harmonik/worktrees`) via `os.EvalSymlinks` to obtain `canonicalWorktreeRoot`.
+3. Add `--dangerously-skip-permissions` to `argv` if and only if `canonicalWorkspace` has `canonicalWorktreeRoot+string(os.PathSeparator)` as a prefix (positive-allowlist match).
+
+**Implementation constraint:** The check MUST be a positive-allowlist match against the harmonik worktrees prefix, NOT a negative-allowlist against a set of "other" paths. If `EvalSymlinks` fails for either path (e.g. the directory does not yet exist), the flag MUST be omitted and no error is returned.
+
+**HC-055b-1 (settings.json workaround obsolescence):** This rule OBVIATES any prior `dangerouslyAllowedPermissions` field in the worktree-materialized `.claude/settings.json`. The workaround code MUST be removed in the same commit that adds this path-check; the CLI flag replaces it.
+
+Tags: mechanism, security-relevant
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-055a — ModelPreference descriptor invariants
 
@@ -1142,6 +1161,7 @@ Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing po
 | 2026-05-12 | 0.3.5 | foundation-author | Add HC-045a / HC-045b / HC-045c in §4.10 (gap-filler placement after HC-045, matching the HC-016a / HC-026b pattern) covering claude-code agent type's launch mechanism (pointer to claude-hook-bridge.md), hook-bridge one-shot NDJSON connection regime, and handler-side claude_session_id minting/resume discipline including orphan-reconnect git-derived lookup. Clarifying sentence added to HC-006 pointing forward to HC-045c and to CHB-023's durability boundary. No requirement IDs renumbered or retired; HC-053 in §6.2 is unchanged. Status remains `reviewed`. |
 | 2026-05-13 | 0.3.6 | bridge-integration | **HC-054/055/056/057 added (hk-gql20.3).** Additive amendments for the bridge-integration initiative. **HC-054** (§6.1) — `Session.Attach()` for `agent_type=claude-code` under the PL-021b tmux substrate returns a live pty `io.Reader` (not a log tail); single-line buffering for real-time observation; close-reader does not terminate the session; multiple concurrent attaches permitted. **HC-055** (§4.10) — claude CLI flag allow-list at MVH: only `--session-id` / `--resume` constructed by the daemon; explicit deny on `--print`, `--add-dir`, `--allowed-tools`/`--disallowed-tools`, `--mcp-server`/`--mcp-config`, `--permission-mode` (policy lives in worktree-materialized `.claude/settings.json`); operator `Config.HandlerArgs` validated against CHB-007 deny-list. **HC-056** (§4.9) — `agent_ready` timeout default 30s via `Config.AgentReadyTimeout`; on timeout: kill, reap, emit `agent_failed{sub_reason=agent_ready_timeout}`, reopen bead. Closes `hk-do7te`. **HC-057** (§4.9) — heartbeat-emission ownership carve-out: for `agent_type=claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf (CHB-019 cadence); retired when post-MVH shim binary lands. No existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-05-13 | 0.3.7 | agent (hk-p63bz) | **agent_ready semantics reframed for the interactive substrate (audit §6 B3).** HC-039 amended: `agent_ready` emitter identity is now substrate-dependent; under the tmux substrate the relay synthesizes it on `SessionStart` receipt (not the handler pre-exec). HC-041 amended: `DetectReady` must accept relay-synthesized `agent_ready` with `provenance: "claude_session_start"` and MUST NOT accept `launch_initiated`. HC-056 amended: timeout window now starts at `SubstrateSpawn` return (not `cmd.Start()`) under the tmux substrate, explicitly excluding `launch_initiated` as a satisfying signal, and cross-refs updated to point at CHB-013 (SessionStart mapping) and CHB-018 (launch_initiated precursor). No existing HC IDs renumbered. Coexists with HC-054/055/056/057 (hk-gql20.3). Refs: hk-p63bz. |
+| 2026-05-15 | 0.3.9 | agent (hk-fdyip) | **Worktree auto-trust: `--dangerously-skip-permissions` carveout (HC-055 + HC-055b).** **HC-055 amended** to add `--dangerously-skip-permissions` to the flag allow-list, permitted only when the daemon launch CWD canonicalizes to a path under the harmonik-owned worktree root. **HC-055b added** (§4.10) — specifies the path-check rule: canonicalize both `workspacePath` and `<projectDir>/.harmonik/worktrees` via `os.EvalSymlinks`; emit the flag iff `canonicalWorkspace` has `canonicalWorktreeRoot+separator` as a prefix; positive-allowlist match, NOT negative-allowlist. **HC-055b-1** — `dangerouslyAllowedPermissions` settings.json workaround is obsoleted by this CLI flag and MUST be removed from the materialization path. Rationale: in an operator-daemon context the worktree is already operator-sanctioned; the flag removes the interactive confirmation that would otherwise block the unattended session. Operator-supplied `Config.HandlerArgs` MUST NOT carry this flag (CHB-007 guard applies). Refs: hk-fdyip. |
 | 2026-05-14 | 0.3.8 | agent (hk-7zvh4) | **Model-selection spec amendment: ModelPreference descriptor + HC-055 flag allow-list extension.** New **HC-055a** (§4.10) — `ModelPreference` descriptor invariants: shape constraints (`^[A-Za-z0-9._:/-]+$`, max 128 chars, rationale: allows aliases, version pins, provider-prefixed forms; rejects shell metacharacters); value-opacity invariant (harmonik validates shape not value; handler-side launch failure is the authoritative compatibility check; supports future handler types with arbitrary model strings); `effort` closed enum `{low,medium,high,xhigh,max}`; argv translation rule for `agent_type=claude-code`; `model_rejected_by_tool` structural sub-reason. **HC-055 amended** to extend the allow-list with `--model <value>` and `--effort <value>` as optional flags, both omitted when the resolution chain produces empty. **LaunchSpec RECORD** (§6.1) gains `model_preference : ModelPreference | None`; **HC-006** optional-fields list updated to include `model_preference`. **ModelPreference RECORD** added to §6.1. No existing HC IDs renumbered. Refs: hk-7zvh4, hk-cfhj2. |
 
 ## A. Appendices

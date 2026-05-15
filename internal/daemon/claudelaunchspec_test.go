@@ -364,3 +364,115 @@ func claudeLaunchSpecAssertEnvKey(t *testing.T, env []string, key string) {
 	}
 	t.Errorf("env missing %q entry; have %v", key, env)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HC-055b: --dangerously-skip-permissions path-check tests (hk-fdyip)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// claudeLaunchSpecFixtureWorktreeLayout creates a temp directory tree that
+// mirrors the harmonik worktree layout:
+//
+//	<root>/.harmonik/worktrees/<runID>/
+//
+// Returns (worktreeRootPath, worktreePath) where worktreePath is the per-run
+// subdirectory that should be used as workspacePath.
+func claudeLaunchSpecFixtureWorktreeLayout(t *testing.T, runID string) (worktreeRootPath, worktreePath string) {
+	t.Helper()
+	root := t.TempDir()
+	wtRoot := filepath.Join(root, ".harmonik", "worktrees")
+	wtPath := filepath.Join(wtRoot, runID)
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("claudeLaunchSpecFixtureWorktreeLayout: MkdirAll: %v", err)
+	}
+	// Ensure .claude/ exists for MaterializeClaudeSettings.
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Join(wtPath, ".claude"), 0o755); err != nil {
+		t.Fatalf("claudeLaunchSpecFixtureWorktreeLayout: MkdirAll .claude: %v", err)
+	}
+	return wtRoot, wtPath
+}
+
+// TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree verifies that
+// --dangerously-skip-permissions IS present in argv when workspacePath
+// canonicalizes to a path under the harmonik worktrees root (HC-055b).
+func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree(t *testing.T) {
+	t.Parallel()
+
+	runUID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("mint runUID: %v", err)
+	}
+	wtRoot, wtPath := claudeLaunchSpecFixtureWorktreeLayout(t, runUID.String())
+
+	rc := daemon.ExportedClaudeRunCtx{
+		RunID:            core.RunID(runUID),
+		BeadID:           "test-bead-hc055b-in",
+		WorkspacePath:    wtPath,
+		DaemonSocket:     "/tmp/harmonik-test-hc055b.sock",
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   0,
+		HandlerBinary:    "claude",
+		BaseEnv:          []string{"HARMONIK_PROJECT_HASH=deadbeef123456"},
+		WorktreeRootPath: wtRoot,
+	}
+
+	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_InWorktree: unexpected error: %v", err)
+	}
+
+	found := false
+	for _, a := range spec.Args {
+		if a == "--dangerously-skip-permissions" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("HC-055b: --dangerously-skip-permissions expected in args %v for harmonik-managed worktree; not found", spec.Args)
+	}
+}
+
+// TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree verifies
+// that --dangerously-skip-permissions is NOT present in argv when workspacePath
+// does NOT reside under the harmonik worktrees root (HC-055b).
+func TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree(t *testing.T) {
+	t.Parallel()
+
+	// workspacePath is a plain temp dir unrelated to the worktree root.
+	ws := claudeLaunchSpecFixtureWorkspace(t)
+	// worktreeRootPath points to a different temp dir (simulating the harmonik
+	// worktrees root on another path).
+	unrelatedRoot := t.TempDir()
+
+	runUID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("mint runUID: %v", err)
+	}
+	rc := daemon.ExportedClaudeRunCtx{
+		RunID:            core.RunID(runUID),
+		BeadID:           "test-bead-hc055b-out",
+		WorkspacePath:    ws,
+		DaemonSocket:     "/tmp/harmonik-test-hc055b-out.sock",
+		WorkflowMode:     core.WorkflowModeSingle,
+		Phase:            "",
+		IterationCount:   0,
+		HandlerBinary:    "claude",
+		BaseEnv:          []string{"HARMONIK_PROJECT_HASH=deadbeef123456"},
+		WorktreeRootPath: unrelatedRoot,
+	}
+
+	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("TestBuildClaudeLaunchSpec_DangerouslySkipPermissions_OutsideWorktree: unexpected error: %v", err)
+	}
+
+	for _, a := range spec.Args {
+		if a == "--dangerously-skip-permissions" {
+			t.Errorf("HC-055b: --dangerously-skip-permissions must NOT be in args %v for non-harmonik-managed path", spec.Args)
+			return
+		}
+	}
+}

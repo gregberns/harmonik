@@ -507,6 +507,11 @@ type ExportedClaudeRunCtx struct {
 	// Non-empty → --effort <value> appended to argv. Must be one of {low,medium,high,xhigh,max}.
 	// Empty → no flag emitted.
 	Effort string
+	// WorktreeRootPath is the absolute path to the harmonik worktrees root
+	// (e.g. <projectDir>/.harmonik/worktrees). When non-empty and workspacePath
+	// canonicalizes to a path under this prefix, --dangerously-skip-permissions is
+	// added to argv per HC-055b. Empty → path-check skipped, flag not emitted.
+	WorktreeRootPath string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -541,6 +546,7 @@ func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx)
 		baseEnv:           rc.BaseEnv,
 		model:             rc.Model,
 		effort:            rc.Effort,
+		worktreeRootPath:  rc.WorktreeRootPath,
 	}
 	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
 	if err != nil {

@@ -269,6 +269,7 @@ func run() int {
 		MaxConcurrent:    maxConcurrentFlag,
 		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
 		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
+		BinaryCommitHash: commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

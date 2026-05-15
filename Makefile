@@ -30,8 +30,16 @@ COMMIT_HASH := $(shell git rev-parse HEAD)
 # Core build / test
 # ---------------------------------------------------------------------------
 
+# build-harmonik: compile cmd/harmonik with the commit-hash ldflags stamp.
+# The -X flag injects the current HEAD SHA into main.commitHash so that the
+# daemon_started event payload carries a real git hash (hk-mz0x4).
+# Output: /tmp/harmonik (matches the canonical smoke-test path).
+.PHONY: build-harmonik
+build-harmonik:  ## Build cmd/harmonik → /tmp/harmonik with commit-hash stamp (hk-mz0x4)
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o /tmp/harmonik ./cmd/harmonik
+
 .PHONY: build
-build:  ## go build ./... (no-op until first package lands; target must exist)
+build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4)
 	go build ./...
 
 .PHONY: test

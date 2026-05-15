@@ -186,6 +186,21 @@ type Config struct {
 	// Spec ref: specs/execution-model.md §4.3 EM-012b — tier-2 slot.
 	// Bead ref: hk-bfvk7.
 	ProjectCfg ProjectConfig
+
+	// BinaryCommitHash is the git commit hash of the running daemon binary,
+	// injected at build time via -ldflags "-X main.commitHash=<sha>" and
+	// forwarded here from the composition root (cmd/harmonik/main.go).
+	//
+	// It is emitted verbatim in the daemon_started event payload
+	// (binary_commit_hash field, §8.7.1). When empty Start falls back to
+	// "unknown" so that the field is always well-formed per the spec.
+	//
+	// The zero value ("") is safe for unit tests that do not care about the
+	// stamped hash; they will see "unknown" in the emitted payload.
+	//
+	// Spec ref: specs/event-model.md §8.7.1 (daemon_started payload).
+	// Bead ref: hk-mz0x4.
+	BinaryCommitHash string
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -314,14 +329,19 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Emit daemon_started (§8.7.1, hk-iarcy): F-class event marking the
 	// startup landmark for post-crash-window detection (EV-023).
-	// binary_commit_hash: use a placeholder until build-info injection lands;
-	// the field is required by the spec so we emit "unknown" to keep the
-	// envelope well-formed.
+	// binary_commit_hash: forwarded from cfg.BinaryCommitHash which is stamped
+	// at build time via -ldflags "-X main.commitHash=<sha>" (hk-mz0x4).
+	// Falls back to "unknown" when the caller does not set the field (unit tests,
+	// unstamped builds) to keep the envelope well-formed per the spec.
+	binaryCommitHash := cfg.BinaryCommitHash
+	if binaryCommitHash == "" {
+		binaryCommitHash = "unknown"
+	}
 	daemonStartTime := time.Now().UTC()
 	startedPayload := core.DaemonStartedPayload{
 		StartedAt:        daemonStartTime.Format(time.RFC3339),
 		PID:              os.Getpid(),
-		BinaryCommitHash: "unknown", // TODO(follow-up): inject from ldflags at build time
+		BinaryCommitHash: binaryCommitHash,
 	}
 	payloadBytes, marshalErr := json.Marshal(startedPayload)
 	if marshalErr != nil {

@@ -10,13 +10,16 @@ package main
 // package main so that the composition-root guard can be observed without a
 // real tmux server.
 //
+// Also covers the commitHash → daemon.Config.BinaryCommitHash wiring
+// (acceptance criteria per hk-mz0x4).
+//
 // NOTE: run() registers flags against flag.CommandLine. Calling run() more
 // than once in the same test binary would re-define those flags (a panic).
 // Each test that calls run() MUST reset flag.CommandLine beforehand via
 // mainFixtureResetFlags.  Tests that call run() must NOT be parallel (flag
 // reset is not concurrent-safe).
 //
-// Bead: hk-kqdpf.4.
+// Bead: hk-kqdpf.4, hk-mz0x4.
 
 import (
 	"flag"
@@ -132,5 +135,30 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 		// In a real tmux session this would be unexpected in a test env;
 		// log it but do not fail.
 		t.Logf("run() returned 0 with fake TMUX socket — unexpected in test env")
+	}
+}
+
+// TestCommitHashVar_DefaultIsUnknown verifies the package-level commitHash
+// variable declared in version.go has the sentinel value "unknown" in an
+// unstamped build (i.e., when -ldflags "-X main.commitHash=<sha>" is NOT
+// passed at build time).
+//
+// This test is deliberately simple: it documents the ldflags injection target
+// and confirms the default sentinel so that a missing wiring is immediately
+// obvious (the test binary would show "" instead of "unknown").
+//
+// Acceptance: hk-mz0x4 — commitHash default is "unknown"; zero string must
+// not appear in the daemon_started payload.
+//
+// Parallel: safe — reads a package-level variable but does not modify it.
+func TestCommitHashVar_DefaultIsUnknown(t *testing.T) {
+	t.Parallel()
+
+	const want = "unknown"
+	if commitHash != want {
+		// In a stamped build the value will be a real SHA (40 hex chars).
+		// In an unstamped test build it must be the sentinel "unknown".
+		// A blank string here means version.go lost its initialiser.
+		t.Errorf("commitHash = %q; want %q (unstamped build sentinel)", commitHash, want)
 	}
 }

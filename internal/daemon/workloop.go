@@ -292,6 +292,19 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		maxConcurrent = 1
 	}
 
+	// Inject HARMONIK_PROJECT_HASH into every handler subprocess env (hk-nvrvp).
+	//
+	// The provenance marker is prepended so it is present even when
+	// Config.HandlerEnv is nil (the MVH default).  Callers that supply their own
+	// HandlerEnv retain all their entries; the hash entry is first so it is easy
+	// to spot in /proc/<pid>/environ debugging.
+	//
+	// Spec ref: docs/dogfood-smoke-trace.md §4; process-lifecycle.md §4.2 PL-006a.
+	projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
+	handlerEnv := make([]string, 0, 1+len(cfg.HandlerEnv))
+	handlerEnv = append(handlerEnv, lifecycle.ProvenanceEnvVar(projectHash))
+	handlerEnv = append(handlerEnv, cfg.HandlerEnv...)
+
 	return workLoopDeps{
 		brAdapter:           adapter,
 		bus:                 bus,
@@ -301,7 +314,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		handlerBinary:       binary,
 		daemonBinaryPath:    daemonBinaryPath,
 		handlerArgs:         cfg.HandlerArgs,
-		handlerEnv:          cfg.HandlerEnv,
+		handlerEnv:          handlerEnv,
 		brTimeoutCfg:        brcli.TimeoutConfig{},
 		tidGen:              core.NewTransitionIDGenerator(),
 		workflowModeDefault: workflowModeDefault,

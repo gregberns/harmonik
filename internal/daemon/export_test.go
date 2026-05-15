@@ -779,6 +779,26 @@ func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg ProjectConfig) WorkLoo
 	return p
 }
 
+// HandlerEnvOf returns the handlerEnv field from deps.
+// Used by tests to assert HARMONIK_PROJECT_HASH injection (hk-nvrvp).
+func HandlerEnvOf(deps workLoopDeps) []string {
+	return deps.handlerEnv
+}
+
+// ExportedNewWorkLoopDepsWithStore exposes newWorkLoopDeps for tests in package
+// daemon_test. The hookStore parameter is typed as *hookSessionStore (an exported
+// concrete type via HookSessionStoreExported alias) so that callers in daemon_test
+// can pass daemon.ExportedNewHookSessionStore() without naming the unexported
+// hookStoreIface interface.
+//
+// It requires a real br binary on PATH; callers that skip when br is absent
+// should use exec.LookPath("br") to guard.
+//
+// Bead ref: hk-nvrvp.
+func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
+	return newWorkLoopDeps(cfg, bus, workflowModeDefault, registry, store)
+}
+
 // ExportedProjectCfgOf returns the projectCfg field from deps for inspection.
 //
 // Bead ref: hk-bfvk7.

@@ -46,6 +46,7 @@ import (
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 )
 
 func main() {
@@ -113,6 +114,43 @@ func run() int {
 			return 1
 		}
 		return hookrelay.Run(eventKind, os.Stdin, os.Stderr, nil)
+	}
+
+	// hk queue {submit,append,status,dry-run} — external orchestrator queue
+	// control surface. Dispatched before flag.Parse per PL-028c so that the
+	// global flag set does not reject subcommand-specific flags.
+	//
+	// Exit-code contract (all four verbs):
+	//   0  — success (JSON response to stdout)
+	//   1  — validation error (JSON error body to stdout, not stderr)
+	//   2  — transport/protocol error or unrecognised verb
+	//  17  — daemon not running (socket absent or ECONNREFUSED)
+	//
+	// Spec ref: specs/process-lifecycle.md §4.4 PL-028 + PL-028c.
+	// Bead ref: hk-eblue.
+	if len(os.Args) >= 2 && os.Args[1] == "queue" {
+		verb := ""
+		if len(os.Args) >= 3 {
+			verb = os.Args[2]
+		}
+		subArgs := []string{}
+		if len(os.Args) >= 4 {
+			subArgs = os.Args[3:]
+		}
+		ctx := context.Background()
+		switch verb {
+		case "submit":
+			return queuecli.RunQueueSubmit(ctx, subArgs, os.Stdout, os.Stderr)
+		case "append":
+			return queuecli.RunQueueAppend(ctx, subArgs, os.Stdout, os.Stderr)
+		case "status":
+			return queuecli.RunQueueStatus(ctx, subArgs, os.Stdout, os.Stderr)
+		case "dry-run":
+			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; v0.1 verbs are: submit, append, status, dry-run\n", verb)
+			return 2
+		}
 	}
 
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.

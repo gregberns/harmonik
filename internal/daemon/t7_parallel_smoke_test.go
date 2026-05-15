@@ -10,7 +10,7 @@ package daemon_test
 // Acceptance criteria (hk-e61c3.4 bead body):
 //   - Both beads close before Start returns.
 //   - Both runs emit run_started AND run_completed in JSONL with distinct
-//     run_id values in the payload.
+//     run_id values on the EV-001 envelope (hk-a6nob).
 //   - Worktree paths (workspace_path in run_started payload) are distinct.
 //   - go test -race is clean for internal/daemon/, internal/eventbus/,
 //     internal/handlercontract/.
@@ -21,8 +21,9 @@ package daemon_test
 //     sleeps briefly (0.2 s) so both goroutines are simultaneously in-flight.
 //   - Context cancelled once both beads are confirmed closed in SQLite AND
 //     both run_completed events appear in JSONL.
-//   - JSONL is parsed to extract run_id (from payload) and workspace_path
-//     (from run_started payload) for the distinct-values assertions.
+//   - JSONL is parsed to extract run_id (from envelope, hk-a6nob) and
+//     workspace_path (from run_started payload) for the distinct-values assertions.
+//   - eventbus.Filter is used to verify envelope-level run_id coverage.
 //
 // Helper prefix: parallelSmokeFixture (per implementer-protocol.md
 // §Helper-prefix discipline; bead hk-e61c3.4).
@@ -38,7 +39,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,7 +192,8 @@ type parallelSmokeRunStartedEntry struct {
 }
 
 // parallelSmokeFixtureExtractRunStarted reads the JSONL file and extracts
-// run_id and workspace_path from every run_started event's payload.
+// run_id (from the EV-001 envelope, stamped by EmitWithRunID per hk-a6nob)
+// and workspace_path (from the payload) for every run_started event.
 func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []parallelSmokeRunStartedEntry {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -199,14 +203,8 @@ func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []par
 	}
 	defer func() { _ = f.Close() }()
 
-	// Each JSONL line is a core.Event envelope. The payload is a JSON object
-	// containing run_id and workspace_path (workloopRunStartedPayload).
-	type envelope struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
-	}
+	// workspace_path is a payload field; run_id is now on the envelope (hk-a6nob).
 	type startedPayload struct {
-		RunID         string `json:"run_id"`
 		WorkspacePath string `json:"workspace_path"`
 	}
 
@@ -217,19 +215,22 @@ func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []par
 		if !strings.Contains(line, `"run_started"`) {
 			continue
 		}
-		var env envelope
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
+		var ev core.Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if env.Type != "run_started" {
+		if ev.Type != "run_started" {
+			continue
+		}
+		if ev.RunID == nil {
 			continue
 		}
 		var pl startedPayload
-		if err := json.Unmarshal(env.Payload, &pl); err != nil {
+		if err := json.Unmarshal(ev.Payload, &pl); err != nil {
 			continue
 		}
 		entries = append(entries, parallelSmokeRunStartedEntry{
-			runID:         pl.RunID,
+			runID:         ev.RunID.String(),
 			workspacePath: pl.WorkspacePath,
 		})
 	}
@@ -237,7 +238,8 @@ func parallelSmokeFixtureExtractRunStarted(t *testing.T, jsonlPath string) []par
 }
 
 // parallelSmokeFixtureExtractRunCompletedRunIDs reads the JSONL file and
-// extracts run_id from every run_completed or run_failed event payload.
+// extracts run_id from the EV-001 envelope of every run_completed or
+// run_failed event (envelope-stamped by EmitWithRunID per hk-a6nob).
 func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath string) []string {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
@@ -247,14 +249,6 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 	}
 	defer func() { _ = f.Close() }()
 
-	type envelope struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	type completedPayload struct {
-		RunID string `json:"run_id"`
-	}
-
 	var runIDs []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -262,18 +256,17 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 		if !strings.Contains(line, `"run_completed"`) && !strings.Contains(line, `"run_failed"`) {
 			continue
 		}
-		var env envelope
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
+		var ev core.Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
 		}
-		if env.Type != "run_completed" && env.Type != "run_failed" {
+		if ev.Type != "run_completed" && ev.Type != "run_failed" {
 			continue
 		}
-		var pl completedPayload
-		if err := json.Unmarshal(env.Payload, &pl); err != nil {
+		if ev.RunID == nil {
 			continue
 		}
-		runIDs = append(runIDs, pl.RunID)
+		runIDs = append(runIDs, ev.RunID.String())
 	}
 	return runIDs
 }
@@ -409,6 +402,27 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 	for id := range completedRunIDSet {
 		if _, ok := startedRunIDs[id]; !ok {
 			t.Errorf("run_completed run_id %q does not appear in any run_started event; started IDs: %v", id, startedRunIDs)
+		}
+	}
+
+	// ── Assert eventbus.Filter returns >= 2 events per run_id (hk-a6nob) ───────
+	//
+	// emitRunStarted and emitRunCompleted now use EmitWithRunID, so the envelope
+	// run_id is populated.  Filter must return at least 2 events per run_id
+	// (run_started + run_completed/run_failed).
+	for idStr := range startedRunIDs {
+		var rid core.RunID
+		if err := rid.UnmarshalText([]byte(idStr)); err != nil {
+			t.Errorf("parallelSmoke: run_id %q is not a valid RunID: %v", idStr, err)
+			continue
+		}
+		var filteredCount int
+		for range eventbus.Filter(jsonlPath, rid) {
+			filteredCount++
+		}
+		if filteredCount < 2 {
+			t.Errorf("eventbus.Filter: run_id %q yielded %d events, want >= 2 "+
+				"(run_started + terminal); envelope run_id must be populated (hk-a6nob)", idStr, filteredCount)
 		}
 	}
 

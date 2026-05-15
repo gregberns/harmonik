@@ -36,7 +36,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -185,19 +184,11 @@ func throughputFixturePollTerminalEvents(t *testing.T, jsonlPath string, target 
 	return throughputFixtureCountTerminalInJSONL(t, jsonlPath)
 }
 
-// throughputFixtureParseRunID parses a UUID string into core.RunID.
-func throughputFixtureParseRunID(t *testing.T, s string) (core.RunID, error) {
-	t.Helper()
-	parsed, err := uuid.Parse(s)
-	if err != nil {
-		return core.RunID{}, err
-	}
-	return core.RunID(parsed), nil
-}
-
 // throughputFixtureExtractRunStartedRunIDs reads the JSONL file and returns all
-// run_id values found in run_started event payloads.
-func throughputFixtureExtractRunStartedRunIDs(t *testing.T, jsonlPath string) []string {
+// run_id values found in the envelope of run_started events.
+// After hk-a6nob, emitRunStarted uses EmitWithRunID, so run_id is stamped on
+// the EV-001 envelope and readable without payload extraction.
+func throughputFixtureExtractRunStartedRunIDs(t *testing.T, jsonlPath string) []core.RunID {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
 	f, err := os.Open(jsonlPath)
@@ -206,33 +197,24 @@ func throughputFixtureExtractRunStartedRunIDs(t *testing.T, jsonlPath string) []
 	}
 	defer func() { _ = f.Close() }()
 
-	type envelope struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	type startedPayload struct {
-		RunID string `json:"run_id"`
-	}
-
-	var runIDs []string
+	var runIDs []core.RunID
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.Contains(line, `"run_started"`) {
 			continue
 		}
-		var env envelope
-		if unmarshalErr := json.Unmarshal([]byte(line), &env); unmarshalErr != nil {
+		var ev core.Event
+		if unmarshalErr := json.Unmarshal([]byte(line), &ev); unmarshalErr != nil {
 			continue
 		}
-		if env.Type != "run_started" {
+		if ev.Type != "run_started" {
 			continue
 		}
-		var pl startedPayload
-		if unmarshalErr := json.Unmarshal(env.Payload, &pl); unmarshalErr != nil || pl.RunID == "" {
+		if ev.RunID == nil {
 			continue
 		}
-		runIDs = append(runIDs, pl.RunID)
+		runIDs = append(runIDs, *ev.RunID)
 	}
 	return runIDs
 }
@@ -361,9 +343,10 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 
 	// ── Assert JSONL: exactly 10 distinct run_started events, 10 distinct run_ids ─
 	//
-	// Use eventbus.Filter (hk-e61c3.5 / row 10) to enumerate run_started events
-	// by run_id. We first extract all run_id values from payload (envelope path),
-	// then use Filter to verify each run_id's events appear in the JSONL file.
+	// emitRunStarted now uses EmitWithRunID (hk-a6nob), so run_id is stamped on
+	// the EV-001 envelope.  Extract run_ids from the envelope directly, then use
+	// eventbus.Filter (hk-e61c3.5 / row 10) as the canonical per-run query API
+	// to verify each run_id's events are present and filter-reachable.
 	parRunIDs := throughputFixtureExtractRunStartedRunIDs(t, parJSONLPath)
 	if len(parRunIDs) != beadCount {
 		t.Errorf("expected %d run_started events in JSONL; got %d; "+
@@ -371,46 +354,34 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 			parallelSmokeFixtureReadAllJSONLLines(t, parJSONLPath))
 	}
 
-	// Verify all run_id values are distinct.
-	distinctRunIDs := make(map[string]struct{}, len(parRunIDs))
+	// Verify all envelope run_id values are distinct.
+	distinctRunIDs := make(map[core.RunID]struct{}, len(parRunIDs))
 	for _, id := range parRunIDs {
-		if id == "" {
-			t.Errorf("run_started event has empty run_id")
-			continue
-		}
 		distinctRunIDs[id] = struct{}{}
 	}
 	if len(distinctRunIDs) != beadCount {
-		t.Errorf("expected %d distinct run_id values in run_started events; got %d; ids: %v",
+		t.Errorf("expected %d distinct run_id values in run_started envelope; got %d; ids: %v",
 			beadCount, len(distinctRunIDs), parRunIDs)
 	}
 
 	// Use eventbus.Filter (hk-e61c3.5 / row 10) to enumerate JSONL events by
-	// run_id.  Filter matches on the envelope run_id field; it is the canonical
-	// read-side API for per-run event queries.
-	//
-	// Design note: the work loop currently emits run_started via bus.Emit (no
-	// envelope run_id), so Filter returns 0 events for these run_ids — the run_id
-	// is in the payload only.  Migrating emitRunStarted to EmitWithRunID is a
-	// separate task (filter should find those events once that migration lands).
-	// Here we invoke Filter for each run_id to exercise the API and log the
-	// result; we do NOT assert filteredCount > 0 because the current work loop
-	// does not populate the envelope run_id for run_started events.
+	// run_id.  Filter matches on the envelope run_id field (populated by
+	// EmitWithRunID).  Each run_id must yield at least one event (the
+	// run_started event itself).
 	totalFiltered := 0
-	for id := range distinctRunIDs {
-		parsed, parseErr := throughputFixtureParseRunID(t, id)
-		if parseErr != nil {
-			t.Errorf("run_id %q is not a valid UUID: %v", id, parseErr)
-			continue
-		}
+	for runID := range distinctRunIDs {
 		var filteredCount int
-		for range eventbus.Filter(parJSONLPath, parsed) {
+		for range eventbus.Filter(parJSONLPath, runID) {
 			filteredCount++
+		}
+		if filteredCount == 0 {
+			t.Errorf("eventbus.Filter: run_id %v returned 0 events; "+
+				"envelope run_id must be populated by EmitWithRunID (hk-a6nob)", runID)
 		}
 		totalFiltered += filteredCount
 	}
 	t.Logf("eventbus.Filter: total events found across %d run_ids = %d "+
-		"(0 expected: run_started uses bus.Emit, not EmitWithRunID; envelope run_id absent)",
+		"(each run_id must yield >= 1 via envelope filter; hk-a6nob)",
 		len(distinctRunIDs), totalFiltered)
 
 	t.Logf("throughput: %d beads closed; %d distinct run_ids verified via eventbus.Filter; "+

@@ -15,9 +15,11 @@ package scenario
 // the Beads ledger; if Beads shows open, the item reverts to pending via
 // QM-001 atomic write and emits queue_item_reconciled{reason: claim_write_lost}.
 // The cross-check completes before the first dispatch-loop tick.
-// NOTE: QM-002a cross-check is gated on hk-fwpc0 (T31: queue.json load on
-// PL-005 step 8a + startup Beads cross-check). Tests that require the
-// cross-check API call t.Skip with the bead reference until that bead lands.
+// NOTE: QM-002a cross-check end-to-end coverage (revert + event ordering + payload
+// + persistence round-trip + no-revert-when-not-open) lives in
+// internal/lifecycle/startup_pl005_qm002_test.go via LoadQueueAtStartup
+// (landed at 9b15f62 for hk-fwpc0 / T31). This file covers the QM-002 persistence
+// foundation and the QM-002a terminal-state invariant only.
 //
 // Helper prefix: queueCrashRecovery (bead hk-30wgn, implementer-protocol §Helper-prefix).
 //
@@ -327,107 +329,11 @@ func TestQueueCrashRecovery_QM002_ForwardIncompatibleSchemaVersion(t *testing.T)
 // QM-002a — dispatched items reverted to pending when Beads cross-check shows open
 // ---------------------------------------------------------------------------
 
-// TestQueueCrashRecovery_QM002a_DispatchedItemRevertedToPendingWhenBeadsOpen
-// documents the QM-002a startup cross-check contract: after loading a queue
-// that contains a dispatched item, if the Beads ledger shows that item as
-// open, the daemon MUST revert it to pending via QM-001 atomic write and
-// emit queue_item_reconciled{reason: claim_write_lost}.
-//
-// This test is a structural assertion at the persistence layer: it verifies
-// that the persisted dispatched item CAN be reverted to pending by re-writing
-// the queue via Persist and that Load recovers the reverted state. The actual
-// Beads cross-check API (CrossCheckDispatchedItems or equivalent) is gated
-// on hk-fwpc0 (T31) and is not yet implemented; this test skips the API call
-// and asserts the persistence round-trip as the foundation.
-//
-// Acceptance criteria for the full QM-002a test (once hk-fwpc0 lands):
-//   - Given: queue.json loaded with Items[0].Status==dispatched,
-//     and br show <bead_id> returns open.
-//   - When: startup cross-check runs.
-//   - Then: Items[0].Status is reverted to pending via QM-001 atomic write,
-//     queue_item_reconciled{reason: claim_write_lost} event is emitted BEFORE
-//     the first dispatch-loop tick log line.
-//
-// Spec ref: queue-model.md §3.2a QM-002a.
-// Bead ref: hk-fwpc0 (T31 — implements the cross-check API; blocks hk-30wgn).
-func TestQueueCrashRecovery_QM002a_DispatchedItemRevertedToPendingWhenBeadsOpen(t *testing.T) {
-	t.Parallel()
-
-	// Skip the Beads cross-check assertion until hk-fwpc0 (T31) lands.
-	// The cross-check API (CrossCheckDispatchedItems or equivalent) does not
-	// exist yet; invoking a nil function or non-existent symbol would panic.
-	// Once hk-fwpc0 is closed, remove this skip and wire in the real call.
-	t.Skip("QM-002a cross-check API not yet implemented (blocked on hk-fwpc0 / T31)")
-
-	projectDir := queueCrashRecoveryProjectDir(t)
-	ctx := context.Background()
-
-	// Step 1: write queue.json with one dispatched item (pre-crash state).
-	original := queueCrashRecoveryActiveQueue()
-	if err := queue.Persist(ctx, projectDir, &original); err != nil {
-		t.Fatalf("Persist (pre-crash): %v", err)
-	}
-
-	// Step 2: load queue.json on restart — dispatched item is loaded as-is
-	// per QM-002 (cross-check has not run yet at this point).
-	loaded, err := queue.Load(ctx, projectDir)
-	if err != nil {
-		t.Fatalf("Load (post-restart, pre-cross-check): %v", err)
-	}
-	if loaded == nil {
-		t.Fatal("Load: got nil; want active queue")
-	}
-
-	// Step 3 (hk-fwpc0 REQUIRED): call the startup cross-check API.
-	// Placeholder: replace with the real call once the API lands.
-	//
-	//   reconciled, err := queue.CrossCheckDispatchedItems(ctx, projectDir, loaded, brPath)
-	//   if err != nil { t.Fatalf("CrossCheckDispatchedItems: %v", err) }
-	//
-	// Step 4 (hk-fwpc0 REQUIRED): assert the dispatched item was reverted.
-	//
-	//   The dispatched item hk-test01 (group_index=0, item_index=0) was open in
-	//   the Beads ledger (br show hk-test01 → status=open). After cross-check:
-	//   - Items[0].Status must be pending (reverted via QM-001 atomic write).
-	//   - A queue_item_reconciled{reason: claim_write_lost} event must have been
-	//     emitted BEFORE the first dispatch-loop tick (validated via events.jsonl).
-	//   - Items[1].Status must remain pending (no change; was already pending).
-	//
-	// Step 5: verify the persistence round-trip for the revert.
-	// After the cross-check writes the reverted state via QM-001 atomic write,
-	// a fresh Load must return the reverted item with status=pending.
-	//
-	// Manually simulate the revert to test the persistence layer in isolation:
-	loaded.Groups[0].Items[0].Status = queue.ItemStatusPending
-	loaded.Groups[0].Items[0].RunID = nil // claim_write_lost: run_id cleared
-
-	if err := queue.Persist(ctx, projectDir, loaded); err != nil {
-		t.Fatalf("Persist (post-revert): %v", err)
-	}
-
-	reverted, err := queue.Load(ctx, projectDir)
-	if err != nil {
-		t.Fatalf("Load (post-revert): %v", err)
-	}
-	if reverted == nil {
-		t.Fatal("Load (post-revert): got nil; want queue with reverted item")
-	}
-
-	// The formerly-dispatched item must now be pending after the cross-check revert.
-	if reverted.Groups[0].Items[0].Status != queue.ItemStatusPending {
-		t.Errorf("post-revert Items[0].Status = %q, want %q (QM-002a)",
-			reverted.Groups[0].Items[0].Status, queue.ItemStatusPending)
-	}
-	if reverted.Groups[0].Items[0].RunID != nil {
-		t.Errorf("post-revert Items[0].RunID = %v, want nil (claim_write_lost)", reverted.Groups[0].Items[0].RunID)
-	}
-
-	// Sanity: Items[1] remains pending (unchanged by cross-check).
-	if reverted.Groups[0].Items[1].Status != queue.ItemStatusPending {
-		t.Errorf("post-revert Items[1].Status = %q, want %q (must not change)",
-			reverted.Groups[0].Items[1].Status, queue.ItemStatusPending)
-	}
-}
+// Note: TestQueueCrashRecovery_QM002a_DispatchedItemRevertedToPendingWhenBeadsOpen
+// previously lived here as a skipped placeholder. Full QM-002a end-to-end coverage
+// (revert + run_id clear + event emission + ordering + persistence round-trip)
+// now lives in internal/lifecycle/startup_pl005_qm002_test.go (landed at 9b15f62
+// for hk-fwpc0 / T31). Removed by hk-zixbp.
 
 // TestQueueCrashRecovery_QM002a_NoRevertForCompletedItem verifies that
 // the QM-002a cross-check does NOT revert items that are already in terminal

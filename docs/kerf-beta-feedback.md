@@ -387,3 +387,21 @@ The jig says "Save findings per area to `03-research/{component}/findings.md`." 
 
 `kerf show phase-3-dot` prints the full pass-3 instructions plus the file tree plus the session ledger plus the command palette. For a returning finalizer this is overkill — a `kerf show --compact` mode (just "status: research → next: change-design", file count, last-session marker) would be a faster context recovery.
 
+---
+
+## 2026-05-15: phase-3-dot pass-4 (change-design) — D3
+
+Sub-agent dispatched to land design decision D3 (control-point framing — node-type vs. policy primitive vs. discriminant). Brief specified "one decision only"; other pass-4 design decisions parked for parallel agents. Output: `04-design/control-point-node-type-design.md` (~150 lines). Decision: Framing A (drop control-point from node-type catalog; 5→4 taxonomy; `gate` retained as the one Kind whose trigger maps to a node-shaped execution slot).
+
+### MAJOR-1 — Reviewer-dispatch directive presumes Agent tool availability
+
+Pass-4 brief said: "Dispatch a reviewer sub-agent via the Agent tool if available — fresh-context, general-purpose, foreground. If Agent tool unavailable, do a fresh-context re-read pass and state so explicitly in the design doc footer." The Agent tool was NOT available in the sub-agent's harness — only the deferred-tool surface (Monitor, EnterWorktree, etc.) was offered via ToolSearch. The fallback (self-re-read) was honored, but a self-re-read is structurally weaker than a fresh-context reviewer because the same agent's context is biased toward the decision it just made. Recommendation: the orchestrator (main thread) should run the reviewer pass after the sub-agent returns its draft, rather than asking the sub-agent to self-review or dispatch its own reviewer.
+
+### MINOR-1 — `04-design/` directory not pre-created by `kerf status ... change-design`
+
+The status advance from `research` → `change-design` did not create the `04-design/` directory; the sub-agent had to `mkdir -p` before its first Write. The pass-3 jig pre-creates the `03-research/{component}/` substructure when entering research; pass-4 could do the same with a `04-design/` empty dir to signal "this is where design decisions land."
+
+### MINOR-2 — No convention for "one design decision per file" vs. monolithic design doc
+
+Pass-4 ran D3 as a standalone file (`control-point-node-type-design.md`); pass-3 SUMMARY enumerated 20 decisions, several of which will land in parallel. The jig is silent on whether each decision is one file or a single `04-design/design.md` aggregates them. The per-decision-file convention is better for parallel sub-agents (no merge conflict) but ad-hoc. Worth declaring in the jig.
+

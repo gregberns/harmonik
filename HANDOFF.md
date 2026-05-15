@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-14 main — v41. Three implementer waves (8 + 5 + 4), 14 new beads closed (12 commits, 2 SUBSUMED), stale CI branch dropped, root MD archived. HEAD `7c54c76`, pushed. Zero-blocker code backlog drained — remaining ready work is spec-authoring (needs user check-in) or parent-child gridlock (needs L-011 sqlite-flip). Phase 2 first-demo bead `hk-09tne` filed and awaiting daemon-driven run. -->
+<!-- PP-TRIAL:v2 2026-05-14 extqueue-v0.1-specs — v42. Whole 8-pass kerf cycle for extqueue v0.1 landed on a feature branch. 6 spec files (1 new + 5 edits) authored via 22 sub-agent invocations across research/design/draft/review rounds. Branch `extqueue-v0.1-specs` pushed; main is unchanged. PR not opened. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -74,82 +74,50 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
       git -C /Users/gb/github/harmonik branch -d "$BRANCH"
     done
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50% across 3 waves.
+CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50% across 3 waves. v42 used ~53% across one 8-pass kerf cycle (no implementer waves).
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v41, 2026-05-14)
+# Where we are (v42, 2026-05-14)
 
-**Main at `7c54c76`, pushed to origin. Working tree clean.**
+**Branch `extqueue-v0.1-specs` at commit `20d362d`, pushed to origin. Main is untouched.**
 
-v41 ran three implementer waves and closed 14 beads (12 new commits, 2 SUBSUMED). All waves drained the zero-blocker leaf-code backlog. The next session should pivot from sub-agent dispatch to either: (a) running harmonik daemon on `hk-09tne` (the Phase 2 first-demo), or (b) breaking parent-child gridlock to surface a wave-4 batch.
+Whole 8-pass kerf spec cycle (codename `extqueue`) ran in one session. Output: a feature branch carrying the v0.1 spec package for an external-orchestrator queue control surface — the daemon no longer picks beads itself; an external agent submits an ordered queue of waves and streams via CLI; daemon executes it. v0.1 surface = `queue-submit / queue-append / queue-status / queue-dry-run`. v0.2 deferrals (remove/pause/resume/clear) explicitly scoped out.
 
-## v41 waves
+Files on the branch (945 insertions, 96 deletions vs main):
+- `specs/queue-model.md` (NEW, 604 lines)
+- `specs/execution-model.md` — §7.4 dispatch loop rewritten; new EM-015f / §4.11 concurrency primitives
+- `specs/beads-integration.md` — BI-013 demoted; BI-013b/c submit-time read surface
+- `specs/process-lifecycle.md` — PL-003a method-set extended; `enqueue` retired; PL-013 retired-with-stub
+- `specs/event-model.md` — 6 new `queue_*` events; optional `queue_id` on `run_*`
+- `specs/operator-nfr.md` — ON-015 reframed; 9 surgical amendments
 
-**Wave 1** (8 dispatched, 7 commits + 1 SUBSUMED):
-- `hk-hqwn.44` source_subsystem registry → `2e9ce19`
-- `hk-hqwn.49` sync-consumer cardinality + acyclicity sensors → `f311f12`
-- `hk-hqwn.50` UUIDv7 monotonic event_id → SUBSUMED by `hk-hqwn.62` / `5ca45d9`
-- `hk-hqwn.52` EV-INV-006 redaction + structural check → `4e694b5`
-- `hk-hqwn.59.27` session_log_location payload → `5aead46`
-- `hk-hqwn.59.78` redaction_failed payload → `c7f2fc3`
-- `hk-8i31.27` mechanism-tagged error classification (HC-023) → `04aeb01`
-- `hk-8i31.41` HC-034 no-secret-in-JSONL test → `0ddc097`
-
-**Wave 2** (5 dispatched, 5 commits):
-- `hk-mmvcm` JSONLWriter.Close idempotent → `1ae9782`
-- `hk-6x7dw` rename StaleVerdictPayload.SnapshotToken → `1ff0c86`
-- `hk-xlach` CHB-INV-003 mechanism-no-cognition → `514c0f6`
-- `hk-gerqr` CHB-INV-001 two-contributor session → `79e7f19`
-- `hk-qo96c` CHB-INV-002 single terminal event → `8956ebc`
-
-**Wave 3** (4 dispatched, 3 commits + 1 SUBSUMED):
-- `hk-qo08q.22` CHB-022 daemon-is-twin-blind → `7c54c76`
-- `hk-qo08q.23` CHB-023 session_id durable checkpoint → SUBSUMED by `hk-w5vra.6` / `1b88110`
-- `hk-qo08q.24` CHB-024 settings-precedence → `be91ba6`
-- `hk-u5c5i` sub_reason enum → `b939afe`
-
-## Cleanup
-
-- Stale `ci-workflows-hk-4tttc` branch dropped (CI explicitly unwanted).
-- Orphan `worktree-agent-ae97d05df4ee78078` removed (its `hk-gql20.11` work already in main via different commit).
-- Root MD archived to `docs/historical/`: `OVERNIGHT_RUN_2026-04-19.md`, `MVH_ROADMAP.md`, `QUESTIONS.md`, `EXPLORATORY_TESTING_PLAN.md`.
-- Root MD deleted: `NEXT_AGENT.md`, `SESSION_HANDOFF.md` (superseded by this file).
-- Stale closeable beads: `hk-zrj83`, `hk-gql20.23`, `hk-w5vra.7` (closed in cleanup commit).
-
-## Follow-up beads filed in v41
-
-- `hk-09tne` — Phase 2 first-demo: append milestone line to README via harmonik daemon end-to-end. P2 docs.
-- `hk-6x7dw` — EV-036 violation (CLOSED in wave 2).
-- `hk-mmvcm` — JSONLWriter close-of-closed-channel panic (CLOSED in wave 2).
+Kerf artifacts (problem space → tasks, plus 4 reviewer rounds) at `.kerf/extqueue/` — gitignored per project convention.
 
 # Next session — START HERE
 
-**Two viable next moves.** Pick one based on what you want to learn.
+**The branch is awaiting your call.** Three options, plain English:
 
-**Option A — Phase 2 first-demo run (RECOMMENDED).** Drive `hk-09tne` end-to-end through the harmonik daemon (NOT via sub-agent dispatch). This is the v40-handoff's stated Phase-2 entry test. Steps:
+1. **Open a PR and review the spec text yourself.** No agent action needed. The 6 spec files are the product; they need a human read before merge. The PR-ready URL printed by `git push` was `https://github.com/gregberns/harmonik/pull/new/extqueue-v0.1-specs`.
 
-    cd /Users/gb/github/harmonik
-    go build -o /tmp/harmonik ./cmd/harmonik
-    # In a tmux session:
-    /tmp/harmonik tmux-start --session-name harmonik-phase2 --project /Users/gb/github/harmonik
-    # Inside the resulting tmux session:
-    /tmp/harmonik --project /Users/gb/github/harmonik --max-concurrent 1
+2. **File the 22 implementation tasks as beads and start churning.** Implementation decomposition lives at `.kerf/extqueue/07-tasks.md` — 22 tasks across 8 tiers with a full DAG and parallelization plan. Critical path ~7 implementer cycles; Wave 3-4 fans out to 4-5 parallel implementers. If the user says "file the beads," the agent runs through 07-tasks.md and creates one bead per Txx with the bead body matching the task's scope + acceptance criteria.
 
-The daemon should poll `br ready`, claim `hk-09tne`, spawn a real claude in a tmux window, watch the work happen, and merge to main. Success signal: a merge commit on main authored by the implementer + `outcome_emitted{kind=approved}` in `.harmonik/events/events.jsonl`. If round-trip fails, file a bug bead with the failing-step name and the JSONL excerpt. Pre-flight blockers: `hk-zrj83` (paste-inject), `hk-fdyip` (auto-trust) — paste-inject is closed; auto-trust still has an open design question, but the operational-green smoke ran without it being formally resolved so the demo should work.
+3. **Pause the extqueue work and come back to Phase 2 first-demo.** The previous session (v41) filed `hk-ftyvo` — a Phase-2 bug: the daemon's auto-close path doesn't merge run branches back to main. That bead is still open and is the actual Phase-2 round-trip blocker. extqueue is the longer-term scheduling rework; `hk-ftyvo` is the shorter-term "make the daemon actually finish a round-trip" fix.
 
-**Option B — wave 4 via gridlock-flip.** Open beads under epic parents (hk-hqwn, hk-8i31, hk-872, hk-b3f, hk-a8bg, hk-8mwo) all show "0 open children" via the simple prefix filter — meaning either every child IS closed, or the dep edge is `blocks` and L-011-grid-lock applies. Run `bv --robot-triage --format toon` to see if children are still actionable; if `br stats` Open count exceeds the sum of openable children, flip parent-`blocks` edges to `related` via the sqlite-flip in the directives above, then dispatch a new wave.
-
-Open follow-ups (not blocking):
-- DOT testbed (Phase 3) — needs `kerf new dot-testbed --jig spec` work — defer until Phase 2 demo proves out.
-- Daemon command-queue: `br create` IS the queue; SIGUSR1 "poll now" handler in `workloop.go` is the smallest possible LP-extension (≤20 LOC) if poll-latency bites.
-- Pre-existing test failures (not introduced this session, file fix beads if needed): `TestAR013EnvelopeDeclaration/claude-hook-bridge.md` (specaudit), `TestEventEV002b_HandlerPackageDoesNotImportCore` (core/handler import cycle hint), `PL-021*` axis-invalid spec-audit failures in process-lifecycle.md.
+If the user opens the next session with **"resume"** and no further direction, default to option 2 (file beads, prepare for implementation) — that's the path that converts the spec work into runnable code.
 
 # Files to open first
 
 1. `HANDOFF.md` (this).
-2. `docs/dogfood-smoke-run-2026-05-14-operational-green.md` — Phase 1 milestone + the 11 umbrella fixes that converged.
-3. `docs/twin-parity-audit-2026-05-14.md` — twin coverage map.
-4. `specs/workspace-model.md` §WM-005b + `specs/execution-model.md` §EM-012b — bead-level branching + model selection (Phase 2 prerequisites).
-5. `cmd/harmonik/main.go` — daemon entrypoint, tmux-start subcommand.
-6. `internal/daemon/workloop.go` — the run-one loop.
+2. `specs/queue-model.md` — the foundation spec (new, 604 lines).
+3. `.kerf/extqueue/01-problem-space.md` — the locked decisions D1-D6.
+4. `.kerf/extqueue/05-changelog.md` — the package-level changelog with all amendment summaries + flagged residuals.
+5. `.kerf/extqueue/07-tasks.md` — the 22-task implementation plan.
+6. `.kerf/extqueue/SESSION.md` — narrative of the v42 session (what each pass produced).
+
+# Notes for the next agent
+
+- `hk-ftyvo` (Phase 2 bug: daemon doesn't merge run branches to main) is independent of extqueue and still open. It blocks Phase 2 round-trip regardless of which path above is chosen.
+- `hk-09tne` (Phase 2 first-demo bead) is reopened and blocked on `hk-ftyvo` — that's intentional.
+- The previously deferred `hk-gql20`, `hk-kqdpf`, `hk-fdyip`, `hk-1n0cw`, `hk-kqdpf.5` beads had their `defer_until` cleared during the v42 demo cleanup; their priorities are also restored.
+- One pre-existing miscitation noted by the integration audit: `beads-integration.md:205` cites WM-007 in §4.5 but it's actually in §4.2. Out of scope for extqueue; flag for a future housekeeping pass.

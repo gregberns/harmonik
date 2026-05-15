@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"testing"
 )
 
@@ -51,6 +52,36 @@ func TestWM009_BranchNamingStableAcrossVersion(t *testing.T) {
 		if fromFunc != specMandatedDefault {
 			t.Errorf("WM-009: branchNameFixtureDefaultIntegrationBranch() = %q, want %q",
 				fromFunc, specMandatedDefault)
+		}
+	})
+
+	// Cross-check: production TaskBranchPrefix constant must equal the frozen test value.
+	// This is the load-bearing sensor: if TaskBranchPrefix changes in taskbranch.go, this
+	// sub-test fails, signalling that a migration release is required per WM-009 / ON-018.
+	t.Run("production-task-branch-prefix-matches-frozen-constant", func(t *testing.T) {
+		t.Parallel()
+
+		if TaskBranchPrefix != branchNameFixtureRunPrefix {
+			t.Errorf("WM-009: production TaskBranchPrefix = %q, but frozen stability constant = %q; "+
+				"a breaking change requires a migration release per operator-nfr.md §4.5 ON-018",
+				TaskBranchPrefix, branchNameFixtureRunPrefix)
+		}
+	})
+
+	// Cross-check: IntegrationBranchName with no parent bead must return the frozen default.
+	// This is the load-bearing sensor for the integration-branch naming path: if the
+	// defaultIntegrationBranch literal in integrationbranch.go changes, this sub-test fails.
+	t.Run("production-default-integration-branch-matches-frozen-constant", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := IntegrationBranchName(context.Background(), "")
+		if err != nil {
+			t.Fatalf("WM-009: IntegrationBranchName(ctx, \"\") returned error: %v", err)
+		}
+		if got != branchNameFixtureIntegrationDefault {
+			t.Errorf("WM-009: production IntegrationBranchName(ctx, \"\") = %q, but frozen stability constant = %q; "+
+				"a breaking change requires a migration release per operator-nfr.md §4.5 ON-018",
+				got, branchNameFixtureIntegrationDefault)
 		}
 	})
 

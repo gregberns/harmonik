@@ -677,3 +677,230 @@ func TestValidateQM027SkippedForAppend(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// QM-029a: order-of-evaluation (first-failure short-circuit)
+// ---------------------------------------------------------------------------
+
+// TestValidateQM029aOrderOfEvaluation constructs a request that would fail
+// multiple validation rules simultaneously and asserts that only the FIRST
+// rule in the QM-029a sequence fires. The daemon MUST short-circuit on the
+// first failing rule and return exactly one ValidationError.
+//
+// QM-029a order: QM-027 → QM-024 → QM-020 → QM-021 → QM-022 → QM-023 → QM-026.
+//
+// Spec ref: queue-model.md §6.11 QM-029a.
+func TestValidateQM029aOrderOfEvaluation(t *testing.T) {
+	t.Parallel()
+
+	// QM-027 fires before QM-020: active queue + missing bead.
+	// Both rules would fire independently, but QM-027 is first in sequence.
+	t.Run("qm027_before_qm020", func(t *testing.T) {
+		t.Parallel()
+		const missingID = core.BeadID("hk-missing-order-027")
+		req := validFixtureSingleGroup(missingID)
+		req.ActiveQueue = &queue.Queue{
+			SchemaVersion: 1,
+			QueueID:       "order-test-queue",
+			Status:        queue.QueueStatusActive,
+		}
+		// Empty ledger: missingID is not found (would trigger QM-020 independently).
+		ledger := &validFixtureFakeLedger{
+			statuses: map[core.BeadID]queue.BeadStatus{},
+			edges:    map[[2]core.BeadID]bool{},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected exactly 1 error (first-failure short-circuit), got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonQueueAlreadyActive {
+			t.Errorf("QM-029a: expected QM-027 (%q) to fire before QM-020; got %q",
+				queue.ReasonQueueAlreadyActive, errs[0].Reason)
+		}
+	})
+
+	// QM-020 fires before QM-021: missing bead preempts not-open bead.
+	// Use two beads: one missing (QM-020), one closed (would trigger QM-021).
+	// QM-020 is first, so bead_not_found must be the returned reason.
+	t.Run("qm020_before_qm021", func(t *testing.T) {
+		t.Parallel()
+		const missingID = core.BeadID("hk-missing-order-020")
+		const closedID = core.BeadID("hk-closed-order-021")
+		req := queue.ValidationRequest{
+			Groups: []queue.Group{
+				{
+					GroupIndex: 0,
+					Kind:       queue.GroupKindWave,
+					Status:     queue.GroupStatusPending,
+					Items: []queue.Item{
+						{BeadID: missingID, Status: queue.ItemStatusPending},
+						{BeadID: closedID, Status: queue.ItemStatusPending},
+					},
+				},
+			},
+			ActiveQueue: nil,
+			IsAppend:    false,
+		}
+		// closedID is in the ledger as "closed"; missingID is absent (not_found).
+		ledger := &validFixtureFakeLedger{
+			statuses: map[core.BeadID]queue.BeadStatus{
+				closedID: queue.BeadStatus("closed"),
+			},
+			edges: map[[2]core.BeadID]bool{},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected exactly 1 error (first-failure short-circuit), got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonBeadNotFound {
+			t.Errorf("QM-029a: expected QM-020 (%q) to fire before QM-021; got %q",
+				queue.ReasonBeadNotFound, errs[0].Reason)
+		}
+	})
+
+	// QM-021 fires before QM-022: not-open bead preempts in-progress (double-dispatch) bead.
+	// Use two beads: one closed (QM-021), one in_progress (would trigger QM-022).
+	// QM-021 is iterated first, so bead_not_open must be the returned reason.
+	t.Run("qm021_before_qm022", func(t *testing.T) {
+		t.Parallel()
+		const closedID = core.BeadID("hk-closed-order-021b")
+		const inProgressID = core.BeadID("hk-inprogress-order-022")
+		req := queue.ValidationRequest{
+			Groups: []queue.Group{
+				{
+					GroupIndex: 0,
+					Kind:       queue.GroupKindWave,
+					Status:     queue.GroupStatusPending,
+					Items: []queue.Item{
+						{BeadID: closedID, Status: queue.ItemStatusPending},
+						{BeadID: inProgressID, Status: queue.ItemStatusPending},
+					},
+				},
+			},
+			ActiveQueue: nil,
+			IsAppend:    false,
+		}
+		ledger := &validFixtureFakeLedger{
+			statuses: map[core.BeadID]queue.BeadStatus{
+				closedID:     queue.BeadStatus("closed"),
+				inProgressID: queue.BeadStatusInProgress,
+			},
+			edges: map[[2]core.BeadID]bool{},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected exactly 1 error (first-failure short-circuit), got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonBeadNotOpen {
+			t.Errorf("QM-029a: expected QM-021 (%q) to fire before QM-022; got %q",
+				queue.ReasonBeadNotOpen, errs[0].Reason)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// QM-025: parallelism-narrowed multi-event count
+// ---------------------------------------------------------------------------
+
+// TestValidateQM025ParallelismNarrowedMultiEvent submits a wave group with
+// multiple blocker→blocked pairs and asserts that Validate returns exactly one
+// LedgerDepPair notice per blocked item, validation passes (no errors), and the
+// notice count implies parallelism_narrowed=true in QueueDryRunResponse.
+//
+// Spec ref: queue-model.md §6.6 QM-025.
+func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
+	t.Parallel()
+
+	// Build a wave group with numPairs blocker→blocked pairs.
+	// Pair k: blockerIDs[k] blocks blockedIDs[k].
+	const numPairs = 3
+	blockerIDs := [numPairs]core.BeadID{
+		core.BeadID("hk-multi-blocker-0"),
+		core.BeadID("hk-multi-blocker-1"),
+		core.BeadID("hk-multi-blocker-2"),
+	}
+	blockedIDs := [numPairs]core.BeadID{
+		core.BeadID("hk-multi-blocked-0"),
+		core.BeadID("hk-multi-blocked-1"),
+		core.BeadID("hk-multi-blocked-2"),
+	}
+
+	// Assemble one flat group containing all 2*numPairs beads.
+	items := make([]queue.Item, 0, numPairs*2)
+	for i := 0; i < numPairs; i++ {
+		items = append(items,
+			queue.Item{BeadID: blockerIDs[i], Status: queue.ItemStatusPending},
+			queue.Item{BeadID: blockedIDs[i], Status: queue.ItemStatusPending},
+		)
+	}
+	req := queue.ValidationRequest{
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusPending,
+				Items:      items,
+			},
+		},
+		ActiveQueue: nil,
+		IsAppend:    false,
+	}
+
+	// Ledger: all beads open; edges declare each pair as blocker→blocked.
+	statuses := make(map[core.BeadID]queue.BeadStatus, numPairs*2)
+	edges := make(map[[2]core.BeadID]bool, numPairs)
+	for i := 0; i < numPairs; i++ {
+		statuses[blockerIDs[i]] = queue.BeadStatusOpen
+		statuses[blockedIDs[i]] = queue.BeadStatusOpen
+		edges[[2]core.BeadID{blockerIDs[i], blockedIDs[i]}] = true
+	}
+	ledger := &validFixtureFakeLedger{statuses: statuses, edges: edges}
+
+	errs, notices, err := queue.Validate(context.Background(), req, ledger)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// QM-025 must NOT fail validation.
+	if len(errs) != 0 {
+		t.Fatalf("QM-025 must not produce validation errors; got %d: %v", len(errs), errs)
+	}
+
+	// Exactly numPairs notices — one per blocked item.
+	if len(notices) != numPairs {
+		t.Fatalf("expected %d LedgerDepPair notices (one per blocked item), got %d: %v",
+			numPairs, len(notices), notices)
+	}
+
+	// Each blocked bead must appear exactly once with its correct blocker.
+	for i := 0; i < numPairs; i++ {
+		wantBlocked := blockedIDs[i]
+		wantBlocker := blockerIDs[i]
+		found := false
+		for _, n := range notices {
+			if n.BeadID == wantBlocked && n.BlockerBeadID == wantBlocker {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("pair %d: expected notice {BeadID:%q, BlockerBeadID:%q}, not found in %v",
+				i, wantBlocked, wantBlocker, notices)
+		}
+	}
+
+	// parallelism_narrowed is true when notices is non-empty (QueueDryRunResponse.ParallelismNarrowed).
+	parallelismNarrowed := len(notices) > 0
+	if !parallelismNarrowed {
+		t.Errorf("expected parallelism_narrowed=true (notices non-empty), got false")
+	}
+}

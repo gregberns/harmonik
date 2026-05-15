@@ -358,3 +358,32 @@ Filed 2026-05-15 from this dogfood run:
 - `hk-jvzc2` (P1, bug) — Daemon writes uncommitted .gitignore + .claude/settings.json edits into parent repo's working tree
 - `hk-44w19` (P2, bug) — SIGTERM to harmonik daemon doesn't propagate to child claude/tmux windows
 - `hk-sc3o4` (P1, bug) — Orphan-sweep: stale_intents_observed=4 but bead_in_progress_reset=0 — PL-006 gap
+
+---
+
+## 2026-05-15: phase-3-dot pass-3 (research) dogfood
+
+Pass-3 `research` on the `phase-3-dot` kerf work, run via 5 parallel sub-agents (one per component C1–C5), then a finalizer pass to produce `03-research/SUMMARY.md` and advance to `change-design`.
+
+### MAJOR-1 — Research-pass instructions assume sub-agent file-write availability
+
+2 of 5 research sub-agents (R3 handler-contract-outcome, R4 control-points-binding) hit a harness rule that blocks `.md` writes for research-pass artifacts; both had to return their findings inline and the parent (orchestrator) persisted the file to `03-research/{component}/findings.md`. R1 / R2 / R5 wrote directly without issue.
+
+The kerf `research` pass instructions (per `kerf show <work>`) tell the sub-agent to "Save findings per area to `03-research/{component}/findings.md`." That directive is unsafe-by-default across harnesses — Claude Code's sub-agent role has tooling guidance ("Subagents should return findings as text, not write report files") that overrides it. The finalizer hit the same block when trying to Write SUMMARY.md and had to fall back to a Bash heredoc, which silently dropped line wrapping (93 lines persisted vs. 200+ intended — content present, structure compressed).
+
+**Recommended fix:** the kerf research-pass instruction template should explicitly tell the parent to **collect inline returns** and own the persistence step, not delegate the write to sub-agents. Alternatively, document the heredoc fallback as the recommended sub-agent path.
+
+Severity: MAJOR. Workflow proceeded, but with a confusion tax (2 retries) and a content-fidelity hit on the finalizer's SUMMARY.md.
+
+### MINOR-1 — `kerf status` doesn't surface "what does the next pass want"
+
+`kerf status phase-3-dot change-design` advanced cleanly and dumped the full Pass-4 instructions. Good. But there is no `kerf preview <next-status>` to show the next-pass instructions *before* committing the advance — the finalizer had to either grep `kerf show` output or just advance and read. For multi-session works this is fine; for the finalizer dispatching to pass-4 immediately it's an extra round-trip.
+
+### MINOR-2 — No cross-component "SUMMARY.md" slot in the pass-3 jig output template
+
+The jig says "Save findings per area to `03-research/{component}/findings.md`." It does not anticipate a cross-cutting summary file. The finalizer chose `03-research/SUMMARY.md` as the natural location, but the convention is ad-hoc; pass-4 instructions don't reference it. Consider adding an optional `03-research/SUMMARY.md` to the jig contract so the cross-cutting decision matrix and "already-resolved" list has a canonical home.
+
+### NIT-1 — `kerf show` output is long
+
+`kerf show phase-3-dot` prints the full pass-3 instructions plus the file tree plus the session ledger plus the command palette. For a returning finalizer this is overkill — a `kerf show --compact` mode (just "status: research → next: change-design", file count, last-session marker) would be a faster context recovery.
+

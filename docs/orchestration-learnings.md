@@ -35,6 +35,7 @@ This is **dual-purpose**:
 - [L-015 — "Continue claiming until 250k" was a main-thread rule mis-applied to implementers](#l-015) — `process-fix-applied` · `product-input`
 - [L-016 — `git worktree remove` does not kill the sub-agent process](#l-016) — `process-improvement-pending` · `product-input`
 - [L-017 — `defer_until` is a separate field from `status=deferred` and silently filters `br ready`](#l-017) — `process-fix-applied` · `product-input`
+- [L-020 — Queue-with-context discipline (don't queue hygiene; when queuing, include enough to decide)](#l-020) — `process-fix-applied` · `product-input`
 
 ---
 
@@ -278,3 +279,31 @@ Tags: orchestrator, beads, dispatch
 **Why this matters.** Out-of-order dispatch wastes a slot on work whose acceptance depends on a sibling not yet landed — the agent finishes, the sibling lands, and the original work needs touch-up. Cost: 1 extra agent cycle per inversion. Across a session of 8–12 dispatches, that's 1–2 wasted cycles.
 
 **Product input.** harmonik's daemon should compute a `dispatch-priority` per bead from these signals (label-prefix scan, sibling-graph traversal, body-token match) so `br ready --sorted` returns the orchestrator-preferred order without judgment calls in the main thread.
+
+---
+
+### L-020 — Queue-with-context discipline (don't queue hygiene; when queuing, include enough to decide) <a name="l-020"></a>
+
+**Observed 2026-05-15 (session v45, mid-stream).** Orchestrator queued an item to the user labeled `"AR-013 envelope drafts (A apply / B you read / C reviewer agent verifies first)"`. The change was actually trivial test-driven hygiene — a failing test wanted a missing markdown section and the fix was to add it. Queuing it (a) wasted a user turn on a decision that didn't need making, and (b) presented an undecodable surface: the user had no idea what `AR-013` referred to without grepping conversation history.
+
+User feedback verbatim: *"For minor changes, corrections, bugs, etc I do not need to be consulted. If there are significant changes in the direction of the product, or user/agent impacting, that's where we should discuss before moving forward. But you also need to come to me with enough information I can make a decision on — that is in the instructions — and that wasn't done in the description above."*
+
+**Root cause.** Information-asymmetry between orchestrator and user, compounded by a present-but-unenforced rule. The rules to *not* queue hygiene (resume-continue directive, autonomy dispatching fixers) and to *translate codes* (plain-language feedback) both existed. What was missing was a single mechanical pre-queue checklist that fires *before* the queue-the-user instinct.
+
+**Fix applied.** This entry plus the standing memory `feedback_queue_with_context` codify the pre-queue test:
+
+1. **Triage test (skip-queue):** "Would a competent collaborator object if I just did this?" Hygiene / test-driven fix / correction / internal rename / non-normative doc → just do it.
+2. **If queuing is warranted (product direction, user/agent impact, irreversibility):** the surface MUST include (a) one plain-English sentence of what the change does — no bare codes; (b) why it's queued — what makes it non-routine; (c) concrete options with their consequences. A cold-drop-in reader must be able to decide without grepping conversation history.
+
+The two rules compose: rule 1 catches the hygiene case; rule 2 catches the labeled-without-context case. Both failure modes appeared in the same friction event.
+
+**Related discipline already in place.**
+- `feedback_resume_continue_directive` (default = execute, not ask).
+- `feedback_autonomy_dispatching_fixers` (dispatch obvious fix-up agents without confirmation).
+- `feedback_plain_language` (translate codes on first mention).
+- `feedback_queue_with_context` (the standing memory this entry cross-references).
+- L-007 / L-018 (don't ask questions, don't park the stream).
+
+L-020 is the integration point: a pre-queue checklist that takes the union of those rules and turns them into a single test the orchestrator runs *before* drafting any user-facing queue item.
+
+**Product input.** A daemon-side dispatch surface should expose two channels: an autonomous-execute channel (hygiene, test-driven, routine) and a human-decision channel (direction-shaping, irreversible). The orchestrator-agent's judgment about *which channel a unit of work belongs in* is itself a deterministic function of the work's properties (label set, blast radius, reversibility). Encoding the channel choice in the bead — rather than re-deriving it per-event in the orchestrator — would eliminate the entire class of queue-the-wrong-thing failures. Candidate bead labels: `requires-direction` (always queue), `routine` (never queue), default behavior = follow rule 1.

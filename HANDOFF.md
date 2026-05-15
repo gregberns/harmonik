@@ -1,6 +1,6 @@
-<!-- PP-TRIAL:v2 2026-05-15 main — v43. Phase 2 first-demo GREEN; extqueue v0.1 implementation ~80% done (19 of 24 task beads landed including T50 workloop rewrite); ROADMAP.md added at repo root. T80/T81/T82 scenario tests are the immediate next dispatches — they gate Roadmap Row 8 (Phase 2 multi-bead E2E). -->
+<!-- PP-TRIAL:v2 2026-05-15 main — v45. T80/T81/T82 scenario tests merged → Roadmap Row 8 GATE PASSED. Bridge-integration epic hk-gql20 CLOSED (Row 5 P0 done). 75 beads closed across the session (242 → 167 open). Cross-project ~/.claude/CLAUDE.md synthesized + v44 ACTIVE DISPATCH directive added. -->
 
-Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order from current state to fully operational.
+Roadmap: [ROADMAP.md](ROADMAP.md) — high-level epic order. Cross-project working-style rules: `~/.claude/CLAUDE.md`.
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT EXCEPT BY EXPLICIT USER REQUEST. Loaded every /session-resume. -->
 
@@ -18,7 +18,11 @@ IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers in the v38 ses
 
 WORKTREE TASK-INJECTION LEAK (v36, ONGOING). Implementer edits leak into main's working tree as uncommitted changes. Workaround: `git stash push -m "v36-leak ..." && git merge --ff-only <branch> && git stash drop`. Never commit the leaked main-tree edits as a separate commit — the proper changes arrive via the worktree branch merge.
 
-WORKTREE AUTO-REMOVED BY HARNESS (v41 NEW). When an implementer agent finishes, the harness may auto-remove its worktree directory (but NOT the branch). If `git -C <wtpath>` returns `cannot change to directory`, the worktree is already gone — just `git merge --ff-only worktree-agent-<id>` directly from main. The branch can be rebased without a checked-out worktree by creating a temporary worktree at `/tmp/wt-<short>`, rebasing there, merging into main, then removing the temp worktree. Pattern used 3x in v41.
+WORKTREE AUTO-REMOVED BY HARNESS (v41 NEW). When an implementer agent finishes, the harness may auto-remove its worktree directory (but NOT the branch). If `git -C <wtpath>` returns `cannot change to directory`, the worktree is already gone — just `git merge --ff-only worktree-agent-<id>` directly from main.
+
+WORKTREE-REMOVE STEALS CWD (v45 NEW). When `git worktree remove` runs against the directory the shell is sitting in (or the next command's cwd resolves to a now-removed worktree), subsequent commands fail with `fatal: Unable to read current working directory`. ALWAYS prepend `cd /Users/gb/github/harmonik` to the post-remove commands in the same Bash call. v45 hit this twice; lost a merge commit until reflog-cherry-pick.
+
+WORKTREE BEADS-JSONL LEAK (v41 PATTERN). Implementers' `br close` writes to `.beads/issues.jsonl` in the worktree, which then conflicts with rebase. Workaround in the merge dance: `git -C "$WTPATH" stash push -m leak && git -C "$WTPATH" rebase main` BEFORE the ff-merge. The stash is intentionally never popped — the JSONL state on main wins.
 
 ISOLATED-WORKTREE STALE-BASE BUG (v35, ONGOING). Every implementer dispatched with `isolation: "worktree"` MUST be told in its brief to:
 
@@ -28,16 +32,13 @@ ISOLATED-WORKTREE STALE-BASE BUG (v35, ONGOING). Every implementer dispatched wi
 
 BEFORE reading any spec or code. Verify base via `git log --oneline -5`.
 
-WORKTREE BEADS-JSONL LEAK (v41 PATTERN). Implementers' `br close` writes to `.beads/issues.jsonl` in the worktree, which then conflicts with rebase. Workaround in the merge dance: `git -C "$WTPATH" stash push -m leak && git -C "$WTPATH" rebase main` BEFORE the ff-merge. The stash is intentionally never popped — the JSONL state on main wins.
-
 TRUST `br ready` BUT VERIFY (HARD RULE — L-011, L-017).
 `br ready` is not authoritative for "the corpus is drained":
   1. Stale `blocked_issues_cache` (L-011): cross-check `br stats` Open vs Ready. Recovery: `br doctor --repair`.
-  2. Parent-child gridlock (L-011): convert via sqlite3:
-       sqlite3 .beads/beads.db "UPDATE dependencies SET type='related' WHERE issue_id='<id>' AND depends_on_id='<parent>';"
-       br doctor --repair
-       git checkout -- .gitignore  # br doctor --repair strips .beads/* ignore line
+  2. Parent-child gridlock (L-011): convert via sqlite3.
   3. Stale `defer_until` (L-017): clear via `br update <id> --defer ""`.
+
+`br ready --format json` ALSO drops `labels` (br v0.1.45). Fixed in 93aeaae via ShowBead hydration in workloop. Don't add a parallel fix.
 
 DON'T ASK — EXECUTE.
 On `/session-resume` with no hard blocker, EXECUTE — don't close the say-back with an A/B question. Sub-agents inherit via `.claude/implementer-protocol.md`. EXCEPTION: spec-text authoring is user-shaping; check in before dispatching agents that will write normative spec sections. (v43 refinement: SMALL spec amendments may dispatch without check-in; only check in for SIGNIFICANT/architectural changes.)
@@ -49,25 +50,20 @@ ACTIVE DISPATCH — DON'T PARK THE STREAM (v44, L-018). Three sub-patterns of th
 - **Informational planning-agent output** (roadmap, triage, audit) → synthesize and continue dispatching; only pause when the output explicitly surfaces a user-decision.
 - **Dispatch updates end with the next action you're taking, not a question.** If two paths are equally valid, pick the throughput-maximizing one and name it — the user will redirect if wrong.
 
-PUSH AUTONOMY (v40 2026-05-14). User lifted the "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation. Destructive-op rules (force-push, reset --hard, branch -D, --no-verify) STILL require confirmation; only the routine push step is lifted.
+SUBSUMED BEADS ARE COMMON (v45 NEW). Many open beads' spec content has already landed in earlier corpus-finalize commits (e.g. 6bc2e57). When dispatching a spec-amendment implementer, the brief should END with "if the bead's spec text is already in place, close as SUBSUMED with the landing commit SHA and exit — no edit needed." In v45, ~10 dispatches resolved to SUBSUMED out of ~25 spec-amend implementers — fast hygiene work the orchestrator can run as a periodic sweep agent rather than waiting for implementers to discover.
 
-NO CI (v41 2026-05-14). User explicitly does NOT want GitHub Actions. The `ci-workflows-hk-4tttc` side branch was dropped in v41 and `.github/workflows/` does NOT exist in main. Do not propose CI workflow files in future work. Scenario tests run locally only.
+PUSH AUTONOMY (v40 2026-05-14). User lifted "ask before push" constraint. Orchestrator pushes `origin main` after merge dance + tests-green without confirmation.
 
-IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL.
-`.claude/implementer-protocol.md` is authoritative. (a) Implementer CLOSES OWN BEADS via `br close` after each commit. (b) Implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS — no free-claiming. (c) Implementer DOES NOT ASK questions back. (d) **Implementer COMMITS EXPLICITLY** (v38 reinforcement).
+NO CI (v41 2026-05-14). User does NOT want GitHub Actions. Do not propose CI workflow files.
+
+IMPLEMENTER LIFECYCLE — ENFORCED IN PROTOCOL. `.claude/implementer-protocol.md` is authoritative. (a) Implementer CLOSES OWN BEADS via `br close`. (b) Implementer DOES THE BEADS NAMED IN ITS BRIEF AND EXITS. (c) Implementer DOES NOT ASK questions back. (d) Implementer COMMITS EXPLICITLY.
 
 DISPATCH SHAPE.
-- Implementers: `model=sonnet`, `effort=high`, `isolation=worktree`, `run_in_background=true`. **REBASE FIRST per the hard rule.**
+- Implementers: `model=sonnet`, `effort=high`, `isolation=worktree`, `run_in_background=true`. REBASE FIRST per the hard rule.
 - Reviewers: `model=sonnet`, `effort=high`, no isolation.
-- Briefs ≤15 lines: see brief-template appendix in `.claude/implementer-protocol.md`. **Do NOT paraphrase the bead body.** Implementer fetches via `br show`.
+- Briefs ≤15 lines: see brief-template in `.claude/implementer-protocol.md`. Do NOT paraphrase the bead body. Implementer fetches via `br show`.
 
-PRE-FLIGHT (orchestrator, ≤3 reads per dispatch).
-- Bead body via `br show <id> --format json`.
-- The cited spec section or roadmap row.
-- ONE canonical sibling for pattern conventions.
-
-CWD DISCIPLINE.
-Use `git -C /Users/gb/github/harmonik` for ALL git ops AND read absolute paths to avoid bash-cwd drift inside worktrees. Verify `pwd` returns `/Users/gb/github/harmonik` before any build/test command. v41 hit CWD-disappeared errors 3x when removing a worktree the shell was sitting inside — always `cd /Users/gb/github/harmonik &&` before any worktree-remove.
+CWD DISCIPLINE. Use `git -C /Users/gb/github/harmonik` for ALL git ops AND absolute paths for reads. After any `git worktree remove`, the next command MUST start with `cd /Users/gb/github/harmonik` (v45 cwd-steal).
 
 MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
@@ -75,65 +71,81 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
     for id in <agent-id-1> <agent-id-2>; do
       WTPATH="/Users/gb/github/harmonik/.claude/worktrees/agent-$id"
       BRANCH="worktree-agent-$id"
-      # v41 pattern: stash leak then rebase BEFORE ff-merge
       [ -d "$WTPATH" ] && git -C "$WTPATH" stash push -m leak
       [ -d "$WTPATH" ] && git -C "$WTPATH" rebase main
-      git -C /Users/gb/github/harmonik merge --ff-only "$BRANCH"
-      git -C /Users/gb/github/harmonik worktree remove --force --force "$WTPATH" 2>/dev/null
-      git -C /Users/gb/github/harmonik branch -d "$BRANCH"
+      git merge --ff-only "$BRANCH"
+      cd /Users/gb/github/harmonik   # restore cwd before remove
+      git worktree remove --force --force "$WTPATH" 2>/dev/null
+      git branch -d "$BRANCH"
     done
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v41 used ~50%. v42 used ~53%. v43 used ~51% across heavy implementer-stream + 3 review rounds + multi-wave dispatch.
+If a branch is lost (e.g. worktree dir gone before merge): `git reflog --all | grep worktree-agent-<id>` then `git cherry-pick <SHA>`.
+
+CONTEXT BUDGET (orchestrator). ~700 k effective. v45 used ~60% across heavy parallel dispatch (~25 implementers, 6 explorers, 4 hygiene agents, 30 commits).
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v43, 2026-05-15)
+# Where we are (v45, 2026-05-15)
 
-**Main at HEAD (will be updated to post-T50-merge SHA before this handoff is used). All work pushed to origin. Working tree clean. Big session — ~25 commits landed.**
+**Main at `a8b6568`. All work pushed to origin. Working tree clean (1 in-progress bead per `br stats` — verify after pull). Big session — 24 commits.**
 
 ## Headline outcomes
 
-1. **Phase 2 first-demo GREEN** — bead `hk-09tne` ran end-to-end through the daemon (claude → commit on run-branch → daemon merge-to-main → outcome_emitted + bead_closed). Commit `d50393b`. Unblocker was `hk-ftyvo` (added EM-052/053: merge-to-main + non-FF reopen) plus `hk-4goy3` (added EM-054: working-tree refresh after update-ref).
-2. **Extqueue v0.1 spec landed and gap-filled.** Original spec `e228bc3`; v0.1.1 gap-fix `cfb55a0` closed 6 wire-contract + recovery gaps surfaced by a 3-reviewer pass (completeness / failure-modes / feasibility). New section §2.10 has the JSON-RPC request/response RECORDs; §6.11a QM-029b has the error-code mapping; §3.2a QM-002a has the startup Beads cross-check.
-3. **Extqueue v0.1 implementation ~80% done.** Epic `hk-lj0pb` + 24 task beads filed and reviewed (DAG + scope APPROVE after 6 bead-body sharpenings). Landed: T03, T10, T11, T12, T20, T21, T30, T31, T32, T40, T41, T42, T50, T60, T61, T62, T70, T83, T84. **T50 (workloop rewrite, P0) shipped in `3b53a8e`** — `br ready` poll replaced by `EligibleItems()` pull from active queue group; EM-015f group-advance gate; `complete-with-failures` → `paused-by-failure` + `queue_paused`; QueueID/QueueGroupIndex stamped on run_* payloads; backward-compat fallback to `br ready` when no queue is loaded. T80/T81/T82 (scenario tests, the Phase 2 multi-bead E2E gate) are now dispatchable.
-4. **HC-055b worktree auto-trust** — picked Candidate 3 from the bead body. Daemon now injects `--dangerously-skip-permissions` only when launching into a path that canonicalizes to under the harmonik worktrees prefix. Replaces the prior `dangerouslyAllowedPermissions` settings.json hack.
-5. **ROADMAP.md added at repo root** — 11 ordered rows from Phase 1 GREEN to Phase 3 (DOT-defined bead processes). Referenced from this HANDOFF.
-6. **EV-002b sensor narrowed** — `internal/handler/launchspecdelivery_hc005_test.go` is a test file, not a handler subprocess, so importing core was a false positive. Sensor now skips `_test.go` files. Bead `hk-59ob6`.
-7. **Other code landings**: `hk-nvrvp` (HARMONIK_PROJECT_HASH env injection), `hk-mz0x4` (ldflags binary_commit_hash + Makefile), `hk-a6nob` (envelope run_id on emitRunStarted/emitRunCompleted), `hk-8mwo.33` (sidecar-walk WM-022). **Sensors**: HC-INV-003 (`hk-8i31.66`), ON-INV-006 (`hk-sx9r.72`), ON-019 (`hk-sx9r.23`), WM-INV-003 (`hk-8mwo.57`), WM-009 (`hk-8mwo.14`). **Spec amendments**: BI-010d activity-marker/truth-claim split (`hk-iuaed.1`), handler-contract front-matter fix (`hk-4woeq`).
+1. **Roadmap Row 5 (bridge-integration) CLOSED.** Epic `hk-gql20` closed at `a8b6568` after take-2 review-loop dogfood smoke went GREEN. Same session: epic `hk-lj1p9` (claude session lifecycle) closed at `10d4bf5` after hygiene confirmed all 20 children done. Phase 0 epic `hk-ahvq` also closed via the orphan-hygiene pass.
+2. **Roadmap Row 8 (Phase 2 multi-bead E2E) GATE PASSED.** T80 (`hk-8vokz` queue lifecycle, 676 lines), T81 (`hk-2gqua` paused-by-failure, 517 lines), T82 (`hk-30wgn` crash recovery, 565 lines) all merged green at `e46fc5b` / `384f7a2` / `8201de3`. `internal/scenario/...` package fully green.
+3. **Cross-project working-style synthesis.** `~/.claude/CLAUDE.md` now holds 7 cross-project guidelines (keep moving, delegate, plain English, compact, review gate, etc.) distilled from the v43 friction-mine + the parallel kerf-project mine. Harmonik's `CLAUDE.md` adds a one-line pointer + keeps project-specific bits.
+4. **v44 directive added + L-018 in orchestration-learnings.** ACTIVE DISPATCH paragraph in HANDOFF directives block — "don't park the stream" with 5 sub-rules. L-018 captures the 5 concrete moments justifying it.
+5. **Big hygiene reckoning.** 75 beads closed (242 → 167 Open). Extqueue v0.1: 11 SUBSUMED beads closed in the first sweep (`71044e1`) — handoff v43 said "landed" but `br close` had never run. Then Row 9 sweep closed 2 more (`35a22b7`). Then individual implementers found ~10 more SUBSUMED while doing real spec-amend work. Pattern: spec content already lived in commit `6bc2e57` (claude-hook-bridge spec corpus finalize) but the corresponding tracking beads were orphaned. See new directive paragraph "SUBSUMED BEADS ARE COMMON" above.
+6. **imrest (Row 6) major progress.** `hk-iuaed.2` (PL-006 orphan-reset spec, `a1d281c`), `hk-iuaed.3` (BI adapter ResetBead op — `internal/brcli/resetbead_bi010d_test.go` + 588-line impl, `60c8170`), `hk-iuaed.5` (EV §8.7.14 confirm + catch-up of 5 additive fields, `bedd5a5`) all landed. `hk-iuaed.4` (PL-006 sweep impl) and `.6` (sensor) are now unblocked and dispatchable.
+7. **Other code landings**: `hk-do7te` agent_ready timeout (`e19de6a` — adds 10s reap-after-Kill in workloop + reviewloop), `hk-a0htu` labels-gap fix in workloop (`93aeaae` — ShowBead hydration after Ready), `hk-zs0.21` AR-020 amendment-proposal procedure with architect+critic personas (`0d2bcd5`), `hk-sx9r.24` 7 upgrade sub-rules ON-020b–h (`cca00f5`), `hk-sx9r.27` ON-022 secrets binding test (`2af7dfa`), `hk-sx9r.69` ON-INV-001 N-1 compat sensor harness (`5856de2`).
+8. **Orphan-parent hygiene.** 3 parent-child edges added (`3697cc0`): hk-do7te → hk-kqdpf, hk-4goy3 → hk-kqdpf, hk-6x7dw → hk-hqwn. hk-7uasg has an existing `related` edge to hk-qo08q — needs manual upgrade to parent-child if desired.
+9. **ROADMAP audit.** All 15 open epics covered by existing rows (`b736d9d` removed closed `hk-lj1p9` from Row 5). No new rows needed.
 
 ## Stream / dispatch state at handoff time
 
-- Stream **drained** — no implementer agents running. Working tree clean. Main pushed.
-- Queue draining note: T50 was the last in-flight agent; it landed in `3b53a8e` + `1873195`.
+- Stream drained — no implementer agents running.
+- `br stats`: Open 167, In Progress 1 (likely stale — re-check on resume), Blocked 128, Ready 50, Deferred 38, Closed 1092.
+
+## Plain-English glossary (what the codes mean)
+
+- `hk-iuaed` — imrest epic: separating "bead in_progress" (activity marker, recoverable) from close/reopen (truth claim). Row 6 on the roadmap.
+- `hk-kqdpf.5` — single remaining bridge-followup task: re-run dogfood smoke with substrate + bridge wired (P0). Only thing keeping Row 5 from full closure now that hk-gql20 is done.
+- `hk-qo08q` — claude-hook-bridge spec corpus implementation epic (Row 7).
+- `hk-sx9r` — operator-NFR spec implementation (Row 9).
+- `hk-zs0.*` — architecture spec amendments under epic hk-b3f (Row 9).
+- "SUBSUMED" — bead's spec text already landed in earlier commit; closing as hygiene rather than re-doing work.
 
 # Next session — START HERE
 
-## Immediate plan (Roadmap Row 4 → Row 8)
+## Immediate plan (in order)
 
-1. **Dispatch T80 (`hk-8vokz`, P0)** — Phase 2 multi-bead E2E scenario tests. This is the gate test for the entire extqueue v0.1 milestone. Brief should cite scenario-harness.md for testing convention + `internal/queue/state.go` + `internal/daemon/workloop.go` (post-T50) for assertions. Acceptance: run a 3–5 bead queue via `hk queue submit`, observe each run_started + run_completed has non-nil QueueID/QueueGroupIndex, observe group-advance gate held until all-terminal, observe queue_paused on synthetic failure.
-2. **Then T81 (`hk-2gqua`) and T82 (`hk-30wgn`)** — additional scenario tests; can dispatch in parallel after T80 lands (or in parallel WITH T80 since they touch sibling test files).
-3. **Optional T71 (`hk-dji5z`)** — small cleanup bead in workloop.go (replaces nothing-ready-sleep with socket-block idle). P2; can fold into T50 review or do as separate cleanup.
-4. **Optional T51 (`hk-w85to`)** — annotation-only; consider closing as SUBSUMED by T50 if the implementer already added the EM-049/050/051 godoc.
+1. **Dispatch `hk-kqdpf.5`** (P0 remaining bridge-followup) — re-run dogfood smoke with substrate + bridge wired. Now that hk-gql20 closed via the review-loop smoke, this one should also be GREEN. Closing it closes the bridge-followup epic and lets Row 5 be fully checked off. Operational agent (not worktree-isolated) similar to the gql20.24 smoke pattern in `af7aa914bdf4ee1da`'s output.
+2. **Dispatch `hk-iuaed.4`** (P1 sweep impl, now unblocked by .2/.3/.5) — extend PL-006 orphan-sweep with stale-in_progress reset using the new ResetBead adapter op. Then `hk-iuaed.6` (sensor — depends on .4).
+3. **Dispatch a deferred-clear sweep** — 38 beads sit in deferred state per `br stats`. Some are valid post-MVH parks; others are stale `defer_until` blockers (L-017). A small agent can scan and clear the stale ones — high ROI on ready-queue depth.
 
-## After Row 8 — Roadmap Row 5 (Bridge cluster)
+## Subsequent waves
 
-- **`hk-gql20`** (bridge-integration epic, P0), **`hk-kqdpf`** (bridge-followup epic, P0), **`hk-lj1p9`** (claude session lifecycle parent). These have many open child beads — re-check `bv --robot-triage --label hk-gql20` (or equivalent) for current dispatchable children.
-- The daemon audit (commit `e17cd39`) noted: `workLoopDeps.substrate = nil` in composition root (claude is still spawned via `exec.CommandContext`, not tmux panes); review-loop lacks `waitAgentReady`; orphan session sweep is window-only.
-
-## Known-failing tests (NOT blocking — confirmed pre-existing on main)
-
-- `TestAR013EnvelopeDeclaration` in specaudit — `queue-model.md` and `claude-hook-bridge.md` lack the §4.a Subsystem envelope section. Cosmetic spec hygiene.
-- `TestON027DrainStep1StopPullingQueue/check-4` — `operator-nfr.md` drain step wording mismatches the sensor's expected phrase. Cosmetic.
-- `TestWorkLoop_FailedHandlerReopensBead` and `TestWorkLoop_TwoConcurrentBeads` — pre-existing flaky workloop tests; pass in isolation but time out under full-suite parallel load. Triage as part of Row 5 work, not blocking.
+- **Roadmap Row 7 (CHB spec corpus)** — hk-qo08q has ~15 open code-implementation children per the Row 9 sweep report. Triage with `bv --robot-triage --graph-root hk-qo08q` and dispatch in parallel; many are likely independent CHB-NNN req beads.
+- **Roadmap Row 5 final close** — once hk-kqdpf.5 lands, close the `hk-kqdpf` epic itself; both Row 5 epics will be done.
+- **Roadmap Row 8 fold-up** — hk-1n0cw (smoke epic) is a meta-parent with 2 open children (hk-w5vra closed, hk-do7te closed via this session). Verify hk-1n0cw can now close.
+- **Roadmap Row 6 close-out** — once hk-iuaed.4 + .6 land, the imrest epic closes (Row 6 done).
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `ROADMAP.md` (the 11-row plan).
-3. `specs/queue-model.md` (v0.1.1 with §2.10 + §6.11a + §3.2a).
-4. `internal/queue/state.go` + `internal/daemon/workloop.go` (post-T50) — your next implementers will read these.
-5. `.kerf/extqueue/07-tasks.md` — for context on T80/T81/T82 scope.
+2. `ROADMAP.md` (11-row plan).
+3. `~/.claude/CLAUDE.md` (cross-project working style — auto-loaded by every session).
+4. `docs/orchestration-learnings.md` (read on resume; L-018 is newest).
+5. `docs/dogfood-smoke-run-2026-05-15-review-loop-take2.md` — GREEN smoke run that closed hk-gql20.
 
 ## Question that blocks the next session
 
 None. Continue executing per directives + roadmap.
+
+## Known-failing tests (pre-existing, NOT blocking)
+
+- `TestAR013EnvelopeDeclaration` in specaudit (cosmetic spec hygiene).
+- `TestON027DrainStep1StopPullingQueue/check-4` (cosmetic wording).
+- `TestWorkLoop_FailedHandlerReopensBead`, `TestWorkLoop_TwoConcurrentBeads` (pre-existing flaky under full-suite parallel load).
+- `TestBI010c_SpecContainsWorkflowLabelDiscipline` in brcli (pre-existing; noted in hk-iuaed.3 dispatch report).
+- `TestThroughput_TenBeadsAtMaxFour` is slow (~57s) and times out full suite at 120s — not a regression.

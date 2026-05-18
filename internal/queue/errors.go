@@ -10,9 +10,9 @@ package queue
 // specs/queue-model.md §6.11a QM-029b. These are wire-level constants: once
 // assigned they are immutable; changes require a spec amendment.
 //
-// -32018 and -32019 are reserved for future QueueValidationReason additions
-// within the v0.1 error-code block. Do not assign them without a spec
-// amendment and a QM-029b table update.
+// -32019 remains reserved for a future QueueValidationReason addition within
+// the v0.1 error-code block. Do not assign it without a spec amendment and
+// a QM-029b table update.
 
 const (
 	// ErrorCodeQueueAlreadyActive is the JSON-RPC error code for
@@ -55,8 +55,14 @@ const (
 	// Spec ref: queue-model.md §6.11a QM-029b.
 	ErrorCodeQueueTooLarge = -32017
 
-	// -32018 and -32019 are reserved for future QueueValidationReason
-	// additions within the v0.1 error-code block per QM-029b.
+	// ErrorCodeHandlerPaused is the JSON-RPC error code for
+	// ReasonHandlerPaused (QM-052a — handler-pause queue-submit gate).
+	// Allocated from the previously-reserved -32018 slot per QM-029b.
+	// Spec ref: queue-model.md §6.11a QM-029b; handler-pause-and-resume.md Appendix A.1.
+	ErrorCodeHandlerPaused = -32018
+
+	// -32019 is reserved for a future QueueValidationReason addition within
+	// the v0.1 error-code block per QM-029b.
 )
 
 // ---------------------------------------------------------------------------
@@ -88,6 +94,8 @@ func JSONRPCError(reason QueueValidationReason) (code int, message string) {
 		return ErrorCodeDuplicateBeadID, "duplicate_bead_id"
 	case ReasonQueueTooLarge:
 		return ErrorCodeQueueTooLarge, "queue_too_large"
+	case ReasonHandlerPaused:
+		return ErrorCodeHandlerPaused, "handler_paused"
 	default:
 		return -32099, "unknown_validation_reason"
 	}

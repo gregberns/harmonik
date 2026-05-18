@@ -56,6 +56,14 @@ const (
 	// queue.json to exceed 1 MiB (1048576 bytes).
 	// JSON-RPC error code -32017 per QM-029b.
 	ReasonQueueTooLarge QueueValidationReason = "queue_too_large"
+
+	// ReasonHandlerPaused — QM-052a: one or more beads in the request resolve
+	// to an agent_type whose handler is currently paused. Per the handler-pause
+	// spec (docs/components/internal/handler-pause-and-resume.md Appendix A.1),
+	// the daemon rejects queue-submit when any bead's resolved agent_type is
+	// paused; the detail map includes agent_type and the affected bead_ids.
+	// JSON-RPC error code -32018 per QM-029b (previously reserved slot).
+	ReasonHandlerPaused QueueValidationReason = "handler_paused"
 )
 
 // ---------------------------------------------------------------------------
@@ -139,6 +147,30 @@ type BeadLedger interface {
 }
 
 // ---------------------------------------------------------------------------
+// HandlerPauseChecker — minimal seam for QM-052a handler-pause validation
+// ---------------------------------------------------------------------------
+
+// HandlerPauseChecker is the minimal seam between the validation pipeline and
+// the daemon's handler-pause controller (docs/components/internal/handler-pause-and-resume.md).
+//
+// When non-nil in a ValidationRequest, Validate evaluates QM-052a: any bead
+// whose resolved agent_type maps to a currently-paused handler causes
+// ReasonHandlerPaused. When nil, QM-052a is skipped (the hk-9hwbw
+// HandlerPauseController is not yet wired; nil == check disabled).
+//
+// All methods MUST be safe for concurrent use. The context carries deadlines
+// from the enclosing JSON-RPC request.
+type HandlerPauseChecker interface {
+	// ResolvedAgentType returns the agent_type that would be used to dispatch
+	// bead id. Returns an error if the bead's agent_type cannot be determined.
+	ResolvedAgentType(ctx context.Context, id core.BeadID) (core.AgentType, error)
+
+	// IsHandlerPaused reports whether the handler for agentType is currently
+	// paused. Returns false if the handler is live or unknown.
+	IsHandlerPaused(ctx context.Context, agentType core.AgentType) (bool, error)
+}
+
+// ---------------------------------------------------------------------------
 // ValidationRequest — input shape for Validate
 // ---------------------------------------------------------------------------
 
@@ -162,16 +194,24 @@ type ValidationRequest struct {
 	// AppendGroupIndex is the 0-based target group_index for queue-append.
 	// Ignored when IsAppend is false.
 	AppendGroupIndex int
+
+	// PauseChecker is the optional handler-pause seam for QM-052a validation.
+	// When non-nil, Validate checks each bead's resolved agent_type against the
+	// handler-pause controller and rejects with ReasonHandlerPaused if any
+	// handler is paused. When nil, QM-052a is skipped (controller not yet wired).
+	//
+	// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+	PauseChecker HandlerPauseChecker
 }
 
 // ---------------------------------------------------------------------------
-// Validate — 8-rule pipeline (QM-029a order)
+// Validate — 9-rule pipeline (QM-029a order + QM-052a)
 // ---------------------------------------------------------------------------
 
 // maxQueueJSON is the persisted-size limit per QM-026 / QM-004: 1 MiB.
 const maxQueueJSON = 1048576
 
-// Validate runs the 8 validation rules in QM-029a order against req. It
+// Validate runs the validation rules in QM-029a order against req. It
 // returns a single-element slice on the first failing rule (first-failure
 // short-circuit per QM-029a), an empty slice on pass, and nil when QM-025
 // informational notices are collected.
@@ -180,9 +220,11 @@ const maxQueueJSON = 1048576
 // returned LedgerDepPairs slice but never causes a ValidationError.
 //
 // Order: QM-027 (submit-only) → QM-024 (append-only) → QM-020 → QM-021 →
-// QM-022 → QM-023 → QM-026 → QM-025 (informational, last).
+// QM-022 → QM-052a (handler-pause, optional) → QM-023 → QM-026 →
+// QM-025 (informational, last).
 //
-// Spec ref: queue-model.md §6 QM-020..QM-027, QM-029, QM-029a.
+// Spec ref: queue-model.md §6 QM-020..QM-027, QM-029, QM-029a;
+// handler-pause-and-resume.md Appendix A.1 (QM-052a).
 func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]ValidationError, []LedgerDepPair, error) {
 	// --- QM-027: single active queue (submit-only) ---------------------------
 	if !req.IsAppend {
@@ -333,6 +375,64 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 					Reason: ReasonBeadAlreadyDispatched,
 					Detail: map[string]any{
 						"bead_id": string(id),
+					},
+				},
+			}, nil, nil
+		}
+	}
+
+	// --- QM-052a: handler-pause check (optional seam) -----------------------
+	// When PauseChecker is wired (hk-9hwbw HandlerPauseController), reject any
+	// bead whose resolved agent_type maps to a currently-paused handler.
+	// Orthogonal to paused-by-failure: the queue status is NOT changed here.
+	// Per Appendix A.1, this is a submit-time gate — the bead never enters the
+	// queue; the caller must retry after the handler is resumed.
+	//
+	// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+	if req.PauseChecker != nil {
+		// Walk beads in order; stop at the first paused agent_type (first-failure
+		// short-circuit per QM-029a). Collect all bead_ids for that agent_type
+		// in the detail map for operator diagnostics.
+		type pauseHit struct {
+			agentType core.AgentType
+			beadIDs   []string
+		}
+		var hit *pauseHit
+		for _, id := range allBeadIDs {
+			at, atErr := req.PauseChecker.ResolvedAgentType(ctx, id)
+			if atErr != nil {
+				return nil, nil, fmt.Errorf("QM-052a ResolvedAgentType %q: %w", id, atErr)
+			}
+			paused, pErr := req.PauseChecker.IsHandlerPaused(ctx, at)
+			if pErr != nil {
+				return nil, nil, fmt.Errorf("QM-052a IsHandlerPaused %q: %w", at, pErr)
+			}
+			if paused {
+				if hit == nil {
+					// First paused agent_type found; collect all beads in the submission
+					// that resolve to this same paused handler for the detail map.
+					h := &pauseHit{agentType: at}
+					for _, id2 := range allBeadIDs {
+						at2, at2Err := req.PauseChecker.ResolvedAgentType(ctx, id2)
+						if at2Err != nil {
+							return nil, nil, fmt.Errorf("QM-052a ResolvedAgentType (collection) %q: %w", id2, at2Err)
+						}
+						if at2 == at {
+							h.beadIDs = append(h.beadIDs, string(id2))
+						}
+					}
+					hit = h
+				}
+				break
+			}
+		}
+		if hit != nil {
+			return []ValidationError{
+				{
+					Reason: ReasonHandlerPaused,
+					Detail: map[string]any{
+						"agent_type": string(hit.agentType),
+						"bead_ids":   hit.beadIDs,
 					},
 				},
 			}, nil, nil

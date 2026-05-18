@@ -17,6 +17,7 @@ var errorsAllReasons = []queue.QueueValidationReason{
 	queue.ReasonBeadAlreadyDispatched,
 	queue.ReasonDuplicateBeadID,
 	queue.ReasonQueueTooLarge,
+	queue.ReasonHandlerPaused,
 }
 
 // errorsExpectedCodes is the normative code-to-reason table per QM-029b.
@@ -30,6 +31,7 @@ var errorsExpectedCodes = map[queue.QueueValidationReason]int{
 	queue.ReasonBeadAlreadyDispatched: queue.ErrorCodeBeadAlreadyDispatched,
 	queue.ReasonDuplicateBeadID:       queue.ErrorCodeDuplicateBeadID,
 	queue.ReasonQueueTooLarge:         queue.ErrorCodeQueueTooLarge,
+	queue.ReasonHandlerPaused:         queue.ErrorCodeHandlerPaused,
 }
 
 // errorsExpectedMessages is the normative message-to-reason table per QM-029b.
@@ -43,6 +45,7 @@ var errorsExpectedMessages = map[queue.QueueValidationReason]string{
 	queue.ReasonBeadAlreadyDispatched: "bead_already_dispatched",
 	queue.ReasonDuplicateBeadID:       "duplicate_bead_id",
 	queue.ReasonQueueTooLarge:         "queue_too_large",
+	queue.ReasonHandlerPaused:         "handler_paused",
 }
 
 // TestErrorCodeConstantsNormativeMapping verifies that each constant value
@@ -65,6 +68,7 @@ func TestErrorCodeConstantsNormativeMapping(t *testing.T) {
 		{"ErrorCodeBeadAlreadyDispatched", queue.ErrorCodeBeadAlreadyDispatched, -32015},
 		{"ErrorCodeDuplicateBeadID", queue.ErrorCodeDuplicateBeadID, -32016},
 		{"ErrorCodeQueueTooLarge", queue.ErrorCodeQueueTooLarge, -32017},
+		{"ErrorCodeHandlerPaused", queue.ErrorCodeHandlerPaused, -32018},
 	}
 
 	for _, tc := range cases {
@@ -111,14 +115,17 @@ func TestJSONRPCErrorExhaustive(t *testing.T) {
 }
 
 // TestJSONRPCErrorStableRange verifies that all allocated codes fall within
-// the -32010..-32017 range reserved for queue-model per PL-003a and that
-// -32018 and -32019 are not used.
+// the -32010..-32018 range reserved for queue-model per PL-003a and that
+// -32019 is not used.
+//
+// Note: -32018 was allocated to ReasonHandlerPaused (QM-052a) per the
+// handler-pause spec amendment (hk-siuo2). -32019 remains reserved.
 //
 // Spec ref: queue-model.md §6.11a QM-029b; process-lifecycle.md §4.4 PL-003a.
 func TestJSONRPCErrorStableRange(t *testing.T) {
 	t.Parallel()
 
-	reserved := map[int]bool{-32018: true, -32019: true}
+	reserved := map[int]bool{-32019: true}
 
 	for _, reason := range errorsAllReasons {
 		reason := reason
@@ -127,8 +134,8 @@ func TestJSONRPCErrorStableRange(t *testing.T) {
 
 			code, _ := queue.JSONRPCError(reason)
 
-			if code < -32017 || code > -32010 {
-				t.Errorf("JSONRPCError(%q) code %d is outside the reserved range [-32017, -32010]", reason, code)
+			if code < -32018 || code > -32010 {
+				t.Errorf("JSONRPCError(%q) code %d is outside the reserved range [-32018, -32010]", reason, code)
 			}
 			if reserved[code] {
 				t.Errorf("JSONRPCError(%q) code %d collides with a reserved slot", reason, code)

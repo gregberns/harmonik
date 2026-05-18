@@ -904,3 +904,149 @@ func TestValidateQM025ParallelismNarrowedMultiEvent(t *testing.T) {
 		t.Errorf("expected parallelism_narrowed=true (notices non-empty), got false")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// QM-052a: handler-pause gate (submit-only)
+// ---------------------------------------------------------------------------
+
+// fakeHandlerPauseChecker is a test double for HandlerPauseChecker.
+// It maps bead IDs to agent_types and records which agent_types are paused.
+type fakeHandlerPauseChecker struct {
+	// agentTypes maps bead ID → agent_type.
+	agentTypes map[core.BeadID]core.AgentType
+
+	// paused is the set of currently-paused agent_types.
+	paused map[core.AgentType]bool
+}
+
+func (f *fakeHandlerPauseChecker) ResolvedAgentType(_ context.Context, id core.BeadID) (core.AgentType, error) {
+	if at, ok := f.agentTypes[id]; ok {
+		return at, nil
+	}
+	// Default to "claude-code" for any bead not explicitly mapped.
+	return core.AgentTypeClaudeCode, nil
+}
+
+func (f *fakeHandlerPauseChecker) IsHandlerPaused(_ context.Context, agentType core.AgentType) (bool, error) {
+	return f.paused[agentType], nil
+}
+
+// TestValidateQM052aHandlerPaused verifies that queue-submit is rejected with
+// handler_paused when any bead's resolved agent_type maps to a paused handler,
+// and that the check is skipped when PauseChecker is nil.
+//
+// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+// Bead ref: hk-siuo2.
+func TestValidateQM052aHandlerPaused(t *testing.T) {
+	t.Parallel()
+
+	const (
+		idA = core.BeadID("hk-aaa-pause")
+		idB = core.BeadID("hk-bbb-pause")
+		idC = core.BeadID("hk-ccc-pause")
+	)
+
+	t.Run("fail_paused_handler_single_bead", func(t *testing.T) {
+		t.Parallel()
+		// idA resolves to claude-code, which is paused.
+		req := validFixtureSingleGroup(idA)
+		ledger := validFixtureOpenLedger(idA)
+		req.PauseChecker = &fakeHandlerPauseChecker{
+			agentTypes: map[core.BeadID]core.AgentType{idA: core.AgentTypeClaudeCode},
+			paused:     map[core.AgentType]bool{core.AgentTypeClaudeCode: true},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonHandlerPaused {
+			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
+		}
+		// Detail must include agent_type and bead_ids.
+		if errs[0].Detail["agent_type"] != string(core.AgentTypeClaudeCode) {
+			t.Errorf("detail agent_type: got %v, want %q", errs[0].Detail["agent_type"], core.AgentTypeClaudeCode)
+		}
+		beadIDs, ok := errs[0].Detail["bead_ids"].([]string)
+		if !ok || len(beadIDs) == 0 {
+			t.Errorf("detail bead_ids: expected non-empty []string, got %v", errs[0].Detail["bead_ids"])
+		}
+	})
+
+	t.Run("fail_paused_handler_multiple_beads_same_type", func(t *testing.T) {
+		t.Parallel()
+		// idA and idB both resolve to claude-code (paused); idC resolves to pi (live).
+		items := []queue.Item{
+			{BeadID: idA, Status: queue.ItemStatusPending},
+			{BeadID: idB, Status: queue.ItemStatusPending},
+			{BeadID: idC, Status: queue.ItemStatusPending},
+		}
+		req := queue.ValidationRequest{
+			Groups: []queue.Group{
+				{GroupIndex: 0, Kind: queue.GroupKindWave, Status: queue.GroupStatusPending, Items: items},
+			},
+		}
+		ledger := validFixtureOpenLedger(idA, idB, idC)
+		req.PauseChecker = &fakeHandlerPauseChecker{
+			agentTypes: map[core.BeadID]core.AgentType{
+				idA: core.AgentTypeClaudeCode,
+				idB: core.AgentTypeClaudeCode,
+				idC: core.AgentTypePi,
+			},
+			paused: map[core.AgentType]bool{core.AgentTypeClaudeCode: true},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonHandlerPaused {
+			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
+		}
+		// Both idA and idB must appear in bead_ids; idC (pi, live) must not.
+		beadIDs, ok := errs[0].Detail["bead_ids"].([]string)
+		if !ok {
+			t.Fatalf("detail bead_ids: expected []string, got %T %v", errs[0].Detail["bead_ids"], errs[0].Detail["bead_ids"])
+		}
+		if len(beadIDs) != 2 {
+			t.Errorf("expected 2 affected bead_ids (idA + idB), got %d: %v", len(beadIDs), beadIDs)
+		}
+	})
+
+	t.Run("pass_live_handler", func(t *testing.T) {
+		t.Parallel()
+		// idA resolves to claude-code, which is NOT paused.
+		req := validFixtureSingleGroup(idA)
+		ledger := validFixtureOpenLedger(idA)
+		req.PauseChecker = &fakeHandlerPauseChecker{
+			agentTypes: map[core.BeadID]core.AgentType{idA: core.AgentTypeClaudeCode},
+			paused:     map[core.AgentType]bool{}, // no handlers paused
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 0 {
+			t.Fatalf("expected pass for live handler, got errors: %v", errs)
+		}
+	})
+
+	t.Run("pass_nil_checker_skips_qm052a", func(t *testing.T) {
+		t.Parallel()
+		// PauseChecker is nil → QM-052a is skipped entirely.
+		req := validFixtureSingleGroup(idA)
+		ledger := validFixtureOpenLedger(idA)
+		// req.PauseChecker is nil (zero value)
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 0 {
+			t.Fatalf("expected pass when PauseChecker is nil, got errors: %v", errs)
+		}
+	})
+}

@@ -46,16 +46,16 @@ The lists in this section captured Phase-0 in-flight work and are kept verbatim 
 
 - [x] **Cross-spec citation drift cleanup.** Two passes: pass 1 migrated `architecture.md §1.N → §4.N` (57 sites) + `handler_type → agent_type` rename (7 sites). Pass 2 migrated ~145 more cites across 7 files (EV `§3.N`, WM `§5.N`, ON `§7.N`, PL `§8.N`, BI `§10.N`, CP misnumbered `§6.N`) + fixed reconciliation multi-file path form. Each batch-2 R1 integration also cleaned its own outbound cites.
 - [x] **`handler_type` → `agent_type` rename** (AR-MIG-001 complete).
-- [ ] **`depended-on-by` reverse index** — removed from front matter v1.1; computation tool not built. Deferred post-MVH.
+- [ ] **`depended-on-by` reverse index** — removed from front matter v1.1; computation tool not built. Deferred (post-phase-1).
 
 ### v0.4.x cross-spec coordination patch wave — LANDED 2026-04-25
 
 - [x] **PL → v0.4.1** — 9 items (PL-INTERIM dropped on 22/23; daemon_instance_id UUIDv7; pidfile line 3; PL-009/PL-011a monotonic fields; PL-005 step 8a marker reads; get-agent-count RPC; PL-006 orphan sweep for `br` + reconciliation-locks).
-- [x] **EV → v0.3.3** — 7 new event types (§8.6.11–14, §8.7.16–17, §8.8.5); daemon_shutdown class F confirmed (resolves OQ-PL-012); monotonic-companion fields; daemon_degraded enum exhaustive; divergence_kind post-MVH note.
+- [x] **EV → v0.3.3** — 7 new event types (§8.6.11–14, §8.7.16–17, §8.8.5); daemon_shutdown class F confirmed (resolves OQ-PL-012); monotonic-companion fields; daemon_degraded enum exhaustive; divergence_kind post-phase-1 extension note.
 - [x] **EM → v0.3.3** — EM-005a + Outcome.kind discriminator + OutcomeKind enum (resolves OQ-RC-010); 2 RC-owned trailers added (resolves OQ-RC-002).
 - [x] **WM → v0.4.2** — WM-036 verdict-disposition `no-op-accept` row (resolves OQ-RC-011).
 - [x] **HC → v0.3.3** — HC-016a orphan-reconnect retry; HC-026b drain-forced silent-hang acceptance.
-- [x] **ON → v0.4.1** — OQ-RC-009 resolution acknowledgment (decline normative `quarantined` state at MVH).
+- [x] **ON → v0.4.1** — OQ-RC-009 resolution acknowledgment (decline normative `quarantined` state in phase-1 scope).
 
 All §12 revision-history rows added; all spec IDs FROZEN; net new IDs (EM-005a, HC-016a, HC-026b) minted in pre-existing gaps.
 
@@ -67,7 +67,7 @@ All §12 revision-history rows added; all spec IDs FROZEN; net new IDs (EM-005a,
 - [x] **`docs/decompose-to-tasks/pilot-review-protocol.md` v0.1** — 3-reviewer parallel pass (Coverage / Decomposition-quality / Reference) + synthesis (BLOCKER / MAJOR / MINOR) + load gate. Gates every remaining pilot.
 - [x] **BI smoke-load** completed twice. First run under `--prefix bi` surfaced 5 cycle bugs (now fixed in v0.4 + v0.1.3). Second run under `--prefix hk` clean: 66 beads, 110 edges, zero cycles. State preserved in `<repo>/.beads/`.
 - [x] **`br` (Beads CLI) installed** at `/Users/gb/.local/bin/br` v0.1.45.
-- [x] **`.beads/` added to `.gitignore`** at MVH (regenerable from JSONL).
+- [x] **`.beads/` added to `.gitignore`** at the phase-1 operational milestone (regenerable from JSONL).
 - [x] **BI → v0.4.1 (status-enum reconciliation per reviewer F2).** Unchanged this session.
 
 ### Decompose-to-tasks — REMAINING
@@ -121,8 +121,8 @@ The knowledge base captured the open Phase-0 decisions; spec drafting + review +
 
 ### A. User decisions on bootstrap.md (resolved through specs + bootstrap subset)
 
-- [x] **§2 MVH cut.** Resolved via `bootstrap-subset.md` §1 working definition + the 376-bead `scope:bootstrap` subset.
-- [x] **§3 Workflow lifecycle.** Resolved via EM v0.3.3 (Outcome.kind discriminator + revision-loop semantics) + the §3 open question on retry cap explicitly deferred (conservative default suffices at MVH).
+- [x] **§2 Phase-1 scope cut.** Resolved via `bootstrap-subset.md` §1 working definition + the 376-bead `scope:bootstrap` subset.
+- [x] **§3 Workflow lifecycle.** Resolved via EM v0.3.3 (Outcome.kind discriminator + revision-loop semantics) + the §3 open question on retry cap explicitly deferred (conservative default suffices in phase-1).
 - [x] **§4 Operator controls.** Resolved via ON v0.4.1 (queue-level pause/stop FSM) + the parked-state-rule withdrawal (Z.2): operator safety at queue level, not bead level.
 - [x] **§5 Build order.** Resolved via the bootstrap-subset cluster ordering (PL → WM/EM → HC + twin) and the milestone-close §"What unblocks now" sequence.
 - [x] **§6 Risk specifics.** Resolved via SH (S07) regression-baseline shape + the agent-reviewer-every-commit decision; first-cycle review cadence is local-pass-only per Z.1.

@@ -4,7 +4,7 @@
 >
 > Last updated: 2026-05-12 — **Workflow-modes corpus shipped** (epic `hk-7om2q` + 32 child beads closed; daemon work-loop dispatch driver landed in `internal/daemon/reviewloop.go` with full §8.1a event coverage, exactly-once `review_loop_cycle_complete` across all 5 termination paths, and `run_id` propagation assertions). Workflow-modes is the central integration node that ties the spec corpus to a running daemon for the trivial-slice happy-path. See HANDOFF.md for v33 detail.
 >
-> Previously: 2026-05-06 — **Phase 0 closed.** 11 reviewed specs (~562 req IDs); 905 live beads in `<repo>/.beads/` with 3,589 edges, zero cycles; 376 beads carry `scope:bootstrap` (348 spec-corpus + 28 meta-epic); discipline at v0.12 (12 versions, 16 class-lane findings absorbed). Readiness gaps closed in beads: build/test scaffolding (`hk-pvcs`), twin-binary scaffolding (`hk-ahvq.48`), operational skills (`hk-jhob`), Phase-1 validation (`hk-kle6`), MVH no-op PolicyEngine (`hk-b3f.89`). Parked-state lifecycle withdrawn per user 2026-05-05; loaded beads transition directly to dispatchable. Phase-1 starting point: `hk-pvcs` 8-bead local-scaffolding epic.
+> Previously: 2026-05-06 — **Phase 0 closed.** 11 reviewed specs (~562 req IDs); 905 live beads in `<repo>/.beads/` with 3,589 edges, zero cycles; 376 beads carry `scope:bootstrap` (348 spec-corpus + 28 meta-epic); discipline at v0.12 (12 versions, 16 class-lane findings absorbed). Readiness gaps closed in beads: build/test scaffolding (`hk-pvcs`), twin-binary scaffolding (`hk-ahvq.48`), operational skills (`hk-jhob`), Phase-1 validation (`hk-kle6`), no-op PolicyEngine (`hk-b3f.89`). Parked-state lifecycle withdrawn per user 2026-05-05; loaded beads transition directly to dispatchable. Phase-1 starting point: `hk-pvcs` 8-bead local-scaffolding epic.
 
 ## What Harmonik Is
 
@@ -18,17 +18,17 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 - `docs/decompose-to-tasks/bi-pilot.md` at **v0.1.3** (was v0.1.2). 5 deltas: §7 tally arithmetic fixed (40 first-class req beads, total 66 — not the prior 36/61); removed bidirectional `bi-004 ↔ bi-027`; removed wrong-direction `bi-011 → bi-inv-001` and `bi-022 → bi-inv-003`; removed redundant step→umbrella edges; added `bi-schema.harmonik-write-status` per BI v0.4.1 §6.1 split.
 - `docs/decompose-to-tasks/bi-smoke-load-findings.md` (new) — full report of the first smoke load against live `br` and the 11 findings that produced the v0.4 + v0.1.3 patches.
 - `docs/decompose-to-tasks/pilot-review-protocol.md` at **v0.1** (new) — the 3-reviewer parallel pass (Coverage / Decomposition-quality / Reference) that gates every pilot before it loads into Beads. Plus synthesis rules (BLOCKER / MAJOR / MINOR) and a load gate.
-- `.beads/` added to `.gitignore` at MVH (regenerable from JSONL).
+- `.beads/` added to `.gitignore` at the phase-1 operational milestone (regenerable from JSONL).
 
 **Spec corpus + v0.4.x coordination wave: COMPLETE.** All 10 normative specs `reviewed`. Six specs patched in the prior session (2026-04-25) with the cross-spec coordination items that the prior session's R2 integrations filed:
 
 - architecture (v0.3.1), control-points (v0.3.2), reconciliation (v0.4.0) — unchanged this session.
 - execution-model (v0.3.2 → **v0.3.3**) — Outcome `kind` discriminator + 2 RC-owned trailers.
-- event-model (v0.3.2 → **v0.3.3**) — 7 new event types (§8.6.11–14, §8.7.16–17, §8.8.5), monotonic-companion fields, daemon_degraded enum exhaustive, `divergence_kind` post-MVH note.
+- event-model (v0.3.2 → **v0.3.3**) — 7 new event types (§8.6.11–14, §8.7.16–17, §8.8.5), monotonic-companion fields, daemon_degraded enum exhaustive, `divergence_kind` post-phase-1 extension note.
 - handler-contract (v0.3.2 → **v0.3.3**) — HC-016a orphan-reconnect retry + HC-026b drain-forced silent-hang acceptance.
 - workspace-model (v0.4.1 → **v0.4.2**) — WM-036 `no-op-accept` row.
 - process-lifecycle (v0.4.0 → **v0.4.1**) — 9 items including `daemon_instance_id` UUIDv7, marker-read step 8a, monotonic fields, `get-agent-count` RPC, `br` + reconciliation-locks orphan sweep.
-- operator-nfr (v0.4.0 → **v0.4.1**) — OQ-RC-009 resolution acknowledgment (decline normative `quarantined` state at MVH).
+- operator-nfr (v0.4.0 → **v0.4.1**) — OQ-RC-009 resolution acknowledgment (decline normative `quarantined` state in phase-1 scope).
 
 **~526 unique requirement IDs** counted across the 10 specs (NEXT_AGENT.md's "~250" estimate was 2× low).
 
@@ -47,11 +47,11 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 **v0.4.x cross-spec coordination patch wave landed in 4 parallel patch agents.** Six specs patched per the request list accumulated in prior session's R2 integrations. Each patch was authored as a pre-baked plan (~150-line prompt per agent). Highlights:
 
 - **PL v0.4.1 (9 items)** — PL-INTERIM markers dropped on codes 22/23 (ON v0.4.0 absorbed both); `.harmonik/daemon.upgrading` promoted to normative; `daemon_instance_id` (UUIDv7) minted at step 0; pidfile gains line 3; PL-009/PL-011a payloads gain `_at_ns_since_boot`; new step 8a reads `daemon.upgrading` + `daemon.state` markers (gates step 9 transition target); `get-agent-count` RPC added to PL-003a inventory; PL-006 orphan sweep extended to `br` subprocesses + stale `.harmonik/reconciliation-locks/*.lock`. PL-008a adds code 14 (`upgrade-hash-mismatch`).
-- **EV v0.3.3 (5 items)** — 7 new event types (§8.6.11 dispatch_dedup, §8.6.12 detector_panic, §8.6.13 verdict_execution_retry, §8.6.14 bead_terminal_transition_recovered post-MVH, §8.7.16 operator_command_failed, §8.7.17 operator_escalation_cleared, §8.8.5 redaction_failed); `daemon_shutdown` durability F confirmed (resolves OQ-PL-012); `ready_at_ns_since_boot` + `shutdown_at_ns_since_boot` payload fields; `daemon_degraded` reason enum promoted exhaustive (6 values, including `cat0_post_ready`); `divergence_kind` post-MVH extension note.
+- **EV v0.3.3 (5 items)** — 7 new event types (§8.6.11 dispatch_dedup, §8.6.12 detector_panic, §8.6.13 verdict_execution_retry, §8.6.14 bead_terminal_transition_recovered (post-phase-1), §8.7.16 operator_command_failed, §8.7.17 operator_escalation_cleared, §8.8.5 redaction_failed); `daemon_shutdown` durability F confirmed (resolves OQ-PL-012); `ready_at_ns_since_boot` + `shutdown_at_ns_since_boot` payload fields; `daemon_degraded` reason enum promoted exhaustive (6 values, including `cat0_post_ready`); `divergence_kind` post-phase-1 extension note.
 - **EM v0.3.3 (2 items)** — new EM-005a + Outcome `kind` discriminator + `OutcomeKind` enum (resolves OQ-RC-010); trailer registry gains `Harmonik-Workflow-Class` + `Harmonik-Target-Run-ID` (resolves OQ-RC-002).
 - **WM v0.4.2 (1 item)** — WM-036 verdict-disposition table seventh row for `no-op-accept` (resolves OQ-RC-011).
 - **HC v0.3.3 (2 items)** — HC-016a orphan-reconnect-window retry rule (companion to PL-003b/PL-009b); HC-026b drain-forced silent-hang ON-classification acceptance.
-- **ON v0.4.1 (1 item)** — OQ-RC-009 resolution acknowledgment: decline to add normative `quarantined` daemon-status at MVH (rationale: quarantine is the operator-escalation outcome per RC's `escalate-to-human` mechanical action).
+- **ON v0.4.1 (1 item)** — OQ-RC-009 resolution acknowledgment: decline to add normative `quarantined` daemon-status in phase-1 scope (rationale: quarantine is the operator-escalation outcome per RC's `escalate-to-human` mechanical action).
 
 Net new IDs added: PL (none — extensions only), EV (none — new event-type identifiers in §8 numbering), EM (EM-005a), WM (none), HC (HC-016a, HC-026b), ON (none).
 
@@ -105,7 +105,7 @@ Net new IDs added: PL (none — extensions only), EV (none — new event-type id
 
 ### Decisions locked in this session's flow (from prior sessions)
 
-- Direct-to-main + agent-reviewer-every-commit + no-PRs-for-MVH.
+- Direct-to-main + agent-reviewer-every-commit + no-PRs (decision from phase-1).
 - AGENTS.md canonical with CLAUDE.md symlink.
 - CONSTITUTION.md as non-recursive trust anchor.
 - JSON-structured agent-reviewer verdict.
@@ -114,42 +114,42 @@ Net new IDs added: PL (none — extensions only), EV (none — new event-type id
 - Three-tier `make check-fast` / `check` / `check-full`.
 - Spec-template structure locked.
 
-### MVH scope: daemonization deferred (2026-05-08)
+### Phase-1 scope: daemonization deferred (2026-05-08)
 
-**MVH ships as a foreground binary.** `harmonik run <workflow>` is a real binary you run in a terminal. Its lifecycle = the shell session. It logs to stdout, holds state in memory while alive, owns a real in-process event bus, runs workflow goroutines, exits when the workflow completes (or on SIGINT/SIGTERM). The "centralized controller" architectural thesis is unchanged; we are deferring **daemonization**, not the architecture.
+**Phase 1 shipped as a foreground binary.** `harmonik run <workflow>` is a real binary you run in a terminal. Its lifecycle = the shell session. It logs to stdout, holds state in memory while alive, owns a real in-process event bus, runs workflow goroutines, exits when the workflow completes (or on SIGINT/SIGTERM). The "centralized controller" architectural thesis is unchanged; we are deferring **daemonization**, not the architecture.
 
-**What's deferred to post-MVH (the daemonized version):**
+**What's deferred (the daemonized version):**
 - Detached / backgrounded execution (fork-and-detach; pidfile)
 - Listening socket + JSON-RPC operator-control surface (queue pause/stop *while running*)
 - Long-lived coordinator that survives between invocations
 - Restart-recovery semantics that assume a daemon process to recover into
 - The full process-lifecycle (PL) spec startup sequence, marker-files, fd-passing on exec-upgrade, etc.
 
-**What MVH operator control looks like (without daemonization):**
+**Phase-1 operator control (without daemonization):**
 - SIGINT / SIGTERM = stop (graceful shutdown handler)
 - SIGSTOP / SIGCONT = pause (kernel-level)
 - Workflow completion = clean exit
-- No socket-RPC needed for MVH
+- No socket-RPC needed in phase-1
 
-**Concurrency-readiness is non-negotiable.** Concurrent workflow runs is the **first post-MVH unlock**. All MVH code MUST be:
+**Concurrency-readiness is non-negotiable.** Concurrent workflow runs is the **first post-phase-1 unlock**. All baseline code MUST be:
 - `run_id`-keyed (no globals representing "the current run")
 - free of shared mutable state across runs
 - safe for per-invocation reconciliation (no in-memory cache assumptions that depend on a long-lived process)
 - locks/leases scoped to `run_id`, not process
 
-The foreground-process shape supports concurrent runs naturally — the binary just needs to manage multiple `run_id`-keyed workflow goroutines in its goroutine pool. That's the post-MVH expansion, not a re-architecture.
+The foreground-process shape supports concurrent runs naturally — the binary just needs to manage multiple `run_id`-keyed workflow goroutines in its goroutine pool. That's the post-phase-1 expansion, not a re-architecture.
 
-**Beads parked behind daemonization (do not dispatch as implementer briefs until post-MVH; some may need a process-lifecycle spec amendment when reopened):**
+**Beads parked behind daemonization (do not dispatch until daemonization is in scope; some may need a process-lifecycle spec amendment when reopened):**
 - `hk-b3f.107` — daemon-initiated context-restore initiation-source enforcement (EM-046)
 - `hk-b3f.108` — daemon Outcome synthesis for context-restore (EM-046)
-- Cycle-counter git-history adapter (restart-recovery — rendered moot at MVH because there is no detached daemon to restart into)
-- Operator pause/stop RPCs (PL/ON cross-spec — replaced at MVH by signal handling)
+- Cycle-counter git-history adapter (restart-recovery — rendered moot in phase-1 because there is no detached daemon to restart into)
+- Operator pause/stop RPCs (PL/ON cross-spec — replaced in phase-1 by signal handling)
 - Pidfile + socket + JSON-RPC startup sequence (PL §3a, §8a)
 - The full process-lifecycle spec startup sequence
 
-**What is NOT deferred:** EM-016 git-plumbing (`write-tree → commit-tree → update-ref`), checkpoint-write functions, event-bus in-process implementation, workflow runner, reconciliation logic. All of these are foreground-process MVH code, not daemon-only code.
+**What is NOT deferred:** EM-016 git-plumbing (`write-tree → commit-tree → update-ref`), checkpoint-write functions, event-bus in-process implementation, workflow runner, reconciliation logic. All of these are foreground-process baseline code, not daemon-only code.
 
-**Decision rationale:** Daemonization adds substantial complexity (process-lifecycle spec ownership, IPC, operator-control RPC, startup/restart-recovery semantics) without unlocking any MVH capability. Bootstrap-subset is single-workflow trivial-slice. User wants minimum path to a running system in a terminal, then add concurrent runs as the first post-MVH unlock, then add daemonization later when there is a real reason to detach (long-lived multi-tenant service shape).
+**Decision rationale:** Daemonization adds substantial complexity (process-lifecycle spec ownership, IPC, operator-control RPC, startup/restart-recovery semantics) without being required for the phase-1 operational milestone. Bootstrap-subset is single-workflow trivial-slice. User wants minimum path to a running system in a terminal, then add concurrent runs as the first post-phase-1 unlock, then add daemonization later when there is a real reason to detach (long-lived multi-tenant service shape).
 
 ## Spec corpus inventory — current state (2026-04-25)
 

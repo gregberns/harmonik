@@ -112,6 +112,18 @@ type Item struct {
 	// AppendedAt is set when the item was appended post-submit (streams only).
 	// None (nil) for submit-time items.
 	AppendedAt *time.Time `json:"appended_at"`
+
+	// Context is an optional operator-supplied free-form string injected into
+	// the agent-task.md as an "## Extra Context" section (hk-boiwe). When
+	// non-empty the daemon threads it through to WriteAgentTask via
+	// claudeRunCtx.extraContext. Empty means no section is rendered.
+	Context string `json:"context,omitempty"`
+
+	// WorkflowMode is an optional per-item workflow-mode override (hk-hiqrl).
+	// When non-empty it takes precedence over the per-bead workflow:<mode>
+	// label (tier-1) and the daemon default (tier-3) in the EM-012a resolution
+	// walk. Valid values: "single", "review-loop". Empty means no override.
+	WorkflowMode string `json:"workflow_mode,omitempty"`
 }
 
 // Group is one execution group within the Queue envelope

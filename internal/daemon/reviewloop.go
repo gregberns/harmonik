@@ -131,6 +131,7 @@ func runReviewLoop(
 	parentSHA string,
 	resolvedModel string,
 	resolvedEffort string,
+	extraContext string, // hk-boiwe: per-item context injected into agent-task.md
 ) reviewLoopResult {
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
@@ -186,6 +187,7 @@ func runReviewLoop(
 			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 			// priorVerdictFile and priorVerdictSummary are populated below for
 			// implementer-resume phases (iteration ≥ 2) once state.lastVerdictNotes is known.
+			extraContext: extraContext, // hk-boiwe
 		}
 		implSpec, implArtifacts, implSpecErr := buildClaudeLaunchSpec(ctx, implRC)
 		if implSpecErr != nil {
@@ -411,6 +413,7 @@ func runReviewLoop(
 			// worktreeRootPath enables --dangerously-skip-permissions for daemon-managed
 			// worktrees per HC-055b.
 			worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+			extraContext:     extraContext, // hk-boiwe
 		}
 		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
 		if revSpecErr != nil {

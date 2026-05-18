@@ -21,8 +21,9 @@ import (
 //
 // The test uses Config.TestOnlyBusObserver to capture the bus subscription
 // count immediately before Seal, without modifying the EventBus interface.
-// The expected count is 2: one consumer per event type subscribed by the policy
-// goroutine (agent_rate_limit_status + budget_exhausted) per hk-37zy8.
+// The expected count is 4: 2 from HandlerPausePolicyGoroutine (agent_rate_limit_status
+// + budget_exhausted per hk-37zy8) + 2 from QueueOperatorEventConsumer
+// (operator_pause_status + operator_resuming per hk-7urls).
 //
 // Spec ref: docs/components/internal/handler-pause-and-resume.md §4 event flow.
 // Bead ref: hk-37zy8.
@@ -50,13 +51,15 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 		t.Fatal("TestOnlyBusObserver was never called; daemon.Start must invoke the observer pre-Seal")
 	}
 
-	// The policy goroutine registers exactly 2 asynchronous consumers:
-	//   1. agent_rate_limit_status — rate-limit hysteresis logic
-	//   2. budget_exhausted        — single-hit budget-exhaustion logic
+	// The composition root registers exactly 4 asynchronous consumers pre-Seal:
+	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis (hk-37zy8)
+	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic (hk-37zy8)
+	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain (hk-7urls)
+	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
 	//
-	// Any deviation (0 = not subscribed at all, 1 = partial, >2 = unexpected)
-	// indicates a composition-root wiring regression.
-	const wantSubscriptions = 2
+	// Any deviation indicates a composition-root wiring regression.
+	// Updated from 2 → 4 when QueueOperatorEventConsumer.Subscribe was wired (hk-7urls).
+	const wantSubscriptions = 4
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"HandlerPausePolicyGoroutine.Subscribe must be called pre-Seal in daemon.Start (hk-37zy8)",

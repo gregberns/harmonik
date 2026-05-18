@@ -252,6 +252,18 @@ type Config struct {
 	//
 	// Bead ref: hk-kac8g.
 	HandlerPauseController *HandlerPauseController
+
+	// TestOnlyBusObserver, when non-nil, is called with the event bus
+	// immediately after all pre-Seal subscriptions have been registered and
+	// before bus.Seal() is called.  Production callers MUST leave this nil.
+	//
+	// The callback allows tests to inspect the bus subscription state (e.g. to
+	// assert that HandlerPausePolicyGoroutine.Subscribe wired the expected
+	// consumers into the production composition) without requiring changes to
+	// the EventBus interface.
+	//
+	// Bead ref: hk-37zy8.
+	TestOnlyBusObserver func(bus eventbus.EventBus)
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -370,10 +382,55 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	// Instantiate the EventBus with the registry and writer (EV-035; hk-8mup.62,
-	// hk-8i31.83, hk-8mup.63). Seal immediately — MVH has no subscribers yet;
-	// this will be unsealed when handlers register (post-MVH beads add Subscribe
-	// calls before Seal).
+	// hk-8i31.83, hk-8mup.63).
+	//
+	// Subscribers MUST be registered before Seal (EV-009). The
+	// HandlerPausePolicyGoroutine (hk-37zy8) is the first production subscriber;
+	// it is wired below before bus.Seal() is called.
 	bus := eventbus.NewBusImplWithWriter(registry, jsonlWriter)
+
+	// PL-005 step 0 (hk-m0k0a, hk-37zy8): construct HandlerPauseController and
+	// RunRegistry at the composition root so both are available pre-Seal for
+	// HandlerPausePolicyGoroutine.Subscribe(bus).
+	//
+	// Controller construction is moved here (before Seal) because the policy
+	// goroutine constructor requires it. LoadHandlerPauseState (persistence seed)
+	// runs further below, after Seal, where cfg.ProjectDir is checked — that
+	// sequencing is unchanged.
+	//
+	// RunRegistry is created here so the policy goroutine and the work loop share
+	// the same instance. The work loop receives it via deps.runRegistry (injected
+	// post-newWorkLoopDeps, same pattern as queueStore / handlerPauseController).
+	handlerPauseCtrl := NewHandlerPauseController(bus, nil) // persistFn patched below when ProjectDir is set
+	sharedRunRegistry := NewRunRegistry()
+
+	// Construct the HandlerPausePolicyGoroutine and subscribe it to the bus
+	// BEFORE Seal so event delivery is wired for the production run.
+	//
+	// At MVH we monitor AgentTypeClaudeCode (the only handler type in use).
+	// Subscribe registers two asynchronous consumers: agent_rate_limit_status
+	// and budget_exhausted. Bus worker-pool delivers events; no additional
+	// goroutine is needed.
+	//
+	// Spec ref: docs/components/internal/handler-pause-and-resume.md §4 event flow.
+	// Bead ref: hk-37zy8.
+	pausePolicy := NewHandlerPausePolicyGoroutine(HandlerPausePolicyConfig{
+		AgentType:  core.AgentTypeClaudeCode,
+		Controller: handlerPauseCtrl,
+		Registry:   sharedRunRegistry,
+	})
+	if subscribeErr := pausePolicy.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
+	}
+
+	// Notify the test-only observer (when set) so tests can inspect bus
+	// subscription state before Seal locks it.  Production callers set this nil.
+	//
+	// Bead ref: hk-37zy8.
+	if cfg.TestOnlyBusObserver != nil {
+		cfg.TestOnlyBusObserver(bus)
+	}
+
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)
 	}
@@ -557,32 +614,31 @@ func Start(ctx context.Context, cfg Config) error {
 		// submitted.
 	}
 
-	// PL-005 step 8a (hk-m0k0a): construct HandlerPauseController and load
-	// persisted handler state from .harmonik/handler-state.json.
+	// PL-005 step 8a (hk-m0k0a): wire the persistence function into the
+	// HandlerPauseController (constructed pre-Seal above) and load any persisted
+	// handler state from .harmonik/handler-state.json.
 	//
-	// The controller is constructed with a persistFn that atomically writes
-	// handler-state.json on every Pause/Resume call.  LoadHandlerPauseState
-	// seeds the controller with any paused handlers that survived the last
-	// daemon run, ensuring "paused status MUST persist across restarts" per
-	// specs/handler-pause.md §8.3 HP-008 (QM-055 analog).
+	// The controller was constructed above (pre-Seal) with a nil persistFn so
+	// that HandlerPausePolicyGoroutine.Subscribe could reference it before Seal.
+	// Here we patch in the real persistFn (when ProjectDir is set) and then seed
+	// the controller from disk.
+	//
+	// LoadHandlerPauseState seeds the controller with any paused handlers that
+	// survived the last daemon run, ensuring "paused status MUST persist across
+	// restarts" per specs/handler-pause.md §8.3 HP-008 (QM-055 analog).
 	//
 	// A forward-incompatible schema_version causes a fatal return (exit code 2).
 	// File absent → all handlers default live (no-op).
 	//
 	// Spec ref: specs/handler-pause.md §3.5.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
-	// Bead ref: hk-m0k0a.
-	var handlerPauseCtrl *HandlerPauseController
+	// Bead ref: hk-m0k0a, hk-37zy8.
 	if cfg.ProjectDir != "" {
 		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-		persistFn := MakeHandlerPausePersistFn(harmonikDir)
-		handlerPauseCtrl = NewHandlerPauseController(bus, persistFn)
+		handlerPauseCtrl.SetPersistFn(MakeHandlerPausePersistFn(harmonikDir))
 		if loadErr := LoadHandlerPauseState(context.Background(), harmonikDir, handlerPauseCtrl); loadErr != nil {
 			return fmt.Errorf("daemon.Start: handler-state.json load: %w", loadErr)
 		}
-	} else {
-		// Unit-test mode: no ProjectDir, no persistence.
-		handlerPauseCtrl = NewHandlerPauseController(bus, nil)
 	}
 
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
@@ -664,6 +720,15 @@ func Start(ctx context.Context, cfg Config) error {
 		// Inject the HandlerPauseController so the work loop can gate dispatch
 		// on handler pause state (hk-m0k0a).
 		deps.handlerPauseController = handlerPauseCtrl
+
+		// Inject the shared RunRegistry so the work loop and the
+		// HandlerPausePolicyGoroutine operate on the same in-flight snapshot.
+		// The policy goroutine calls Registry.snapshotWithKeys() at pause time;
+		// using the same instance as the work loop ensures the freeze-list reflects
+		// actual in-flight runs rather than an empty registry.
+		//
+		// Bead ref: hk-37zy8.
+		deps.runRegistry = sharedRunRegistry
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

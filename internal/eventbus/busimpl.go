@@ -550,6 +550,36 @@ func (b *busImpl) Subscribe(sub core.Subscription) (core.Subscription, error) {
 	return sub, nil
 }
 
+// SubscriptionCount returns the number of consumers registered with the bus.
+//
+// This is a test-and-diagnostics helper.  In production the count is only
+// meaningful between the last Subscribe call and Seal(); after Seal the
+// slice is immutable and the returned value reflects the final wired count.
+//
+// Bead ref: hk-37zy8 (used in production-composition subscription test).
+func (b *busImpl) SubscriptionCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subscriptions)
+}
+
+// BusSubscriptionCount returns the number of subscriptions registered on bus.
+//
+// It uses a type assertion against an unexported interface to avoid adding
+// SubscriptionCount to the public EventBus interface.  Returns -1 when bus
+// does not implement the counter (e.g. a mock in tests).
+//
+// Bead ref: hk-37zy8.
+func BusSubscriptionCount(bus EventBus) int {
+	type counter interface {
+		SubscriptionCount() int
+	}
+	if c, ok := bus.(counter); ok {
+		return c.SubscriptionCount()
+	}
+	return -1
+}
+
 // checkSyncCardinality enforces EV-014 / EV-INV-003: at most one synchronous
 // consumer per event type. Called under b.mu.
 func (b *busImpl) checkSyncCardinality(incoming core.Subscription) error {

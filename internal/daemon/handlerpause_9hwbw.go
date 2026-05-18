@@ -189,6 +189,26 @@ func NewHandlerPauseController(bus eventbus.EventBus, persistFn func(ctx context
 	}
 }
 
+// SetPersistFn patches the controller's persist function after construction.
+//
+// The controller is intentionally constructed with persistFn=nil before
+// bus.Seal() so HandlerPausePolicyGoroutine.Subscribe can reference it pre-Seal.
+// After Seal the composition root (daemon.Start) resolves the .harmonik dir and
+// calls SetPersistFn to wire in the real persist hook before LoadHandlerPauseState
+// runs.
+//
+// Calling SetPersistFn is safe: no Pause/Resume call can have occurred yet
+// because the bus is sealed but no events have been emitted at the point
+// daemon.Start invokes this.  No mu lock is taken here — the assignment is
+// single-writer before any bus consumers can fire.
+//
+// Bead ref: hk-37zy8, hk-m0k0a.
+func (c *HandlerPauseController) SetPersistFn(fn func(ctx context.Context, snapshots []HandlerPauseStatusSnapshot) error) {
+	c.mu.Lock()
+	c.persistFn = fn
+	c.mu.Unlock()
+}
+
 // ---------------------------------------------------------------------------
 // Pause — trip the handler-type pause state
 // ---------------------------------------------------------------------------

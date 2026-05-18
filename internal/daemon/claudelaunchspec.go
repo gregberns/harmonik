@@ -147,6 +147,11 @@ type claudeRunCtx struct {
 	// When empty (e.g. in tests that do not need the flag), the path-check is
 	// skipped and the flag is not emitted.
 	worktreeRootPath string
+
+	// extraContext is an optional operator-supplied free-form string injected
+	// into the agent-task.md as an "## Extra Context" section (hk-boiwe).
+	// Empty means no section is rendered. Passed through to AgentTaskPayload.
+	extraContext string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -257,6 +262,7 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		ReviewBaseSHA:       rc.reviewBaseSHA,
 		ReviewHeadSHA:       rc.reviewHeadSHA,
 		ReAttach:            rc.agentTaskReAttach,
+		ExtraContext:        rc.extraContext,
 	}
 	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(

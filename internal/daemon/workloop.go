@@ -501,10 +501,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Bead ref: hk-45ude.
 
 		var (
-			beadRecord      core.BeadRecord
-			queueItemIndex  int // item index within the group (-1 = no queue)
-			queueIDField    *string
-			queueGroupIdxFd *int
+			beadRecord           core.BeadRecord
+			queueItemIndex       int // item index within the group (-1 = no queue)
+			queueIDField         *string
+			queueGroupIdxFd      *int
+			capturedExtraContext string // hk-boiwe: per-item context from queue.Item.Context
+			capturedItemWFMode   string // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -651,6 +653,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				gIdx := activeGroup.GroupIndex
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
+				capturedExtraContext = item.Context       // hk-boiwe
+				capturedItemWFMode = item.WorkflowMode    // hk-hiqrl
 			}
 		}
 
@@ -852,6 +856,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		capturedQueueID := queueIDField
 		capturedQueueGroupIdx := queueGroupIdxFd
 		capturedItemIndex := queueItemIndex
+		// Per-item overrides captured here; empty for br-ready path.
+		capturedCtx := capturedExtraContext // hk-boiwe
+		capturedWFMode := capturedItemWFMode // hk-hiqrl
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -861,18 +868,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)
-		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode string) {
 			defer wg.Done()
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded)
+			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
 			}
-		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex)
+		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode)
 	}
 }
 
@@ -895,7 +902,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string) {
 	beadID := beadRecord.BeadID
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -916,7 +923,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Four-tier precedence: per-bead label → project config (no-op) →
 	// daemon default → single. Resolved once at claim time; immutable for
 	// the run's lifetime. See moderesolve.go.
+	//
+	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the
+	// CLI --review-loop flag via queue.Item.WorkflowMode. When set and valid
+	// it takes precedence over the full EM-012a walk.
 	workflowMode := resolveWorkflowMode(ctx, beadRecord, deps.workflowModeDefault, deps.bus)
+	if itemWorkflowMode != "" {
+		if candidate := core.WorkflowMode(itemWorkflowMode); candidate.Valid() {
+			workflowMode = candidate
+		}
+	}
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
@@ -973,7 +989,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// single mode (default MVH): one-shot implementer dispatch.
 	if workflowMode == core.WorkflowModeReviewLoop {
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort)
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
@@ -1016,6 +1032,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
 		// per HC-055b. Derived from projectDir via the standard worktree root formula.
 		worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		extraContext:      extraContext, // hk-boiwe: per-item context from queue.Item.Context
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {

@@ -100,6 +100,13 @@ type AgentTaskPayload struct {
 	// When false (default), the existing file is overwritten with the new
 	// content; review-loop phase transitions are normal overwrite, not error.
 	ReAttach bool
+
+	// ExtraContext is an optional operator-supplied free-form string that is
+	// appended as an "## Extra Context" section after the Task Description
+	// (hk-boiwe). When empty, the section is omitted entirely. Intended to
+	// carry predecessor-commit SHAs, dependency-landing notes, or orchestrator
+	// briefs that are not part of the bead body itself.
+	ExtraContext string
 }
 
 // AgentTaskPath returns the canonical path for the per-launch task-delivery
@@ -269,6 +276,17 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	sb.WriteString(p.Body)
 	if !strings.HasSuffix(p.Body, "\n") {
 		sb.WriteString("\n")
+	}
+
+	// Extra Context section (hk-boiwe): operator-supplied briefing notes.
+	// Rendered immediately after Task Description, before phase-specific sections.
+	// Omitted entirely when ExtraContext is empty.
+	if strings.TrimSpace(p.ExtraContext) != "" {
+		sb.WriteString("\n## Extra Context\n\n")
+		sb.WriteString(p.ExtraContext)
+		if !strings.HasSuffix(p.ExtraContext, "\n") {
+			sb.WriteString("\n")
+		}
 	}
 
 	// Prior-Iteration Context section: present only for implementer-resume and reviewer.

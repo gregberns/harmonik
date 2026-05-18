@@ -46,6 +46,14 @@ build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4
 test:  ## go test ./... (no race; quick smoke)
 	go test ./...
 
+# test-e2e-real-claude: run the real-Claude single-mode E2E smoke test.
+# Requires: claude, tmux, git, br, ntm on PATH; ANTHROPIC_API_KEY or
+# CLAUDE_CODE_OAUTH_TOKEN set; harmonik buildable from source.
+# Budget: 300s timeout (the agent interaction may take up to 180s).
+.PHONY: test-e2e-real-claude
+test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + binaries on PATH)
+	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeSingleMode ./internal/daemon/...
+
 # ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------

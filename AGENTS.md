@@ -76,6 +76,10 @@ Don't skip the planning process. Measure twice, cut once.
 - Don't add abstraction layers the user hasn't asked for.
 - Don't skip the AGENT_INDEX → STATUS → TASKS reading order when picking up the project.
 
+## Terminology — avoid MVH
+
+MVH (Minimum Viable Harmonik) was a project-level milestone achieved 2026-05-14. It is NOT a per-feature scope label. New plans/beads/specs MUST NOT use MVH framing — it has historically licensed half-built features. Use "Done means..." criteria per plans/README.md instead.
+
 <!-- bv-agent-instructions-v2 -->
 
 ---

@@ -138,6 +138,79 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// harmonik run <bead-id> unit tests (hk-icecw)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestRunBeadSubcommand_MissingBeadID verifies that `harmonik run` with no
+// positional arguments returns exit code 1 and does not panic.
+//
+// Acceptance: hk-icecw — "harmonik run nonexistent returns a clear error and
+// non-zero exit".
+//
+// Parallel: safe — runBeadSubcommand does not touch flag.CommandLine.
+func TestRunBeadSubcommand_MissingBeadID(t *testing.T) {
+	t.Parallel()
+
+	// Call with no args — missing bead-id.
+	got := runBeadSubcommand([]string{})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand with no args returned 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcommand_TooManyArgs verifies that extra positional arguments
+// are rejected.
+//
+// Parallel: safe.
+func TestRunBeadSubcommand_TooManyArgs(t *testing.T) {
+	t.Parallel()
+
+	got := runBeadSubcommand([]string{"bead-a", "bead-b"})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand with 2 positional args returned 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcommand_UnknownFlag verifies that unknown flags are rejected.
+//
+// Parallel: safe.
+func TestRunBeadSubcommand_UnknownFlag(t *testing.T) {
+	t.Parallel()
+
+	got := runBeadSubcommand([]string{"--unknown-flag", "bead-a"})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand with unknown flag returned 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcommand_NoBrOnPath verifies that when 'br' is not on PATH, the
+// subcommand returns exit code 1 cleanly.
+//
+// This test temporarily manipulates PATH to ensure br is not found.
+// Not parallel (modifies global env).
+func TestRunBeadSubcommand_NoBrOnPath(t *testing.T) {
+	mainFixtureSaveRestoreEnv(t, "PATH", "", false /* set to empty */)
+
+	got := runBeadSubcommand([]string{"hk-test-bead"})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand with no br on PATH returned 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcommand_BadProjectDir verifies that a non-existent project dir
+// causes a non-zero exit.
+//
+// Parallel: safe — uses a syntactically plausible but nonexistent dir.
+func TestRunBeadSubcommand_BadProjectDir(t *testing.T) {
+	t.Parallel()
+
+	got := runBeadSubcommand([]string{"--project", "/nonexistent/path/for/test-hkicecw", "hk-test-bead"})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand with nonexistent project dir returned 0; want non-zero")
+	}
+}
+
 // TestCommitHashVar_DefaultIsUnknown verifies the package-level commitHash
 // variable declared in version.go has the sentinel value "unknown" in an
 // unstamped build (i.e., when -ldflags "-X main.commitHash=<sha>" is NOT

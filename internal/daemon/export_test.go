@@ -142,6 +142,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-45ude.
 	QueueStore *QueueStore
+
+	// CancelOnQueueDrain, when non-nil, is called once after the queue
+	// transitions to all-success and ClearQueue completes.  Mirrors
+	// daemon.Config.CancelOnQueueDrain; used by hk-icecw tests to verify
+	// exit-on-empty behaviour without process-level signals.
+	//
+	// Bead ref: hk-icecw.
+	CancelOnQueueDrain context.CancelFunc
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -232,6 +240,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentReadyTimeout:   p.AgentReadyTimeout,
 		projectCfg:          p.ProjectCfg,
 		queueStore:          p.QueueStore,
+		cancelOnQueueDrain:  p.CancelOnQueueDrain,
 	}
 }
 

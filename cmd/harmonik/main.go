@@ -153,6 +153,22 @@ func run() int {
 		}
 	}
 
+	// harmonik run <bead-id> [--project DIR] — single-bead invocation.
+	//
+	// Submits a single-item queue to the daemon and blocks until the bead reaches
+	// a terminal state. The daemon context is cancelled after the queue drains so
+	// the process exits with code 0 on success or non-zero on failure.
+	//
+	// Exit-code contract:
+	//   0  — bead reached SUCCESS terminal (bead closed)
+	//   1  — bead validation or daemon error
+	//  17  — daemon not running (socket absent) — not used here (in-process)
+	//
+	// Bead ref: hk-icecw.
+	if len(os.Args) >= 2 && os.Args[1] == "run" {
+		return runBeadSubcommand(os.Args[2:])
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

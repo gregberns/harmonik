@@ -228,6 +228,17 @@ type workLoopDeps struct {
 	// (group-advance gate).
 	// Bead ref: hk-45ude.
 	queueStore *QueueStore
+
+	// cancelOnQueueDrain, when non-nil, is called once after the queue
+	// transitions to all-success and ClearQueue completes. Used by the
+	// `harmonik run <bead-id>` subcommand (hk-icecw) to exit the daemon
+	// cleanly after a single-bead queue drains.
+	//
+	// The zero value (nil) preserves normal daemon behaviour: the work loop
+	// continues running after the queue drains.
+	//
+	// Bead ref: hk-icecw.
+	cancelOnQueueDrain context.CancelFunc
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -347,6 +358,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		adapterRegistry:     registry,
 		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
+		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
 		queueStore:          nil, // populated by daemon.Start after wiring QueueStore (hk-45ude)
 	}, nil
@@ -1527,6 +1539,12 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		lq.Done()
 		// Release the write lock before ClearQueue (which acquires its own lock).
 		deps.queueStore.ClearQueue()
+		// hk-icecw: if a drain-cancel is registered (harmonik run path), cancel
+		// the daemon context now so the work loop exits cleanly instead of
+		// idle-spinning waiting for more work.
+		if deps.cancelOnQueueDrain != nil {
+			deps.cancelOnQueueDrain()
+		}
 	} else {
 		// Intermediate state or paused-by-failure: persist the updated queue.json
 		// so on-disk state matches in-memory after each item completion (hk-xsutm).

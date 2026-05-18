@@ -203,6 +203,22 @@ type Config struct {
 	// Spec ref: specs/event-model.md §8.7.1 (daemon_started payload).
 	// Bead ref: hk-mz0x4.
 	BinaryCommitHash string
+
+	// CancelOnQueueDrain, when non-nil, is called once after the queue
+	// transitions to all-success and ClearQueue completes.  The cancel causes
+	// the daemon context to expire so harmonik exits cleanly instead of
+	// idle-spinning waiting for more work.
+	//
+	// Set by the `harmonik run <bead-id>` subcommand (hk-icecw) to implement
+	// exit-on-empty semantics: a queue of one item terminates naturally after
+	// CompleteAndUnlink + ClearQueue, and the cancel propagates through the
+	// daemon context to runWorkLoop.
+	//
+	// The zero value (nil) is safe: the daemon continues running after the
+	// queue drains, which is the normal daemon behaviour.
+	//
+	// Bead ref: hk-icecw.
+	CancelOnQueueDrain context.CancelFunc
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -559,6 +575,10 @@ func Start(ctx context.Context, cfg Config) error {
 		//
 		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
 		deps.queueStore = qs
+
+		// Inject the drain-cancel so harmonik run <bead-id> exits after the queue
+		// completes (hk-icecw). The zero value (nil) preserves normal daemon behaviour.
+		deps.cancelOnQueueDrain = cfg.CancelOnQueueDrain
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

@@ -174,6 +174,16 @@ func oninv006FixtureONINV006Body(t *testing.T, lines []string) (body []string, h
 var oninv006FixtureCLIAllowlist = map[string]string{
 	"tmux-start": "process-lifecycle.md §4.10 PL-028; bootstrap-only, no run impact",
 	"hook-relay": "claude-hook-bridge.md §4.4 CHB-010..017; hook delivery, no run abort",
+	// hk-eblue: queue verbs submit/append/status/dry-run route through the
+	// queue-model.md §8 state machine and are gated by ON-008/ON-009; the
+	// socket listener serialises all mutations through the QueueStore write lock
+	// (QM-060) which is ON-008-drain-safe.
+	"queue": "queue-model.md §8; drain-safe via QM-060 single-writer; ON-008 compliant",
+	// hk-icecw: harmonik run <bead-id> submits a single-item queue and starts
+	// the daemon in-process; the daemon exit is driven by queue drain
+	// (CompleteAndUnlink + cancelOnQueueDrain), not by operator abort; fully
+	// ON-008 drain-gated (no in-flight run impact).
+	"run": "hk-icecw; single-bead queue submission; exits on drain, ON-008 compliant",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled
@@ -190,6 +200,14 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 var oninv006FixtureSocketOpAllowlist = map[string]string{
 	"emit-outcome": "MVH_ROADMAP row #5; run-completion report, no mid-run abort",
 	"claim-next":   "MVH_ROADMAP row #5; queue read, no run impact",
+	// hk-eblue: queue JSON-RPC ops route through the queue-model.md §8 state
+	// machine, serialised by QM-060 single-writer; they do not abort in-flight
+	// runs (submit creates a new queue; append/status/dry-run are queue reads or
+	// pre-dispatch mutations; all are drain-safe per ON-008).
+	"queue-submit":  "queue-model.md §8; new queue creation, no in-flight run abort",
+	"queue-append":  "queue-model.md §8; append to pending group, drain-safe ON-008",
+	"queue-status":  "queue-model.md §9; read-only status query, no run impact",
+	"queue-dry-run": "queue-model.md §8; validation-only, no state mutation, ON-008",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

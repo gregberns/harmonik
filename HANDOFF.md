@@ -117,17 +117,17 @@ PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_pla
 
 ## Headline outcomes
 
-1. **Handler-pause MVH 8 of 9 P1 beads landed**, BUT it is DORMANT in production: `hk-8ykjq` (P1, OPEN) is the wire-up gap — `HandlerPausePolicyGoroutine.Subscribe(bus)` is never called in `daemon.go` composition root. The controller + persistence + dispatcher gate + policy goroutine all exist; nothing actually triggers pauses in production until hk-8ykjq lands. Reviewer (hk-37zy8 review) caught this; first 7 reviewers did not.
+1. **Handler-pause 8 of 9 P1 beads landed**, BUT it is DORMANT in production: `hk-8ykjq` (P1, OPEN) is the wire-up gap — `HandlerPausePolicyGoroutine.Subscribe(bus)` is never called in `daemon.go` composition root. The controller + persistence + dispatcher gate + policy goroutine all exist; nothing actually triggers pauses in production until hk-8ykjq lands. Reviewer (hk-37zy8 review) caught this; first 7 reviewers did not.
 2. **Dogfood CLI surface landed.** `harmonik run --beads id1,id2,... --max-concurrent N [--context "string|@file"] [--review-loop]` works at the orchestration level. Two dogfood-blockers found and fixed: `hk-2hb2y` (tmux pane race + bead-close-without-impl, fixed at `a7bcd49`) and `hk-yjduq` (nil watcher in tmux substrate path, fixed at `94d8992`). Three retries; #3 in flight.
 3. **Audit wave: 6 subsystem spec-vs-impl audits + source-of-truth inventory.** workspace/brcli is 100% spec-aligned. daemon has 8 categories of code-not-specced (most important: handler-pause-and-resume.md is a DESIGN DOC, never elevated to specs/). core/eventbus has 8 event types declared but never registered → JSONL replay fails. queue has 2 normative requirements not implemented (QM-002a, operator-drain). 12 spec-gap beads filed (6 P1 + 6 P2). `docs/source-of-truth-inventory.md` written.
-4. **Terminology cleanup landed.** 4 drifted "MVH" lines fixed. plans/README.md now requires "Done means..." section per plan. Upstream kerf jigs are clean; local jig customization via `kerf jig save/load` is the path for the testing-criteria convention (hk-85trr P1).
+4. **Terminology cleanup landed.** 4 drifted scope-qualifier lines fixed (hk-ux915). plans/README.md now requires "Done means..." section per plan. Upstream kerf jigs are clean; local jig customization via `kerf jig save/load` is the path for the testing-criteria convention (hk-85trr P1).
 5. **Scenario-test audit.** 20 prioritized workflows; 5 P0 with zero coverage. The audit names hk-37zy8 wire-up as exactly the kind of bug twin-based scenarios would catch (and indeed it was; and then hk-yjduq was caught dogfooding-as-scenario-test).
 6. **"Half-built systems" pattern formally identified.** 3 instances in this session alone (hk-37zy8 wire-up, hk-2hb2y pane race, hk-yjduq nil watcher) — all unit-tested, all reviewer-APPROVED, all broken in production. New directive: REVIEWERS MISS COMPOSITION-ROOT WIRING.
 
 ## Next session — priorities
 
 1. **Check on dogfood retry #3** (`b7lq45kbe` background process). Inspect `/private/tmp/claude-502/.../tasks/b7lq45kbe.output` and bead status. If still failing, expect a new P0 — file, fix, repeat.
-2. **Land `hk-8ykjq`** (handler-pause policy goroutine wire-up). This is THE most impactful real-impact bead — handler-pause MVH is non-functional until it lands. Small fix: add `policyGoroutine := NewHandlerPausePolicyGoroutine(...); policyGoroutine.Subscribe(deps.bus)` pre-Seal in daemon.go composition root. Dogfood it.
+2. **Land `hk-8ykjq`** (handler-pause policy goroutine wire-up). This is THE most impactful real-impact bead — handler-pause is non-functional in production until it lands. Small fix: add `policyGoroutine := NewHandlerPausePolicyGoroutine(...); policyGoroutine.Subscribe(deps.bus)` pre-Seal in daemon.go composition root. Dogfood it.
 3. **`hk-gjyks`** (8 EventType constants declared but never registered — JSONL replay fails). Real correctness gap.
 4. **`hk-m7joe`** (elevate handler-pause-and-resume.md → specs/handler-pause.md normative). This is the structural fix for one major half-built-systems instance.
 5. **Once dogfood is stable, route P2 docs beads through harmonik:** `hk-x0y2k`, `hk-75rij`, `hk-rwdvm`, `hk-zudz0`, `hk-n3v1q`, `hk-pxrv6`, `hk-vqoh2`, `hk-o0yft`, `hk-xpnfy`, `hk-h7eke`. All pure docs work.
@@ -152,7 +152,7 @@ PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_pla
 - **hk-b6ls5 / hk-85trr** — Extend "Done means..." convention to require scenario+exploratory test beads at plan end (both in plans/README.md and in local kerf jig templates).
 - **hk-f31xv** — Restore `pasteinject_hk2hb2y_test.go` (lost in merge-dance stash).
 - **Half-built systems pattern** — feature is unit-tested, reviewer-APPROVED, but broken in production because composition-root wiring was skipped. 3 instances this session.
-- **MVH** (project-level) — "Minimum Viable Harmonik" = the threshold at which the daemon can run jobs end-to-end. NOT a per-feature scope label. Drift cleanup landed.
+- **Phase-1 operational milestone (2026-05-14)** — the point at which the daemon can run jobs end-to-end with zero human input. Previously called "MVH" internally; that label is retired — it licensed half-built features. Use "Done means..." criteria per plans/README.md for future work.
 - **`harmonik run --beads`** — new multi-bead dispatch CLI; the dogfood mechanism.
 
 ## Loose ends / blockers

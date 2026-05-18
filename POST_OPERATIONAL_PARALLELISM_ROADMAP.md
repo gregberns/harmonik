@@ -1,6 +1,6 @@
-# Post-MVH Parallelism Roadmap
+# Post-Operational Parallelism Roadmap
 
-**Scope**: after MVH rows 1–11 are green (one bead, one worktree, one run at a time), the first optimization is concurrent throughput. This document is the plan for that phase. Not features. Not polish. Throughput.
+**Scope**: after the phase-1 operational milestone (rows 1–11 green — one bead, one worktree, one run at a time), the first optimization is concurrent throughput. This document is the plan for that phase. Not features. Not polish. Throughput.
 
 ---
 
@@ -44,7 +44,7 @@ Audited against `60b6024`. Citations are absolute paths.
 
 The daemon-per-project boundary is already locked in by the pidfile and socket paths in `internal/lifecycle/daemonpaths.go`. The question is whether concurrent beads run as goroutines inside that one daemon or as OS subprocesses.
 
-STATUS.md's MVH-scope section: "All MVH code MUST be `run_id`-keyed, free of shared mutable state across runs." `run_id` keying is already in place — `workspace.WorktreePath` keys on `runID` (`worktreepath.go:98`), `brcli.terminalTransitionWrite` keys the idempotency key on `runID` (`terminaltransition_bi010.go:73`), the intent-log filename derives from the idempotency key. The foundation is goroutine-safe if the choke points above are fixed.
+STATUS.md's phase-1 scope section: "All baseline code MUST be `run_id`-keyed, free of shared mutable state across runs." `run_id` keying is already in place — `workspace.WorktreePath` keys on `runID` (`worktreepath.go:98`), `brcli.terminalTransitionWrite` keys the idempotency key on `runID` (`terminaltransition_bi010.go:73`), the intent-log filename derives from the idempotency key. The foundation is goroutine-safe if the choke points above are fixed.
 
 Subprocess-per-bead (model b) duplicates the bus, registry, JSONL writer, and brcli adapter per run, plus IPC overhead, for a feature (per-bead isolation) the worktree boundary already enforces (WM-003). More importantly, it pushes the "centralized controller" thesis toward Gas Town — multiple semi-autonomous processes each owning a slice of the queue. Explicitly against the user's standing position.
 
@@ -54,7 +54,7 @@ Conclusion: **model a** (goroutines). Fix the five blockers, add a run-registry 
 
 ## 3. Ordered Work List
 
-Rows in MVH_ROADMAP.md shape. Order is dependency-first: row N+1 can be dispatched after row N lands.
+Rows in ROADMAP.md shape. Order is dependency-first: row N+1 can be dispatched after row N lands.
 
 | # | Task | Where | Size | Unblocks |
 |---|---|---|---|---|
@@ -63,7 +63,7 @@ Rows in MVH_ROADMAP.md shape. Order is dependency-first: row N+1 can be dispatch
 | 3 | Split `busImpl.wg` into a per-subscription WaitGroup or a per-run-ID drainer; `Drain(ctx, runID)` signature addition — waits only for consumers tagged with that run | `internal/eventbus/busimpl.go` | M | A |
 | 4 | In-flight run registry: `sync.Map` (or mutex-guarded map) in `daemon` package keyed by `run_id` → `*RunHandle`; `RunHandle` holds the watcher, worktree path, bead ID | `internal/daemon/runregistry.go` (new) | S | E |
 | 5 | Work loop goroutine: replace single-shot `Start` with a polling loop that calls `ListBeadsByStatus("ready")`, claims first unclaimed, creates worktree, launches handler goroutine, registers in run registry; at most `cfg.MaxConcurrent` goroutines live simultaneously | `internal/daemon/workloop.go` (new) | L | E + #4 |
-| 6 | `MaxConcurrent` field on `daemon.Config` default 1 (no behavioral change at MVH); next step sets it to N | `internal/daemon/daemon.go` | XS | #5 |
+| 6 | `MaxConcurrent` field on `daemon.Config` default 1 (no behavioral change at phase-1); next step sets it to N | `internal/daemon/daemon.go` | XS | #5 |
 | 7 | Smoke test for N=2: two ready beads, `MaxConcurrent=2`, both close before `Start` returns; assert both events appear in JSONL with distinct `run_id` | `internal/daemon/` or `test/` | M | #5 + #1 |
 | 8 | Bounded-worker bus: replace per-dispatch `go func()` in `busImpl` with shared worker pool (default 4 workers, operator-configurable per EV-014a note in `busimpl.go:39`); add `BusWorkerPoolSize` to `daemon.Config` | `busimpl.go`, `daemon.go` | M | C |
 | 9 | Rate-limit `ClaimBead` concurrency: semaphore (buffered channel) in the work loop governing simultaneous `br update --claim` calls; prevents SQLite contention storm at N>5 | `workloop.go` | S | #5 |
@@ -90,12 +90,12 @@ Row #5 (work loop) is the gate for all goroutine-per-bead behavior. Before it: p
 
 - Multi-project (one daemon per project locked).
 - Daemonization (`Start` stays foreground; no socket RPC, no detached process).
-- Reconciliation (post-MVH by spec).
+- Reconciliation (deferred per spec).
 - Adapter rotation across Anthropic accounts (`ErrSingleAccountOnly` flag).
 - ntm / tmux integration (gated on daemonization).
 - Cross-machine centralized controller (Gas Town shape, against locked-in thesis).
 - JSONL rotation (EV defers per OQ-EV-001).
-- Operator pause/stop RPCs (signal-only at MVH).
+- Operator pause/stop RPCs (signal-only in phase-1).
 - Workflow composition / node graphs (next scaling mechanism after N-concurrent-beads validated).
 
 ---

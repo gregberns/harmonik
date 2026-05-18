@@ -321,12 +321,23 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	// each assistant response.  Without /quit, the daemon's workloop sits at
 	// sess.Wait() forever because the claude process remains alive at the REPL.
 	//
+	// Commit-before-close guard (hk-2hb2y): agents MUST NOT run `br close` from
+	// inside the worktree — bead lifecycle transitions are owned by the daemon.
+	// Running `br close` without a commit causes the closure to leak into the
+	// parent repo's .beads/issues.jsonl even though no implementation landed.
+	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+	// Bead ref: hk-2hb2y (commit-before-close guard).
 	sb.WriteString("\n## Session Completion\n\n")
 	sb.WriteString("IMPORTANT: You MUST run `/quit` as your final action after committing all work.\n")
 	sb.WriteString("Do not ask the user to run it — you must type `/quit` yourself and submit it.\n")
 	sb.WriteString("The daemon cannot detect that your task is complete until you exit this session.\n")
 	sb.WriteString("Failure to run `/quit` will leave the workflow permanently stalled.\n")
+	sb.WriteString("\n## Bead Lifecycle (CRITICAL — read before acting)\n\n")
+	sb.WriteString("DO NOT run `br close`, `br update --status closed`, or any terminal bead transition from inside this worktree.\n")
+	sb.WriteString("The daemon owns all bead lifecycle transitions (open → in_progress → closed/failed).\n")
+	sb.WriteString("Running `br close` from the worktree causes premature closure that leaks to the parent repo even when no implementation has landed.\n")
+	sb.WriteString("Your job is to implement, commit, and `/quit`. The daemon will close the bead on your behalf after verifying the commit.\n")
 
 	return sb.String()
 }

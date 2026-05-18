@@ -195,6 +195,16 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+		// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+		// REQUIRED: without this, h.Launch takes the exec.CommandContext path and
+		// SpawnWindow is never called, leaving tmuxSubstrate.lastHandle empty.
+		// pasteInjectOnLaunch then fails with "no window spawned yet" because it
+		// reads lastHandle from the substrate but no window was opened in this phase.
+		// This is the root cause of the pane-race bug (hk-2hb2y).
+		//
+		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
+		implSpec.Substrate = deps.substrate
+
 		// Prepend deps.handlerArgs so test handlers (e.g. /bin/sh scriptPath) are invoked
 		// correctly. For production (claude binary, empty handlerArgs) this is a no-op.
 		// The session-id / resume flags from buildClaudeLaunchSpec follow the script path.
@@ -421,6 +431,14 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+		// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
+		// Same requirement as implSpec.Substrate above (hk-2hb2y): without this
+		// the reviewer launch takes the exec.CommandContext path, SpawnWindow is
+		// never called, and pasteInjectOnLaunch fails with "no window spawned yet".
+		//
+		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
+		revSpec.Substrate = deps.substrate
+
 		// Prepend deps.handlerArgs for test handlers; no-op in production.
 		if len(deps.handlerArgs) > 0 {
 			revSpec.Args = append(deps.handlerArgs, revSpec.Args...)

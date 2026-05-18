@@ -4,10 +4,24 @@ package main
 //
 // # Purpose (hk-lgtq2)
 //
-// Runs the Cat 3a / Cat 3c on-demand reconciler against the project's bead
-// ledger. This is the minimum deliverable from hk-lgtq2: an operator-facing
-// command that detects and closes beads that are in_progress despite their
-// implementation having already landed in git.
+// Runs the Cat 3c on-demand reconciler against the project's bead ledger. This
+// is the minimum deliverable from hk-lgtq2: an operator-facing command that
+// detects and closes beads that are in_progress despite their implementation
+// having already landed in git.
+//
+// Naming note: the bead hk-lgtq2 was originally filed with the title
+// "Cat 3a / Cat 3c reconciler". The implemented pattern is Cat 3c per
+// specs/reconciliation/spec.md §8.6 ("inverse premature-close" — bead still
+// in_progress despite merge landing on the target branch). Cat 3a refers to
+// pending close/reopen intents (a distinct path handled in
+// internal/lifecycle/orphansweepbeads.go exclusion (b)).
+//
+// Race note: both this command and the daemon orphan sweep (RunOrphanSweep)
+// implement Cat 3c auto-resolution. If the daemon starts while `harmonik
+// reconcile` is also running (e.g., the operator triggered reconcile manually
+// right before daemon start), both may attempt to close the same bead. This
+// race is benign: `br close` is idempotent at the Beads level — closing an
+// already-closed bead is a no-op. No locking is required.
 //
 // The dogfood trigger: hk-iuaed.4 was IN_PROGRESS despite landing at 9779f72
 // (6 commits prior). Had to manually `br close` before hk-iuaed.6 became ready.

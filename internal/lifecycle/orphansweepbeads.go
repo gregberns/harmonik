@@ -6,6 +6,15 @@ package lifecycle
 // run, no pending close/reopen intent, and no merge-commit-on-target-branch
 // claim its terminal-transition handling.
 //
+// Naming note: the bead that delivered Cat 3c auto-resolution (hk-lgtq2) was
+// filed under the title "Cat 3a / Cat 3c reconciler" for historical reasons
+// (the original filing used "Cat 3a" to refer to the subsumed-bead pattern).
+// The canonical pattern name in specs/reconciliation/spec.md §8.6 is Cat 3c
+// ("inverse premature-close" — bead still in_progress despite implementation
+// having merged). Cat 3a in the spec refers to pending close/reopen intents
+// (exclusion (b) in this file). All code in this file uses the canonical Cat 3c
+// label.
+//
 // Bead ref: hk-iuaed.4 (imrest-impl-sweep).
 // Spec refs:
 //   - specs/process-lifecycle.md §4.5 PL-006 sixth bullet ("Stale `in_progress`

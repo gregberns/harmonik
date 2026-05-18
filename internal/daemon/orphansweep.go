@@ -73,6 +73,7 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		ReconciliationLocksRemoved: r.ReconciliationLocksRemoved,
 		StaleIntentsObserved:       r.StaleIntentsObserved,
 		BeadInProgressReset:        r.BeadInProgressReset,
+		BeadCat3cClosed:            r.BeadCat3cClosed,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }

@@ -774,6 +774,15 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// hk-iuaed.5.
 	BeadInProgressReset int `json:"bead_in_progress_reset"`
 
+	// BeadCat3cClosed is the count of subsumed `in_progress` beads auto-closed
+	// by the Cat 3c auto-reconciler (hk-lgtq2): beads whose implementation has
+	// already merged to the target branch (Harmonik-Bead-ID trailer present) but
+	// were still marked `in_progress`. Required (must be >= 0).
+	//
+	// Spec ref: specs/reconciliation/spec.md §8.6 Cat 3c — "inverse premature-close".
+	// Bead ref: hk-lgtq2.
+	BeadCat3cClosed int `json:"bead_cat3c_closed"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`
@@ -813,6 +822,9 @@ func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.BeadInProgressReset < 0 {
+		return false
+	}
+	if p.BeadCat3cClosed < 0 {
 		return false
 	}
 	if p.SweptAt == "" {

@@ -68,6 +68,20 @@ func (f *imrestSweepFakeMergeScanner) HasMergeCommitForBead(_ context.Context, b
 	return f.merged[beadID], nil
 }
 
+// imrestSweepFakeCat3cCloser implements BeadCat3cCloser and records calls.
+type imrestSweepFakeCat3cCloser struct {
+	called []core.BeadID
+	errOn  map[core.BeadID]error
+}
+
+func (f *imrestSweepFakeCat3cCloser) SweepCloseBead(_ context.Context, _ brcli.TimeoutConfig, beadID core.BeadID) error {
+	f.called = append(f.called, beadID)
+	if err, ok := f.errOn[beadID]; ok {
+		return err
+	}
+	return nil
+}
+
 // imrestSweepBead constructs a valid in-progress BeadRecord with the given ID.
 func imrestSweepBead(id string) core.BeadRecord {
 	return core.BeadRecord{
@@ -746,5 +760,102 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvena
 	}
 	if len(resetter.called) != 1 || resetter.called[0] != bid {
 		t.Errorf("hk-sc3o4: ResetBead not called on expected bead: calls=%v", resetter.called)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cat 3c auto-resolution (hk-lgtq2) — BeadCat3cCloser coverage
+// ---------------------------------------------------------------------------
+
+// TestSweepStaleInProgressBeads_Cat3cClose_Success verifies the Cat 3c
+// auto-resolution happy path: when a non-nil Cat3cCloser is injected and the
+// merge scanner reports a Harmonik-Bead-ID commit on the target branch, the
+// sweep CLOSES the bead (calls SweepCloseBead), increments Cat3cCloseCount,
+// and does NOT reset the bead.
+//
+// Covers orphansweepbeads.go:504-512 (close success branch).
+// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+func TestSweepStaleInProgressBeads_Cat3cClose_Success(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-lgtq2-cat3c-success")
+
+	// Provenance via ProvenanceChecker (no intent file needed).
+	cfg.Provenance = &imrestSweepFakeProvenance{owns: map[core.BeadID]bool{bid: true}}
+	// Merge scanner: bead is subsumed (merge commit present on target branch).
+	cfg.MergeScanner = &imrestSweepFakeMergeScanner{merged: map[core.BeadID]bool{bid: true}}
+
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+	closer := &imrestSweepFakeCat3cCloser{}
+	cfg.Cat3cCloser = closer
+
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	// Cat 3c close must have fired.
+	if result.Cat3cCloseCount != 1 {
+		t.Errorf("Cat3cCloseCount = %d, want 1", result.Cat3cCloseCount)
+	}
+	if len(closer.called) != 1 || closer.called[0] != bid {
+		t.Errorf("SweepCloseBead calls = %v, want [%s]", closer.called, bid)
+	}
+	// Reset must NOT have fired (Cat 3c takes the bead, not reset path).
+	if result.ResetCount != 0 {
+		t.Errorf("ResetCount = %d, want 0 (Cat 3c owns the bead)", result.ResetCount)
+	}
+	if len(resetter.called) != 0 {
+		t.Errorf("ResetBead must not be called for a Cat 3c bead: calls=%v", resetter.called)
+	}
+}
+
+// TestSweepStaleInProgressBeads_Cat3cClose_ErrorAggregated verifies that when
+// SweepCloseBead returns an error for one bead, the sweep does NOT abort —
+// remaining beads are still processed — and the error is aggregated into the
+// returned error (existing pattern at orphansweepbeads.go:544).
+//
+// Covers orphansweepbeads.go:507-509 (close failure aggregation branch).
+// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+func TestSweepStaleInProgressBeads_Cat3cClose_ErrorAggregated(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bidFail := core.BeadID("hk-lgtq2-cat3c-fail")
+	bidOK := core.BeadID("hk-lgtq2-cat3c-ok")
+
+	// Both beads owned and both subsumed.
+	cfg.Provenance = &imrestSweepFakeProvenance{owns: map[core.BeadID]bool{bidFail: true, bidOK: true}}
+	cfg.MergeScanner = &imrestSweepFakeMergeScanner{merged: map[core.BeadID]bool{bidFail: true, bidOK: true}}
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{
+		imrestSweepBead(string(bidFail)),
+		imrestSweepBead(string(bidOK)),
+	}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+	sentinel := errors.New("cat3c close failed for bidFail")
+	closer := &imrestSweepFakeCat3cCloser{errOn: map[core.BeadID]error{bidFail: sentinel}}
+	cfg.Cat3cCloser = closer
+
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	// Error must be reported (aggregated from the failing close).
+	if err == nil {
+		t.Fatal("expected aggregated error from Cat 3c close failure; got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel %v wrapped in returned error; got %v", sentinel, err)
+	}
+	// The successful bead (bidOK) must have been closed — sweep continued despite bidFail error.
+	if result.Cat3cCloseCount != 1 {
+		t.Errorf("Cat3cCloseCount = %d, want 1 (bidOK succeeded)", result.Cat3cCloseCount)
+	}
+	if len(closer.called) != 2 {
+		t.Errorf("SweepCloseBead call count = %d, want 2 (both beads attempted); calls=%v", len(closer.called), closer.called)
+	}
+	// No resets issued — both beads reached the Cat 3c path.
+	if result.ResetCount != 0 {
+		t.Errorf("ResetCount = %d, want 0", result.ResetCount)
 	}
 }

@@ -159,6 +159,7 @@ func TestPL006_OrphanSweepResult_ToPayload(t *testing.T) {
 		BrSubprocessesKilled:       4,
 		ReconciliationLocksRemoved: 5,
 		StaleIntentsObserved:       6,
+		BeadCat3cClosed:            7,
 		SweptAt:                    sweepTime,
 	}
 
@@ -181,6 +182,9 @@ func TestPL006_OrphanSweepResult_ToPayload(t *testing.T) {
 	}
 	if payload.StaleIntentsObserved != 6 {
 		t.Errorf("ToPayload: StaleIntentsObserved = %d, want 6", payload.StaleIntentsObserved)
+	}
+	if payload.BeadCat3cClosed != 7 {
+		t.Errorf("ToPayload: BeadCat3cClosed = %d, want 7", payload.BeadCat3cClosed)
 	}
 	if payload.SweptAt != "2026-01-02T03:04:05Z" {
 		t.Errorf("ToPayload: SweptAt = %q, want %q", payload.SweptAt, "2026-01-02T03:04:05Z")

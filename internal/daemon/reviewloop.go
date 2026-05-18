@@ -506,14 +506,24 @@ func runReviewLoop(
 			} else {
 				// Derive a child context that cancels when the reviewer watcher finishes
 				// (handler exit), preventing a full-timeout block on reviewer crash.
+				//
+				// Substrate path: revWatcher is nil when deps.substrate != nil
+				// (tmux-hosted sessions return nil from handler.launchViaSubstrate
+				// when subSess.Stdout() is nil — see internal/handler/handler.go:291).
+				// In that case there is no progress-stream goroutine to await; the
+				// watcher-done coordination goroutine is simply skipped and the
+				// ready-wait below relies on context cancellation alone.
+				// Bead ref: hk-yjduq (DOGFOOD-BLOCKER #2 — nil watcher in tmux path).
 				revReadyCtx, revReadyCancel := context.WithCancel(ctx)
-				go func() {
-					select {
-					case <-revWatcher.Done():
-						revReadyCancel()
-					case <-revReadyCtx.Done():
-					}
-				}()
+				if revWatcher != nil {
+					go func() {
+						select {
+						case <-revWatcher.Done():
+							revReadyCancel()
+						case <-revReadyCtx.Done():
+						}
+					}()
+				}
 
 				revEventSrc := newChanAgentEventSource(revTapCh)
 				revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, deps.agentReadyTimeout)
@@ -527,12 +537,16 @@ func runReviewLoop(
 					// Wait for the reviewer watcher goroutine to exit with a
 					// deadline — agentReadyKillReapTimeout prevents indefinite
 					// blocking if the killed subprocess does not cooperate.
-					// Bead ref: hk-do7te.
-					select {
-					case <-revWatcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
-						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
-							beadID, state.iterationCount, runID.String())
+					// Substrate path: revWatcher is nil when tmux-hosted (no
+					// stdout pipe — see handler.go:291); skip the watcher reap
+					// and rely on sess.Wait below. Bead ref: hk-yjduq.
+					if revWatcher != nil {
+						select {
+						case <-revWatcher.Done():
+						case <-time.After(agentReadyKillReapTimeout):
+							fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+								beadID, state.iterationCount, runID.String())
+						}
 					}
 					_ = revSess.Wait(ctx)
 					if deps.hookStore != nil {

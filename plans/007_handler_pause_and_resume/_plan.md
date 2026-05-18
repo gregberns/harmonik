@@ -1,0 +1,46 @@
+# Plan 007: handler-pause-and-resume
+
+## Objective
+Add per-handler-type pause-and-resume to the daemon so a handler-fatal failure (Claude rate-limit, session-token cap) pauses dispatch for that handler only, persists across restart, and exposes an operator + submitter-agent surface — instead of tombing a 50-bead wave against a known-broken handler.
+
+## Status
+research-phase — design landed; implementation not started.
+
+## What's done
+- Design doc landed at commit `b554b6f`: [`docs/components/internal/handler-pause-and-resume.md`](../../docs/components/internal/handler-pause-and-resume.md) — problem, MVH scope, trigger taxonomy, controller shape, persistence layout, CLI surface, spec amendments (Appendix A: HC-020a, execution-model §8 INFORMATIVE note, QM-060 single-writer mirror, PL-005 startup step 8a).
+- 13 beads filed (all labeled `handler-pause`, 2026-05-18).
+- ROADMAP entry inserted at position 9 (between Phase-2 multi-bead E2E and remaining spec corpus); Phase-3 DOT shifted 11 → 12. See [`ROADMAP.md`](../../ROADMAP.md).
+
+## What's remaining
+- **P1 MVH (9 beads):**
+  - `hk-107gz` — handler-fatal failure-class taxonomy + policy table (Go constants + spec amends HC-020a, §8 note)
+  - `hk-m0k0a` — persistence: `.harmonik/handler-state.json` + atomic-write + load on startup
+  - `hk-9hwbw` — `HandlerPauseController` + in-flight bead freeze-list (central hub)
+  - `hk-37zy8` — daemon outcome-ingestion → pause-trigger policy goroutine
+  - `hk-kac8g` — dispatcher skip-on-paused + `queue_item_held_for_handler_pause` event
+  - `hk-ejyku` — `harmonik handler resume <type>` CLI
+  - `hk-39ryh` — `harmonik handler status` CLI + JSON output (submitter-agent surface)
+  - `hk-siuo2` — `QueueValidationReason = handler_paused` on queue-submit
+  - `hk-ifqnj` — event-model amendments (`handler_paused`, `handler_resumed`, `queue_item_held_for_handler_pause`)
+- **P2 (2 beads):** `hk-xlq2e` (submitter-agent docs), `hk-tvsl7` (per-handler `Diagnose()` seam, post-MVH).
+- **P3 / post-MVH (3 beads):** `hk-0otqs` (auto-resume on timed backoff), `hk-bdvae` (external-trigger resume — webhook / SIGUSR1 / file-marker), `hk-lhxzc` (per-account pause within a handler type).
+- **P3 research-only (1 bead):** `hk-bm9qm` (cross-handler task transfer memo).
+
+## References
+- design doc: `docs/components/internal/handler-pause-and-resume.md` (commit `b554b6f`)
+- specs touched (amendments pending in `hk-107gz`): `specs/handler-contract.md` §4.5a (HC-020a), `specs/execution-model.md` §8, `specs/queue-model.md` (QM-060 single-writer mirror), `specs/process-lifecycle.md` (PL-005 step 8a)
+- beads: label `handler-pause` (13 total) — P1 MVH set `hk-107gz hk-m0k0a hk-9hwbw hk-37zy8 hk-kac8g hk-ejyku hk-39ryh hk-siuo2 hk-ifqnj`; P2 `hk-xlq2e hk-tvsl7`; post-MVH `hk-0otqs hk-bdvae hk-lhxzc hk-bm9qm`
+- roadmap: `ROADMAP.md` row 9
+- chat-context: Phase-2 dogfooding (HANDOFF v47 §3) flagged that a single Claude rate-limit near the head of a 50-bead wave would tomb the entire wave with non-work FAIL records. A 2026-05-18 design pass produced the doc + bead set above; implementation deferred to its own slot.
+
+## Next steps
+1. Start the P1 MVH chain at the two roots in parallel — they have no upstream blockers and together unblock the central controller:
+   - `hk-107gz` (taxonomy: Go constants + HC-020a + §8 note)
+   - `hk-m0k0a` (persistence file + atomic-write + startup load)
+2. With both root beads landed, implement `hk-9hwbw` (`HandlerPauseController` + freeze-list) — the central hub blocking the remaining six P1 beads.
+3. Fan out the six dependents of `hk-9hwbw` in dependency order: `hk-37zy8` (policy goroutine, also depends on `hk-107gz`) → `hk-kac8g` (dispatcher skip) → `hk-ejyku` (resume CLI) → `hk-39ryh` (status CLI) → `hk-siuo2` (queue-submit validation) → `hk-ifqnj` (event-model amendments — can land anytime after `hk-9hwbw` defines the event names).
+
+## Open questions
+- **Per-account vs per-handler-type granularity** (`hk-lhxzc`, post-MVH): MVH pauses the whole handler type when any account in the pool rate-limits. If multi-account Claude pools become common, we will need a per-account axis. Deferring until evidence demands it.
+- **Auth-expired and api-unreachable sub-reasons** (design doc §3 items 2–3): listed in the MVH handler-fatal set but ride on rate-limit's path until handler-contract formally surfaces them. Tracked as a follow-up inside `hk-107gz`; may spin out a separate bead if the migration is non-trivial.
+- **Cross-handler task transfer** (`hk-bm9qm`, research-only): whether a Claude-Code-bound bead can be rerouted to Codex while Claude is paused. Memo, not implementation; revisit after MVH ships.

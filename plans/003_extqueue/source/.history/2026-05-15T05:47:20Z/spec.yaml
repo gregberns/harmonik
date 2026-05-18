@@ -1,0 +1,27 @@
+codename: extqueue
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: spec-draft
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-05-14T22:39:29Z
+updated: 2026-05-15T05:47:20Z
+sessions:
+    - id: null
+      started: 2026-05-14T22:39:29Z
+active_session: anonymous
+depends_on: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

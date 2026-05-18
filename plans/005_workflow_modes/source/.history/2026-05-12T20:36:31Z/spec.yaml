@@ -1,0 +1,27 @@
+codename: workflow-modes
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: integration
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-05-12T19:42:46Z
+updated: 2026-05-12T20:36:31Z
+sessions:
+    - id: null
+      started: 2026-05-12T19:42:46Z
+active_session: anonymous
+depends_on: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

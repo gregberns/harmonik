@@ -1,0 +1,29 @@
+codename: claude-hook-bridge
+type: spec
+project:
+  id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+  - problem-space
+  - decompose
+  - research
+  - change-design
+  - spec-draft
+  - integration
+  - tasks
+  - ready
+created: 2026-05-12T23:14:16Z
+updated: 2026-05-15T20:51:39Z
+sessions:
+  - id: null
+    started: 2026-05-12T23:14:16Z
+active_session: anonymous
+depends_on: []
+implementation:
+  branch: null
+  pr: null
+  commits: []
+bead_filter:
+  label: codename:claude-hook-bridge

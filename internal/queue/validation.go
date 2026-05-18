@@ -58,8 +58,8 @@ const (
 	ReasonQueueTooLarge QueueValidationReason = "queue_too_large"
 
 	// ReasonHandlerPaused — QM-052a: one or more beads in the request resolve
-	// to an agent_type whose handler is currently paused. Per the handler-pause
-	// spec (docs/components/internal/handler-pause-and-resume.md Appendix A.1),
+	// to an agent_type whose handler is currently paused. Per the normative
+	// handler-pause spec (specs/handler-pause.md §6 HP-025),
 	// the daemon rejects queue-submit when any bead's resolved agent_type is
 	// paused; the detail map includes agent_type and the affected bead_ids.
 	// JSON-RPC error code -32018 per QM-029b (previously reserved slot).
@@ -151,7 +151,7 @@ type BeadLedger interface {
 // ---------------------------------------------------------------------------
 
 // HandlerPauseChecker is the minimal seam between the validation pipeline and
-// the daemon's handler-pause controller (docs/components/internal/handler-pause-and-resume.md).
+// the daemon's handler-pause controller (specs/handler-pause.md §7).
 //
 // When non-nil in a ValidationRequest, Validate evaluates QM-052a: any bead
 // whose resolved agent_type maps to a currently-paused handler causes
@@ -200,7 +200,7 @@ type ValidationRequest struct {
 	// handler-pause controller and rejects with ReasonHandlerPaused if any
 	// handler is paused. When nil, QM-052a is skipped (controller not yet wired).
 	//
-	// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+	// Spec ref: specs/handler-pause.md §6 HP-025; queue-model.md §8.3a QM-052a.
 	PauseChecker HandlerPauseChecker
 }
 
@@ -224,7 +224,7 @@ const maxQueueJSON = 1048576
 // QM-025 (informational, last).
 //
 // Spec ref: queue-model.md §6 QM-020..QM-027, QM-029, QM-029a;
-// handler-pause-and-resume.md Appendix A.1 (QM-052a).
+// specs/handler-pause.md §6 HP-025 (QM-052a).
 func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]ValidationError, []LedgerDepPair, error) {
 	// --- QM-027: single active queue (submit-only) ---------------------------
 	if !req.IsAppend {
@@ -388,7 +388,7 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 	// Per Appendix A.1, this is a submit-time gate — the bead never enters the
 	// queue; the caller must retry after the handler is resumed.
 	//
-	// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+	// Spec ref: specs/handler-pause.md §6 HP-025; queue-model.md §8.3a QM-052a.
 	if req.PauseChecker != nil {
 		// Walk beads in order; stop at the first paused agent_type (first-failure
 		// short-circuit per QM-029a). Collect all bead_ids for that agent_type

@@ -1,5 +1,7 @@
 # Handler Pause-and-Resume
 
+> **Status: SUPERSEDED.** This design doc is non-normative. The normative contract lives in [specs/handler-pause.md](../../../specs/handler-pause.md). Retained for design rationale + history only.
+
 > **Status:** design (knowledge-base; not yet a normative spec).
 > **Owner-of-record:** harmonik daemon (queue-model + handler-contract cross-cutting).
 > **Last updated:** 2026-05-18.

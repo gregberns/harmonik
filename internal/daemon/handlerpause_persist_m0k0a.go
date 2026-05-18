@@ -38,7 +38,7 @@ package daemon
 // Rename → parent-dir Sync.  Same sequence used by cmd/harmonik/handler.go
 // atomicWriteHandlerState.
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §5.
+// Spec ref: specs/handler-pause.md §3.5.
 // Bead ref: hk-m0k0a.
 
 import (
@@ -233,7 +233,7 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 //   - Paused handlers → Pause is called on ctrl to restore their state.
 //   - Live (status != "paused") handlers → skipped; absent = live.
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §5.3.
+// Spec ref: specs/handler-pause.md §8.2 HP-007.
 // Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 // Bead ref: hk-m0k0a.
 func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPauseController) error {

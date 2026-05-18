@@ -564,12 +564,12 @@ func Start(ctx context.Context, cfg Config) error {
 	// handler-state.json on every Pause/Resume call.  LoadHandlerPauseState
 	// seeds the controller with any paused handlers that survived the last
 	// daemon run, ensuring "paused status MUST persist across restarts" per
-	// handler-pause-and-resume.md §5.3 (QM-055 analog).
+	// specs/handler-pause.md §8.3 HP-008 (QM-055 analog).
 	//
 	// A forward-incompatible schema_version causes a fatal return (exit code 2).
 	// File absent → all handlers default live (no-op).
 	//
-	// Spec ref: docs/components/internal/handler-pause-and-resume.md §5.
+	// Spec ref: specs/handler-pause.md §3.5.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 	// Bead ref: hk-m0k0a.
 	var handlerPauseCtrl *HandlerPauseController

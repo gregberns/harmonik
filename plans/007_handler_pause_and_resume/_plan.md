@@ -7,7 +7,7 @@ Add per-handler-type pause-and-resume to the daemon so a handler-fatal failure (
 research-phase — design landed; implementation not started.
 
 ## What's done
-- Design doc landed at commit `b554b6f`: [`docs/components/internal/handler-pause-and-resume.md`](../../docs/components/internal/handler-pause-and-resume.md) — problem, Phase-1 scope, trigger taxonomy, controller shape, persistence layout, CLI surface, spec amendments (Appendix A: HC-020a, execution-model §8 INFORMATIVE note, QM-060 single-writer mirror, PL-005 startup step 8a).
+- Design doc landed at commit `b554b6f`: [`docs/components/internal/handler-pause-and-resume.md`](../../docs/components/internal/handler-pause-and-resume.md) — problem, Phase-1 scope, trigger taxonomy, controller shape, persistence layout, CLI surface, spec amendments (Appendix A: HC-020a, execution-model §8 INFORMATIVE note, QM-060 single-writer mirror, PL-005 startup step 8a). **Now superseded: normative spec at [`specs/handler-pause.md`](../../specs/handler-pause.md) (hk-m7joe).**
 - 13 beads filed (all labeled `handler-pause`, 2026-05-18).
 - ROADMAP entry inserted at position 9 (between Phase-2 multi-bead E2E and remaining spec corpus); Phase-3 DOT shifted 11 → 12. See [`ROADMAP.md`](../../ROADMAP.md).
 
@@ -27,7 +27,8 @@ research-phase — design landed; implementation not started.
 - **P3 research-only (1 bead):** `hk-bm9qm` (cross-handler task transfer memo).
 
 ## References
-- design doc: `docs/components/internal/handler-pause-and-resume.md` (commit `b554b6f`)
+- normative spec: `specs/handler-pause.md` (elevated from design doc by hk-m7joe)
+- design doc (SUPERSEDED, history only): `docs/components/internal/handler-pause-and-resume.md` (commit `b554b6f`)
 - specs touched (amendments pending in `hk-107gz`): `specs/handler-contract.md` §4.5a (HC-020a), `specs/execution-model.md` §8, `specs/queue-model.md` (QM-060 single-writer mirror), `specs/process-lifecycle.md` (PL-005 step 8a)
 - beads: label `handler-pause` (13 total) — P1 Phase-1 set `hk-107gz hk-m0k0a hk-9hwbw hk-37zy8 hk-kac8g hk-ejyku hk-39ryh hk-siuo2 hk-ifqnj`; P2 `hk-xlq2e hk-tvsl7`; post-Phase-1 `hk-0otqs hk-bdvae hk-lhxzc hk-bm9qm`
 - roadmap: `ROADMAP.md` row 9

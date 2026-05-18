@@ -58,7 +58,7 @@ const (
 	// ErrorCodeHandlerPaused is the JSON-RPC error code for
 	// ReasonHandlerPaused (QM-052a — handler-pause queue-submit gate).
 	// Allocated from the previously-reserved -32018 slot per QM-029b.
-	// Spec ref: queue-model.md §6.11a QM-029b; handler-pause-and-resume.md Appendix A.1.
+	// Spec ref: queue-model.md §6.11a QM-029b; specs/handler-pause.md §6 HP-025.
 	ErrorCodeHandlerPaused = -32018
 
 	// -32019 is reserved for a future QueueValidationReason addition within

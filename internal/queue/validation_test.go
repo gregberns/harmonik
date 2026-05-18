@@ -935,7 +935,7 @@ func (f *fakeHandlerPauseChecker) IsHandlerPaused(_ context.Context, agentType c
 // handler_paused when any bead's resolved agent_type maps to a paused handler,
 // and that the check is skipped when PauseChecker is nil.
 //
-// Spec ref: handler-pause-and-resume.md Appendix A.1; queue-model.md §8.3a QM-052a.
+// Spec ref: specs/handler-pause.md §6 HP-025; queue-model.md §8.3a QM-052a.
 // Bead ref: hk-siuo2.
 func TestValidateQM052aHandlerPaused(t *testing.T) {
 	t.Parallel()

@@ -26,7 +26,7 @@ package daemon
 // (for the in-flight freeze-list) and HandlerPauseController, both of which live
 // in the composition root package.
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §4 event flow.
+// Spec ref: specs/handler-pause.md §7 (HandlerPauseController contract).
 // Bead ref: hk-37zy8.
 
 import (
@@ -200,8 +200,8 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 // Single-hit rule: any budget_exhausted event trips a pause immediately.
 // The controller's Pause is idempotent on double-trip.
 //
-// Sub-reason: "budget_exhausted_handler_account" per the handler-pause-and-resume.md
-// §3 vocabulary.
+// Sub-reason: "budget_exhausted_handler_account" per the specs/handler-pause.md
+// §5 trigger taxonomy.
 func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context, evt core.Event) error {
 	var payload core.BudgetExhaustedEventPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {

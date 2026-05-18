@@ -8,7 +8,7 @@ package core
 //   - queue_item_held_for_handler_pause   (§8.11.3)
 //
 // Spec ref: specs/event-model.md §8.11.
-// Design ref: docs/components/internal/handler-pause-and-resume.md.
+// Spec ref: specs/handler-pause.md.
 // Bead ref: hk-ifqnj.
 
 // ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ type HandlerPauseCause struct {
 
 	// SubReason is the fine-grained sub-reason within the failure class.
 	// Required (non-empty). Known values at MVH: "rate_limit", "budget_exhausted_handler_account".
-	// The vocabulary is open per handler-pause-and-resume.md §3.
+	// The vocabulary is open per specs/handler-pause.md §5.
 	SubReason string `json:"sub_reason"`
 
 	// SourceRunID is the run ID of the run whose outcome tripped the pause.
@@ -80,11 +80,11 @@ func (c HandlerPauseCause) Valid() bool {
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 // Durability class: F (fsync-boundary — loss orphans the pause-state landmark;
 // reconciliation depends on this event to detect a paused handler across
-// daemon restart per handler-pause-and-resume.md §5.3).
+// daemon restart per specs/handler-pause.md §8.3 HP-008).
 //
 // Emitted by daemon-core (HandlerPauseController.Pause) when a handler type
 // is determined to be handler-fatal per the trigger taxonomy in
-// handler-pause-and-resume.md §3. MUST be fsync-backed before control returns
+// specs/handler-pause.md §5. MUST be fsync-backed before control returns
 // from Pause() per §8.11 emission ordering.
 //
 // # Payload fields (event-model.md §8.11.1)
@@ -105,7 +105,7 @@ type HandlerPausedPayload struct {
 	// InFlightCount is the number of runs of this handler type that were
 	// in-flight (dispatched but not yet terminal) at the moment of pause.
 	// Required (>= 0). These runs are NOT interrupted; they continue to their
-	// natural terminal per handler-pause-and-resume.md §6.
+	// natural terminal per specs/handler-pause.md §9 HP-050.
 	InFlightCount int `json:"in_flight_count"`
 
 	// PausedEpoch is the monotonic counter identifying this pause→resume cycle.
@@ -172,7 +172,7 @@ func (b HandlerResumedBy) Valid() bool {
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 // Durability class: F (fsync-boundary — loss would leave the operator's resume
 // action unrecorded; the dispatcher depends on this event's visibility to
-// resume dispatch for the handler type per handler-pause-and-resume.md §7).
+// resume dispatch for the handler type per specs/handler-pause.md §7.3 HP-040).
 //
 // Emitted by daemon-core (HandlerPauseController.Resume) when an operator
 // clears the pause for a handler type. MUST be fsync-backed before control

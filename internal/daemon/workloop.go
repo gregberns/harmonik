@@ -260,7 +260,7 @@ type workLoopDeps struct {
 	// the dispatcher uses to enforce the at-most-once dedup contract for
 	// queue_item_held_for_handler_pause events (§8.11.3).
 	//
-	// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
+	// Spec ref: specs/handler-pause.md §6.
 	// Bead ref: hk-kac8g, hk-m0k0a.
 	handlerPauseController *HandlerPauseController
 
@@ -580,7 +580,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				//     (bead_id, paused_epoch) per §8.11.3 dedup contract.
 				//   - Idle-wait and retry on next poll tick.
 				//
-				// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
+				// Spec ref: specs/handler-pause.md §6.
 				// Bead ref: hk-kac8g.
 				if deps.handlerPauseController != nil {
 					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)

@@ -21,7 +21,7 @@ package daemon
 // for the exact seam.  At MVH state is in-memory only; daemon restart resets
 // all handlers to live.
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §4, §5, §6.
+// Spec ref: specs/handler-pause.md §7, §8, §9.
 // Event types: core.EventTypeHandlerPaused, core.EventTypeHandlerResumed (§8.11).
 // Interface: queue.HandlerPauseChecker (hk-siuo2).
 // Bead ref: hk-9hwbw.
@@ -50,7 +50,7 @@ var _ queue.HandlerPauseChecker = (*HandlerPauseController)(nil)
 // InFlightBeadRecord is a single entry in the in_flight_at_pause freeze-list
 // captured when a handler type is paused.
 //
-// Per handler-pause-and-resume.md §6, in-flight beads are NOT interrupted at
+// Per specs/handler-pause.md §9 HP-050, in-flight beads are NOT interrupted at
 // pause time; the freeze-list is a snapshot for operator visibility only.
 //
 // Fields match the in_flight_at_pause array shape in .harmonik/handler-state.json §5.1.
@@ -206,7 +206,7 @@ func NewHandlerPauseController(bus eventbus.EventBus, persistFn func(ctx context
 // caller (daemon policy goroutine) is responsible for querying RunRegistry and
 // filtering by agent type before calling Pause.  inFlight may be empty or nil.
 //
-// Per handler-pause-and-resume.md §6, in-flight runs are NOT interrupted.
+// Per specs/handler-pause.md §9 HP-050, in-flight runs are NOT interrupted.
 // The freeze-list is recorded for operator visibility only.
 //
 // The handler_paused event is emitted AFTER state mutation and (when wired)

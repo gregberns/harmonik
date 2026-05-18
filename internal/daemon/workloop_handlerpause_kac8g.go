@@ -8,7 +8,7 @@ package daemon
 // The dispatch-time gate itself is inlined in workloop.go alongside the queue-pull
 // and br-ready paths it guards, for readability.
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
+// Spec ref: specs/handler-pause.md §6.
 // Event ref: specs/event-model.md §8.11.3.
 // Bead ref: hk-kac8g.
 

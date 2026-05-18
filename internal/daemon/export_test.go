@@ -158,6 +158,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-8jh26.
 	CancelOnQueueExit context.CancelFunc
+
+	// HandlerPauseController, when non-nil, is wired into the work loop to
+	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
+	// is disabled: all items are dispatched regardless of handler pause state.
+	//
+	// Bead ref: hk-kac8g.
+	HandlerPauseController *HandlerPauseController
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -227,29 +234,30 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
 	return workLoopDeps{
-		brAdapter:           p.BrAdapter,
-		bus:                 p.Bus,
-		h:                   h,
-		intentLogDir:        p.IntentLogDir,
-		projectDir:          p.ProjectDir,
-		handlerBinary:       binary,
-		handlerArgs:         p.HandlerArgs,
-		handlerEnv:          nil,
-		brTimeoutCfg:        brcli.TimeoutConfig{},
-		tidGen:              core.NewTransitionIDGenerator(),
-		workflowModeDefault: wmd,
-		runRegistry:         reg,
-		maxConcurrent:       maxConcurrent,
-		hookStore:           hookStore,
-		launchSpecBuilder:   lsb,
-		worktreeFactory:     wtf,
-		adapterRegistry:     p.AdapterRegistry2,
-		substrate:           p.Substrate,
-		agentReadyTimeout:   p.AgentReadyTimeout,
-		projectCfg:          p.ProjectCfg,
-		queueStore:          p.QueueStore,
-		cancelOnQueueDrain:  p.CancelOnQueueDrain,
-		cancelOnQueueExit:   p.CancelOnQueueExit,
+		brAdapter:              p.BrAdapter,
+		bus:                    p.Bus,
+		h:                      h,
+		intentLogDir:           p.IntentLogDir,
+		projectDir:             p.ProjectDir,
+		handlerBinary:          binary,
+		handlerArgs:            p.HandlerArgs,
+		handlerEnv:             nil,
+		brTimeoutCfg:           brcli.TimeoutConfig{},
+		tidGen:                 core.NewTransitionIDGenerator(),
+		workflowModeDefault:    wmd,
+		runRegistry:            reg,
+		maxConcurrent:          maxConcurrent,
+		hookStore:              hookStore,
+		launchSpecBuilder:      lsb,
+		worktreeFactory:        wtf,
+		adapterRegistry:        p.AdapterRegistry2,
+		substrate:              p.Substrate,
+		agentReadyTimeout:      p.AgentReadyTimeout,
+		projectCfg:             p.ProjectCfg,
+		queueStore:             p.QueueStore,
+		cancelOnQueueDrain:     p.CancelOnQueueDrain,
+		cancelOnQueueExit:      p.CancelOnQueueExit,
+		handlerPauseController: p.HandlerPauseController,
 	}
 }
 

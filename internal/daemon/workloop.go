@@ -249,6 +249,31 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-8jh26.
 	cancelOnQueueExit context.CancelFunc
+
+	// handlerPauseController, when non-nil, is consulted before every dispatch
+	// to implement the skip-on-paused gate (hk-kac8g).  When nil the gate is
+	// disabled: all items are dispatched regardless of handler pause state.
+	// Production wires the daemon-singleton HandlerPauseController; tests that
+	// do not exercise handler-pause behaviour leave this nil (safe default).
+	//
+	// The controller also tracks the current paused_epoch per agent type, which
+	// the dispatcher uses to enforce the at-most-once dedup contract for
+	// queue_item_held_for_handler_pause events (§8.11.3).
+	//
+	// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
+	// Bead ref: hk-kac8g.
+	handlerPauseController *HandlerPauseController
+
+	// heldEventDedup tracks (beadID + ":" + epoch) pairs for which a
+	// queue_item_held_for_handler_pause event has already been emitted this
+	// session, enforcing the at-most-once-per-(bead_id, paused_epoch) contract
+	// from event-model.md §8.11.3.
+	//
+	// Keyed by the string "<beadID>:<pausedEpoch>" (e.g. "hk-abc:2").
+	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
+	//
+	// Bead ref: hk-kac8g.
+	heldEventDedup map[string]struct{}
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -439,6 +464,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// Bead ref: hk-e61c3.3.
 	claimSem := make(chan struct{}, effectiveMax)
 
+	// Initialise the held-event dedup map (hk-kac8g).  Written only from this
+	// goroutine (outer poll loop) — no locking needed.
+	if deps.heldEventDedup == nil {
+		deps.heldEventDedup = make(map[string]struct{})
+	}
+
 	for {
 		// Step 1: check for cancellation before any new dispatch.
 		select {
@@ -536,6 +567,30 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					continue
 				}
 
+				// Handler-pause gate (hk-kac8g): check whether the resolved agent
+				// type is paused before claiming/dispatching the item.  At MVH all
+				// beads map to AgentTypeClaudeCode; multi-agent resolution is post-MVH.
+				//
+				// When paused:
+				//   - The item remains ItemStatus=pending (no stamp, no claim).
+				//   - Emit queue_item_held_for_handler_pause at-most-once per
+				//     (bead_id, paused_epoch) per §8.11.3 dedup contract.
+				//   - Idle-wait and retry on next poll tick.
+				//
+				// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
+				// Bead ref: hk-kac8g.
+				if deps.handlerPauseController != nil {
+					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+					if isPaused {
+						emitHeldEvent(ctx, deps, item.BeadID, core.AgentTypeClaudeCode, epoch)
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							wg.Wait()
+							return nil
+						}
+						continue
+					}
+				}
+
 				// Stamp item as dispatched under the write lock.
 				{
 					lq := deps.queueStore.LockForMutation()
@@ -628,6 +683,23 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			// Pick first ready bead; labels carry workflow:<mode> for mode resolution.
 			beadRecord = readyRecords[0]
+
+			// Handler-pause gate for the br-ready path (hk-kac8g): mirror the same
+			// check applied in the queue path above.  The bead remains in the br
+			// ready queue (not claimed) while the handler is paused.
+			//
+			// Bead ref: hk-kac8g.
+			if deps.handlerPauseController != nil {
+				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+				if isPaused {
+					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
+					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						wg.Wait()
+						return nil
+					}
+					continue
+				}
+			}
 		}
 		beadID = beadRecord.BeadID
 

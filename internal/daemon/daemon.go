@@ -241,6 +241,17 @@ type Config struct {
 	//
 	// Bead ref: hk-8jh26.
 	QueueStore *QueueStore
+
+	// HandlerPauseController, when non-nil, is wired into the work loop to
+	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
+	// is disabled: all items are dispatched regardless of handler pause state.
+	//
+	// Production callers (cmd/harmonik/main.go) construct a controller and wire
+	// it here so `harmonik handler pause` can trip the gate mid-run.
+	// Unit tests that do not exercise handler-pause behaviour may leave this nil.
+	//
+	// Bead ref: hk-kac8g.
+	HandlerPauseController *HandlerPauseController
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -606,6 +617,12 @@ func Start(ctx context.Context, cfg Config) error {
 		//
 		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
 		deps.queueStore = qs
+
+		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
+		// (hk-kac8g) can consult pause state before claiming each item.
+		// nil → gate disabled; pre-hk-kac8g behaviour preserved for callers that
+		// don't set the field.
+		deps.handlerPauseController = cfg.HandlerPauseController
 
 		// Inject the drain-cancel so harmonik run <bead-id> exits after the queue
 		// completes (hk-icecw). The zero value (nil) preserves normal daemon behaviour.

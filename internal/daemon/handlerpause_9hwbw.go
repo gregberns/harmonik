@@ -369,6 +369,26 @@ func (c *HandlerPauseController) IsPaused(agentType core.AgentType) bool {
 	return paused
 }
 
+// PausedEpochFor returns (epoch, true) when agentType is currently paused, or
+// (0, false) when it is live.  Both the paused flag and epoch are read under
+// the same lock acquisition so callers get a consistent snapshot.
+//
+// Used by the dispatch loop (workloop.go) to implement the dedup contract for
+// queue_item_held_for_handler_pause events: the dispatcher records
+// (beadID, epoch) and emits at-most-once per pair per §8.11.3.
+//
+// Safe for concurrent use.
+func (c *HandlerPauseController) PausedEpochFor(agentType core.AgentType) (epoch int, paused bool) {
+	c.mu.Lock()
+	entry, exists := c.handlers[agentType]
+	if exists && entry.status == pauseStatusPaused {
+		epoch = entry.pausedEpoch
+		paused = true
+	}
+	c.mu.Unlock()
+	return epoch, paused
+}
+
 // ---------------------------------------------------------------------------
 // queue.HandlerPauseChecker implementation
 // ---------------------------------------------------------------------------

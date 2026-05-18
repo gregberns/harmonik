@@ -153,6 +153,20 @@ func run() int {
 		}
 	}
 
+	// harmonik handler status [--type T] [--format json|text] [--project DIR]
+	// Read-only status surface for handler-pause state.
+	// Reads .harmonik/handler-state.json directly (no daemon required).
+	//
+	// Exit-code contract:
+	//   0  — success (output written)
+	//   1  — argument or file-parse error
+	//   2  — forward-incompatible schema version
+	//
+	// Bead ref: hk-39ryh.
+	if len(os.Args) >= 2 && os.Args[1] == "handler" {
+		return runHandlerSubcommand(os.Args[2:])
+	}
+
 	// harmonik run <bead-id> [--project DIR] — single-bead invocation.
 	//
 	// Submits a single-item queue to the daemon and blocks until the bead reaches

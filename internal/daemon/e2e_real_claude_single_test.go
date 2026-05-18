@@ -41,6 +41,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,16 +240,44 @@ func rcsmFixtureTailEvents(ctx context.Context, t *testing.T, jsonlPath string) 
 			}
 		}
 
-		//nolint:gosec // G304: jsonlPath is constructed from t.TempDir(); not user input
-		f, err := os.Open(jsonlPath)
-		if err != nil {
-			return
-		}
-		defer func() { _ = f.Close() }()
+		// Track the read offset so we can re-open the file each pass and seek
+		// to where we left off.  bufio.Scanner does not re-read after EOF, so
+		// we must re-open (or seek) on each poll iteration.
+		var offset int64
 
-		scanner := bufio.NewScanner(f)
 		for {
-			// Try to read a new line.
+			// Open, seek to last offset, and scan new lines.
+			//nolint:gosec // G304: jsonlPath is constructed from t.TempDir(); not user input
+			f, openErr := os.Open(jsonlPath)
+			if openErr != nil {
+				// File may not exist yet (race with daemon startup); retry.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(200 * time.Millisecond):
+				}
+				continue
+			}
+
+			fi, statErr := f.Stat()
+			if statErr != nil || fi.Size() <= offset {
+				// No new data.
+				_ = f.Close()
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(200 * time.Millisecond):
+				}
+				continue
+			}
+
+			if _, seekErr := f.Seek(offset, io.SeekStart); seekErr != nil {
+				_ = f.Close()
+				return
+			}
+
+			scanner := bufio.NewScanner(f)
+			completed := false
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
 				if line == "" {
@@ -264,21 +293,30 @@ func rcsmFixtureTailEvents(ctx context.Context, t *testing.T, jsonlPath string) 
 				mu.Unlock()
 
 				if isRunCompleted {
-					return
+					completed = true
 				}
 			}
-			if err := scanner.Err(); err != nil {
+			if scanErr := scanner.Err(); scanErr != nil {
+				_ = f.Close()
 				return
 			}
-			// No new data; check if context expired or wait briefly.
+
+			// Update offset to current position.
+			newOffset, tellErr := f.Seek(0, io.SeekCurrent)
+			if tellErr == nil {
+				offset = newOffset
+			}
+			_ = f.Close()
+
+			if completed {
+				return
+			}
+
+			// Wait briefly before next poll.
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(200 * time.Millisecond):
-				// Seek to catch appended lines by re-opening is tricky;
-				// for simplicity we re-read from the file offset after scanner
-				// reaches EOF by re-creating the scanner from the current position.
-				// The file handle stays open so the OS position tracks the end.
 			}
 		}
 	}()
@@ -566,8 +604,10 @@ func TestE2ERealClaudeSingleMode(t *testing.T) {
 		eventsCh <- rcsmFixtureTailEvents(watchCtx, t, jsonlPath)
 	}()
 
-	// Launch harmonik.
-	stopDaemon := rcsmFixtureLaunchHarmonik(t, harmonikBin, sessionName, smokeDir)
+	// Launch harmonik.  Wrap stop in sync.Once so defer + explicit call are idempotent.
+	rawStop := rcsmFixtureLaunchHarmonik(t, harmonikBin, sessionName, smokeDir)
+	var stopOnce sync.Once
+	stopDaemon := func() { stopOnce.Do(rawStop) }
 	defer stopDaemon()
 
 	// Wait for events (run_completed or timeout).
@@ -604,12 +644,11 @@ func TestE2ERealClaudeSingleMode(t *testing.T) {
 
 	workspacePath := rcsmWorkspacePath(events)
 	if workspacePath == "" {
-		t.Log("e2e_real_claude: run_started not observed; skipping workspace post-conditions")
-	} else {
-		rcsmAssertMarkerOK(t, workspacePath)
-		rcsmAssertNewCommit(t, workspacePath)
-		rcsmAssertSettingsJSON(t, workspacePath)
+		t.Fatalf("workspace_path not observed in run_started event — cannot verify post-conditions")
 	}
+	rcsmAssertMarkerOK(t, workspacePath)
+	rcsmAssertNewCommit(t, workspacePath)
+	rcsmAssertSettingsJSON(t, workspacePath)
 
 	rcsmAssertBeadClosed(t, smokeDir, beadID)
 }

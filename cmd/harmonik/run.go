@@ -281,6 +281,12 @@ func runBeadSubcommand(subArgs []string) int {
 	}
 	if finalQueue.Status == queue.QueueStatusPausedByFailure {
 		fmt.Fprintf(os.Stderr, "harmonik run: bead %s failed (queue paused-by-failure)\n", beadID)
+		archivePath, archiveErr := queue.ArchiveFailedQueue(context.Background(), projectDir, time.Now())
+		if archiveErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: warning: could not archive queue.json: %v\n", archiveErr)
+		} else if archivePath != "" {
+			fmt.Fprintf(os.Stderr, "harmonik run: archived failed queue → %s\n", archivePath)
+		}
 		return 1
 	}
 	// Unexpected terminal state — surface for debugging.

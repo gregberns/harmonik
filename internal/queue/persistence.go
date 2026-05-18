@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 // queueFileName is the canonical on-disk name for the queue envelope per
@@ -204,6 +205,47 @@ func CompleteAndUnlink(ctx context.Context, projectDir string, q *Queue) error {
 		return fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)
 	}
 	return nil
+}
+
+// ArchiveFailedQueue renames .harmonik/queue.json to
+// .harmonik/queue.json.failed-<timestamp> so that a subsequent `harmonik run`
+// invocation finds no active queue file and can proceed without manual cleanup.
+//
+// The timestamp is formatted as yyyymmddHHMMSS (UTC) to be filesystem-safe
+// and monotonically ordered.
+//
+// If queue.json does not exist, ArchiveFailedQueue is a no-op (returns nil).
+// The archive path is returned on success for logging/diagnostics.
+//
+// Spec ref: hk-ly4w5 — auto-archive queue.json on paused-by-failure.
+func ArchiveFailedQueue(_ context.Context, projectDir string, t time.Time) (string, error) {
+	src := queuePath(projectDir)
+	ts := t.UTC().Format("20060102150405")
+	dst := src + ".failed-" + ts
+
+	if err := os.Rename(src, dst); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Already gone — treat as success.
+			return "", nil
+		}
+		return "", fmt.Errorf("queue: ArchiveFailedQueue: rename %q → %q: %w", src, dst, err)
+	}
+
+	// fsync parent directory so the rename is durable.
+	hDir := harmonikDir(projectDir)
+	//nolint:gosec // G304: hDir is the daemon-internal .harmonik directory
+	dir, err := os.Open(hDir)
+	if err != nil {
+		return dst, fmt.Errorf("queue: ArchiveFailedQueue: open parent dir %q: %w", hDir, err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return dst, fmt.Errorf("queue: ArchiveFailedQueue: fsync parent dir %q: %w", hDir, err)
+	}
+	if err := dir.Close(); err != nil {
+		return dst, fmt.Errorf("queue: ArchiveFailedQueue: close parent dir %q: %w", hDir, err)
+	}
+	return dst, nil
 }
 
 // Unlink removes .harmonik/queue.json and fsyncs the parent directory for

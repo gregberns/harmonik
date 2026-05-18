@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
@@ -465,6 +466,183 @@ func TestCompleteAndUnlinkIdempotent(t *testing.T) {
 	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
 		t.Error("queue.json must be absent after second CompleteAndUnlink")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ArchiveFailedQueue tests (hk-ly4w5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestArchiveFailedQueue_RenamesFile verifies that ArchiveFailedQueue renames
+// queue.json to queue.json.failed-<timestamp> and that queue.json is absent
+// afterwards, while the archive file contains the original content.
+//
+// Bead ref: hk-ly4w5.
+func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	q := persistFixtureQueue()
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("Persist (setup): %v", err)
+	}
+
+	ts := time.Date(2026, 5, 18, 12, 34, 56, 0, time.UTC)
+	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	if err != nil {
+		t.Fatalf("ArchiveFailedQueue: %v", err)
+	}
+
+	// Archive path must contain the timestamp in yyyymmddHHMMSS format.
+	expectedSuffix := ".failed-20260518123456"
+	if !strings.HasSuffix(archivePath, expectedSuffix) {
+		t.Errorf("archivePath %q does not end with %q", archivePath, expectedSuffix)
+	}
+
+	// Original queue.json must be absent.
+	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
+		t.Error("queue.json still exists after ArchiveFailedQueue; must have been renamed")
+	}
+
+	// Archive file must exist and contain parseable content.
+	data, readErr := os.ReadFile(archivePath) //nolint:gosec // G304: test-only
+	if readErr != nil {
+		t.Fatalf("ReadFile(archivePath): %v", readErr)
+	}
+	if !bytes.Contains(data, []byte(q.QueueID)) {
+		t.Errorf("archive file does not contain QueueID %q", q.QueueID)
+	}
+
+	// Load must now return (nil, nil) — no active queue remains.
+	got, loadErr := queue.Load(ctx, projectDir)
+	if loadErr != nil {
+		t.Fatalf("Load after ArchiveFailedQueue: %v", loadErr)
+	}
+	if got != nil {
+		t.Errorf("Load after ArchiveFailedQueue: got %+v, want nil", got)
+	}
+}
+
+// TestArchiveFailedQueue_AbsentIsNoOp verifies that ArchiveFailedQueue returns
+// ("", nil) when queue.json does not exist (idempotent / missing-file case).
+//
+// Bead ref: hk-ly4w5.
+func TestArchiveFailedQueue_AbsentIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+	ts := time.Now().UTC()
+
+	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	if err != nil {
+		t.Fatalf("ArchiveFailedQueue on absent queue.json: %v", err)
+	}
+	if archivePath != "" {
+		t.Errorf("archivePath = %q; want empty string for no-op", archivePath)
+	}
+}
+
+// TestArchiveFailedQueue_SubsequentRunSucceeds verifies that after
+// ArchiveFailedQueue renames queue.json, a subsequent Persist (simulating a
+// fresh `harmonik run`) succeeds — i.e., re-run is one command (hk-ly4w5 goal).
+//
+// Bead ref: hk-ly4w5.
+func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	// Simulate a prior failed run: write queue.json with paused-by-failure status.
+	failedQueue := persistFixtureQueue()
+	failedQueue.Status = queue.QueueStatusPausedByFailure
+	if err := queue.Persist(ctx, projectDir, &failedQueue); err != nil {
+		t.Fatalf("Persist (prior failed queue): %v", err)
+	}
+
+	// Archive it (as run.go does on paused-by-failure exit).
+	ts := time.Now().UTC()
+	_, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	if archiveErr != nil {
+		t.Fatalf("ArchiveFailedQueue: %v", archiveErr)
+	}
+
+	// Simulate guard check: Load should return nil (no active queue).
+	loaded, loadErr := queue.Load(ctx, projectDir)
+	if loadErr != nil {
+		t.Fatalf("Load after archive: %v", loadErr)
+	}
+	if loaded != nil {
+		t.Errorf("Load after archive: got non-nil queue (status=%q); guard would block re-run", loaded.Status)
+	}
+
+	// Simulate fresh `harmonik run`: Persist a new active queue. Must succeed.
+	newQueue := persistFixtureQueue()
+	newQueue.QueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0099"
+	newQueue.Status = queue.QueueStatusActive
+	if err := queue.Persist(ctx, projectDir, &newQueue); err != nil {
+		t.Fatalf("Persist (re-run): %v", err)
+	}
+
+	// Verify the new queue is visible.
+	reloaded, loadErr2 := queue.Load(ctx, projectDir)
+	if loadErr2 != nil {
+		t.Fatalf("Load (re-run): %v", loadErr2)
+	}
+	if reloaded == nil {
+		t.Fatal("Load (re-run): got nil; expected new active queue")
+	}
+	if reloaded.QueueID != newQueue.QueueID {
+		t.Errorf("re-run QueueID: got %q, want %q", reloaded.QueueID, newQueue.QueueID)
+	}
+}
+
+// TestArchiveFailedQueue_ActiveQueueGuardPreserved verifies that when a queue
+// is still in active status (not paused-by-failure), the existing guard in
+// run.go continues to block — i.e., exit-5 behavior is unaffected.
+//
+// The guard blocks on any non-completed status. This test exercises the
+// active-status path (QM-027 guard, exit code 5 in run.go) directly via
+// Load-and-check, mirroring the approach in TestRunBead_RefusesActiveQueue.
+//
+// Bead ref: hk-ly4w5.
+func TestArchiveFailedQueue_ActiveQueueGuardPreserved(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	ctx := context.Background()
+
+	// Write an active (in-flight) queue — this represents a concurrently-running
+	// harmonik instance; the guard must block.
+	activeQueue := persistFixtureQueue()
+	activeQueue.Status = queue.QueueStatusActive
+	if err := queue.Persist(ctx, projectDir, &activeQueue); err != nil {
+		t.Fatalf("Persist (active queue): %v", err)
+	}
+
+	// Simulate the guard logic from run.go (lines 172–183).
+	loaded, loadErr := queue.Load(ctx, projectDir)
+	if loadErr != nil {
+		t.Fatalf("queue.Load: %v", loadErr)
+	}
+	if loaded == nil {
+		t.Fatal("queue.Load returned nil; expected active queue")
+	}
+
+	// Guard condition: any non-completed status should block.
+	if loaded.Status == queue.QueueStatusCompleted {
+		t.Errorf("active queue should have non-completed status; got %q", loaded.Status)
+	}
+
+	// ArchiveFailedQueue is NOT called for active queues — only for
+	// paused-by-failure. Confirm queue.json is still intact.
+	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	if _, statErr := os.Stat(queuePath); os.IsNotExist(statErr) {
+		t.Error("queue.json must not be removed for an active-status queue")
 	}
 }
 

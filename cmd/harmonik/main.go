@@ -128,6 +128,21 @@ func run() int {
 	//
 	// Spec ref: specs/process-lifecycle.md §4.4 PL-028 + PL-028c.
 	// Bead ref: hk-eblue.
+
+	// harmonik reconcile [--project DIR] [--target-branch BRANCH]
+	// Cat 3c auto-reconciler: detect and close IN_PROGRESS beads whose
+	// implementation has already merged to the target branch.
+	//
+	// Exit-code contract:
+	//   0  — success (0 or more beads closed)
+	//   1  — argument or adapter error
+	//   2  — at least one bead close failed
+	//
+	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+	if len(os.Args) >= 2 && os.Args[1] == "reconcile" {
+		return runReconcileSubcommand(os.Args[2:])
+	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "queue" {
 		verb := ""
 		if len(os.Args) >= 3 {

@@ -420,6 +420,7 @@ func Start(ctx context.Context, cfg Config) error {
 		// Bead ref: hk-iuaed.4.
 		var beadLedger lifecycle.InFlightBeadLedger
 		var beadResetter lifecycle.BeadResetter
+		var beadCat3cCloser lifecycle.BeadCat3cCloser
 		var intentLogDir string
 		if cfg.BrPath != "" {
 			brAdapter, brAdapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
@@ -431,6 +432,7 @@ func Start(ctx context.Context, cfg Config) error {
 			} else {
 				beadLedger = brAdapter
 				beadResetter = brAdapter
+				beadCat3cCloser = brAdapter // Cat 3c auto-reconciler (hk-lgtq2)
 				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 			}
 		}
@@ -441,8 +443,9 @@ func Start(ctx context.Context, cfg Config) error {
 			projectHash,
 			daemonStartTime,
 			OrphanSweepConfig{
-				BeadLedger:   beadLedger,
-				BeadResetter: beadResetter,
+				BeadLedger:      beadLedger,
+				BeadResetter:    beadResetter,
+				BeadCat3cCloser: beadCat3cCloser,
 				MergeCommitScanner: lifecycle.GitMergeCommitScanner{
 					ProjectDir:   cfg.ProjectDir,
 					TargetBranch: "", // defaults to "main" inside the scanner

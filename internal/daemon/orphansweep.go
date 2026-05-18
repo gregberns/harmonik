@@ -53,6 +53,11 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-iuaed.4.
 	BeadInProgressReset int
 
+	// BeadCat3cClosed is the count of subsumed in_progress beads auto-closed
+	// by the Cat 3c auto-reconciler (hk-lgtq2): beads whose implementation has
+	// already merged to the target branch but were still marked in_progress.
+	BeadCat3cClosed int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -117,6 +122,14 @@ type OrphanSweepConfig struct {
 	// Nil → exclusion (c) is treated as "no merge commit" (the conservative
 	// fallback; a missed Cat 3c condition is re-detected on the next restart).
 	MergeCommitScanner lifecycle.MergeCommitScanner
+
+	// BeadCat3cCloser, when non-nil, enables Cat 3c auto-resolution: when a
+	// subsumed bead is detected (merge commit with Harmonik-Bead-ID present on
+	// target branch but bead still IN_PROGRESS), the sweep closes the bead
+	// instead of skipping it. Nil → exclusion (c) is a skip (old behavior).
+	//
+	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+	BeadCat3cCloser lifecycle.BeadCat3cCloser
 
 	// IntentLogDir is the absolute path of .harmonik/beads-intents/ — read by
 	// the bead-reset sweep to compute exclusion conditions (a) and (b).
@@ -237,11 +250,12 @@ func RunOrphanSweep(
 	// sequencing rationale). Skipped silently when the bead-ledger / resetter
 	// adapter isn't wired (unit-test mode).
 	if cfg.BeadLedger != nil && cfg.BeadResetter != nil {
-		beadResetCount, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
+		sweepResult, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
 			Ledger:        cfg.BeadLedger,
 			Resetter:      cfg.BeadResetter,
 			Provenance:    cfg.BeadProvenance,
 			MergeScanner:  cfg.MergeCommitScanner,
+			Cat3cCloser:   cfg.BeadCat3cCloser,
 			IntentLogDir:  cfg.IntentLogDir,
 			ProjectHash:   projectHash,
 			DaemonStartNS: cfg.DaemonStartNS,
@@ -251,7 +265,8 @@ func RunOrphanSweep(
 		if beadResetErr != nil {
 			errs = append(errs, fmt.Sprintf("bead-reset: %v", beadResetErr))
 		}
-		result.BeadInProgressReset = beadResetCount
+		result.BeadInProgressReset = sweepResult.ResetCount
+		result.BeadCat3cClosed = sweepResult.Cat3cCloseCount
 	}
 
 	result.SweptAt = time.Now()

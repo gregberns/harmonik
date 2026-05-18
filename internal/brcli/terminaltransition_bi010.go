@@ -397,3 +397,38 @@ func (a *Adapter) ResetBead(
 
 	return nil
 }
+
+// SweepCloseBead issues a direct `br close <beadID>` WITHOUT the BI-030
+// intent-log protocol. It is the write surface for the Cat 3c auto-reconciler
+// (hk-lgtq2): closing a subsumed bead that is IN_PROGRESS but whose
+// implementation has already merged to the target branch.
+//
+// Unlike CloseBead, there is no associated in-flight run — no RunID or
+// TransitionID exists — so the BI-030 intent-log protocol (steps 1–6)
+// cannot be applied. Idempotency is provided at the Beads level: a closed
+// bead will not appear in the next startup's `br list --status in_progress`
+// query, so a crash after `br close` succeeds but before the sweep completes
+// simply means the bead is already closed on the next startup.
+//
+// Implements lifecycle.BeadCat3cCloser.
+//
+// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+func (a *Adapter) SweepCloseBead(
+	ctx context.Context,
+	cfg TimeoutConfig,
+	beadID core.BeadID,
+) error {
+	result, err := a.RunWithDBLockedRetry(
+		ctx, cfg, CommandKindWrite,
+		DBLockedRetryMax, DBLockedRetryBase, DBLockedRetryCap,
+		"close", string(beadID),
+	)
+	if err != nil {
+		return fmt.Errorf("brcli.SweepCloseBead: br exec: %w", err)
+	}
+	if result.BrErr != BrOK {
+		return fmt.Errorf("brcli.SweepCloseBead: br close %s failed: %s (exit %d): stderr=%q",
+			beadID, result.BrErr, result.ExitCode, string(result.Stderr))
+	}
+	return nil
+}

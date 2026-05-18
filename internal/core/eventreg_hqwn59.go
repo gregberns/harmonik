@@ -13,6 +13,7 @@ package core
 // Durability classes per §8 table: F = fsync-boundary, O = ordinary, L = lossy.
 //
 // §8.1  Run lifecycle event registrations are in registerRunLifecycle().
+// §8.1a Run lifecycle registrations also include bead_closed and working_tree_refresh_failed.
 // §8.2  Control-point lifecycle event registrations are in registerControlPoints().
 // §8.3  Agent/handler lifecycle event registrations are in registerAgentEvents().
 // §8.4  Budget lifecycle event registrations are in registerBudgetEvents().
@@ -22,7 +23,7 @@ package core
 // §8.8  Bus/observability event registrations are in registerBusEvents().
 // §8.10 Queue lifecycle event registrations are in registerQueueEvents().
 //
-// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78, hk-yslws.
+// Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78, hk-yslws, hk-gjyks.
 
 func init() {
 	registerRunLifecycle()
@@ -38,20 +39,24 @@ func init() {
 	registerHandlerPauseEvents()
 }
 
-// registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors.
+// registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
+// plus the two §4.12 merge-to-main adjacents (bead_closed and working_tree_refresh_failed)
+// that share the run-lifecycle emission sequence per execution-model.md §4.12 EM-052/EM-054.
 //
 // Durability classes per §8.1 table:
-//   - run_started (§8.1.1):             F (fsync-boundary per beads-integration.md §4.3 BI-009)
-//   - run_completed (§8.1.2):           F (terminal-state fsync per BI-010)
-//   - run_failed (§8.1.3):              F (terminal-state fsync per BI-010)
-//   - state_entered (§8.1.4):           O (ordinary — observability stream)
-//   - state_exited (§8.1.5):            O (ordinary — observability stream)
-//   - transition_event (§8.1.6):        F (fsync-boundary per checkpoint write)
-//   - checkpoint_written (§8.1.7):      F (fsync-boundary per checkpoint write)
-//   - outcome_emitted (§8.1.8):         O (ordinary — handler-to-daemon pipe)
-//   - sub_workflow_entered (§8.1.9):    O (ordinary — observability stream)
-//   - sub_workflow_exited (§8.1.10):    O (ordinary — observability stream)
-//   - node_dispatch_requested (§8.1.11): O (ordinary — observability stream)
+//   - run_started (§8.1.1):                    F (fsync-boundary per beads-integration.md §4.3 BI-009)
+//   - run_completed (§8.1.2):                  F (terminal-state fsync per BI-010)
+//   - run_failed (§8.1.3):                     F (terminal-state fsync per BI-010)
+//   - state_entered (§8.1.4):                  O (ordinary — observability stream)
+//   - state_exited (§8.1.5):                   O (ordinary — observability stream)
+//   - transition_event (§8.1.6):               F (fsync-boundary per checkpoint write)
+//   - checkpoint_written (§8.1.7):             F (fsync-boundary per checkpoint write)
+//   - outcome_emitted (§8.1.8):                O (ordinary — handler-to-daemon pipe)
+//   - sub_workflow_entered (§8.1.9):           O (ordinary — observability stream)
+//   - sub_workflow_exited (§8.1.10):           O (ordinary — observability stream)
+//   - node_dispatch_requested (§8.1.11):       O (ordinary — observability stream)
+//   - bead_closed (EM-052 §4.12.6):            F (fsync-boundary — bead closure terminal-state landmark)
+//   - working_tree_refresh_failed (EM-054):    O (ordinary — informational; merge already durable)
 func registerRunLifecycle() {
 	mustRegister("run_started", func() EventPayload { return &RunStartedPayload{} })
 	mustRegister("run_completed", func() EventPayload { return &RunCompletedPayload{} })
@@ -64,6 +69,8 @@ func registerRunLifecycle() {
 	mustRegister("sub_workflow_entered", func() EventPayload { return &SubWorkflowEnteredPayload{} })
 	mustRegister("sub_workflow_exited", func() EventPayload { return &SubWorkflowExitedPayload{} })
 	mustRegister("node_dispatch_requested", func() EventPayload { return &NodeDispatchRequestedPayload{} })
+	mustRegister("bead_closed", func() EventPayload { return &BeadClosedPayload{} })
+	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
 }
 
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.
@@ -99,27 +106,36 @@ func registerControlPoints() {
 // registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors.
 //
 // Durability classes per §8.3 table:
-//   - agent_started (§8.3.2):            O (ordinary — handler lifecycle audit and observability)
-//   - agent_ready (§8.3.1):              O (ordinary — handler lifecycle observability)
-//   - agent_output_chunk (§8.3.3):       L (lossy-tail-ok — per-chunk statistical aggregate)
-//   - agent_failed (§8.3.5):             O (ordinary — handler lifecycle observability)
-//   - agent_rate_limit_status (§8.3.6):  O (ordinary — rate-limit lifecycle observability)
-//   - session_log_location (§8.3.7):     O (ordinary — session-log-pipeline audit)
-//   - skills_provisioned (§8.3.8):       O (ordinary — skill-injection audit and observability)
-//   - handler_capabilities (§8.3.9):     O (ordinary — version-negotiation observability)
-//
-// Note: §8.3.4 (agent_completed), §8.3.10 (agent_warning_silent_hang),
-// §8.3.11 (agent_resumed_after_warning), §8.3.12 (agent_soft_terminating), and
-// §8.3.13 (agent_hard_terminating) are registered by other implementer waves (future waves).
+//   - agent_ready (§8.3.1):                 O (ordinary — handler lifecycle observability)
+//   - agent_started (§8.3.2):               O (ordinary — handler lifecycle audit and observability)
+//   - agent_output_chunk (§8.3.3):          L (lossy-tail-ok — per-chunk statistical aggregate)
+//   - agent_completed (§8.3.4):             O (ordinary — handler lifecycle observability)
+//   - agent_failed (§8.3.5):                O (ordinary — handler lifecycle observability)
+//   - agent_rate_limit_status (§8.3.6):     O (ordinary — rate-limit lifecycle observability)
+//   - session_log_location (§8.3.7):        O (ordinary — session-log-pipeline audit)
+//   - skills_provisioned (§8.3.8):          O (ordinary — skill-injection audit and observability)
+//   - handler_capabilities (§8.3.9):        O (ordinary — version-negotiation observability)
+//   - agent_warning_silent_hang (§8.3.10):  O (ordinary — silent-hang detection)
+//   - agent_resumed_after_warning (§8.3.11): O (ordinary — hang recovery observability)
+//   - agent_soft_terminating (§8.3.12):     O (ordinary — termination lifecycle audit)
+//   - agent_hard_terminating (§8.3.13):     O (ordinary — termination lifecycle audit)
+//   - agent_heartbeat (HC-026a):            O (ordinary — silent-hang timer reset)
+//   - launch_initiated:                     O (ordinary — pre-exec lifecycle observability)
 func registerAgentEvents() {
 	mustRegister("agent_started", func() EventPayload { return &AgentStartedPayload{} })
 	mustRegister("agent_ready", func() EventPayload { return &AgentReadyPayload{} })
 	mustRegister("agent_output_chunk", func() EventPayload { return &AgentOutputChunkPayload{} })
+	mustRegister("agent_completed", func() EventPayload { return &AgentCompletedPayload{} })
 	mustRegister("agent_failed", func() EventPayload { return &AgentFailedPayload{} })
+	mustRegister("agent_heartbeat", func() EventPayload { return &AgentHeartbeatPayload{} })
 	mustRegister("agent_rate_limit_status", func() EventPayload { return &AgentRateLimitStatusPayload{} })
 	mustRegister("session_log_location", func() EventPayload { return &SessionLogLocationPayload{} })
 	mustRegister("skills_provisioned", func() EventPayload { return &SkillsProvisionedPayload{} })
 	mustRegister("handler_capabilities", func() EventPayload { return &HandlerCapabilitiesPayload{} })
+	mustRegister("agent_warning_silent_hang", func() EventPayload { return &AgentWarningSilentHangPayload{} })
+	mustRegister("agent_resumed_after_warning", func() EventPayload { return &AgentResumedAfterWarningPayload{} })
+	mustRegister("agent_soft_terminating", func() EventPayload { return &AgentSoftTerminatingPayload{} })
+	mustRegister("agent_hard_terminating", func() EventPayload { return &AgentHardTerminatingPayload{} })
 	mustRegister("launch_initiated", func() EventPayload { return &LaunchInitiatedPayload{} })
 }
 

@@ -54,6 +54,14 @@ test:  ## go test ./... (no race; quick smoke)
 test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + binaries on PATH)
 	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeSingleMode ./internal/daemon/...
 
+# test-e2e-real-claude-reviewloop: run the real-Claude review-loop E2E smoke test.
+# Requires: claude, tmux, git, br, ntm on PATH; ANTHROPIC_API_KEY or
+# CLAUDE_CODE_OAUTH_TOKEN set; harmonik buildable from source.
+# Budget: 300s timeout (the two-agent cycle may take up to 240s).
+.PHONY: test-e2e-real-claude-reviewloop
+test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requires credentials + binaries on PATH)
+	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeReviewLoopMode ./internal/daemon/...
+
 # ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------

@@ -57,7 +57,11 @@ Phase-1 completion requires ALL of the following observable states — not "the 
 
 6. **Smoke test GREEN.** The Phase-2 dogfood smoke (`harmonik run` dispatching ≥2 beads sequentially, with the second bead's handler forced to rate-limit) produces: first bead DONE, second bead HELD (not FAILED), daemon paused, `handler_paused` event in JSONL, `.harmonik/handler-state.json` present.
 
-Items 1–5 are covered by unit/integration tests in `internal/lifecycle/`. Item 6 is an E2E test. This plan is not done until item 6 is GREEN.
+7. **Scenario-test bead GREEN.** A twin-based end-to-end scenario test verifies that `harmonik run` dispatching a bead that returns `handler_fatal` triggers pause, emits `handler_paused`, and writes `.harmonik/handler-state.json` — confirming the policy goroutine is wired into the composition root. Covered by `hk-6f1uj` (scenario test: HandlerPause policy goroutine wired end-to-end).
+
+8. **Exploratory-test bead GREEN.** An exploratory test exercises the operator-facing CLI surface (`harmonik handler status`, `harmonik handler resume`) against a running daemon, verifying the JSON output schema and that resume actually unpauses dispatch. Covered by `hk-qxtbq` (scenario test: handler-fatal outcome trips dispatcher gate).
+
+Items 1–5 are covered by unit/integration tests in `internal/lifecycle/`. Item 6 is an E2E test. Items 7–8 are scenario/exploratory tests per the `plans/README.md` testing-criteria requirement. This plan is not done until items 6, 7, and 8 are GREEN.
 
 ## Open questions
 - **Per-account vs per-handler-type granularity** (`hk-lhxzc`, post-Phase-1): Phase-1 pauses the whole handler type when any account in the pool rate-limits. If multi-account Claude pools become common, we will need a per-account axis. Deferring until evidence demands it.

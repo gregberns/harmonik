@@ -746,6 +746,40 @@ func ExportedLandTaskBranch(ctx context.Context, repoRoot, mergeWorktreeDir, tas
 	return landTaskBranch(ctx, repoRoot, mergeWorktreeDir, taskBranch, runID, beadID, cfg)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HandlerPausePolicyGoroutine test seams (hk-37zy8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedHandlerPausePolicyConfig is a type alias for HandlerPausePolicyConfig
+// so tests in package daemon_test can reference the type directly.
+//
+// Bead ref: hk-37zy8.
+type ExportedHandlerPausePolicyConfig = HandlerPausePolicyConfig
+
+// ExportedNewHandlerPausePolicyGoroutine exposes NewHandlerPausePolicyGoroutine
+// for tests in package daemon_test.
+//
+// Bead ref: hk-37zy8.
+var ExportedNewHandlerPausePolicyGoroutine = NewHandlerPausePolicyGoroutine
+
+// ExportedPolicyHandleRateLimitStatus invokes the unexported
+// handleRateLimitStatus method on a HandlerPausePolicyGoroutine for tests in
+// package daemon_test.
+//
+// Bead ref: hk-37zy8.
+func ExportedPolicyHandleRateLimitStatus(p *HandlerPausePolicyGoroutine, ctx context.Context, evt core.Event) error {
+	return p.handleRateLimitStatus(ctx, evt)
+}
+
+// ExportedPolicyHandleBudgetExhausted invokes the unexported
+// handleBudgetExhausted method on a HandlerPausePolicyGoroutine for tests in
+// package daemon_test.
+//
+// Bead ref: hk-37zy8.
+func ExportedPolicyHandleBudgetExhausted(p *HandlerPausePolicyGoroutine, ctx context.Context, evt core.Event) error {
+	return p.handleBudgetExhausted(ctx, evt)
+}
+
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.
 //

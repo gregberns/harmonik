@@ -110,3 +110,20 @@ func (r *RunRegistry) Snapshot() []*RunHandle {
 	r.mu.RUnlock()
 	return out
 }
+
+// snapshotWithKeys returns a stable map copy of all currently registered
+// (runID → *RunHandle) entries.  This is the key-preserving variant of
+// Snapshot, used internally by HandlerPausePolicyGoroutine to build the
+// in-flight freeze-list (hk-37zy8).
+//
+// The map is a shallow copy: keys are value-copied (RunID is a UUIDv7 value
+// type), and RunHandle pointers are copied (not the structs they point to).
+func (r *RunRegistry) snapshotWithKeys() map[core.RunID]*RunHandle {
+	r.mu.RLock()
+	out := make(map[core.RunID]*RunHandle, len(r.handles))
+	for id, h := range r.handles {
+		out[id] = h
+	}
+	r.mu.RUnlock()
+	return out
+}

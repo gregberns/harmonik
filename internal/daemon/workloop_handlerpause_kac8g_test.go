@@ -36,7 +36,7 @@ func hpcNewController(t *testing.T) *daemon.HandlerPauseController {
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("hpcNewController: bus.Seal: %v", err)
 	}
-	return daemon.NewHandlerPauseController(bus)
+	return daemon.NewHandlerPauseController(bus, nil)
 }
 
 // hpcPause pauses AgentTypeClaudeCode on ctrl with a minimal cause.

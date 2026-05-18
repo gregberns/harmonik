@@ -175,13 +175,17 @@ type HandlerPauseController struct {
 // bus MUST be non-nil.  It is used to emit handler_paused and handler_resumed
 // events on state transitions.
 //
-// PERSISTENCE NOTE (hk-m0k0a): when persistence is wired, the constructor
-// will accept an additional PersistFunc parameter (or a functional option).
-// Until then the field is nil and persistence is skipped.
-func NewHandlerPauseController(bus eventbus.EventBus) *HandlerPauseController {
+// persistFn, when non-nil, is called inside mu on every state mutation (Pause
+// and Resume) to persist the full snapshot to .harmonik/handler-state.json
+// before bus events are emitted.  Pass nil to disable persistence (unit-test
+// mode or when no ProjectDir is configured).
+//
+// Bead ref: hk-m0k0a.
+func NewHandlerPauseController(bus eventbus.EventBus, persistFn func(ctx context.Context, snapshots []HandlerPauseStatusSnapshot) error) *HandlerPauseController {
 	return &HandlerPauseController{
-		handlers: make(map[core.AgentType]*handlerEntry),
-		bus:      bus,
+		handlers:  make(map[core.AgentType]*handlerEntry),
+		bus:       bus,
+		persistFn: persistFn,
 	}
 }
 
@@ -246,14 +250,16 @@ func (c *HandlerPauseController) Pause(
 
 	inFlightCount := len(entry.inFlightAtPause)
 
-	// PERSISTENCE NOTE (hk-m0k0a): persist here, under the lock, before
-	// emitting the bus event.  Example seam:
-	//   if c.persistFn != nil {
-	//       if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
-	//           c.mu.Unlock()
-	//           return fmt.Errorf("HandlerPauseController.Pause: persist: %w", persistErr)
-	//       }
-	//   }
+	// Persist under the lock before emitting the bus event (hk-m0k0a).
+	// Rationale: writing inside the lock is the simplest safe option; the
+	// controller already owns the lock and disk write latency (~ms) is
+	// acceptable at the low call frequency of operator-driven pauses.
+	if c.persistFn != nil {
+		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("HandlerPauseController.Pause: persist: %w", persistErr)
+		}
+	}
 
 	c.mu.Unlock()
 
@@ -261,10 +267,10 @@ func (c *HandlerPauseController) Pause(
 	// for fsync-boundary events; holding the lock across I/O would serialize
 	// all pause/resume/check calls unnecessarily).
 	payload := core.HandlerPausedPayload{
-		AgentType:    agentType,
-		Cause:        cause,
+		AgentType:     agentType,
+		Cause:         cause,
 		InFlightCount: inFlightCount,
-		PausedEpoch:  epoch,
+		PausedEpoch:   epoch,
 	}
 	payloadJSON, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
@@ -322,14 +328,13 @@ func (c *HandlerPauseController) Resume(
 	// pausedEpoch is NOT reset — it is monotonically increasing to support the
 	// dispatcher's dedup contract (queue_item_held_for_handler_pause §8.11.3).
 
-	// PERSISTENCE NOTE (hk-m0k0a): persist here, under the lock, before
-	// emitting the bus event.  Example seam:
-	//   if c.persistFn != nil {
-	//       if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
-	//           c.mu.Unlock()
-	//           return fmt.Errorf("HandlerPauseController.Resume: persist: %w", persistErr)
-	//       }
-	//   }
+	// Persist under the lock before emitting the bus event (hk-m0k0a).
+	if c.persistFn != nil {
+		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("HandlerPauseController.Resume: persist: %w", persistErr)
+		}
+	}
 
 	c.mu.Unlock()
 
@@ -463,6 +468,17 @@ func (c *HandlerPauseController) snapshotEntryLocked(at core.AgentType, entry *h
 		copy(snap.InFlightAtPause, entry.inFlightAtPause)
 	}
 	return snap
+}
+
+// snapshotAllLocked returns snapshots for all known handler types.
+// MUST be called while mu is held.
+// Used by persistFn to capture the full state for serialisation (hk-m0k0a).
+func (c *HandlerPauseController) snapshotAllLocked() []HandlerPauseStatusSnapshot {
+	out := make([]HandlerPauseStatusSnapshot, 0, len(c.handlers))
+	for at, entry := range c.handlers {
+		out = append(out, c.snapshotEntryLocked(at, entry))
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

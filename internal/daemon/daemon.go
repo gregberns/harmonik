@@ -557,6 +557,34 @@ func Start(ctx context.Context, cfg Config) error {
 		// submitted.
 	}
 
+	// PL-005 step 8a (hk-m0k0a): construct HandlerPauseController and load
+	// persisted handler state from .harmonik/handler-state.json.
+	//
+	// The controller is constructed with a persistFn that atomically writes
+	// handler-state.json on every Pause/Resume call.  LoadHandlerPauseState
+	// seeds the controller with any paused handlers that survived the last
+	// daemon run, ensuring "paused status MUST persist across restarts" per
+	// handler-pause-and-resume.md §5.3 (QM-055 analog).
+	//
+	// A forward-incompatible schema_version causes a fatal return (exit code 2).
+	// File absent → all handlers default live (no-op).
+	//
+	// Spec ref: docs/components/internal/handler-pause-and-resume.md §5.
+	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+	// Bead ref: hk-m0k0a.
+	var handlerPauseCtrl *HandlerPauseController
+	if cfg.ProjectDir != "" {
+		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
+		persistFn := MakeHandlerPausePersistFn(harmonikDir)
+		handlerPauseCtrl = NewHandlerPauseController(bus, persistFn)
+		if loadErr := LoadHandlerPauseState(context.Background(), harmonikDir, handlerPauseCtrl); loadErr != nil {
+			return fmt.Errorf("daemon.Start: handler-state.json load: %w", loadErr)
+		}
+	} else {
+		// Unit-test mode: no ProjectDir, no persistence.
+		handlerPauseCtrl = NewHandlerPauseController(bus, nil)
+	}
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -632,6 +660,10 @@ func Start(ctx context.Context, cfg Config) error {
 		// all-success AND paused-by-failure outcomes (hk-8jh26 Fix 1).
 		// The zero value (nil) preserves normal daemon behaviour.
 		deps.cancelOnQueueExit = cfg.CancelOnQueueExit
+
+		// Inject the HandlerPauseController so the work loop can gate dispatch
+		// on handler pause state (hk-m0k0a).
+		deps.handlerPauseController = handlerPauseCtrl
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

@@ -163,7 +163,7 @@ type WorkLoopDepsParams struct {
 	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
 	// is disabled: all items are dispatched regardless of handler pause state.
 	//
-	// Bead ref: hk-kac8g.
+	// Bead ref: hk-kac8g, hk-m0k0a.
 	HandlerPauseController *HandlerPauseController
 }
 

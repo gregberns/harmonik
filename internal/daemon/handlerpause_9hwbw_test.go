@@ -47,7 +47,7 @@ func newTestController(t *testing.T) *daemon.HandlerPauseController {
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("bus.Seal: %v", err)
 	}
-	return daemon.NewHandlerPauseController(bus)
+	return daemon.NewHandlerPauseController(bus, nil)
 }
 
 // ---------------------------------------------------------------------------

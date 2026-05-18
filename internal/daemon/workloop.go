@@ -261,7 +261,7 @@ type workLoopDeps struct {
 	// queue_item_held_for_handler_pause events (§8.11.3).
 	//
 	// Spec ref: docs/components/internal/handler-pause-and-resume.md §4.
-	// Bead ref: hk-kac8g.
+	// Bead ref: hk-kac8g, hk-m0k0a.
 	handlerPauseController *HandlerPauseController
 
 	// heldEventDedup tracks (beadID + ":" + epoch) pairs for which a
@@ -271,8 +271,9 @@ type workLoopDeps struct {
 	//
 	// Keyed by the string "<beadID>:<pausedEpoch>" (e.g. "hk-abc:2").
 	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
+	// Map stays bounded.  Access is single-threaded.
 	//
-	// Bead ref: hk-kac8g.
+	// Bead ref: hk-kac8g, hk-m0k0a.
 	heldEventDedup map[string]struct{}
 }
 

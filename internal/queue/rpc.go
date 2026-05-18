@@ -32,6 +32,32 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// QueueSetter — minimal interface so HandlerAdapter can update the daemon's
+// in-memory QueueStore without importing internal/daemon (cycle prevention).
+// ---------------------------------------------------------------------------
+
+// QueueSetter is the write side of the daemon's QueueStore. HandlerAdapter
+// calls SetQueue after every persist so the running workloop sees the updated
+// queue without requiring a daemon restart.
+//
+// daemon.QueueStore satisfies this interface.
+//
+// Spec ref: specs/queue-model.md §9.1 QM-060 (single-writer).
+// Bead ref: hk-4ukkq.
+type QueueSetter interface {
+	SetQueue(q *Queue)
+}
+
+// EventEmitter is the minimal bus interface required by HandlerAdapter to emit
+// queue lifecycle events after persistence. It matches handlercontract.EventEmitter
+// so that the daemon can pass the bus directly without an adapter.
+//
+// Bead ref: hk-peucr.
+type EventEmitter interface {
+	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+}
+
+// ---------------------------------------------------------------------------
 // RPCError — typed JSON-RPC error for queue operations
 // ---------------------------------------------------------------------------
 
@@ -441,30 +467,91 @@ func HandleQueueDryRun(
 // Create one via NewHandlerAdapter and pass it to daemon.RunSocketListener as
 // the qh variadic argument.
 //
+// After HandleQueueSubmit and HandleQueueAppend persist to disk, the adapter
+// calls qs.SetQueue so the running workloop picks up the updated queue without
+// requiring a restart (hk-4ukkq / hk-lzs8r). When qs is nil the SetQueue call
+// is skipped (unit-test / legacy-caller compat).
+//
 // Spec ref: specs/queue-model.md §2.10; specs/process-lifecycle.md §4.4 PL-003a.
-// Bead ref: hk-nomxl.
+// Bead ref: hk-nomxl, hk-4ukkq, hk-lzs8r, hk-peucr.
 type HandlerAdapter struct {
 	ledger     BeadLedger
 	projectDir string
+	qs         QueueSetter
+	bus        EventEmitter
 }
 
 // NewHandlerAdapter returns a *HandlerAdapter wired to ledger and projectDir.
-func NewHandlerAdapter(ledger BeadLedger, projectDir string) *HandlerAdapter {
-	return &HandlerAdapter{ledger: ledger, projectDir: projectDir}
+//
+// qs is optional: when non-nil, the adapter calls qs.SetQueue after each
+// successful persist so the daemon workloop sees the new queue immediately
+// (hk-4ukkq / hk-lzs8r). Pass nil to skip the in-memory update (unit tests
+// that do not instantiate a QueueStore).
+//
+// bus is optional: when non-nil, the adapter emits queue lifecycle events
+// (queue_submitted, queue_appended, queue_item_deferred_for_ledger_dep) after
+// each persist (hk-peucr). Pass nil to suppress events.
+func NewHandlerAdapter(ledger BeadLedger, projectDir string, qs QueueSetter, bus EventEmitter) *HandlerAdapter {
+	return &HandlerAdapter{ledger: ledger, projectDir: projectDir, qs: qs, bus: bus}
 }
 
 // HandleQueueSubmit decodes the raw request, calls HandleQueueSubmit, and
 // encodes the response. Satisfies daemon.QueueHandler.
+//
+// After a successful persist, the adapter calls a.qs.SetQueue so the running
+// workloop picks up the new queue without a restart (hk-4ukkq). Then emits
+// queue_submitted + any queue_item_deferred_for_ledger_dep events (hk-peucr).
 func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueSubmitRequest
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)}}
 	}
-	resp, _, _, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir)
+	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+
+	// Thread the persisted queue into the running workloop (hk-4ukkq).
+	if a.qs != nil && q != nil {
+		a.qs.SetQueue(q)
+	}
+
+	// Emit queue_submitted event (hk-peucr). The queue has already been
+	// persisted inside HandleQueueSubmit so QM-063 (persist-before-emit) is
+	// satisfied.
+	if a.bus != nil && q != nil {
+		totalBeads := 0
+		for _, g := range q.Groups {
+			totalBeads += len(g.Items)
+		}
+		payload := core.QueueSubmittedPayload{
+			QueueID:            q.QueueID,
+			SubmittedAt:        q.SubmittedAt.Format(time.RFC3339),
+			GroupCount:         len(q.Groups),
+			TotalBeadCount:     totalBeads,
+			QueueSchemaVersion: q.SchemaVersion,
+		}
+		if raw, err := json.Marshal(payload); err == nil {
+			_ = a.bus.Emit(ctx, core.EventTypeQueueSubmitted, raw)
+		}
+
+		// Emit queue_item_deferred_for_ledger_dep for QM-025 deferred items.
+		detectedAt := q.SubmittedAt.Format(time.RFC3339)
+		for _, pair := range ledgerDepPairs {
+			deferPayload := core.QueueItemDeferredForLedgerDepPayload{
+				QueueID:       q.QueueID,
+				GroupIndex:    pair.GroupIndex,
+				BeadID:        string(pair.BeadID),
+				BlockerBeadID: string(pair.BlockerBeadID),
+				DetectedAt:    detectedAt,
+			}
+			if raw, err := json.Marshal(deferPayload); err == nil {
+				_ = a.bus.Emit(ctx, core.EventTypeQueueItemDeferredForLedgerDep, raw)
+			}
+		}
+	}
+
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
@@ -475,16 +562,45 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 
 // HandleQueueAppend decodes the raw request, calls HandleQueueAppend, and
 // encodes the response. Satisfies daemon.QueueHandler.
+//
+// After AppendItems mutates the in-memory queue, the adapter persists it and
+// calls a.qs.SetQueue so the running workloop sees the appended items without
+// a restart (hk-lzs8r). Then emits queue_appended and any
+// queue_item_deferred_for_ledger_dep events returned by AppendItems (hk-peucr).
 func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueAppendRequest
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-append request: %v", err)}}
 	}
-	resp, _, _, rpcErr := HandleQueueAppend(ctx, req, a.ledger, a.projectDir)
+	resp, mutated, events, rpcErr := HandleQueueAppend(ctx, req, a.ledger, a.projectDir)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+
+	// Persist the mutated queue (QM-063: persist before emit) and update the
+	// in-memory QueueStore so the workloop sees the appended items (hk-lzs8r).
+	if mutated != nil {
+		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
+			return nil, &RPCError{Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)}}
+		}
+		if a.qs != nil {
+			a.qs.SetQueue(mutated)
+		}
+	}
+
+	// Emit append events returned by AppendItems (hk-peucr).
+	if a.bus != nil {
+		for _, evt := range events {
+			raw, err := json.Marshal(evt.Payload)
+			if err != nil {
+				raw = evt.Payload
+			}
+			_ = a.bus.Emit(ctx, core.EventType(evt.Type), raw)
+		}
+	}
+
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",

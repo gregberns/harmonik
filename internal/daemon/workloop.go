@@ -556,6 +556,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						continue
 					}
 					lq.SetQueue(liveQ)
+					// Persist the dispatched-stamp so queue.json reflects the
+					// in-memory state (hk-xsutm). Non-fatal: RunID placeholder
+					// will be patched shortly; the important invariant is that
+					// the item is marked dispatched before any other path reads it.
+					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist dispatch-stamp queueID=%s: %v\n",
+							liveQ.QueueID, persistErr)
+					}
 					lq.Done()
 				}
 
@@ -628,6 +636,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 				lq.SetQueue(liveQ)
+				// Persist the RunID patch (hk-xsutm).
+				if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: Persist RunID-patch queueID=%s: %v\n",
+						liveQ.QueueID, persistErr)
+				}
 			}
 			lq.Done()
 		}
@@ -710,6 +723,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 					}
 					lq.SetQueue(liveQ)
+					// Persist the claim-failure revert (hk-xsutm).
+					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist claim-revert queueID=%s: %v\n",
+							liveQ.QueueID, persistErr)
+					}
 				}
 				lq.Done()
 			}
@@ -1422,10 +1440,10 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 	}
 
 	lq := deps.queueStore.LockForMutation()
-	defer lq.Done()
 
 	q := lq.Queue()
 	if q == nil || q.QueueID != queueID {
+		lq.Done()
 		return
 	}
 
@@ -1438,6 +1456,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		}
 	}
 	if groupPos < 0 || itemIdx >= len(q.Groups[groupPos].Items) {
+		lq.Done()
 		return
 	}
 
@@ -1454,6 +1473,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup queueID=%s groupIndex=%d: %v\n",
 			queueID, groupIndex, advErr)
 		lq.SetQueue(q)
+		lq.Done()
 		return
 	}
 
@@ -1482,12 +1502,45 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		}
 	}
 
-	lq.SetQueue(q)
+	// Determine whether the queue has completed: all groups reached
+	// complete-success (hk-xsutm). This is the sole condition that triggers
+	// CompleteAndUnlink (QM-003). A paused-by-failure queue retains queue.json
+	// for operator-driven resume or reset; only the happy-path full-success case
+	// removes it.
+	allSucceeded := len(q.Groups) > 0
+	for i := range q.Groups {
+		if q.Groups[i].Status != queue.GroupStatusCompleteSuccess {
+			allSucceeded = false
+			break
+		}
+	}
 
-	// Emit the queued events after releasing the lock is not possible here
-	// since we deferred Done. Emit before Done releases the lock: event
-	// ordering is maintained because no other mutation can race (we hold the
-	// write lock). The bus.Emit calls are non-blocking per EV-002a.
+	if allSucceeded {
+		// All groups complete-success → CompleteAndUnlink (QM-003 / QM-053).
+		// This internally sets q.Status = completed and persists before
+		// unlinking queue.json (hk-xsutm).
+		if err := queue.CompleteAndUnlink(ctx, deps.projectDir, q); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: CompleteAndUnlink queueID=%s: %v\n",
+				queueID, err)
+			// Fall through: still clear in-memory state so the loop isn't stuck.
+		}
+		lq.Done()
+		// Release the write lock before ClearQueue (which acquires its own lock).
+		deps.queueStore.ClearQueue()
+	} else {
+		// Intermediate state or paused-by-failure: persist the updated queue.json
+		// so on-disk state matches in-memory after each item completion (hk-xsutm).
+		if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: Persist queueID=%s after item completion: %v\n",
+				queueID, err)
+			// Non-fatal: in-memory state is still updated; file will resync on next persist.
+		}
+		lq.SetQueue(q)
+		lq.Done()
+	}
+
+	// Emit the queued events (after lock release above). Bus.Emit is non-blocking
+	// per EV-002a so ordering relative to the lock release is acceptable.
 	for _, evt := range events {
 		raw, err := json.Marshal(evt.Payload)
 		if err != nil {

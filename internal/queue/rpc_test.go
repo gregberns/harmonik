@@ -396,7 +396,7 @@ func TestHandlerAdapter_QueueStatus_RoundTrip(t *testing.T) {
 
 	projectDir := rpcFixtureTempProjectDir(t)
 	ledger := rpcFixtureOpenLedger()
-	adapter := queue.NewHandlerAdapter(ledger, projectDir)
+	adapter := queue.NewHandlerAdapter(ledger, projectDir, nil, nil)
 
 	raw, rpcErr := adapter.HandleQueueStatus(t.Context())
 	if rpcErr != nil {

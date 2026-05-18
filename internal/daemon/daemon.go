@@ -522,11 +522,14 @@ func Start(ctx context.Context, cfg Config) error {
 
 		// Construct the QueueHandler adapter. Nil when BrPath is unset (unit-test
 		// mode); RunSocketListener accepts nil and returns -32099 for queue-* ops.
+		// qs and bus are threaded in so the adapter can update the in-memory
+		// QueueStore and emit events after each persist (hk-4ukkq, hk-lzs8r,
+		// hk-peucr).
 		var queueHandler QueueHandler
 		if cfg.BrPath != "" {
 			brAdapterForHandler, brHandlerErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
 			if brHandlerErr == nil {
-				queueHandler = queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir)
+				queueHandler = queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
 			}
 		}
 

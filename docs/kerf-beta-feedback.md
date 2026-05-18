@@ -462,3 +462,43 @@ After fixes, `kerf triage --ack` advanced the baseline past 70-bead external dri
 
 - Repetitive triage suggestions (task brief flagged this as a possible issue). After the filter fixes + `--ack`, triage output was tight and non-repetitive. May have been resolved by an intermediate kerf release, or may surface again with different drift shapes.
 
+
+---
+
+## 2026-05-18 — Queue realignment pass 2
+
+Second realignment pass after `kerf next` drifted out of alignment with the user's stated objective ("define queue → hand to harmonik → merge → identify follow-up"). Three problems surfaced: keystone bead `hk-icecw` invisible, 9 handler-pause P1 beads unattached, `phase-3-dot` filter matching zero beads again.
+
+### New works created
+
+- **`handler-pause`** — `bead_filter: label=handler-pause` — matches 15 beads (9 P1 + 6 P2/P3).
+- **`phase-2-completion`** — `bead_filter` with 3 `--bead-filter-add` clauses: `label=phase2-dogfood-friction`, `label=harmonik-cli`, `label=phase-1-acceptance`. Matches 15 beads (7 open / 8 closed). hk-icecw now surfaces at top-3 of `kerf next`.
+
+### Kerf filter OR-semantics
+
+`kerf work edit --bead-filter-add` can be **repeated**, and repeated clauses are evaluated as **OR** (verified by counting matches across the 3 separate labels above and confirming the union). The triage output renders this as `filter: any=[label=A, label=B, label=C]` — explicit and correct. **No upstream gap on OR-support.** The earlier hypothesis in this doc ("kerf filter syntax may lack OR") is resolved: OR is supported via repeated clauses; AND-semantics across heterogeneous keys would be the next question (not exercised here).
+
+### phase-3-dot filter — not a regression
+
+Earlier note in this doc said the phase-3-dot filter "was correct earlier, regressed." Re-checked today: the filter is `label=codename:phase-3-dot` (intent-correct, same value as `claude-hook-bridge` uses). The reason it matches zero is that **no beads with that label exist yet** — phase-3-dot is still in `change-design` status and its spec-amend / task beads haven't been spawned. The "regression" was a misdiagnosis; the filter has not changed. Leaving the filter as-is is correct: when phase-3-dot reaches `tasks` and emits its bead corpus, the filter will start matching automatically.
+
+Surface-improvement candidate (already covered by hk-43ate): `kerf next`'s `clean: bead_filter matches zero beads` line should distinguish "filter intent-correct, beads not yet created" from "filter is wrong" — they have different remedies.
+
+### Final `kerf next` top-10 (post-fix, 2026-05-18 evening)
+
+1. `hk-sc3o4` — Orphan-sweep: stale_intents_observed=4 but bead_in_progress_reset=0 (phase-2-completion)
+2. `hk-rp48p` — Daemon claim-path ignores priority order (phase-2-completion)
+3. `hk-icecw` — Add `harmonik run <bead-id>` subcommand (phase-2-completion) ← **keystone restored**
+4. `hk-7uasg` — Real-Claude end-to-end review-loop integration test (phase-2-completion)
+5. `hk-lgtq2` — Ship Cat 3a auto-reconciler (phase-2-completion)
+6. `hk-ajchp` — Daemon should idle/exit after target bead completes (phase-2-completion)
+7. `hk-pcgms` — Relay-failure scenario: daemon socket missing → bridge_dial_failed (phase-2-completion)
+8. `hk-ifqnj` — Handler-pause: event-model.md §8 events (handler-pause)
+9. `hk-siuo2` — Handler-pause: QueueValidationReason 'handler_paused' (handler-pause)
+10. `hk-39ryh` — Handler-pause: 'harmonik handler status' CLI (handler-pause)
+
+The dispatch queue now reflects the operational objective: orphan-sweep + claim-priority bugs, the keystone `harmonik run` CLI, real-Claude integration, then the handler-pause subsystem.
+
+### Multi-match warnings (info, not problem)
+
+After realignment, 2 beads (hk-7uasg, hk-pcgms) match both `claude-hook-bridge` and `phase-2-completion` — expected, since `claude-hook-bridge` work is sealed (`status: ready`) but its `bead_filter` still actively claims its label-set. `kerf pin` is the documented remedy. Question for upstream: should `status: ready` works stop claiming new beads in triage by default? Captured as a comment, not a bead — low-priority observation.

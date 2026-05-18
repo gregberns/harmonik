@@ -6,19 +6,21 @@ package main
 //  1. Parse --project flag and positional bead-id argument.
 //  2. Resolve br binary via PATH.
 //  3. Validate the bead exists and is in a claimable state (open/ready).
-//  4. Construct a single-item wave queue and persist it to .harmonik/queue.json.
-//  5. Start the daemon (same composition root as the normal run path) with a
-//     context that is cancelled when the queue drains (cancelOnQueueDrain).
-//  6. Return 0 on success (bead closed), non-zero on error.
+//  4. Guard against an existing active queue (QM-027).
+//  5. Construct a single-item wave queue and persist it to .harmonik/queue.json.
+//  6. Start the daemon (same composition root as the normal run path) with a
+//     context that is cancelled when the queue exits (drain or failure).
+//  7. Return 0 on success (bead closed), 1 on bead failure, non-zero on error.
 //
 // Exit-code contract:
 //
 //	0  — bead reached SUCCESS terminal (daemon exited cleanly after queue drain)
-//	1  — argument/validation/daemon error
+//	1  — bead reached FAIL terminal (queue paused-by-failure) or argument/validation/daemon error
+//	2  — unexpected queue state after daemon exit (diagnostic)
 //	5  — pidfile locked (another harmonik instance is running)
 //
-// Spec ref: specs/queue-model.md §2.3, §3.1 QM-001.
-// Bead ref: hk-icecw.
+// Spec ref: specs/queue-model.md §2.3, §3.1 QM-001, §QM-027.
+// Bead ref: hk-icecw, hk-8jh26.
 
 import (
 	"context"
@@ -165,10 +167,29 @@ func runBeadSubcommand(subArgs []string) int {
 	}
 
 	persistCtx := context.Background()
+
+	// QM-027: refuse if an active (non-completed) queue already exists.
+	// Silently overwriting an in-flight queue would corrupt its state.
+	existingQueue, loadErr := queue.Load(persistCtx, projectDir)
+	if loadErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot check existing queue: %v\n", loadErr)
+		return 1
+	}
+	if existingQueue != nil && existingQueue.Status != queue.QueueStatusCompleted {
+		fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
+		fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
+		fmt.Fprintln(os.Stderr, "  use 'harmonik queue status' to inspect, or remove .harmonik/queue.json to reset")
+		return 1
+	}
+
 	if persistErr := queue.Persist(persistCtx, projectDir, q); persistErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot persist queue.json: %v\n", persistErr)
 		return 1
 	}
+
+	// qs is created here so that run.go can inspect final queue status after
+	// daemon.Start returns (Fix 2: exit code reflects bead outcome, hk-8jh26).
+	qs := daemon.NewQueueStore()
 
 	// --- Resolve daemon binary path and tmux session ---
 
@@ -214,14 +235,14 @@ func runBeadSubcommand(subArgs []string) int {
 
 	jsonlLogPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 
-	// --- Build a context that cancels on SIGINT/SIGTERM or after queue drains ---
+	// --- Build a context that cancels on SIGINT/SIGTERM or after queue exits ---
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// cancelOnDrain cancels ctx when the queue drains (exit-on-empty, hk-icecw).
-	// We wrap the signal context with a new cancel so that the drain path can
-	// trigger context expiry independently from the signal path.
+	// cancelOnExit cancels ctx when the queue reaches any terminal state
+	// (all-success OR paused-by-failure), ensuring the process exits promptly
+	// on both outcome paths (hk-8jh26 Fix 1).
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
@@ -235,7 +256,9 @@ func runBeadSubcommand(subArgs []string) int {
 		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
 		DaemonBinaryPath:   daemonBinaryPath,
 		BinaryCommitHash:   commitHash,
-		CancelOnQueueDrain: cancelRun,
+		CancelOnQueueDrain: cancelRun, // success path (hk-icecw)
+		CancelOnQueueExit:  cancelRun, // failure path (hk-8jh26 Fix 1)
+		QueueStore:         qs,        // retained for post-Start status inspection (hk-8jh26 Fix 2)
 	}
 
 	if startErr := daemon.Start(runCtx, cfg); startErr != nil {
@@ -246,5 +269,22 @@ func runBeadSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	return 0
+	// Fix 2: map final queue status to exit code (hk-8jh26).
+	// After daemon.Start returns, qs reflects the terminal queue state:
+	//   nil           → CompleteAndUnlink ran → all-success → exit 0
+	//   paused-by-failure → bead failed → exit 1
+	//   other non-nil → unexpected state → exit 2 with diagnostic
+	finalQueue := qs.Queue()
+	if finalQueue == nil {
+		// Queue was cleared via CompleteAndUnlink → all-success.
+		return 0
+	}
+	if finalQueue.Status == queue.QueueStatusPausedByFailure {
+		fmt.Fprintf(os.Stderr, "harmonik run: bead %s failed (queue paused-by-failure)\n", beadID)
+		return 1
+	}
+	// Unexpected terminal state — surface for debugging.
+	fmt.Fprintf(os.Stderr, "harmonik run: unexpected queue state after exit: %s (queue_id=%s)\n",
+		finalQueue.Status, finalQueue.QueueID)
+	return 2
 }

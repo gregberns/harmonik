@@ -239,6 +239,16 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-icecw.
 	cancelOnQueueDrain context.CancelFunc
+
+	// cancelOnQueueExit, when non-nil, is called once when the queue reaches
+	// any terminal state: all-success (after ClearQueue) OR paused-by-failure
+	// (after Persist). This ensures harmonik run <bead-id> exits on failure
+	// instead of hanging indefinitely waiting for more work (hk-8jh26 Fix 1).
+	//
+	// The zero value (nil) preserves normal daemon behaviour.
+	//
+	// Bead ref: hk-8jh26.
+	cancelOnQueueExit context.CancelFunc
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -1545,6 +1555,11 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		if deps.cancelOnQueueDrain != nil {
 			deps.cancelOnQueueDrain()
 		}
+		// hk-8jh26 Fix 1: if a queue-exit cancel is registered, fire it on the
+		// success path too (covers the case where only cancelOnQueueExit is set).
+		if deps.cancelOnQueueExit != nil {
+			deps.cancelOnQueueExit()
+		}
 	} else {
 		// Intermediate state or paused-by-failure: persist the updated queue.json
 		// so on-disk state matches in-memory after each item completion (hk-xsutm).
@@ -1555,6 +1570,12 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		}
 		lq.SetQueue(q)
 		lq.Done()
+		// hk-8jh26 Fix 1: if the queue is now paused-by-failure and an exit-cancel
+		// is registered (harmonik run path), cancel the daemon context so the work
+		// loop exits promptly instead of idle-spinning waiting for more work.
+		if q.Status == queue.QueueStatusPausedByFailure && deps.cancelOnQueueExit != nil {
+			deps.cancelOnQueueExit()
+		}
 	}
 
 	// Emit the queued events (after lock release above). Bus.Emit is non-blocking

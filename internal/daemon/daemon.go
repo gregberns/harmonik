@@ -219,6 +219,28 @@ type Config struct {
 	//
 	// Bead ref: hk-icecw.
 	CancelOnQueueDrain context.CancelFunc
+
+	// CancelOnQueueExit, when non-nil, is called once when the queue reaches
+	// a terminal state — either all-success (after ClearQueue) OR
+	// paused-by-failure (after Persist).  Together with CancelOnQueueDrain
+	// this ensures harmonik run <bead-id> exits promptly on both outcome
+	// paths instead of idle-spinning waiting for more work.
+	//
+	// The zero value (nil) is safe: the daemon continues running after the
+	// queue exits, which is the normal daemon behaviour.
+	//
+	// Bead ref: hk-8jh26.
+	CancelOnQueueExit context.CancelFunc
+
+	// QueueStore, when non-nil, is used directly instead of creating a fresh
+	// QueueStore inside daemon.Start.  The caller retains the pointer and can
+	// inspect queue status after Start returns (Fix 2 of hk-8jh26).
+	//
+	// The zero value (nil) is safe: daemon.Start creates its own QueueStore
+	// as before.
+	//
+	// Bead ref: hk-8jh26.
+	QueueStore *QueueStore
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -478,8 +500,14 @@ func Start(ctx context.Context, cfg Config) error {
 	// The same instance is threaded into the work loop (queue-pull dispatch) and
 	// populated via LoadQueueAtStartup (PL-005 step 8a) below.
 	//
+	// When cfg.QueueStore is non-nil the caller supplies their own store
+	// (hk-8jh26 Fix 2: run.go retains the pointer to inspect status post-Start).
+	//
 	// Spec ref: specs/queue-model.md §9.1 QM-060.
-	qs := newQueueStore()
+	qs := cfg.QueueStore
+	if qs == nil {
+		qs = newQueueStore()
+	}
 
 	// PL-005 step 8a (QM-002 / QM-002a): load queue.json at startup BEFORE the
 	// socket listener or work loop start.  Only runs when both ProjectDir and
@@ -579,6 +607,11 @@ func Start(ctx context.Context, cfg Config) error {
 		// Inject the drain-cancel so harmonik run <bead-id> exits after the queue
 		// completes (hk-icecw). The zero value (nil) preserves normal daemon behaviour.
 		deps.cancelOnQueueDrain = cfg.CancelOnQueueDrain
+
+		// Inject the exit-cancel so harmonik run <bead-id> exits on both
+		// all-success AND paused-by-failure outcomes (hk-8jh26 Fix 1).
+		// The zero value (nil) preserves normal daemon behaviour.
+		deps.cancelOnQueueExit = cfg.CancelOnQueueExit
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

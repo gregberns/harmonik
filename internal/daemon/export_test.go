@@ -150,6 +150,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-icecw.
 	CancelOnQueueDrain context.CancelFunc
+
+	// CancelOnQueueExit, when non-nil, is called once when the queue reaches
+	// any terminal state (all-success or paused-by-failure).  Mirrors
+	// daemon.Config.CancelOnQueueExit; used by hk-8jh26 tests to verify
+	// exit-on-failure behaviour.
+	//
+	// Bead ref: hk-8jh26.
+	CancelOnQueueExit context.CancelFunc
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -241,6 +249,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		projectCfg:          p.ProjectCfg,
 		queueStore:          p.QueueStore,
 		cancelOnQueueDrain:  p.CancelOnQueueDrain,
+		cancelOnQueueExit:   p.CancelOnQueueExit,
 	}
 }
 

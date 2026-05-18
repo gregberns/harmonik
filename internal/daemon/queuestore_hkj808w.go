@@ -62,6 +62,15 @@ func newQueueStore() *QueueStore {
 	return &QueueStore{}
 }
 
+// NewQueueStore is the exported constructor for callers outside the daemon
+// package (e.g. cmd/harmonik/run.go) that need to retain a QueueStore
+// reference to inspect status after daemon.Start returns (hk-8jh26 Fix 2).
+//
+// Bead ref: hk-8jh26.
+func NewQueueStore() *QueueStore {
+	return newQueueStore()
+}
+
 // SetQueue installs q as the active queue under the write lock, replacing
 // any prior value. q MUST be non-nil; use ClearQueue to remove the queue.
 //

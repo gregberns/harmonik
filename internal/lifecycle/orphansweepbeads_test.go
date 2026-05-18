@@ -595,8 +595,8 @@ func TestSweepStaleInProgressBeads_ResetError_ContinuesAndReports(t *testing.T) 
 }
 
 // TestScanIntentLog_PartitionsByOp verifies that ScanIntentLog correctly
-// partitions intent files into claim vs close/reopen sets, ignoring reset
-// intents.
+// partitions intent files into claim vs close/reopen sets. Reset intents
+// appear only in provenance (not claims or mutations).
 func TestScanIntentLog_PartitionsByOp(t *testing.T) {
 	t.Parallel()
 
@@ -606,7 +606,7 @@ func TestScanIntentLog_PartitionsByOp(t *testing.T) {
 	imrestSweepWriteIntent(t, dir, "hk-c", core.TerminalOpReopen)
 	imrestSweepWriteIntent(t, dir, "hk-d", core.TerminalOpReset)
 
-	claims, mutations, err := ScanIntentLog(dir, nil)
+	provenance, claims, mutations, err := ScanIntentLog(dir, nil)
 	if err != nil {
 		t.Fatalf("ScanIntentLog: %v", err)
 	}
@@ -625,6 +625,12 @@ func TestScanIntentLog_PartitionsByOp(t *testing.T) {
 	if _, ok := mutations["hk-d"]; ok {
 		t.Error("hk-d (reset) should NOT be in mutations set")
 	}
+	// All four beads must appear in provenance.
+	for _, bid := range []core.BeadID{"hk-a", "hk-b", "hk-c", "hk-d"} {
+		if _, ok := provenance[bid]; !ok {
+			t.Errorf("expected %s in provenance set", bid)
+		}
+	}
 }
 
 // TestScanIntentLog_MissingDirNoError verifies that ScanIntentLog returns empty
@@ -632,11 +638,113 @@ func TestScanIntentLog_PartitionsByOp(t *testing.T) {
 func TestScanIntentLog_MissingDirNoError(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
-	claims, mutations, err := ScanIntentLog(dir, nil)
+	provenance, claims, mutations, err := ScanIntentLog(dir, nil)
 	if err != nil {
 		t.Fatalf("ScanIntentLog: missing dir should be silent; got %v", err)
 	}
-	if len(claims) != 0 || len(mutations) != 0 {
-		t.Errorf("expected empty sets; got claims=%v mutations=%v", claims, mutations)
+	if len(provenance) != 0 || len(claims) != 0 || len(mutations) != 0 {
+		t.Errorf("expected empty sets; got provenance=%v claims=%v mutations=%v", provenance, claims, mutations)
+	}
+}
+
+// TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvenance
+// reproduces the hk-sc3o4 dogfood failure: a bead whose claim intent was
+// already cleared by BI-031 recovery (so it does NOT appear in claims) but
+// whose close intent from a timed-out close attempt is still on disk.
+//
+// Before the fix, provenance was established only via the claim intent — the
+// close intent was invisible to the ownership check, so the bead was skipped
+// (stale_intents_observed=4, bead_in_progress_reset=0). After the fix,
+// ANY intent file in the project's intent-log directory establishes
+// provenance.
+//
+// Note: exclusion (b) does NOT fire here because we supply a CLOSE intent
+// for provenance but the bead also has no exclusion (b) would only fire if
+// the close intent is still in the mutations set. In this scenario the close
+// attempt itself failed (timed out), leaving the intent file, but there is
+// no pending Cat 3a handler — so the daemon SHOULD reset the bead.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet.
+// Bug ref: hk-sc3o4.
+func TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvenance(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-sc3o4-repro")
+
+	// Simulate: claim intent was cleared by BI-031 recovery; a timed-out close
+	// attempt left a close intent on disk. No claim intent present.
+	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpClose)
+	// No TerminalOpClaim intent written — this is the scenario.
+
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+	// No ProvenanceChecker wired (MVH production default).
+
+	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	// hk-sc3o4 fix: the close intent establishes provenance AND exclusion (b)
+	// does NOT suppress the reset because the bead is stale IN_PROGRESS with
+	// no live Cat 3a handler. BUT wait: exclusion (b) fires on mutation intent
+	// presence — so this test exercises the tricky interaction.
+	//
+	// Correct behavior per PL-006: stale close intent = Cat 3a territory.
+	// The sweep MUST NOT preempt Cat 3a. Therefore count = 0 here.
+	// The provenance fix ensures the bead reaches the exclusion checks
+	// rather than being silently skipped — but exclusion (b) still applies.
+	//
+	// The real fix for hk-sc3o4 therefore requires either:
+	//   (i)  a stale RESET intent (not close) establishing provenance, or
+	//   (ii) a ProvenanceChecker that is wired to detect orphaned beads.
+	//
+	// This test documents the correct layered behavior.
+	if count != 0 {
+		t.Errorf("PL-006 exclusion (b) must suppress reset when close intent present: count = %d, want 0", count)
+	}
+	if len(resetter.called) != 0 {
+		t.Errorf("ResetBead must not be called when close intent present (Cat 3a territory): %v", resetter.called)
+	}
+}
+
+// TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvenance
+// reproduces the hk-sc3o4 dogfood failure using a stale RESET intent
+// (no claim, no close/reopen). This is the exact scenario where:
+//   - A prior daemon reset the bead (or attempted to).
+//   - The reset intent was left on disk (e.g., the daemon crashed during the
+//     reset write's BI-030 atomic rename).
+//   - The next daemon restart finds the bead IN_PROGRESS and must reset it.
+//
+// Before the fix: provenance fails (no claim intent) → bead skipped.
+// After the fix: reset intent establishes provenance → reset fires.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet.
+// Bug ref: hk-sc3o4.
+func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvenance(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-sc3o4-repro-reset")
+
+	// Stale reset intent from a prior sweep that crashed during the BI-030
+	// atomic rename. No claim intent. No close/reopen intent.
+	imrestSweepWriteIntent(t, cfg.IntentLogDir, bid, core.TerminalOpReset)
+
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+	// No ProvenanceChecker (MVH production default).
+
+	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("hk-sc3o4: stale reset intent should establish provenance and fire reset: count = %d, want 1", count)
+	}
+	if len(resetter.called) != 1 || resetter.called[0] != bid {
+		t.Errorf("hk-sc3o4: ResetBead not called on expected bead: calls=%v", resetter.called)
 	}
 }

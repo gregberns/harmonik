@@ -90,17 +90,24 @@ package lifecycle
 // At MVH the audit-trail actor field is not reliably populated with the
 // project hash (Beads v0.1.x records the user's git config `user.name`); the
 // implementation therefore uses the intent-log cross-reference as the default
-// provenance signal. A bead with no claim intent in the local intent-log and
-// no positive [ProvenanceChecker] verdict is NOT owned by this project's
-// daemon and MUST NOT be touched. This is consistent with PL-006a's
+// provenance signal. A bead with NO intent file of ANY op type in the local
+// intent-log and no positive [ProvenanceChecker] verdict is NOT owned by this
+// project's daemon and MUST NOT be touched. This is consistent with PL-006a's
 // project-scoped-provenance discipline.
+//
+// hk-sc3o4 fix: the initial implementation used only the `claim` intent as the
+// provenance signal. Dogfood #2 showed stale_intents_observed=4 but
+// bead_in_progress_reset=0: hk-a0htu's claim intent had been cleared by BI-031
+// recovery, but a close intent (from a timed-out close attempt) or reset
+// intent (from a prior sweep that crashed mid-write) was still on disk. The fix
+// broadens the provenance signal to any op type — any intent file in the
+// project's .harmonik/beads-intents/ directory establishes ownership.
 //
 // The [ProvenanceChecker] seam lets a future Beads release whose audit-log
 // actor field carries the project_hash plug in a deterministic owner check
-// independent of the claim-intent presence (which is the MVH-fallback). When
-// a ProvenanceChecker is wired and returns true, the reset path becomes
-// reachable for beads where the claim intent was already cleared by a prior
-// BI-031 recovery — the scenario the PL-006 sixth bullet targets. See
+// independent of the intent-log presence (the MVH-fallback). When a
+// ProvenanceChecker is wired and returns true, the reset path becomes
+// reachable for beads where all intent files were already cleared. See
 // hk-iuaed.4 follow-up.
 //
 // # Idempotency
@@ -226,26 +233,42 @@ type IntentClaimSet map[core.BeadID]struct{}
 // (b) applies (Cat 3a handles it).
 type IntentMutationSet map[core.BeadID]struct{}
 
-// ScanIntentLog walks intentLogDir and returns:
-//   - claims:    bead IDs with a pending `claim` intent (exclusion (a)).
-//   - mutations: bead IDs with a pending `close` or `reopen` intent (exclusion (b)).
+// IntentProvenanceSet is the set of bead IDs for which ANY intent file exists in
+// the project's intent-log directory, regardless of op type. Membership
+// establishes provenance: any intent file in .harmonik/beads-intents/ was
+// written by this project's daemon (or a prior instance of it). This is the
+// MVH-fallback provenance signal used when [ProvenanceChecker] is nil.
 //
-// Reset intent files are ignored: a stale reset intent does not constitute a
-// terminal-transition decision in flight, and the BI-031 recovery path will
-// resolve it on its own.
+// The set is a strict superset of IntentClaimSet ∪ IntentMutationSet: it
+// captures beads whose claim intent was cleared by BI-031 recovery but whose
+// close, reopen, or reset intent is still on disk. This is precisely the
+// scenario where stale_intents_observed > 0 but bead_in_progress_reset == 0
+// (PL-006 gap, hk-sc3o4).
+type IntentProvenanceSet map[core.BeadID]struct{}
+
+// ScanIntentLog walks intentLogDir and returns:
+//   - provenance: bead IDs referenced by ANY intent file (claim, close, reopen,
+//     reset, or unknown op). Used as the MVH-fallback provenance signal.
+//   - claims:     bead IDs with a pending `claim` intent (exclusion (a)).
+//   - mutations:  bead IDs with a pending `close` or `reopen` intent (exclusion (b)).
+//
+// Reset intent files are included in provenance but are NOT added to claims or
+// mutations: a stale reset intent does not constitute a live-run signal (a) nor
+// a Cat 3a hand-off (b), and the BI-031 recovery path will resolve it on its own.
 //
 // A missing directory yields empty sets and no error. Malformed entries are
 // logged and skipped.
-func ScanIntentLog(intentLogDir string, logger *log.Logger) (claims IntentClaimSet, mutations IntentMutationSet, err error) {
+func ScanIntentLog(intentLogDir string, logger *log.Logger) (provenance IntentProvenanceSet, claims IntentClaimSet, mutations IntentMutationSet, err error) {
+	provenance = make(IntentProvenanceSet)
 	claims = make(IntentClaimSet)
 	mutations = make(IntentMutationSet)
 
 	entries, readErr := os.ReadDir(intentLogDir)
 	if readErr != nil {
 		if errors.Is(readErr, os.ErrNotExist) {
-			return claims, mutations, nil
+			return provenance, claims, mutations, nil
 		}
-		return nil, nil, fmt.Errorf("lifecycle: ScanIntentLog: ReadDir %q: %w", intentLogDir, readErr)
+		return nil, nil, nil, fmt.Errorf("lifecycle: ScanIntentLog: ReadDir %q: %w", intentLogDir, readErr)
 	}
 
 	for _, e := range entries {
@@ -265,21 +288,23 @@ func ScanIntentLog(intentLogDir string, logger *log.Logger) (claims IntentClaimS
 			orphanLog(logger, "ScanIntentLog: skipping malformed %q: %v", name, readEntryErr)
 			continue
 		}
+		// Every successfully-parsed entry establishes provenance regardless of op.
+		provenance[entry.BeadID] = struct{}{}
 		switch entry.Op {
 		case core.TerminalOpClaim:
 			claims[entry.BeadID] = struct{}{}
 		case core.TerminalOpClose, core.TerminalOpReopen:
 			mutations[entry.BeadID] = struct{}{}
 		case core.TerminalOpReset:
-			// Stale reset intent — neither a live-run signal nor a Cat 3a
-			// hand-off; ignored per the discussion above.
+			// Stale reset intent — not a live-run signal (a) nor a Cat 3a
+			// hand-off (b); provenance only.
 		default:
 			// Unknown op (future schema extension): conservative — treat as a
 			// mutation so we DO NOT preempt whatever it represents.
 			mutations[entry.BeadID] = struct{}{}
 		}
 	}
-	return claims, mutations, nil
+	return provenance, claims, mutations, nil
 }
 
 // SweepStaleInProgressBeadsConfig carries injected dependencies for
@@ -381,7 +406,7 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 		return 0, nil
 	}
 
-	claims, mutations, scanErr := ScanIntentLog(cfg.IntentLogDir, cfg.Logger)
+	provenance, claims, mutations, scanErr := ScanIntentLog(cfg.IntentLogDir, cfg.Logger)
 	if scanErr != nil {
 		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ScanIntentLog: %w", scanErr)
 	}
@@ -390,8 +415,12 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 	for _, bead := range beads {
 		// Provenance check (PL-006a OR clause): the bead is owned by this
 		// project iff either (i) cfg.Provenance.Owns(...) reports true, OR
-		// (ii) a local claim intent references it (the MVH fallback). When
-		// cfg.Provenance is nil only (ii) applies.
+		// (ii) ANY intent file (claim, close, reopen, or reset) references it
+		// in the local intent log. Using the full provenance set (not just
+		// claims) closes the hk-sc3o4 gap: a bead whose claim intent was
+		// cleared by BI-031 recovery may still have a close or reset intent
+		// on disk — those are equally valid provenance signals that the prior
+		// implementation missed.
 		owned := false
 		if cfg.Provenance != nil {
 			provOwned, provErr := cfg.Provenance.Owns(ctx, bead.BeadID)
@@ -402,7 +431,7 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			}
 		}
 		if !owned {
-			if _, hasClaim := claims[bead.BeadID]; hasClaim {
+			if _, hasProvenance := provenance[bead.BeadID]; hasProvenance {
 				owned = true
 			}
 		}

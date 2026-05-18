@@ -158,6 +158,21 @@ type BeadResetter interface {
 	) error
 }
 
+// BeadCat3cCloser is the write surface for Cat 3c auto-resolution: closing a
+// bead that is IN_PROGRESS but whose implementation has already merged to the
+// target branch ("subsumed-bead pattern"). Satisfied by *brcli.Adapter in
+// production (Adapter.SweepCloseBead) and by a fake in tests.
+//
+// Unlike BeadResetter, SweepCloseBead does NOT use the BI-030 intent-log
+// protocol — there is no associated in-flight run, so no RunID/TransitionID
+// exists. Idempotency is provided at the Beads level: a closed bead will not
+// appear in the next startup's `br list --status in_progress` query.
+//
+// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+type BeadCat3cCloser interface {
+	SweepCloseBead(ctx context.Context, cfg brcli.TimeoutConfig, beadID core.BeadID) error
+}
+
 // ProvenanceChecker reports whether a given bead is owned by this project's
 // daemon per PL-006a — independent of the claim-intent presence used as the
 // MVH-fallback provenance signal. Production callers MAY leave this nil; the
@@ -352,12 +367,29 @@ type SweepStaleInProgressBeadsConfig struct {
 	// REQUIRED (> 0).
 	DaemonStartNS int64
 
+	// Cat3cCloser, when non-nil, enables Cat 3c auto-resolution: when a merged
+	// commit bearing Harmonik-Bead-ID is detected for an in_progress bead
+	// (exclusion c), the sweep CLOSES the bead via SweepCloseBead instead of
+	// skipping it. When nil the sweep skips the bead (old behavior — safe but
+	// leaves the bead permanently in_progress until operator intervention).
+	//
+	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
+	Cat3cCloser BeadCat3cCloser
+
 	// BrTimeoutCfg is the BI-025c timeout configuration forwarded to ResetBead.
 	// Zero value is acceptable (defaults apply).
 	BrTimeoutCfg brcli.TimeoutConfig
 
 	// Logger receives diagnostic messages. Nil → silent.
 	Logger *log.Logger
+}
+
+// SweepResult reports the outcome of a single SweepStaleInProgressBeads call.
+type SweepResult struct {
+	// ResetCount is the number of beads successfully reset (in_progress → open).
+	ResetCount int
+	// Cat3cCloseCount is the number of subsumed beads auto-closed (hk-lgtq2 Cat 3c).
+	Cat3cCloseCount int
 }
 
 // SweepStaleInProgressBeads enumerates beads in coarse status `in_progress`
@@ -381,37 +413,38 @@ type SweepStaleInProgressBeadsConfig struct {
 //
 // Spec ref: specs/process-lifecycle.md §4.5 PL-006 sixth bullet;
 // specs/beads-integration.md §4.4 BI-010d; §4.10 BI-030.
-func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBeadsConfig) (resetCount int, err error) {
+func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBeadsConfig) (result SweepResult, err error) {
 	if cfg.Ledger == nil {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Ledger is nil")
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Ledger is nil")
 	}
 	if cfg.Resetter == nil {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Resetter is nil")
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.Resetter is nil")
 	}
 	if cfg.IntentLogDir == "" {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.IntentLogDir is empty")
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.IntentLogDir is empty")
 	}
 	if cfg.ProjectHash == "" {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.ProjectHash is empty")
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.ProjectHash is empty")
 	}
 	if cfg.DaemonStartNS <= 0 {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.DaemonStartNS must be > 0")
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: cfg.DaemonStartNS must be > 0")
 	}
 
 	beads, listErr := cfg.Ledger.ListInFlightBeads(ctx)
 	if listErr != nil {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ListInFlightBeads: %w", listErr)
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ListInFlightBeads: %w", listErr)
 	}
 	if len(beads) == 0 {
-		return 0, nil
+		return SweepResult{}, nil
 	}
 
 	provenance, claims, mutations, scanErr := ScanIntentLog(cfg.IntentLogDir, cfg.Logger)
 	if scanErr != nil {
-		return 0, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ScanIntentLog: %w", scanErr)
+		return SweepResult{}, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: ScanIntentLog: %w", scanErr)
 	}
 
 	var lastResetErr error
+	var lastCat3cErr error
 	for _, bead := range beads {
 		// Provenance check (PL-006a OR clause): the bead is owned by this
 		// project iff either (i) cfg.Provenance.Owns(...) reports true, OR
@@ -468,7 +501,18 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			if mergeErr != nil {
 				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s merge-commit scan error (proceeding to reset): %v", bead.BeadID, mergeErr)
 			} else if merged {
-				orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has Harmonik-Bead-ID merge commit on target branch; exclusion (c) — skip reset", bead.BeadID)
+				if cfg.Cat3cCloser != nil {
+					// Cat 3c auto-resolution (hk-lgtq2): close the subsumed bead.
+					orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s subsumed — Harmonik-Bead-ID merge commit detected; Cat 3c auto-close", bead.BeadID)
+					if closeErr := cfg.Cat3cCloser.SweepCloseBead(ctx, cfg.BrTimeoutCfg, bead.BeadID); closeErr != nil {
+						orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s Cat 3c close failed: %v", bead.BeadID, closeErr)
+						lastCat3cErr = closeErr
+					} else {
+						result.Cat3cCloseCount++
+					}
+				} else {
+					orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has Harmonik-Bead-ID merge commit on target branch; exclusion (c) — skip reset (Cat3cCloser not wired)", bead.BeadID)
+				}
 				continue
 			}
 		}
@@ -487,11 +531,17 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			lastResetErr = resetErr
 			continue
 		}
-		resetCount++
+		result.ResetCount++
 	}
 
-	if lastResetErr != nil {
-		return resetCount, fmt.Errorf("lifecycle: SweepStaleInProgressBeads: at least one reset failed (last: %w)", lastResetErr)
+	var combinedErr error
+	switch {
+	case lastResetErr != nil && lastCat3cErr != nil:
+		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: reset error: %w; cat3c error: %v", lastResetErr, lastCat3cErr)
+	case lastResetErr != nil:
+		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: at least one reset failed (last: %w)", lastResetErr)
+	case lastCat3cErr != nil:
+		combinedErr = fmt.Errorf("lifecycle: SweepStaleInProgressBeads: at least one Cat 3c close failed (last: %w)", lastCat3cErr)
 	}
-	return resetCount, nil
+	return result, combinedErr
 }

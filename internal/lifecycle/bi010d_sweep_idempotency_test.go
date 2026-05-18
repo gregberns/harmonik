@@ -139,12 +139,12 @@ func TestSweepStaleInProgressBeads_Idempotency_SecondSweepZeroResets(t *testing.
 	ctx := context.Background()
 
 	// First sweep: one bead in in_progress → one reset.
-	count1, err := SweepStaleInProgressBeads(ctx, cfg)
+	result1, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first sweep: unexpected error: %v", err)
 	}
-	if count1 != 1 {
-		t.Errorf("first sweep: resetCount = %d, want 1", count1)
+	if result1.ResetCount != 1 {
+		t.Errorf("first sweep: resetCount = %d, want 1", result1.ResetCount)
 	}
 	if len(resetter.called) != 1 || resetter.called[0] != bid {
 		t.Errorf("first sweep: ResetBead calls = %v, want [%s]", resetter.called, bid)
@@ -152,14 +152,14 @@ func TestSweepStaleInProgressBeads_Idempotency_SecondSweepZeroResets(t *testing.
 
 	// Second sweep: ledger now returns empty (bead is open); zero resets.
 	beforeLen := len(resetter.called)
-	count2, err := SweepStaleInProgressBeads(ctx, cfg)
+	result2, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second sweep: unexpected error: %v", err)
 	}
-	if count2 != 0 {
+	if result2.ResetCount != 0 {
 		t.Errorf("BI-010d idempotency: second sweep resetCount = %d, want 0 "+
 			"(first sweep already transitioned bead to open; no in_progress beads remain)",
-			count2,
+			result2.ResetCount,
 		)
 	}
 	if len(resetter.called) != beforeLen {
@@ -191,22 +191,22 @@ func TestSweepStaleInProgressBeads_Idempotency_MultiBeads_SecondSweepZeroResets(
 	ctx := context.Background()
 
 	// First sweep: two beads → two resets.
-	count1, err := SweepStaleInProgressBeads(ctx, cfg)
+	result1, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first sweep: unexpected error: %v", err)
 	}
-	if count1 != 2 {
-		t.Errorf("first sweep: resetCount = %d, want 2", count1)
+	if result1.ResetCount != 2 {
+		t.Errorf("first sweep: resetCount = %d, want 2", result1.ResetCount)
 	}
 
 	// Second sweep: both beads are open; zero resets.
 	beforeLen := len(resetter.called)
-	count2, err := SweepStaleInProgressBeads(ctx, cfg)
+	result2, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second sweep: unexpected error: %v", err)
 	}
-	if count2 != 0 {
-		t.Errorf("BI-010d idempotency (multi-bead): second sweep resetCount = %d, want 0", count2)
+	if result2.ResetCount != 0 {
+		t.Errorf("BI-010d idempotency (multi-bead): second sweep resetCount = %d, want 0", result2.ResetCount)
 	}
 	if len(resetter.called) != beforeLen {
 		t.Errorf("BI-010d idempotency (multi-bead): second sweep issued %d additional calls, want 0",
@@ -229,20 +229,20 @@ func TestSweepStaleInProgressBeads_Idempotency_EmptyInitialSet_AlwaysZero(t *tes
 
 	ctx := context.Background()
 
-	count1, err := SweepStaleInProgressBeads(ctx, cfg)
+	result1, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first sweep: %v", err)
 	}
-	if count1 != 0 {
-		t.Errorf("first sweep (empty): count = %d, want 0", count1)
+	if result1.ResetCount != 0 {
+		t.Errorf("first sweep (empty): count = %d, want 0", result1.ResetCount)
 	}
 
-	count2, err := SweepStaleInProgressBeads(ctx, cfg)
+	result2, err := SweepStaleInProgressBeads(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second sweep: %v", err)
 	}
-	if count2 != 0 {
-		t.Errorf("second sweep (empty): count = %d, want 0", count2)
+	if result2.ResetCount != 0 {
+		t.Errorf("second sweep (empty): count = %d, want 0", result2.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("idempotency empty: ResetBead called %d times, want 0", len(resetter.called))

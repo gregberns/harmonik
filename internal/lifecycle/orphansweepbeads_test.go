@@ -169,12 +169,12 @@ func TestSweepStaleInProgressBeads_NoBeads(t *testing.T) {
 	cfg.Ledger = &imrestSweepFakeLedger{}
 	cfg.Resetter = &imrestSweepFakeResetter{}
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 sixth bullet: count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 sixth bullet: count = %d, want 0", result.ResetCount)
 	}
 }
 
@@ -189,12 +189,12 @@ func TestSweepStaleInProgressBeads_ProvenanceSkipsNonOwnedBead(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006a provenance: count = %d, want 0 (no local claim intent)", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006a provenance: count = %d, want 0 (no local claim intent)", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006a provenance: ResetBead called on non-owned bead: %v", resetter.called)
@@ -215,12 +215,12 @@ func TestSweepStaleInProgressBeads_ExclusionA_LiveClaimIntent(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 exclusion (a): count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion (a): count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006 exclusion (a): ResetBead called despite claim intent: %v", resetter.called)
@@ -254,12 +254,12 @@ func TestSweepStaleInProgressBeads_ExclusionB_PendingCloseIntent(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 exclusion (b): count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion (b): count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006 exclusion (b): ResetBead called despite close intent: %v", resetter.called)
@@ -295,12 +295,12 @@ func TestSweepStaleInProgressBeads_ExclusionC_LayeredWithA(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 exclusion layering: count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion layering: count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006 exclusion layering: ResetBead called: %v", resetter.called)
@@ -322,12 +322,12 @@ func TestSweepStaleInProgressBeads_NoClaimIntent_NotOwned(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006a provenance: count = %d, want 0 (no claim intent → not owned)", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006a provenance: count = %d, want 0 (no claim intent → not owned)", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006a provenance: ResetBead called on non-owned bead")
@@ -443,12 +443,12 @@ func TestSweepStaleInProgressBeads_ResetFires_WhenProvenanceCheckerEstablishesOw
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("PL-006 sixth bullet reset path: count = %d, want 1", count)
+	if result.ResetCount != 1 {
+		t.Errorf("PL-006 sixth bullet reset path: count = %d, want 1", result.ResetCount)
 	}
 	if len(resetter.called) != 1 || resetter.called[0] != bid {
 		t.Errorf("PL-006 sixth bullet reset path: ResetBead called=%v, want [%s]", resetter.called, bid)
@@ -468,12 +468,12 @@ func TestSweepStaleInProgressBeads_ProvenanceChecker_FalseSkipsReset(t *testing.
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006a provenance: count = %d, want 0 (Provenance.Owns=false, no claim intent)", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006a provenance: count = %d, want 0 (Provenance.Owns=false, no claim intent)", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006a provenance: ResetBead called on non-owned bead: %v", resetter.called)
@@ -495,12 +495,12 @@ func TestSweepStaleInProgressBeads_ResetFires_RespectsExclusionB(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 exclusion (b) over provenance: count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion (b) over provenance: count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006 exclusion (b) over provenance: ResetBead called despite close intent: %v", resetter.called)
@@ -522,12 +522,12 @@ func TestSweepStaleInProgressBeads_ResetFires_RespectsExclusionC(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 0 {
-		t.Errorf("PL-006 exclusion (c) over provenance: count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion (c) over provenance: count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("PL-006 exclusion (c) over provenance: ResetBead called despite merge commit: %v", resetter.called)
@@ -551,12 +551,12 @@ func TestSweepStaleInProgressBeads_ResetFires_MultipleBeads(t *testing.T) {
 	resetter := &imrestSweepFakeResetter{}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("PL-006 sixth bullet reset path: count = %d, want 2", count)
+	if result.ResetCount != 2 {
+		t.Errorf("PL-006 sixth bullet reset path: count = %d, want 2", result.ResetCount)
 	}
 	if len(resetter.called) != 2 {
 		t.Errorf("PL-006 sixth bullet reset path: ResetBead call count = %d, want 2; calls=%v", len(resetter.called), resetter.called)
@@ -582,15 +582,15 @@ func TestSweepStaleInProgressBeads_ResetError_ContinuesAndReports(t *testing.T) 
 	resetter := &imrestSweepFakeResetter{errOn: map[core.BeadID]error{bidA: sentinel}}
 	cfg.Resetter = resetter
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err == nil {
 		t.Fatal("expected wrapped error from failing reset; got nil")
 	}
 	if !errors.Is(err, sentinel) {
 		t.Errorf("expected sentinel %v wrapped in returned error; got %v", sentinel, err)
 	}
-	if count != 1 {
-		t.Errorf("count = %d, want 1 (bidB succeeded)", count)
+	if result.ResetCount != 1 {
+		t.Errorf("count = %d, want 1 (bidB succeeded)", result.ResetCount)
 	}
 }
 
@@ -682,7 +682,7 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvena
 	cfg.Resetter = resetter
 	// No ProvenanceChecker wired (MVH production default).
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
@@ -701,8 +701,8 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleCloseIntentEstablishesProvena
 	//   (ii) a ProvenanceChecker that is wired to detect orphaned beads.
 	//
 	// This test documents the correct layered behavior.
-	if count != 0 {
-		t.Errorf("PL-006 exclusion (b) must suppress reset when close intent present: count = %d, want 0", count)
+	if result.ResetCount != 0 {
+		t.Errorf("PL-006 exclusion (b) must suppress reset when close intent present: count = %d, want 0", result.ResetCount)
 	}
 	if len(resetter.called) != 0 {
 		t.Errorf("ResetBead must not be called when close intent present (Cat 3a territory): %v", resetter.called)
@@ -737,12 +737,12 @@ func TestSweepStaleInProgressBeads_ResetFires_StaleResetIntentEstablishesProvena
 	cfg.Resetter = resetter
 	// No ProvenanceChecker (MVH production default).
 
-	count, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("hk-sc3o4: stale reset intent should establish provenance and fire reset: count = %d, want 1", count)
+	if result.ResetCount != 1 {
+		t.Errorf("hk-sc3o4: stale reset intent should establish provenance and fire reset: count = %d, want 1", result.ResetCount)
 	}
 	if len(resetter.called) != 1 || resetter.called[0] != bid {
 		t.Errorf("hk-sc3o4: ResetBead not called on expected bead: calls=%v", resetter.called)

@@ -451,6 +451,162 @@ func TestCHB021_UnknownScenarioExitsOne(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// E2E test 3: relay-failure (dial-failed) scenario (hk-pcgms)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestCHB021_E2E_RelayFailure_DialFailed wires handler.NewHandler + handler.Launch
+// with the harmonik-twin-claude binary (scenario=dial-failed) and asserts that:
+//
+//   - The Watcher observes agent_failed as the terminal progress-stream event.
+//   - No agent_completed event is emitted (CHB-020: exactly one terminal event).
+//
+// This exercises the relay-failure path specified in specs/claude-hook-bridge.md
+// §10 "A relay-can't-dial scenario": daemon socket missing → relay emits
+// bridge_dial_failed → handler Wait-return emits agent_failed.
+//
+// Spec: specs/claude-hook-bridge.md §8, §10; CHB-013, CHB-015, CHB-020.
+// Cite: bead hk-pcgms (relay-failure scenario: daemon socket missing →
+// bridge_dial_failed).
+func TestCHB021_E2E_RelayFailure_DialFailed(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+	h, pub := chbE2EFixtureHandler(t)
+
+	spec := handler.LaunchSpec{
+		Binary:  binPath,
+		Args:    []string{"--scenario", "dial-failed"},
+		Env:     []string{},
+		WorkDir: t.TempDir(),
+		Role:    "implementer",
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	sess, watcher, err := h.Launch(ctx, spec)
+	if err != nil {
+		t.Fatalf("handler.Launch: %v", err)
+	}
+
+	// Wait for the watcher to drain all output.
+	select {
+	case <-watcher.Done():
+	case <-ctx.Done():
+		t.Fatalf("context cancelled before watcher finished: %v", ctx.Err())
+	}
+
+	if watcherErr := watcher.Err(); watcherErr != nil {
+		t.Errorf("watcher.Err(): expected nil (clean twin exit), got %v", watcherErr)
+	}
+
+	if err := sess.Wait(ctx); err != nil {
+		t.Errorf("Session.Wait: %v", err)
+	}
+
+	got := pub.EventTypes()
+	if len(got) == 0 {
+		t.Fatal("publisher received no events; twin binary produced no output")
+	}
+
+	// CHB-020: agent_failed MUST be the terminal progress-stream event.
+	lastProgressType := ""
+	for _, et := range got {
+		if isKnownProgressType(et) {
+			lastProgressType = et
+		}
+	}
+	if lastProgressType != "agent_failed" {
+		t.Errorf("relay-failure (E2E): last progress-stream event = %q, want agent_failed (CHB-020 terminal-event obligation)", lastProgressType)
+	}
+
+	// CHB-020 + CHB-INV-002: no agent_completed must be emitted on the failure path.
+	for _, et := range got {
+		if et == "agent_completed" {
+			t.Errorf("relay-failure (E2E): agent_completed observed but must not appear when bridge_dial_failed")
+		}
+	}
+}
+
+// TestCHB021_TwinParity_RelayFailure_DialFailed verifies that the dial-failed
+// scenario emits the correct NDJSON sequence including agent_failed with
+// reason="bridge_dial_failed" and error_category="transient" per CHB §8.
+//
+// Wire-level companion to TestCHB021_E2E_RelayFailure_DialFailed: inspects the
+// raw NDJSON payload fields rather than the emitter's collected type list.
+//
+// Spec: specs/claude-hook-bridge.md §8 (bridge_dial_failed, ErrTransient),
+// §10; CHB-013, CHB-015, CHB-020.
+// Cite: bead hk-pcgms.
+func TestCHB021_TwinParity_RelayFailure_DialFailed(t *testing.T) {
+	t.Parallel()
+
+	binPath := chbE2EFixtureBuildBinary(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "--scenario", "dial-failed") //nolint:gosec // binPath from build
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = []string{}
+	cmd.Dir = t.TempDir()
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("twin binary exited with error: %v", err)
+	}
+
+	// Parse NDJSON and find the agent_failed message.
+	agentFailedPayload := chbE2EFixtureParseAgentFailedPayload(t, &stdout)
+	if agentFailedPayload == nil {
+		t.Fatal("relay-failure (twin): no agent_failed line found in twin NDJSON output")
+	}
+
+	// CHB §8: bridge_dial_failed must be the reason.
+	reason, _ := agentFailedPayload["reason"].(string)
+	if reason != "bridge_dial_failed" {
+		t.Errorf("relay-failure (twin): agent_failed.reason = %q, want %q (CHB §8 bridge_dial_failed)", reason, "bridge_dial_failed")
+	}
+
+	// CHB §8: bridge_dial_failed maps to ErrTransient.
+	errCat, _ := agentFailedPayload["error_category"].(string)
+	if errCat != "transient" {
+		t.Errorf("relay-failure (twin): agent_failed.error_category = %q, want %q (CHB §8 ErrTransient)", errCat, "transient")
+	}
+}
+
+// chbE2EFixtureParseAgentFailedPayload scans the NDJSON output for an
+// agent_failed line and returns its fields as a generic map.  The twin emits
+// agent_failed as a flat NDJSON object (fields at the top level, no nested
+// "payload" key).  Returns nil if no agent_failed line is found.
+func chbE2EFixtureParseAgentFailedPayload(t *testing.T, buf *bytes.Buffer) map[string]interface{} {
+	t.Helper()
+	scanner := bufio.NewScanner(buf)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal(line, &obj); err != nil {
+			t.Errorf("chbE2EFixtureParseAgentFailedPayload: unmarshal line %q: %v", string(line), err)
+			continue
+		}
+		typStr, _ := obj["type"].(string)
+		if typStr != "agent_failed" {
+			continue
+		}
+		// The twin emits all fields at the top level of the NDJSON object.
+		return obj
+	}
+	if err := scanner.Err(); err != nil {
+		t.Errorf("chbE2EFixtureParseAgentFailedPayload: scanner error: %v", err)
+	}
+	return nil
+}
+
 // isExitError reports whether err is *exec.ExitError and stores it in target.
 func isExitError(err error, target **exec.ExitError) bool {
 	if ee, ok := err.(*exec.ExitError); ok {

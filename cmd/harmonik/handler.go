@@ -1,25 +1,46 @@
-// handler.go — `harmonik handler status` subcommand implementation.
+// handler.go — `harmonik handler status` and `harmonik handler resume` subcommand
+// implementations.
 //
-// Semantics (hk-39ryh):
+// Semantics (hk-39ryh — status):
 //  1. Parse --type and --format flags.
 //  2. Resolve the project directory.
 //  3. Read .harmonik/handler-state.json (absent → all handlers live; show empty).
 //  4. If --type is given, filter to that handler only.
 //  5. Output JSON (--format json) or human-readable text (default).
 //
-// This is a read-only CLI that reads the on-disk handler-state.json directly.
-// It does NOT connect to the daemon socket (no daemon required). The file is
-// written by hk-m0k0a (HandlerPauseController persistence); for now the file
-// may be absent, in which case all handlers are treated as live.
+// Semantics (hk-ejyku — resume):
+//  1. Parse --type (required) and --project flags.
+//  2. Resolve the project directory.
+//  3. Read .harmonik/handler-state.json to validate handler type and current state.
+//  4. Validate: unknown type → exit 2; already-live (without --force) → exit 3.
+//  5. Update handler entry to "live", clear cause, bump paused_epoch.
+//  6. Atomic-write updated handler-state.json (tmp → fsync → rename).
+//  7. Append handler_resumed event to .harmonik/events/events.jsonl.
+//  8. Print prior cause, in_flight_at_pause count, and confirmation.
 //
-// Exit-code contract:
+// Both verbs read/write handler-state.json directly (no daemon socket required
+// at MVH). HandlerPauseController (hk-9hwbw) is not yet wired; direct file I/O
+// with atomic-write discipline (WM-026) is consistent with how `status` operates.
+// When hk-9hwbw + hk-m0k0a land the daemon-side controller will own the state
+// file; resume can then delegate to the socket. This is noted as a wiring site.
+//
+// Exit-code contract (status):
 //
 //	0  — success (output written)
 //	1  — argument or file-parse error
 //	2  — forward-incompatible schema version
 //
-// Spec ref: docs/components/internal/handler-pause-and-resume.md §8.2 §8.3.
-// Bead ref: hk-39ryh.
+// Exit-code contract (resume):
+//
+//	0  — success (handler resumed)
+//	1  — argument or I/O error
+//	2  — unknown handler type (not in handler-state.json)
+//	3  — handler already live (not paused); use --force to no-op
+//	4  — socket-unreachable (reserved for post-hk-9hwbw wiring; unused at MVH)
+//
+// Spec ref: docs/components/internal/handler-pause-and-resume.md §7.
+// Spec ref: specs/event-model.md §8.11.2 (handler_resumed event).
+// Bead ref: hk-39ryh (status), hk-ejyku (resume).
 
 package main
 
@@ -115,7 +136,9 @@ func runHandlerSubcommand(subArgs []string) int {
 func runHandlerSubcommandIO(subArgs []string, out io.Writer, errOut io.Writer) int {
 	if len(subArgs) == 0 {
 		fmt.Fprintln(errOut, "harmonik handler: missing verb")
-		fmt.Fprintln(errOut, "usage: harmonik handler status [--type <agent-type>] [--format json|text] [--project DIR]")
+		fmt.Fprintln(errOut, "usage: harmonik handler <verb> [flags]")
+		fmt.Fprintln(errOut, "  status  [--type <agent-type>] [--format json|text] [--project DIR]")
+		fmt.Fprintln(errOut, "  resume  --type <agent-type> [--force] [--project DIR]")
 		return 1
 	}
 
@@ -123,10 +146,268 @@ func runHandlerSubcommandIO(subArgs []string, out io.Writer, errOut io.Writer) i
 	switch verb {
 	case "status":
 		return runHandlerStatus(subArgs[1:], out, errOut)
+	case "resume":
+		return runHandlerResume(subArgs[1:], out, errOut)
 	default:
-		fmt.Fprintf(errOut, "harmonik handler: unrecognised verb %q; supported verbs: status\n", verb)
+		fmt.Fprintf(errOut, "harmonik handler: unrecognised verb %q; supported verbs: status, resume\n", verb)
 		return 1
 	}
+}
+
+// ---------------------------------------------------------------------------
+// resume verb
+// ---------------------------------------------------------------------------
+
+// resumeExitUnknownType is exit 2 — handler type not found in handler-state.json.
+const resumeExitUnknownType = 2
+
+// resumeExitAlreadyLive is exit 3 — handler is already live (not paused).
+const resumeExitAlreadyLive = 3
+
+// handlerResumedEventType is the event type per specs/event-model.md §8.11.2.
+const handlerResumedEventType = "handler_resumed"
+
+// handlerResumedEvent is the JSONL envelope written to events.jsonl on success.
+// Fields per event-model.md §8.11.2: agent_type, by, prior_cause, paused_epoch.
+type handlerResumedEvent struct {
+	EventType   string            `json:"event_type"`
+	EmittedAt   string            `json:"emitted_at"`
+	AgentType   string            `json:"agent_type"`
+	By          string            `json:"by"`
+	PriorCause  *handlerCauseDisk `json:"prior_cause"`
+	PausedEpoch int               `json:"paused_epoch"`
+}
+
+// runHandlerResume implements `harmonik handler resume --type <agent-type> [--force] [--project DIR]`.
+//
+// Exit-code contract:
+//
+//	0  — success
+//	1  — argument or I/O error
+//	2  — unknown handler type (not in handler-state.json)
+//	3  — handler already live (use --force to no-op)
+func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
+	// --- Parse flags ---
+
+	typeFlag := ""
+	projectDirFlag := ""
+	forceFlag := false
+
+	for i := 0; i < len(subArgs); i++ {
+		switch {
+		case subArgs[i] == "--type" && i+1 < len(subArgs):
+			i++
+			typeFlag = subArgs[i]
+		case strings.HasPrefix(subArgs[i], "--type="):
+			typeFlag = strings.TrimPrefix(subArgs[i], "--type=")
+
+		case subArgs[i] == "--project" && i+1 < len(subArgs):
+			i++
+			projectDirFlag = subArgs[i]
+		case strings.HasPrefix(subArgs[i], "--project="):
+			projectDirFlag = strings.TrimPrefix(subArgs[i], "--project=")
+
+		case subArgs[i] == "--force":
+			forceFlag = true
+
+		case strings.HasPrefix(subArgs[i], "-"):
+			fmt.Fprintf(errOut, "harmonik handler resume: unknown flag %q\n", subArgs[i])
+			return 1
+		default:
+			fmt.Fprintf(errOut, "harmonik handler resume: unexpected argument %q\n", subArgs[i])
+			return 1
+		}
+	}
+
+	if typeFlag == "" {
+		fmt.Fprintln(errOut, "harmonik handler resume: --type is required")
+		return 1
+	}
+
+	// --- Resolve project directory ---
+
+	if projectDirFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(errOut, "harmonik handler resume: cannot determine working directory: %v\n", err)
+			return 1
+		}
+		projectDirFlag = wd
+	}
+	projectDir, err := filepath.Abs(projectDirFlag)
+	if err != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: cannot resolve project path %q: %v\n", projectDirFlag, err)
+		return 1
+	}
+
+	// --- Read handler-state.json ---
+
+	statePath := filepath.Join(projectDir, ".harmonik", handlerStateFile)
+	state, exitCode := loadHandlerState(statePath, errOut)
+	if exitCode != 0 {
+		return exitCode
+	}
+
+	// --- Validate: type must be known (present in file) ---
+
+	entry, known := state.Handlers[typeFlag]
+	if !known {
+		// Type not in file at all → there's no pause record; we can't resume
+		// something that was never paused. Exit 2 per bead spec.
+		fmt.Fprintf(errOut, "harmonik handler resume: handler type %q not found in handler-state.json (never paused)\n", typeFlag)
+		return resumeExitUnknownType
+	}
+
+	// --- Validate: must be paused (or --force allows already-live) ---
+
+	currentStatus := entry.Status
+	if currentStatus == "" {
+		currentStatus = "live"
+	}
+	if currentStatus != "paused" {
+		if forceFlag {
+			// --force: treat as no-op, print notice, exit 0.
+			fmt.Fprintf(out, "handler %q is already live (--force: no-op)\n", typeFlag)
+			return 0
+		}
+		fmt.Fprintf(errOut, "harmonik handler resume: handler %q is already live (status=%s); use --force to no-op\n", typeFlag, currentStatus)
+		return resumeExitAlreadyLive
+	}
+
+	// Capture prior cause and paused_epoch before mutation.
+	priorCause := entry.Cause
+	priorEpoch := entry.PausedEpoch
+	inFlightCount := len(entry.InFlightAtPause)
+
+	// --- Update entry: set live, clear cause ---
+
+	state.Handlers[typeFlag] = handlerEntryDisk{
+		Status:          "live",
+		Cause:           nil,
+		InFlightAtPause: []inFlightRunDisk{},
+		PausedEpoch:     priorEpoch, // epoch preserved; HandlerPauseController will increment on next pause
+	}
+
+	// --- Atomic-write updated handler-state.json (WM-026: tmp → fsync → rename) ---
+
+	if writeErr := atomicWriteHandlerState(statePath, state, errOut); writeErr != 0 {
+		return writeErr
+	}
+
+	// --- Emit handler_resumed event to events.jsonl (event-model §8.11.2) ---
+	// Best-effort: event emission failure does not roll back the state update.
+	// The state file is authoritative; the event log is observational.
+
+	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+	emitHandlerResumedEvent(eventsPath, typeFlag, priorCause, priorEpoch)
+
+	// --- Print confirmation ---
+
+	fmt.Fprintf(out, "handler %q resumed\n", typeFlag)
+	if priorCause != nil {
+		fmt.Fprintf(out, "  prior cause:\n")
+		fmt.Fprintf(out, "    failure_class: %s\n", priorCause.FailureClass)
+		fmt.Fprintf(out, "    sub_reason:    %s\n", priorCause.SubReason)
+		fmt.Fprintf(out, "    source_bead:   %s\n", priorCause.SourceBeadID)
+		fmt.Fprintf(out, "    source_run:    %s\n", priorCause.SourceRunID)
+		if t, parseErr := time.Parse(time.RFC3339Nano, priorCause.TrippedAt); parseErr == nil {
+			fmt.Fprintf(out, "    tripped_at:    %s\n", t.Format(time.RFC3339))
+		} else {
+			fmt.Fprintf(out, "    tripped_at:    %s\n", priorCause.TrippedAt)
+		}
+	}
+	fmt.Fprintf(out, "  in_flight_at_pause: %d\n", inFlightCount)
+	// Wiring site (hk-9hwbw / hk-m0k0a): once HandlerPauseController lands,
+	// query the dispatcher backlog via socket and print held count here.
+	fmt.Fprintf(out, "  dispatcher_backlog_held: (unavailable at MVH — HandlerPauseController not yet wired)\n")
+
+	return 0
+}
+
+// atomicWriteHandlerState writes state to statePath using WM-026 atomic discipline:
+// write to a temp file, fsync, rename over the target, fsync the parent directory.
+// Returns 0 on success, 1 on any I/O error.
+func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut io.Writer) int {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: cannot serialise handler-state.json: %v\n", err)
+		return 1
+	}
+	data = append(data, '\n')
+
+	dir := filepath.Dir(statePath)
+	tmpFile, err := os.CreateTemp(dir, ".handler-state-tmp-")
+	if err != nil {
+		fmt.Fprintf(errOut, "harmonik handler resume: cannot create temp file in %s: %v\n", dir, err)
+		return 1
+	}
+	tmpPath := tmpFile.Name()
+
+	// Write content.
+	if _, writeErr := tmpFile.Write(data); writeErr != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		fmt.Fprintf(errOut, "harmonik handler resume: cannot write temp file %s: %v\n", tmpPath, writeErr)
+		return 1
+	}
+
+	// fsync the temp file before rename.
+	if syncErr := tmpFile.Sync(); syncErr != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		fmt.Fprintf(errOut, "harmonik handler resume: fsync %s: %v\n", tmpPath, syncErr)
+		return 1
+	}
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		_ = os.Remove(tmpPath)
+		fmt.Fprintf(errOut, "harmonik handler resume: close %s: %v\n", tmpPath, closeErr)
+		return 1
+	}
+
+	// Rename (atomic on POSIX).
+	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
+		_ = os.Remove(tmpPath)
+		fmt.Fprintf(errOut, "harmonik handler resume: rename %s → %s: %v\n", tmpPath, statePath, renameErr)
+		return 1
+	}
+
+	// fsync the parent directory to flush the directory entry.
+	dirF, err := os.Open(dir)
+	if err == nil {
+		_ = dirF.Sync()
+		_ = dirF.Close()
+	}
+
+	return 0
+}
+
+// emitHandlerResumedEvent appends a handler_resumed event line to eventsPath.
+// Best-effort: errors are silently discarded per §8.11 (state file is authoritative).
+func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *handlerCauseDisk, pausedEpoch int) {
+	evt := handlerResumedEvent{
+		EventType:   handlerResumedEventType,
+		EmittedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		AgentType:   agentType,
+		By:          "operator",
+		PriorCause:  priorCause,
+		PausedEpoch: pausedEpoch,
+	}
+	line, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	line = append(line, '\n')
+
+	// Ensure the events directory exists (best-effort; daemon may not have run).
+	_ = os.MkdirAll(filepath.Dir(eventsPath), 0o755)
+
+	f, err := os.OpenFile(eventsPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // G304: operator-controlled project dir
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort
+	_, _ = f.Write(line)             //nolint:errcheck // best-effort
 }
 
 // runHandlerStatus implements `harmonik handler status`.

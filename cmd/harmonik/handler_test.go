@@ -407,3 +407,289 @@ func TestHandlerStatus_JSONAlias(t *testing.T) {
 		t.Fatalf("--json output is not valid JSON: %v\nraw: %s", err, out.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// harmonik handler resume tests (hk-ejyku)
+// ---------------------------------------------------------------------------
+
+// TestHandlerResume_PausedHandler verifies that resume on a paused handler
+// exits 0, transitions status to live, and prints the prior cause.
+//
+// Acceptance: hk-ejyku — "pause then resume via CLI; verify daemon state transitions".
+func TestHandlerResume_PausedHandler(t *testing.T) {
+	t.Parallel()
+
+	projectDir := handlerFixtureTempDir(t)
+	handlerFixtureWriteStateFile(t, projectDir, `{
+		"schema_version": 1,
+		"handlers": {
+			"claude-code": {
+				"status": "paused",
+				"cause": {
+					"failure_class": "transient",
+					"sub_reason": "rate_limit",
+					"source_run_id": "01900000-0000-7000-8000-000000000001",
+					"source_bead_id": "hk-test01",
+					"tripped_at": "2026-05-18T14:22:11Z"
+				},
+				"in_flight_at_pause": [
+					{
+						"run_id": "01900000-0000-7000-8000-000000000042",
+						"bead_id": "hk-ajchp",
+						"dispatched_at": "2026-05-18T14:20:01Z"
+					}
+				],
+				"paused_epoch": 3
+			}
+		}
+	}`)
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "claude-code", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr: %s", code, errOut.String())
+	}
+	stdout := out.String()
+
+	// Confirm prior cause is printed.
+	for _, want := range []string{
+		"claude-code",
+		"resumed",
+		"rate_limit",
+		"hk-test01",
+		"in_flight_at_pause: 1",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+
+	// Verify handler-state.json was updated to live.
+	stateFile := filepath.Join(projectDir, ".harmonik", "handler-state.json")
+	rawState, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("cannot read handler-state.json: %v", err)
+	}
+	var updatedState handlerStateDisk
+	if parseErr := json.Unmarshal(rawState, &updatedState); parseErr != nil {
+		t.Fatalf("cannot parse updated handler-state.json: %v\nraw: %s", parseErr, rawState)
+	}
+	entry, ok := updatedState.Handlers["claude-code"]
+	if !ok {
+		t.Fatalf("handler 'claude-code' missing from updated state")
+	}
+	if entry.Status != "live" {
+		t.Errorf("after resume: status = %q, want live", entry.Status)
+	}
+	if entry.Cause != nil {
+		t.Errorf("after resume: cause should be nil, got %+v", entry.Cause)
+	}
+}
+
+// TestHandlerResume_AlreadyLive verifies exit 3 when handler is already live.
+//
+// Acceptance: hk-ejyku — "exit codes: 3 already-live (without --force)".
+func TestHandlerResume_AlreadyLive(t *testing.T) {
+	t.Parallel()
+
+	projectDir := handlerFixtureTempDir(t)
+	handlerFixtureWriteStateFile(t, projectDir, `{
+		"schema_version": 1,
+		"handlers": {
+			"claude-code": {
+				"status": "live",
+				"cause": null,
+				"in_flight_at_pause": [],
+				"paused_epoch": 0
+			}
+		}
+	}`)
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "claude-code", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	if code != resumeExitAlreadyLive {
+		t.Errorf("exit code = %d, want %d (already-live); stderr: %s", code, resumeExitAlreadyLive, errOut.String())
+	}
+}
+
+// TestHandlerResume_AlreadyLive_Force verifies --force exits 0 and no-ops.
+//
+// Acceptance: hk-ejyku — "--force flag is no-op at MVH (reserved)".
+func TestHandlerResume_AlreadyLive_Force(t *testing.T) {
+	t.Parallel()
+
+	projectDir := handlerFixtureTempDir(t)
+	handlerFixtureWriteStateFile(t, projectDir, `{
+		"schema_version": 1,
+		"handlers": {
+			"claude-code": {
+				"status": "live",
+				"cause": null,
+				"in_flight_at_pause": [],
+				"paused_epoch": 0
+			}
+		}
+	}`)
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "claude-code", "--force", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0 (--force no-op); stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "already live") {
+		t.Errorf("stdout missing 'already live'; got: %s", out.String())
+	}
+}
+
+// TestHandlerResume_UnknownType verifies exit 2 when the handler type is not
+// in handler-state.json (never paused).
+//
+// Acceptance: hk-ejyku — "exit codes: 2 unknown-type".
+func TestHandlerResume_UnknownType(t *testing.T) {
+	t.Parallel()
+
+	projectDir := handlerFixtureTempDir(t)
+	handlerFixtureWriteStateFile(t, projectDir, `{
+		"schema_version": 1,
+		"handlers": {}
+	}`)
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "nonexistent-agent", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	if code != resumeExitUnknownType {
+		t.Errorf("exit code = %d, want %d (unknown-type); stderr: %s", code, resumeExitUnknownType, errOut.String())
+	}
+}
+
+// TestHandlerResume_MissingType verifies exit 1 when --type is omitted.
+//
+// Acceptance: hk-ejyku — "Validates handler-type known + currently paused".
+func TestHandlerResume_MissingType(t *testing.T) {
+	t.Parallel()
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume"},
+		&out, &errOut,
+	)
+
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1 (missing --type); stderr: %s", code, errOut.String())
+	}
+}
+
+// TestHandlerResume_EmitsEvent verifies that a handler_resumed event is appended
+// to events.jsonl on successful resume.
+//
+// Acceptance: hk-ejyku — "Emit a handler_resumed event per event-model §8.11".
+func TestHandlerResume_EmitsEvent(t *testing.T) {
+	t.Parallel()
+
+	projectDir := handlerFixtureTempDir(t)
+	// Pre-create events/ directory.
+	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		t.Fatalf("mkdir events: %v", err)
+	}
+	handlerFixtureWriteStateFile(t, projectDir, `{
+		"schema_version": 1,
+		"handlers": {
+			"claude-code": {
+				"status": "paused",
+				"cause": {
+					"failure_class": "transient",
+					"sub_reason": "rate_limit",
+					"source_run_id": "run-1",
+					"source_bead_id": "hk-a",
+					"tripped_at": "2026-05-18T14:22:11Z"
+				},
+				"in_flight_at_pause": [],
+				"paused_epoch": 1
+			}
+		}
+	}`)
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "claude-code", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0; stderr: %s", code, errOut.String())
+	}
+
+	// Verify events.jsonl contains a handler_resumed line.
+	eventsPath := filepath.Join(eventsDir, "events.jsonl")
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("cannot read events.jsonl: %v", err)
+	}
+	if !strings.Contains(string(eventsData), handlerResumedEventType) {
+		t.Errorf("events.jsonl missing %q; content:\n%s", handlerResumedEventType, eventsData)
+	}
+
+	// Verify the event parses as a valid handlerResumedEvent.
+	var evt handlerResumedEvent
+	if parseErr := json.Unmarshal(bytes.TrimRight(eventsData, "\n"), &evt); parseErr != nil {
+		t.Errorf("events.jsonl line is not valid JSON: %v\nraw: %s", parseErr, eventsData)
+	}
+	if evt.EventType != handlerResumedEventType {
+		t.Errorf("event_type = %q, want %q", evt.EventType, handlerResumedEventType)
+	}
+	if evt.AgentType != "claude-code" {
+		t.Errorf("agent_type = %q, want claude-code", evt.AgentType)
+	}
+	if evt.By != "operator" {
+		t.Errorf("by = %q, want operator", evt.By)
+	}
+	if evt.PausedEpoch != 1 {
+		t.Errorf("paused_epoch = %d, want 1", evt.PausedEpoch)
+	}
+}
+
+// TestHandlerResume_UnknownFlag verifies exit 1 for an unknown flag.
+func TestHandlerResume_UnknownFlag(t *testing.T) {
+	t.Parallel()
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO([]string{"resume", "--unknown-flag"}, &out, &errOut)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+}
+
+// TestHandlerSubcommand_ResumeVerb_Dispatch verifies the dispatch table routes
+// "resume" to runHandlerResume (not the default error path).
+func TestHandlerSubcommand_ResumeVerb_Dispatch(t *testing.T) {
+	t.Parallel()
+
+	// Without --type the resume path should error with exit 1, not the
+	// "unrecognised verb" error which also exits 1. We confirm by checking
+	// stderr content.
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO([]string{"resume"}, &out, &errOut)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	// Should be the missing-type error, not the unrecognised-verb error.
+	if strings.Contains(errOut.String(), "unrecognised verb") {
+		t.Errorf("got unrecognised-verb error; resume verb not dispatched; stderr: %s", errOut.String())
+	}
+}

@@ -122,7 +122,7 @@ KERF IS IN BETA + REALIGNED (v48 NEW). `kerf next`, `kerf triage`, `kerf pin`, `
 2. `hk-7uasg` — real-Claude review-loop E2E (extends the single-mode harness from `e2e_real_claude_single_test.go`).
 3. `hk-lgtq2` — Cat 3a auto-reconciler.
 4. `hk-pcgms` — relay-failure scenario test.
-5. `hk-ifqnj` / `hk-siuo2` / `hk-39ryh` — handler-pause MVH (9 P1 beads, plan 007).
+5. `hk-ifqnj` / `hk-siuo2` / `hk-39ryh` — handler-pause Phase-1 scope (9 P1 beads, plan 007).
 
 Suggested order: verify `hk-rp48p` subsumed-by-`run` then close OR dispatch quick fix; then dispatch `hk-7uasg` (use the single-mode test as the template). `hk-lgtq2` and handler-pause beads are parallelizable.
 

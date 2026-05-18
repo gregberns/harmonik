@@ -13,6 +13,21 @@ One folder per plan. Each folder contains `_plan.md` (the plan itself) and may a
 ## Status
 active | mostly-done | superseded | not-started | research-phase
 
+## Done means...
+Explicit observable conditions that define completion. NOT "the beads shipped" — actual
+behavioral acceptance criteria an agent or operator can verify without reading chat context.
+Format: numbered list, each item names: the observable state, the mechanism (test name,
+CLI command, or JSONL record) that confirms it, and which bead closes it.
+
+Example:
+1. <observable state>. Verified by <test or command>.
+2. <observable state>. Verified by <test or command>.
+...
+N. Smoke test GREEN: describe the end-to-end scenario that must pass before this plan closes.
+
+This section is REQUIRED for new plans. It guards against agents declaring a plan "done"
+when only a subset (a "Phase-1 scope" or "bootstrap slice") has shipped.
+
 ## What's done
 - bullet, with code SHA or bead ID where relevant
 

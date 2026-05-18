@@ -296,7 +296,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 ### 8.11 Handler-pause lifecycle
 
-Three new event types introduced by the handler-pause MVH (see [docs/components/internal/handler-pause-and-resume.md]). `handler_paused` and `handler_resumed` are Class F because loss would orphan the pause-state landmark; the reconciliation investigator depends on these events to respect pauses across restarts. `queue_item_held_for_handler_pause` is Class O: the held state is reconstructible from `handler-state.json` plus queue.json at startup.
+Three new event types introduced by the handler-pause Phase-1 implementation (see [docs/components/internal/handler-pause-and-resume.md]). `handler_paused` and `handler_resumed` are Class F because loss would orphan the pause-state landmark; the reconciliation investigator depends on these events to respect pauses across restarts. `queue_item_held_for_handler_pause` is Class O: the held state is reconstructible from `handler-state.json` plus queue.json at startup.
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
 |---|---|---|---|---|---|

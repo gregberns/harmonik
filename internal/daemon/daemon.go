@@ -18,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // Config holds the startup configuration for the harmonik daemon.
@@ -457,6 +458,47 @@ func Start(ctx context.Context, cfg Config) error {
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	hookStore := newHookSessionStore()
 
+	// Instantiate the QueueStore singleton (QM-060: single-writer discipline).
+	// The same instance is threaded into the work loop (queue-pull dispatch) and
+	// populated via LoadQueueAtStartup (PL-005 step 8a) below.
+	//
+	// Spec ref: specs/queue-model.md §9.1 QM-060.
+	qs := newQueueStore()
+
+	// PL-005 step 8a (QM-002 / QM-002a): load queue.json at startup BEFORE the
+	// socket listener or work loop start.  Only runs when both ProjectDir and
+	// BrPath are set (production mode); unit-test callers that omit one or both
+	// skip the load cleanly.
+	//
+	// A forward-incompatible schema_version causes a fatal return with exit-code-2
+	// semantics per QM-002.  Corrupt but parseable files produce a warning and a
+	// nil queue (daemon proceeds without a queue).
+	//
+	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
+	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+	if cfg.ProjectDir != "" && cfg.BrPath != "" {
+		brAdapterForQueue, brAdapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+		if brAdapterErr == nil {
+			loadedQueue, loadErr := lifecycle.LoadQueueAtStartup(
+				context.Background(),
+				cfg.ProjectDir,
+				brAdapterForQueue,
+				bus,
+				nil, // slog.Default() is used when nil
+			)
+			if loadErr != nil {
+				// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
+				return fmt.Errorf("daemon.Start: queue.json load: %w", loadErr)
+			}
+			if loadedQueue != nil {
+				qs.SetQueue(loadedQueue)
+			}
+		}
+		// Non-fatal brcli construction failure: daemon proceeds without a queue.
+		// The socket handler will return errors for queue-* ops until a queue is
+		// submitted.
+	}
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -464,11 +506,8 @@ func Start(ctx context.Context, cfg Config) error {
 	// skip the socket (no path to bind). The socket listener runs concurrently
 	// with the work loop and shuts down on the same ctx.
 	//
-	// RequestHandler: no production implementer at MVH (claim-next / emit-outcome
-	// wiring is a follow-up bead). A noopRequestHandler is passed so that rare
-	// op-path connections get a proper ok=false response rather than a nil-deref
-	// panic. Hook-relay envelopes route via hr (hookStore), not h, so this is
-	// non-blocking for the hook-relay path.
+	// QueueHandler: queue.NewHandlerAdapter wired when BrPath is set. A nil
+	// QueueHandler causes all queue-* ops to return -32099 (no queue loaded).
 	//
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3a; §4.1 PL-003.
 	if cfg.ProjectDir != "" {
@@ -481,13 +520,27 @@ func Start(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
 		}
 
+		// Construct the QueueHandler adapter. Nil when BrPath is unset (unit-test
+		// mode); RunSocketListener accepts nil and returns -32099 for queue-* ops.
+		var queueHandler QueueHandler
+		if cfg.BrPath != "" {
+			brAdapterForHandler, brHandlerErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+			if brHandlerErr == nil {
+				queueHandler = queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir)
+			}
+		}
+
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
 		// channel to avoid goroutine leaks; error is discarded per the same
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore)
+			if queueHandler != nil {
+				socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore, queueHandler)
+			} else {
+				socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore)
+			}
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}
@@ -498,6 +551,11 @@ func Start(ctx context.Context, cfg Config) error {
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}
+		// Inject the QueueStore singleton so the work loop can pull from the
+		// active queue (queue-pull dispatch path per execution-model.md §7.4 TS-1).
+		//
+		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
+		deps.queueStore = qs
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

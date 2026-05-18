@@ -909,3 +909,35 @@ func ExportedQueueStoreOf(deps workLoopDeps) *QueueStore {
 func ExportedProjectCfgOf(deps workLoopDeps) ProjectConfig {
 	return deps.projectCfg
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QueueOperatorEventConsumer test seams (hk-7urls)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedQueueOperatorEventConsumerConfig is a type alias for
+// QueueOperatorEventConsumerConfig for tests in package daemon_test.
+//
+// Bead ref: hk-7urls.
+type ExportedQueueOperatorEventConsumerConfig = QueueOperatorEventConsumerConfig
+
+// ExportedNewQueueOperatorEventConsumer exposes NewQueueOperatorEventConsumer
+// for tests in package daemon_test.
+//
+// Bead ref: hk-7urls.
+var ExportedNewQueueOperatorEventConsumer = NewQueueOperatorEventConsumer
+
+// ExportedQueueOpConsumerHandlePauseStatus invokes the unexported
+// handleOperatorPauseStatus method for tests in package daemon_test.
+//
+// Bead ref: hk-7urls.
+func ExportedQueueOpConsumerHandlePauseStatus(c *QueueOperatorEventConsumer, ctx context.Context, evt core.Event) error {
+	return c.handleOperatorPauseStatus(ctx, evt)
+}
+
+// ExportedQueueOpConsumerHandleResuming invokes the unexported
+// handleOperatorResuming method for tests in package daemon_test.
+//
+// Bead ref: hk-7urls.
+func ExportedQueueOpConsumerHandleResuming(c *QueueOperatorEventConsumer, ctx context.Context, evt core.Event) error {
+	return c.handleOperatorResuming(ctx, evt)
+}

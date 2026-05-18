@@ -389,9 +389,9 @@ func Start(ctx context.Context, cfg Config) error {
 	// it is wired below before bus.Seal() is called.
 	bus := eventbus.NewBusImplWithWriter(registry, jsonlWriter)
 
-	// PL-005 step 0 (hk-m0k0a, hk-37zy8): construct HandlerPauseController and
-	// RunRegistry at the composition root so both are available pre-Seal for
-	// HandlerPausePolicyGoroutine.Subscribe(bus).
+	// PL-005 step 0 (hk-m0k0a, hk-37zy8, hk-7urls): construct HandlerPauseController,
+	// RunRegistry, and QueueStore at the composition root so all are available
+	// pre-Seal for their respective Subscribe(bus) calls.
 	//
 	// Controller construction is moved here (before Seal) because the policy
 	// goroutine constructor requires it. LoadHandlerPauseState (persistence seed)
@@ -401,6 +401,18 @@ func Start(ctx context.Context, cfg Config) error {
 	// RunRegistry is created here so the policy goroutine and the work loop share
 	// the same instance. The work loop receives it via deps.runRegistry (injected
 	// post-newWorkLoopDeps, same pattern as queueStore / handlerPauseController).
+	//
+	// QueueStore is instantiated here (pre-Seal) so QueueOperatorEventConsumer can
+	// reference it in its Subscribe call. The store is populated later via
+	// LoadQueueAtStartup (PL-005 step 8a). When cfg.QueueStore is non-nil the
+	// caller-supplied instance is used directly (hk-8jh26 Fix 2).
+	//
+	// Spec ref: specs/queue-model.md §9.1 QM-060.
+	// Bead ref: hk-7urls.
+	qs := cfg.QueueStore
+	if qs == nil {
+		qs = newQueueStore()
+	}
 	handlerPauseCtrl := NewHandlerPauseController(bus, nil) // persistFn patched below when ProjectDir is set
 	sharedRunRegistry := NewRunRegistry()
 
@@ -421,6 +433,25 @@ func Start(ctx context.Context, cfg Config) error {
 	})
 	if subscribeErr := pausePolicy.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
+	}
+
+	// Construct and subscribe the QueueOperatorEventConsumer BEFORE Seal so
+	// operator_pause_status and operator_resuming events are delivered during the
+	// production run (EV-009: subscribers MUST register before Seal).
+	//
+	// The consumer drives queue-level active ↔ paused-by-drain transitions per
+	// QM-054 and QM-055. qs was constructed above (pre-Seal); cfg.ProjectDir is
+	// forwarded for the persist-before-emit step (QM-063).
+	//
+	// Spec ref: specs/queue-model.md §8.5 QM-054, §8.6 QM-055.
+	// Bead ref: hk-7urls.
+	queueOpConsumer := NewQueueOperatorEventConsumer(QueueOperatorEventConsumerConfig{
+		QueueStore: qs,
+		ProjectDir: cfg.ProjectDir,
+		Bus:        bus,
+	})
+	if subscribeErr := queueOpConsumer.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: QueueOperatorEventConsumer.Subscribe: %w", subscribeErr)
 	}
 
 	// Notify the test-only observer (when set) so tests can inspect bus
@@ -566,19 +597,6 @@ func Start(ctx context.Context, cfg Config) error {
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	hookStore := newHookSessionStore()
-
-	// Instantiate the QueueStore singleton (QM-060: single-writer discipline).
-	// The same instance is threaded into the work loop (queue-pull dispatch) and
-	// populated via LoadQueueAtStartup (PL-005 step 8a) below.
-	//
-	// When cfg.QueueStore is non-nil the caller supplies their own store
-	// (hk-8jh26 Fix 2: run.go retains the pointer to inspect status post-Start).
-	//
-	// Spec ref: specs/queue-model.md §9.1 QM-060.
-	qs := cfg.QueueStore
-	if qs == nil {
-		qs = newQueueStore()
-	}
 
 	// PL-005 step 8a (QM-002 / QM-002a): load queue.json at startup BEFORE the
 	// socket listener or work loop start.  Only runs when both ProjectDir and

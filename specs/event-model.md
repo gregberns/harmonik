@@ -294,6 +294,26 @@ The `agent_output_chunk` and `budget_accrual` types remain fine-grained in MVH b
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
+### 8.11 Handler-pause lifecycle
+
+Three new event types introduced by the handler-pause MVH (see [docs/components/internal/handler-pause-and-resume.md]). `handler_paused` and `handler_resumed` are Class F because loss would orphan the pause-state landmark; the reconciliation investigator depends on these events to respect pauses across restarts. `queue_item_held_for_handler_pause` is Class O: the held state is reconstructible from `handler-state.json` plus queue.json at startup.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.11.1 | `handler_paused` | F | daemon-core (HandlerPauseController) | orchestrator-core, operator-observability, audit, reconciliation | `agent_type`, `cause` (`failure_class`, `sub_reason`, `source_run_id`, `source_bead_id`, `tripped_at`), `in_flight_count`, `paused_epoch` |
+| 8.11.2 | `handler_resumed` | F | daemon-core (HandlerPauseController) | orchestrator-core, operator-observability, audit | `agent_type`, `by` (enum: `operator`), `prior_cause` (`failure_class`, `sub_reason`, `source_run_id`, `source_bead_id`, `tripped_at`), `paused_epoch` |
+| 8.11.3 | `queue_item_held_for_handler_pause` | O | daemon-core (dispatcher) | operator-observability, audit, orchestrator-core | `bead_id`, `agent_type`, `paused_epoch` |
+
+> **Dedup contract (§8.11.3).** `queue_item_held_for_handler_pause` MUST be emitted at-most-once per `(bead_id, paused_epoch)` pair. The dispatcher MUST NOT re-emit if the same bead is skipped again within the same pause epoch. The `paused_epoch` is the monotonic counter from `.harmonik/handler-state.json` incremented on every pause→resume cycle, which the dispatcher reads from `HandlerPauseController.CurrentEpoch(agent_type)` at each skip point.
+
+> **Paired-phase note (§8.11.1–2).** `handler_paused` and `handler_resumed` are NOT a paired-phase lifecycle (§8.9(h)) because Pause and Resume are not sequential phases of the same entity — they are distinct terminal-distinct outcomes with independent payload shapes. The `status` merge rule of §8.9(h) does not apply. Each event is its own type.
+
+> **Emission ordering (§8.11).** For a single pause epoch the emission order MUST be: (a) `handler_paused` (once, on pause-trip, MUST precede any `queue_item_held_for_handler_pause` for that epoch); (b) zero or more `queue_item_held_for_handler_pause` events (one per skipped item, dedup'd per `(bead_id, paused_epoch)`); (c) `handler_resumed` (once, on operator resume, terminates the epoch). `handler_paused` is fsync-backed before control returns from `HandlerPauseController.Pause()`; `handler_resumed` is fsync-backed before control returns from `HandlerPauseController.Resume()`.
+
+> Section Axes (§8.11 Handler-pause lifecycle): All §8.11 event emissions are mechanism-tagged. §8.11.1 (`handler_paused`) and §8.11.2 (`handler_resumed`) are class F (fsync-backed, deterministic) because their loss would leave the pause-state landmark unrecoverable across restart — reconciliation depends on the JSONL to detect that a handler was paused when the daemon last exited. §8.11.3 (`queue_item_held_for_handler_pause`) is class O (ordinary, reconstructible from `handler-state.json` plus queue.json). Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ## 4. Normative requirements
 
 ### 4.1 Envelope

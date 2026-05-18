@@ -459,6 +459,25 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// §8.11 Handler-pause lifecycle event types (handler-pause MVH, hk-ifqnj)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeHandlerPaused is the handler_paused event type (§8.11.1).
+	// Durability class: F (fsync-boundary — pause-state landmark for restart recovery).
+	EventTypeHandlerPaused EventType = "handler_paused"
+
+	// EventTypeHandlerResumed is the handler_resumed event type (§8.11.2).
+	// Durability class: F (fsync-boundary — resume action must be durable before dispatcher proceeds).
+	EventTypeHandlerResumed EventType = "handler_resumed"
+
+	// EventTypeQueueItemHeldForHandlerPause is the queue_item_held_for_handler_pause event type (§8.11.3).
+	// Durability class: O (ordinary — reconstructible from handler-state.json + queue.json).
+	// Dedup: at-most-once per (bead_id, paused_epoch) per §8.11.3 dedup contract.
+	EventTypeQueueItemHeldForHandlerPause EventType = "queue_item_held_for_handler_pause"
+)
+
+// ---------------------------------------------------------------------------
 // §8.10 Queue lifecycle event types (extqueue v0.1)
 // ---------------------------------------------------------------------------
 

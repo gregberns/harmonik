@@ -35,6 +35,7 @@ func init() {
 	registerBusEvents()
 	registerReviewLoopEvents()
 	registerQueueEvents()
+	registerHandlerPauseEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors.
@@ -285,6 +286,19 @@ func registerQueueEvents() {
 	mustRegister("queue_appended", func() EventPayload { return &QueueAppendedPayload{} })
 	mustRegister("queue_item_deferred_for_ledger_dep", func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
 	mustRegister("queue_item_reconciled", func() EventPayload { return &QueueItemReconciledPayload{} })
+}
+
+// registerHandlerPauseEvents registers all §8.11 handler-pause lifecycle event
+// payload constructors (handler-pause MVH, hk-ifqnj).
+//
+// Durability classes per §8.11 table:
+//   - handler_paused                    (§8.11.1): F (fsync-boundary — pause-state landmark for restart recovery)
+//   - handler_resumed                   (§8.11.2): F (fsync-boundary — resume action durable before dispatcher proceeds)
+//   - queue_item_held_for_handler_pause (§8.11.3): O (ordinary — reconstructible from handler-state.json + queue.json)
+func registerHandlerPauseEvents() {
+	mustRegister("handler_paused", func() EventPayload { return &HandlerPausedPayload{} })
+	mustRegister("handler_resumed", func() EventPayload { return &HandlerResumedPayload{} })
+	mustRegister("queue_item_held_for_handler_pause", func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

@@ -14,7 +14,9 @@ package handler_test
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -182,6 +184,74 @@ func TestSession_Stdout_Exposed(t *testing.T) {
 	// Drain stdout so the child can exit and Wait doesn't block.
 	_, _ = io.ReadAll(sess.Stdout())
 	_ = sess.Wait(t.Context())
+}
+
+// TestSession_Kill_PropagatesSignalToProcessGroup verifies that Kill sends
+// SIGTERM to the entire process group, not just the direct child.
+//
+// The child shell forks a grandchild (sleep 300) and writes the grandchild's
+// PID to a temp file.  After Kill returns both the child and the grandchild
+// must be gone, exercising the syscall.Kill(-pgid, SIGTERM) path in
+// session.Kill.
+//
+// Spec ref: process-lifecycle.md §4.2 PL-006a; handler-contract.md HC-044.
+// Bead ref: hk-44w19 (SIGTERM propagation).
+func TestSession_Kill_PropagatesSignalToProcessGroup(t *testing.T) {
+	t.Parallel()
+
+	pidFile := t.TempDir() + "/grandchild.pid"
+
+	// Child forks a grandchild sleep, records its PID, then waits.
+	// Both stay alive until the process group receives a signal.
+	script := `sh -c 'sleep 300' & echo $! > ` + pidFile + `; wait`
+
+	cmd := sessionFixtureCmd(t, script)
+	sess, err := handler.NewSession(t.Context(), cmd)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+
+	// Wait until the grandchild PID file is written (child has forked).
+	deadline := time.Now().Add(5 * time.Second)
+	var grandchildPIDBytes []byte
+	for time.Now().Before(deadline) {
+		//nolint:gosec // G304: path from t.TempDir(); not user-controlled
+		b, readErr := os.ReadFile(pidFile)
+		if readErr == nil && len(b) > 0 {
+			grandchildPIDBytes = b
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(grandchildPIDBytes) == 0 {
+		t.Fatal("timed out waiting for grandchild PID file")
+	}
+
+	var grandchildPID int
+	if _, scanErr := fmt.Sscan(strings.TrimSpace(string(grandchildPIDBytes)), &grandchildPID); scanErr != nil {
+		t.Fatalf("parse grandchild PID: %v", scanErr)
+	}
+
+	// Confirm the grandchild is alive before Kill.
+	if probeErr := syscall.Kill(grandchildPID, 0); probeErr != nil {
+		t.Fatalf("grandchild (pid %d) not alive before Kill: %v", grandchildPID, probeErr)
+	}
+
+	killCtx, killCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer killCancel()
+
+	if err := sess.Kill(killCtx); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	_ = sess.Wait(t.Context())
+
+	// Give the OS a brief moment to reap the grandchild.
+	time.Sleep(100 * time.Millisecond)
+
+	// The grandchild must no longer exist.
+	if killErr := syscall.Kill(grandchildPID, 0); killErr == nil {
+		t.Errorf("grandchild (pid %d) is still alive after Kill — SIGTERM did not propagate to process group", grandchildPID)
+	}
 }
 
 // TestSession_Kill_SIGKILL_Escalation verifies that Kill escalates to SIGKILL

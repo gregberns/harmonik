@@ -28,6 +28,21 @@ N. Smoke test GREEN: describe the end-to-end scenario that must pass before this
 This section is REQUIRED for new plans. It guards against agents declaring a plan "done"
 when only a subset (a "Phase-1 scope" or "bootstrap slice") has shipped.
 
+Each plan MUST list at least one **scenario-test bead** covering the end-to-end workflow
+(using a twin or real-claude substrate), and at least one **exploratory-test bead** for
+the operator-facing surface (CLI or API a human or submitter agent would actually invoke).
+These beads belong in "What's remaining" until closed, and in the "Done means..." numbered
+list as explicit acceptance items.
+
+**Motivating example — hk-37zy8 (handler-pause policy goroutine):** The policy goroutine
+that triggers a pause on handler-fatal outcomes was unit-tested and reviewer-APPROVED, but
+was never wired into the composition root. A twin-based scenario test — verifying that
+`harmonik run` dispatching a bead that returns `handler_fatal` actually emits
+`handler_paused` and writes `.harmonik/handler-state.json` — would have caught the gap
+at PR time instead of requiring a separate fixup bead (hk-c8k4c). For the canonical
+inventory of all scenario-test gaps found in the 2026-05-18 audit, see
+[`docs/scenario-test-gap-audit-2026-05-18.md`](../docs/scenario-test-gap-audit-2026-05-18.md).
+
 ## What's done
 - bullet, with code SHA or bead ID where relevant
 

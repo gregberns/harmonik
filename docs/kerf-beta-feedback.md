@@ -405,3 +405,60 @@ The status advance from `research` → `change-design` did not create the `04-de
 
 Pass-4 ran D3 as a standalone file (`control-point-node-type-design.md`); pass-3 SUMMARY enumerated 20 decisions, several of which will land in parallel. The jig is silent on whether each decision is one file or a single `04-design/design.md` aggregates them. The per-decision-file convention is better for parallel sub-agents (no merge conflict) but ad-hoc. Worth declaring in the jig.
 
+---
+
+## 2026-05-18 — Re-trying kerf next with broken filters
+
+Returning after several days of bead churn. `kerf next` opened with three works in `clean: bead_filter matches zero beads` state, plus an entry-friction wall of "175 untriaged beads · 70 beads changed externally" before any actionable item appeared. Goal: get the ranked feed useful again.
+
+### Entry friction — drift wall before payload (MAJOR)
+
+`kerf next` led with three lines of warnings (untriaged count + external_close + external_new) before showing the ranked feed. That is the **right information** but the **wrong placement** — when an agent is dispatched to "find the next bead," it has to skip past 70-bead drift noise and three `clean` rows to get to anything dispatchable. Suggestion: invert — show the top-N ranked items first, then a single one-line drift footer with the `kerf triage` hint. Drift is a hygiene task, not a routing answer.
+
+### Broken filters — root cause: filter syntax convention mismatch (MAJOR)
+
+Three of four broken works used the same wrong filter pattern. Inspecting `~/.kerf/projects/gregberns-harmonik/<codename>/spec.yaml`:
+
+| Work | Old filter (broken) | Actual matching label in `.beads/` | New filter | Beads attached after fix |
+|---|---|---|---|---|
+| `bridge-integration` | `label: codename:bridge-integration` | `bridge-integration` (no prefix) | `label=bridge-integration` | **28** (2 open / 26 closed) |
+| `extqueue` | `label: codename:extqueue` | `queue` | `label=queue` | **5** (4 open / 1 closed) |
+| `phase-3-dot` | *(no `bead_filter` field at all)* | none — work is in `change-design` pass; no implementation beads exist yet | `label=codename:phase-3-dot` | **0** (forward-wired for upcoming beads) |
+| `workflow-modes` | `label: codename:workflow-modes` | `codename:workflow-modes` | (unchanged — was correct) | 1 open / 0 closed |
+
+The pattern: bead authors used **bare-label** convention (`bridge-integration`, `queue`) for some works and **prefixed-label** convention (`codename:claude-hook-bridge`, `codename:workflow-modes`) for others, while kerf works appear to have been seeded uniformly with the prefixed convention. There is no enforcement on either side. **Root cause is convention drift, not a kerf bug per se** — but kerf's `kerf init` / `kerf new` should probably (a) sample existing bead labels and suggest the most-likely-correct filter clause when creating a work, and (b) warn at `kerf next` time when a filter is `clean` *and* the codename matches a non-empty label that differs only in prefix (e.g. `codename:bridge-integration` filter + `bridge-integration` label both exist → suggest the swap inline).
+
+### `kerf work edit` UX — accepts both `=` and `:` separators, returns count delta (NIT-positive)
+
+`kerf work edit <codename> --bead-filter-add 'label=<value>' --bead-filter-remove 'label=<value>'` worked cleanly first try on all three fixes. The "`Now matches: N beads (was: M beads)`" feedback is excellent — instant confirmation. Good surface.
+
+### `phase-3-dot` had no `bead_filter` field at all (MINOR)
+
+`spec.yaml` for `phase-3-dot` was missing the `bead_filter:` key entirely; only `pinned_beads: []` was present. `kerf next` rendered this as `clean: bead_filter matches zero beads` — but the actual condition is "no filter declared." Worth a distinct status line: `unwired: no bead_filter declared` vs. `clean: bead_filter matches zero beads`. Different fixes (declare a filter vs. broaden a filter).
+
+### `kerf triage --ack` advanced baseline cleanly
+
+After fixes, `kerf triage --ack` advanced the baseline past 70-bead external drift. Next `kerf next` ran with only `! 169 untriaged beads` (the legitimate signal — most beads still match no work). Baseline ack is doing its job; `kerf next` should consider whether `untriaged beads` should also be footer-only, since it's a hygiene cue and not a routing one.
+
+### Final `kerf next` top-10 (post-fix, 2026-05-18)
+
+1. `hk-pwfhk` — queue-append: no in-memory mutation visible to running workloop (extqueue)
+2. `hk-ug821` — workloop: completion path never persists queue mutations (extqueue)
+3. `hk-1fubv` — queue-submit: HandlerAdapter discards mutated *Queue and events (extqueue)
+4. `hk-a0htu` — br ready --format json does not surface labels; BI-013 unmet (bridge-integration)
+5. `hk-7uasg` — Real-Claude end-to-end review-loop integration test (claude-hook-bridge)
+6. `hk-go9k3` — queue events from handlers + workloop never emitted to event bus (extqueue)
+7. `hk-ebcw2` — Codify bridge-integration GREEN smoke as runnable go test (bridge-integration)
+8. `hk-j4lct` — dot-mode dispatch: silently falls through to single, no warning event (workflow-modes)
+9. `hk-pcgms` — Relay-failure scenario: daemon socket missing → bridge_dial_failed (claude-hook-bridge)
+10. `hk-ocisx` — docs/subsystems/agent-runner.md + hook-system.md docs amendment (claude-hook-bridge)
+
+### Cross-references
+
+- `hk-43ate` — pre-existing upstream bead on `clean`-status confusion. This session re-confirms its premise: `clean` conflates "filter is right but no matches yet" with "filter is wrong" with "no filter declared." Three different operator-actions needed; same surface message.
+- Existing `kerf-upstream` corpus (14 beads, see label counter above) already covers `kerf-init`, `kerf-triage`, `kerf-show`, `kerf-work-edit` friction surfaces — the issues recorded here align with those buckets, so no new upstream beads created from this pass.
+
+### Did not encounter
+
+- Repetitive triage suggestions (task brief flagged this as a possible issue). After the filter fixes + `--ack`, triage output was tight and non-repetitive. May have been resolved by an intermediate kerf release, or may surface again with different drift shapes.
+

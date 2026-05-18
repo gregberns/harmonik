@@ -675,6 +675,90 @@ func TestHandlerResume_UnknownFlag(t *testing.T) {
 	}
 }
 
+// TestHandlerResume_AtomicWrite_TempDirUnwritable verifies that when the temp
+// file cannot be created (e.g. the .harmonik directory is read-only), the
+// original handler-state.json is not corrupted and the command exits non-zero.
+//
+// This exercises the atomic-write ordering (CreateTemp → Write → Sync → Close →
+// Rename → parent-dir Sync) declared in WM-026 and the atomicWriteHandlerState
+// docstring: a failure before the rename must leave the original file intact.
+//
+// Acceptance: hk-zmlyh — atomic-write fault-injection test for handler resume.
+func TestHandlerResume_AtomicWrite_TempDirUnwritable(t *testing.T) {
+	t.Parallel()
+
+	if os.Getuid() == 0 {
+		t.Skip("running as root; read-only dir check not meaningful")
+	}
+
+	projectDir := handlerFixtureTempDir(t)
+	originalContent := `{
+		"schema_version": 1,
+		"handlers": {
+			"claude-code": {
+				"status": "paused",
+				"cause": {
+					"failure_class": "transient",
+					"sub_reason": "rate_limit",
+					"source_run_id": "01900000-0000-7000-8000-000000000001",
+					"source_bead_id": "hk-test01",
+					"tripped_at": "2026-05-18T14:22:11Z"
+				},
+				"in_flight_at_pause": [],
+				"paused_epoch": 1
+			}
+		}
+	}`
+	handlerFixtureWriteStateFile(t, projectDir, originalContent)
+
+	// Make .harmonik directory read-only so CreateTemp fails.
+	harmDir := filepath.Join(projectDir, ".harmonik")
+	if err := os.Chmod(harmDir, 0o555); err != nil {
+		t.Fatalf("chmod .harmonik: %v", err)
+	}
+	// Restore permissions on cleanup so t.TempDir cleanup can remove the dir.
+	t.Cleanup(func() { _ = os.Chmod(harmDir, 0o755) })
+
+	var out, errOut bytes.Buffer
+	code := runHandlerSubcommandIO(
+		[]string{"resume", "--type", "claude-code", "--project", projectDir},
+		&out, &errOut,
+	)
+
+	// Command must fail (exit non-zero) because the atomic write could not proceed.
+	if code == 0 {
+		t.Errorf("exit code = 0, want non-zero (temp-file creation should fail with read-only dir)")
+	}
+
+	// Restore permissions so we can read the file.
+	if err := os.Chmod(harmDir, 0o755); err != nil {
+		t.Fatalf("restore chmod .harmonik: %v", err)
+	}
+
+	// The original handler-state.json must be intact (not corrupted).
+	stateFile := filepath.Join(harmDir, "handler-state.json")
+	rawState, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("cannot read handler-state.json after failed resume: %v", err)
+	}
+	var parsedState handlerStateDisk
+	if parseErr := json.Unmarshal(rawState, &parsedState); parseErr != nil {
+		t.Fatalf("handler-state.json is corrupt after failed resume: %v\nraw: %s", parseErr, rawState)
+	}
+	entry, ok := parsedState.Handlers["claude-code"]
+	if !ok {
+		t.Fatal("handler-state.json missing 'claude-code' after failed resume")
+	}
+	// Status must still be "paused" — the write never completed.
+	if entry.Status != "paused" {
+		t.Errorf("after failed atomic write: status = %q, want paused (original must be preserved)", entry.Status)
+	}
+	// PausedEpoch must be unchanged.
+	if entry.PausedEpoch != 1 {
+		t.Errorf("after failed atomic write: paused_epoch = %d, want 1", entry.PausedEpoch)
+	}
+}
+
 // TestHandlerSubcommand_ResumeVerb_Dispatch verifies the dispatch table routes
 // "resume" to runHandlerResume (not the default error path).
 func TestHandlerSubcommand_ResumeVerb_Dispatch(t *testing.T) {

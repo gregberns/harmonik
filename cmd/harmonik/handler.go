@@ -53,6 +53,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // handlerStateSchemaVersion is the only schema version the CLI accepts at MVH.
@@ -243,6 +245,15 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 	// --- Read handler-state.json ---
 
 	statePath := filepath.Join(projectDir, ".harmonik", handlerStateFile)
+	// TOCTOU note: reading statePath here and renaming over it below creates a
+	// window in which a concurrent writer (e.g., a future daemon socket handler)
+	// could overwrite the file between our read and our rename, silently losing
+	// their update. This is acceptable for MVH because only the operator runs
+	// `harmonik handler resume` and the daemon does not yet write handler-state.json
+	// directly (HandlerPauseController is not yet wired). When hk-9hwbw lands the
+	// daemon-socket delegation path, the CLI will delegate to the controller and
+	// this file-level TOCTOU window will be eliminated. Until then, no advisory
+	// lock is held between read and rename.
 	state, exitCode := loadHandlerState(statePath, errOut)
 	if exitCode != 0 {
 		return exitCode
@@ -365,7 +376,11 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut i
 		return 1
 	}
 
-	// Rename (atomic on POSIX).
+	// Rename (atomic on POSIX). This is the other end of the TOCTOU window noted
+	// at the loadHandlerState call above: a concurrent writer that read the file
+	// before this rename completes will have its update silently lost when this
+	// rename lands. Acceptable at MVH (single operator, no daemon writer). Resolved
+	// by hk-9hwbw daemon-socket delegation.
 	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
 		_ = os.Remove(tmpPath)
 		fmt.Fprintf(errOut, "harmonik handler resume: rename %s → %s: %v\n", tmpPath, statePath, renameErr)
@@ -384,12 +399,48 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut i
 
 // emitHandlerResumedEvent appends a handler_resumed event line to eventsPath.
 // Best-effort: errors are silently discarded per §8.11 (state file is authoritative).
+//
+// Before emitting, the function constructs a core.HandlerResumedPayload and calls
+// .Valid() on it (event-model §8.11.2 payload contract). If the payload is invalid
+// (e.g. PausedEpoch < 1 or cause fields empty), the emit is skipped and a warning
+// is printed to stderr. This prevents replay tooling from ingesting a malformed
+// handler_resumed event that would fail schema validation.
 func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *handlerCauseDisk, pausedEpoch int) {
+	// Build a typed HandlerResumedPayload and validate before emitting.
+	// This guards against payload-shape drift between the CLI's flat envelope and
+	// the core schema (event-model §8.11.2 / handlerpauseevents_ifqnj.go).
+	var typedPriorCause core.HandlerPauseCause
+	if priorCause != nil {
+		typedPriorCause = core.HandlerPauseCause{
+			FailureClass: core.FailureClass(priorCause.FailureClass),
+			SubReason:    priorCause.SubReason,
+			SourceRunID:  priorCause.SourceRunID,
+			SourceBeadID: priorCause.SourceBeadID,
+			TrippedAt:    priorCause.TrippedAt,
+		}
+	}
+	typedPayload := core.HandlerResumedPayload{
+		AgentType:   core.AgentType(agentType),
+		By:          core.HandlerResumedByOperator,
+		PriorCause:  typedPriorCause,
+		PausedEpoch: pausedEpoch,
+	}
+	if !typedPayload.Valid() {
+		// The payload does not satisfy event-model §8.11.2 validation rules.
+		// Skip the emit rather than writing a malformed event that replay tooling
+		// would reject. The state file update already succeeded; this is observable
+		// from handler-state.json. A warning is written to stderr (best-effort).
+		_, _ = fmt.Fprintf(os.Stderr, //nolint:errcheck // best-effort
+			"harmonik handler resume: warning: skipping handler_resumed event emit — payload invalid (paused_epoch=%d agent_type=%q); state file updated successfully\n",
+			pausedEpoch, agentType)
+		return
+	}
+
 	evt := handlerResumedEvent{
 		EventType:   handlerResumedEventType,
 		EmittedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		AgentType:   agentType,
-		By:          "operator",
+		By:          string(core.HandlerResumedByOperator),
 		PriorCause:  priorCause,
 		PausedEpoch: pausedEpoch,
 	}

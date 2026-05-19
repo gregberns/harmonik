@@ -338,6 +338,78 @@ func TestHandlerPauseController_StatusAllHandlers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// HP-035 — concurrent readers + writer: no deadlock, consistent state
+// ---------------------------------------------------------------------------
+
+// TestHandlerPauseController_ConcurrentReadersWhileWriting verifies HP-035:
+// multiple goroutines calling IsPaused simultaneously while another goroutine
+// cycles through Pause / Resume must not deadlock and must always observe
+// a consistent (boolean) pause state.
+//
+// Bead ref: hk-87u3q.
+func TestHandlerPauseController_ConcurrentReadersWhileWriting(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ctrl := newTestController(t)
+	at := core.AgentTypeClaudeCode
+
+	const readers = 16
+	const cycles = 50
+
+	// writerDone signals readers to stop.
+	writerDone := make(chan struct{})
+
+	// Launch readers — each calls IsPaused + PausedEpochFor in a tight loop.
+	var readerWg sync.WaitGroup
+	for range readers {
+		readerWg.Add(1)
+		go func() {
+			defer readerWg.Done()
+			for {
+				select {
+				case <-writerDone:
+					return
+				default:
+					// Both read paths must work concurrently without deadlock.
+					_ = ctrl.IsPaused(at)
+					_, _ = ctrl.PausedEpochFor(at)
+				}
+			}
+		}()
+	}
+
+	// Writer cycles through Pause / Resume.
+	for i := range cycles {
+		cause := makePauseCause("run-rw", "hk-rw01")
+		if err := ctrl.Pause(ctx, at, cause, nil); err != nil {
+			close(writerDone)
+			t.Fatalf("cycle %d Pause: %v", i, err)
+		}
+		if err := ctrl.Resume(ctx, at, core.HandlerResumedByOperator); err != nil {
+			close(writerDone)
+			t.Fatalf("cycle %d Resume: %v", i, err)
+		}
+	}
+
+	close(writerDone)
+	readerWg.Wait()
+
+	// After all cycles, handler must be live.
+	if ctrl.IsPaused(at) {
+		t.Error("expected handler to be live after all Pause/Resume cycles")
+	}
+	// Epoch should equal the number of cycles (one increment per Pause).
+	snaps := ctrl.Status(at)
+	if len(snaps) != 1 {
+		t.Fatalf("want 1 snapshot, got %d", len(snaps))
+	}
+	if snaps[0].PausedEpoch != cycles {
+		t.Errorf("PausedEpoch = %d, want %d", snaps[0].PausedEpoch, cycles)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // InFlightBeadRecordFromRunHandle helper
 // ---------------------------------------------------------------------------
 

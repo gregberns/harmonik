@@ -5,7 +5,7 @@
 title: Handler Pause
 spec-id: handler-pause
 requirement-prefix: HP
-status: draft
+status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
 version: 0.1.0

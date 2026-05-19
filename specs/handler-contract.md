@@ -325,6 +325,34 @@ Mapping a subprocess exit state or adapter-detected condition to a sentinel clas
 
 Tags: mechanism
 
+### 4.5a Handler-fatal classification
+
+#### HC-020a — Closed handler-fatal taxonomy
+
+Certain failure classes are **HANDLER-FATAL**: they indicate that every subsequent invocation of the same `agent_type` will fail until external resolution.  The closed handler-fatal set at MVH is:
+
+(i) `transient` with `agent_rate_limited` observed **two times consecutively** without an intervening `agent_rate_limit_cleared`, and
+(ii) `budget_exhausted` whose underlying budget point declares `budget_scope = handler-account`.
+
+The complete class × sub-reason taxonomy at MVH is:
+
+| §8 class | Sub-reason | Handler-fatal? | HandlerFatalClass constant | Rationale |
+|---|---|---|---|---|
+| `transient` | `rate_limit` | **Yes** | `HandlerFatalClassRateLimit` | Two consecutive `agent_rate_limited` without `agent_rate_limit_cleared` indicate a handler-wide rate-limit; per-bead retry cannot resolve it. |
+| `transient` | _(other)_ | No | — | A single DNS hiccup or short-lived upstream error is per-bead; does not predict the next invocation. |
+| `budget_exhausted` | `handler-account` | **Yes** | `HandlerFatalClassBudgetAccount` | A session-token cap or daily-quota exhaustion applies to the entire handler type until external reset. |
+| `budget_exhausted` | _(other / per-run)_ | No | — | A per-node budget exhaustion is per-bead; does not imply every subsequent dispatch will fail. |
+| `structural` | _(any)_ | No | — | Different beads fail structurally for different reasons; one structural failure does not predict the next. |
+| `deterministic` | _(any)_ | No | — | Single-bead determinism is per-bead by definition. |
+| `canceled` | _(any)_ | No | — | Operator action; not a handler problem. |
+| `compilation_loop` | _(any)_ | No | — | Daemon-observed traversal cap; the handler subprocess is healthy. |
+
+The daemon's **handler-pause controller** (see [docs/components/internal/handler-pause-and-resume.md §5] and [specs/handler-pause.md §5.2 HP-011, HP-012]) is the policy-layer consumer of these signals.  This spec is normative for **signal-emission and classification**; the controller's hysteresis rules and pause state machine are normative in `specs/handler-pause.md`.
+
+Go implementation: `internal/core/failureclass_107gz.go` — `HandlerFatalClass` type, `HandlerFatalClassRateLimit`, `HandlerFatalClassBudgetAccount` constants, and `ClassifyHandlerFatal(FailureClass, HandlerFatalSubReason) (HandlerFatalClass, bool)` function.
+
+Tags: mechanism
+
 ### 4.6 Error propagation across async boundaries
 
 #### HC-024 — Subprocess crash emits agent_failed with typed class

@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-18 main — v49. Dogfood-pivot session. Audit findings (12 spec-gap beads, 5 follow-up beads, 5 dogfood-CLI beads). Plans/Done-means convention landed. Dogfood CLI multi-bead+context+review-loop landed. Two dogfood-blockers fixed; retry #3 in flight at handoff time. ~35 commits past v48. -->
+<!-- PP-TRIAL:v2 2026-05-19 main — v50. Phase-2 dogfood OPERATIONAL: 5/5 harmonik run --beads dogfoods landed real spec/Go changes end-to-end. MVH terminology scrubbed (hk-wn2pl). 5 scenario-test gap beads filed. ~70 commits past v49. Outstanding: hk-5dewt root cause = .br_history bloat (226MB, 200 entries) — daemon-side rotation fix in flight at handoff time. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -111,54 +111,54 @@ PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_pla
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v49, 2026-05-18)
+# Where we are (v50, 2026-05-19)
 
-**Main at `48a574e`. Working tree clean. ~35 commits past v48 baseline (`581f926`).** Dogfood retry #3 in flight at handoff time (background command `b7lq45kbe`; beads `hk-x0y2k` + `hk-75rij` IN_PROGRESS).
+**Main at `2622783`. Working tree clean (apart from in-flight worktree). ~70 commits past v49 baseline (`30a89bd`).** One implementer in flight at handoff time: hk-5dewt daemon `.br_history` rotation pre-flight (the root-cause fix for bead-close timeout).
 
 ## Headline outcomes
 
-1. **Handler-pause 8 of 9 P1 beads landed**, BUT it is DORMANT in production: `hk-8ykjq` (P1, OPEN) is the wire-up gap — `HandlerPausePolicyGoroutine.Subscribe(bus)` is never called in `daemon.go` composition root. The controller + persistence + dispatcher gate + policy goroutine all exist; nothing actually triggers pauses in production until hk-8ykjq lands. Reviewer (hk-37zy8 review) caught this; first 7 reviewers did not.
-2. **Dogfood CLI surface landed.** `harmonik run --beads id1,id2,... --max-concurrent N [--context "string|@file"] [--review-loop]` works at the orchestration level. Two dogfood-blockers found and fixed: `hk-2hb2y` (tmux pane race + bead-close-without-impl, fixed at `a7bcd49`) and `hk-yjduq` (nil watcher in tmux substrate path, fixed at `94d8992`). Three retries; #3 in flight.
-3. **Audit wave: 6 subsystem spec-vs-impl audits + source-of-truth inventory.** workspace/brcli is 100% spec-aligned. daemon has 8 categories of code-not-specced (most important: handler-pause-and-resume.md is a DESIGN DOC, never elevated to specs/). core/eventbus has 8 event types declared but never registered → JSONL replay fails. queue has 2 normative requirements not implemented (QM-002a, operator-drain). 12 spec-gap beads filed (6 P1 + 6 P2). `docs/source-of-truth-inventory.md` written.
-4. **Terminology cleanup landed.** 4 drifted scope-qualifier lines fixed (hk-ux915). plans/README.md now requires "Done means..." section per plan. Upstream kerf jigs are clean; local jig customization via `kerf jig save/load` is the path for the testing-criteria convention (hk-85trr P1).
-5. **Scenario-test audit.** 20 prioritized workflows; 5 P0 with zero coverage. The audit names hk-37zy8 wire-up as exactly the kind of bug twin-based scenarios would catch (and indeed it was; and then hk-yjduq was caught dogfooding-as-scenario-test).
-6. **"Half-built systems" pattern formally identified.** 3 instances in this session alone (hk-37zy8 wire-up, hk-2hb2y pane race, hk-yjduq nil watcher) — all unit-tested, all reviewer-APPROVED, all broken in production. New directive: REVIEWERS MISS COMPOSITION-ROOT WIRING.
+1. **Phase-2 dogfood OPERATIONAL — 5/5 dogfood runs landed real work via `harmonik run --beads`.** Each shipped a substantive spec edit committed by the daemon, merged + pushed to main without any sub-agent dispatch. Commits: `0b233a0` (hk-x0y2k CHB-013), `02e31e1` (hk-75rij QM-052a), `54fa28a` (hk-pxrv6 HC-057), `2748c51` (hk-vqoh2 EM-012b), `c3a6731` (hk-o0yft PL-006b/c). Work-completion path is solid.
+2. **3 dogfood-blockers fixed during the run.** **hk-aievp** (`fd5d268`): tmux `WindowPaneID(session:name-with-slash)` misparsed worktree-path window names → returned stale prior-session pane; fixed by atomic `-P -F "#{pane_id}"` capture. **hk-ry3be** (`4daaa3d`): `runWait` only checked `processDead(pid)` which returns false when macOS reparents an orphan to launchd → daemon heartbeated for 15h after silent pane death; fixed by secondary `WindowPanePID` check. **hk-5dewt** (in flight): wrong root-cause path was widened-retry then WAL-checkpoint. The actual cause is `.beads/.br_history/` (226MB, 200 snapshot entries) — each `br close` snapshots the full 2.3MB jsonl + scans history. With history archived: `br close` 19.5s → 0.15s. Fix in flight: daemon-side rotation pre-flight keeping latest 20.
+3. **MVH terminology scrubbed** (`hk-wn2pl`, P0). 5 top-level docs rewritten, `POST_MVH_PARALLELISM_ROADMAP.md` renamed, 6 open beads retitled to drop `(post-MVH)`/`MVH-required` qualifiers, CLAUDE.md/AGENTS.md gained a normative "Terminology — avoid MVH" guardrail. Root user concern: "MVH framing licensed half-built features." Reinforced by hk-b6ls5 (plans/README) + hk-85trr (local kerf jigs require Validation/Acceptance Tests section).
+4. **Substantive work: 70 commits.** Beads closed include hk-8ykjq (HandlerPausePolicy wire-up), hk-gjyks (8 EventType registrations), hk-m7joe (handler-pause.md elevated to specs/ normative), hk-9als7 (queue operator-drain consumer), hk-87u3q (HP-035 RWMutex), hk-107gz (handler-fatal taxonomy + HC-020a), hk-c8k4c + hk-th378 (BI-031b classifier wire-up at all 3 brAdapterErr sites), hk-rwdvm (EM-015e enum), hk-zudz0 (HC-006a per-phase LaunchSpec table), hk-5mjrs (label convention unified to `codename:*`), hk-3aqtb (nil-watcher scenario test), hk-f31xv (restored pasteinject test), hk-s95t2 (source-of-truth inventory verified).
+5. **Scenario-test gap audit** (`docs/scenario-test-gap-audit-2026-05-18.md`) filed 5 P0 beads: hk-6f1uj, hk-t5j2w, hk-3aqtb (✓ landed), hk-qxtbq, hk-nfhqd. Each names the half-built-systems pattern it would have caught at PR time.
+6. **Reviewer-gate paid off twice.** hk-m7joe reviewer caught HP-035 spec/code drift (filed as hk-87u3q, fixed at `df3ac9e`). hk-c8k4c reviewer caught half-built-systems (filed hk-th378, fixed at `75fdacd`). The directive "REVIEWERS MISS COMPOSITION-ROOT WIRING" continues to hold.
+7. **Diagnostic improvement landed** (`f518d8b`): br retry escalation now surfaces per-attempt brErr class + exit + stderr. The "BrUnavailable persisted after N retries" message had been masking the actual error class — exactly how we discovered (11/11 BrUnavailable, 0/11 BrDbLocked) was a timeout issue, not a lock-conflict issue.
 
 ## Next session — priorities
 
-1. **Check on dogfood retry #3** (`b7lq45kbe` background process). Inspect `/private/tmp/claude-502/.../tasks/b7lq45kbe.output` and bead status. If still failing, expect a new P0 — file, fix, repeat.
-2. **Land `hk-8ykjq`** (handler-pause policy goroutine wire-up). This is THE most impactful real-impact bead — handler-pause is non-functional in production until it lands. Small fix: add `policyGoroutine := NewHandlerPausePolicyGoroutine(...); policyGoroutine.Subscribe(deps.bus)` pre-Seal in daemon.go composition root. Dogfood it.
-3. **`hk-gjyks`** (8 EventType constants declared but never registered — JSONL replay fails). Real correctness gap.
-4. **`hk-m7joe`** (elevate handler-pause-and-resume.md → specs/handler-pause.md normative). This is the structural fix for one major half-built-systems instance.
-5. **Once dogfood is stable, route P2 docs beads through harmonik:** `hk-x0y2k`, `hk-75rij`, `hk-rwdvm`, `hk-zudz0`, `hk-n3v1q`, `hk-pxrv6`, `hk-vqoh2`, `hk-o0yft`, `hk-xpnfy`, `hk-h7eke`. All pure docs work.
+1. **Land hk-5dewt** (`.br_history` rotation pre-flight) when implementer returns. Verify by running another dogfood end-to-end without manual close.
+2. **Investigate stalled `harmonik run` post-success.** Even with the WAL fix and the silent-termination detection, the run process still hangs waiting after close-fail (queue stays "active"). Once hk-5dewt fixes close, run a full dogfood + confirm clean exit code 0.
+3. **Route remaining P2 docs beads through harmonik** (validates unattended Phase 2): hk-n3v1q, hk-xpnfy, hk-h7eke (workflow-modes spec), and `hk-2hb2y`/`hk-yjduq` follow-ups if any remain. The list of "all pure docs work" from v49 has 5 closed via dogfood already.
+4. **Stale-bead sweep** — orchestrator hit worktree-stale-at-fork ~5 times this session. The pattern is well-documented; not blocking, just verbose. Optional: tighten the implementer protocol so `br` ops happen in main's DB, not the worktree's.
+5. **Scenario-test backlog**: hk-6f1uj, hk-t5j2w, hk-qxtbq, hk-nfhqd. Each needs a small twin variant. Good 4-way parallel dispatch.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `docs/source-of-truth-inventory.md` (new this session).
-3. `plans/README.md` — "Done means..." convention now lives here.
-4. `cmd/harmonik/run.go` — new multi-bead CLI surface.
-5. `internal/daemon/handlerpause_policy_37zy8.go` — the dormant goroutine waiting for hk-8ykjq wire-up.
-6. `br list --label spec-gap --status=open` — the 12 spec-gap beads from this session's audits.
+2. `docs/scenario-test-gap-audit-2026-05-18.md` (5 P0 scenario beads, source).
+3. `docs/kerf-feedback/2026-05-19.md` (.br_history bloat + WAL-fix-was-insufficient findings, MAJOR-tagged).
+4. `internal/daemon/walcheckpoint.go` + `internal/daemon/daemon.go` (PL-005 step 0 pre-flight hooks — where .br_history rotation will land).
+5. `specs/handler-pause.md` (newly elevated normative spec at 77ae7ee).
+6. `br list --status=open --priority 1` — current P1 backlog (most are now spec-gap docs work).
 
 ## Plain-English glossary
 
-- **hk-8ykjq** — wire-up fix: connect `HandlerPausePolicyGoroutine.Subscribe(bus)` in daemon.go composition root. P1 OPEN. *Most impactful pending work.*
-- **hk-2hb2y** — DOGFOOD-BLOCKER #1, now CLOSED. Tmux pane race (`SendEnterToLastPane: no window spawned yet`). Fixed by wiring `Substrate` on implSpec + revSpec.
-- **hk-yjduq** — DOGFOOD-BLOCKER #2, now CLOSED. Nil-pointer panic in `Watcher.Done` because tmux substrate path returns nil watcher. Fixed by nil-guards in reviewloop.go.
-- **hk-w3cp1 / hk-boiwe / hk-hiqrl** — Dogfood CLI bundle (multi-bead + --context + --review-loop). CLOSED.
-- **hk-m7joe** — Elevate handler-pause-and-resume.md from design-doc to specs/handler-pause.md normative.
-- **hk-gjyks** — 8 EventType constants declared but never registered → JSONL replay fails.
-- **hk-b6ls5 / hk-85trr** — Extend "Done means..." convention to require scenario+exploratory test beads at plan end (both in plans/README.md and in local kerf jig templates).
-- **hk-f31xv** — Restore `pasteinject_hk2hb2y_test.go` (lost in merge-dance stash).
-- **Half-built systems pattern** — feature is unit-tested, reviewer-APPROVED, but broken in production because composition-root wiring was skipped. 3 instances this session.
-- **Phase-1 operational milestone (2026-05-14)** — the point at which the daemon can run jobs end-to-end with zero human input. Previously called "MVH" internally; that label is retired — it licensed half-built features. Use "Done means..." criteria per plans/README.md for future work.
-- **`harmonik run --beads`** — new multi-bead dispatch CLI; the dogfood mechanism.
+- **hk-5dewt** — daemon-side `.br_history` rotation pre-flight (keep latest 20). Root cause for the bead-close timeout that every dogfood hits. *In flight at handoff.*
+- **hk-aievp** — CLOSED. Tmux misparse of window names with `/` returned stale prior pane. Atomic `-P -F` fix.
+- **hk-ry3be** — CLOSED. `processDead(pid)` false-negative when macOS reparents claude orphan to launchd. Secondary `WindowPanePID` check fix.
+- **hk-wn2pl** — CLOSED. MVH terminology scrubbed from project; CLAUDE.md guardrail added.
+- **hk-u9kn5 / hk-ekz5v** — Both CLOSED. The path-of-investigation beads for the bead-close timeout (each layer was insufficient: retry-widen → WAL-pre-flight → finally .br_history rotation).
+- **`harmonik run --beads <id>`** — Phase-2 dispatch CLI. 5/5 dogfoods landed work this session. Bead-close step still requires manual completion until hk-5dewt lands.
+- **Phase-1 operational milestone (2026-05-14)** — daemon runs jobs end-to-end with zero human input. (Previously "MVH" — retired.)
+- **Half-built systems pattern** — feature is unit-tested + reviewer-APPROVED but breaks in production because composition-root wiring or runtime-environment was untested. v50 found 3 more (hk-aievp, hk-ry3be, hk-c8k4c→hk-th378). Dogfood is the canonical test.
+- **.br_history bloat** — every `br` write appends a full ~2.3MB jsonl snapshot to `.beads/.br_history/`. 200 entries = 226MB. Each `br close` then scans the history → 19.5s instead of 0.15s. Upstream kerf/beads_rust issue logged in `docs/kerf-feedback/2026-05-19.md`.
 
 ## Loose ends / blockers
 
-- The dogfood retry (`b7lq45kbe`) may still be running OR may have hit a new bug. First action next session: check it.
-- When daemon panics, queue.json stays in "active" state — `hk-ly4w5` only archives on paused-by-failure. May want a follow-up bead for "archive on any abnormal exit." Not filed yet.
-- Stale leftover stashes (3 worktree-leak stashes) — harmless; `git stash drop` after confirming each is leak-only.
+- **hk-5dewt** fix in flight (agent id known to current session — see TaskList). Cherry-pick + close + re-test on next session start.
+- `.beads/.br_history.226mb-archived/` is a 226MB directory I manually archived during diagnosis. Safe to delete after confirming hk-5dewt rotation works.
+- Pre-existing `TestBI010c_SpecContainsWorkflowLabelDiscipline` test failure noted by two reviewers — fixture reads wrong paragraph due to forward-reference vs `#### BI-010c` heading order. Not in scope for any current bead.
+- Tasks #7 (route P2 docs through harmonik) is the natural next move once hk-5dewt lands.
 
 ## No hard blockers requiring user input.

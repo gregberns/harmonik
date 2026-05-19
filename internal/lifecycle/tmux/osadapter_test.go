@@ -363,11 +363,13 @@ func TestOSAdapter_ListWindows_TmuxFailure(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // TestOSAdapter_NewWindowIn_HappyPath verifies that NewWindowIn returns an
-// Outcome with a non-empty Handle and nil Err on fake tmux success.
+// Outcome with a non-empty Handle, non-empty PaneID, and nil Err on fake tmux
+// success. The fake tmux prints "%27" (the pane ID captured via -P -F "#{pane_id}").
 // NOTE: uses t.Setenv — cannot be parallel.
 func TestOSAdapter_NewWindowIn_HappyPath(t *testing.T) {
 	binDir := osAdapterFixtureBinDir(t)
-	osAdapterFixtureWriteFakeTmux(t, binDir, nil, 0)
+	// Fake tmux prints the pane ID to stdout (the -P -F "#{pane_id}" output).
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"%27"}, 0)
 	osAdapterFixtureWithFakeTmux(t, binDir)
 
 	a := OSAdapter{}
@@ -385,6 +387,61 @@ func TestOSAdapter_NewWindowIn_HappyPath(t *testing.T) {
 	expectedHandle := WindowHandle("harmonik-abc123-default:hk-abc123-my-task")
 	if outcome.Handle != expectedHandle {
 		t.Errorf("NewWindowIn happy path: Handle = %q, want %q", outcome.Handle, expectedHandle)
+	}
+	// Verify the pane ID was captured atomically from the -P -F "#{pane_id}" output.
+	if outcome.PaneID != "%27" {
+		t.Errorf("NewWindowIn happy path: PaneID = %q, want %%27 (hk-aievp: atomic capture)", outcome.PaneID)
+	}
+}
+
+// TestOSAdapter_NewWindowIn_PaneIDCapturedAtomically verifies that NewWindowIn
+// captures the pane ID from the tmux -P -F "#{pane_id}" output in a single
+// invocation, without requiring a follow-up WindowPaneID call.
+//
+// This is the core test for the hk-aievp fix: the pane ID MUST be captured
+// atomically at window-creation time to avoid a subsequent display-message call
+// with the slash-bearing "session:window-name" handle.
+// NOTE: uses t.Setenv — cannot be parallel.
+func TestOSAdapter_NewWindowIn_PaneIDCapturedAtomically(t *testing.T) {
+	binDir := osAdapterFixtureBinDir(t)
+	// Simulate the real tmux output: pane ID on its own line.
+	osAdapterFixtureWriteFakeTmux(t, binDir, []string{"%42"}, 0)
+	osAdapterFixtureWithFakeTmux(t, binDir)
+
+	a := OSAdapter{}
+	// Window name is a slash-bearing filesystem path — the production scenario
+	// that caused the stale-pane misdirect (hk-aievp).
+	outcome := a.NewWindowIn(context.Background(), NewWindowIn{
+		Session:    "harmonik-proj",
+		WindowName: "/harmonik/worktrees/019e3d97-c2b7-7660-8827-36a079379cb0",
+	})
+	if outcome.Err != nil {
+		t.Fatalf("NewWindowIn slash-window: unexpected Err: %v", outcome.Err)
+	}
+	if outcome.PaneID != "%42" {
+		t.Errorf("NewWindowIn slash-window: PaneID = %q, want %%42 (pane ID from -P -F output)", outcome.PaneID)
+	}
+}
+
+// TestOSAdapter_BuildNewWindowArgs_IncludesPrintFlag verifies that the -P and
+// -F flags are present in buildNewWindowArgs output so that OSAdapter.NewWindowIn
+// captures the pane ID atomically (hk-aievp).
+func TestOSAdapter_BuildNewWindowArgs_IncludesPrintFlag(t *testing.T) {
+	t.Parallel()
+
+	params := NewWindowIn{
+		Session:    "s",
+		WindowName: "w",
+	}
+	args := buildNewWindowArgs(params)
+
+	// -P must be present.
+	if !sliceContains(args, "-P") {
+		t.Errorf("buildNewWindowArgs: missing -P flag (required for atomic pane-ID capture, hk-aievp); got %v", args)
+	}
+	// -F "#{pane_id}" must be present as a pair.
+	if !sliceContainsPair(args, "-F", "#{pane_id}") {
+		t.Errorf("buildNewWindowArgs: missing -F #{pane_id} pair (required for atomic pane-ID capture, hk-aievp); got %v", args)
 	}
 }
 

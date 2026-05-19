@@ -109,13 +109,18 @@ func (a *Adapter) terminalTransitionWrite(
 	}
 
 	// BI-030 step 5: invoke `br` with the status-change argv.
+	// Terminal-transition writes use UnavailableRetryMax (10) instead of
+	// DBLockedRetryMax (3): dogfood run hk-75rij showed that 3 retries are
+	// insufficient under concurrent kerf/agent SQLite contention (hk-ekz5v).
+	// The BI-030 intent-log backing provides idempotency across all retries.
+	// Spec ref: beads-integration.md §4.10 BI-031 step (4c-transient).
 	result, err := a.RunWithDBLockedRetry(
 		ctx,
 		cfg,
 		CommandKindWrite,
-		DBLockedRetryMax,
-		DBLockedRetryBase,
-		DBLockedRetryCap,
+		UnavailableRetryMax,
+		UnavailableRetryBase,
+		UnavailableRetryCap,
 		brArgs...,
 	)
 	if err != nil {
@@ -221,18 +226,19 @@ func (a *Adapter) CloseBead(
 	}
 
 	// Apply needs-attention label: operator-drain marker per EM-015e / ON-009a.
-	// Routes through RunWithDBLockedRetry (same retry discipline as the close
-	// write). The label write is a separate br invocation; if it fails the bead
-	// is already closed but the operator-drain marker is absent — the caller
-	// MUST treat this as an error (the bead could be re-dispatched without
-	// operator triage, violating ON-009a's no-auto-retry constraint).
+	// Routes through RunWithDBLockedRetry with UnavailableRetryMax (10) —
+	// same retry discipline as the close write (hk-ekz5v). The label write is
+	// a separate br invocation; if it fails the bead is already closed but the
+	// operator-drain marker is absent — the caller MUST treat this as an error
+	// (the bead could be re-dispatched without operator triage, violating
+	// ON-009a's no-auto-retry constraint).
 	result, err := a.RunWithDBLockedRetry(
 		ctx,
 		cfg,
 		CommandKindWrite,
-		DBLockedRetryMax,
-		DBLockedRetryBase,
-		DBLockedRetryCap,
+		UnavailableRetryMax,
+		UnavailableRetryBase,
+		UnavailableRetryCap,
 		"label", "add", string(beadID), "-l", "needs-attention",
 	)
 	if err != nil {
@@ -368,13 +374,15 @@ func (a *Adapter) ResetBead(
 	// BI-030 step 5: invoke `br update <bead_id> --status open`.
 	// Uses the same argv as ReopenBead: `br update --status open` is the only
 	// br command that reliably transitions in_progress → open (hk-wdeen).
+	// Uses UnavailableRetryMax (10) — same rationale as terminalTransitionWrite
+	// (hk-ekz5v): terminal writes back intent-log idempotency across retries.
 	result, err := a.RunWithDBLockedRetry(
 		ctx,
 		cfg,
 		CommandKindWrite,
-		DBLockedRetryMax,
-		DBLockedRetryBase,
-		DBLockedRetryCap,
+		UnavailableRetryMax,
+		UnavailableRetryBase,
+		UnavailableRetryCap,
 		"update", string(beadID), "--status", "open",
 	)
 	if err != nil {

@@ -53,8 +53,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioDaemonNotReadyRetry(), nil
 	case "commit-on-cue-startup-delay":
 		return scenarioCommitOnCueStartupDelay(), nil
+	case "handler-fatal":
+		return scenarioHandlerFatal(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, handler-fatal", name)
 	}
 }
 
@@ -701,6 +703,75 @@ func scenarioDaemonNotReadyRetry() *ScriptFile {
 					"ended_at":    now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
 					"exit_code":   0,
 					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: handler-fatal (hk-qxtbq)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioHandlerFatal returns a script that emits agent_ready followed by
+// agent_failed, simulating a handler-fatal failure outcome.
+//
+// Used by TestScenario_WorkLoop_HandlerFatalTripsGate to exercise the
+// dispatcher gate: after bead-1 reaches agent_failed, the test directly trips
+// HandlerPausePolicyGoroutine so that bead-2 is held rather than dispatched.
+//
+// Cite: hk-qxtbq.
+func scenarioHandlerFatal() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID  = "run-qxtbq-hf-001"
+		sessID = "sess-qxtbq-hf-001"
+		nodeID = "node-qxtbq-hf-001"
+	)
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		// ExitWithError causes the twin process to exit 1 after emitting the
+		// messages.  The work loop's CHB-020 exit=0 fallback would otherwise
+		// close the bead rather than reopen it; a non-zero exit triggers the
+		// default ReopenBead branch.
+		ExitWithError: true,
+		Messages: []ScriptMessage{
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-qxtbq-hf-001",
+				},
+			},
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": "claude-twin-claude",
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// Terminal failure event — work loop reopens the bead on agent_failed.
+			{
+				Type: "agent_failed",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"ended_at":       now.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+					"error_category": "transient",
+					"reason":         "handler_fatal_test",
 				},
 			},
 		},

@@ -135,12 +135,18 @@ type HandlerPauseStatusSnapshot struct {
 // HandlerPauseController is the daemon-singleton component that tracks
 // per-handler-type pause state and maintains the in-flight-bead freeze-list.
 //
-// # Single-writer discipline (QM-060 analog)
+// # Lock discipline (HP-035)
 //
-// mu is a plain sync.Mutex (not RWMutex) because every read of pause state
-// that influences dispatch decisions must be consistent with the most recent
-// write.  The expected call frequency is low (tens of calls per second at most)
-// so the coarser lock does not create a throughput problem.
+// mu is a sync.RWMutex.  Write paths (Pause, Resume, SetPersistFn) acquire the
+// full write lock (Lock/Unlock).  Read paths (IsPaused, PausedEpochFor) acquire
+// only the read lock (RLock/RUnlock), allowing multiple concurrent dispatcher
+// goroutines to check pause state without contention.  Status also uses the
+// write lock because it snapshots mutable sub-slices (freeze-list, cause) whose
+// copying is not safe under a concurrent write.  snapshotAllLocked and
+// snapshotEntryLocked are called only while the write lock is already held.
+//
+// Spec ref: specs/handler-pause.md §7.2 HP-035 ("IsPaused() MUST be lock-free
+// for readers via RWMutex read-lock").
 //
 // # Persistence seam (hk-m0k0a)
 //
@@ -152,7 +158,7 @@ type HandlerPauseStatusSnapshot struct {
 //
 // All exported methods are safe for concurrent use.
 type HandlerPauseController struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	// handlers maps agent_type → mutable state entry.
 	// Entries are created on first Pause; absent entries default to live.
@@ -382,15 +388,18 @@ func (c *HandlerPauseController) Resume(
 // IsPaused reports whether the handler for agentType is currently paused.
 // Returns false for unknown handler types (default-live per §5.3 "absent ⇒ all live").
 //
+// Uses a read lock per HP-035 so concurrent dispatch-loop goroutines can call
+// IsPaused simultaneously without contention on write paths (Pause/Resume).
+//
 // Safe for concurrent use.
 func (c *HandlerPauseController) IsPaused(agentType core.AgentType) bool {
-	c.mu.Lock()
+	c.mu.RLock()
 	entry, exists := c.handlers[agentType]
 	var paused bool
 	if exists {
 		paused = entry.status == pauseStatusPaused
 	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 	return paused
 }
 
@@ -404,13 +413,13 @@ func (c *HandlerPauseController) IsPaused(agentType core.AgentType) bool {
 //
 // Safe for concurrent use.
 func (c *HandlerPauseController) PausedEpochFor(agentType core.AgentType) (epoch int, paused bool) {
-	c.mu.Lock()
+	c.mu.RLock()
 	entry, exists := c.handlers[agentType]
 	if exists && entry.status == pauseStatusPaused {
 		epoch = entry.pausedEpoch
 		paused = true
 	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 	return epoch, paused
 }
 

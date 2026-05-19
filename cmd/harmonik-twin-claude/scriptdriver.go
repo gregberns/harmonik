@@ -175,6 +175,13 @@ type ScriptFile struct {
 	// Messages is the ordered list of progress-stream messages to emit.
 	// nil or empty means no messages are emitted (the driver exits immediately).
 	Messages []ScriptMessage `yaml:"messages"`
+
+	// ExitWithError, when true, causes runScript to return a non-nil error after
+	// all messages have been emitted.  main.go maps a non-nil runScript error to
+	// exit code 1.  Use this in scenarios that simulate a handler-fatal failure
+	// where the handler process must exit non-zero so the work loop takes the
+	// ReopenBead branch (exit=0 is auto-closed by the CHB-020 fallback heuristic).
+	ExitWithError bool `yaml:"exit_with_error"`
 }
 
 // loadScriptFile reads and parses the YAML script file at path.
@@ -286,6 +293,9 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 		if err := emitScriptMessage(e, msg); err != nil {
 			return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 		}
+	}
+	if sf.ExitWithError {
+		return fmt.Errorf("scenario exit_with_error: handler-fatal simulation")
 	}
 	return nil
 }

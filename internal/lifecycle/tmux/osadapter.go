@@ -101,15 +101,19 @@ func (OSAdapter) ListWindows(ctx context.Context, session string) ([]string, err
 // directory.
 //
 // On success, returns an Outcome whose Handle is a "session:window-name" string
-// in tmux notation, usable with [KillWindow] and [WindowPanePID].
+// in tmux notation, usable with [KillWindow] and [WindowPanePID], and whose
+// PaneID is the stable pane identifier (e.g. "%27") captured atomically via
+// the `-P -F "#{pane_id}"` flags. The PaneID is slash-free and safe to use as
+// a tmux pane target even when the window name is a filesystem path (hk-aievp,
+// hk-yngq2).
 //
 // Returns [ErrNoSession] when params.Session does not exist.
 // Returns [ErrWindowCollision] when a window named params.WindowName already
 // exists in the session.
 // Returns [*ErrTmuxFailure] on other tmux invocation errors.
 //
-// The tmux invocation is: tmux new-window -d -t <session>: -n <window> [-c <cwd>]
-// [-e KEY=VAL...] -- [argv...]
+// The tmux invocation is: tmux new-window -P -F "#{pane_id}" -d -t <session>:
+// -n <window> [-c <cwd>] [-e KEY=VAL...] -- [argv...]
 //
 // Spec ref: process-lifecycle.md §4.5 PL-021b obligation 1 — "the daemon MUST
 // create the subprocess via `tmux new-window -d -t <session>: -n <window-name>
@@ -133,7 +137,15 @@ func (OSAdapter) NewWindowIn(ctx context.Context, params NewWindowIn) Outcome {
 	// Construct the handle as "session:window-name" per the opaque format
 	// documented in adapter.go.
 	handle := WindowHandle(params.Session + ":" + params.WindowName)
-	return Outcome{Handle: handle}
+
+	// Extract the pane ID from the -P -F "#{pane_id}" output (e.g. "%27").
+	// This is captured atomically at window-creation time, eliminating the need
+	// for a follow-up WindowPaneID call that would use the slash-bearing handle
+	// and risk resolving the wrong pane when the window name is a filesystem path
+	// (hk-aievp: root cause of stale-pane misdirect).
+	paneID := strings.TrimSpace(string(out))
+
+	return Outcome{Handle: handle, PaneID: paneID}
 }
 
 // KillWindow destroys the window identified by handle. Returns nil if the
@@ -464,10 +476,17 @@ func parseBufferNameComponents(bufferName string) (sessionID, purpose string) {
 // buildNewWindowArgs constructs the argument slice for `tmux new-window` from
 // a [NewWindowIn]. It follows the command shape:
 //
-//	new-window -d -t <session>: -n <window> [-c <cwd>] [-e K=V...] [-- <argv...>]
+//	new-window -P -F "#{pane_id}" -d -t <session>: -n <window> [-c <cwd>] [-e K=V...] [-- <argv...>]
+//
+// The -P flag prints information about the newly-created window; -F "#{pane_id}"
+// narrows the output to the stable pane ID (e.g. "%27"). Capturing the pane ID
+// atomically at creation time avoids the follow-up WindowPaneID call that would
+// use the slash-bearing "session:window-name" handle, which tmux can misparse
+// when the window name is a filesystem path (hk-aievp, hk-yngq2).
 func buildNewWindowArgs(p NewWindowIn) []string {
 	args := []string{
 		"new-window",
+		"-P", "-F", "#{pane_id}", // print new pane ID atomically (hk-aievp)
 		"-d",                  // detached (don't switch to the new window)
 		"-t", p.Session + ":", // target session; trailing colon selects last window
 		"-n", p.WindowName,

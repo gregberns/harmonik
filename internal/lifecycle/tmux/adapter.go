@@ -54,8 +54,17 @@ type WindowHandle string
 // On success, Handle is the opaque reference to the created window and Err is
 // nil. On failure, Handle is empty and Err wraps one of the error sentinels
 // declared in this package.
+//
+// PaneID is the stable tmux pane identifier (e.g. "%27") captured atomically
+// at window-creation time via `tmux new-window -P -F "#{pane_id}"`.
+// It is slash-free and can be used directly as a pane target even when the
+// window name is a filesystem path containing slashes (hk-aievp).
+// When empty, callers fall back to WindowPaneID or the legacy handle+".0" form.
 type Outcome struct {
 	Handle WindowHandle
+	// PaneID is the stable pane identifier captured atomically at creation time.
+	// Non-empty on success when the -P -F "#{pane_id}" flags are supported.
+	PaneID string
 	Err    error
 }
 

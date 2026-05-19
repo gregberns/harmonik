@@ -163,17 +163,30 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		pid = 0
 	}
 
-	// Retrieve the stable pane ID ("%NNNN") immediately so WriteLastPane can
-	// address the pane without constructing a slash-bearing target string.
-	// Failure is non-fatal; WriteLastPane falls back to handle+".0" when empty.
-	// (hk-yngq2: window name is a worktree path with slashes — tmux cannot parse
-	// "session:path/to/dir.0" as a pane target; "%NNNN" is always slash-free.)
-	paneID := ""
-	if id, paneIDErr := s.adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
-		paneID = id
+	// Prefer the pane ID captured atomically by NewWindowIn (hk-aievp fix):
+	// outcome.PaneID is set by OSAdapter.NewWindowIn via `-P -F "#{pane_id}"`,
+	// which captures the ID in the same tmux invocation that creates the window.
+	// This avoids a follow-up WindowPaneID call that uses the slash-bearing
+	// "session:window-name" handle — tmux misparsing that handle when the window
+	// name is a filesystem path caused the stale-pane misdirect (pane %22 instead
+	// of the fresh %27).
+	//
+	// Fall back to a separate WindowPaneID call only when outcome.PaneID is empty
+	// (e.g. fake adapters in tests that do not yet set PaneID, or future adapter
+	// implementations that do not support -P -F).
+	//
+	// hk-yngq2: window name is a worktree path with slashes — tmux cannot parse
+	// "session:path/to/dir.0" as a pane target; "%NNNN" is always slash-free.
+	paneID := outcome.PaneID
+	if paneID == "" {
+		if id, paneIDErr := s.adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
+			paneID = id
+		}
 	}
 
 	// Record the handle and pane ID so WriteLastPane can reference them.
+	// This assignment happens BEFORE returning the session, so any subsequent
+	// WriteLastPane call on this substrate will use the just-spawned pane.
 	s.lastHandleMu.Lock()
 	s.lastHandle = outcome.Handle
 	s.lastPaneID = paneID

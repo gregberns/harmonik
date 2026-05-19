@@ -232,6 +232,20 @@ type Config struct {
 	// Bead ref: hk-8jh26.
 	CancelOnQueueExit context.CancelFunc
 
+	// SkipWALCheckpoint, when true, disables the advisory WAL-checkpoint
+	// pre-flight that runs at PL-005 step 0 before the first brcli call.
+	//
+	// The pre-flight is non-fatal and transparent in production. This field
+	// exists solely for unit tests that operate on fake or absent .beads
+	// databases where spawning sqlite3 would be a no-op at best and
+	// confusing at worst.
+	//
+	// Default (false): pre-flight runs when ProjectDir is set and
+	// .beads/beads.db-wal exceeds 1 MB.
+	//
+	// Bead ref: hk-5dewt.
+	SkipWALCheckpoint bool
+
 	// QueueStore, when non-nil, is used directly instead of creating a fresh
 	// QueueStore inside daemon.Start.  The caller retains the pointer and can
 	// inspect queue status after Start returns (Fix 2 of hk-8jh26).
@@ -384,6 +398,18 @@ func Start(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", cfgErr)
 		}
 		cfg.ProjectCfg = projectCfg
+	}
+
+	// WAL-checkpoint pre-flight (hk-5dewt): if .beads/beads.db-wal exists and
+	// exceeds 1 MB, run PRAGMA wal_checkpoint(TRUNCATE) via sqlite3 before the
+	// first br write.  This prevents the 10s wall-clock timeout in
+	// brcli/timeout.go from firing when WAL bloat causes `br close` to take
+	// >10s (dogfood-2/3/4 diagnosis: 0.35s on clean DB vs 19.4s with 12MB WAL).
+	// The call is non-fatal and is a no-op when sqlite3 is not on PATH.
+	// Skipped when SkipWALCheckpoint is true (test isolation) or when ProjectDir
+	// is empty (unit-test mode).
+	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
+		_ = runWALCheckpointPreflight(ctx, cfg.ProjectDir)
 	}
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).

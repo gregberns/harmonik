@@ -399,6 +399,15 @@ func killProcessWithGrace(pid int, grace time.Duration) {
 // active pane when the window name is no longer found — causing an infinite
 // loop when Kill has already destroyed the window (hk-smuku).
 //
+// Secondary pane-presence check (hk-ry3be): when s.pid > 0 but processDead
+// returns false, Wait also calls WindowPanePID on the stored handle.  If the
+// window can no longer be found by tmux (ErrNoSession or ErrTmuxFailure), the
+// daemon treats the pane as gone and unblocks even if the OS-level process is
+// still reachable (e.g. a zombie, orphan, or launchd re-parented child).  This
+// prevents the 15-hour heartbeat hang observed in the 2026-05-18 dogfood run
+// (hk-ry3be): the tmux pane %29 disappeared but the shell PID remained alive in
+// the OS process table, causing processDead to always return false.
+//
 // When s.pid == 0 (PID lookup failed at spawn time), Wait falls back to the
 // WindowPanePID adapter call so that tests without real PIDs continue to work.
 //
@@ -455,7 +464,21 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 					s.outcomeReady.Store(true)
 					return
 				}
-				// Process still alive — continue polling.
+				// Secondary check: the OS process appears alive, but the tmux
+				// pane may have been killed externally (tmux kill-window, session
+				// closed, or host process survived as an orphan/zombie).  If the
+				// window is gone from tmux's perspective, unblock immediately so
+				// the daemon does not hang indefinitely emitting heartbeats for a
+				// pane that no longer exists (hk-ry3be dogfood-blocker).
+				if _, paneErr := s.adapter.WindowPanePID(ctx, s.handle); paneErr != nil {
+					s.outcome = handler.Outcome{
+						ExitCode: -1, // unknown: pane gone, process state uncertain
+						Duration: time.Since(startedAt),
+					}
+					s.outcomeReady.Store(true)
+					return
+				}
+				// Process and pane both appear alive — continue polling.
 			} else {
 				// Slow path: PID unknown; fall back to WindowPanePID.
 				_, err := s.adapter.WindowPanePID(ctx, s.handle)

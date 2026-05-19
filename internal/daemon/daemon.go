@@ -264,6 +264,30 @@ type Config struct {
 	//
 	// Bead ref: hk-37zy8.
 	TestOnlyBusObserver func(bus eventbus.EventBus)
+
+	// TestOnlyBrAdapterFactory, when non-nil, replaces brcli.NewForProject at
+	// all three call sites in Start.  Production callers MUST leave this nil.
+	//
+	// The injection point allows tests to exercise the BI-031b reconciliation
+	// classification + divergence_inconclusive emission path without a real `br`
+	// binary or a real .beads database; the factory can return a stubbed
+	// *brcli.Adapter or a BrSchemaMismatch-wrapping error unconditionally.
+	//
+	// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+	// Bead ref: hk-th378.
+	TestOnlyBrAdapterFactory func(brPath, projectDir string) (*brcli.Adapter, error)
+}
+
+// newBrAdapter constructs a *brcli.Adapter via cfg.TestOnlyBrAdapterFactory when
+// set (test mode), or via brcli.NewForProject in production.
+//
+// Centralising the call avoids three duplicate factory-selection blocks across
+// the three brcli.NewForProject call sites in Start (hk-th378).
+func (cfg Config) newBrAdapter(brPath, projectDir string) (*brcli.Adapter, error) {
+	if cfg.TestOnlyBrAdapterFactory != nil {
+		return cfg.TestOnlyBrAdapterFactory(brPath, projectDir)
+	}
+	return brcli.NewForProject(brPath, projectDir)
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -522,12 +546,18 @@ func Start(ctx context.Context, cfg Config) error {
 		var beadCat3cCloser lifecycle.BeadCat3cCloser
 		var intentLogDir string
 		if cfg.BrPath != "" {
-			brAdapter, brAdapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+			brAdapter, brAdapterErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
 			if brAdapterErr != nil {
-				// Non-fatal: bead-reset sweep is best-effort; falling back to
-				// no-bead-reset leaves the standard PL-006 sweep intact and
-				// the bead remains in_progress until the next restart.
-				_ = brAdapterErr
+				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
+				// BI-031b; other error categories are also classified so the event
+				// bus always carries a structured observation.  Non-fatal: bead-reset
+				// sweep is best-effort; Cat 0 (schema mismatch / unavailable) means
+				// we proceed queue-less and the bead remains in_progress until the
+				// next restart.
+				//
+				// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+				// Bead ref: hk-th378.
+				_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bus)
 			} else {
 				beadLedger = brAdapter
 				beadResetter = brAdapter
@@ -610,8 +640,16 @@ func Start(ctx context.Context, cfg Config) error {
 	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 	if cfg.ProjectDir != "" && cfg.BrPath != "" {
-		brAdapterForQueue, brAdapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
-		if brAdapterErr == nil {
+		brAdapterForQueue, brAdapterErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
+		if brAdapterErr != nil {
+			// Classify + emit divergence_inconclusive for BrSchemaMismatch per
+			// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
+			// return errors until a queue is submitted.
+			//
+			// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+			// Bead ref: hk-th378.
+			_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
+		} else {
 			loadedQueue, loadErr := lifecycle.LoadQueueAtStartup(
 				context.Background(),
 				cfg.ProjectDir,
@@ -627,9 +665,6 @@ func Start(ctx context.Context, cfg Config) error {
 				qs.SetQueue(loadedQueue)
 			}
 		}
-		// Non-fatal brcli construction failure: daemon proceeds without a queue.
-		// The socket handler will return errors for queue-* ops until a queue is
-		// submitted.
 	}
 
 	// PL-005 step 8a (hk-m0k0a): wire the persistence function into the
@@ -687,8 +722,16 @@ func Start(ctx context.Context, cfg Config) error {
 		// hk-peucr).
 		var queueHandler QueueHandler
 		if cfg.BrPath != "" {
-			brAdapterForHandler, brHandlerErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
-			if brHandlerErr == nil {
+			brAdapterForHandler, brHandlerErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
+			if brHandlerErr != nil {
+				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
+				// BI-031b.  Non-fatal: socket handler proceeds without queue support;
+				// queue-* ops return errors until a queue is submitted.
+				//
+				// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+				// Bead ref: hk-th378.
+				_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brHandlerErr, "br-new-for-project-handler", bus)
+			} else {
 				queueHandler = queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
 			}
 		}

@@ -53,8 +53,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioDaemonNotReadyRetry(), nil
 	case "commit-on-cue-startup-delay":
 		return scenarioCommitOnCueStartupDelay(), nil
+	case "budget-exhausted":
+		return scenarioBudgetExhausted(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted", name)
 	}
 }
 
@@ -701,6 +703,80 @@ func scenarioDaemonNotReadyRetry() *ScriptFile {
 					"ended_at":    now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
 					"exit_code":   0,
 					"outcome_ref": runID + "/outcome",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: budget-exhausted (hk-6f1uj)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioBudgetExhausted returns a script that emits a budget_exhausted event
+// after agent_ready, modelling the handler-account budget exhaustion case that
+// trips HandlerPauseController.Pause via the policy goroutine (HP-012).
+//
+// Expected event ordering:
+//
+//  1. handler_capabilities
+//  2. agent_ready
+//  3. budget_exhausted  — trips handler-pause policy for AgentTypeClaudeCode
+//  4. agent_failed      — terminal event; run closes with failure
+//
+// The budget_exhausted event uses budget_ref="handler-account" to represent the
+// handler-account scope per specs/handler-pause.md §5.2 HP-012.
+//
+// Cite: specs/handler-pause.md §5.2 HP-012; hk-6f1uj.
+func scenarioBudgetExhausted() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID  = "run-hk6f1uj-be-001"
+		sessID = "sess-hk6f1uj-be-001"
+	)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities — first message on stream (HC-009).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-hk6f1uj-001",
+				},
+			},
+			// 2. agent_ready (HC-039) — signals handler is live before exhaustion.
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			// 3. budget_exhausted — handler-account scope; trips HP-012 single-hit pause.
+			// budget_ref="handler-account" signals the per-handler-account budget cap.
+			{
+				Type: "budget_exhausted",
+				Payload: map[string]any{
+					"run_id":                  runID,
+					"budget_ref":              "handler-account",
+					"attempted_dispatch_cost": 0.01,
+				},
+				RelativeTimestampMs: 5,
+			},
+			// 4. agent_failed — terminal event after budget exhaustion.
+			{
+				Type: "agent_failed",
+				Payload: map[string]any{
+					"run_id":         runID,
+					"session_id":     sessID,
+					"ended_at":       now.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
+					"error_category": "budget_exhausted",
+					"reason":         "handler_account_budget_exhausted",
 				},
 			},
 		},

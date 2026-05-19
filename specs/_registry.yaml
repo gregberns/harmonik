@@ -24,3 +24,6 @@ prefixes:
   RC: {spec-id: reconciliation,     reserved: 2026-04-24, status: draft}
   BI: {spec-id: beads-integration,  reserved: 2026-04-24, status: draft}
   SH: {spec-id: scenario-harness,   reserved: 2026-05-05, status: draft}
+  QM: {spec-id: queue-model,        reserved: 2026-05-18, status: draft}
+  CHB: {spec-id: claude-hook-bridge, reserved: 2026-05-18, status: draft}
+  HP: {spec-id: handler-pause,      reserved: 2026-05-18, status: draft}

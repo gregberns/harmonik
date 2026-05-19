@@ -3,9 +3,11 @@
 *.swo
 *~
 
-# kerf working state — tracked project identifier only
+# kerf working state — tracked project identifier and local jig overrides only
 .kerf/*
 !.kerf/project-identifier
+!.kerf/jigs/
+!.kerf/jigs/*.md
 
 # Beads task ledger — track only the JSONL export and test fixtures; ignore SQLite DB / WAL / locks
 .beads/*

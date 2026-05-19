@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.1
+version: 0.1.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-15
+last-updated: 2026-05-19
 depends-on:
   - architecture
   - execution-model
@@ -20,6 +20,7 @@ depends-on:
   - process-lifecycle
   - operator-nfr
   - workspace-model
+  - handler-pause
 ---
 ```
 
@@ -554,13 +555,14 @@ ENUM QueueValidationReason:
   queue_not_advancing
   queue_too_large
   queue_already_active
+  handler_paused
 ```
 
 Additions to this enum require a corresponding allocation in the JSON-RPC error-code block reserved for `queue-model` (`-32010..-32019` per [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]). Existing reason values are stable across the N-1 compatibility window per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.5 ON-018]; the enum is a wire-level contract carried in JSON-RPC error responses.
 
 ### 6.11 QM-029a — Order of evaluation
 
-Validation checks within a single request MUST be evaluated in the order: QM-027 (single active queue, submit-only) → QM-024 (append target validity, append-only) → QM-020 (existence) → QM-021 (status) → QM-022 (no double dispatch) → QM-023 (duplicates) → QM-026 (size). QM-025 (parallelism-narrowed) is evaluated last as an informational pass and emits its events only after the request is accepted; it never produces a validation failure. The first failing rule short-circuits and returns its typed error; the daemon MUST NOT report multiple validation failures from a single request.
+Validation checks within a single request MUST be evaluated in the order: QM-027 (single active queue, submit-only) → QM-024 (append target validity, append-only) → QM-020 (existence) → QM-021 (status) → QM-022 (no double dispatch) → QM-052a (handler-pause gate, submit and append) → QM-023 (duplicates) → QM-026 (size). QM-025 (parallelism-narrowed) is evaluated last as an informational pass and emits its events only after the request is accepted; it never produces a validation failure. The first failing rule short-circuits and returns its typed error; the daemon MUST NOT report multiple validation failures from a single request.
 
 ### 6.11a QM-029b — Validation reason to JSON-RPC error-code mapping
 
@@ -576,8 +578,9 @@ Each `QueueValidationReason` enum value maps to a specific JSON-RPC error code i
 | `-32015`            | `bead_already_dispatched`    | QM-022              |
 | `-32016`            | `duplicate_bead_id`          | QM-023              |
 | `-32017`            | `queue_too_large`            | QM-026              |
+| `-32018`            | `handler_paused`             | QM-052a (handler-pause gate) |
 
-Error codes `-32018` and `-32019` are reserved for future `QueueValidationReason` additions within the v0.1 error-code block. Each code is a stable wire constant; additions require a spec amendment and a corresponding entry in this table. The `message` field of the JSON-RPC error carries the typed-error shape per the PL-003b `<error_type>{...}` convention; the `code` field is the numeric value in this table.
+Error code `-32019` is reserved for a future `QueueValidationReason` addition within the v0.1 error-code block. Each code is a stable wire constant; additions require a spec amendment and a corresponding entry in this table. The `message` field of the JSON-RPC error carries the typed-error shape per the PL-003b `<error_type>{...}` convention; the `code` field is the numeric value in this table.
 
 ## 7. Append Semantics
 
@@ -644,6 +647,14 @@ When the active group reaches `GroupStatus: complete-with-failures` per §5.1 ro
 4. Emit `queue_paused{queue_id, group_index, fail_count, reason: "group_failure"}`.
 
 No further dispatch occurs while `status == paused-by-failure`. The daemon remains running; `.harmonik/queue.json` persists with `status: paused-by-failure`. v0.1 recovery is daemon restart followed by a fresh `queue-submit` after the operator addresses the failed beads; v0.2 will add `queue-resume`.
+
+### 8.3a QM-052a — Handler-pause gate orthogonality
+
+Handler-type pause (per [/Users/gb/github/harmonik/specs/handler-pause.md §6 HP-025]) is **orthogonal** to the queue-level pause states (`paused-by-failure`, `paused-by-drain`). A handler pause does NOT transition `Queue.status`; it manifests only as a submission-time validation gate and as a dispatcher-level eligibility check that holds individual items without advancing queue state.
+
+**Submission-time gate.** During `queue-submit` and `queue-append` validation (QM-052a step in the QM-029a order), the daemon MUST consult `HandlerPauseController.IsHandlerPaused(agent_type)` for each item in the request. If any item resolves to a paused handler type, the entire request MUST be rejected with `QueueValidationReason: handler_paused` (JSON-RPC error code `-32018` per §6.11a). The rejection payload MUST include the `agent_type` and the list of bead IDs that would dispatch to the paused handler. See [/Users/gb/github/harmonik/specs/handler-pause.md §6 HP-025, §7 HP-009a].
+
+**Orthogonality.** When `Queue.status` is `paused-by-failure` or `paused-by-drain`, a concurrent handler pause has no additional effect on queue state. The queue remains in its existing pause state; the handler pause persists independently and applies when the queue eventually resumes. No `queue_paused` event is emitted for a handler pause.
 
 ### 8.4 QM-053 — Complete
 
@@ -749,6 +760,7 @@ The validation pipeline (§6) MUST run against an immutable snapshot of the in-m
 | [/Users/gb/github/harmonik/specs/execution-model.md] | §7.1 | Per-run state machine layers under per-item state per §2.7 INFORMATIVE note. |
 | [/Users/gb/github/harmonik/specs/beads-integration.md] | §4.3 BI-006, §4.5 | `blocks` edge consumed by QM-025; `br show` / status reads consumed by QM-020 / QM-021. |
 | [/Users/gb/github/harmonik/specs/workspace-model.md] | §4.7 WM-026 | Atomic-write discipline cited by QM-001. |
+| [/Users/gb/github/harmonik/specs/handler-pause.md] | §6 HP-025, §7 HP-009a | Normative dependency introduced in v0.1.2: QM-052a (§8.3a) cites HP-025 for the submission-time gate contract; `handler_paused` enum value and `-32018` error-code allocation cross-reference HP-009a. |
 
 ### A.3 v0.1 deferred surface
 
@@ -765,6 +777,16 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.2 — 2026-05-19 — QM-052a handler-pause gate amendment (hk-75rij). Three additive amendments landing `ReasonHandlerPaused` implemented at 298624d (hk-siuo2) as a normative spec requirement:
+
+1. **§6.10 QM-029 — enum extension.** Added `handler_paused` to `QueueValidationReason` enum.
+
+2. **§6.11 QM-029a — evaluation order.** Added QM-052a (handler-pause gate, submit and append) between QM-022 and QM-023.
+
+3. **§6.11a QM-029b — error-code mapping.** Allocated `-32018` → `handler_paused` (QM-052a). `-32019` remains reserved.
+
+4. **§8.3a QM-052a (new) — Handler-pause gate orthogonality.** Normative submission-time gate requirement and orthogonality clause: handler-type pause does not modify `Queue.status`; a concurrent queue-level pause and handler pause coexist independently.
 
 v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments surfaced by 3-reviewer parallel pass on the extqueue v0.1 spec commit (e228bc3):
 

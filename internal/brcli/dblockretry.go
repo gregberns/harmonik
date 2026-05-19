@@ -102,6 +102,14 @@ func (a *Adapter) RunWithDBLockedRetry(
 ) (Result, error) {
 	backoff := base
 
+	// Diagnostic counters: track how many attempts hit each failure class.
+	var countDbLocked, countUnavailable int
+
+	// lastResult and lastErr hold the outcome of the most-recent transient
+	// attempt so the escalation message can surface them verbatim.
+	var lastResult Result
+	var lastErr error
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		result, err := a.RunWithTimeout(ctx, cfg, kind, args...)
 
@@ -121,19 +129,44 @@ func (a *Adapter) RunWithDBLockedRetry(
 			return Result{}, err
 		}
 
-		// Transient: BrDbLocked Result, or wall-clock-timeout error wrapping
-		// BrUnavailable. If this was the last allowed attempt, escalate.
+		// Transient: record outcome for diagnostics.
+		lastResult = result
+		lastErr = err
+		if err != nil {
+			countUnavailable++
+		} else {
+			countDbLocked++
+		}
+
+		// If this was the last allowed attempt, escalate with full diagnostics.
 		if attempt == maxRetries {
-			if err != nil {
+			// Capture the last 200 bytes of stderr for the diagnostic message.
+			stderrSnippet := lastResult.Stderr
+			if len(stderrSnippet) > 200 {
+				stderrSnippet = stderrSnippet[len(stderrSnippet)-200:]
+			}
+
+			totalAttempts := maxRetries + 1
+			if lastErr != nil {
 				return Result{}, fmt.Errorf(
-					"brcli: BrUnavailable persisted after %d retries: %w",
+					"brcli: BrUnavailable persisted after %d retries"+
+						" (%d/%d BrUnavailable, %d/%d BrDbLocked)"+
+						" last attempt: brErr=%s exit=%d stderr=%q: %w",
 					maxRetries,
+					countUnavailable, totalAttempts,
+					countDbLocked, totalAttempts,
+					lastResult.BrErr.String(), lastResult.ExitCode, stderrSnippet,
 					BrUnavailable,
 				)
 			}
 			return Result{}, fmt.Errorf(
-				"brcli: BrDbLocked persisted after %d retries: %w",
+				"brcli: BrDbLocked persisted after %d retries"+
+					" (%d/%d BrUnavailable, %d/%d BrDbLocked)"+
+					" last attempt: brErr=%s exit=%d stderr=%q: %w",
 				maxRetries,
+				countUnavailable, totalAttempts,
+				countDbLocked, totalAttempts,
+				lastResult.BrErr.String(), lastResult.ExitCode, stderrSnippet,
 				BrUnavailable,
 			)
 		}

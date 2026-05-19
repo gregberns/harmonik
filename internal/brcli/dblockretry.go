@@ -25,6 +25,33 @@ const DBLockedRetryBase = 100 * time.Millisecond
 // Spec ref: specs/beads-integration.md §4.8a BI-025c (step 4c: "max 1s").
 const DBLockedRetryCap = 1 * time.Second
 
+// UnavailableRetryMax is the BI-025c maximum number of retry attempts for
+// terminal-transition writes when `br` returns a wall-clock-timeout
+// BrUnavailable (step 4c-transient: transient SQLite contention burst).
+//
+// This is wider than DBLockedRetryMax (3) because terminal-transition writes
+// have the BI-030 intent-log backing idempotency across retries, and because
+// dogfood run hk-75rij showed that 3 retries are insufficient under concurrent
+// kerf/agent activity (hk-ekz5v).
+//
+// Applies only to CloseBead, ClaimBead, ReopenBead, and ResetBead paths.
+// Non-terminal-transition reads use DBLockedRetryMax.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient).
+const UnavailableRetryMax = 10
+
+// UnavailableRetryBase is the BI-025c initial backoff duration for
+// terminal-transition BrUnavailable transient retries.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient: "initial 50ms").
+const UnavailableRetryBase = 50 * time.Millisecond
+
+// UnavailableRetryCap is the BI-025c maximum backoff duration per sleep for
+// terminal-transition BrUnavailable transient retries.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient: "max 2s").
+const UnavailableRetryCap = 2 * time.Second
+
 // RunWithDBLockedRetry invokes RunWithTimeout and retries transient failures
 // with exponential backoff starting at base and capped at cap_. Retries fire
 // on either of two transient classes:

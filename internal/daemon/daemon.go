@@ -246,6 +246,21 @@ type Config struct {
 	// Bead ref: hk-5dewt.
 	SkipWALCheckpoint bool
 
+	// SkipBrHistoryRotation, when true, disables the advisory .br_history/
+	// rotation pre-flight that runs at PL-005 step 0 immediately after the
+	// WAL-checkpoint pre-flight.
+	//
+	// The pre-flight is non-fatal and transparent in production. This field
+	// exists solely for unit tests that operate on temp directories where
+	// history-dir presence/absence is deliberately controlled and a rotation
+	// run would interfere with fixture state.
+	//
+	// Default (false): pre-flight runs when ProjectDir is set, keeping the 20
+	// most-recent .br_history/ entries and archiving the rest.
+	//
+	// Bead ref: hk-5dewt.
+	SkipBrHistoryRotation bool
+
 	// QueueStore, when non-nil, is used directly instead of creating a fresh
 	// QueueStore inside daemon.Start.  The caller retains the pointer and can
 	// inspect queue status after Start returns (Fix 2 of hk-8jh26).
@@ -410,6 +425,17 @@ func Start(ctx context.Context, cfg Config) error {
 	// is empty (unit-test mode).
 	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
 		_ = runWALCheckpointPreflight(ctx, cfg.ProjectDir)
+	}
+
+	// .br_history/ rotation pre-flight (hk-5dewt): each `br` write appends a
+	// ~1.2 MB snapshot to .beads/.br_history/. With 200+ entries (226 MB) the
+	// per-write scan cost reaches ~19.5 s, exceeding the 10 s brcli timeout
+	// regardless of WAL state. Archiving all but the 20 most-recent snapshots
+	// restores sub-second write latency (validated: 19.5 s → 0.15 s).
+	// The call is non-fatal. Skipped when SkipBrHistoryRotation is true (test
+	// isolation) or when ProjectDir is empty (unit-test mode).
+	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
+		_ = runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep)
 	}
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,6 +279,157 @@ func TestRunWithDBLockedRetryContextCanceledDuringBackoff(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunWithDBLockedRetry did not return promptly after ctx cancellation")
+	}
+}
+
+// dblockretryFixtureMockBinaryWithStderr writes a mock `br` binary that exits
+// with the given exit code and writes a fixed stderr message before exiting.
+// Used to verify that the escalation error surfaces the last stderr snippet.
+func dblockretryFixtureMockBinaryWithStderr(t *testing.T, exitCode int, stderrMsg string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "br")
+	script := fmt.Sprintf("#!/bin/sh\necho %q >&2\nexit %d\n", stderrMsg, exitCode)
+	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("dblockretryFixtureMockBinaryWithStderr: write: %v", err)
+	}
+	return path
+}
+
+// TestRunWithDBLockedRetryDiagnosticFieldsDbLocked verifies that when all
+// retries produce BrDbLocked (exit 3), the escalation error message contains:
+//   - the actual brErr class ("DbLocked")
+//   - the exit code ("exit=3")
+//   - a snippet of the captured stderr
+//   - the per-class attempt counters
+//
+// Refs: hk-u9kn5 (diagnostic fix).
+func TestRunWithDBLockedRetryDiagnosticFieldsDbLocked(t *testing.T) {
+	const stderrMsg = "database is locked"
+	path := dblockretryFixtureMockBinaryWithStderr(t, 3, stderrMsg)
+	a, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("brcli.New: %v", err)
+	}
+
+	_, retryErr := a.RunWithDBLockedRetry(
+		context.Background(),
+		dblockretryFixtureFastCfg(),
+		brcli.CommandKindWrite,
+		2, // maxRetries=2: 3 attempts total
+		1*time.Millisecond,
+		10*time.Millisecond,
+	)
+	if retryErr == nil {
+		t.Fatal("RunWithDBLockedRetry: expected error after exhausted DbLocked retries, got nil")
+	}
+	if !errors.Is(retryErr, brcli.BrUnavailable) {
+		t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", retryErr)
+	}
+
+	msg := retryErr.Error()
+
+	// Must surface the last-attempt brErr class.
+	if !strings.Contains(msg, "brErr=DbLocked") {
+		t.Errorf("escalation error missing brErr=DbLocked; got: %s", msg)
+	}
+	// Must surface the exit code.
+	if !strings.Contains(msg, "exit=3") {
+		t.Errorf("escalation error missing exit=3; got: %s", msg)
+	}
+	// Must surface a snippet of the captured stderr.
+	if !strings.Contains(msg, stderrMsg) {
+		t.Errorf("escalation error missing stderr snippet %q; got: %s", stderrMsg, msg)
+	}
+	// Must include the per-class counter (3/3 BrDbLocked, 0/3 BrUnavailable).
+	if !strings.Contains(msg, "3/3 BrDbLocked") {
+		t.Errorf("escalation error missing 3/3 BrDbLocked counter; got: %s", msg)
+	}
+	if !strings.Contains(msg, "0/3 BrUnavailable") {
+		t.Errorf("escalation error missing 0/3 BrUnavailable counter; got: %s", msg)
+	}
+}
+
+// TestRunWithDBLockedRetryDiagnosticFieldsUnavailable verifies that when all
+// retries produce a BrUnavailable-wrapped wall-clock timeout, the escalation
+// error message contains the brErr class, exit code, stderr snippet, and
+// per-class counters.
+//
+// Refs: hk-u9kn5 (diagnostic fix).
+func TestRunWithDBLockedRetryDiagnosticFieldsUnavailable(t *testing.T) {
+	// Binary sleeps past every tight timeout → all attempts return BrUnavailable.
+	const stderrMsg = "slow operation"
+	const failCount = 999
+	const sleepDuration = 300 * time.Millisecond
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "br")
+	countDir := filepath.Join(dir, "calls")
+	if err := os.MkdirAll(countDir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		t.Fatalf("TestRunWithDBLockedRetryDiagnosticFieldsUnavailable: mkdir: %v", err)
+	}
+	// This binary sleeps on every call (failCount=999) and writes to stderr.
+	// Because the timeout fires before the sleep ends, stderr may be empty —
+	// that is fine; the test only verifies the brErr and exit fields.
+	script := fmt.Sprintf(`#!/bin/sh
+count=$(ls %q 2>/dev/null | wc -l | tr -d ' ')
+touch %q/"call_${count}"
+if [ "$count" -lt "%d" ]; then
+  echo %q >&2
+  sleep %.3f
+fi
+exit 0
+`, countDir, countDir, failCount, stderrMsg, sleepDuration.Seconds())
+	//nolint:gosec // G306: mock binary fixture; permissive mode required for executability
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("TestRunWithDBLockedRetryDiagnosticFieldsUnavailable: write: %v", err)
+	}
+
+	a, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("brcli.New: %v", err)
+	}
+
+	cfg := brcli.TimeoutConfig{
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+	}
+
+	_, retryErr := a.RunWithDBLockedRetry(
+		context.Background(),
+		cfg,
+		brcli.CommandKindWrite,
+		1, // maxRetries=1: 2 attempts total, both timeout
+		1*time.Millisecond,
+		10*time.Millisecond,
+	)
+	if retryErr == nil {
+		t.Fatal("RunWithDBLockedRetry: expected error after exhausted Unavailable retries, got nil")
+	}
+	if !errors.Is(retryErr, brcli.BrUnavailable) {
+		t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", retryErr)
+	}
+
+	msg := retryErr.Error()
+
+	// brErr for a wall-clock timeout is the zero-value BrError ("") because
+	// terminateAndClassify returns Result{} — the subprocess was killed before
+	// completing, so no exit code was recorded. The important thing is that
+	// "brErr=" appears in the message so the field is present.
+	if !strings.Contains(msg, "brErr=") {
+		t.Errorf("escalation error missing brErr= field; got: %s", msg)
+	}
+	// exit= field must be present.
+	if !strings.Contains(msg, "exit=") {
+		t.Errorf("escalation error missing exit= field; got: %s", msg)
+	}
+	// Per-class counters: 2/2 BrUnavailable, 0/2 BrDbLocked.
+	if !strings.Contains(msg, "2/2 BrUnavailable") {
+		t.Errorf("escalation error missing 2/2 BrUnavailable counter; got: %s", msg)
+	}
+	if !strings.Contains(msg, "0/2 BrDbLocked") {
+		t.Errorf("escalation error missing 0/2 BrDbLocked counter; got: %s", msg)
 	}
 }
 

@@ -27,3 +27,4 @@ prefixes:
   QM: {spec-id: queue-model,        reserved: 2026-05-18, status: draft}
   CHB: {spec-id: claude-hook-bridge, reserved: 2026-05-18, status: draft}
   HP: {spec-id: handler-pause,      reserved: 2026-05-18, status: draft}
+  CLS: {spec-id: claude-launchspec, reserved: 2026-05-19, status: draft}

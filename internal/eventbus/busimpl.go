@@ -11,6 +11,26 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
+// jsonlAppender is the write surface of [JSONLWriter] used by [busImpl].
+//
+// The interface allows [busImpl] to hold either a real [*JSONLWriter] or a
+// [nullJSONLWriter] without nil-guarding every call site.  Constructors that
+// receive a nil [*JSONLWriter] MUST substitute [nullJSONLWriter{}] so that
+// Emit and EmitWithRunID can call Append unconditionally.
+//
+// Bead ref: hk-2m3bq.
+type jsonlAppender interface {
+	Append(line []byte, sync bool) error
+}
+
+// nullJSONLWriter is a jsonlAppender that silently discards all writes.
+// Used as the required-argument default when no log path is configured.
+//
+// Bead ref: hk-2m3bq.
+type nullJSONLWriter struct{}
+
+func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
+
 // busImpl is the concrete in-process implementation of [EventBus].
 //
 // Emit applies the full EV-035 redaction pipeline before JSONL append and
@@ -30,6 +50,9 @@ import (
 // L-class events call Append(line, sync=false). The durability class is
 // derived from [isFsyncBoundaryEvent] per the §8 taxonomy table.
 //
+// When no writer is provided, jsonlWriter holds a [nullJSONLWriter] and
+// Append calls are unconditional no-ops (no nil-guard required).
+//
 // # Dead-letter sink (hk-xvpwb)
 //
 // When constructed via [NewBusImplWithSink], a [handlercontract.DeadLetterSink]
@@ -37,8 +60,8 @@ import (
 //   - Observer/async consumer panics are recorded with reason "observer_panic".
 //   - Async/observer consumer dispatch errors are recorded with reason "consumer_error".
 //
-// The sink field is optional; a nil sink causes the bus to silently drop
-// undeliverable events (logging is not yet wired — post-MVH).
+// When no sink is provided, deadLetterSink holds a [handlercontract.NoopDeadLetterSink]
+// and Record calls are unconditional no-ops (no nil-guard required).
 //
 // # Dispatch order (EV-014a)
 //
@@ -60,11 +83,11 @@ import (
 // Plain Emit (no run_id) only touches wg; DrainRun does not wait for those.
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
-// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb.
+// Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb, hk-2m3bq.
 type busImpl struct {
 	registry       *handlercontract.RedactionRegistry
-	jsonlWriter    *JSONLWriter                   // nil when no log path is configured
-	deadLetterSink handlercontract.DeadLetterSink // nil when no sink is configured
+	jsonlWriter    jsonlAppender                  // never nil; nullJSONLWriter when no log path configured
+	deadLetterSink handlercontract.DeadLetterSink // never nil; NoopDeadLetterSink when no sink configured
 	idGen          *core.EventIDGenerator
 	mu             sync.Mutex
 	subscriptions  []core.Subscription
@@ -130,9 +153,11 @@ func isFsyncBoundaryEvent(eventType core.EventType) bool {
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-035, PL-005 step 0.
 func NewBusImpl() EventBus {
 	return &busImpl{
-		registry:    handlercontract.NewRedactionRegistry(),
-		idGen:       core.NewEventIDGenerator(),
-		runDrainers: make(map[string]*sync.WaitGroup),
+		registry:       handlercontract.NewRedactionRegistry(),
+		jsonlWriter:    nullJSONLWriter{},
+		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		idGen:          core.NewEventIDGenerator(),
+		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -152,9 +177,11 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 		return NewBusImpl()
 	}
 	return &busImpl{
-		registry:    registry,
-		idGen:       core.NewEventIDGenerator(),
-		runDrainers: make(map[string]*sync.WaitGroup),
+		registry:       registry,
+		jsonlWriter:    nullJSONLWriter{},
+		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		idGen:          core.NewEventIDGenerator(),
+		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -167,24 +194,30 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 // (EV-016 / EV-016a); O-class and L-class events are written without fsync.
 //
 // Passing a nil registry is equivalent to a zero-pattern registry (HC-031
-// only). Passing a nil writer disables JSONL append (same behaviour as
-// [NewBusImplWithRegistry]).
+// only). Passing a nil writer substitutes a [nullJSONLWriter] (Append is a
+// no-op); this has the same observable behaviour as [NewBusImplWithRegistry]
+// but keeps the busImpl invariant that jsonlWriter is never nil.
 //
 // The returned bus is unsealed; callers MUST call Subscribe for all consumers
 // before calling Seal (EV-009). The returned value satisfies [EventBus].
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
 // specs/handler-contract.md §4.7.HC-032.
-// Bead ref: hk-8mup.63.
+// Bead ref: hk-8mup.63, hk-2m3bq.
 func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *JSONLWriter) EventBus {
 	if registry == nil {
 		registry = handlercontract.NewRedactionRegistry()
 	}
+	var w jsonlAppender = nullJSONLWriter{}
+	if writer != nil {
+		w = writer
+	}
 	return &busImpl{
-		registry:    registry,
-		jsonlWriter: writer,
-		idGen:       core.NewEventIDGenerator(),
-		runDrainers: make(map[string]*sync.WaitGroup),
+		registry:       registry,
+		jsonlWriter:    w,
+		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		idGen:          core.NewEventIDGenerator(),
+		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
@@ -196,8 +229,9 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 //
 // Passing nil for registry, writer, or sink is safe:
 //   - nil registry falls back to HC-031-only redaction (same as [NewBusImpl]).
-//   - nil writer disables JSONL append.
-//   - nil sink silently drops undeliverable events (bus MUST NOT panic on nil sink).
+//   - nil writer substitutes a [nullJSONLWriter] (JSONL append is a no-op).
+//   - nil sink substitutes a [handlercontract.NoopDeadLetterSink] (undeliverable
+//     events are silently discarded). Record is called unconditionally — no nil-guard.
 //
 // This constructor is the preferred call site for daemon.Start when
 // MVH_ROADMAP row #9 dead-letter wiring is active.
@@ -207,14 +241,21 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
 // specs/handler-contract.md §4.7.HC-032.
-// Bead ref: hk-xvpwb.
+// Bead ref: hk-xvpwb, hk-2m3bq.
 func NewBusImplWithSink(registry *handlercontract.RedactionRegistry, writer *JSONLWriter, sink handlercontract.DeadLetterSink) EventBus {
 	if registry == nil {
 		registry = handlercontract.NewRedactionRegistry()
 	}
+	var w jsonlAppender = nullJSONLWriter{}
+	if writer != nil {
+		w = writer
+	}
+	if sink == nil {
+		sink = handlercontract.NoopDeadLetterSink{}
+	}
 	return &busImpl{
 		registry:       registry,
-		jsonlWriter:    writer,
+		jsonlWriter:    w,
 		deadLetterSink: sink,
 		idGen:          core.NewEventIDGenerator(),
 		runDrainers:    make(map[string]*sync.WaitGroup),
@@ -278,17 +319,15 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
 	// Marshal the COMPLETE envelope (all EV-001 fields + nested payload) to a
 	// single JSON object. F-class (fsync-boundary) events are fsynced before
-	// returning; O-class and L-class events are written without fsync. When no
-	// writer is configured (nil), this step is a no-op (e.g., in-memory-only tests).
-	if b.jsonlWriter != nil {
-		envelopeBytes, marshalErr := json.Marshal(evt)
-		if marshalErr != nil {
-			return fmt.Errorf("eventbus.Emit: marshal envelope: %w", marshalErr)
-		}
-		needsSync := isFsyncBoundaryEvent(eventType)
-		if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
-			return fmt.Errorf("eventbus.Emit: JSONL append: %w", appendErr)
-		}
+	// returning; O-class and L-class events are written without fsync.
+	// jsonlWriter is never nil (nullJSONLWriter when no log path configured).
+	envelopeBytes, marshalErr := json.Marshal(evt)
+	if marshalErr != nil {
+		return fmt.Errorf("eventbus.Emit: marshal envelope: %w", marshalErr)
+	}
+	needsSync := isFsyncBoundaryEvent(eventType)
+	if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
+		return fmt.Errorf("eventbus.Emit: JSONL append: %w", appendErr)
 	}
 
 	// Step 5: collect matching subscriptions once under lock so dispatch runs
@@ -331,9 +370,8 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 				// (post-MVH: add structured logger fallback).
 				defer func() {
 					if r := recover(); r != nil {
-						if b.deadLetterSink != nil {
-							_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
-						}
+						// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
+						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
 					}
 				}()
 				// Context is passed through so callers can cancel in-flight
@@ -341,9 +379,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 				// Consumer errors are recorded to the dead-letter sink with
 				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					if b.deadLetterSink != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
-					}
+					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -397,15 +433,14 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	}
 
 	// Step 4b: JSONL append + fsync per EV-016 durability class (hk-8mup.63).
-	if b.jsonlWriter != nil {
-		envelopeBytes, marshalErr := json.Marshal(evt)
-		if marshalErr != nil {
-			return fmt.Errorf("eventbus.EmitWithRunID: marshal envelope: %w", marshalErr)
-		}
-		needsSync := isFsyncBoundaryEvent(eventType)
-		if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
-			return fmt.Errorf("eventbus.EmitWithRunID: JSONL append: %w", appendErr)
-		}
+	// jsonlWriter is never nil (nullJSONLWriter when no log path configured).
+	envelopeBytes, marshalErr := json.Marshal(evt)
+	if marshalErr != nil {
+		return fmt.Errorf("eventbus.EmitWithRunID: marshal envelope: %w", marshalErr)
+	}
+	needsSync := isFsyncBoundaryEvent(eventType)
+	if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
+		return fmt.Errorf("eventbus.EmitWithRunID: JSONL append: %w", appendErr)
 	}
 
 	// Step 5: collect matching subscriptions once under lock.
@@ -441,22 +476,17 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 				defer b.wg.Done()
 				defer runWG.Done()
 				// Panic recovery (hk-xvpwb): recover observer panics and record
-				// them to the dead-letter sink with reason "observer_panic". If
-				// the sink is nil, the panic is absorbed and logged nowhere
-				// (post-MVH: add structured logger fallback).
+				// them to the dead-letter sink with reason "observer_panic".
+				// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
 				defer func() {
 					if r := recover(); r != nil {
-						if b.deadLetterSink != nil {
-							_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
-						}
+						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
 					}
 				}()
 				// Consumer errors are recorded to the dead-letter sink with
 				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					if b.deadLetterSink != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
-					}
+					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
 				}
 			}()
 		}

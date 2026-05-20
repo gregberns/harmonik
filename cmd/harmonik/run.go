@@ -54,6 +54,16 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
+// signalGracePeriod is the maximum time runBeadSubcommand waits for daemon.Start
+// to return after SIGINT/SIGTERM before calling os.Exit(1) unconditionally.
+//
+// The 5-second window gives the work loop time to drain the queue and archive
+// queue.json cleanly. If cleanup is not complete within the window, the hard
+// exit ensures the operator is never forced to use SIGKILL.
+//
+// Spec ref: hk-qd3f4.
+const signalGracePeriod = 5 * time.Second
+
 // runBeadSubcommand implements `harmonik run <bead-id> [flags]`.
 // subArgs is os.Args[2:] (everything after "run").
 func runBeadSubcommand(subArgs []string) int {
@@ -377,7 +387,45 @@ func runBeadSubcommand(subArgs []string) int {
 		QueueStore:         qs,        // retained for post-Start status inspection (hk-8jh26 Fix 2)
 	}
 
-	if startErr := daemon.Start(runCtx, cfg); startErr != nil {
+	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.
+	//
+	// Problem: when dispatch goroutines are wedged (blocking syscall, channel
+	// deadlock, etc.), ctx.Done() fires on SIGINT/SIGTERM but runWorkLoop never
+	// returns, so daemon.Start never returns, so the process never exits.  The
+	// operator must use SIGKILL.
+	//
+	// Fix: spin a watchdog goroutine that is structurally independent of the
+	// dispatch path. It waits for the signal context (ctx) to be cancelled, then
+	// arms a 5-second grace timer.  If daemon.Start returns before the timer
+	// fires, the watchdog is disarmed via daemonDone.  If the timer fires first,
+	// the watchdog calls os.Exit(1) unconditionally — no path through wedged
+	// goroutines can prevent it.
+	//
+	// Invariant: daemonDone must be closed BEFORE runBeadSubcommand returns so
+	// the goroutine always exits and never leaks in tests.
+	//
+	// Spec ref: hk-qd3f4.
+	daemonDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Signal received; arm the hard-exit timer.
+			fmt.Fprintf(os.Stderr, "harmonik run: signal received — arming 5s hard-exit timer\n")
+			select {
+			case <-daemonDone:
+				// daemon.Start returned within the grace window; normal exit.
+			case <-time.After(signalGracePeriod):
+				fmt.Fprintf(os.Stderr, "harmonik run: grace period expired — forcing os.Exit(1)\n")
+				os.Exit(1)
+			}
+		case <-daemonDone:
+			// daemon.Start returned normally before any signal; watchdog not needed.
+		}
+	}()
+
+	startErr := daemon.Start(runCtx, cfg)
+	close(daemonDone) // disarm watchdog
+	if startErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: %v\n", startErr)
 		if errors.Is(startErr, lifecycle.ErrPidfileLocked) {
 			return 5

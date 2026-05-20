@@ -14,10 +14,7 @@ When working in this project (`/Users/gb/github/harmonik`), the FIRST tool calls
 ## The loop
 
 1. **Triage in parallel.** `bv --robot-triage` (graph-aware ranking) + `kerf next` (work-attachment-aware feed). Both views are complementary.
-2. **Pick a batch of 3–5 beads.** Skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats":
-   - **Priority-sensitive routing** — wait for hk-rp48p's behavioural test (hk-tul2a).
-   - **`--max-concurrent > 1`** — broken; wait for hk-wx8z8 to land.
-   - **Code-touching beads** — wait for the Go-touching probe to pass at least once.
+2. **Pick a batch of 3–5 beads.** Previously-flagged caveats (hk-rp48p priority-sort, hk-wx8z8 parallel pane allocator, hk-cj0gm Stop-hook delivery) are all FIXED; broad-class dispatch is now safe. The remaining caveat is the test-coverage gap for the spawn-path itself (parent `hk-p3diy`) — until scenario tests land, prefer single-class batches when validating new daemon changes.
 3. **Dispatch in background.** `harmonik run --beads id1,id2,id3 --max-concurrent 1 2>&1 | tee /tmp/dogfood-<date>.log &` (background-mode pattern; do NOT block inline). The daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead.
 4. **Stay active while harmonik runs.** Queue the next batch's candidates; drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.
 5. **On harmonik exit.** Inspect: exit code (0 success / 1 paused-by-failure / 2 unexpected); `git log --oneline -N` for landed commits; `br list --status=closed --limit 10`. Run reviewer on any load-bearing commit.

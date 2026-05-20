@@ -121,6 +121,17 @@ Does the diff implement what the bead or kerf codename claims?
 
 Findings → flag: `bead-mismatch`
 
+### 6. Production call-site wiring
+
+Per HANDOFF DIRECTIVES (REVIEWERS MISS COMPOSITION-ROOT WIRING): per-commit reviewers check the unit but do NOT by default ask "is this thing triggered in production?"
+
+For every new exported symbol, goroutine, or subscription introduced by the diff:
+- Find the production call site (typically `internal/daemon/daemon.go` composition root or equivalent). Verify the wire-up exists — the symbol is actually called / subscribed / registered in the running binary, not just defined and unit-tested.
+- Confirm the test exercises the production code path, not a test-only seam (nil-guard, mode-flag, or `export_test.go` shortcut). A test that bypasses `daemon.Start` and constructs internals directly is suspect.
+- A symbol that is unit-tested but never wired into the daemon is a BLOCK.
+
+Findings → flag: `x-missing-wire-up`
+
 ---
 
 ## Flag vocabulary
@@ -140,6 +151,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `missing-spec-ref` | Commit body does not name the spec section it implements. |
 | `rule-file-bundled` | Rule-file change bundled with code change (must be separate commit). |
 | `constitution-edit-missing-trailer` | CONSTITUTION.md touched without `Constitution-Edit-Approved-By:` trailer. |
+| `x-missing-wire-up` | New symbol/goroutine/subscription not wired into production composition root. |
 
 ---
 

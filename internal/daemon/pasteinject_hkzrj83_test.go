@@ -119,9 +119,13 @@ var _ tmux.Adapter = (*pasteInjectFixtureAdapter)(nil)
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// pasteInjectFixtureSubstrate creates a tmuxSubstrate backed by the fake
-// adapter.  The substrate's SpawnWindow is called once to prime lastHandle so
+// pasteInjectFixtureSubstrate creates a perRunSubstrate backed by the fake
+// adapter. SpawnWindow is called once to capture the pane target so
 // WriteLastPane has a valid pane target.
+//
+// hk-jfh59: WriteLastPane/SendEnterToLastPane/SendQuitToLastPane are now on
+// perRunSubstrate, not tmuxSubstrate. The fixture wraps the shared substrate
+// in a perRunSubstrate (the production path) and calls SpawnWindow on it.
 func pasteInjectFixtureSubstrate(t *testing.T, adapter *pasteInjectFixtureAdapter) handler.Substrate {
 	t.Helper()
 	// Prime the adapter with a successful NewWindowIn outcome.
@@ -129,9 +133,11 @@ func pasteInjectFixtureSubstrate(t *testing.T, adapter *pasteInjectFixtureAdapte
 		Handle: tmux.WindowHandle("harmonik-proj:task-window"),
 		Err:    nil,
 	}
-	sub := daemon.NewTmuxSubstrate(adapter, "harmonik-proj")
-	// Call SpawnWindow to set lastHandle.
-	_, err := sub.SpawnWindow(t.Context(), handler.SubstrateSpawn{
+	sharedSub := daemon.NewTmuxSubstrate(adapter, "harmonik-proj")
+	// Wrap in perRunSubstrate so pasteInjectOnLaunch finds the pasteInjecter interface.
+	prs := daemon.ExportedNewPerRunSubstrate(sharedSub)
+	// Call SpawnWindow to capture the pane target.
+	_, err := prs.SpawnWindow(t.Context(), handler.SubstrateSpawn{
 		WindowName: "task-window",
 		Cwd:        "/tmp",
 		Env:        nil,
@@ -140,7 +146,7 @@ func pasteInjectFixtureSubstrate(t *testing.T, adapter *pasteInjectFixtureAdapte
 	if err != nil {
 		t.Fatalf("pasteInjectFixtureSubstrate: SpawnWindow: %v", err)
 	}
-	return sub
+	return prs
 }
 
 // pasteInjectFixtureTaskFile creates a non-empty task file at

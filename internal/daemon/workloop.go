@@ -1056,12 +1056,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// hk-012af: when deps.substrate is a *tmuxSubstrate, wrap it in a
 	// perRunSubstrate so this goroutine gets its own isolated pane handle.
-	// Under MaxConcurrent>1, each concurrent beadRunOne call previously
-	// shared the same tmuxSubstrate.lastPaneID field; the second SpawnWindow
-	// would overwrite it, sending paste-inject messages to the wrong pane and
-	// stalling both runs indefinitely (7-hour silent gap in 22:29 UTC dogfood).
+	// Under MaxConcurrent>1, each concurrent beadRunOne call would otherwise
+	// race on a shared pane-target; the second SpawnWindow would overwrite the
+	// first run's target, causing paste-inject messages to land in the wrong pane
+	// and stalling both runs indefinitely (7-hour silent gap in 22:29 UTC dogfood).
 	// perRunSubstrate captures the pane ID of *this* goroutine's spawned window
-	// and routes all paste-inject I/O there instead of to "the last spawned pane".
+	// and routes all paste-inject I/O there. (hk-jfh59: shared-state methods on
+	// tmuxSubstrate removed.)
 	var runSubstrate handler.Substrate = deps.substrate
 	var runPasteTarget handler.Substrate = deps.substrate // fallback: shared substrate
 	if prs := newPerRunSubstrate(deps.substrate); prs != nil {

@@ -543,6 +543,9 @@ func TestTmuxSubstrateSession_Wait_ReturnAfterExternalKill(t *testing.T) {
 // This is the hk-yngq2 regression: when the window name is a filesystem path
 // containing slashes, the "session:path/to/dir.0" form cannot be parsed by tmux
 // and paste-buffer exits 1. Using the pane ID directly avoids the issue.
+//
+// hk-jfh59: WriteLastPane is now on perRunSubstrate, not tmuxSubstrate.
+// The test wraps the shared substrate in a perRunSubstrate (production path).
 func TestTmuxSubstrate_WriteLastPane_UsesPaneID(t *testing.T) {
 	t.Parallel()
 
@@ -556,25 +559,27 @@ func TestTmuxSubstrate_WriteLastPane_UsesPaneID(t *testing.T) {
 		panePIDResult:      1234,
 		paneIDResult:       wantPaneID, // Simulate tmux returning "%1964".
 	}
-	substrate := tmuxSubstrateFixtureNew(t, fake)
+	sharedSubstrate := tmuxSubstrateFixtureNew(t, fake)
 
+	// Wrap in perRunSubstrate (hk-jfh59): production path for paste-inject.
+	prs := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn := handler.SubstrateSpawn{
 		WindowName: slashWindowName,
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
 
-	_, err := substrate.SpawnWindow(t.Context(), spawn)
+	_, err := prs.SpawnWindow(t.Context(), spawn)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
 	}
 
 	// Cast to pasteInjecter to access WriteLastPane.
-	pi, ok := substrate.(interface {
+	pi, ok := prs.(interface {
 		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
 	})
 	if !ok {
-		t.Fatal("substrate does not implement WriteLastPane; check daemon.pasteInjecter interface")
+		t.Fatal("perRunSubstrate does not implement WriteLastPane; check daemon.pasteInjecter interface")
 	}
 
 	const bufferName = "harmonik-01hwxyz-abc123-task"
@@ -597,6 +602,11 @@ func TestTmuxSubstrate_WriteLastPane_UsesPaneID(t *testing.T) {
 // TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID verifies that
 // WriteLastPane falls back to "handle.0" when WindowPaneID returned "" at
 // spawn time (e.g. test doubles that do not implement the new method).
+//
+// hk-jfh59: WriteLastPane is now on perRunSubstrate. The test wraps the
+// shared substrate in a perRunSubstrate, which captures the pane target from
+// the SubstrateSession's PaneTarget() method at SpawnWindow time. When the
+// session has an empty pane ID, PaneTarget() falls back to handle+".0".
 func TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID(t *testing.T) {
 	t.Parallel()
 
@@ -606,24 +616,26 @@ func TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID(t *testing.T) {
 		panePIDResult:      1,
 		paneIDResult:       "", // Simulate empty pane ID — triggers fallback.
 	}
-	substrate := tmuxSubstrateFixtureNew(t, fake)
+	sharedSubstrate := tmuxSubstrateFixtureNew(t, fake)
 
+	// Wrap in perRunSubstrate (hk-jfh59): production path for paste-inject.
+	prs := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn := handler.SubstrateSpawn{
 		WindowName: "hk-simple-win",
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
 
-	_, err := substrate.SpawnWindow(t.Context(), spawn)
+	_, err := prs.SpawnWindow(t.Context(), spawn)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
 	}
 
-	pi, ok := substrate.(interface {
+	pi, ok := prs.(interface {
 		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
 	})
 	if !ok {
-		t.Fatal("substrate does not implement WriteLastPane")
+		t.Fatal("perRunSubstrate does not implement WriteLastPane")
 	}
 
 	if err := pi.WriteLastPane(t.Context(), "harmonik-01hwxyz-abc123-task", []byte("hello")); err != nil {

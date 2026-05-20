@@ -804,6 +804,23 @@ func ExportedBufferName(sessionID, purpose string) string {
 	return bufferName(sessionID, purpose)
 }
 
+// ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package
+// daemon_test that need per-run pane isolation without importing the unexported
+// type directly.
+//
+// Returns nil when sub is nil or is not a *tmuxSubstrate (matching
+// newPerRunSubstrate semantics). Tests that call WriteLastPane on the returned
+// value must call SpawnWindow first to capture the pane target.
+//
+// Bead ref: hk-jfh59.
+func ExportedNewPerRunSubstrate(sub handler.Substrate) handler.Substrate {
+	prs := newPerRunSubstrate(sub)
+	if prs == nil {
+		return nil
+	}
+	return prs
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Project config + model resolution test seams (hk-bfvk7)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -998,12 +1015,12 @@ func (n *noopTmuxAdapter) WindowPanePID(_ context.Context, _ tmuxPkg.WindowHandl
 func (n *noopTmuxAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
 	return "", nil
 }
-func (n *noopTmuxAdapter) KillSession(_ context.Context, _ string) error      { return nil }
-func (n *noopTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
-func (n *noopTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error   { return nil }
-func (n *noopTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
-func (n *noopTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error    { return nil }
-func (n *noopTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error     { return nil }
+func (n *noopTmuxAdapter) KillSession(_ context.Context, _ string) error              { return nil }
+func (n *noopTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error     { return nil }
+func (n *noopTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error           { return nil }
+func (n *noopTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error       { return nil }
+func (n *noopTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error            { return nil }
+func (n *noopTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error             { return nil }
 func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error { return nil }
 
 // Compile-time assertion: noopTmuxAdapter implements tmux.Adapter.

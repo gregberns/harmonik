@@ -163,13 +163,18 @@ var _ tmux.Adapter = (*stalePaneFixtureSequentialAdapter)(nil)
 
 // stalePaneFixtureWriteLastPane casts substrate to pasteInjecter and calls
 // WriteLastPane with a fixed buffer name and payload.
+//
+// substrate MUST be a perRunSubstrate (obtained via
+// daemon.ExportedNewPerRunSubstrate) with SpawnWindow already called.
+// Calling this on a bare *tmuxSubstrate is not supported: tmuxSubstrate no
+// longer implements WriteLastPane (hk-jfh59).
 func stalePaneFixtureWriteLastPane(t *testing.T, substrate handler.Substrate) {
 	t.Helper()
 	pi, ok := substrate.(interface {
 		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
 	})
 	if !ok {
-		t.Fatal("stalePaneFixtureWriteLastPane: substrate does not implement WriteLastPane")
+		t.Fatal("stalePaneFixtureWriteLastPane: substrate does not implement WriteLastPane (must be a perRunSubstrate)")
 	}
 	const bufName = "harmonik-01hwxyz-abc123-task"
 	if err := pi.WriteLastPane(t.Context(), bufName, []byte("test payload")); err != nil {
@@ -205,18 +210,21 @@ func TestStalePaneFix_MultiRun_PasteGoesToFreshPane(t *testing.T) {
 	fake := &stalePaneFixtureSequentialAdapter{
 		paneSequence: []string{"%22", "%27"},
 	}
-	substrate := daemon.NewTmuxSubstrate(fake, "test-session")
+	sharedSubstrate := daemon.NewTmuxSubstrate(fake, "test-session")
 
 	// ── Run 1: pane %22 ──────────────────────────────────────────────────────
+	// Each run gets its own perRunSubstrate so pane-target capture is isolated
+	// (hk-012af, hk-jfh59). WriteLastPane routes through perRunSubstrate.
+	prs1 := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn1 := handler.SubstrateSpawn{
 		WindowName: "/harmonik/worktrees/run1",
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
-	if _, err := substrate.SpawnWindow(t.Context(), spawn1); err != nil {
+	if _, err := prs1.SpawnWindow(t.Context(), spawn1); err != nil {
 		t.Fatalf("run1 SpawnWindow: %v", err)
 	}
-	stalePaneFixtureWriteLastPane(t, substrate)
+	stalePaneFixtureWriteLastPane(t, prs1)
 
 	run1Target := fake.lastWriteTarget()
 	if run1Target != "%22" {
@@ -224,15 +232,16 @@ func TestStalePaneFix_MultiRun_PasteGoesToFreshPane(t *testing.T) {
 	}
 
 	// ── Run 2: pane %27 ──────────────────────────────────────────────────────
+	prs2 := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn2 := handler.SubstrateSpawn{
 		WindowName: "/harmonik/worktrees/run2",
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
-	if _, err := substrate.SpawnWindow(t.Context(), spawn2); err != nil {
+	if _, err := prs2.SpawnWindow(t.Context(), spawn2); err != nil {
 		t.Fatalf("run2 SpawnWindow: %v", err)
 	}
-	stalePaneFixtureWriteLastPane(t, substrate)
+	stalePaneFixtureWriteLastPane(t, prs2)
 
 	run2Target := fake.lastWriteTarget()
 	if run2Target != "%27" {
@@ -259,14 +268,17 @@ func TestStalePaneFix_AtomicPaneID_UsedDirectly(t *testing.T) {
 	fake := &stalePaneFixtureSequentialAdapter{
 		paneSequence: []string{"%42"},
 	}
-	substrate := daemon.NewTmuxSubstrate(fake, "test-session")
+	sharedSubstrate := daemon.NewTmuxSubstrate(fake, "test-session")
 
+	// Wrap in perRunSubstrate (hk-012af, hk-jfh59): this is the production path
+	// that isolates pane-target capture per goroutine.
+	prs := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn := handler.SubstrateSpawn{
 		WindowName: "/harmonik/worktrees/run1",
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
-	if _, err := substrate.SpawnWindow(t.Context(), spawn); err != nil {
+	if _, err := prs.SpawnWindow(t.Context(), spawn); err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
 	}
 
@@ -276,7 +288,7 @@ func TestStalePaneFix_AtomicPaneID_UsedDirectly(t *testing.T) {
 	}
 
 	// Verify WriteLastPane uses the atomically-captured pane ID.
-	stalePaneFixtureWriteLastPane(t, substrate)
+	stalePaneFixtureWriteLastPane(t, prs)
 	if got := fake.lastWriteTarget(); got != "%42" {
 		t.Errorf("WriteLastPane target = %q; want %%42", got)
 	}
@@ -299,23 +311,25 @@ func TestStalePaneFix_FallbackToWindowPaneID_WhenOutcomePaneIDEmpty(t *testing.T
 		panePIDResult:      1,
 		paneIDResult:       wantPaneID, // returned by WindowPaneID fallback
 	}
-	substrate := daemon.NewTmuxSubstrate(fake, "test-session")
+	sharedSubstrate := daemon.NewTmuxSubstrate(fake, "test-session")
 
+	// Wrap in perRunSubstrate (hk-jfh59): production path for paste-inject.
+	prs := daemon.ExportedNewPerRunSubstrate(sharedSubstrate)
 	spawn := handler.SubstrateSpawn{
 		WindowName: "hk-win",
 		Cwd:        t.TempDir(),
 		Argv:       []string{"claude"},
 	}
-	if _, err := substrate.SpawnWindow(t.Context(), spawn); err != nil {
+	if _, err := prs.SpawnWindow(t.Context(), spawn); err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
 	}
 
 	// Verify the fallback reached WriteLastPane with the right pane ID.
-	pi, ok := substrate.(interface {
+	pi, ok := prs.(interface {
 		WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
 	})
 	if !ok {
-		t.Fatal("substrate does not implement WriteLastPane")
+		t.Fatal("perRunSubstrate does not implement WriteLastPane")
 	}
 	if err := pi.WriteLastPane(t.Context(), "harmonik-01hwxyz-abc123-task", []byte("hello")); err != nil {
 		t.Fatalf("WriteLastPane: %v", err)

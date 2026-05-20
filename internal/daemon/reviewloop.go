@@ -197,15 +197,15 @@ func runReviewLoop(
 		}
 		// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
 		// REQUIRED: without this, h.Launch takes the exec.CommandContext path and
-		// SpawnWindow is never called, leaving tmuxSubstrate.lastHandle empty.
-		// pasteInjectOnLaunch then fails with "no window spawned yet" because it
-		// reads lastHandle from the substrate but no window was opened in this phase.
-		// This is the root cause of the pane-race bug (hk-2hb2y).
+		// SpawnWindow is never called; pasteInjectOnLaunch then fails with
+		// "no window spawned yet". This is the root cause of the pane-race bug
+		// (hk-2hb2y).
 		//
 		// hk-012af: wrap deps.substrate in a perRunSubstrate so this review-loop
 		// iteration gets an isolated pane handle. Under MaxConcurrent>1, two
-		// concurrent review-loop goroutines would otherwise race on
-		// tmuxSubstrate.lastPaneID, sending paste-inject to the wrong pane.
+		// concurrent review-loop goroutines would otherwise race on shared
+		// paste-inject state, sending paste-inject to the wrong pane.
+		// (hk-jfh59: shared-state methods on tmuxSubstrate removed.)
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
 		implPRS := newPerRunSubstrate(deps.substrate)

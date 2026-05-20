@@ -59,22 +59,21 @@ const (
 // pasteInjecter — optional interface for tmux-backed substrates
 // ──────────────────────────────────────────────────────────────────────────────
 
-// pasteInjecter is the optional interface implemented by tmux-backed Substrates.
+// pasteInjecter is the optional interface implemented by perRunSubstrate.
 //
-// After SpawnWindow returns (the pane is live), callers may check whether the
-// substrate also implements pasteInjecter and, if so, call WriteLastPane to
-// deliver an initial instruction to the pane via the PL-021d paste mechanism.
+// After SpawnWindow returns (the pane is live), callers check whether the
+// substrate implements pasteInjecter and, if so, call WriteLastPane to deliver
+// an initial instruction to the pane via the PL-021d paste mechanism.
 //
-// The method name WriteLastPane reflects that the target pane is the most
-// recently spawned window — not an arbitrary pane. This matches the MVH
-// usage pattern (one window per dispatch at MaxConcurrent=1). Post-MVH
-// parallel dispatch will require a pane-handle API; for now this is sufficient.
+// Implemented by perRunSubstrate (hk-012af, hk-jfh59). NOT implemented by
+// tmuxSubstrate directly — use newPerRunSubstrate(tmuxSub) to get a substrate
+// that implements this interface with per-run pane isolation.
 //
 // Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
-// Bead ref: hk-zrj83.
+// Bead ref: hk-zrj83, hk-jfh59.
 type pasteInjecter interface {
-	// WriteLastPane delivers payload to the pane of the most recently spawned
-	// window.  bufferName MUST follow the "harmonik-<session-id>-<purpose>"
+	// WriteLastPane delivers payload to the pane spawned by this run's
+	// SpawnWindow call.  bufferName MUST follow the "harmonik-<session-id>-<purpose>"
 	// format required by PL-021d.  Returns a non-nil error if no window has
 	// been spawned yet or if the underlying WriteToPane call fails.
 	WriteLastPane(ctx context.Context, bufferName string, payload []byte) error
@@ -86,31 +85,23 @@ type pasteInjecter interface {
 // injects it into handler.LaunchSpec.Substrate for every agent session that
 // requires tmux hosting.
 //
+// Paste-inject operations (WriteLastPane, SendEnterToLastPane,
+// SendQuitToLastPane) are NOT implemented on tmuxSubstrate directly. Instead,
+// callers MUST wrap tmuxSubstrate in a perRunSubstrate (hk-012af) before
+// calling SpawnWindow. perRunSubstrate captures the pane target of the window
+// it spawned and routes paste-inject I/O there, ensuring per-goroutine
+// isolation under MaxConcurrent>1.
+//
 // All methods are safe for concurrent use.
 type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
-
-	// lastHandleMu guards lastHandle and lastPaneID.
-	lastHandleMu sync.Mutex
-	// lastHandle is the WindowHandle of the most recently spawned window.
-	// Set by SpawnWindow; read by WriteLastPane.  Zero value means no window
-	// has been spawned yet.
-	lastHandle tmux.WindowHandle
-	// lastPaneID is the stable tmux pane identifier (e.g. "%1964") for the
-	// first pane of the most recently spawned window. Captured once by
-	// SpawnWindow via WindowPaneID; used by WriteLastPane as the pane target
-	// instead of the slash-bearing "session:window-name.0" form (hk-yngq2).
-	// Empty string means the lookup failed; WriteLastPane falls back to the
-	// legacy handle+".0" form in that case.
-	lastPaneID string
 }
 
-// Compile-time assertions.
+// Compile-time assertion: tmuxSubstrate implements handler.Substrate.
+// Note: tmuxSubstrate does NOT implement pasteInjecter/enterSender/quitSender —
+// those are implemented by perRunSubstrate (hk-jfh59).
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
-var _ pasteInjecter = (*tmuxSubstrate)(nil)
-var _ enterSender = (*tmuxSubstrate)(nil)
-var _ quitSender = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
 // creates new windows in sessionName.
@@ -210,14 +201,6 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		}
 	}
 
-	// Record the handle and pane ID so WriteLastPane can reference them.
-	// This assignment happens BEFORE returning the session, so any subsequent
-	// WriteLastPane call on this substrate will use the just-spawned pane.
-	s.lastHandleMu.Lock()
-	s.lastHandle = outcome.Handle
-	s.lastPaneID = paneID
-	s.lastHandleMu.Unlock()
-
 	// waitDone is initialized here at construction so that callers of Outcome()
 	// that arrive before Wait() is called can block on the channel rather than
 	// observe a nil-channel receive (which would block forever) or a zero struct
@@ -246,17 +229,17 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 //
 // # Why this exists
 //
-// tmuxSubstrate stores lastHandle/lastPaneID as shared fields guarded by a
-// mutex. Under MaxConcurrent>1, two concurrent beadRunOne goroutines both call
-// handler.Launch → SpawnWindow, each overwriting lastPaneID. The second write
-// makes all WriteLastPane/SendEnterToLastPane/SendQuitToLastPane calls for the
-// first run target the wrong pane, so the first run's Claude never receives its
-// kick-off message, waitAgentReady never unblocks, and the run hangs
-// indefinitely. (hk-012af dogfood: 7-hour stall after two run_started events at
-// 22:29:08 UTC on 2026-05-20.)
+// Under MaxConcurrent>1, two concurrent beadRunOne goroutines both call
+// handler.Launch → SpawnWindow. If paste-inject state were stored on the shared
+// tmuxSubstrate, the second SpawnWindow would overwrite the pane target from the
+// first, causing the first run's kick-off message to land in the wrong pane,
+// waitAgentReady to hang indefinitely, and both runs to stall. (hk-012af
+// dogfood: 7-hour stall after two run_started events at 22:29:08 UTC on
+// 2026-05-20.)
 //
-// By creating one perRunSubstrate per bead run, each goroutine has an isolated
-// handle that targets exactly the pane spawned for that run.
+// perRunSubstrate carries per-goroutine pane state so each run targets exactly
+// the pane it spawned. The vestigial shared-state methods on tmuxSubstrate were
+// removed in hk-jfh59.
 //
 // # Usage
 //
@@ -414,114 +397,6 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 		return fmt.Errorf("daemon: perRunSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
 	return p.inner.adapter.SendKeysQuit(ctx, target)
-}
-
-// SendEnterToLastPane sends a bare "Enter" key event to the first pane of the
-// most recently spawned window via `tmux send-keys -t <pane> Enter`.
-//
-// This bypasses bracketed-paste mode so that TUI applications (e.g. Claude
-// Code's React/ink welcome splash) receive it as a real keypress.
-//
-// Implements the [enterSender] interface (pasteinject.go) used by
-// pasteInjectOnLaunch to dismiss the splash before the kick-off message
-// arrives (hk-rf4ux).
-//
-// Returns [tmux.ErrStructural] (wrapped) when no window has been spawned yet.
-//
-// Spec ref: process-lifecycle.md §4.7 PL-021d — send-keys Enter.
-// Bead: hk-rf4ux.
-func (s *tmuxSubstrate) SendEnterToLastPane(ctx context.Context) error {
-	s.lastHandleMu.Lock()
-	handle := s.lastHandle
-	paneID := s.lastPaneID
-	s.lastHandleMu.Unlock()
-
-	if handle == "" {
-		return fmt.Errorf("daemon: tmuxSubstrate.SendEnterToLastPane: no window spawned yet: %w", tmux.ErrStructural)
-	}
-
-	var paneTarget string
-	if paneID != "" {
-		paneTarget = paneID
-	} else {
-		paneTarget = string(handle) + ".0"
-	}
-	return s.adapter.SendKeysEnter(ctx, paneTarget)
-}
-
-// SendQuitToLastPane sends `/quit` followed by Enter to the first pane of the
-// most recently spawned window via `tmux send-keys -t <pane> /quit Enter`.
-//
-// Both `/quit` and `Enter` are dispatched as real key events (not through
-// bracketed-paste mode), causing Claude Code's interactive REPL to execute
-// the /quit slash command and exit the session.  This fires the Stop hook,
-// which delivers outcome_emitted to the daemon socket and unblocks the
-// workloop's waitWithSocketGrace call.
-//
-// Called from pasteInjectQuitOnCommit after the task commit lands in the
-// worktree.
-//
-// Returns [tmux.ErrStructural] (wrapped) when no window has been spawned yet.
-//
-// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Bead: hk-cmybm.
-func (s *tmuxSubstrate) SendQuitToLastPane(ctx context.Context) error {
-	s.lastHandleMu.Lock()
-	handle := s.lastHandle
-	paneID := s.lastPaneID
-	s.lastHandleMu.Unlock()
-
-	if handle == "" {
-		return fmt.Errorf("daemon: tmuxSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
-	}
-
-	var paneTarget string
-	if paneID != "" {
-		paneTarget = paneID
-	} else {
-		paneTarget = string(handle) + ".0"
-	}
-	return s.adapter.SendKeysQuit(ctx, paneTarget)
-}
-
-// WriteLastPane delivers payload to the first pane of the most recently spawned
-// window using the PL-021d load-buffer + paste-buffer sequence.
-//
-// The pane target is the stable pane ID captured at SpawnWindow time (e.g.
-// "%1964"). Pane IDs are slash-free and remain valid regardless of the window
-// name — critical when the window name is a filesystem path (hk-yngq2).
-//
-// Falls back to "handle.0" only when the pane ID lookup failed at spawn time
-// (legacy behaviour for test doubles that do not implement WindowPaneID).
-//
-// bufferName MUST match the format "harmonik-<session-id>-<purpose>" required
-// by PL-021d.
-//
-// Returns [tmux.ErrStructural] when no window has been spawned yet.
-//
-// Spec ref: process-lifecycle.md §4.7 PL-021d — daemon→pane write mechanism.
-// Bead ref: hk-zrj83, hk-yngq2.
-func (s *tmuxSubstrate) WriteLastPane(ctx context.Context, bufferName string, payload []byte) error {
-	s.lastHandleMu.Lock()
-	handle := s.lastHandle
-	paneID := s.lastPaneID
-	s.lastHandleMu.Unlock()
-
-	if handle == "" {
-		return fmt.Errorf("daemon: tmuxSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
-	}
-
-	// Prefer the stable pane ID ("%NNNN") captured at spawn time. This is
-	// slash-free and works even when the window name is a filesystem path.
-	// Fall back to "handle.0" only when paneID is empty (e.g. in test doubles
-	// that return "" from WindowPaneID).
-	var paneTarget string
-	if paneID != "" {
-		paneTarget = paneID
-	} else {
-		paneTarget = string(handle) + ".0"
-	}
-	return s.adapter.WriteToPane(ctx, bufferName, paneTarget, payload)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -66,6 +66,14 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-yhq3m — daemon orphan-sweep must also walk .claude/worktrees/.
 	ClaudeWorktreesSwept int
 
+	// QueueArchivesDeleted is the count of old queue.json archive files removed
+	// by the Gap-4 archive-accumulation sweep (hk-pycay). Keeps the newest N
+	// (default 5, configurable via HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT) per
+	// category; older archives are removed.
+	//
+	// Bead ref: hk-pycay.
+	QueueArchivesDeleted int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -305,6 +313,18 @@ func RunOrphanSweep(
 		errs = append(errs, fmt.Sprintf("claude-worktrees: %v", claudeErr))
 	}
 	result.ClaudeWorktreesSwept = len(claudeResult.Orphans)
+
+	// (h) Queue archive accumulation sweep (Gap-4 / hk-pycay).
+	// Keeps the newest N archives per category (default 5; configurable via
+	// HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT) and deletes older ones. Non-fatal:
+	// a removal error is logged but does not abort startup.
+	archiveResult, archiveErr := lifecycle.SweepQueueArchives(projectDir, lifecycle.SweepQueueArchivesConfig{
+		Logger: cfg.Logger,
+	})
+	if archiveErr != nil {
+		errs = append(errs, fmt.Sprintf("queue-archives: %v", archiveErr))
+	}
+	result.QueueArchivesDeleted = archiveResult.Deleted
 
 	result.SweptAt = time.Now()
 

@@ -338,6 +338,7 @@ func TestConcurrentDispatch_PerRunSubstrate_PaneIsolation(t *testing.T) {
 		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		MaxConcurrent:   2,
 		Substrate:       substrate,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorktreeFactory: worktreeFactory,
 	})
 

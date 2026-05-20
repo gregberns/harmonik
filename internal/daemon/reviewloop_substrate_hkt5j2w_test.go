@@ -307,6 +307,7 @@ func TestScenario_ReviewLoop_SubstrateWired(t *testing.T) {
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		Substrate:           spy,
 	})
 

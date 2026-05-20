@@ -62,6 +62,7 @@ func runBead8jh26FixtureDepsWithExit(
 		QueueStore:         qs,
 		CancelOnQueueDrain: cancelOnDrain,
 		CancelOnQueueExit:  cancelOnExit,
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
 	}
 }
 

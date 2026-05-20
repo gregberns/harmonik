@@ -219,6 +219,7 @@ func TestReviewLoopCycleComplete_Approved(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -263,6 +264,7 @@ func TestReviewLoopCycleComplete_CapHit(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -309,6 +311,7 @@ func TestReviewLoopCycleComplete_Blocked(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -367,6 +370,7 @@ func TestReviewLoopCycleComplete_NoProgress(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -424,6 +428,7 @@ func TestReviewLoopCycleComplete_Error(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 

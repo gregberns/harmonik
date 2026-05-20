@@ -78,6 +78,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      2, // hk-w3cp1: allow both items to dispatch concurrently
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -162,6 +163,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      1, // hk-w3cp1: serialised dispatch
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -279,6 +281,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 		HandlerArgs:        []string{"-c", "exit 0"},
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -414,6 +417,7 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		CancelOnQueueDrain: cancelExit, // success path (APPROVE)
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueExit:  cancelExit, // failure/error path (BLOCK/error)
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -497,6 +501,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      2, // --max-concurrent 2
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

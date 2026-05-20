@@ -1086,13 +1086,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
-	// Use deps.adapterRegistry when available; fall back to a fresh empty
-	// registry when nil. NewHandler panics on nil registry.
-	tapRegistry := deps.adapterRegistry
-	if tapRegistry == nil {
-		tapRegistry = handlercontract.NewAdapterRegistry()
-	}
-	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, tapRegistry)
+	// Precondition: deps.adapterRegistry must be non-nil (enforced by
+	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
+	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
@@ -1147,8 +1143,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	defer close(hbDone)
 
 	// Step 6: waitAgentReady — HC-056 agent_ready timeout guard.
-	// Obtain the adapter from the registry for DetectReady; skip when registry
-	// is nil (test mode with no adapters registered).
+	//
+	// Precondition: deps.adapterRegistry is non-nil (enforced by newWorkLoopDeps;
+	// hk-d8u1y). Obtain the adapter from the registry for DetectReady.
 	//
 	// HC-056 timeout semantics: we only treat this as a hard failure requiring
 	// reopen if the SPECIFIC HC-056 timeout sentinel (ErrAgentReadyTimeout)
@@ -1157,76 +1154,73 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// context.Canceled — in that case we skip the reopen and fall through to
 	// the normal waitWithSocketGrace path which handles the exit correctly per
 	// CHB-020 branch 3.
-	if deps.adapterRegistry != nil {
-		adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
-		if adapterErr != nil {
-			// No adapter for claude-code — non-fatal at MVH; skip ready-wait.
-			fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(claude-code) bead %s: %v (skipping ready-wait)\n",
-				beadID, adapterErr)
-		} else {
-			// Derive a child context that cancels when the watcher finishes (handler
-			// exit). This prevents waitAgentReady from blocking for the full timeout
-			// when the handler exits before emitting agent_ready (e.g. a crash).
-			//
-			// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
-			// sessions return watcher=nil; completion flows via HookSessionStore.WaitForOutcome).
-			// Skip the watcher-done goroutine in that case — readyCtx is still valid
-			// and will be cancelled by the outer ctx or readyCancel below.
-			readyCtx, readyCancel := context.WithCancel(ctx)
-			if watcher != nil {
-				go func() {
-					select {
-					case <-watcher.Done():
-						readyCancel()
-					case <-readyCtx.Done():
-					}
-				}()
-			}
-
-			eventSrc := newChanAgentEventSource(tapCh)
-			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
-			readyCancel() // always release the watcher-done goroutine above
-
-			if readyErr == ErrAgentReadyTimeout {
-				// HC-056: agent_ready_timeout — kill, reap, reopen.
-				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
-					beadID, runID.String(), readyErr)
-				_ = sess.Kill(ctx)
-				if watcher != nil {
-					// Wait for the watcher goroutine to exit, but do not block
-					// indefinitely — agentReadyKillReapTimeout guards against a
-					// hung watcher after SIGKILL. The bead is still reopened even
-					// if reaping times out; the watcher goroutine will unblock
-					// when the outer ctx is eventually cancelled.
-					// Bead ref: hk-do7te.
-					select {
-					case <-watcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
-						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
-							beadID, runID.String())
-					}
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	if adapterErr != nil {
+		// No adapter for claude-code — non-fatal; skip ready-wait.
+		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(claude-code) bead %s: %v (skipping ready-wait)\n",
+			beadID, adapterErr)
+	} else {
+		// Derive a child context that cancels when the watcher finishes (handler
+		// exit). This prevents waitAgentReady from blocking for the full timeout
+		// when the handler exits before emitting agent_ready (e.g. a crash).
+		//
+		// Substrate path: watcher is nil when deps.substrate != nil (tmux-hosted
+		// sessions return watcher=nil; completion flows via HookSessionStore.WaitForOutcome).
+		// Skip the watcher-done goroutine in that case — readyCtx is still valid
+		// and will be cancelled by the outer ctx or readyCancel below.
+		readyCtx, readyCancel := context.WithCancel(ctx)
+		if watcher != nil {
+			go func() {
+				select {
+				case <-watcher.Done():
+					readyCancel()
+				case <-readyCtx.Done():
 				}
-				_ = sess.Wait(ctx)
-				reopenTID, _ := deps.tidGen.Next()
-				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					"agent_ready_timeout"); reopenErr != nil {
-					// ReopenBead failed: the bead remains in_progress and will NOT be
-					// re-dispatched by the poll loop (Ready only returns open beads).
-					// Log loudly so the operator can detect the stuck bead and recover
-					// manually (e.g. `br update <id> --status open`).
-					// Bead ref: hk-kqdpf.8.
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually\n",
-						beadID, runID.String(), reopenErr)
-				}
-				emitDone(false, "agent_ready_timeout")
-				return
-			}
-			// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
-			// exited first, outer ctx cancelled, or watcher-done cancel).
-			// Fall through to waitWithSocketGrace.
+			}()
 		}
+
+		eventSrc := newChanAgentEventSource(tapCh)
+		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+		readyCancel() // always release the watcher-done goroutine above
+
+		if readyErr == ErrAgentReadyTimeout {
+			// HC-056: agent_ready_timeout — kill, reap, reopen.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), readyErr)
+			_ = sess.Kill(ctx)
+			if watcher != nil {
+				// Wait for the watcher goroutine to exit, but do not block
+				// indefinitely — agentReadyKillReapTimeout guards against a
+				// hung watcher after SIGKILL. The bead is still reopened even
+				// if reaping times out; the watcher goroutine will unblock
+				// when the outer ctx is eventually cancelled.
+				// Bead ref: hk-do7te.
+				select {
+				case <-watcher.Done():
+				case <-time.After(agentReadyKillReapTimeout):
+					fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
+						beadID, runID.String())
+				}
+			}
+			_ = sess.Wait(ctx)
+			reopenTID, _ := deps.tidGen.Next()
+			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				"agent_ready_timeout"); reopenErr != nil {
+				// ReopenBead failed: the bead remains in_progress and will NOT be
+				// re-dispatched by the poll loop (Ready only returns open beads).
+				// Log loudly so the operator can detect the stuck bead and recover
+				// manually (e.g. `br update <id> --status open`).
+				// Bead ref: hk-kqdpf.8.
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually\n",
+					beadID, runID.String(), reopenErr)
+			}
+			emitDone(false, "agent_ready_timeout")
+			return
+		}
+		// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
+		// exited first, outer ctx cancelled, or watcher-done cancel).
+		// Fall through to waitWithSocketGrace.
 	}
-	_ = tapCh // suppress unused-variable lint when adapterRegistry is nil
 
 	// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
 	// and begin." (or phase-appropriate equivalent) to the tmux pane via

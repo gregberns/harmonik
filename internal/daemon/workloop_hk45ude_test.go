@@ -117,6 +117,7 @@ func queueDispatchFixtureDeps(t *testing.T, projectDir string, bus *stubEventCol
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:    qs,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 	}
 }
 
@@ -306,6 +307,7 @@ func TestQueueDispatch_EM015f_GroupAdvanceGate(t *testing.T) {
 		Bus:          bus,
 		ProjectDir:   projectDir,
 		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:   qs,
 	})
 
@@ -371,6 +373,7 @@ func TestQueueDispatch_FailurePath_QueuePaused(t *testing.T) {
 		Bus:          bus,
 		ProjectDir:   projectDir,
 		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:   qs,
 	})
 
@@ -444,6 +447,7 @@ func TestQueueDispatch_BackwardCompat_BrReadyFallback(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		// QueueStore: nil — intentionally absent
 	})
 
@@ -526,6 +530,7 @@ func TestQueueDispatch_QueuePausedState_NoDispatch(t *testing.T) {
 		Bus:          bus,
 		ProjectDir:   projectDir,
 		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:   qs,
 	})
 

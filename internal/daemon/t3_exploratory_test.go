@@ -687,6 +687,7 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "sleep 30"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  intentDir,
 	})
 

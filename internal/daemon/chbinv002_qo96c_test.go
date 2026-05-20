@@ -299,6 +299,7 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		HandlerArgs:   []string{scriptPath},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		// HookStore: nil → uses synthHookStore (immediate WORK_COMPLETE synthesis
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		// on WaitForOutcome), preventing the 3-second grace window in shell-fixture tests.
 	})
 

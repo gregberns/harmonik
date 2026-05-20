@@ -58,6 +58,14 @@ type OrphanSweepResult struct {
 	// already merged to the target branch but were still marked in_progress.
 	BeadCat3cClosed int
 
+	// ClaudeWorktreesSwept is the count of orphan .claude/worktrees/ entries
+	// identified by the Gap-11 parallel sweep (hk-yhq3m). Reported in both
+	// dry-run and live modes; when HARMONIK_SWEEP_CLAUDE_WORKTREES is not "1"
+	// no directories are deleted even if this count is > 0.
+	//
+	// Bead ref: hk-yhq3m — daemon orphan-sweep must also walk .claude/worktrees/.
+	ClaudeWorktreesSwept int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -288,6 +296,15 @@ func RunOrphanSweep(
 		result.BeadInProgressReset = sweepResult.ResetCount
 		result.BeadCat3cClosed = sweepResult.Cat3cCloseCount
 	}
+
+	// (g) Sub-agent .claude/worktrees/ orphan sweep (Gap-11 — hk-yhq3m).
+	// Parallel path: does NOT touch .harmonik/worktrees/ semantics.
+	// Dry-run by default; HARMONIK_SWEEP_CLAUDE_WORKTREES=1 enables removal.
+	claudeResult, claudeErr := SweepClaudeWorktrees(ctx, projectDir, cfg.Logger)
+	if claudeErr != nil {
+		errs = append(errs, fmt.Sprintf("claude-worktrees: %v", claudeErr))
+	}
+	result.ClaudeWorktreesSwept = len(claudeResult.Orphans)
 
 	result.SweptAt = time.Now()
 

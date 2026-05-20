@@ -444,9 +444,22 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// Context cancelled: record a canceled outcome and return.
+			// Context cancelled: do one final pid check before reporting -1.
+			// If the pid is already gone (common when claude exits cleanly and
+			// the ctx is cancelled by the grace timer or workloop teardown),
+			// report exitCode=0 so the workloop's close-on-exit-0 fallback
+			// fires instead of the claude_crashed branch.
+			// Diagnostic note (hk-cj0gm / hk-ajhqw): the 5-minute gap between
+			// claude exit (21:18) and run_failed (21:23:36) was caused by a
+			// zombie/slow-poll race where processDead returned false during the
+			// polling ticks; ctx.Done() fired first with exitCode=-1, causing
+			// a false claude_crashed classification.
+			exitCode := -1
+			if s.pid > 0 && processDead(s.pid) {
+				exitCode = 0
+			}
 			s.outcome = handler.Outcome{
-				ExitCode: -1,
+				ExitCode: exitCode,
 				Duration: time.Since(startedAt),
 			}
 			s.outcomeReady.Store(true)

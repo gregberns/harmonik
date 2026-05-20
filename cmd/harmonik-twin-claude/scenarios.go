@@ -21,6 +21,9 @@
 //   - daemon-not-ready-retry  — twin emits a brief delay then the full happy
 //     path, simulating the relay-side retry path for daemon_not_ready
 //     (CHB-016).
+//   - partial-pre-exec        — emits handler_capabilities + agent_started only,
+//     omitting agent_ready.  Watcher times out waiting for agent_ready; daemon
+//     HC-024 closes the bead (SC-5 / hk-35mpj).
 //
 // # Mechanism tagging
 //
@@ -59,8 +62,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioHandlerFatal(), nil
 	case "silent-hang":
 		return scenarioSilentHang(), nil
+	case "partial-pre-exec":
+		return scenarioPartialPreExec(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal, silent-hang", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal, silent-hang, partial-pre-exec", name)
 	}
 }
 
@@ -861,6 +866,71 @@ func scenarioSilentHang() *ScriptFile {
 			// Deliberate: no heartbeats follow, no outcome_emitted.
 			// The subprocess exits here.  The daemon watcher must detect
 			// silent-hang (HC-056 / §7.1 FSM) and emit agent_failed.
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: partial-pre-exec (hk-7amcv — SC-5 / hk-35mpj)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioPartialPreExec returns a script that emits the handler-side pre-exec
+// preamble only partially: handler_capabilities + agent_started are sent but
+// agent_ready is never emitted.
+//
+// This models SC-5 (hk-35mpj): the twin process starts and emits
+// handler_capabilities (announcing protocol support) and agent_started
+// (confirming the agent process launched), but then exits without sending
+// agent_ready.  The watcher times out waiting for agent_ready per the
+// §7.2 handshake window; daemon HC-024 closes the bead with a terminal
+// agent_failed event.
+//
+// Expected event ordering (truncated — agent_ready intentionally absent):
+//
+//  1. handler_capabilities (HC-009)
+//  2. agent_started        (§6.4)
+//
+// After agent_started the script ends.  The twin process exits 0; the daemon
+// watcher observes the subprocess exit without agent_ready having arrived,
+// triggering the §7.2 handshake-timeout path and HC-024 terminal closure.
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §7.2; hk-7amcv; hk-35mpj.
+func scenarioPartialPreExec() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-hk7amcv-ppe-001"
+		sessID    = "sess-hk7amcv-ppe-001"
+		nodeID    = "node-hk7amcv-ppe-001"
+		agentType = "claude-twin-claude"
+	)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities — first message on stream (HC-009).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-hk7amcv-001",
+				},
+			},
+			// 2. agent_started (§6.4) — process has launched but pre-exec handshake
+			// stalls: agent_ready is never emitted.
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// Deliberate: no agent_ready follows.  The subprocess exits here.
+			// The watcher's §7.2 handshake-timeout fires; HC-024 closes the bead.
 		},
 	}
 }

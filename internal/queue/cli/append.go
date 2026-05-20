@@ -11,7 +11,8 @@ import (
 //
 // Parses the positional arguments (group-index followed by one or more bead
 // IDs), sends a queue-append request to the daemon via the Unix socket, and
-// prints the QueueAppendResponse JSON to out.
+// prints the QueueAppendResponse to out (human-readable by default; JSON with
+// --json or --format json).
 //
 // Flag args (subArgs is os.Args[3:]):
 //
@@ -19,6 +20,8 @@ import (
 //	--project=<dir>    equals form
 //	--queue-id <uuid>  required: active queue identity guard
 //	--queue-id=<uuid>  equals form
+//	--json             output raw JSON (shorthand for --format json)
+//	--format json|text output format (default text)
 //
 // Spec refs:
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
@@ -28,7 +31,7 @@ import (
 // Bead ref: hk-eblue.
 func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
 	var queueID string
-	projectDir, positional, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
+	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--queue-id" && i+1 < len(args):
 			queueID = args[i+1]
@@ -90,5 +93,5 @@ func RunQueueAppend(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return earlyExit
 	}
 
-	return handleResponse(resp, out)
+	return handleResponse(resp, out, outputJSON, renderQueueAppendText)
 }

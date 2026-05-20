@@ -10,7 +10,8 @@ import (
 // RunQueueStatus implements `hk queue status`.
 //
 // Sends a queue-status request to the daemon, prints the QueueStatusResponse
-// JSON to out, and returns the PL-028c exit code.
+// to out (human-readable by default; JSON with --json or --format json), and
+// returns the PL-028c exit code.
 //
 // queue-status always exits 0 if the daemon is reachable (the response body
 // contains {queue: null} when no queue is active, per QM-057).
@@ -21,6 +22,8 @@ import (
 //	--project=<dir>    equals form
 //	--queue-id <uuid>  optional; for future filtering (currently informational)
 //	--queue-id=<uuid>  equals form
+//	--json             output raw JSON (shorthand for --format json)
+//	--format json|text output format (default text)
 //
 // Spec refs:
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
@@ -28,7 +31,7 @@ import (
 //
 // Bead ref: hk-eblue.
 func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
-	projectDir, _, ok := parseQueueFlags(subArgs, errOut)
+	projectDir, _, outputJSON, ok := parseQueueFlags(subArgs, errOut)
 	if !ok {
 		return exitTransportError
 	}
@@ -60,5 +63,5 @@ func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut
 
 	// queue-status always exits 0 when the daemon is reachable, even when the
 	// queue is null. The response carries {queue: null} in that case per QM-057.
-	return handleResponse(resp, out)
+	return handleResponse(resp, out, outputJSON, renderQueueStatusText)
 }

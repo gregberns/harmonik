@@ -12,13 +12,15 @@ import (
 //
 // Reads a QueueDryRunRequest JSON document from queueFile, sends it to the
 // daemon via the Unix socket WITHOUT mutating state or emitting events (per
-// QM-028), prints the QueueDryRunResponse JSON to out, and returns the
-// PL-028c exit code.
+// QM-028), prints the QueueDryRunResponse to out (human-readable by default;
+// JSON with --json or --format json), and returns the PL-028c exit code.
 //
 // Flag args (subArgs is os.Args[3:]):
 //
 //	--project <dir>    project directory (default: cwd)
 //	--project=<dir>    equals form
+//	--json             output raw JSON (shorthand for --format json)
+//	--format json|text output format (default text)
 //
 // Spec refs:
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
@@ -27,7 +29,7 @@ import (
 //
 // Bead ref: hk-eblue.
 func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
-	projectDir, positional, ok := parseQueueFlags(subArgs, errOut)
+	projectDir, positional, outputJSON, ok := parseQueueFlags(subArgs, errOut)
 	if !ok {
 		return exitTransportError
 	}
@@ -75,5 +77,5 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return earlyExit
 	}
 
-	return handleResponse(resp, out)
+	return handleResponse(resp, out, outputJSON, renderQueueDryRunText)
 }

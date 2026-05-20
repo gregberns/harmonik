@@ -9,13 +9,16 @@ import (
 	"strings"
 )
 
-// parseQueueFlags parses the --project flag from subArgs and returns:
+// parseQueueFlags parses the --project and --json/--format flags from subArgs
+// and returns:
 //   - projectDir: resolved project directory (cwd if unspecified)
 //   - positional: remaining non-flag arguments
+//   - outputJSON: true when --json or --format json was given
 //   - ok: false if an unrecoverable parse error occurred
 //
 // Both `--project value` and `--project=value` forms are accepted per PL-028c.
-func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, positional []string, ok bool) {
+// --json and --format json|text are accepted per hk-5553i policy.
+func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, positional []string, outputJSON bool, ok bool) {
 	return parseQueueFlagsExtra(subArgs, errOut, nil)
 }
 
@@ -23,11 +26,14 @@ func parseQueueFlags(subArgs []string, errOut io.Writer) (projectDir string, pos
 // extraFlagFn callback that can handle subcommand-specific flags. The callback
 // receives (args, i) and returns (nextI, consumed). If consumed is false the
 // flag is treated as unknown and skipped (passed to positional).
+//
+// The --json flag (shorthand) and --format json (long form) are handled here
+// for all queue subcommands. --json ≡ --format json per hk-5553i policy.
 func parseQueueFlagsExtra(
 	subArgs []string,
 	errOut io.Writer,
 	extraFlagFn func(args []string, i int) (nextI int, consumed bool),
-) (projectDir string, positional []string, ok bool) {
+) (projectDir string, positional []string, outputJSON bool, ok bool) {
 	for i := 0; i < len(subArgs); {
 		arg := subArgs[i]
 		switch {
@@ -36,6 +42,16 @@ func parseQueueFlagsExtra(
 			i += 2
 		case strings.HasPrefix(arg, "--project="):
 			projectDir = strings.TrimPrefix(arg, "--project=")
+			i++
+		case arg == "--json":
+			// Convenience alias: --json ≡ --format json (mirrors handler status convention).
+			outputJSON = true
+			i++
+		case arg == "--format" && i+1 < len(subArgs):
+			outputJSON = subArgs[i+1] == "json"
+			i += 2
+		case strings.HasPrefix(arg, "--format="):
+			outputJSON = strings.TrimPrefix(arg, "--format=") == "json"
 			i++
 		default:
 			// Delegate to extra flag handler if provided.
@@ -57,16 +73,16 @@ func parseQueueFlagsExtra(
 		wd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(errOut, "harmonik queue: cannot determine working directory: %v\n", err)
-			return "", nil, false
+			return "", nil, false, false
 		}
 		projectDir = wd
 	}
 	abs, err := filepath.Abs(projectDir)
 	if err != nil {
 		fmt.Fprintf(errOut, "harmonik queue: cannot resolve project path %q: %v\n", projectDir, err)
-		return "", nil, false
+		return "", nil, false, false
 	}
-	return abs, positional, true
+	return abs, positional, outputJSON, true
 }
 
 // harmonikDirFromProject returns the .harmonik subdirectory under projectDir.

@@ -202,7 +202,7 @@ func queueCliFixtureWriteQueueFile(t *testing.T) string {
 // queue submit tests
 // ---------------------------------------------------------------------------
 
-// TestRunQueueSubmit_HappyPath verifies exit 0 and JSON to stdout on success.
+// TestRunQueueSubmit_HappyPath verifies exit 0 and human-readable output by default.
 func TestRunQueueSubmit_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -227,6 +227,38 @@ func TestRunQueueSubmit_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "queue_id") {
 		t.Errorf("RunQueueSubmit happy-path: stdout %q does not contain queue_id", out.String())
+	}
+}
+
+// TestRunQueueSubmit_HappyPath_JSON verifies exit 0 and raw JSON with --json.
+func TestRunQueueSubmit_HappyPath_JSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	successPayload := map[string]any{
+		"queue_id":    "11111111-1111-7111-8111-aaaaaaaaaaaa",
+		"status":      "active",
+		"group_count": 1,
+	}
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, successPayload)
+	})
+
+	queueFile := queueCliFixtureWriteQueueFile(t)
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueSubmit(context.Background(), []string{"--json", "--project", projectDir, queueFile}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueSubmit --json: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	// With --json the raw JSON result is emitted; verify it is valid JSON.
+	if !json.Valid([]byte(strings.TrimSpace(out.String()))) {
+		t.Errorf("RunQueueSubmit --json: stdout is not valid JSON: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "queue_id") {
+		t.Errorf("RunQueueSubmit --json: stdout %q does not contain queue_id field", out.String())
 	}
 }
 
@@ -303,7 +335,7 @@ func TestRunQueueSubmit_FlagEqualsForm(t *testing.T) {
 // queue append tests
 // ---------------------------------------------------------------------------
 
-// TestRunQueueAppend_HappyPath verifies exit 0 and JSON to stdout on success.
+// TestRunQueueAppend_HappyPath verifies exit 0 and human-readable output by default.
 func TestRunQueueAppend_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -329,8 +361,8 @@ func TestRunQueueAppend_HappyPath(t *testing.T) {
 	if got != 0 {
 		t.Errorf("RunQueueAppend happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
-	if !strings.Contains(out.String(), "appended_count") {
-		t.Errorf("RunQueueAppend happy-path: stdout %q does not contain appended_count", out.String())
+	if !strings.Contains(out.String(), "appended:") {
+		t.Errorf("RunQueueAppend happy-path: stdout %q does not contain appended: (text mode)", out.String())
 	}
 }
 
@@ -379,11 +411,46 @@ func TestRunQueueAppend_FlagEqualsForm(t *testing.T) {
 	}
 }
 
+// TestRunQueueAppend_HappyPath_JSON verifies exit 0 and raw JSON with --json.
+func TestRunQueueAppend_HappyPath_JSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	successPayload := map[string]any{
+		"appended_count":   2,
+		"new_tail_indices": []int{4, 5},
+	}
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, successPayload)
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueAppend(context.Background(), []string{
+		"--json",
+		"--project", projectDir,
+		"--queue-id", "33333333-0000-7000-8000-aaaaaaaaaaaa",
+		"0",
+		"hk-aaa10", "hk-aaa11",
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueAppend --json: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if !json.Valid([]byte(strings.TrimSpace(out.String()))) {
+		t.Errorf("RunQueueAppend --json: stdout is not valid JSON: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "appended_count") {
+		t.Errorf("RunQueueAppend --json: stdout %q does not contain appended_count", out.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // queue status tests
 // ---------------------------------------------------------------------------
 
-// TestRunQueueStatus_HappyPath verifies exit 0 and JSON to stdout on success.
+// TestRunQueueStatus_HappyPath verifies exit 0 and human-readable output by default.
 func TestRunQueueStatus_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -409,6 +476,35 @@ func TestRunQueueStatus_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "queue_id") {
 		t.Errorf("RunQueueStatus happy-path: stdout %q does not contain queue_id", out.String())
+	}
+}
+
+// TestRunQueueStatus_HappyPath_JSON verifies exit 0 and raw JSON with --json.
+func TestRunQueueStatus_HappyPath_JSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	statusPayload := map[string]any{
+		"queue": map[string]any{
+			"schema_version": 1,
+			"queue_id":       "55555555-0000-7000-8000-aaaaaaaaaaaa",
+			"status":         "active",
+		},
+	}
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, statusPayload)
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueStatus(context.Background(), []string{"--json", "--project", projectDir}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueStatus --json: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if !json.Valid([]byte(strings.TrimSpace(out.String()))) {
+		t.Errorf("RunQueueStatus --json: stdout is not valid JSON: %q", out.String())
 	}
 }
 
@@ -451,7 +547,7 @@ func TestRunQueueStatus_DaemonDown(t *testing.T) {
 // queue dry-run tests
 // ---------------------------------------------------------------------------
 
-// TestRunQueueDryRun_HappyPath verifies exit 0 and JSON to stdout on success.
+// TestRunQueueDryRun_HappyPath verifies exit 0 and human-readable output by default.
 func TestRunQueueDryRun_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -478,8 +574,43 @@ func TestRunQueueDryRun_HappyPath(t *testing.T) {
 	if got != 0 {
 		t.Errorf("RunQueueDryRun happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
 	}
+	if !strings.Contains(out.String(), "dry-run:") {
+		t.Errorf("RunQueueDryRun happy-path: stdout %q does not contain dry-run: (text mode)", out.String())
+	}
+}
+
+// TestRunQueueDryRun_HappyPath_JSON verifies exit 0 and raw JSON with --json.
+func TestRunQueueDryRun_HappyPath_JSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	dryRunPayload := map[string]any{
+		"resolved_queue": map[string]any{
+			"schema_version": 1,
+			"queue_id":       "00000000-0000-0000-0000-aaaaaaaaaaaa",
+			"status":         "active",
+		},
+		"ledger_dep_notices":   []any{},
+		"parallelism_narrowed": false,
+	}
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, dryRunPayload)
+	})
+
+	queueFile := queueCliFixtureWriteQueueFile(t)
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueDryRun(context.Background(), []string{"--json", "--project", projectDir, queueFile}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueDryRun --json: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if !json.Valid([]byte(strings.TrimSpace(out.String()))) {
+		t.Errorf("RunQueueDryRun --json: stdout is not valid JSON: %q", out.String())
+	}
 	if !strings.Contains(out.String(), "resolved_queue") {
-		t.Errorf("RunQueueDryRun happy-path: stdout %q does not contain resolved_queue", out.String())
+		t.Errorf("RunQueueDryRun --json: stdout %q does not contain resolved_queue", out.String())
 	}
 }
 

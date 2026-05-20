@@ -196,9 +196,192 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	sess := &tmuxSubstrateSession{
 		adapter: s.adapter,
 		handle:  outcome.Handle,
+		paneID:  paneID,
 		pid:     pid,
 	}
 	return sess, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// perRunSubstrate — per-bead-run substrate wrapper (hk-012af)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// perRunSubstrate wraps a tmuxSubstrate and captures the pane ID of the single
+// window spawned for one bead run. It implements handler.Substrate for
+// SpawnWindow (delegating to the shared substrate) and the three paste-inject
+// interfaces (pasteInjecter, enterSender, quitSender) using the captured pane
+// ID rather than the shared "lastPaneID" field on tmuxSubstrate.
+//
+// # Why this exists
+//
+// tmuxSubstrate stores lastHandle/lastPaneID as shared fields guarded by a
+// mutex. Under MaxConcurrent>1, two concurrent beadRunOne goroutines both call
+// handler.Launch → SpawnWindow, each overwriting lastPaneID. The second write
+// makes all WriteLastPane/SendEnterToLastPane/SendQuitToLastPane calls for the
+// first run target the wrong pane, so the first run's Claude never receives its
+// kick-off message, waitAgentReady never unblocks, and the run hangs
+// indefinitely. (hk-012af dogfood: 7-hour stall after two run_started events at
+// 22:29:08 UTC on 2026-05-20.)
+//
+// By creating one perRunSubstrate per bead run, each goroutine has an isolated
+// handle that targets exactly the pane spawned for that run.
+//
+// # Usage
+//
+//	prs := newPerRunSubstrate(tmuxSub)
+//	spec.Substrate = prs                     // used for handler.Launch
+//	// ... after Launch returns ...
+//	go pasteInjectOnLaunch(ctx, prs, ...)    // safe: prs.paneID is run-local
+//	go pasteInjectQuitOnCommit(ctx, prs, ...) // same
+//
+// Bead ref: hk-012af.
+type perRunSubstrate struct {
+	// inner is the shared tmuxSubstrate. SpawnWindow is delegated here.
+	inner *tmuxSubstrate
+
+	// paneTargetMu guards paneTarget; set once by SpawnWindow.
+	paneTargetMu sync.Mutex
+	// paneTarget is the tmux pane target for the window spawned by this run's
+	// SpawnWindow call (e.g. "%1964" or "session:window.0"). Captured from the
+	// returned SubstrateSession via the paneTargeter interface.
+	// Empty when SpawnWindow has not yet been called or when the session does
+	// not implement paneTargeter.
+	cachedPaneTarget string
+}
+
+// Compile-time assertions for perRunSubstrate.
+var _ handler.Substrate = (*perRunSubstrate)(nil)
+var _ pasteInjecter = (*perRunSubstrate)(nil)
+var _ enterSender = (*perRunSubstrate)(nil)
+var _ quitSender = (*perRunSubstrate)(nil)
+
+// paneTargeter is an optional interface a SubstrateSession may implement to
+// expose its specific tmux pane target string (e.g. "%1964").  perRunSubstrate
+// probes for this interface on the SubstrateSession returned by SpawnWindow so
+// it can capture the pane target without a hard dependency on the concrete
+// tmuxSubstrateSession type.
+//
+// Test doubles that need per-run pane isolation (e.g. the hk-012af concurrent
+// dispatch test) implement this interface to expose the pane target assigned at
+// spawn time.
+type paneTargeter interface {
+	// PaneTarget returns the tmux pane target string for this session.
+	// Returns an empty string when no pane target is available.
+	PaneTarget() string
+}
+
+// substrateWithAdapter is an optional interface a Substrate may implement to
+// expose the underlying tmux.Adapter.  perRunSubstrate probes for this
+// interface so it can call WriteToPane/SendKeysEnter/SendKeysQuit directly on
+// the adapter using the captured per-run pane target.
+//
+// *tmuxSubstrate implements this interface.  Test doubles may implement it as
+// well to allow perRunSubstrate to route paste-inject calls to a recording
+// adapter.
+type substrateWithAdapter interface {
+	tmuxAdapter() tmux.Adapter
+}
+
+// tmuxAdapter exposes the adapter field of tmuxSubstrate so perRunSubstrate can
+// call it on the concrete type.  This satisfies substrateWithAdapter.
+func (s *tmuxSubstrate) tmuxAdapter() tmux.Adapter { return s.adapter }
+
+// newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
+// sub and captures the spawned pane target from the returned SubstrateSession.
+//
+// When sub implements substrateWithAdapter, perRunSubstrate can forward
+// paste-inject calls to the underlying tmux.Adapter using the captured pane
+// target; this is the production path (*tmuxSubstrate).
+//
+// When sub does NOT implement substrateWithAdapter but the returned session
+// implements paneTargeter, perRunSubstrate can record the pane target — paste
+// inject calls will fail gracefully (no adapter available) but the pane routing
+// is still isolated, which is sufficient for test fixtures that do not need
+// actual paste-inject to succeed.
+//
+// Returns nil when sub is nil (safe: the caller falls back to the shared-substrate
+// path which is correct for the exec.CommandContext / no-tmux code path).
+func newPerRunSubstrate(sub handler.Substrate) *perRunSubstrate {
+	if sub == nil {
+		return nil
+	}
+	ts, ok := sub.(*tmuxSubstrate)
+	if !ok {
+		// deps.substrate is not a *tmuxSubstrate (e.g. a test double that does not
+		// implement substrateWithAdapter). Return nil so the caller falls back to
+		// the original shared-substrate path for test doubles that don't need pane
+		// isolation (e.g. spy substrates in pasteinject_hk2hb2y_test.go).
+		return nil
+	}
+	return &perRunSubstrate{inner: ts}
+}
+
+// SpawnWindow delegates to the inner tmuxSubstrate.SpawnWindow and captures the
+// spawned pane target into this per-run instance.
+//
+// The pane target is extracted via the paneTargeter interface (implemented by
+// tmuxSubstrateSession and test doubles that need pane isolation). If the
+// returned session does not implement paneTargeter, the pane target remains
+// empty and paste-inject calls will fail gracefully.
+func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	sess, err := p.inner.SpawnWindow(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	// Capture the pane target from the just-spawned session via paneTargeter.
+	// tmuxSubstrateSession implements paneTargeter (PaneTarget() string).
+	if pt, ok := sess.(paneTargeter); ok {
+		if target := pt.PaneTarget(); target != "" {
+			p.paneTargetMu.Lock()
+			p.cachedPaneTarget = target
+			p.paneTargetMu.Unlock()
+		}
+	}
+	return sess, nil
+}
+
+// paneTarget returns the tmux pane target captured at SpawnWindow time for
+// this run's pane.  Returns empty string when SpawnWindow has not yet been
+// called or when the spawned session did not expose a pane target via
+// paneTargeter.
+func (p *perRunSubstrate) paneTarget() string {
+	p.paneTargetMu.Lock()
+	defer p.paneTargetMu.Unlock()
+	return p.cachedPaneTarget
+}
+
+// WriteLastPane delivers payload to this run's pane (not the shared
+// "last pane" — the pane captured at SpawnWindow time for this run).
+//
+// Implements pasteInjecter.
+func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, payload []byte) error {
+	target := p.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: perRunSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+	return p.inner.adapter.WriteToPane(ctx, bufferName, target, payload)
+}
+
+// SendEnterToLastPane sends a bare Enter key to this run's pane.
+//
+// Implements enterSender.
+func (p *perRunSubstrate) SendEnterToLastPane(ctx context.Context) error {
+	target := p.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: perRunSubstrate.SendEnterToLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+	return p.inner.adapter.SendKeysEnter(ctx, target)
+}
+
+// SendQuitToLastPane sends /quit followed by Enter to this run's pane.
+//
+// Implements quitSender.
+func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
+	target := p.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: perRunSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+	return p.inner.adapter.SendKeysQuit(ctx, target)
 }
 
 // SendEnterToLastPane sends a bare "Enter" key event to the first pane of the
@@ -325,7 +508,11 @@ func (s *tmuxSubstrate) WriteLastPane(ctx context.Context, bufferName string, pa
 type tmuxSubstrateSession struct {
 	adapter tmux.Adapter
 	handle  tmux.WindowHandle
-	pid     int
+	// paneID is the stable tmux pane identifier (e.g. "%1964") captured at
+	// SpawnWindow time. Read by perRunSubstrate.SpawnWindow to initialise its
+	// own isolated pane target (hk-012af).
+	paneID string
+	pid    int
 
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once
@@ -542,6 +729,22 @@ func (s *tmuxSubstrateSession) Outcome() handler.Outcome {
 // PID returns the pane PID retrieved at spawn time. Returns 0 if unknown.
 func (s *tmuxSubstrateSession) PID() int {
 	return s.pid
+}
+
+// PaneTarget returns the tmux pane target string for this session: the stable
+// pane ID ("%NNNN") captured at spawn time, or "handle.0" as a fallback, or
+// empty string when neither is available.
+//
+// Implements paneTargeter, allowing perRunSubstrate.SpawnWindow to capture the
+// pane target without hard-coding the tmuxSubstrateSession type (hk-012af).
+func (s *tmuxSubstrateSession) PaneTarget() string {
+	if s.paneID != "" {
+		return s.paneID
+	}
+	if s.handle != "" {
+		return string(s.handle) + ".0"
+	}
+	return ""
 }
 
 // Stdout returns nil: tmux-hosted sessions do not expose a stdout pipe to the

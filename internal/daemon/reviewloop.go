@@ -202,8 +202,20 @@ func runReviewLoop(
 		// reads lastHandle from the substrate but no window was opened in this phase.
 		// This is the root cause of the pane-race bug (hk-2hb2y).
 		//
+		// hk-012af: wrap deps.substrate in a perRunSubstrate so this review-loop
+		// iteration gets an isolated pane handle. Under MaxConcurrent>1, two
+		// concurrent review-loop goroutines would otherwise race on
+		// tmuxSubstrate.lastPaneID, sending paste-inject to the wrong pane.
+		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		implSpec.Substrate = deps.substrate
+		implPRS := newPerRunSubstrate(deps.substrate)
+		var implSubstrate handler.Substrate = deps.substrate
+		var implPasteTarget handler.Substrate = deps.substrate
+		if implPRS != nil {
+			implSubstrate = implPRS
+			implPasteTarget = implPRS
+		}
+		implSpec.Substrate = implSubstrate
 
 		// Prepend deps.handlerArgs so test handlers (e.g. /bin/sh scriptPath) are invoked
 		// correctly. For production (claude binary, empty handlerArgs) this is a no-op.
@@ -298,7 +310,7 @@ func runReviewLoop(
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 		// Bead ref: hk-lj1p9.4, hk-zrj83.
-		go pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID,
+		go pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
 			implPhase, state.iterationCount, wtPath)
 
 		// Quit-on-commit: after the implementer's task commit lands in the worktree,
@@ -306,9 +318,12 @@ func runReviewLoop(
 		// The initial HEAD for this iteration is the current worktree HEAD at launch time.
 		// Non-fatal: only fires when substrate implements quitSender (tmux path).
 		//
+		// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
+		// iteration's pane, not the shared "last pane".
+		//
 		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
 		// Bead: hk-cmybm.
-		if qs, ok := deps.substrate.(quitSender); ok {
+		if qs, ok := implPasteTarget.(quitSender); ok {
 			implInitialSHA, resolveErr := resolveWorktreeHEAD(ctx, wtPath)
 			if resolveErr != nil {
 				implInitialSHA = parentSHA // fallback to known-good parent SHA
@@ -436,8 +451,19 @@ func runReviewLoop(
 		// the reviewer launch takes the exec.CommandContext path, SpawnWindow is
 		// never called, and pasteInjectOnLaunch fails with "no window spawned yet".
 		//
+		// hk-012af: wrap deps.substrate in a fresh perRunSubstrate for the reviewer
+		// phase. This gives the reviewer its own isolated pane handle, preventing
+		// cross-run pane misdirection under MaxConcurrent>1.
+		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		revSpec.Substrate = deps.substrate
+		revPRS := newPerRunSubstrate(deps.substrate)
+		var revSubstrate handler.Substrate = deps.substrate
+		var revPasteTarget handler.Substrate = deps.substrate
+		if revPRS != nil {
+			revSubstrate = revPRS
+			revPasteTarget = revPRS
+		}
+		revSpec.Substrate = revSubstrate
 
 		// Prepend deps.handlerArgs for test handlers; no-op in production.
 		if len(deps.handlerArgs) > 0 {
@@ -564,8 +590,10 @@ func runReviewLoop(
 		// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).
 		// Running before agent_ready races Claude's welcome splash, which
 		// consumes the trailing \n and leaves the buffered text unsubmitted.
+		// hk-012af: use revPasteTarget (per-run wrapper) so inject targets this
+		// reviewer's pane rather than the shared "last pane".
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-		go pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID,
+		go pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
 			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

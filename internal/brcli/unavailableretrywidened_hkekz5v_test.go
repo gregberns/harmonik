@@ -9,7 +9,9 @@ package brcli_test
 //
 // Fix: terminal-transition writes (CloseBead, ClaimBead, ReopenBead, ResetBead)
 // now use UnavailableRetryMax (10) instead of DBLockedRetryMax (3), with a
-// faster initial backoff (UnavailableRetryBase = 50ms) and a 2s per-sleep cap.
+// faster initial backoff (UnavailableRetryBase = 50ms) and a 15s per-sleep cap.
+// The 15s cap matches the maximum .write.lock hold time (10s write timeout +
+// 5s SIGTERM grace), preventing retry-loop self-contention (hk-5ce5n / hk-5dewt).
 // Non-terminal-transition reads are unchanged.
 //
 // Spec ref: beads-integration.md §4.10 BI-031 step (4c-transient).
@@ -34,8 +36,8 @@ func TestUnavailableRetryConstsAlignmentHkekz5v(t *testing.T) {
 	if brcli.UnavailableRetryBase != 50*time.Millisecond {
 		t.Errorf("UnavailableRetryBase = %v; want 50ms (per BI-031 step 4c-transient)", brcli.UnavailableRetryBase)
 	}
-	if brcli.UnavailableRetryCap != 2*time.Second {
-		t.Errorf("UnavailableRetryCap = %v; want 2s (per BI-031 step 4c-transient)", brcli.UnavailableRetryCap)
+	if brcli.UnavailableRetryCap != 15*time.Second {
+		t.Errorf("UnavailableRetryCap = %v; want 15s (each br attempt may hold .write.lock up to 15s; cap must exceed that window — hk-5ce5n)", brcli.UnavailableRetryCap)
 	}
 }
 

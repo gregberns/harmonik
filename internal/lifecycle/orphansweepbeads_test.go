@@ -812,6 +812,116 @@ func TestSweepStaleInProgressBeads_Cat3cClose_Success(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Queue-based provenance and liveness (hk-2ty0g — SIGKILL recovery fix)
+// ---------------------------------------------------------------------------
+
+// TestSweepStaleInProgressBeads_QueueOwned_NoIntentFile_ResetsOrphan is the
+// regression test for hk-2ty0g (SIGKILL recovery — orphan sweep emits
+// bead_in_progress_reset=0 even when stale in_progress beads exist).
+//
+// Scenario: a bead is in_progress in the Beads ledger, the intent log is empty
+// (all intent files were drained by BI-031 recovery on a prior restart), but
+// the bead appears in QueueOwned (it was dispatched by this project's queue).
+// Before the fix the sweep skipped the bead (no provenance signal). After the
+// fix it resets the bead (QueueOwned establishes provenance).
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet.
+// Bug ref: hk-2ty0g.
+func TestSweepStaleInProgressBeads_QueueOwned_NoIntentFile_ResetsOrphan(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-2ty0g-queue-owned")
+
+	// Empty intent log — simulates fully-drained BI-031 recovery.
+	// No intent files written for bid.
+
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+
+	// Wire QueueOwned: bead appears in queue.json (any status other than dispatched).
+	cfg.QueueOwned = QueueOwnedSet{bid: {}}
+	// QueueDispatched is nil / empty — no live run in the queue.
+
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	// hk-2ty0g fix: QueueOwned establishes provenance → reset must fire.
+	if result.ResetCount != 1 {
+		t.Errorf("hk-2ty0g: queue-owned bead with empty intent log should be reset: count = %d, want 1", result.ResetCount)
+	}
+	if len(resetter.called) != 1 || resetter.called[0] != bid {
+		t.Errorf("hk-2ty0g: ResetBead not called on expected bead: calls=%v", resetter.called)
+	}
+}
+
+// TestSweepStaleInProgressBeads_QueueDispatched_ExcludesLiveRun verifies that
+// a bead still marked as dispatched in queue.json is NOT reset — the queue
+// considers the run live and exclusion (a-queue) must fire.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — exclusion (a).
+// Bug ref: hk-2ty0g.
+func TestSweepStaleInProgressBeads_QueueDispatched_ExcludesLiveRun(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-2ty0g-queue-dispatched")
+
+	// No intent file — simulates fully-drained BI-031 recovery.
+
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+
+	// Wire both sets: bead is owned AND dispatched — live run exists.
+	cfg.QueueOwned = QueueOwnedSet{bid: {}}
+	cfg.QueueDispatched = QueueDispatchedSet{bid: {}}
+
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	// Exclusion (a-queue) must suppress the reset: queue still believes run is live.
+	if result.ResetCount != 0 {
+		t.Errorf("hk-2ty0g: queue-dispatched bead must not be reset (exclusion a-queue): count = %d, want 0", result.ResetCount)
+	}
+	if len(resetter.called) != 0 {
+		t.Errorf("hk-2ty0g: ResetBead must not be called for queue-dispatched bead: calls=%v", resetter.called)
+	}
+}
+
+// TestSweepStaleInProgressBeads_QueueOwned_Dispatched_ExcludesEvenWithNoIntentFile
+// is the SIGKILL scenario complement to the dispatched test: even if the intent
+// file is absent, a dispatched queue entry means the run is live → no reset.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — exclusion (a).
+// Bug ref: hk-2ty0g.
+func TestSweepStaleInProgressBeads_QueueOwned_Dispatched_ExcludesEvenWithNoIntentFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := imrestSweepBaseConfig(t)
+	bid := core.BeadID("hk-2ty0g-queue-dispatched-nofile")
+
+	// Empty intent log AND queue-dispatched: the queue is the authoritative
+	// liveness source here.
+	cfg.Ledger = &imrestSweepFakeLedger{beads: []core.BeadRecord{imrestSweepBead(string(bid))}}
+	resetter := &imrestSweepFakeResetter{}
+	cfg.Resetter = resetter
+	cfg.QueueOwned = QueueOwnedSet{bid: {}}
+	cfg.QueueDispatched = QueueDispatchedSet{bid: {}}
+
+	result, err := SweepStaleInProgressBeads(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("SweepStaleInProgressBeads: unexpected error: %v", err)
+	}
+	if result.ResetCount != 0 {
+		t.Errorf("queue-dispatched (no intent file): exclusion (a-queue) must hold: count = %d, want 0", result.ResetCount)
+	}
+}
+
 // TestSweepStaleInProgressBeads_Cat3cClose_ErrorAggregated verifies that when
 // SweepCloseBead returns an error for one bead, the sweep does NOT abort —
 // remaining beads are still processed — and the error is aggregated into the

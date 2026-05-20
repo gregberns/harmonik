@@ -246,6 +246,36 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 	return strings.TrimSpace(string(out)) != "", nil
 }
 
+// QueueDispatchedSet is the set of bead IDs that appear in queue.json with
+// status=dispatched at the time the orphan sweep runs. Membership means a live
+// run is still registered in the queue and exclusion (a) applies — the daemon
+// MUST NOT reset the bead while the queue believes it is being executed.
+//
+// This set is populated by the caller from a raw queue.Load before the full
+// LoadQueueAtStartup cross-check runs, giving the sweep an authoritative
+// "live run" signal that survives SIGKILL recovery even when the BI-030 intent
+// log has been fully drained.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — exclusion (a).
+// Bug ref: hk-2ty0g (SIGKILL recovery — intent log drained, queue not checked).
+type QueueDispatchedSet map[core.BeadID]struct{}
+
+// QueueOwnedSet is the set of bead IDs that appear in queue.json in ANY item
+// status (pending, dispatched, completed, failed, deferred-for-ledger-dep).
+// Membership establishes provenance: the bead was submitted to THIS project's
+// daemon via queue-submit and is therefore owned by this project, regardless of
+// whether intent files survive.
+//
+// When a bead is in QueueOwnedSet but NOT in QueueDispatchedSet, the daemon
+// may have been SIGKILL'd after dispatching the bead and clearing the claim
+// intent but before the queue could record the completion. That bead is an
+// orphan: it must be reset so the next `harmonik run` can reclaim it.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — provenance via
+// queue.json as an alternative to intent-log presence.
+// Bug ref: hk-2ty0g.
+type QueueOwnedSet map[core.BeadID]struct{}
+
 // IntentClaimSet is the set of bead IDs for which a `claim` intent file is
 // still present on disk under .harmonik/beads-intents/. Membership means
 // exclusion condition (a) applies (the BI adapter's BI-031 recovery will
@@ -385,6 +415,34 @@ type SweepStaleInProgressBeadsConfig struct {
 	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
 	Cat3cCloser BeadCat3cCloser
 
+	// QueueDispatched, when non-nil, provides the set of bead IDs that queue.json
+	// records as status=dispatched at startup. Membership triggers exclusion (a):
+	// the queue still believes a live run exists, so the sweep MUST NOT reset the
+	// bead. This complements the intent-log exclusion (a) and survives SIGKILL
+	// scenarios where the intent log has been fully drained.
+	//
+	// Nil is safe — the queue-dispatched check is then skipped (old behavior).
+	// Production callers SHOULD supply this; tests that do not exercise the queue
+	// path may leave it nil.
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — exclusion (a).
+	// Bug ref: hk-2ty0g.
+	QueueDispatched QueueDispatchedSet
+
+	// QueueOwned, when non-nil, provides the set of bead IDs that appear in
+	// queue.json in ANY item status. Membership establishes provenance for the
+	// bead: it was submitted to THIS project's daemon and is therefore owned,
+	// independent of whether intent files remain on disk. This closes the
+	// SIGKILL-recovery gap where intent files have been drained and the bead
+	// appears unowned to the intent-log-only provenance check.
+	//
+	// Nil is safe — the queue-ownership provenance signal is then not consulted.
+	// Production callers SHOULD supply this alongside QueueDispatched.
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — provenance.
+	// Bug ref: hk-2ty0g.
+	QueueOwned QueueOwnedSet
+
 	// BrTimeoutCfg is the BI-025c timeout configuration forwarded to ResetBead.
 	// Zero value is acceptable (defaults apply).
 	BrTimeoutCfg brcli.TimeoutConfig
@@ -456,13 +514,15 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 	var lastCat3cErr error
 	for _, bead := range beads {
 		// Provenance check (PL-006a OR clause): the bead is owned by this
-		// project iff either (i) cfg.Provenance.Owns(...) reports true, OR
-		// (ii) ANY intent file (claim, close, reopen, or reset) references it
-		// in the local intent log. Using the full provenance set (not just
-		// claims) closes the hk-sc3o4 gap: a bead whose claim intent was
-		// cleared by BI-031 recovery may still have a close or reset intent
-		// on disk — those are equally valid provenance signals that the prior
-		// implementation missed.
+		// project iff any of the following holds:
+		//   (i)  cfg.Provenance.Owns(...) reports true, OR
+		//   (ii) ANY intent file (claim, close, reopen, or reset) references it
+		//        in the local intent log (hk-sc3o4 broadened provenance signal), OR
+		//   (iii) the bead appears in QueueOwned — it was submitted to THIS
+		//         project's daemon via queue-submit (hk-2ty0g SIGKILL-recovery fix).
+		//
+		// Signal (iii) closes the gap where the intent log has been fully drained
+		// after SIGKILL recovery but the bead is still in_progress in the ledger.
 		owned := false
 		if cfg.Provenance != nil {
 			provOwned, provErr := cfg.Provenance.Owns(ctx, bead.BeadID)
@@ -478,23 +538,37 @@ func SweepStaleInProgressBeads(ctx context.Context, cfg SweepStaleInProgressBead
 			}
 		}
 		if !owned {
+			if _, inQueue := cfg.QueueOwned[bead.BeadID]; inQueue {
+				owned = true
+			}
+		}
+		if !owned {
 			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s in_progress but no provenance signal — not owned by this project; skipping", bead.BeadID)
 			continue
 		}
 
-		// (a) Live run will be reattached (claim intent present + BI-031
-		//     recovery will re-drive it). At MVH the in-memory model rebuild
-		//     is not yet wired; the OR clause governs — a claim intent file
-		//     means the BI-031 recovery path WILL re-drive the run, so
-		//     resetting now would race with the re-drive.
+		// (a) Live run will be reattached. Two signals can fire exclusion (a):
 		//
-		// When [ProvenanceChecker] establishes provenance independently and
-		// the claim intent is absent (e.g., BI-031 recovery already cleared
-		// it on a prior restart), exclusion (a) does NOT fire and the reset
+		//   (a-intent) A claim intent file is present in the local intent log.
+		//              BI-031 recovery WILL re-drive the run, so resetting now
+		//              would race with the re-drive.
+		//
+		//   (a-queue)  The bead appears in QueueDispatched — queue.json still
+		//              records an active dispatch for this bead. The queue
+		//              considers the run live; the sweep MUST NOT preempt it.
+		//              This covers SIGKILL recovery where the claim intent was
+		//              drained by BI-031 recovery on a previous restart but
+		//              queue.json was not yet updated (hk-2ty0g).
+		//
+		// When NEITHER signal fires and provenance is established, the reset
 		// path proceeds. This is the imrest scenario the PL-006 sixth bullet
 		// targets.
 		if _, hasClaim := claims[bead.BeadID]; hasClaim {
 			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s has live claim intent; exclusion (a) — skip reset", bead.BeadID)
+			continue
+		}
+		if _, isDispatched := cfg.QueueDispatched[bead.BeadID]; isDispatched {
+			orphanLog(cfg.Logger, "SweepStaleInProgressBeads: bead %s is dispatched in queue.json; exclusion (a-queue) — skip reset", bead.BeadID)
 			continue
 		}
 

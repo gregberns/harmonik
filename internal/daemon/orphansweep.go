@@ -118,6 +118,23 @@ type OrphanSweepConfig struct {
 	// project_hash (or an alternate per-project provenance signal lands).
 	BeadProvenance lifecycle.ProvenanceChecker
 
+	// QueueDispatched is the set of bead IDs that queue.json records as
+	// status=dispatched at daemon startup. Nil → queue-dispatched exclusion (a)
+	// check is skipped. Production callers SHOULD populate this from a raw
+	// queue.Load before RunOrphanSweep (hk-2ty0g SIGKILL-recovery fix).
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — exclusion (a).
+	// Bug ref: hk-2ty0g.
+	QueueDispatched lifecycle.QueueDispatchedSet
+
+	// QueueOwned is the set of bead IDs that appear in queue.json in ANY item
+	// status. Nil → queue-ownership provenance signal is skipped. Production
+	// callers SHOULD populate this alongside QueueDispatched.
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet — provenance.
+	// Bug ref: hk-2ty0g.
+	QueueOwned lifecycle.QueueOwnedSet
+
 	// MergeCommitScanner detects PL-006 exclusion condition (c) — a
 	// Harmonik-Bead-ID merge commit on the target branch (Cat 3c condition).
 	// Nil → exclusion (c) is treated as "no merge commit" (the conservative
@@ -252,16 +269,18 @@ func RunOrphanSweep(
 	// adapter isn't wired (unit-test mode).
 	if cfg.BeadLedger != nil && cfg.BeadResetter != nil {
 		sweepResult, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
-			Ledger:        cfg.BeadLedger,
-			Resetter:      cfg.BeadResetter,
-			Provenance:    cfg.BeadProvenance,
-			MergeScanner:  cfg.MergeCommitScanner,
-			Cat3cCloser:   cfg.BeadCat3cCloser,
-			IntentLogDir:  cfg.IntentLogDir,
-			ProjectHash:   projectHash,
-			DaemonStartNS: cfg.DaemonStartNS,
-			BrTimeoutCfg:  cfg.BrTimeoutCfg,
-			Logger:        cfg.Logger,
+			Ledger:          cfg.BeadLedger,
+			Resetter:        cfg.BeadResetter,
+			Provenance:      cfg.BeadProvenance,
+			MergeScanner:    cfg.MergeCommitScanner,
+			Cat3cCloser:     cfg.BeadCat3cCloser,
+			IntentLogDir:    cfg.IntentLogDir,
+			ProjectHash:     projectHash,
+			DaemonStartNS:   cfg.DaemonStartNS,
+			BrTimeoutCfg:    cfg.BrTimeoutCfg,
+			QueueDispatched: cfg.QueueDispatched,
+			QueueOwned:      cfg.QueueOwned,
+			Logger:          cfg.Logger,
 		})
 		if beadResetErr != nil {
 			errs = append(errs, fmt.Sprintf("bead-reset: %v", beadResetErr))

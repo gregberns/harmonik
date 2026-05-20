@@ -618,6 +618,36 @@ func Start(ctx context.Context, cfg Config) error {
 			}
 		}
 
+		// Raw queue.json load for the orphan-sweep bead-provenance check
+		// (hk-2ty0g). This is a lightweight read-only load — no QM-002a cross-
+		// check, no bead-ledger queries — performed BEFORE the full
+		// LoadQueueAtStartup at PL-005 step 8a. The two sets it produces let
+		// the bead-reset sweep:
+		//   - establish queue-based provenance for beads whose intent files
+		//     were fully drained after a previous SIGKILL recovery (QueueOwned),
+		//   - skip beads that the queue still considers live (QueueDispatched).
+		//
+		// Errors are non-fatal: a missing or corrupt queue.json yields empty
+		// sets and the sweep falls back to intent-log provenance only (the
+		// pre-fix behaviour, which is safe; it just misses the SIGKILL case).
+		//
+		// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet.
+		// Bug ref: hk-2ty0g.
+		var queueDispatched lifecycle.QueueDispatchedSet
+		var queueOwned lifecycle.QueueOwnedSet
+		if rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir); rawQErr == nil && rawQ != nil {
+			queueDispatched = make(lifecycle.QueueDispatchedSet)
+			queueOwned = make(lifecycle.QueueOwnedSet)
+			for gi := range rawQ.Groups {
+				for _, item := range rawQ.Groups[gi].Items {
+					queueOwned[item.BeadID] = struct{}{}
+					if item.Status == queue.ItemStatusDispatched {
+						queueDispatched[item.BeadID] = struct{}{}
+					}
+				}
+			}
+		}
+
 		sweepResult, sweepErr := RunOrphanSweep(
 			ctx,
 			cfg.ProjectDir,
@@ -631,8 +661,10 @@ func Start(ctx context.Context, cfg Config) error {
 					ProjectDir:   cfg.ProjectDir,
 					TargetBranch: "", // defaults to "main" inside the scanner
 				},
-				IntentLogDir:  intentLogDir,
-				DaemonStartNS: daemonStartTime.UnixNano(),
+				IntentLogDir:    intentLogDir,
+				DaemonStartNS:   daemonStartTime.UnixNano(),
+				QueueDispatched: queueDispatched,
+				QueueOwned:      queueOwned,
 			},
 		)
 

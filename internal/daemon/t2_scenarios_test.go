@@ -104,6 +104,7 @@ func TestT2_NonZeroExit(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: twinFail,
 		HandlerArgs:   nil,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -188,6 +189,7 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: twinHang,
 		HandlerArgs:   nil,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -298,6 +300,7 @@ exit 0
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{scriptPath},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -374,6 +377,7 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{scriptPath},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -451,6 +455,7 @@ func TestT2_HangTwinCtxCancel(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: twinHang,
 		HandlerArgs:   nil,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -510,6 +515,7 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: twinHang,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -595,6 +601,7 @@ func TestT2_RunFailedEventContainsExitCode(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: twinFail,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -671,6 +678,7 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: twinFail,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 

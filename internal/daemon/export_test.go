@@ -442,8 +442,15 @@ func (s *synthHookStore) WaitForOutcome(_ context.Context, _, _ string) (json.Ra
 	return nil, nil
 }
 
-// SetAgentReadyCallback is a no-op: synthHookStore does not simulate relay events.
-func (s *synthHookStore) SetAgentReadyCallback(_, _ string, _ func()) {}
+// SetAgentReadyCallback fires the callback immediately in a goroutine so that
+// waitAgentReady receives agent_ready without waiting for a real hook-bridge.
+// This matches the production path (callback is fired from the socket-acceptor
+// goroutine) and unblocks waitAgentReady for tests using synthHookStore (hk-d8u1y).
+func (s *synthHookStore) SetAgentReadyCallback(_, _ string, cb func()) {
+	if cb != nil {
+		go cb()
+	}
+}
 
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {

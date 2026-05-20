@@ -158,6 +158,7 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: handlerScript,
 		HandlerArgs:   nil,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 	depsB := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
@@ -166,6 +167,7 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: handlerScript,
 		HandlerArgs:   nil,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 

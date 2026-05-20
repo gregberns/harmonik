@@ -479,12 +479,10 @@ func runReviewLoop(
 		// Create a per-phase tapping emitter so waitAgentReady can observe watcher
 		// events from the reviewer launch without a post-seal bus subscription (EV-009).
 		// A new handler is constructed using the tap so events flow through the channel.
+		// Precondition: deps.adapterRegistry must be non-nil (enforced by
+		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 		revTap, revTapCh := newPerRunEventTap(deps.bus, runID)
-		tapRegistry := deps.adapterRegistry
-		if tapRegistry == nil {
-			tapRegistry = handlercontract.NewAdapterRegistry()
-		}
-		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, tapRegistry)
+		revH := handler.NewHandler(revTap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
 		revSessionID := handlercontract.NewSessionID()
 		emitReviewerLaunched(ctx, deps.bus, runID, revSessionID, state.claudeSessionID, state.iterationCount)

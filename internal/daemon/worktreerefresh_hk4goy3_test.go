@@ -113,6 +113,7 @@ func TestWorkingTreeRefresh_AfterSuccessfulMerge(t *testing.T) {
 		HandlerBinary:   "/bin/sh",
 		HandlerArgs:     []string{"-c", "exit 0"},
 		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorktreeFactory: mergeToMainCommittingFactory(t),
 	})
 

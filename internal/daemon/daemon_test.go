@@ -345,6 +345,7 @@ func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
@@ -370,6 +371,7 @@ func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
@@ -396,6 +398,7 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: "", // zero value
 	}
 

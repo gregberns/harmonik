@@ -137,6 +137,7 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:    qs,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -246,6 +247,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:    qs,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

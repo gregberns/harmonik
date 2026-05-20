@@ -53,6 +53,7 @@ func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handle
 		HandlerBinary: handlerBinary,
 		HandlerArgs:   handlerArgs,
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 	}
 }
 
@@ -252,6 +253,7 @@ func TestT4_ClaimConflict(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	}
 	deps := daemon.ExportedWorkLoopDeps(depsParams)
@@ -366,6 +368,7 @@ exit 0
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{handlerScript},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -470,6 +473,7 @@ func TestT4_CloseBeadError(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -574,6 +578,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 	deps2 := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
@@ -582,6 +587,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -688,6 +694,7 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 

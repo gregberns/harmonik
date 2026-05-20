@@ -283,6 +283,7 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -378,6 +379,7 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 1"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -565,6 +567,7 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "sleep 0.2; exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		MaxConcurrent: 2,
 	})
 
@@ -694,6 +697,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
@@ -875,6 +879,7 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		MaxConcurrent: maxConcurrent,
 	})
 

@@ -15,7 +15,10 @@ fi
 # coverage-gate.sh — Harmonik coverage enforcement gate (hk-pvcs.5)
 #
 # RULES (all locked, per STATUS.md "Decisions in force"):
-#   1. internal/core/** packages: must reach ≥ 95.0% line coverage.
+#   1. Spec-named core subsystems (internal/orchestrator, workspace, eventbus,
+#      handler, reconciler, core): must reach ≥ 95.0% line coverage.
+#      See testing.md §Coverage targets for the authoritative list; the
+#      HIGH_THRESHOLD_PACKAGES array below is the implementation.
 #   2. All other internal/** packages: must reach ≥ 90.0% floor.
 #   3. No package may regress more than 0.3 percentage points below its
 #      recorded value in coverage.baseline at the repo root.
@@ -174,8 +177,19 @@ fi
 FAILURES=()
 MODULE_PREFIX="github.com/gregberns/harmonik"
 
-CORE_PATTERN="${MODULE_PREFIX}/internal/core"
 INTERNAL_PATTERN="${MODULE_PREFIX}/internal"
+
+# Packages requiring 95% coverage per testing.md §Coverage targets:
+#   "Core subsystem packages (internal/orchestrator, workspace, eventbus, handler, reconciler)"
+#   internal/core is retained for historical alignment and any future core utilities.
+HIGH_THRESHOLD_PACKAGES=(
+    "${MODULE_PREFIX}/internal/core"
+    "${MODULE_PREFIX}/internal/orchestrator"
+    "${MODULE_PREFIX}/internal/workspace"
+    "${MODULE_PREFIX}/internal/eventbus"
+    "${MODULE_PREFIX}/internal/handler"
+    "${MODULE_PREFIX}/internal/reconciler"
+)
 
 CORE_THRESHOLD=95.0
 FLOOR_THRESHOLD=90.0
@@ -206,23 +220,26 @@ for pkg in "${!PKG_COVERAGE[@]}"; do
 
     # Determine if this is an internal package
     is_internal=0
-    is_core=0
+    is_high_threshold=0
     if [[ "${pkg}" == ${INTERNAL_PATTERN}/* || "${pkg}" == "${INTERNAL_PATTERN}" ]]; then
         is_internal=1
     fi
-    if [[ "${pkg}" == ${CORE_PATTERN}/* || "${pkg}" == "${CORE_PATTERN}" ]]; then
-        is_core=1
-    fi
+    for ht_pkg in "${HIGH_THRESHOLD_PACKAGES[@]}"; do
+        if [[ "${pkg}" == "${ht_pkg}" || "${pkg}" == "${ht_pkg}/"* ]]; then
+            is_high_threshold=1
+            break
+        fi
+    done
 
-    # Gate 1: internal/core → 95% threshold
-    if [[ $is_core -eq 1 ]]; then
+    # Gate 1: spec-named subsystems (orchestrator, workspace, eventbus, handler, reconciler, core) → 95%
+    if [[ $is_high_threshold -eq 1 ]]; then
         if bc_lt "${pct}" "${CORE_THRESHOLD}"; then
-            FAILURES+=("CORE-THRESHOLD  ${pkg}  got=${pct}%  required>=${CORE_THRESHOLD}%")
+            FAILURES+=("HIGH-THRESHOLD  ${pkg}  got=${pct}%  required>=${CORE_THRESHOLD}%")
         fi
     fi
 
     # Gate 2: all other internal → 90% floor
-    if [[ $is_internal -eq 1 && $is_core -eq 0 ]]; then
+    if [[ $is_internal -eq 1 && $is_high_threshold -eq 0 ]]; then
         if bc_lt "${pct}" "${FLOOR_THRESHOLD}"; then
             FAILURES+=("FLOOR  ${pkg}  got=${pct}%  required>=${FLOOR_THRESHOLD}%")
         fi

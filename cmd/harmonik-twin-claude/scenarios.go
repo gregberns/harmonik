@@ -57,8 +57,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioBudgetExhausted(), nil
 	case "handler-fatal":
 		return scenarioHandlerFatal(), nil
+	case "silent-hang":
+		return scenarioSilentHang(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal, silent-hang", name)
 	}
 }
 
@@ -788,6 +790,80 @@ func scenarioBudgetExhausted() *ScriptFile {
 // ─────────────────────────────────────────────────────────────────────────────
 // Scenario: handler-fatal (hk-qxtbq)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: silent-hang (hk-0r1ti — SC-3 / hk-xfhva)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioSilentHang returns a script that emits the preamble
+// (handler_capabilities → agent_ready → agent_started) and then returns
+// without emitting any heartbeats or outcome events.
+//
+// This models SC-3 (hk-xfhva): the agent process starts but then silently
+// hangs — no heartbeats arrive, no outcome_emitted is ever sent.  The daemon's
+// HC-056 silent-hang detection watcher MUST fire when presented with this event
+// stream.
+//
+// Expected event ordering (truncated — intentionally no terminal events):
+//
+//  1. handler_capabilities (HC-009)
+//  2. agent_ready          (HC-039)
+//  3. agent_started        (§6.4)
+//
+// After agent_started the script ends.  The twin process exits 0; the daemon
+// watcher observes the subprocess exit without outcome_emitted and without
+// heartbeats, putting it in the regime where HC-056 silent-hang detection must
+// have already fired (or fires on the subprocess-exit event).
+//
+// Cite: specs/handler-contract.md §4.6.HC-056, §7.1; hk-0r1ti; hk-xfhva.
+func scenarioSilentHang() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-hk0r1ti-sh-001"
+		sessID    = "sess-hk0r1ti-sh-001"
+		nodeID    = "node-hk0r1ti-sh-001"
+		agentType = "claude-twin-claude"
+	)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities — first message on stream (HC-009).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-hk0r1ti-001",
+				},
+			},
+			// 2. agent_ready (HC-039).
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted"},
+				},
+			},
+			// 3. agent_started (§6.4).
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// Deliberate: no heartbeats follow, no outcome_emitted.
+			// The subprocess exits here.  The daemon watcher must detect
+			// silent-hang (HC-056 / §7.1 FSM) and emit agent_failed.
+		},
+	}
+}
 
 // scenarioHandlerFatal returns a script that emits agent_ready followed by
 // agent_failed, simulating a handler-fatal failure outcome.

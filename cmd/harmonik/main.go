@@ -63,6 +63,13 @@ func run() int {
 	// Subcommand dispatch: tmux-start and hook-relay must be checked before
 	// flag.Parse so that flag does not consume their positional arguments.
 
+	// --help / -h: print top-level usage and exit 0 before any flag.Parse so
+	// that "harmonik --help" always exits 0 with the subcommand listing.
+	if len(os.Args) >= 2 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
+		harmonikUsage()
+		return 0
+	}
+
 	// hk tmux-start — operator-facing tmux session bootstrap.
 	// Parses its own --session-name flag and must run before flag.Parse so
 	// that the global flag set does not reject the subcommand-specific flag.
@@ -242,8 +249,9 @@ func run() int {
 	// Default 1 preserves MVH single-threaded semantics (POST_MVH_PARALLELISM_ROADMAP row 6, hk-e61c3.1).
 	// Values >1 are inert until the work-loop goroutine scheduler (hk-e61c3.2) lands.
 	var maxConcurrentFlag int
-	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently (default 1)")
+	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")
 
+	flag.Usage = harmonikUsage
 	flag.Parse()
 
 	// Resolve project directory.

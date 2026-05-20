@@ -637,16 +637,23 @@ func TestTmuxSubstrate_WriteLastPane_FallbackOnEmptyPaneID(t *testing.T) {
 	}
 }
 
-// TestTmuxSubstrateSession_Outcome_BeforeWait verifies that Outcome() returns
-// a zero-value Outcome before Wait has returned.
-func TestTmuxSubstrateSession_Outcome_BeforeWait(t *testing.T) {
+// TestTmuxSubstrateSession_Outcome_BlocksUntilWait verifies that Outcome()
+// called before Wait() blocks until Wait() completes, then returns the correct
+// exit metadata.  This is the R2 regression guard (hk-9to6j): before the fix,
+// Outcome() returned a zero struct silently when called before Wait because
+// waitDone was initialized lazily inside waitOnce.Do rather than at SpawnWindow
+// construction.
+//
+// Semantics: Outcome blocks on <-s.waitDone; once Wait's goroutine closes the
+// channel, Outcome unblocks and returns the populated outcome.
+func TestTmuxSubstrateSession_Outcome_BlocksUntilWait(t *testing.T) {
 	t.Parallel()
 
-	// panePIDErr is NOT set so WindowPanePID succeeds — the poll loop keeps running,
-	// keeping Wait blocked so we can observe Outcome before completion.
+	// panePIDErr is set so the first WindowPanePID poll signals "window gone",
+	// which makes Wait return quickly (pid==0 slow path: window gone → exit 0).
 	fake := &fakeTmuxAdapter{
 		newWindowInOutcome: tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win")},
-		panePIDResult:      1,
+		panePIDErr:         errors.New("tmux: no such window"),
 	}
 	substrate := tmuxSubstrateFixtureNew(t, fake)
 
@@ -661,9 +668,28 @@ func TestTmuxSubstrateSession_Outcome_BeforeWait(t *testing.T) {
 		t.Fatalf("SpawnWindow: %v", err)
 	}
 
-	// Do NOT call Wait. Outcome before Wait MUST be zero.
-	o := sess.Outcome()
-	if o.ExitCode != 0 || o.Duration != 0 {
-		t.Errorf("Outcome before Wait: expected zero-value, got %+v", o)
+	// Call Outcome() in a goroutine before Wait() — it must block, not return
+	// a zero struct.
+	outcomeCh := make(chan handler.Outcome, 1)
+	go func() {
+		outcomeCh <- sess.Outcome()
+	}()
+
+	// Wait for Wait() to return (with panePIDErr set, this is quick).
+	waitCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := sess.Wait(waitCtx); err != nil {
+		t.Fatalf("SubstrateSession.Wait: %v", err)
+	}
+
+	// Outcome() goroutine must now unblock and deliver a result.
+	select {
+	case o := <-outcomeCh:
+		// The pid==0 slow-path (window gone) produces exitCode=0.
+		if o.ExitCode != 0 {
+			t.Errorf("Outcome().ExitCode = %d; want 0 (pid==0 slow-path, window gone)", o.ExitCode)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Outcome() did not unblock after Wait() completed (hk-9to6j regression)")
 	}
 }

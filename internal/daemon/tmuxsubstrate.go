@@ -193,11 +193,18 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	s.lastPaneID = paneID
 	s.lastHandleMu.Unlock()
 
+	// waitDone is initialized here at construction so that callers of Outcome()
+	// that arrive before Wait() is called can block on the channel rather than
+	// observe a nil-channel receive (which would block forever) or a zero struct
+	// (which is silently wrong).  waitOnce then guards only the goroutine launch,
+	// not the channel allocation — the channel is always valid after SpawnWindow
+	// returns.  See architectural review R2 (hk-9to6j).
 	sess := &tmuxSubstrateSession{
-		adapter: s.adapter,
-		handle:  outcome.Handle,
-		paneID:  paneID,
-		pid:     pid,
+		adapter:  s.adapter,
+		handle:   outcome.Handle,
+		paneID:   paneID,
+		pid:      pid,
+		waitDone: make(chan struct{}),
 	}
 	return sess, nil
 }
@@ -607,8 +614,9 @@ func killProcessWithGrace(pid int, grace time.Duration) {
 //
 // If ctx is cancelled before the process exits, Wait returns ctx.Err().
 func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
+	// waitOnce guards only the goroutine launch.  waitDone is always non-nil
+	// because SpawnWindow initializes it at construction (hk-9to6j / R2).
 	s.waitOnce.Do(func() {
-		s.waitDone = make(chan struct{})
 		go s.runWait(ctx)
 	})
 	select {
@@ -718,11 +726,19 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	}
 }
 
-// Outcome returns exit metadata once Wait has returned.
+// Outcome returns exit metadata once the Wait goroutine has finished.
+//
+// Semantics: Outcome blocks until the runWait goroutine closes waitDone.
+// Because waitDone is initialized at SpawnWindow construction (not lazily
+// inside waitOnce.Do), calling Outcome before Wait is safe — it will block
+// until some caller eventually calls Wait (which launches the goroutine) and
+// the goroutine finishes.  This prevents a silent zero-struct return when
+// Outcome races ahead of Wait (hk-9to6j / R2).
+//
+// In the normal production call order (Wait → Outcome), waitDone is already
+// closed and the receive returns instantly.
 func (s *tmuxSubstrateSession) Outcome() handler.Outcome {
-	if !s.outcomeReady.Load() {
-		return handler.Outcome{}
-	}
+	<-s.waitDone
 	return s.outcome
 }
 

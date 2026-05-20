@@ -666,3 +666,471 @@ func TestEM015dRIA_ReviewerHints(t *testing.T) {
 		t.Error("EM-015d-RIA no-hints: unexpected ## Hints section when ReviewerHints is empty")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Additional unit tests for hk-rfda7 step (a) — coverage uplift
+// ---------------------------------------------------------------------------
+
+// TestCHB028_ExtraContextSection verifies that the ## Extra Context section is
+// rendered when ExtraContext is non-empty and is omitted entirely when empty.
+// Covers the hk-boiwe ExtraContext branch in buildAgentTaskContent.
+func TestCHB028_ExtraContextSection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("non-empty extra context included", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		workspacePath := filepath.Join(dir, "workspace")
+		harmonikDir := filepath.Join(workspacePath, ".harmonik")
+		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+
+		payload := AgentTaskPayload{
+			BeadID:        "hk-ec01",
+			Title:         "Task with extra context",
+			Phase:         "implementer-initial",
+			Iteration:     1,
+			RunID:         "018e1234-0000-7000-8000-000000000ec1",
+			WorkspacePath: workspacePath,
+			Body:          "Implement the feature.",
+			ExtraContext:  "predecessor: abc1234\nnote: dependency hk-xyz landed in main",
+		}
+
+		if err := WriteAgentTask(workspacePath, payload); err != nil {
+			t.Fatalf("WriteAgentTask: %v", err)
+		}
+
+		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		content := string(data)
+
+		if !strings.Contains(content, "## Extra Context") {
+			t.Error("ExtraContext: missing ## Extra Context section")
+		}
+		if !strings.Contains(content, "predecessor: abc1234") {
+			t.Errorf("ExtraContext: missing extra context body; content:\n%s", content)
+		}
+		// Verify Extra Context appears AFTER Task Description.
+		descIdx := strings.Index(content, "## Task Description")
+		extraIdx := strings.Index(content, "## Extra Context")
+		if descIdx < 0 || extraIdx < 0 || extraIdx < descIdx {
+			t.Errorf("ExtraContext: ## Extra Context must follow ## Task Description; desc@%d extra@%d", descIdx, extraIdx)
+		}
+	})
+
+	t.Run("empty extra context omitted", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		workspacePath := filepath.Join(dir, "workspace")
+		harmonikDir := filepath.Join(workspacePath, ".harmonik")
+		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+
+		payload := AgentTaskPayload{
+			BeadID:        "hk-ec02",
+			Title:         "Task without extra context",
+			Phase:         "implementer-initial",
+			Iteration:     1,
+			RunID:         "018e1234-0000-7000-8000-000000000ec2",
+			WorkspacePath: workspacePath,
+			Body:          "Do the work.",
+			ExtraContext:  "", // omitted
+		}
+
+		if err := WriteAgentTask(workspacePath, payload); err != nil {
+			t.Fatalf("WriteAgentTask: %v", err)
+		}
+
+		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		if strings.Contains(string(data), "## Extra Context") {
+			t.Error("ExtraContext empty: unexpected ## Extra Context section when ExtraContext is empty")
+		}
+	})
+
+	t.Run("whitespace-only extra context omitted", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		workspacePath := filepath.Join(dir, "workspace")
+		harmonikDir := filepath.Join(workspacePath, ".harmonik")
+		if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+
+		payload := AgentTaskPayload{
+			BeadID:        "hk-ec03",
+			Title:         "Task with whitespace extra context",
+			Phase:         "implementer-initial",
+			Iteration:     1,
+			RunID:         "018e1234-0000-7000-8000-000000000ec3",
+			WorkspacePath: workspacePath,
+			Body:          "Do the work.",
+			ExtraContext:  "   \n\t  ", // whitespace-only — must be treated as empty
+		}
+
+		if err := WriteAgentTask(workspacePath, payload); err != nil {
+			t.Fatalf("WriteAgentTask: %v", err)
+		}
+
+		data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+		if strings.Contains(string(data), "## Extra Context") {
+			t.Error("ExtraContext whitespace: unexpected ## Extra Context section for whitespace-only value")
+		}
+	})
+}
+
+// TestCHB028_AutoCreatesDotHarmonikDir verifies that WriteAgentTask creates
+// the .harmonik/ directory automatically when it does not already exist, per
+// the MkdirAll call in WriteAgentTask.
+//
+// This is a regression guard: a workspace path that has no .harmonik/ dir
+// must not fail — the function creates it.
+func TestCHB028_AutoCreatesDotHarmonikDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// workspacePath exists but .harmonik/ is deliberately NOT pre-created.
+	workspacePath := filepath.Join(dir, "workspace-no-harmonik")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatalf("MkdirAll workspace: %v", err)
+	}
+
+	payload := AgentTaskPayload{
+		BeadID:        "hk-ah01",
+		Title:         "Auto-create test",
+		Phase:         "implementer-initial",
+		Iteration:     1,
+		RunID:         "018e1234-0000-7000-8000-000000000ah1",
+		WorkspacePath: workspacePath,
+		Body:          "Body for auto-create test.",
+	}
+
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask (no pre-existing .harmonik): %v", err)
+	}
+
+	target := AgentTaskPath(workspacePath)
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("agent-task.md not created: %v", err)
+	}
+	if fi.Size() == 0 {
+		t.Error("agent-task.md is zero bytes after WriteAgentTask auto-create path")
+	}
+}
+
+// TestCHB028_WhitespaceBodyRejected verifies that a body consisting entirely
+// of whitespace (spaces, tabs, newlines) is rejected with ErrTaskFileEmpty.
+// Covers the strings.TrimSpace guard in WriteAgentTask.
+func TestCHB028_WhitespaceBodyRejected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	payload := AgentTaskPayload{
+		BeadID:        "hk-wb01",
+		Title:         "Whitespace body",
+		Phase:         "implementer-initial",
+		Iteration:     1,
+		RunID:         "018e1234-0000-7000-8000-000000000wb1",
+		WorkspacePath: workspacePath,
+		Body:          "   \n\t\n   ", // whitespace-only body
+	}
+
+	err := WriteAgentTask(workspacePath, payload)
+	if err == nil {
+		t.Fatal("expected ErrTaskFileEmpty for whitespace-only body, got nil")
+	}
+	if !errors.Is(err, ErrTaskFileEmpty) {
+		t.Errorf("want ErrTaskFileEmpty, got %v", err)
+	}
+}
+
+// TestCHB028_ReAttachWritesWhenFileAbsent verifies that WriteAgentTask with
+// ReAttach=true writes the file normally when agent-task.md does NOT yet exist.
+// This covers the "re-attach but file absent" branch — the first-time write
+// must succeed even when ReAttach is set.
+func TestCHB028_ReAttachWritesWhenFileAbsent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	payload := AgentTaskPayload{
+		BeadID:        "hk-ra01",
+		Title:         "ReAttach-absent test",
+		Phase:         "implementer-initial",
+		Iteration:     1,
+		RunID:         "018e1234-0000-7000-8000-000000000ra1",
+		WorkspacePath: workspacePath,
+		Body:          "Body that must be written on first re-attach.",
+		ReAttach:      true, // file is absent — must write
+	}
+
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask (ReAttach=true, file absent): %v", err)
+	}
+
+	data, err := os.ReadFile(AgentTaskPath(workspacePath))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(data), "Body that must be written on first re-attach.") {
+		t.Errorf("ReAttach-absent: body not written; content:\n%s", string(data))
+	}
+}
+
+// TestCHB028_ImplementerResumeWithDerivedVerdictPath verifies that when
+// PriorVerdictFile is empty, buildAgentTaskContent derives the canonical path
+// from WorkspacePath and priorN per the fallback branch.
+func TestCHB028_ImplementerResumeWithDerivedVerdictPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	payload := AgentTaskPayload{
+		BeadID:           "hk-dv01",
+		Title:            "Resume — derived verdict path",
+		Phase:            "implementer-resume",
+		Iteration:        3,
+		RunID:            "018e1234-0000-7000-8000-000000000dv1",
+		WorkspacePath:    workspacePath,
+		Body:             "Continue the work.",
+		PriorVerdictFile: "", // empty — derived path should appear
+	}
+
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask (derived verdict path): %v", err)
+	}
+
+	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	content := string(data)
+
+	// Derived path: .harmonik/review.iter-2.json (iteration 3 → prior = 2).
+	expectedPath := filepath.Join(workspacePath, ".harmonik", "review.iter-2.json")
+	if !strings.Contains(content, "reviewer-feedback: "+expectedPath) {
+		t.Errorf("derived verdict path: missing derived reviewer-feedback path %q; content:\n%s",
+			expectedPath, content)
+	}
+}
+
+// TestCHB028_ImplementerResumeIterationClamp verifies that when Iteration ≤ 1,
+// the priorN value is clamped to 1 (no negative or zero iteration files).
+// Covers the `if priorN < 1 { priorN = 1 }` branch in buildAgentTaskContent.
+func TestCHB028_ImplementerResumeIterationClamp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Iteration=1 means priorN = 0, which should clamp to 1.
+	payload := AgentTaskPayload{
+		BeadID:           "hk-ic01",
+		Title:            "Iteration clamp test",
+		Phase:            "implementer-resume",
+		Iteration:        1,
+		RunID:            "018e1234-0000-7000-8000-000000000ic1",
+		WorkspacePath:    workspacePath,
+		Body:             "Clamped iteration body.",
+		PriorVerdictFile: "", // trigger derived-path branch
+	}
+
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask (iteration clamp): %v", err)
+	}
+
+	data, _ := os.ReadFile(AgentTaskPath(workspacePath))
+	content := string(data)
+
+	// Clamped: priorN=1 → .harmonik/review.iter-1.json, NOT review.iter-0.json.
+	expectedPath := filepath.Join(workspacePath, ".harmonik", "review.iter-1.json")
+	if !strings.Contains(content, "reviewer-feedback: "+expectedPath) {
+		t.Errorf("iteration clamp: expected derived path %q; content:\n%s", expectedPath, content)
+	}
+	// Paranoia: zero-index path must not appear.
+	zeroPath := filepath.Join(workspacePath, ".harmonik", "review.iter-0.json")
+	if strings.Contains(content, zeroPath) {
+		t.Errorf("iteration clamp: unexpected zero-index path %q in content", zeroPath)
+	}
+}
+
+// TestEM015dRFD_WritesMultipleIterations verifies that WriteReviewerFeedback
+// can write feedback files for successive iterations (iter 1 and iter 2) to
+// the same workspace, and that each file is independently addressable via
+// ReviewerFeedbackPath. This exercises the iteration-indexed path logic.
+func TestEM015dRFD_WritesMultipleIterations(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	for _, iter := range []int{1, 2} {
+		payload := ReviewerFeedbackPayload{
+			WorkspacePath:  workspacePath,
+			PriorIteration: iter,
+			Verdict:        "APPROVE",
+			Notes:          "Iteration notes.",
+		}
+		if err := WriteReviewerFeedback(payload); err != nil {
+			t.Fatalf("WriteReviewerFeedback iter=%d: %v", iter, err)
+		}
+	}
+
+	// Both files must exist independently.
+	for _, iter := range []int{1, 2} {
+		target := ReviewerFeedbackPath(workspacePath, iter)
+		fi, err := os.Stat(target)
+		if err != nil {
+			t.Errorf("reviewer-feedback.iter-%d.md not found: %v", iter, err)
+			continue
+		}
+		if fi.Size() == 0 {
+			t.Errorf("reviewer-feedback.iter-%d.md is zero bytes", iter)
+		}
+	}
+
+	// Sanity: iter-1 and iter-2 are distinct paths.
+	if ReviewerFeedbackPath(workspacePath, 1) == ReviewerFeedbackPath(workspacePath, 2) {
+		t.Error("ReviewerFeedbackPath must return distinct paths for different iterations")
+	}
+}
+
+// TestEM015dRIA_WriteTargetOverwrite verifies that WriteReviewTarget overwrites
+// review-target.md on each reviewer launch (not appended). The second write's
+// content must fully replace the first write's content.
+func TestEM015dRIA_WriteTargetOverwrite(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	first := ReviewTargetPayload{
+		WorkspacePath: workspacePath,
+		BeadID:        "hk-ov01",
+		Iteration:     1,
+		BeadTitle:     "First reviewer launch",
+		BeadBody:      "First body text.",
+		BaseSHA:       "base111",
+		HeadSHA:       "head111",
+	}
+	if err := WriteReviewTarget(first); err != nil {
+		t.Fatalf("WriteReviewTarget (first): %v", err)
+	}
+
+	second := ReviewTargetPayload{
+		WorkspacePath: workspacePath,
+		BeadID:        "hk-ov01",
+		Iteration:     2,
+		BeadTitle:     "Second reviewer launch",
+		BeadBody:      "Second body text.",
+		BaseSHA:       "base222",
+		HeadSHA:       "head222",
+	}
+	if err := WriteReviewTarget(second); err != nil {
+		t.Fatalf("WriteReviewTarget (second): %v", err)
+	}
+
+	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	content := string(data)
+
+	if strings.Contains(content, "First body text.") {
+		t.Error("WriteReviewTarget overwrite: first-launch body still present after second write")
+	}
+	if !strings.Contains(content, "Second body text.") {
+		t.Errorf("WriteReviewTarget overwrite: second-launch body missing; content:\n%s", content)
+	}
+}
+
+// TestEM015dRIA_MultiplePriorVerdictsWithNilFlags verifies that WriteReviewTarget
+// renders multiple prior verdicts correctly, and that a nil Flags slice in a
+// prior verdict renders as "(none)" rather than panicking or emitting empty.
+func TestEM015dRIA_MultiplePriorVerdictsWithNilFlags(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	payload := ReviewTargetPayload{
+		WorkspacePath: workspacePath,
+		BeadID:        "hk-mv01",
+		Iteration:     3,
+		BeadTitle:     "Three-iteration task",
+		BeadBody:      "Implement the multi-iteration feature.",
+		BaseSHA:       "base333",
+		HeadSHA:       "head333",
+		PriorVerdicts: []ReviewTargetPriorVerdict{
+			{
+				Iteration:    1,
+				Verdict:      "REQUEST_CHANGES",
+				Flags:        []string{"missing-tests", "spec-drift"},
+				NotesSummary: "Tests are missing and spec is drifted.",
+			},
+			{
+				Iteration:    2,
+				Verdict:      "REQUEST_CHANGES",
+				Flags:        nil, // nil flags — must render as "(none)"
+				NotesSummary: "Still some issues.",
+			},
+		},
+	}
+
+	if err := WriteReviewTarget(payload); err != nil {
+		t.Fatalf("WriteReviewTarget (multiple prior verdicts): %v", err)
+	}
+
+	data, _ := os.ReadFile(ReviewTargetPath(workspacePath))
+	content := string(data)
+
+	// Both iterations must appear.
+	if !strings.Contains(content, "### Iteration 1") {
+		t.Error("multi-verdict: missing ### Iteration 1")
+	}
+	if !strings.Contains(content, "### Iteration 2") {
+		t.Error("multi-verdict: missing ### Iteration 2")
+	}
+
+	// Flags from iter 1.
+	if !strings.Contains(content, "missing-tests") {
+		t.Error("multi-verdict: missing 'missing-tests' flag from iteration 1")
+	}
+	if !strings.Contains(content, "spec-drift") {
+		t.Error("multi-verdict: missing 'spec-drift' flag from iteration 1")
+	}
+
+	// Nil flags for iter 2 must render as "(none)".
+	if !strings.Contains(content, "(none)") {
+		t.Errorf("multi-verdict: nil flags for iteration 2 must render as '(none)'; content:\n%s", content)
+	}
+
+	// Verdict file paths must be present for both iterations.
+	verdictPath1 := filepath.Join(workspacePath, ".harmonik", "review.iter-1.json")
+	verdictPath2 := filepath.Join(workspacePath, ".harmonik", "review.iter-2.json")
+	if !strings.Contains(content, verdictPath1) {
+		t.Errorf("multi-verdict: missing verdict file path for iter 1 (%s)", verdictPath1)
+	}
+	if !strings.Contains(content, verdictPath2) {
+		t.Errorf("multi-verdict: missing verdict file path for iter 2 (%s)", verdictPath2)
+	}
+}

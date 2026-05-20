@@ -635,7 +635,15 @@ func Start(ctx context.Context, cfg Config) error {
 		// Bug ref: hk-2ty0g.
 		var queueDispatched lifecycle.QueueDispatchedSet
 		var queueOwned lifecycle.QueueOwnedSet
-		if rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir); rawQErr == nil && rawQ != nil {
+		rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir)
+		if rawQErr != nil {
+			logW := cfg.LogWriter
+			if logW == nil {
+				logW = os.Stderr
+			}
+			fmt.Fprintf(logW, "warn: pre-sweep queue.Load failed: %v — falling back to intent-log-only provenance\n", rawQErr)
+		}
+		if rawQErr == nil && rawQ != nil {
 			queueDispatched = make(lifecycle.QueueDispatchedSet)
 			queueOwned = make(lifecycle.QueueOwnedSet)
 			for gi := range rawQ.Groups {

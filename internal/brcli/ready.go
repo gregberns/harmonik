@@ -64,7 +64,7 @@ const brReadySortPriority = "priority"
 // label per BI-009a — so the daemon's claim path can apply per-task
 // workflow-mode overrides at dispatch time (BI-013).
 //
-// Spec refs: specs/beads-integration.md §4.5 BI-013, BI-013a.
+// Spec refs: specs/beads-integration.md §4.5 BI-013, BI-013a, BI-013d.
 //
 // The ready-work query is the input to the daemon dispatch loop. `br ready`
 // natively excludes `draft`-status beads (the harmonik-side readiness

@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.6.1
+version: 0.6.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-19
+last-updated: 2026-05-20
 depends-on:
   - architecture
   - execution-model
@@ -283,6 +283,17 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 Beads carrying a `needs-attention` label MUST NOT be accepted into a submitted queue. The submit-time validation contract of §4.5a (BI-013b) MUST reject any `bead_id` whose live record carries the label, returning a typed validation failure per [queue-model.md §6 QM-021]. The `br`-CLI adapter's `br ready` output remains a faithful ledger view — it MAY include `needs-attention` beads if Beads itself returns them — and downstream consumers (orchestrator agents, operator tooling) are responsible for filtering them per their own policy.
 
 The label is set by the daemon when a `review-loop` run hits the iteration cap per [execution-model.md §4.3] (and by analogous operator-drain semantics per [operator-nfr.md §4.3]); its presence asserts that operator triage is required before re-dispatch. An operator who clears the label restores the bead to the submittable set on the next queue-submit.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### BI-013d — Ready-work query MUST use `--sort priority`
+
+When the adapter invokes `br ready`, it MUST pass `--sort priority`. The `br` default sort policy is `hybrid`, which weights bead age into ranking and can place a lower-priority bead ahead of a higher-priority bead when the lower-priority bead is sufficiently older. The daemon's br-ready fallback path selects `readyRecords[0]` as the claim candidate and therefore requires strict priority ordering: a bead at priority P MUST appear before any bead at priority P+1 in the returned slice, with `br`'s internal `created_at` tie-break applied within a priority class.
+
+Implementations MUST NOT rely on the default `hybrid` sort. Pinning `--sort priority` is non-negotiable because the first-element-pick pattern cannot tolerate age-weighting promotion of lower-priority beads.
+
+*Regression note:* hk-rp48p — the daemon claimed a P1 bead while a P0 bead was simultaneously ready. Root cause: default hybrid sort promoted the older P1 above the P0. Fix: pin `--sort priority`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -903,6 +914,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-20 | 0.6.2 | foundation-author | **hk-uhvjo — BI-013d NEW: `--sort priority` adapter discipline for br-ready fallback.** Added BI-013d to §4.5 documenting the normative requirement that the adapter MUST pass `--sort priority` when invoking `br ready`. Rationale: the daemon's br-ready fallback path selects `readyRecords[0]` as the claim candidate and requires strict priority ordering; the default `hybrid` sort can promote an older lower-priority bead above a higher-priority bead (regression hk-rp48p). Spec-debt item: the constraint was previously carried only in the `brReadySortPriority` Go constant comment; no spec text existed. BI-013d is additive; BI IDs frozen at v0.6.2. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft from components.md §10 + round 2 amendment §10.8a. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchor to the §4.N map per the v0.2 NOTE: §1.5→§4.6 (×1 in §4.1.BI-003 no-MCP-server clause). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.2.1 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~25 citations fixed. EV: `§3.2→§6.3`/§8 (payload registry, taxonomy per context) ×5, `§3.4→§4.4` (fsync durability) at §4.10 intent-log, §9.1 cross-refs. WM: `§5.3→§4.7` (session-log metadata), `§5.8→§4.2` (branching) at §4.3 typed-edge query, §4.6 close rule, §9.3 cross-refs. Reconciliation path fix: `[reconciliation.md §9.N]→[reconciliation/spec.md §N]` ×7 at §2.2 scope (Cat 3a detector ref), §4.2 reopen verdict, §4.5 read-surface feeds, §4.7 divergence-classification (both §8 Cat 3 and §8.12 auto-resolver refs), §4.10 Cat 3a torn-write detector, §9.3 four cross-refs. ON: `§7.4→§4.4` (queue format), `§7.5→§4.5` (N-1 compat), `§7.8→§4.8` (throughput) at §6.1 schema_version, §6.3 schema evolution, §9.3 cross-refs, §10.3 conformance exclusion. PL: `§8.1→§4.1` (daemon scope rationale), `§8.2→§4.2` (startup sequence) at §3 Beads description and §4.5.BI-014 read-surface feeds. CP: `§6.11→§4.11` (skill declaration) ×4, `§6.5→§6.3` (YAML policy) at §2.2 scope, §4.2 br access, §4.9 skill declaration + exclusion policy, §9.3 cross-refs, §11 OQ. No requirement IDs, invariants, or schemas touched. |

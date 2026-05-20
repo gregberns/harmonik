@@ -207,6 +207,56 @@ func CompleteAndUnlink(ctx context.Context, projectDir string, q *Queue) error {
 	return nil
 }
 
+// CancelQueueOnShutdown transitions q to QueueStatusCancelled, persists it, and
+// archives the file to .harmonik/queue.json.cancelled-<timestamp> so that the
+// next harmonik run invocation finds no blocking active queue. The in-memory
+// queue pointer is updated in-place.
+//
+// This is the canonical shutdown drain for the SIGINT / operator-cancel path
+// (hk-ppt32). The caller (runWorkLoop) invokes it only when the queue is still
+// in a non-terminal state (active) at ctx-cancel time.
+//
+// Returns nil when:
+//   - The persist succeeds and the file is renamed.
+//   - q is nil (no-op: nothing to cancel).
+//
+// Returns an error when Persist or the rename fails; the caller logs the error
+// but continues shutdown regardless.
+//
+// Spec ref: specs/queue-model.md §8 (shutdown drain, hk-ppt32).
+func CancelQueueOnShutdown(ctx context.Context, projectDir string, q *Queue) error {
+	if q == nil {
+		return nil
+	}
+	q.Status = QueueStatusCancelled
+	if err := Persist(ctx, projectDir, q); err != nil {
+		return fmt.Errorf("queue: CancelQueueOnShutdown: persist: %w", err)
+	}
+	// Rename queue.json → queue.json.cancelled-<ts> so Load() returns nil on
+	// the next harmonik run invocation (QM-027 guard bypassed cleanly).
+	src := queuePath(projectDir)
+	ts := time.Now().UTC().Format("20060102150405")
+	dst := src + ".cancelled-" + ts
+	if err := os.Rename(src, dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("queue: CancelQueueOnShutdown: rename to %q: %w", dst, err)
+	}
+	// fsync parent directory so the rename is durable.
+	hDir := harmonikDir(projectDir)
+	//nolint:gosec // G304: hDir is the daemon-internal .harmonik directory
+	dir, err := os.Open(hDir)
+	if err != nil {
+		return fmt.Errorf("queue: CancelQueueOnShutdown: open parent dir %q: %w", hDir, err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", hDir, err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("queue: CancelQueueOnShutdown: close parent dir %q: %w", hDir, err)
+	}
+	return nil
+}
+
 // ArchiveFailedQueue renames .harmonik/queue.json to
 // .harmonik/queue.json.failed-<timestamp> so that a subsequent `harmonik run`
 // invocation finds no active queue file and can proceed without manual cleanup.

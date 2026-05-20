@@ -60,10 +60,10 @@ func runBeadSubcommand(subArgs []string) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
-	beadsFlag := ""       // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1   // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""    // --context <inline|@file> (hk-boiwe)
-	reviewLoop := false  // --review-loop (hk-hiqrl)
+	beadsFlag := ""     // --beads id1,id2,... (hk-w3cp1)
+	maxConcurrent := 1  // --max-concurrent N (hk-w3cp1); default 1 for back-compat
+	contextFlag := ""   // --context <inline|@file> (hk-boiwe)
+	reviewLoop := false // --review-loop (hk-hiqrl)
 	positional := []string{}
 
 	for i := 0; i < len(subArgs); i++ {
@@ -111,6 +111,11 @@ func runBeadSubcommand(subArgs []string) int {
 		// --review-loop (hk-hiqrl)
 		case arg == "--review-loop":
 			reviewLoop = true
+
+		// --help / -h (hk-vudz0)
+		case arg == "--help" || arg == "-h":
+			runUsage()
+			return 0
 
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(os.Stderr, "harmonik run: unknown flag %q\n", arg)
@@ -239,8 +244,8 @@ func runBeadSubcommand(subArgs []string) int {
 		items[i] = queue.Item{
 			BeadID:       id,
 			Status:       queue.ItemStatusPending,
-			Context:      extraContext,      // hk-boiwe
-			WorkflowMode: itemWorkflowMode,  // hk-hiqrl
+			Context:      extraContext,     // hk-boiwe
+			WorkflowMode: itemWorkflowMode, // hk-hiqrl
 		}
 	}
 
@@ -404,4 +409,38 @@ func runBeadSubcommand(subArgs []string) int {
 	fmt.Fprintf(os.Stderr, "harmonik run: unexpected queue state after exit: %s (queue_id=%s)\n",
 		finalQueue.Status, finalQueue.QueueID)
 	return 2
+}
+
+// runUsage prints help for `harmonik run --help` and returns, leaving the
+// caller to return exit code 0. Output goes to stdout so it can be captured
+// by agents without stderr redirection (hk-vudz0).
+func runUsage() {
+	fmt.Print(`harmonik run — execute beads and exit on completion
+
+USAGE
+  harmonik run <bead-id> [flags]
+  harmonik run --beads id1,id2,... [flags]
+
+FLAGS
+  --beads id1,id2,...    Comma-separated bead IDs (mutually exclusive with positional <bead-id>)
+  --max-concurrent N     Maximum simultaneous beads (default 1)
+  --context TEXT         Free-form extra context injected into each agent task
+  --context @FILE        Same, but read context from a file
+  --review-loop          Route all beads through the review-loop workflow
+  --project DIR          Project directory (default: current working directory)
+
+EXIT CODES
+  0   All beads succeeded
+  1   At least one bead failed, or argument/validation error
+  2   Unexpected queue state (diagnostic)
+  5   Another harmonik instance is already running (pidfile locked)
+
+EXAMPLES
+  harmonik run hk-abc123
+  harmonik run --beads hk-abc123,hk-def456 --max-concurrent 2
+  harmonik run hk-abc123 --context "Focus on the migration spec only"
+  harmonik run hk-abc123 --context @/path/to/context.txt
+  harmonik run hk-abc123 --review-loop
+  harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
+`)
 }

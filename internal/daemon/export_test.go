@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // WorkLoopDepsParams carries the parameters for ExportedWorkLoopDeps so callers
@@ -941,3 +942,69 @@ func ExportedQueueOpConsumerHandlePauseStatus(c *QueueOperatorEventConsumer, ctx
 func ExportedQueueOpConsumerHandleResuming(c *QueueOperatorEventConsumer, ctx context.Context, evt core.Event) error {
 	return c.handleOperatorResuming(ctx, evt)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runWait ctx-cancel test seams (hk-88nno)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedRunWaitResult is the exported result of a runWait call for tests.
+//
+// Bead ref: hk-88nno.
+type ExportedRunWaitResult struct {
+	ExitCode int
+}
+
+// ExportedRunWaitWithDeadFn drives tmuxSubstrateSession.runWait through a
+// forced ctx.Done() and returns the exit code recorded in outcome.
+//
+// pid is set on the session. deadFn replaces processDead for this call —
+// pass a function that returns true to simulate a dead process, false for alive.
+// The caller-supplied ctx is cancelled immediately after runWait is launched so
+// that the ctx.Done() branch fires on the first select iteration.
+//
+// Bead ref: hk-88nno.
+func ExportedRunWaitWithDeadFn(pid int, deadFn func(int) bool) ExportedRunWaitResult {
+	sess := &tmuxSubstrateSession{
+		adapter:       &noopTmuxAdapter{},
+		handle:        "test-session:hk-88nno-win",
+		pid:           pid,
+		waitDone:      make(chan struct{}),
+		isProcessDead: deadFn,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so ctx.Done() fires on the first select
+	sess.runWait(ctx)
+	return ExportedRunWaitResult{ExitCode: sess.outcome.ExitCode}
+}
+
+// noopTmuxAdapter is a minimal tmux.Adapter stub that satisfies the interface
+// for the runWait test seam. Only WindowPanePID is reachable from runWait, and
+// only in the pid==0 slow-path; ExportedRunWaitWithDeadFn always sets pid>0.
+type noopTmuxAdapter struct{}
+
+func (n *noopTmuxAdapter) ProbeTmux(_ context.Context) error                { return nil }
+func (n *noopTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { return nil, nil }
+func (n *noopTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+func (n *noopTmuxAdapter) NewWindowIn(_ context.Context, _ tmuxPkg.NewWindowIn) tmuxPkg.Outcome {
+	return tmuxPkg.Outcome{}
+}
+func (n *noopTmuxAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) error { return nil }
+func (n *noopTmuxAdapter) WindowPanePID(_ context.Context, _ tmuxPkg.WindowHandle) (int, error) {
+	return 0, nil
+}
+func (n *noopTmuxAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
+	return "", nil
+}
+func (n *noopTmuxAdapter) KillSession(_ context.Context, _ string) error      { return nil }
+func (n *noopTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
+func (n *noopTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error   { return nil }
+func (n *noopTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
+func (n *noopTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error    { return nil }
+func (n *noopTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error     { return nil }
+func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error { return nil }
+
+// Compile-time assertion: noopTmuxAdapter implements tmux.Adapter.
+var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)

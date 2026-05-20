@@ -17,6 +17,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -336,6 +337,12 @@ type tmuxSubstrateSession struct {
 	// waitDone is closed when the Wait goroutine finishes.
 	waitDone chan struct{}
 	waitOnce sync.Once
+
+	// isProcessDead is the liveness predicate used by runWait. In production
+	// it is nil and processDead (the package-level function) is called directly.
+	// Tests inject a deterministic stub via the function-valued field to exercise
+	// the ctx.Done() and tick paths without real OS processes (hk-88nno).
+	isProcessDead func(pid int) bool
 }
 
 // Kill terminates the hosted process and then destroys the tmux window.
@@ -426,16 +433,30 @@ func (s *tmuxSubstrateSession) Wait(ctx context.Context) error {
 }
 
 // processDead reports whether the process with the given pid is no longer
-// alive in the OS process table. It uses kill(pid, 0): ESRCH means gone,
-// any other result means still running.
+// alive in the OS process table.
+//
+// It sends signal 0 to the pid (kill(pid, 0)) and interprets the result:
+//   - nil error  → process exists and we own it → alive
+//   - ESRCH      → no such process                → dead
+//   - EPERM      → process exists but is owned by another user (e.g. PID
+//     recycled after the original process exited)  → treat as alive, not dead,
+//     to avoid a false "process gone" classification
+//   - any other errno → treat as alive (conservative)
 func processDead(pid int) bool {
 	err := syscall.Kill(pid, 0)
-	return err != nil // ESRCH when gone; EPERM means alive but unowned
+	return errors.Is(err, syscall.ESRCH)
 }
 
 // runWait polls until the hosted process/window exits, then populates outcome.
 func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 	defer close(s.waitDone)
+
+	// deadFn is the liveness predicate. Tests inject a stub via isProcessDead;
+	// production uses the package-level processDead (hk-88nno).
+	deadFn := s.isProcessDead
+	if deadFn == nil {
+		deadFn = processDead
+	}
 
 	startedAt := time.Now()
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -455,7 +476,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			// polling ticks; ctx.Done() fired first with exitCode=-1, causing
 			// a false claude_crashed classification.
 			exitCode := -1
-			if s.pid > 0 && processDead(s.pid) {
+			if s.pid > 0 && deadFn(s.pid) {
 				exitCode = 0
 			}
 			s.outcome = handler.Outcome{
@@ -469,7 +490,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// Fast path: check OS process table directly. This avoids the
 				// tmux display-message fallback that returns the active-pane PID
 				// when the window name is no longer resolvable (hk-smuku).
-				if processDead(s.pid) {
+				if deadFn(s.pid) {
 					s.outcome = handler.Outcome{
 						ExitCode: 0,
 						Duration: time.Since(startedAt),

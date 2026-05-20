@@ -46,11 +46,18 @@ const UnavailableRetryMax = 10
 // Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient: "initial 50ms").
 const UnavailableRetryBase = 50 * time.Millisecond
 
-// UnavailableRetryCap is the BI-025c maximum backoff duration per sleep for
+// UnavailableRetryCap is the maximum backoff duration per sleep for
 // terminal-transition BrUnavailable transient retries.
 //
-// Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient: "max 2s").
-const UnavailableRetryCap = 2 * time.Second
+// Set to 15s because each `br` attempt may hold .write.lock for up to ~15s
+// under the 10s write timeout plus the 5s SIGTERM-grace window (HC-018). The
+// cap must exceed that window so a retry attempt does not queue behind a
+// still-dying prior attempt, which was the root cause of the 19s apparent
+// latency diagnosed in hk-5dewt (retry-loop self-contention on .write.lock).
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step (4c-transient).
+// Root cause: hk-5dewt / hk-5ce5n.
+const UnavailableRetryCap = 15 * time.Second
 
 // RunWithDBLockedRetry invokes RunWithTimeout and retries transient failures
 // with exponential backoff starting at base and capped at cap_. Retries fire

@@ -44,15 +44,15 @@ SUBJECT="$(printf '%s\n' "$STRIPPED" | awk 'NF{print;exit}')"
 # Pattern per bead hk-kv7fe: type[(scope)]: description
 # Scope is restricted to lower-case alphanumerics, commas, hyphens.
 # Breaking-change suffix (!) allowed per CC spec even if not listed in bead.
-# Types (closed set per build-practices.md §Commit conventions + bead spec):
-#   feat fix chore docs test refactor build ci perf revert style spec
-# Note: bead spec's CC_PATTERN uses [a-z0-9,-]+ for scope; build-practices.md
-# also defines `spec` as a valid type (not in standard CC but normative here).
-CC_PATTERN='^(feat|fix|chore|docs|test|refactor|build|ci|perf|revert|style|spec)(\([a-z0-9,:-]+\))?(!)?: .+'
+# Types (closed set per build-practices.md §Decisions line 21):
+#   feat fix refactor test docs chore spec build perf
+# 9 types only; ci/revert/style are NOT canonical here. Update both this regex
+# AND build-practices.md if the set ever expands.
+CC_PATTERN='^(feat|fix|refactor|test|docs|chore|spec|build|perf)(\([a-z0-9,:-]+\))?(!)?: .+'
 if ! printf '%s\n' "$SUBJECT" | grep -qE "$CC_PATTERN"; then
   err "subject does not match Conventional Commits format."
   err "  Expected: <type>[(<scope>)][!]: <description>"
-  err "  Allowed types: feat fix chore docs test refactor build ci perf revert style spec"
+  err "  Allowed types: feat fix refactor test docs chore spec build perf"
   err "  Scope (if present) must be lowercase alphanumeric + commas/hyphens/colons."
   err "  Got: $SUBJECT"
 fi

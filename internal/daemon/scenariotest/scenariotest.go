@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,8 +117,10 @@ func CaptureEventStream(t *testing.T, ctx context.Context, jsonlPath string) *Ev
 			if err != nil {
 				continue
 			}
-			if _, err = f.Seek(offset, 0); err != nil {
-				_ = f.Close()
+			if _, err = f.Seek(offset, io.SeekStart); err != nil {
+				if closeErr := f.Close(); closeErr != nil {
+					t.Logf("eventStream: close after seek error: %v", closeErr)
+				}
 				continue
 			}
 			scanner := bufio.NewScanner(f)
@@ -142,11 +145,13 @@ func CaptureEventStream(t *testing.T, ctx context.Context, jsonlPath string) *Ev
 					es.mu.Unlock()
 				}
 			}
-			pos, posErr := f.Seek(0, 1 /* io.SeekCurrent */)
+			pos, posErr := f.Seek(0, io.SeekCurrent)
 			if posErr == nil {
 				offset = pos
 			}
-			_ = f.Close()
+			if closeErr := f.Close(); closeErr != nil {
+				t.Logf("eventStream: close after scan: %v", closeErr)
+			}
 		}
 	}()
 	t.Cleanup(func() { <-es.done })
@@ -185,7 +190,11 @@ func scanJSONLForEvent(t *testing.T, jsonlPath, eventType, runID string) bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Logf("scanJSONLForEvent: close: %v", closeErr)
+		}
+	}()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -259,7 +268,11 @@ func readAllEvents(t *testing.T, jsonlPath string) []CapturedEvent {
 		}
 		t.Fatalf("AssertEventSequence: open %s: %v", jsonlPath, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Logf("readAllEvents: close: %v", closeErr)
+		}
+	}()
 	var out []CapturedEvent
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -396,7 +409,6 @@ func AssertNoOrphanTmuxWindows(t *testing.T, adapter tmuxPkg.Adapter) {
 // Bead: hk-jf2tb.
 func AssertBeadStatus(t *testing.T, brPath, beadID, wantStatus string) {
 	t.Helper()
-	//nolint:gosec // G204: brPath and beadID are test-internal; not user input
 	cmd := exec.CommandContext(t.Context(), brPath, "show", beadID, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {

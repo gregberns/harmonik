@@ -111,7 +111,6 @@ func scenarioN1GitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
@@ -159,14 +158,12 @@ func scenarioN1BrWrapperScript(t *testing.T, realBrPath, dbPath string) string {
 // ready bead, and returns its ID.
 func scenarioN1InitBr(t *testing.T, realBrPath, projectDir, brWrapper string) string {
 	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "sn1")
 	initCmd.Dir = projectDir
 	initOut, initErr := initCmd.CombinedOutput()
 	if initErr != nil {
 		t.Fatalf("scenarioN1InitBr: br init: %v\n%s", initErr, initOut)
 	}
-	//nolint:gosec // G204: br args are test-internal literals; not user input
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
 		"scenario N=1 happy path", "--status", "open", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
@@ -206,7 +203,6 @@ func scenarioN1PollBeadClosed(t *testing.T, brWrapper, beadID string, budget tim
 	t.Helper()
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
-		//nolint:gosec // G204: br args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
 		out, err := cmd.Output()
 		if err == nil {
@@ -243,7 +239,9 @@ func scenarioN1PollRunTerminal(t *testing.T, jsonlPath string, budget time.Durat
 					break
 				}
 			}
-			_ = f.Close()
+			if closeErr := f.Close(); closeErr != nil {
+				t.Logf("scenarioN1PollRunTerminal: close: %v", closeErr)
+			}
 			if found {
 				return true
 			}
@@ -311,7 +309,11 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("scenarioN1: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	t.Cleanup(func() {
+		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
+			t.Logf("scenarioN1: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		}
+	})
 
 	// Wire daemon.Config — production composition root.
 	loopCtx, loopCancel := context.WithCancel(context.Background())

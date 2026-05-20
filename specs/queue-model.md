@@ -332,7 +332,7 @@ Envelope for the queue-model subsystem per [/Users/gb/github/harmonik/specs/arch
 
 (b) Events consumed:
   - `run_started`, `run_completed`, `run_failed` — the dispatcher's per-run terminal events drive per-item status transitions (`dispatched → completed | failed`) per §2.7 and §5; payload schemas in [/Users/gb/github/harmonik/specs/event-model.md §8.1]. Queue-model populates the OPTIONAL `queue_id` / `queue_group_index` fields on these payloads per QM-011 / QM-012 (co-ownership per [/Users/gb/github/harmonik/specs/event-model.md §6.5]).
-  - `operator_pausing`, `operator_paused`, `operator_stopping`, `operator_resuming` — drive queue-level `active ↔ paused-by-drain` transitions per §8.5 and [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3, §4.7 ON-027]; payload schemas in [/Users/gb/github/harmonik/specs/event-model.md §8.7].
+  - `operator_pause_status{status: pausing|paused}`, `operator_resuming` — drive queue-level `active ↔ paused-by-drain` transitions per §8.5 and [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3, §4.7 ON-027]; payload schemas in [/Users/gb/github/harmonik/specs/event-model.md §8.7]. (`operator_pausing`, `operator_paused`, `operator_stopping` do not exist as Go EventTypes; the consolidated `operator_pause_status` with a `status` enum covers pausing and paused phases.)
   - `bead_closed` (informative, v0.1 polling-only) — the dispatcher polls Beads ledger state for `deferred-for-ledger-dep` items per §2.8; v0.2 may consume an explicit event.
 
 (c) Types introduced (cross-subsystem):

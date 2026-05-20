@@ -22,7 +22,6 @@ import (
 	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -424,9 +423,7 @@ type tmuxSubstrateSession struct {
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once
 
-	// outcomeReady is set once Wait has completed.
-	outcomeReady atomic.Bool
-	outcome      handler.Outcome
+	outcome handler.Outcome
 
 	// waitDone is closed when the Wait goroutine finishes.
 	waitDone chan struct{}
@@ -578,7 +575,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				ExitCode: exitCode,
 				Duration: time.Since(startedAt),
 			}
-			s.outcomeReady.Store(true)
 			return
 		case <-ticker.C:
 			if s.pid > 0 {
@@ -590,7 +586,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),
 					}
-					s.outcomeReady.Store(true)
 					return
 				}
 				// Secondary check: the OS process appears alive, but the tmux
@@ -604,7 +599,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 						ExitCode: exitCodeUnknown, // pane gone, process state uncertain
 						Duration: time.Since(startedAt),
 					}
-					s.outcomeReady.Store(true)
 					return
 				}
 				// Process and pane both appear alive — continue polling.
@@ -617,7 +611,6 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),
 					}
-					s.outcomeReady.Store(true)
 					return
 				}
 				// Window still alive — continue polling.

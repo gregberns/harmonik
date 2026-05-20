@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -156,19 +157,64 @@ func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMes
 	return nil, errors.New("daemon: RequestHandler not wired at MVH")
 }
 
+// errLiveDaemon is returned by removeStaleSocket when a dial to the socket
+// path succeeds, indicating another daemon process is actively listening.
+// RunSocketListener surfaces this as a startup error so the caller can exit
+// with the appropriate exit code.
+var errLiveDaemon = errors.New("daemon: live daemon already listening on socket")
+
+// removeStaleSocket checks whether the socket file at sockPath is stale (i.e.
+// no process is listening) and removes it so the caller can rebind.
+//
+// Decision logic:
+//   - If no file exists at sockPath: nothing to do (return nil).
+//   - If a dial to sockPath succeeds: a live daemon is using the socket.
+//     Return errLiveDaemon so the caller can abort startup with exit code 6.
+//   - If the dial returns ECONNREFUSED, timeout, or any other connection error:
+//     the socket file is stale. Remove it and return nil.
+//
+// The dial timeout is 100 ms — sufficient for a local Unix socket handshake
+// on any supported platform.
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-003 (socket exclusivity, Gap-2).
+func removeStaleSocket(sockPath string) error {
+	// Fast path: no file at all, nothing to remove.
+	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	// Probe: attempt a connection with a short timeout.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer probeCancel()
+	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
+	if err == nil {
+		// Dial succeeded → a live daemon owns this socket.
+		_ = conn.Close() //nolint:errcheck // probe conn; close error unactionable
+		return errLiveDaemon
+	}
+	// Any dial error (ECONNREFUSED, context deadline, no-such-file, etc.)
+	// indicates the socket is stale. Remove and proceed.
+	if removeErr := os.Remove(sockPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		return fmt.Errorf("daemon: removeStaleSocket: remove %q: %w", sockPath, removeErr)
+	}
+	return nil
+}
+
 // RunSocketListener binds a Unix-domain socket at sockPath, sets its
 // permissions to 0600, and accepts connections until ctx is cancelled.
 // Each connection is handled in its own goroutine: one JSON request is
 // read, dispatched to h, hr, or qh, and one JSON response is written before
 // the connection is closed.
 //
-// Stale socket removal: if a file already exists at sockPath (e.g. from a
-// previously crashed daemon), it is removed before binding so that the new
-// listen call succeeds. A live socket at sockPath will cause
-// (&net.ListenConfig{}).Listen to return EADDRINUSE.
+// Stale socket removal: if a file already exists at sockPath, RunSocketListener
+// probes it with a 100 ms dial. If the dial succeeds, another daemon is live
+// and RunSocketListener returns an error wrapping errLiveDaemon. If the dial
+// fails (ECONNREFUSED, timeout, etc.) the socket is stale — it is removed and
+// binding proceeds normally.
 //
 // RunSocketListener returns nil when ctx is cancelled and the listener
-// closes cleanly. It returns a non-nil error only on bind failure.
+// closes cleanly. It returns a non-nil error only on bind failure or when a
+// live daemon is detected at sockPath.
 //
 // Dispatch rules:
 //   - Non-empty "type" field → hook-relay envelope, dispatched to hr
@@ -183,10 +229,9 @@ func (n *noopRequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMes
 // Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
 // Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method set).
 func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, qh ...QueueHandler) error {
-	// Remove a stale socket file left by a previously crashed daemon.
-	// Ignore the error: if the file doesn't exist, Remove returns an error
-	// which we discard intentionally.
-	_ = os.Remove(sockPath) //nolint:errcheck // stale-removal: not-exist errors are expected and harmless
+	if err := removeStaleSocket(sockPath); err != nil {
+		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
+	}
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
 	if err != nil {

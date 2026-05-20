@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 
@@ -252,6 +253,88 @@ func TestRunSocketListener_StaleRemoval(t *testing.T) {
 	}
 	if info.Mode()&os.ModeSocket == 0 {
 		t.Errorf("socket path %q is not a Unix domain socket after stale removal (mode=%v)", sockPath, info.Mode())
+	}
+}
+
+// socketFixtureCreateStaleSocket creates a Unix domain socket inode at sockPath
+// without registering any automatic cleanup (simulating a SIGKILL'd daemon that
+// left its socket file on disk). The socket is bound via syscall so the OS does
+// not remove the file when the file descriptor is closed.
+//
+// Returns a cleanup function that removes the stale socket file. If the socket
+// file is consumed by the daemon under test, the cleanup is a no-op.
+func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
+	t.Helper()
+
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatalf("socketFixtureCreateStaleSocket: socket: %v", err)
+	}
+
+	sa := &syscall.SockaddrUnix{Name: sockPath}
+	if err := syscall.Bind(fd, sa); err != nil {
+		_ = syscall.Close(fd) //nolint:errcheck // cleanup; fd close error unactionable
+		t.Fatalf("socketFixtureCreateStaleSocket: bind %q: %v", sockPath, err)
+	}
+	// Close the fd — the socket inode remains on disk (no automatic removal like
+	// net.Listener.Close does). This is the state left by a SIGKILL'd daemon.
+	if err := syscall.Close(fd); err != nil {
+		t.Fatalf("socketFixtureCreateStaleSocket: close fd: %v", err)
+	}
+
+	return func() {
+		_ = os.Remove(sockPath) //nolint:errcheck // cleanup; already-removed is fine
+	}
+}
+
+// TestRunSocketListener_StaleSockFileNoListener verifies Gap-2 of the recovery
+// audit: when daemon.sock exists on disk but no process is listening (e.g. after
+// a SIGKILL), RunSocketListener must detect the stale socket, remove it, and
+// successfully bind so that the daemon starts instead of failing with EADDRINUSE.
+//
+// The test creates a Unix domain socket inode via syscall.Bind (no listener goroutine
+// behind it), then starts RunSocketListener and asserts that the socket is
+// re-created and is accepting connections.
+//
+// Bead ref: hk-63omj (recovery: stale daemon.sock after SIGKILL → EADDRINUSE).
+func TestRunSocketListener_StaleSockFileNoListener(t *testing.T) {
+	t.Parallel()
+
+	sockPath := socketFixtureTempSockPath(t)
+
+	// Create a stale socket inode (fd closed immediately, file remains on disk).
+	// A dial to this path returns ECONNREFUSED — no one is Accept()ing.
+	cleanupStale := socketFixtureCreateStaleSocket(t, sockPath)
+	defer cleanupStale()
+
+	// Confirm the stale socket file is present before starting the daemon.
+	if _, statErr := os.Stat(sockPath); statErr != nil {
+		t.Fatalf("StaleSockFileNoListener: stale socket file missing before daemon start: %v", statErr)
+	}
+
+	// Start the daemon's socket listener — it must detect the stale socket and rebind.
+	h := &stubHandler{}
+	cancel, done := socketFixtureStartListener(t, sockPath, h)
+	defer cancel()
+
+	// If RunSocketListener returns an error immediately (EADDRINUSE or stale-socket
+	// check failure), surface it as a test failure.
+	select {
+	case startErr := <-done:
+		t.Fatalf("StaleSockFileNoListener: RunSocketListener returned early with error: %v", startErr)
+	default:
+	}
+
+	// The listener must reach a state where it accepts connections.
+	socketFixtureWaitReady(t, sockPath)
+
+	// Verify the socket is a valid Unix domain socket (not a stale inode).
+	info, err := os.Stat(sockPath)
+	if err != nil {
+		t.Fatalf("StaleSockFileNoListener: Stat socket after rebind: %v", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		t.Errorf("StaleSockFileNoListener: %q is not a Unix domain socket after rebind (mode=%v)", sockPath, info.Mode())
 	}
 }
 

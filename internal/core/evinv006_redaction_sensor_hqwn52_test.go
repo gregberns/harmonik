@@ -78,9 +78,8 @@ type hqwn52FixtureAuthPayload struct {
 }
 
 // hqwn52FixtureLocalCtors builds an isolated constructor map containing only
-// the provided (typeName, constructor) pairs. Tests use this to avoid touching
-// the global registry, which may already contain production types that have
-// legitimate non-secret "Token"-suffix field names (e.g., SnapshotToken).
+// the provided (typeName, constructor) pairs. Tests use local maps to keep
+// each test case self-contained and independent of global-registry state.
 func hqwn52FixtureLocalCtors(pairs ...any) map[string]func() EventPayload {
 	m := make(map[string]func() EventPayload)
 	for i := 0; i+1 < len(pairs); i += 2 {

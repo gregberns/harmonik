@@ -30,6 +30,31 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
+// Exit code constants for handler.Outcome.ExitCode values produced by the
+// tmux substrate's runWait poll loop.
+//
+// Background (hk-cj0gm / hk-88nno): the EPERM/ESRCH distinction matters here.
+//   - ESRCH (process not found) → process is dead → exitCodeClean
+//   - EPERM (not permitted to signal) → process is alive → continue polling
+//   - ctx-cancel with process still alive → exitCodeUnknown (daemon must NOT
+//     classify this as a clean exit — it would suppress the claude_crashed branch)
+//   - ctx-cancel with ESRCH (process gone before cancel is handled) → exitCodeClean
+//   - pane gone externally (tmux kill-window) → exitCodeUnknown (process state
+//     uncertain; workloop must use the crashed/unknown branch, not close-on-exit-0)
+const (
+	// exitCodeClean is returned when the polled process is confirmed dead via
+	// ESRCH (processDead=true) or when the tmux pane's PID is no longer
+	// resolvable and the PID was already unknown.  Triggers the
+	// close-on-exit-0 fallback in the workloop.
+	exitCodeClean = 0
+
+	// exitCodeUnknown is returned when ctx is cancelled but the process is
+	// still alive (EPERM / processDead=false), or when the pane disappears
+	// externally while the PID is known.  Prevents misclassification as a
+	// clean exit; the workloop's claude_crashed branch handles this.
+	exitCodeUnknown = -1
+)
+
 // ──────────────────────────────────────────────────────────────────────────────
 // pasteInjecter — optional interface for tmux-backed substrates
 // ──────────────────────────────────────────────────────────────────────────────
@@ -670,9 +695,9 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			// zombie/slow-poll race where processDead returned false during the
 			// polling ticks; ctx.Done() fired first with exitCode=-1, causing
 			// a false claude_crashed classification.
-			exitCode := -1
+			exitCode := exitCodeUnknown
 			if s.pid > 0 && deadFn(s.pid) {
-				exitCode = 0
+				exitCode = exitCodeClean
 			}
 			s.outcome = handler.Outcome{
 				ExitCode: exitCode,
@@ -687,7 +712,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// when the window name is no longer resolvable (hk-smuku).
 				if deadFn(s.pid) {
 					s.outcome = handler.Outcome{
-						ExitCode: 0,
+						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),
 					}
 					s.outcomeReady.Store(true)
@@ -701,7 +726,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// pane that no longer exists (hk-ry3be dogfood-blocker).
 				if _, paneErr := s.adapter.WindowPanePID(ctx, s.handle); paneErr != nil {
 					s.outcome = handler.Outcome{
-						ExitCode: -1, // unknown: pane gone, process state uncertain
+						ExitCode: exitCodeUnknown, // pane gone, process state uncertain
 						Duration: time.Since(startedAt),
 					}
 					s.outcomeReady.Store(true)
@@ -714,7 +739,7 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				if err != nil {
 					// Window or session gone — treat as process exited.
 					s.outcome = handler.Outcome{
-						ExitCode: 0,
+						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),
 					}
 					s.outcomeReady.Store(true)

@@ -1325,7 +1325,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		}
 
-	case socketOutcome == nil && ei.exitCode == 0 && !watcherFailed:
+	case socketOutcome == nil && ei.exitCode == exitCodeClean && !watcherFailed:
 		// No stop-hook arrived AND handler exited 0 without watcher error.
 		// Fall back to the pre-bridge close-on-exit-0 heuristic for
 		// MVH twin-blind runs.

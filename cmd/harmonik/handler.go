@@ -71,25 +71,25 @@ const handlerStateFile = "handler-state.json"
 
 // handlerStateDisk is the top-level on-disk structure of .harmonik/handler-state.json.
 type handlerStateDisk struct {
-	SchemaVersion int                        `json:"schema_version"`
+	SchemaVersion int                         `json:"schema_version"`
 	Handlers      map[string]handlerEntryDisk `json:"handlers"`
 }
 
 // handlerEntryDisk represents one handler-type entry in handler-state.json.
 type handlerEntryDisk struct {
-	Status           string              `json:"status"`
-	Cause            *handlerCauseDisk   `json:"cause"`
-	InFlightAtPause  []inFlightRunDisk   `json:"in_flight_at_pause"`
-	PausedEpoch      int                 `json:"paused_epoch"`
+	Status          string            `json:"status"`
+	Cause           *handlerCauseDisk `json:"cause"`
+	InFlightAtPause []inFlightRunDisk `json:"in_flight_at_pause"`
+	PausedEpoch     int               `json:"paused_epoch"`
 }
 
 // handlerCauseDisk is the cause sub-object inside a paused handler entry.
 type handlerCauseDisk struct {
-	FailureClass  string `json:"failure_class"`
-	SubReason     string `json:"sub_reason"`
-	SourceRunID   string `json:"source_run_id"`
-	SourceBeadID  string `json:"source_bead_id"`
-	TrippedAt     string `json:"tripped_at"`
+	FailureClass string `json:"failure_class"`
+	SubReason    string `json:"sub_reason"`
+	SourceRunID  string `json:"source_run_id"`
+	SourceBeadID string `json:"source_bead_id"`
+	TrippedAt    string `json:"tripped_at"`
 }
 
 // inFlightRunDisk is a single entry in in_flight_at_pause.
@@ -106,8 +106,8 @@ type inFlightRunDisk struct {
 // handlerStatusJSONOutput is the top-level JSON response for --format json.
 // Mirrors handler-state.json plus a derived held_count per §8.2.
 type handlerStatusJSONOutput struct {
-	SchemaVersion int                           `json:"schema_version"`
-	Handlers      map[string]handlerEntryJSON   `json:"handlers"`
+	SchemaVersion int                         `json:"schema_version"`
+	Handlers      map[string]handlerEntryJSON `json:"handlers"`
 }
 
 // handlerEntryJSON is one handler entry in the JSON output.
@@ -128,6 +128,84 @@ type handlerEntryJSON struct {
 // Entry point
 // ---------------------------------------------------------------------------
 
+// handlerUsage prints the help text for `harmonik handler --help`.
+func handlerUsage(out io.Writer) {
+	fmt.Fprint(out, `harmonik handler — inspect or resume a paused handler
+
+USAGE
+  harmonik handler <verb> [flags]
+
+VERBS
+  status   Show handler pause state (no daemon required)
+  resume   Resume a paused handler
+
+FLAGS (status)
+  --type AGENT-TYPE       Filter to a single handler type (e.g. claude-code)
+  --format json|text      Output format (default text)
+  --json                  Shorthand for --format json
+  --project DIR           Project directory (default: current working directory)
+
+FLAGS (resume)
+  --type AGENT-TYPE       Handler type to resume (required)
+  --force                 No-op if already live, instead of error
+  --project DIR           Project directory (default: current working directory)
+
+EXAMPLES
+  harmonik handler status
+  harmonik handler status --type claude-code --format json
+  harmonik handler resume --type claude-code
+`)
+}
+
+// statusUsage prints per-verb help for `harmonik handler status --help`.
+func statusUsage(out io.Writer) {
+	fmt.Fprint(out, `harmonik handler status — show handler pause state
+
+USAGE
+  harmonik handler status [flags]
+
+FLAGS
+  --type AGENT-TYPE       Filter to a single handler type (e.g. claude-code)
+  --format json|text      Output format (default text)
+  --json                  Shorthand for --format json
+  --project DIR           Project directory (default: current working directory)
+
+EXIT CODES
+  0   Success (output written)
+  1   Argument or file-parse error
+  2   Forward-incompatible schema version
+
+EXAMPLES
+  harmonik handler status
+  harmonik handler status --type claude-code
+  harmonik handler status --type claude-code --format json
+`)
+}
+
+// resumeUsage prints per-verb help for `harmonik handler resume --help`.
+func resumeUsage(out io.Writer) {
+	fmt.Fprint(out, `harmonik handler resume — resume a paused handler
+
+USAGE
+  harmonik handler resume --type AGENT-TYPE [flags]
+
+FLAGS
+  --type AGENT-TYPE       Handler type to resume (required)
+  --force                 No-op if already live, instead of error
+  --project DIR           Project directory (default: current working directory)
+
+EXIT CODES
+  0   Success (handler resumed)
+  1   Argument or I/O error
+  2   Unknown handler type (not in handler-state.json)
+  3   Handler already live; use --force to no-op
+
+EXAMPLES
+  harmonik handler resume --type claude-code
+  harmonik handler resume --type claude-code --force
+`)
+}
+
 // runHandlerSubcommand implements `harmonik handler <verb> [flags]`.
 // subArgs is os.Args[2:] (everything after "handler").
 func runHandlerSubcommand(subArgs []string) int {
@@ -142,6 +220,12 @@ func runHandlerSubcommandIO(subArgs []string, out io.Writer, errOut io.Writer) i
 		fmt.Fprintln(errOut, "  status  [--type <agent-type>] [--format json|text] [--project DIR]")
 		fmt.Fprintln(errOut, "  resume  --type <agent-type> [--force] [--project DIR]")
 		return 1
+	}
+
+	// Intercept --help / -h before verb dispatch.
+	if subArgs[0] == "--help" || subArgs[0] == "-h" {
+		handlerUsage(out)
+		return 0
 	}
 
 	verb := subArgs[0]
@@ -197,6 +281,10 @@ func runHandlerResume(subArgs []string, out io.Writer, errOut io.Writer) int {
 
 	for i := 0; i < len(subArgs); i++ {
 		switch {
+		case subArgs[i] == "--help" || subArgs[i] == "-h":
+			resumeUsage(out)
+			return 0
+
 		case subArgs[i] == "--type" && i+1 < len(subArgs):
 			i++
 			typeFlag = subArgs[i]
@@ -471,6 +559,10 @@ func runHandlerStatus(subArgs []string, out io.Writer, errOut io.Writer) int {
 
 	for i := 0; i < len(subArgs); i++ {
 		switch {
+		case subArgs[i] == "--help" || subArgs[i] == "-h":
+			statusUsage(out)
+			return 0
+
 		case subArgs[i] == "--type" && i+1 < len(subArgs):
 			i++
 			typeFlag = subArgs[i]

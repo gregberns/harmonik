@@ -30,6 +30,15 @@ const (
 	// QueueStatusCompleted means all groups are complete-success; the
 	// queue.json file is unlinked per QM-003.
 	QueueStatusCompleted QueueStatus = "completed"
+
+	// QueueStatusCancelled means the operator cancelled the run (SIGINT/SIGTERM
+	// or a global timeout) before all groups reached a terminal state. The
+	// queue.json file is left on disk with this status so the next harmonik run
+	// can detect and overwrite it cleanly without the QM-027 "already active"
+	// guard triggering. Exit code 1 is returned to the operator.
+	//
+	// Bead ref: hk-ppt32.
+	QueueStatusCancelled QueueStatus = "cancelled"
 )
 
 // GroupKind distinguishes the two group primitives (specs/queue-model.md §2.4).

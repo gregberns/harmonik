@@ -387,11 +387,23 @@ func runBeadSubcommand(subArgs []string) int {
 
 	// Fix 2: map final queue status to exit code (hk-8jh26).
 	// After daemon.Start returns, qs reflects the terminal queue state:
-	//   nil           → CompleteAndUnlink ran → all-success → exit 0
-	//   paused-by-failure → bead failed → exit 1
-	//   other non-nil → unexpected state → exit 2 with diagnostic
+	//
+	//   nil + no signal    → CompleteAndUnlink ran → all-success → exit 0
+	//   nil + signal       → drainCancelledQueue archived queue → operator cancel → exit 1
+	//   paused-by-failure  → bead failed → exit 1
+	//   other non-nil      → unexpected state → exit 2 with diagnostic
+	//
+	// hk-ppt32: ctx is the signal.NotifyContext (not runCtx). Its Err() is non-nil
+	// only when a real SIGINT/SIGTERM was received; it stays nil when
+	// cancelOnQueueDrain/cancelOnQueueExit fired (those cancel runCtx, not ctx).
 	finalQueue := qs.Queue()
 	if finalQueue == nil {
+		if ctx.Err() != nil {
+			// Operator cancelled via SIGINT/SIGTERM; drainCancelledQueue already
+			// archived the queue file so the next run can start cleanly.
+			fmt.Fprintf(os.Stderr, "harmonik run: cancelled by operator (signal)\n")
+			return 1
+		}
 		// Queue was cleared via CompleteAndUnlink → all-success.
 		return 0
 	}

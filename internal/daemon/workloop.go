@@ -471,21 +471,29 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		deps.heldEventDedup = make(map[string]struct{})
 	}
 
+	// exitClean terminates the loop cleanly: it waits for in-flight goroutines,
+	// then drains any still-active queue to QueueStatusCancelled so the next
+	// harmonik run can start without the QM-027 "already active" guard blocking
+	// it (hk-ppt32). The background context is intentional: by the time exitClean
+	// runs, ctx is always cancelled; queue.Persist needs a live context.
+	exitClean := func() error {
+		wg.Wait()
+		drainCancelledQueue(context.Background(), deps)
+		return nil
+	}
+
 	for {
 		// Step 1: check for cancellation before any new dispatch.
 		select {
 		case <-ctx.Done():
-			// Stop accepting new work; wait for in-flight goroutines.
-			wg.Wait()
-			return nil
+			return exitClean()
 		default:
 		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
 		if deps.runRegistry.Len() >= effectiveMax {
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				wg.Wait()
-				return nil
+				return exitClean()
 			}
 			continue
 		}
@@ -518,8 +526,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
 					// Queue is paused or completed — no dispatch; idle-wait.
 					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						wg.Wait()
-						return nil
+						return exitClean()
 					}
 					continue
 				}
@@ -535,8 +542,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if activeGroup == nil {
 					// No active group yet (all pending or all terminal) — idle-wait.
 					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						wg.Wait()
-						return nil
+						return exitClean()
 					}
 					continue
 				}
@@ -545,8 +551,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if len(items) == 0 {
 					// All items dispatched or deferred — wait for group progress.
 					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						wg.Wait()
-						return nil
+						return exitClean()
 					}
 					continue
 				}
@@ -564,8 +569,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if itemIdx < 0 {
 					// Item not found (stale reference) — retry.
 					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						wg.Wait()
-						return nil
+						return exitClean()
 					}
 					continue
 				}
@@ -587,8 +591,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if isPaused {
 						emitHeldEvent(ctx, deps, item.BeadID, core.AgentTypeClaudeCode, epoch)
 						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-							wg.Wait()
-							return nil
+							return exitClean()
 						}
 						continue
 					}
@@ -602,8 +605,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if liveQ == nil {
 						lq.Done()
 						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-							wg.Wait()
-							return nil
+							return exitClean()
 						}
 						continue
 					}
@@ -630,8 +632,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						lq.Done()
 						// Already dispatched by a concurrent path — retry.
 						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-							wg.Wait()
-							return nil
+							return exitClean()
 						}
 						continue
 					}
@@ -653,8 +654,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				gIdx := activeGroup.GroupIndex
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
-				capturedExtraContext = item.Context       // hk-boiwe
-				capturedItemWFMode = item.WorkflowMode    // hk-hiqrl
+				capturedExtraContext = item.Context    // hk-boiwe
+				capturedItemWFMode = item.WorkflowMode // hk-hiqrl
 			}
 		}
 
@@ -665,23 +666,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if err != nil {
 				// Treat poll errors as transient: log and backoff.
 				if ctx.Err() != nil {
-					wg.Wait()
-					return nil
+					return exitClean()
 				}
 				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
 				// misconfiguration (hk-c1ln2: silent-failure fix).
 				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
 				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-					wg.Wait()
-					return nil
+					return exitClean()
 				}
 				continue
 			}
 
 			if len(readyRecords) == 0 {
 				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-					wg.Wait()
-					return nil
+					return exitClean()
 				}
 				continue
 			}
@@ -699,8 +697,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if isPaused {
 					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
 					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						wg.Wait()
-						return nil
+						return exitClean()
 					}
 					continue
 				}
@@ -794,8 +791,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		select {
 		case claimSem <- struct{}{}:
 		case <-ctx.Done():
-			wg.Wait()
-			return nil
+			return exitClean()
 		}
 		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)
 		// Release the semaphore immediately after the write completes.
@@ -803,8 +799,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if claimErr != nil {
 			// Claim conflict or transient error — surface to stderr and retry.
 			if ctx.Err() != nil {
-				wg.Wait()
-				return nil
+				return exitClean()
 			}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
 			// On queue-path: revert the item back to pending so the loop can retry.
@@ -831,8 +826,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				lq.Done()
 			}
 			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-				wg.Wait()
-				return nil
+				return exitClean()
 			}
 			continue
 		}
@@ -857,7 +851,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		capturedQueueGroupIdx := queueGroupIdxFd
 		capturedItemIndex := queueItemIndex
 		// Per-item overrides captured here; empty for br-ready path.
-		capturedCtx := capturedExtraContext // hk-boiwe
+		capturedCtx := capturedExtraContext  // hk-boiwe
 		capturedWFMode := capturedItemWFMode // hk-hiqrl
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
@@ -1032,7 +1026,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
 		// per HC-055b. Derived from projectDir via the standard worktree root formula.
 		worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-		extraContext:      extraContext, // hk-boiwe: per-item context from queue.Item.Context
+		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {
@@ -1367,6 +1361,45 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 // Bead ref: hk-gql20.14.
 func isWatcherErrCanceled(err error) bool {
 	return errors.Is(err, handlercontract.ErrCanceled)
+}
+
+// drainCancelledQueue transitions the active queue (if any) to
+// QueueStatusCancelled and archives the file so that the next harmonik run
+// invocation can proceed without the QM-027 "already active" guard blocking it.
+//
+// This is called on every clean exit of runWorkLoop — when ctx is cancelled due
+// to SIGINT, SIGTERM, or a timeout — after wg.Wait() ensures all in-flight
+// goroutines have completed. The function is a no-op when:
+//   - deps.queueStore is nil (no queue surface in use).
+//   - The in-memory queue is nil (already cleared by ClearQueue).
+//   - The queue is already in a terminal state (paused-by-failure, completed,
+//     cancelled) — evaluateGroupAdvanceWithOutcome already transitioned it.
+//
+// Uses context.Background() because ctx is always cancelled by the time this
+// runs; queue.CancelQueueOnShutdown needs a non-cancelled context for Persist.
+//
+// Errors are logged to stderr but do not block shutdown.
+//
+// Spec ref: specs/queue-model.md §8 (shutdown drain).
+// Bead ref: hk-ppt32.
+func drainCancelledQueue(ctx context.Context, deps workLoopDeps) {
+	if deps.queueStore == nil {
+		return
+	}
+	lq := deps.queueStore.LockForMutation()
+	q := lq.Queue()
+	if q == nil || q.Status != queue.QueueStatusActive {
+		lq.Done()
+		return
+	}
+	// Queue is still active: transition to cancelled and archive.
+	lq.Done() // release lock before I/O
+	if err := queue.CancelQueueOnShutdown(ctx, deps.projectDir, q); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: drainCancelledQueue queueID=%s: %v\n", q.QueueID, err)
+		return
+	}
+	// Clear in-memory state so callers that inspect qs.Queue() see nil.
+	deps.queueStore.ClearQueue()
 }
 
 // workloopSleep sleeps for d or until ctx is cancelled. Returns a non-nil

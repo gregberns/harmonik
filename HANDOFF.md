@@ -111,54 +111,90 @@ PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_pla
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v50, 2026-05-19)
+# Where we are (v51, 2026-05-19/20)
 
-**Main at `2622783`. Working tree clean (apart from in-flight worktree). ~70 commits past v49 baseline (`30a89bd`).** One implementer in flight at handoff time: hk-5dewt daemon `.br_history` rotation pre-flight (the root-cause fix for bead-close timeout).
+**Main at `60b4abd`. ~15 commits past v50.** Working tree has `M .beads/issues.jsonl` (hk-2nril auto-close from dogfood — to be committed) + stray untracked `harmonik-twin-claude` directory + two new investigator reports under `docs/kerf-feedback/`.
 
-## Headline outcomes
+## 🟢 Phase 2 unattended is VALIDATED end-to-end
 
-1. **Phase-2 dogfood OPERATIONAL — 5/5 dogfood runs landed real work via `harmonik run --beads`.** Each shipped a substantive spec edit committed by the daemon, merged + pushed to main without any sub-agent dispatch. Commits: `0b233a0` (hk-x0y2k CHB-013), `02e31e1` (hk-75rij QM-052a), `54fa28a` (hk-pxrv6 HC-057), `2748c51` (hk-vqoh2 EM-012b), `c3a6731` (hk-o0yft PL-006b/c). Work-completion path is solid.
-2. **2 dogfood-blockers fixed + 1 still elusive (REOPEN).** **hk-aievp** (`fd5d268`): tmux `WindowPaneID(session:name-with-slash)` misparsed worktree-path window names → returned stale prior-session pane; fixed by atomic `-P -F "#{pane_id}"` capture. **hk-ry3be** (`4daaa3d`): `runWait` only checked `processDead(pid)` which returns false when macOS reparents an orphan to launchd → daemon heartbeated for 15h after silent pane death; fixed by secondary `WindowPanePID` check. **hk-5dewt** (REOPEN, P0): tracked through 3 hypotheses — retry-widen (`d99693f`, insufficient), WAL pre-flight (`abf36c4`, insufficient), `.br_history` rotation (`f87704f`, prevents bloat but `br close` STILL takes 19.25s with only 22 history entries). Defense-in-depth fixes kept; real root cause unknown. **6/6 dogfoods land work end-to-end but all hit bead-close timeout** → orchestrator manually closes after each run. Phase-2 work-completion is operational; auto-close is not.
-3. **MVH terminology scrubbed** (`hk-wn2pl`, P0). 5 top-level docs rewritten, `POST_MVH_PARALLELISM_ROADMAP.md` renamed, 6 open beads retitled to drop `(post-MVH)`/`MVH-required` qualifiers, CLAUDE.md/AGENTS.md gained a normative "Terminology — avoid MVH" guardrail. Root user concern: "MVH framing licensed half-built features." Reinforced by hk-b6ls5 (plans/README) + hk-85trr (local kerf jigs require Validation/Acceptance Tests section).
-4. **Substantive work: 70 commits.** Beads closed include hk-8ykjq (HandlerPausePolicy wire-up), hk-gjyks (8 EventType registrations), hk-m7joe (handler-pause.md elevated to specs/ normative), hk-9als7 (queue operator-drain consumer), hk-87u3q (HP-035 RWMutex), hk-107gz (handler-fatal taxonomy + HC-020a), hk-c8k4c + hk-th378 (BI-031b classifier wire-up at all 3 brAdapterErr sites), hk-rwdvm (EM-015e enum), hk-zudz0 (HC-006a per-phase LaunchSpec table), hk-5mjrs (label convention unified to `codename:*`), hk-3aqtb (nil-watcher scenario test), hk-f31xv (restored pasteinject test), hk-s95t2 (source-of-truth inventory verified).
-5. **Scenario-test gap audit** (`docs/scenario-test-gap-audit-2026-05-18.md`) filed 5 P0 beads: hk-6f1uj, hk-t5j2w, hk-3aqtb (✓ landed), hk-qxtbq, hk-nfhqd. Each names the half-built-systems pattern it would have caught at PR time.
-6. **Reviewer-gate paid off twice.** hk-m7joe reviewer caught HP-035 spec/code drift (filed as hk-87u3q, fixed at `df3ac9e`). hk-c8k4c reviewer caught half-built-systems (filed hk-th378, fixed at `75fdacd`). The directive "REVIEWERS MISS COMPOSITION-ROOT WIRING" continues to hold.
-7. **Diagnostic improvement landed** (`f518d8b`): br retry escalation now surfaces per-attempt brErr class + exit + stderr. The "BrUnavailable persisted after N retries" message had been masking the actual error class — exactly how we discovered (11/11 BrUnavailable, 0/11 BrDbLocked) was a timeout issue, not a lock-conflict issue.
+**hk-2nril dogfood (commit `60b4abd`):** `harmonik run --beads hk-2nril` ran to completion, exit code 0, in 101s. Bead auto-closed (close_reason=done, closed_at 2026-05-20T03:34:03Z). Daemon edited AGENTS.md, committed, merged to main, AND pushed to origin — orchestrator was bypassed entirely. **The previous 6-run timeout pattern is closed.** Log at `/tmp/dogfood-v51.log`.
+
+This is the proof that was missing in v50. The retry-cap fix (2s→15s) works in production, not just in the lab.
+
+## Headline outcomes (v50 → v51)
+
+1. **hk-5dewt ROOT-CAUSED + FIXED** (commits `2298cab` + `32259dd`). The 19-second "bead-close timeout" was never about `br close` itself — `br close` is 0.35s. It was harmonik's own retry loop fighting itself: `UnavailableRetryMax=10` with `cap=2s` meant up to 11 br instances queued up, each holding `.write.lock` for ~15s under SIGTERM grace before being killed. Fix: raise `UnavailableRetryCap` 2s → 15s in `internal/brcli/dblockretry.go:53`. Three prior fixes (retry-widen, WAL pre-flight, .br_history rotation) kept as defense-in-depth, not load-bearing. Reproduction recipe in `docs/kerf-feedback/2026-05-19.md` §hk-5dewt.
+2. **4 scenario tests landed (P0 backlog from gap audit)** — `hk-6f1uj` budget_exhausted (`1270265`), `hk-t5j2w` review-loop tmux substrate (`728cc6a`), `hk-qxtbq` handler-fatal dispatcher gate (`918bdf8`), `hk-nfhqd` reviewer agent_ready timeout (`b92dc69`). Each exercises composition-root wiring through `ExportedRunReviewLoop` / `ExportedRunWorkLoop` / `daemon.Start`. Twin gained `budget-exhausted` and `handler-fatal` scenarios.
+3. **Plan 009 CLI help redesign COMPLETE** (6 beads: `hk-judtf` umbrella + `hk-oj65f`/`vudz0`/`ct3t9`/`y4e96` impls + `hk-u0oo2` tests). `harmonik --help` lists all 6 subcommands; every subcommand responds to `--help`/`-h`; `(default 1) (default 1)` bug fixed. New `cmd/harmonik/usage.go` and `cmd/harmonik/help_test.go` (7 substring-assertion tests). Plan at `plans/009_cli_help_redesign/_plan.md`.
+4. **Live dogfood validated everything end-to-end.** hk-2nril shipped real AGENTS.md edits via harmonik with zero orchestrator intervention.
+
+## 🟡 Three caveats before declaring "all work through harmonik"
+
+The readiness auditor and retry-cap reviewer both flagged areas the 6-prior dogfoods did NOT exercise. Validators returned GREEN on the single-bead, P2-docs, single-concurrency case — that's the proven envelope.
+
+### Untested workload classes (HIGH severity)
+1. **Code-touching beads** never dogfooded. Agent has never compiled, hit a build error, or run `go test` inside a harmonik-dispatched session. Failure path: compile loop → no `/quit` → daemon's quit-on-commit fires on broken HEAD. **Suggested probe:** dispatch ONE trivial Go-touching bead (e.g. add a const or rename a var).
+2. **`--max-concurrent N > 1`** only twin-tested. Real parallelism (claude × N) is unproven. `.br_history` rotation + brAdapter shared state under contention are race candidates. **Suggested probe:** 2-bead `--max-concurrent 2` dogfood.
+3. **Priority-claim bug (hk-rp48p OPEN)** — daemon claimed P1 IN_PROGRESS stale bead over P0 ready. Auto-dispatch may silently misroute. Exclude priority-sensitive workloads until fixed.
+
+Full report: `docs/kerf-feedback/2026-05-19-phase2-readiness-audit.md`.
+
+### Retry-cap fix follow-ups (MEDIUM severity, REQUEST_CHANGES from reviewer)
+- Worst-case wait if all 10 retries fail with cap=15s: ~206 seconds before surfacing failure. Single-instance is fine (cap prevents self-cascading). Concurrent instances or external contention can still trigger this. Track as follow-up.
+- Test gap: no behavioral test verifies the non-cascading invariant. The constant-check test just asserts the value, not runtime behavior. File a small bead.
+
+### Exit-path investigator returned CLEAN
+- **NO hang risks identified** in the post-success path. CancelOnQueueExit fires correctly; all watchdogs bounded; `bus.Drain` is never called (events may drop, but no hang); per-connection socket handlers not awaited (cosmetic).
+- Worth one small follow-up bead: add `bus.Drain()` + `daemon_stopped` emit at shutdown for observability completeness.
+- Full report: `docs/kerf-feedback/2026-05-19-phase2-exit-path.md`.
 
 ## Next session — priorities
 
-1. **Land hk-5dewt** (`.br_history` rotation pre-flight) when implementer returns. Verify by running another dogfood end-to-end without manual close.
-2. **Investigate stalled `harmonik run` post-success.** Even with the WAL fix and the silent-termination detection, the run process still hangs waiting after close-fail (queue stays "active"). Once hk-5dewt fixes close, run a full dogfood + confirm clean exit code 0.
-3. **Route remaining P2 docs beads through harmonik** (validates unattended Phase 2): hk-n3v1q, hk-xpnfy, hk-h7eke (workflow-modes spec), and `hk-2hb2y`/`hk-yjduq` follow-ups if any remain. The list of "all pure docs work" from v49 has 5 closed via dogfood already.
-4. **Stale-bead sweep** — orchestrator hit worktree-stale-at-fork ~5 times this session. The pattern is well-documented; not blocking, just verbose. Optional: tighten the implementer protocol so `br` ops happen in main's DB, not the worktree's.
-5. **Scenario-test backlog**: hk-6f1uj, hk-t5j2w, hk-qxtbq, hk-nfhqd. Each needs a small twin variant. Good 4-way parallel dispatch.
+1. **Commit the pending state.** `.beads/issues.jsonl` has hk-2nril auto-close from dogfood — needs to be committed. The two new investigator reports in `docs/kerf-feedback/` also need adding.
+2. **Run the two outstanding probes** (in parallel):
+   - One Go-touching bead through `harmonik run` (validates compile/test loop)
+   - One 2-bead `--max-concurrent 2` dogfood (validates parallelism)
+3. **If both probes pass, the orchestrator stops being the dispatcher.** Route the next 5+ P2 docs beads through harmonik in batches.
+4. **File follow-ups** flagged by reviewers: (a) 206s worst-case retry exhaustion, (b) test for non-cascading invariant, (c) `bus.Drain` + `daemon_stopped` at shutdown.
+5. **Cleanup:** investigate `harmonik-twin-claude` stray directory before deleting; archive `.beads/.br_history.226mb-archived/`; revisit `.gitignore` regression (br doctor strips `.beads/*`).
+
+## Candidate P2 docs beads ready for batch-routing through harmonik (post-probes)
+
+- `hk-ynn8u` — `.gitignore`: add `.harmonik/agent-task*` explicit pattern
+- `hk-xlq2e` — Handler-pause: submitter-agent query docs + AGENTS.md note
+- `hk-vh1bw` — Spec drift: queue-model.md §8.7 input-event vocabulary
+- `hk-m0uop` — Follow-up: queue-model.md spec drift on -32018 + missing test cases
+- `hk-h7eke` (if open) — workflow-modes spec
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `docs/scenario-test-gap-audit-2026-05-18.md` (5 P0 scenario beads, source).
-3. `docs/kerf-feedback/2026-05-19.md` (.br_history bloat + WAL-fix-was-insufficient findings, MAJOR-tagged).
-4. `internal/daemon/walcheckpoint.go` + `internal/daemon/daemon.go` (PL-005 step 0 pre-flight hooks — where .br_history rotation will land).
-5. `specs/handler-pause.md` (newly elevated normative spec at 77ae7ee).
-6. `br list --status=open --priority 1` — current P1 backlog (most are now spec-gap docs work).
+2. `docs/kerf-feedback/2026-05-19.md` §hk-5dewt — root-cause investigation that landed the fix.
+3. `docs/kerf-feedback/2026-05-19-phase2-exit-path.md` — exit-path trace, clean verdict.
+4. `docs/kerf-feedback/2026-05-19-phase2-readiness-audit.md` — workloads still untested.
+5. `internal/brcli/dblockretry.go:53` — the fix.
+6. `plans/009_cli_help_redesign/_plan.md` — Plan 009 complete.
 
 ## Plain-English glossary
 
-- **hk-5dewt** — daemon-side `.br_history` rotation pre-flight (keep latest 20). Root cause for the bead-close timeout that every dogfood hits. *In flight at handoff.*
-- **hk-aievp** — CLOSED. Tmux misparse of window names with `/` returned stale prior pane. Atomic `-P -F` fix.
-- **hk-ry3be** — CLOSED. `processDead(pid)` false-negative when macOS reparents claude orphan to launchd. Secondary `WindowPanePID` check fix.
-- **hk-wn2pl** — CLOSED. MVH terminology scrubbed from project; CLAUDE.md guardrail added.
-- **hk-u9kn5 / hk-ekz5v** — Both CLOSED. The path-of-investigation beads for the bead-close timeout (each layer was insufficient: retry-widen → WAL-pre-flight → finally .br_history rotation).
-- **`harmonik run --beads <id>`** — Phase-2 dispatch CLI. 5/5 dogfoods landed work this session. Bead-close step still requires manual completion until hk-5dewt lands.
-- **Phase-1 operational milestone (2026-05-14)** — daemon runs jobs end-to-end with zero human input. (Previously "MVH" — retired.)
-- **Half-built systems pattern** — feature is unit-tested + reviewer-APPROVED but breaks in production because composition-root wiring or runtime-environment was untested. v50 found 3 more (hk-aievp, hk-ry3be, hk-c8k4c→hk-th378). Dogfood is the canonical test.
-- **.br_history bloat** — every `br` write appends a full ~2.3MB jsonl snapshot to `.beads/.br_history/`. 200 entries = 226MB. Each `br close` then scans the history → 19.5s instead of 0.15s. Upstream kerf/beads_rust issue logged in `docs/kerf-feedback/2026-05-19.md`.
+- **hk-5dewt / hk-5ce5n** — CLOSED. Bead-close timeout root cause. Fix: `UnavailableRetryCap` 2s → 15s.
+- **hk-2nril** — CLOSED. The bead used as the live dogfood-validation target (kerf bench-location clarification in AGENTS.md). Auto-closed via `harmonik run` — first fully-unattended Phase-2 run.
+- **Plan 009 / `codename:cli-help`** — CLOSED. Six-bead redesign of `harmonik --help` so agents can self-discover the CLI surface.
+- **hk-6f1uj / hk-t5j2w / hk-qxtbq / hk-nfhqd** — CLOSED. The 4 scenario tests; each catches a half-built-systems pattern.
+- **hk-judtf** — Plan 009 umbrella epic.
+- **hk-rp48p** — OPEN. Priority-claim bug: daemon claimed P1 in_progress over P0 ready. Blocks priority-sensitive auto-dispatch.
+- **Half-built systems pattern** — feature is unit-tested + reviewer-APPROVED but breaks in production because composition-root wiring or runtime-environment was untested. Recurring; dogfood is the canonical test.
+- **Phase 1 operational milestone (2026-05-14)** — daemon runs jobs end-to-end with zero human input. (Previously "MVH" — retired.)
+- **Phase 2 unattended = VALIDATED for the single-bead, P2-docs, --max-concurrent=1 envelope** as of v51. Code-touching and parallelism still need probes.
+- **`harmonik run --beads <id>`** — Phase-2 dispatch CLI. Now responds to `--help` per Plan 009.
+- **`.write.lock`** — `.beads/.write.lock` — the fcntl LOCK_EX file every `br` write contends on. Held ~350ms uncontested; up to 15s under SIGTERM grace.
 
 ## Loose ends / blockers
 
-- **hk-5dewt** fix in flight (agent id known to current session — see TaskList). Cherry-pick + close + re-test on next session start.
-- `.beads/.br_history.226mb-archived/` is a 226MB directory I manually archived during diagnosis. Safe to delete after confirming hk-5dewt rotation works.
-- Pre-existing `TestBI010c_SpecContainsWorkflowLabelDiscipline` test failure noted by two reviewers — fixture reads wrong paragraph due to forward-reference vs `#### BI-010c` heading order. Not in scope for any current bead.
-- Tasks #7 (route P2 docs through harmonik) is the natural next move once hk-5dewt lands.
+- `M .beads/issues.jsonl` (hk-2nril close from dogfood) + untracked `docs/kerf-feedback/2026-05-19-phase2-{exit-path,readiness-audit}.md` need committing.
+- `harmonik-twin-claude/` stray untracked directory at repo root — looks like a leak from a worktree dispatch. Inspect before deleting.
+- `.beads/.br_history.226mb-archived/` (226MB) — safe to delete now that root cause is known.
+- `.gitignore` strip-on-doctor regression — file a kerf-feedback note + restore-on-detect protocol.
+- Pre-existing `TestBI010c_SpecContainsWorkflowLabelDiscipline` test failure — fixture reads wrong paragraph. Several reviewers have flagged. File a small bead.
 
 ## No hard blockers requiring user input.

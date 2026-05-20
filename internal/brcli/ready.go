@@ -42,6 +42,22 @@ type brReadyItem struct {
 // (operator-nfr.md §4.3).
 const labelNeedsAttention = "needs-attention"
 
+// brReadySortPriority is the `br ready --sort` value the daemon's claim path
+// requires.  The br-CLI default sort policy is `hybrid`, which factors bead
+// age into ranking and can place a P1 bead ahead of a P0 bead when the P1 is
+// significantly older.  The harmonik daemon picks `readyRecords[0]` in its
+// br-ready fallback path (workloop.go) and must observe strict priority order:
+// higher priority (numerically lower; P0 < P1) MUST appear before lower
+// priority in every Ready() response.  Pinning `--sort priority` removes
+// hybrid-sort's age weighting so claim-order is determined by priority alone,
+// with br's internal tie-break (created_at) applied within a priority class.
+//
+// Regression: hk-rp48p — daemon claimed a P1 bead while a higher-priority P0
+// bead was simultaneously ready.  Root cause was the default hybrid sort
+// promoting the older P1 above the P0; the fix pins the sort policy so the
+// claim path's first-element pick is priority-monotonic.
+const brReadySortPriority = "priority"
+
 // Ready invokes `br ready --format json` and returns a BeadRecord slice for
 // every bead whose dependencies are satisfied and whose status is `open`.
 // Each record carries the bead's labels array — including any workflow:<mode>
@@ -69,7 +85,10 @@ const labelNeedsAttention = "needs-attention"
 //   - JSON parse failure            → wrapped BrSchemaMismatch (per BI-025b)
 //   - Missing id field per element  → wrapped BrSchemaMismatch (per BI-025b)
 func (a *Adapter) Ready(ctx context.Context) ([]core.BeadRecord, error) {
-	result, err := a.runFormatJSON(ctx, "ready")
+	// Pin `--sort priority` per the brReadySortPriority comment above
+	// (hk-rp48p): the claim path picks readyRecords[0] and MUST observe
+	// strict priority order across the returned slice.
+	result, err := a.runFormatJSON(ctx, "ready", "--sort", brReadySortPriority)
 	if err != nil {
 		return nil, fmt.Errorf("brcli.Ready: exec failed: %w", err)
 	}

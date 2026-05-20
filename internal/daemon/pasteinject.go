@@ -87,6 +87,187 @@ type quitSender interface {
 	SendQuitToLastPane(ctx context.Context) error
 }
 
+// paneSession is the per-session pane-write interface satisfied by
+// tmuxSubstrateSession (hk-wx8z8).  Each method targets the session's own
+// pane — captured atomically at SpawnWindow time — and does NOT consult any
+// daemon-shared "last pane" state.  This is the parallel-safe alternative to
+// the substrate-level pasteInjecter/enterSender/quitSender interfaces, which
+// shared lastPaneID across concurrent SpawnWindow calls and caused pane
+// collisions in --max-concurrent > 1 dispatch.
+//
+// Callers obtain a paneSession by type-asserting handler.Session →
+// handler.SubstrateSessionAccessor → SubstrateSession → paneSession.
+// Non-tmux paths (exec.CommandContext, test fixtures) do not satisfy the
+// chain; pasteInjectOnLaunchSession is a no-op in that case.
+//
+// Bead: hk-wx8z8.
+type paneSession interface {
+	WritePane(ctx context.Context, bufferName string, payload []byte) error
+	SendEnter(ctx context.Context) error
+	SendQuit(ctx context.Context) error
+}
+
+// extractPaneSession reaches through handler.Session → SubstrateSessionAccessor
+// → SubstrateSession → paneSession and returns the per-session pane writer.
+// Returns (nil, false) when the chain cannot be satisfied — e.g. legacy
+// exec.CommandContext sessions or test fixtures that don't expose paneSession.
+//
+// Bead: hk-wx8z8.
+func extractPaneSession(sess handler.Session) (paneSession, bool) {
+	if sess == nil {
+		return nil, false
+	}
+	accessor, ok := sess.(handler.SubstrateSessionAccessor)
+	if !ok {
+		return nil, false
+	}
+	inner := accessor.Inner()
+	if inner == nil {
+		return nil, false
+	}
+	ps, ok := inner.(paneSession)
+	return ps, ok
+}
+
+// pasteInjectQuitOnCommitSession is the per-session variant of
+// pasteInjectQuitOnCommit.  It uses the session-scoped SendQuit (which targets
+// the pane captured atomically at SpawnWindow) instead of the substrate-shared
+// SendQuitToLastPane.  Required for --max-concurrent > 1 correctness (hk-wx8z8).
+func pasteInjectQuitOnCommitSession(
+	ctx context.Context,
+	ps paneSession,
+	wtPath string,
+	initialSHA string,
+) {
+	deadline := time.Now().Add(commitPollTimeout)
+	ticker := time.NewTicker(commitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-commit: timeout waiting for new commit in %s (initial=%s)\n",
+					wtPath, initialSHA)
+				return
+			}
+
+			headSHA, err := resolveWorktreeHEAD(ctx, wtPath)
+			if err != nil {
+				continue
+			}
+			if headSHA != initialSHA {
+				if qErr := ps.SendQuit(ctx); qErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: SendQuit: %v\n", qErr)
+				}
+				return
+			}
+		}
+	}
+}
+
+// pasteInjectOnLaunchSession is the per-session variant of pasteInjectOnLaunch.
+// All paste/enter operations target the session's own pane (captured atomically
+// at SpawnWindow), so concurrent SpawnWindow calls cannot misdirect one
+// session's kick-off to another session's pane (hk-wx8z8).
+//
+// When ps is nil (non-substrate sessions / test fixtures), this is a no-op.
+func pasteInjectOnLaunchSession(
+	ctx context.Context,
+	ps paneSession,
+	claudeSessID string,
+	phase handlercontract.ReviewLoopPhase,
+	iterCount int,
+	wtPath string,
+) {
+	if ps == nil {
+		return
+	}
+	switch phase {
+	case handlercontract.ReviewLoopPhaseReviewer:
+		pasteInjectReviewerSession(ctx, ps, claudeSessID, wtPath)
+	case handlercontract.ReviewLoopPhaseImplementerResume:
+		pasteInjectImplementerResumeSession(ctx, ps, claudeSessID, iterCount, wtPath)
+	default:
+		pasteInjectImplementerInitialSession(ctx, ps, claudeSessID, wtPath)
+	}
+}
+
+func pasteInjectImplementerInitialSession(ctx context.Context, ps paneSession, claudeSessID, wtPath string) {
+	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
+	if err := statTaskFile(taskFile); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial: %v (skipping inject)\n", err)
+		return
+	}
+	if err := ps.SendEnter(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial SendEnter: %v\n", err)
+	}
+	splashDismissWait(ctx)
+	bufName := bufferName(claudeSessID, "task")
+	msg := "Please read .harmonik/agent-task.md and begin.\n"
+	if err := ps.WritePane(ctx, bufName, []byte(msg)); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial WritePane: %v\n", err)
+	}
+}
+
+func pasteInjectImplementerResumeSession(ctx context.Context, ps paneSession, claudeSessID string, iterCount int, wtPath string) {
+	if err := ps.SendEnter(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume SendEnter: %v\n", err)
+	}
+	splashDismissWait(ctx)
+
+	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
+	if err := statTaskFile(taskFile); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume task: %v (skipping task inject)\n", err)
+	} else {
+		bufName := bufferName(claudeSessID, "task")
+		msg := "Please read .harmonik/agent-task.md and begin.\n"
+		if err := ps.WritePane(ctx, bufName, []byte(msg)); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WritePane(task): %v\n", err)
+		}
+	}
+
+	priorIter := iterCount - 1
+	feedbackFile := filepath.Join(wtPath, ".harmonik", fmt.Sprintf("reviewer-feedback.iter-%d.md", priorIter))
+	if err := statTaskFile(feedbackFile); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume feedback iter %d: %v (skipping feedback inject)\n", priorIter, err)
+		return
+	}
+	bufName := bufferName(claudeSessID, "feedback")
+	msg := fmt.Sprintf(
+		"Before continuing, read .harmonik/reviewer-feedback.iter-%d.md in your worktree."+
+			" It contains the prior reviewer's verdict, flags, and notes for iteration %d."+
+			" Address every flag marked REQUEST_CHANGES before proceeding.\n",
+		priorIter, priorIter,
+	)
+	if err := ps.WritePane(ctx, bufName, []byte(msg)); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WritePane(feedback): %v\n", err)
+	}
+}
+
+func pasteInjectReviewerSession(ctx context.Context, ps paneSession, claudeSessID, wtPath string) {
+	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
+	if err := statTaskFile(reviewFile); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer: %v (skipping inject)\n", err)
+		return
+	}
+	if err := ps.SendEnter(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer SendEnter: %v\n", err)
+	}
+	splashDismissWait(ctx)
+	bufName := bufferName(claudeSessID, "review")
+	msg := "Read .harmonik/review-target.md in this worktree." +
+		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +
+		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1.\n"
+	if err := ps.WritePane(ctx, bufName, []byte(msg)); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer WritePane: %v\n", err)
+	}
+}
+
 // commitPollInterval is the interval between git HEAD checks in
 // pasteInjectQuitOnCommit.  500ms balances responsiveness with avoiding
 // excessive git subprocess overhead.

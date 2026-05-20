@@ -1227,7 +1227,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
+	// hk-wx8z8: route paste-inject through the per-session pane writer (not the
+	// substrate-shared "last pane" state). When --max-concurrent > 1, two concurrent
+	// SpawnWindow calls on the same substrate previously raced to overwrite
+	// lastPaneID, causing both kick-off messages to hit the same pane. Per-session
+	// paneSession captures its own paneID atomically and is immutable.
+	ps, _ := extractPaneSession(sess)
+	go pasteInjectOnLaunchSession(ctx, ps, artifacts.claudeSessionID,
 		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
 	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
@@ -1245,8 +1251,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead: hk-cmybm.
-	if qs, ok := deps.substrate.(quitSender); ok {
-		go pasteInjectQuitOnCommit(ctx, qs, wtPath, headSHA)
+	// hk-wx8z8: quit-on-commit must target this session's pane, not the
+	// substrate-shared "last pane". A parallel SpawnWindow on another bead would
+	// otherwise redirect this run's /quit into the other session's pane.
+	if ps != nil {
+		go pasteInjectQuitOnCommitSession(ctx, ps, wtPath, headSHA)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

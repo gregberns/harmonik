@@ -195,9 +195,67 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	sess := &tmuxSubstrateSession{
 		adapter: s.adapter,
 		handle:  outcome.Handle,
+		paneID:  paneID,
 		pid:     pid,
 	}
 	return sess, nil
+}
+
+// WritePane delivers payload to this session's pane via the PL-021d
+// load-buffer + paste-buffer sequence.  The pane target is the stable pane
+// ID captured atomically at SpawnWindow time; it is per-session and is NOT
+// affected by subsequent SpawnWindow calls on the same substrate (hk-wx8z8).
+//
+// Falls back to "handle.0" only when the pane ID lookup failed at spawn time
+// (legacy behaviour for test doubles that do not implement WindowPaneID).
+//
+// bufferName MUST match "harmonik-<session-id>-<purpose>" per PL-021d.
+//
+// Spec ref: process-lifecycle.md §4.7 PL-021d.
+// Bead: hk-wx8z8 (parallel-dispatch fix), hk-zrj83 (original mechanism).
+func (s *tmuxSubstrateSession) WritePane(ctx context.Context, bufferName string, payload []byte) error {
+	target := s.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: tmuxSubstrateSession.WritePane: no pane recorded: %w", tmux.ErrStructural)
+	}
+	return s.adapter.WriteToPane(ctx, bufferName, target, payload)
+}
+
+// SendEnter sends a bare Enter keypress to this session's pane.  Used to
+// dismiss the Claude Code welcome splash before paste-inject (hk-rf4ux).
+//
+// Bead: hk-wx8z8 (per-session routing), hk-rf4ux (splash mechanism).
+func (s *tmuxSubstrateSession) SendEnter(ctx context.Context) error {
+	target := s.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: tmuxSubstrateSession.SendEnter: no pane recorded: %w", tmux.ErrStructural)
+	}
+	return s.adapter.SendKeysEnter(ctx, target)
+}
+
+// SendQuit sends `/quit Enter` to this session's pane to trigger Claude Code's
+// Stop hook (CHB-028 session-completion-instruction).
+//
+// Bead: hk-wx8z8 (per-session routing), hk-cmybm (mechanism).
+func (s *tmuxSubstrateSession) SendQuit(ctx context.Context) error {
+	target := s.paneTarget()
+	if target == "" {
+		return fmt.Errorf("daemon: tmuxSubstrateSession.SendQuit: no pane recorded: %w", tmux.ErrStructural)
+	}
+	return s.adapter.SendKeysQuit(ctx, target)
+}
+
+// paneTarget returns the tmux pane target string for this session.  Prefers
+// the atomically captured paneID ("%NNNN"); falls back to handle+".0" only
+// when paneID is empty (test-double compatibility).
+func (s *tmuxSubstrateSession) paneTarget() string {
+	if s.paneID != "" {
+		return s.paneID
+	}
+	if s.handle == "" {
+		return ""
+	}
+	return string(s.handle) + ".0"
 }
 
 // SendEnterToLastPane sends a bare "Enter" key event to the first pane of the
@@ -320,11 +378,25 @@ func (s *tmuxSubstrate) WriteLastPane(ctx context.Context, bufferName string, pa
 // at 500ms intervals). This is a best-effort implementation for MVH; a
 // production implementation would use tmux wait-for or a side-channel signal.
 //
+// Per-session pane fields (hk-wx8z8): handle and paneID are captured at
+// SpawnWindow time and are immutable for the lifetime of the session. They
+// MUST NOT be re-derived from any daemon-shared state. This is the fix for
+// the parallel-dispatch pane collision bug: the substrate's lastHandle /
+// lastPaneID fields are shared across all SpawnWindow calls, so concurrent
+// sessions overwrote each other's pane addresses. The per-session WritePane /
+// SendEnter / SendQuit methods (below) read these fields only, never the
+// substrate-shared ones.
+//
 // All methods are safe for concurrent use.
 type tmuxSubstrateSession struct {
 	adapter tmux.Adapter
 	handle  tmux.WindowHandle
-	pid     int
+	// paneID is the stable tmux pane identifier (e.g. "%1964") captured atomically
+	// in SpawnWindow. Slash-free; usable directly as a tmux pane target. Empty
+	// when WindowPaneID lookup also returned "" (legacy fallback path).
+	// Per-session — never overwritten after SpawnWindow returns (hk-wx8z8).
+	paneID string
+	pid    int
 
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once

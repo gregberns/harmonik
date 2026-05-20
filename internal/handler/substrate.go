@@ -143,3 +143,25 @@ func (a *substrateSessionAdapter) Stderr() io.Reader {
 func (a *substrateSessionAdapter) CloseStdin() error {
 	return nil
 }
+
+// Inner returns the wrapped SubstrateSession.  Daemon-side callers use this
+// to reach the per-session pane writers exposed by tmuxSubstrateSession
+// (hk-wx8z8); type-assert the returned SubstrateSession against the optional
+// per-session interfaces defined in internal/daemon.
+//
+// Returns nil when the adapter wraps a nil SubstrateSession (defensive).
+func (a *substrateSessionAdapter) Inner() SubstrateSession {
+	return a.inner
+}
+
+// SubstrateSessionAccessor is the optional interface satisfied by handler.Session
+// values that were produced by the Substrate path (substrateSessionAdapter).
+// It exposes the underlying SubstrateSession so that daemon-side callers can
+// reach per-session capabilities (e.g. tmuxSubstrateSession's per-session pane
+// writers — hk-wx8z8).
+//
+// Sessions produced by the legacy exec.CommandContext path do NOT implement
+// this interface; callers MUST type-assert and fall back gracefully.
+type SubstrateSessionAccessor interface {
+	Inner() SubstrateSession
+}

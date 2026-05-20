@@ -298,22 +298,27 @@ func runReviewLoop(
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 		// Bead ref: hk-lj1p9.4, hk-zrj83.
-		go pasteInjectOnLaunch(ctx, deps.substrate, implArtifacts.claudeSessionID,
+		// hk-wx8z8: route paste-inject and quit-on-commit through the per-session
+		// pane writer, not the substrate-shared "last pane" state.  When parallel
+		// dispatch is enabled, concurrent SpawnWindow calls otherwise race to
+		// overwrite the substrate's lastPaneID and both sessions misdirect to a
+		// single shared pane.
+		implPS, _ := extractPaneSession(implSess)
+		go pasteInjectOnLaunchSession(ctx, implPS, implArtifacts.claudeSessionID,
 			implPhase, state.iterationCount, wtPath)
 
 		// Quit-on-commit: after the implementer's task commit lands in the worktree,
 		// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
 		// The initial HEAD for this iteration is the current worktree HEAD at launch time.
-		// Non-fatal: only fires when substrate implements quitSender (tmux path).
 		//
 		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-		// Bead: hk-cmybm.
-		if qs, ok := deps.substrate.(quitSender); ok {
+		// Bead: hk-cmybm, hk-wx8z8.
+		if implPS != nil {
 			implInitialSHA, resolveErr := resolveWorktreeHEAD(ctx, wtPath)
 			if resolveErr != nil {
 				implInitialSHA = parentSHA // fallback to known-good parent SHA
 			}
-			go pasteInjectQuitOnCommit(ctx, qs, wtPath, implInitialSHA)
+			go pasteInjectQuitOnCommitSession(ctx, implPS, wtPath, implInitialSHA)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
@@ -565,7 +570,10 @@ func runReviewLoop(
 		// Running before agent_ready races Claude's welcome splash, which
 		// consumes the trailing \n and leaves the buffered text unsubmitted.
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-		go pasteInjectOnLaunch(ctx, deps.substrate, revArtifacts.claudeSessionID,
+		// hk-wx8z8: per-session paste; reviewer pane is reached via the reviewer
+		// session, not the substrate's shared lastPane state.
+		revPS, _ := extractPaneSession(revSess)
+		go pasteInjectOnLaunchSession(ctx, revPS, revArtifacts.claudeSessionID,
 			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

@@ -875,6 +875,14 @@ func Start(ctx context.Context, cfg Config) error {
 		// Bead ref: hk-37zy8.
 		deps.runRegistry = sharedRunRegistry
 
+		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
+		// is set in the operator environment.  All 29 wiring points have been
+		// established at this point; the log is a stable diff surface for catching
+		// silent drops between daemon versions.
+		//
+		// Bead ref: hk-4mupj.
+		logCompositionRoot(cfg.LogWriter)
+
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that
 		// Ctrl-C / SIGTERM cancels the work loop without sending signals into

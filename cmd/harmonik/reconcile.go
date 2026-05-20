@@ -63,6 +63,29 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
+// reconcileUsage prints the help text for `harmonik reconcile`.
+func reconcileUsage() {
+	fmt.Print(`harmonik reconcile — close in_progress beads whose implementation has merged
+
+USAGE
+  harmonik reconcile [--project DIR] [--target-branch BRANCH]
+
+FLAGS
+  --project DIR           Project directory (default: current working directory)
+  --target-branch BRANCH  Git branch to scan for merge commits (default: main)
+
+EXIT CODES
+  0  All subsumed beads closed (zero matches is also success)
+  1  Argument or adapter error
+  2  At least one bead close failed (partial reconciliation)
+
+EXAMPLES
+  harmonik reconcile
+  harmonik reconcile --target-branch develop
+  harmonik reconcile --project /path/to/project --target-branch main
+`)
+}
+
 // runReconcileSubcommand implements `harmonik reconcile [--project DIR] [--target-branch BRANCH]`.
 // subArgs is os.Args[2:] (everything after "reconcile").
 func runReconcileSubcommand(subArgs []string) int {
@@ -72,6 +95,9 @@ func runReconcileSubcommand(subArgs []string) int {
 	targetBranchFlag := ""
 	for i := 0; i < len(subArgs); i++ {
 		switch {
+		case subArgs[i] == "--help" || subArgs[i] == "-h":
+			reconcileUsage()
+			return 0
 		case subArgs[i] == "--project" && i+1 < len(subArgs):
 			i++
 			projectDirFlag = subArgs[i]

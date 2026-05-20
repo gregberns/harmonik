@@ -70,6 +70,26 @@ func run() int {
 	// Spec: process-lifecycle.md §4.10 PL-028 refinement.
 	if len(os.Args) >= 2 && os.Args[1] == "tmux-start" {
 		subArgs := os.Args[2:]
+		// --help/-h intercept (hk-y4e96).
+		for _, arg := range subArgs {
+			if arg == "--help" || arg == "-h" {
+				fmt.Print(`harmonik tmux-start — bootstrap a tmux session and start the daemon inside it
+
+USAGE
+  harmonik tmux-start [--session-name NAME] [--project DIR]
+
+FLAGS
+  --session-name NAME  tmux session name (default: harmonik)
+  --project DIR        Project directory (default: current working directory)
+
+EXAMPLES
+  harmonik tmux-start
+  harmonik tmux-start --session-name my-project
+  harmonik tmux-start --project /path/to/project --session-name my-project
+`)
+				return 0
+			}
+		}
 		sessionNameFlag := ""
 		projectDirFlag := ""
 		// Minimal flag parsing for tmux-start arguments only.
@@ -105,6 +125,26 @@ func run() int {
 
 	// Spec: specs/claude-hook-bridge.md §4.4 CHB-010..017.
 	if len(os.Args) >= 2 && os.Args[1] == "hook-relay" {
+		// --help/-h intercept (hk-y4e96).
+		if len(os.Args) >= 3 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
+			fmt.Print(`harmonik hook-relay — forward a Claude hook event to the daemon (internal use)
+
+USAGE
+  harmonik hook-relay <event-kind>
+
+ARGUMENTS
+  event-kind  The Claude hook event type (e.g. PreToolUse, PostToolUse, Stop)
+
+NOTES
+  This subcommand is intended for use by Claude Code hook configurations, not
+  direct operator invocation. The daemon must be running to receive events.
+
+EXAMPLES
+  harmonik hook-relay PreToolUse
+  harmonik hook-relay Stop
+`)
+			return 0
+		}
 		eventKind := ""
 		if len(os.Args) >= 3 {
 			eventKind = os.Args[2]
@@ -147,6 +187,36 @@ func run() int {
 		verb := ""
 		if len(os.Args) >= 3 {
 			verb = os.Args[2]
+		}
+		// --help/-h intercept (hk-y4e96): catch on the verb position or as first subArg.
+		if verb == "--help" || verb == "-h" {
+			fmt.Print(`harmonik queue — submit or inspect the bead queue (daemon must be running)
+
+USAGE
+  harmonik queue <verb> [flags]
+
+VERBS
+  submit    Submit a new bead to the queue
+  append    Append a bead to an existing queue run
+  status    Show current queue state and bead statuses
+  dry-run   Validate a queue submission without executing
+
+NOTES
+  The daemon must be running before invoking any queue verb.
+  Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
+
+EXIT CODES
+  0   Success (JSON response to stdout)
+  1   Validation error (JSON error body to stdout)
+  2   Transport/protocol error or unrecognised verb
+  17  Daemon not running
+
+EXAMPLES
+  harmonik queue submit hk-abc123
+  harmonik queue status
+  harmonik queue dry-run hk-abc123
+`)
+			return 0
 		}
 		subArgs := []string{}
 		if len(os.Args) >= 4 {

@@ -26,6 +26,8 @@
 
 # Harmonik runtime state
 /.harmonik/
+# Daemon-written task files in worktrees (hk-ynn8u)
+.harmonik/agent-task*
 
 # Dev tools installed locally (subsystem-organization.md §Decisions #10)
 /.tools/

@@ -917,9 +917,16 @@ type fakeHandlerPauseChecker struct {
 
 	// paused is the set of currently-paused agent_types.
 	paused map[core.AgentType]bool
+
+	// resolveErr, when set, causes ResolvedAgentType to return an error for the
+	// mapped bead IDs. Used to exercise the QM-052a error propagation path.
+	resolveErr map[core.BeadID]error
 }
 
 func (f *fakeHandlerPauseChecker) ResolvedAgentType(_ context.Context, id core.BeadID) (core.AgentType, error) {
+	if err, ok := f.resolveErr[id]; ok {
+		return "", err
+	}
 	if at, ok := f.agentTypes[id]; ok {
 		return at, nil
 	}
@@ -1047,6 +1054,69 @@ func TestValidateQM052aHandlerPaused(t *testing.T) {
 		}
 		if len(errs) != 0 {
 			t.Fatalf("expected pass when PauseChecker is nil, got errors: %v", errs)
+		}
+	})
+
+	t.Run("fail_two_distinct_paused_types_first_encountered_wins", func(t *testing.T) {
+		t.Parallel()
+		// idA → claude-code (paused, submitted first); idC → pi (also paused).
+		// QM-052a short-circuits at the first paused type: claude-code is reported;
+		// pi is never mentioned even though it is also paused.
+		const idD = core.BeadID("hk-ddd-pause")
+		items := []queue.Item{
+			{BeadID: idA, Status: queue.ItemStatusPending},
+			{BeadID: idD, Status: queue.ItemStatusPending},
+		}
+		req := queue.ValidationRequest{
+			Groups: []queue.Group{
+				{GroupIndex: 0, Kind: queue.GroupKindWave, Status: queue.GroupStatusPending, Items: items},
+			},
+		}
+		ledger := validFixtureOpenLedger(idA, idD)
+		req.PauseChecker = &fakeHandlerPauseChecker{
+			agentTypes: map[core.BeadID]core.AgentType{
+				idA: core.AgentTypeClaudeCode,
+				idD: core.AgentTypePi,
+			},
+			paused: map[core.AgentType]bool{
+				core.AgentTypeClaudeCode: true,
+				core.AgentTypePi:         true,
+			},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 1 {
+			t.Fatalf("expected exactly 1 error, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Reason != queue.ReasonHandlerPaused {
+			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonHandlerPaused)
+		}
+		// Only claude-code (first-encountered) must appear; pi must not.
+		if errs[0].Detail["agent_type"] != string(core.AgentTypeClaudeCode) {
+			t.Errorf("agent_type: got %v, want %q (first-encountered)", errs[0].Detail["agent_type"], core.AgentTypeClaudeCode)
+		}
+		beadIDs, ok := errs[0].Detail["bead_ids"].([]string)
+		if !ok || len(beadIDs) != 1 || beadIDs[0] != string(idA) {
+			t.Errorf("bead_ids: got %v, want [%q]", errs[0].Detail["bead_ids"], idA)
+		}
+	})
+
+	t.Run("error_resolved_agent_type_propagates", func(t *testing.T) {
+		t.Parallel()
+		// ResolvedAgentType returns an error for idA → Validate must return a
+		// non-nil system error (third return value), not a typed ValidationError.
+		req := validFixtureSingleGroup(idA)
+		ledger := validFixtureOpenLedger(idA)
+		req.PauseChecker = &fakeHandlerPauseChecker{
+			resolveErr: map[core.BeadID]error{
+				idA: fmt.Errorf("synthetic lookup failure"),
+			},
+		}
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err == nil {
+			t.Fatalf("expected system error from ResolvedAgentType failure, got nil (errs=%v)", errs)
 		}
 	})
 }

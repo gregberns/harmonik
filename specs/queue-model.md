@@ -825,7 +825,7 @@ v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments s
 
 1. **§2.10 (new) — JSON-RPC request/response payload schemas.** Normative RECORD definitions for `QueueSubmitRequest`, `QueueSubmitResponse`, `QueueAppendRequest`, `QueueAppendResponse`, `QueueStatusResponse`, `QueueDryRunRequest`, and `QueueDryRunResponse`. Clarifies daemon-minted vs. client-supplied fields.
 
-2. **§6.11a (new) — QM-029b validation reason to error-code mapping.** Table mapping all 8 `QueueValidationReason` enum values to specific JSON-RPC error codes in the `-32010..-32017` range, with `-32018`/`-32019` reserved.
+2. **§6.11a (new) — QM-029b validation reason to error-code mapping.** Table mapping all 8 `QueueValidationReason` enum values to specific JSON-RPC error codes in the `-32010..-32017` range; `-32018` and `-32019` reserved at this version. (Amended by v0.1.2: `-32018` allocated to `handler_paused`; stable range is now `-32010..-32018`; `-32019` is the sole remaining reserved slot.)
 
 3. **§2.8 — Deferred-item re-evaluation trigger.** Added normative sentence requiring the dispatcher to re-evaluate `deferred-for-ledger-dep` items on every dispatch-loop tick per execution-model.md §7.4. Notes v0.2 optimization deferral.
 

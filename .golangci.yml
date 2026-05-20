@@ -152,70 +152,77 @@ linters:
             - "github.com/gregberns/harmonik/internal/lifecycle"
 
         # eventbus / policy / handler-contract: may import core only.
-        # Add these rules when the packages land.
-        # eventbus:
-        #   files: ["**/internal/eventbus/**"]
-        #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
-        # policy:
-        #   files: ["**/internal/policy/**"]
-        #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        eventbus:
+          files: ["**/internal/eventbus/**"]
+          allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        policy:
+          files: ["**/internal/policy/**"]
+          allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        # handler-contract: DEFERRED — 36 violations (uuid + test self-imports + real violations).
+        # Path corrected from internal/handler/contract (stub typo) to internal/handlercontract.
+        # Follow-up: hk-t5h2p.
         # handler-contract:
-        #   files: ["**/internal/handler/contract/**"]
+        #   files: ["**/internal/handlercontract/**"]
         #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
-  
+
         # Adapters: core only.
-        # Add these rules when the packages land.
-        # adapter-br:
-        #   files: ["**/internal/adapter/br/**"]
-        #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
-        # adapter-ntm:
-        #   files: ["**/internal/adapter/ntm/**"]
-        #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
-  
+        adapter-br:
+          files: ["**/internal/adapter/br/**"]
+          allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        adapter-ntm:
+          files: ["**/internal/adapter/ntm/**"]
+          allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+
         # Workspace: core + eventbus + adapter-br.
-        # workspace:
-        #   files: ["**/internal/workspace/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-        #     - "github.com/gregberns/harmonik/internal/adapter/br"
-  
+        workspace:
+          files: ["**/internal/workspace/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/adapter/br"
+
         # Agent runner: core + eventbus + handler contract + adapter-ntm.
-        # agentrunner:
-        #   files: ["**/internal/agentrunner/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-        #     - "github.com/gregberns/harmonik/internal/handler/contract"
-        #     - "github.com/gregberns/harmonik/internal/adapter/ntm"
-  
+        agentrunner:
+          files: ["**/internal/agentrunner/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/adapter/ntm"
+
         # Hook: core + eventbus.
-        # hook:
-        #   files: ["**/internal/hook/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-  
+        hook:
+          files: ["**/internal/hook/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+
         # Memory: core + eventbus.
-        # memory:
-        #   files: ["**/internal/memory/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-  
-        # Handlers (claudecode, pi, twin): core + handler/contract.
-        # handler-impls:
-        #   files: ["**/internal/handler/claudecode/**", "**/internal/handler/pi/**", "**/internal/handler/twin/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/handler/contract"
-  
-        # Scenario harness: core + eventbus + agentrunner + orchestrator.
+        memory:
+          files: ["**/internal/memory/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+
+        # Handlers (claudecode, pi, twin): core + handlercontract.
+        # Note: handler-impls targets internal/handler/claudecode, /pi, /twin subdirs which
+        # do not yet exist (all handler code is flat in internal/handler/). Zero violations.
+        # Path for handler/contract corrected to handlercontract per actual package layout.
+        handler-impls:
+          files: ["**/internal/handler/claudecode/**", "**/internal/handler/pi/**", "**/internal/handler/twin/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+
+        # Scenario harness: DEFERRED — 12 violations (daemon, lifecycle, queue, workspace
+        # imports + yaml.v3 + self-imports in test files). Real violations: scenario currently
+        # drives the full stack and imports daemon/queue/lifecycle/workspace directly.
+        # Follow-up: hk-uyxg0.
         # Revisit if the harness needs broader access (subsystem-organization.md §Deferred).
         # scenario:
         #   files: ["**/internal/scenario/**"]

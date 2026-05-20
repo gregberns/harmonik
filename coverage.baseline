@@ -16,5 +16,23 @@
 #   lowering an entry or deleting it is treated as a rule relaxation and requires
 #   the same single-concern commit protocol.
 #
-# CURRENT STATE: no Go packages exist yet; baseline is empty.
-# The regression gate is vacuously satisfied when no entries are present.
+# CURRENT STATE: initial population per hk-41cns (2026-05-20). Coverage profile
+# generated via `go test -coverprofile=/tmp/cover.out -covermode=atomic ./internal/...`.
+# Packages without statements (internal/specaudit, internal/t5probe, internal/scenario,
+# internal/release) and internal/testhelpers (excluded per coverage-gate.sh) are
+# omitted. Per-package floors and regression gate (<0.3pp drop) now active.
+github.com/gregberns/harmonik/internal/branching 83.0
+github.com/gregberns/harmonik/internal/brcli 85.7
+github.com/gregberns/harmonik/internal/core 73.0
+github.com/gregberns/harmonik/internal/daemon 52.2
+github.com/gregberns/harmonik/internal/eventbus 83.6
+github.com/gregberns/harmonik/internal/handler 86.8
+github.com/gregberns/harmonik/internal/handlercontract 84.5
+github.com/gregberns/harmonik/internal/hookrelay 63.0
+github.com/gregberns/harmonik/internal/lifecycle 81.6
+github.com/gregberns/harmonik/internal/lifecycle/tmux 81.1
+github.com/gregberns/harmonik/internal/operatornfr 64.3
+github.com/gregberns/harmonik/internal/queue 69.4
+github.com/gregberns/harmonik/internal/queue/cli 67.6
+github.com/gregberns/harmonik/internal/workflowvalidator 81.5
+github.com/gregberns/harmonik/internal/workspace 81.5

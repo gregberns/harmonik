@@ -511,3 +511,167 @@ func TestRunScriptWallClockContextCancellation(t *testing.T) {
 		t.Fatal("runScript: expected error on pre-cancelled context, got nil")
 	}
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// signal_interrupt step (hk-qawak)
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestSignalInterruptEmitsAgentFailed verifies that the signal_interrupt step
+// emits agent_failed with the configured error_category and reason fields, and
+// that runScript returns nil (exit code 0) per CHB-020.
+func TestSignalInterruptEmitsAgentFailed(t *testing.T) {
+	e, buf := twinScriptFixtureEmitter(t)
+
+	sf := &ScriptFile{
+		HeartbeatMode: heartbeatModeWallClock,
+		Messages: []ScriptMessage{
+			{
+				Type: signalInterruptStep,
+				Payload: map[string]any{
+					"error_category": "transient",
+					"reason":         "sigint_simulation",
+				},
+			},
+		},
+	}
+
+	err := runScript(context.Background(), e, sf, scriptRunConfig{})
+	if err != nil {
+		t.Fatalf("runScript(signal_interrupt): expected nil, got %v", err)
+	}
+
+	msgs := twinScriptFixtureDecodeAll(t, buf)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	m := msgs[0]
+	if got := m["type"].(string); got != "agent_failed" {
+		t.Errorf("type = %q, want agent_failed", got)
+	}
+	if got := m["error_category"].(string); got != "transient" {
+		t.Errorf("error_category = %q, want transient", got)
+	}
+	if got := m["reason"].(string); got != "sigint_simulation" {
+		t.Errorf("reason = %q, want sigint_simulation", got)
+	}
+}
+
+// TestSignalInterruptMissingErrorCategory verifies that signal_interrupt returns
+// an error when error_category is absent, and emits twin_error onto the stream.
+func TestSignalInterruptMissingErrorCategory(t *testing.T) {
+	e, buf := twinScriptFixtureEmitter(t)
+
+	msg := ScriptMessage{
+		Type: signalInterruptStep,
+		Payload: map[string]any{
+			"reason": "sigint_simulation",
+			// error_category intentionally absent
+		},
+	}
+
+	err := runSignalInterrupt(context.Background(), e, msg)
+	if err == nil {
+		t.Fatal("runSignalInterrupt: expected error for missing error_category, got nil")
+	}
+
+	msgs := twinScriptFixtureDecodeAll(t, buf)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 twin_error message, got %d", len(msgs))
+	}
+	if got := msgs[0]["type"].(string); got != "twin_error" {
+		t.Errorf("type = %q, want twin_error", got)
+	}
+}
+
+// TestSignalInterruptMissingReason verifies that signal_interrupt returns an
+// error when reason is absent, and emits twin_error onto the stream.
+func TestSignalInterruptMissingReason(t *testing.T) {
+	e, buf := twinScriptFixtureEmitter(t)
+
+	msg := ScriptMessage{
+		Type: signalInterruptStep,
+		Payload: map[string]any{
+			"error_category": "structural",
+			// reason intentionally absent
+		},
+	}
+
+	err := runSignalInterrupt(context.Background(), e, msg)
+	if err == nil {
+		t.Fatal("runSignalInterrupt: expected error for missing reason, got nil")
+	}
+
+	msgs := twinScriptFixtureDecodeAll(t, buf)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 twin_error message, got %d", len(msgs))
+	}
+	if got := msgs[0]["type"].(string); got != "twin_error" {
+		t.Errorf("type = %q, want twin_error", got)
+	}
+}
+
+// TestSignalInterruptDelayMs verifies that signal_interrupt honours the
+// delay_ms payload field, waiting at least that long before emitting.
+func TestSignalInterruptDelayMs(t *testing.T) {
+	e, buf := twinScriptFixtureEmitter(t)
+
+	const delayMs = 50
+	msg := ScriptMessage{
+		Type: signalInterruptStep,
+		Payload: map[string]any{
+			"error_category": "transient",
+			"reason":         "sigint_simulation",
+			"delay_ms":       float64(delayMs), // YAML map[string]any uses float64 for numbers
+		},
+	}
+
+	start := time.Now()
+	if err := runSignalInterrupt(context.Background(), e, msg); err != nil {
+		t.Fatalf("runSignalInterrupt: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed < time.Duration(delayMs)*time.Millisecond {
+		t.Errorf("delay took %v; expected >= %dms", elapsed, delayMs)
+	}
+
+	msgs := twinScriptFixtureDecodeAll(t, buf)
+	if len(msgs) != 1 || msgs[0]["type"].(string) != "agent_failed" {
+		t.Errorf("expected 1 agent_failed message, got %v", msgs)
+	}
+}
+
+// TestSignalInterruptStopsScriptAfterEmit verifies that runScript terminates
+// the message loop after emitting signal_interrupt (subsequent messages must
+// not be emitted), and returns nil.
+func TestSignalInterruptStopsScriptAfterEmit(t *testing.T) {
+	e, buf := twinScriptFixtureEmitter(t)
+
+	sf := &ScriptFile{
+		HeartbeatMode: heartbeatModeWallClock,
+		Messages: []ScriptMessage{
+			{
+				Type: signalInterruptStep,
+				Payload: map[string]any{
+					"error_category": "transient",
+					"reason":         "sigint_simulation",
+				},
+			},
+			// This message must NOT be emitted — signal_interrupt terminates the loop.
+			{Type: "agent_heartbeat", Payload: map[string]any{"session_id": "s1", "phase": "starting"}},
+		},
+	}
+
+	err := runScript(context.Background(), e, sf, scriptRunConfig{})
+	if err != nil {
+		t.Fatalf("runScript: expected nil after signal_interrupt, got %v", err)
+	}
+
+	msgs := twinScriptFixtureDecodeAll(t, buf)
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly 1 message (agent_failed only), got %d: %v", len(msgs), msgs)
+	}
+	if got := msgs[0]["type"].(string); got != "agent_failed" {
+		t.Errorf("type = %q, want agent_failed", got)
+	}
+}

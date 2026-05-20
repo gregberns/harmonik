@@ -233,6 +233,25 @@ const callStopHookStep = "call_stop_hook"
 // Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 const commitOnCueStep = "commit_on_cue"
 
+// signalInterruptStep is the type constant for the YAML step that emits
+// agent_failed with configurable error_category and reason fields, optionally
+// sleeping first to simulate a running agent being interrupted.
+//
+// This step exercises the daemon's drain-to-cancelled path (CHB-018 §7.1).
+// The twin exits with code 0 after emitting the event so that the bead is NOT
+// auto-reopened by the CHB-020 fallback heuristic (exit=0 → treat as clean).
+//
+// Payload fields (all read from ScriptMessage.Payload):
+//
+//	error_category  string   Required. Maps to HC-020 sentinel classes.
+//	reason          string   Required. Human-readable reason string.
+//	delay_ms        int      Optional. Milliseconds to sleep before emitting.
+//	                         Simulates a running agent being interrupted mid-flight.
+//	                         Context-aware: cancellation during sleep returns ctx.Err().
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, CHB-018 §7.1.
+const signalInterruptStep = "signal_interrupt"
+
 // runScript drives the wireEmitter through the ordered message list in sf.
 //
 // For each ScriptMessage:
@@ -288,6 +307,16 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 			}
 			continue
+		}
+
+		// signal_interrupt emits agent_failed with configurable error_category and
+		// reason, optionally after a delay, to exercise the daemon's
+		// drain-to-cancelled path (CHB-018 §7.1). Returns nil so exit code is 0.
+		if msg.Type == signalInterruptStep {
+			if err := runSignalInterrupt(ctx, e, msg); err != nil {
+				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
+			}
+			return nil // stop script after emitting; exit code 0 per CHB-020
 		}
 
 		if err := emitScriptMessage(e, msg); err != nil {
@@ -417,6 +446,57 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 
 	if err := e.emitTwinCommitted(commitSHA, 0, durationMs, ""); err != nil {
 		return fmt.Errorf("commit_on_cue: emit twin_committed: %w", err)
+	}
+	return nil
+}
+
+// runSignalInterrupt handles the signal_interrupt script step.
+//
+// It reads error_category, reason, and delay_ms from msg.Payload, sleeps for
+// delay_ms (context-aware), then emits agent_failed with the configured fields.
+// Returns nil so the caller exits with code 0 (CHB-020: exit=0 → no auto-reopen).
+//
+// Error policy:
+//   - error_category missing or empty → emit twin_error + return error (caller exits 1).
+//   - reason missing or empty → emit twin_error + return error (caller exits 1).
+//   - Context cancelled during delay → return ctx.Err() (caller propagates).
+//
+// Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, CHB-018 §7.1.
+func runSignalInterrupt(ctx context.Context, e *wireEmitter, msg ScriptMessage) error {
+	// Extract error_category (required).
+	errorCategory, _ := msg.Payload["error_category"].(string)
+	if errorCategory == "" {
+		_ = e.emitTwinError("signal_interrupt: error_category is required and must be non-empty")
+		return fmt.Errorf("signal_interrupt: error_category missing or empty")
+	}
+	// Extract reason (required).
+	reason, _ := msg.Payload["reason"].(string)
+	if reason == "" {
+		_ = e.emitTwinError("signal_interrupt: reason is required and must be non-empty")
+		return fmt.Errorf("signal_interrupt: reason missing or empty")
+	}
+	// Extract delay_ms (optional; 0 means emit immediately).
+	var delayMs int
+	switch v := msg.Payload["delay_ms"].(type) {
+	case int:
+		delayMs = v
+	case float64:
+		// YAML unmarshals numbers as float64 via map[string]any.
+		delayMs = int(v)
+	}
+	if delayMs > 0 {
+		delay := time.Duration(delayMs) * time.Millisecond
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	// Emit agent_failed. run_id and session_id are left empty; this step is
+	// intentionally a lightweight injection mechanism — the scenario YAML owns
+	// the run/session context at the watcher level, not inside the twin.
+	if err := e.emitAgentFailed("", "", time.Now().UTC(), errorCategory, reason, ""); err != nil {
+		return fmt.Errorf("signal_interrupt: emit agent_failed: %w", err)
 	}
 	return nil
 }

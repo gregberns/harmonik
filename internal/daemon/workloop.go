@@ -188,9 +188,10 @@ type workLoopDeps struct {
 	// completion path (HC-056 / hk-gql20.14).
 	//
 	// The work loop calls ForAgent(core.AgentTypeClaudeCode) on each dispatch to
-	// obtain the adapter. When nil, waitAgentReady is skipped (test mode).
+	// obtain the adapter. MUST be non-nil — newWorkLoopDeps rejects nil
+	// (hk-d8u1y: nil-guard branches deleted; precondition now enforced).
 	//
-	// Bead ref: hk-gql20.14.
+	// Bead ref: hk-gql20.14; hk-d8u1y.
 	adapterRegistry *handlercontract.AdapterRegistry
 
 	// substrate is the optional tmux-substrate for handler.Launch.  At MVH this
@@ -329,6 +330,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	}
 	if cfg.ProjectDir == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.ProjectDir is empty; required for worktree creation")
+	}
+	if registry == nil {
+		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: adapterRegistry is nil; required by waitAgentReady (hk-d8u1y deleted the nil-guard)")
 	}
 
 	// NewForProject pins cmd.Dir to cfg.ProjectDir so `br` discovers the

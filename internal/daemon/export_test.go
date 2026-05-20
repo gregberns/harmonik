@@ -91,10 +91,11 @@ type WorkLoopDepsParams struct {
 	// AdapterRegistry2 is the sealed adapter registry forwarded to beadRunOne
 	// for waitAgentReady (hk-gql20.14). Named AdapterRegistry2 to avoid
 	// collision with the existing AdapterRegistry field (used for
-	// handler.NewHandler). When nil, ExportedWorkLoopDeps stores nil in
-	// workLoopDeps.adapterRegistry — waitAgentReady is then skipped.
+	// handler.NewHandler). MUST be non-nil (hk-d8u1y deleted the nil-guard);
+	// tests should use NewSealedAdapterRegistryForTest(t) for an empty-but-sealed
+	// registry that satisfies the production precondition.
 	//
-	// Bead ref: hk-gql20.14.
+	// Bead ref: hk-gql20.14; hk-d8u1y.
 	AdapterRegistry2 *handlercontract.AdapterRegistry
 
 	// Substrate is the optional tmux substrate for handler.Launch (hk-gql20.14).

@@ -32,6 +32,12 @@ Built on the scenario harness + an `Interrupt(at: EventName)` primitive. See ded
 ### 5. Property — `internal/<pkg>/*_prop_test.go`
 Rapid generators for: edge-selection determinism, DOT cycle-detection, checkpoint-trailer round-trip, JSONL event schema round-trip, reconciliation category classifier (input: partial git + beads state; invariant: classifier is total and stable). Default: 100 iterations per push; `HARMONIK_NIGHTLY=1` bumps to 10 000 with a random seed.
 
+**Sample / bootstrap file:** `internal/core/beadid_prop_test.go` (landed via hk-m084e). Demonstrates:
+- `rapid.Check` harness call shape.
+- `rapid.StringN(min, max, -1)` generator for variable-length opaque strings.
+- Two `TestProp_*` invariants: string round-trip and equality symmetry.
+- Correct `*_prop_test.go` file naming (default tags; runs with plain `go test ./...`).
+
 **Fuzz seed corpora (MVH).** `go test -fuzz=Fuzz<Parser>` on the four boundary parsers (DOT workflow, YAML policy, JSONL event, commit trailer). A committed seed corpus lives at `testdata/fuzz/<parser>/` beside the test file — tiny, hand-curated inputs (including prior crashers once found). Every push runs each fuzz target in seed-only mode (`go test -run=FuzzX/seed` or equivalent) so regressions on known inputs are caught cheaply. Continuous fuzzing (long-running `-fuzz` on a schedule / OSS-Fuzz integration) remains deferred — see Deferred / follow-up.
 
 ## Libraries and tools

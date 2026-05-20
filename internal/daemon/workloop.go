@@ -1053,7 +1053,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 
 	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
-	spec.Substrate = deps.substrate
+	//
+	// hk-012af: when deps.substrate is a *tmuxSubstrate, wrap it in a
+	// perRunSubstrate so this goroutine gets its own isolated pane handle.
+	// Under MaxConcurrent>1, each concurrent beadRunOne call previously
+	// shared the same tmuxSubstrate.lastPaneID field; the second SpawnWindow
+	// would overwrite it, sending paste-inject messages to the wrong pane and
+	// stalling both runs indefinitely (7-hour silent gap in 22:29 UTC dogfood).
+	// perRunSubstrate captures the pane ID of *this* goroutine's spawned window
+	// and routes all paste-inject I/O there instead of to "the last spawned pane".
+	var runSubstrate handler.Substrate = deps.substrate
+	var runPasteTarget handler.Substrate = deps.substrate // fallback: shared substrate
+	if prs := newPerRunSubstrate(deps.substrate); prs != nil {
+		runSubstrate = prs
+		runPasteTarget = prs
+	}
+	spec.Substrate = runSubstrate
 
 	// Step 2: register the hook session so incoming Stop-hook relays are routed
 	// to this run's hookSessionStore entry (CHB-025).
@@ -1227,7 +1242,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-	go pasteInjectOnLaunch(ctx, deps.substrate, artifacts.claudeSessionID,
+	go pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
 		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
 	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
@@ -1243,9 +1258,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
 	// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
 	//
+	// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
+	// run's pane, not the shared "last pane" which may have been overwritten by
+	// a concurrent beadRunOne goroutine.
+	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead: hk-cmybm.
-	if qs, ok := deps.substrate.(quitSender); ok {
+	if qs, ok := runPasteTarget.(quitSender); ok {
 		go pasteInjectQuitOnCommit(ctx, qs, wtPath, headSHA)
 	}
 

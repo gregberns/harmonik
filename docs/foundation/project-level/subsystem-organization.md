@@ -122,7 +122,9 @@ linters-settings:
         files: ["**/internal/adapter/ntm/**"]
         allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
 
-      # Workspace: core + eventbus + adapter-br.
+      # Workspace: core + eventbus + adapter-br + uuid.
+      # uuid added: workspace parses RunID/WorkflowID strings from JSON directly;
+      # uuid is already in core's allow-list (leaf utility, no harmonik-internal deps).
       workspace:
         files: ["**/internal/workspace/**"]
         allow:
@@ -130,6 +132,7 @@ linters-settings:
           - "github.com/gregberns/harmonik/internal/core"
           - "github.com/gregberns/harmonik/internal/eventbus"
           - "github.com/gregberns/harmonik/internal/adapter/br"
+          - "github.com/google/uuid"
 
       # Agent runner: core + eventbus + handler contract + adapter-ntm.
       agentrunner:

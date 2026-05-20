@@ -137,7 +137,7 @@ check:  ## Tier 2: full golangci-lint, go test -race, go mod tidy check, coverag
 	@cp go.mod.check go.mod
 	@[ -f go.sum.check ] && cp go.sum.check go.sum || rm -f go.sum
 	@rm -f go.mod.check go.sum.check
-	@if [ -d tools/forbid-import ]; then go run ./tools/forbid-import ./...; else echo "forbid-import not yet present (hk-pvcs.7); skipping"; fi
+	go run ./tools/forbid-import ./...
 	@if [ -x scripts/coverage-gate.sh ]; then scripts/coverage-gate.sh; else echo "coverage-gate.sh not yet present (hk-pvcs.5); skipping"; fi
 	$(TOOLS_DIR)/govulncheck ./...
 

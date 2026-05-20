@@ -19,8 +19,8 @@ import (
 // bus.Seal(), so the two policy consumers (agent_rate_limit_status and
 // budget_exhausted) are registered in the production event-bus.
 //
-// The test uses Config.TestOnlyBusObserver to capture the bus subscription
-// count immediately before Seal, without modifying the EventBus interface.
+// The test uses daemon.WithBusObserver (via StartForTesting) to capture the bus
+// subscription count immediately before Seal, without modifying the EventBus interface.
 // The expected count is 4: 2 from HandlerPausePolicyGoroutine (agent_rate_limit_status
 // + budget_exhausted per hk-37zy8) + 2 from QueueOperatorEventConsumer
 // (operator_pause_status + operator_resuming per hk-7urls).
@@ -37,18 +37,19 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 		// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 		// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 		// The bus + policy subscription path still runs in full.
-		TestOnlyBusObserver: func(bus eventbus.EventBus) {
-			capturedCount = eventbus.BusSubscriptionCount(bus)
-			observed = true
-		},
 	}
 
-	if err := daemon.Start(context.Background(), cfg); err != nil {
-		t.Fatalf("daemon.Start: unexpected error: %v", err)
+	if err := daemon.StartForTesting(context.Background(), cfg,
+		daemon.WithBusObserver(func(bus eventbus.EventBus) {
+			capturedCount = eventbus.BusSubscriptionCount(bus)
+			observed = true
+		}),
+	); err != nil {
+		t.Fatalf("daemon.StartForTesting: unexpected error: %v", err)
 	}
 
 	if !observed {
-		t.Fatal("TestOnlyBusObserver was never called; daemon.Start must invoke the observer pre-Seal")
+		t.Fatal("WithBusObserver was never called; daemon.startWithHooks must invoke the observer pre-Seal")
 	}
 
 	// The composition root registers exactly 4 asynchronous consumers pre-Seal:

@@ -281,40 +281,41 @@ type Config struct {
 	//
 	// Bead ref: hk-kac8g.
 	HandlerPauseController *HandlerPauseController
+}
 
-	// TestOnlyBusObserver, when non-nil, is called with the event bus
-	// immediately after all pre-Seal subscriptions have been registered and
-	// before bus.Seal() is called.  Production callers MUST leave this nil.
-	//
-	// The callback allows tests to inspect the bus subscription state (e.g. to
-	// assert that HandlerPausePolicyGoroutine.Subscribe wired the expected
-	// consumers into the production composition) without requiring changes to
-	// the EventBus interface.
+// daemonTestHooks carries test-only injection points that are absent from the
+// production Config surface.  The zero value is safe for production use: all
+// fields are nil and the hooks are no-ops.
+//
+// Tests use StartForTesting (internal/daemon/testopts_test.go) to supply these
+// hooks via functional options; production callers go through Start which always
+// passes a zero-value daemonTestHooks.
+//
+// Bead ref: hk-j192n.
+type daemonTestHooks struct {
+	// busObserver, when non-nil, is called with the event bus immediately after
+	// all pre-Seal subscriptions have been registered and before bus.Seal() is
+	// called.  Mirrors the former Config.TestOnlyBusObserver.
 	//
 	// Bead ref: hk-37zy8.
-	TestOnlyBusObserver func(bus eventbus.EventBus)
+	busObserver func(bus eventbus.EventBus)
 
-	// TestOnlyBrAdapterFactory, when non-nil, replaces brcli.NewForProject at
-	// all three call sites in Start.  Production callers MUST leave this nil.
-	//
-	// The injection point allows tests to exercise the BI-031b reconciliation
-	// classification + divergence_inconclusive emission path without a real `br`
-	// binary or a real .beads database; the factory can return a stubbed
-	// *brcli.Adapter or a BrSchemaMismatch-wrapping error unconditionally.
+	// brAdapterFactory, when non-nil, replaces brcli.NewForProject at all three
+	// call sites in startWithHooks.  Mirrors the former Config.TestOnlyBrAdapterFactory.
 	//
 	// Spec ref: specs/beads-integration.md §4.10 BI-031b.
 	// Bead ref: hk-th378.
-	TestOnlyBrAdapterFactory func(brPath, projectDir string) (*brcli.Adapter, error)
+	brAdapterFactory func(brPath, projectDir string) (*brcli.Adapter, error)
 }
 
-// newBrAdapter constructs a *brcli.Adapter via cfg.TestOnlyBrAdapterFactory when
-// set (test mode), or via brcli.NewForProject in production.
+// newBrAdapter constructs a *brcli.Adapter using hooks.brAdapterFactory when set
+// (test mode) or brcli.NewForProject in production.
 //
 // Centralising the call avoids three duplicate factory-selection blocks across
-// the three brcli.NewForProject call sites in Start (hk-th378).
-func (cfg Config) newBrAdapter(brPath, projectDir string) (*brcli.Adapter, error) {
-	if cfg.TestOnlyBrAdapterFactory != nil {
-		return cfg.TestOnlyBrAdapterFactory(brPath, projectDir)
+// the three brcli.NewForProject call sites in startWithHooks (hk-th378).
+func newBrAdapter(hooks daemonTestHooks, brPath, projectDir string) (*brcli.Adapter, error) {
+	if hooks.brAdapterFactory != nil {
+		return hooks.brAdapterFactory(brPath, projectDir)
 	}
 	return brcli.NewForProject(brPath, projectDir)
 }
@@ -349,6 +350,15 @@ func (cfg Config) newBrAdapter(brPath, projectDir string) (*brcli.Adapter, error
 // Spec ref: specs/process-lifecycle.md §4.6 PL-020, PL-020a, PL-005 step 0;
 // §4.1 PL-002, PL-002a, PL-002b.
 func Start(ctx context.Context, cfg Config) error {
+	return startWithHooks(ctx, cfg, daemonTestHooks{})
+}
+
+// startWithHooks is the implementation of Start.  Production callers use Start
+// which passes a zero-value daemonTestHooks.  Test callers use StartForTesting
+// (internal/daemon/testopts_test.go) which supplies non-nil hook fields.
+//
+// Bead ref: hk-j192n.
+func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) error {
 	// Step 1 (PL-002, hk-iarcy): acquire the advisory pidfile lock.
 	//
 	// AcquirePidfile constructs the path internally as
@@ -531,11 +541,12 @@ func Start(ctx context.Context, cfg Config) error {
 	}
 
 	// Notify the test-only observer (when set) so tests can inspect bus
-	// subscription state before Seal locks it.  Production callers set this nil.
+	// subscription state before Seal locks it.  Only reachable via
+	// StartForTesting; production Start always passes a zero-value daemonTestHooks.
 	//
-	// Bead ref: hk-37zy8.
-	if cfg.TestOnlyBusObserver != nil {
-		cfg.TestOnlyBusObserver(bus)
+	// Bead ref: hk-37zy8, hk-j192n.
+	if hooks.busObserver != nil {
+		hooks.busObserver(bus)
 	}
 
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -598,7 +609,7 @@ func Start(ctx context.Context, cfg Config) error {
 		var beadCat3cCloser lifecycle.BeadCat3cCloser
 		var intentLogDir string
 		if cfg.BrPath != "" {
-			brAdapter, brAdapterErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
+			brAdapter, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
 			if brAdapterErr != nil {
 				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
 				// BI-031b; other error categories are also classified so the event
@@ -732,7 +743,7 @@ func Start(ctx context.Context, cfg Config) error {
 	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 	if cfg.ProjectDir != "" && cfg.BrPath != "" {
-		brAdapterForQueue, brAdapterErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
+		brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
 		if brAdapterErr != nil {
 			// Classify + emit divergence_inconclusive for BrSchemaMismatch per
 			// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
@@ -814,7 +825,7 @@ func Start(ctx context.Context, cfg Config) error {
 		// hk-peucr).
 		var queueHandler QueueHandler
 		if cfg.BrPath != "" {
-			brAdapterForHandler, brHandlerErr := cfg.newBrAdapter(cfg.BrPath, cfg.ProjectDir)
+			brAdapterForHandler, brHandlerErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
 			if brHandlerErr != nil {
 				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
 				// BI-031b.  Non-fatal: socket handler proceeds without queue support;

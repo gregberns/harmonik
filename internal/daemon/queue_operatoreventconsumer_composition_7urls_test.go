@@ -38,18 +38,19 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 		// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 		// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 		// The bus + subscription path still runs in full.
-		TestOnlyBusObserver: func(bus eventbus.EventBus) {
-			capturedCount = eventbus.BusSubscriptionCount(bus)
-			observed = true
-		},
 	}
 
-	if err := daemon.Start(context.Background(), cfg); err != nil {
-		t.Fatalf("daemon.Start: unexpected error: %v", err)
+	if err := daemon.StartForTesting(context.Background(), cfg,
+		daemon.WithBusObserver(func(bus eventbus.EventBus) {
+			capturedCount = eventbus.BusSubscriptionCount(bus)
+			observed = true
+		}),
+	); err != nil {
+		t.Fatalf("daemon.StartForTesting: unexpected error: %v", err)
 	}
 
 	if !observed {
-		t.Fatal("TestOnlyBusObserver was never called; daemon.Start must invoke the observer pre-Seal")
+		t.Fatal("WithBusObserver was never called; daemon.startWithHooks must invoke the observer pre-Seal")
 	}
 
 	// HandlerPausePolicyGoroutine registers 2 subscribers; QueueOperatorEventConsumer

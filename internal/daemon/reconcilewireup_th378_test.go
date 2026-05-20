@@ -63,25 +63,25 @@ func recwireupFixture378ReadJSONLLines(t *testing.T, path string) []string {
 	return lines
 }
 
-// recwireupFixture378SchemaMismatchFactory returns a TestOnlyBrAdapterFactory
-// that always fails with a wrapped BrSchemaMismatch sentinel, simulating a
-// br binary whose schema version is incompatible with harmonik's pinned
-// version.
+// recwireupFixture378SchemaMismatchFactory returns a br-adapter factory
+// (for use with daemon.WithBrAdapterFactory) that always fails with a wrapped
+// BrSchemaMismatch sentinel, simulating a br binary whose schema version is
+// incompatible with harmonik's pinned version.
 func recwireupFixture378SchemaMismatchFactory() func(brPath, projectDir string) (*brcli.Adapter, error) {
 	return func(_, _ string) (*brcli.Adapter, error) {
 		return nil, fmt.Errorf("stub: schema version mismatch: %w", brcli.BrSchemaMismatch)
 	}
 }
 
-// recwireupFixture378StartDaemon starts daemon.Start in a background goroutine
-// with a cancellable context.  It returns the cancel func and a done channel.
-// Callers MUST call cancel() after the test to avoid goroutine leaks.
-func recwireupFixture378StartDaemon(t *testing.T, cfg daemon.Config) (cancel context.CancelFunc, done <-chan error) {
+// recwireupFixture378StartDaemon starts daemon.StartForTesting in a background
+// goroutine with a cancellable context.  It returns the cancel func and a done
+// channel.  Callers MUST call cancel() after the test to avoid goroutine leaks.
+func recwireupFixture378StartDaemon(t *testing.T, cfg daemon.Config, opts ...daemon.TestOption) (cancel context.CancelFunc, done <-chan error) {
 	t.Helper()
 	ctx, cancelFn := context.WithCancel(context.Background())
 	ch := make(chan error, 1)
 	go func() {
-		ch <- daemon.Start(ctx, cfg)
+		ch <- daemon.StartForTesting(ctx, cfg, opts...)
 	}()
 	return cancelFn, ch
 }
@@ -103,13 +103,14 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 	projectDir, jsonlPath := recwireupFixture378ProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:               projectDir,
-		JSONLLogPath:             jsonlPath,
-		BrPath:                   "/stub/br", // non-empty so all 3 sites run; factory overrides NewForProject
-		TestOnlyBrAdapterFactory: recwireupFixture378SchemaMismatchFactory(),
+		ProjectDir:   projectDir,
+		JSONLLogPath: jsonlPath,
+		BrPath:       "/stub/br", // non-empty so all 3 sites run; factory overrides NewForProject
 	}
 
-	cancel, done := recwireupFixture378StartDaemon(t, cfg)
+	cancel, done := recwireupFixture378StartDaemon(t, cfg,
+		daemon.WithBrAdapterFactory(recwireupFixture378SchemaMismatchFactory()),
+	)
 
 	// Allow a brief settle window for the startup path (sites 1–3) to execute
 	// and flush divergence_inconclusive events to the JSONL log.  All three
@@ -170,13 +171,14 @@ func TestDaemonStart_BrSchemaMismatch_DaemonProceedsQueueless(t *testing.T) {
 	projectDir, jsonlPath := recwireupFixture378ProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:               projectDir,
-		JSONLLogPath:             jsonlPath,
-		BrPath:                   "/stub/br",
-		TestOnlyBrAdapterFactory: recwireupFixture378SchemaMismatchFactory(),
+		ProjectDir:   projectDir,
+		JSONLLogPath: jsonlPath,
+		BrPath:       "/stub/br",
 	}
 
-	cancel, done := recwireupFixture378StartDaemon(t, cfg)
+	cancel, done := recwireupFixture378StartDaemon(t, cfg,
+		daemon.WithBrAdapterFactory(recwireupFixture378SchemaMismatchFactory()),
+	)
 	defer cancel()
 
 	// Allow time for startup path to complete (pre-work-loop code is synchronous).

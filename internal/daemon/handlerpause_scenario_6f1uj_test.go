@@ -14,9 +14,9 @@ package daemon_test
 //
 // This test exercises the full composition root via daemon.Start:
 //
-//   1. daemon.Start is called with BrPath="" (no work loop) and ProjectDir=""
-//      (no filesystem dependencies). A TestOnlyBusObserver callback intercepts
-//      the sealed bus and subscribes a test consumer for handler_paused events.
+//   1. daemon.StartForTesting is called with BrPath="" (no work loop) and
+//      ProjectDir="" (no filesystem dependencies). A WithBusObserver callback
+//      intercepts the sealed bus and subscribes a test consumer for handler_paused events.
 //
 //   2. After Start returns, a synthetic budget_exhausted event is emitted on the
 //      captured bus. The event exercises the same handler-pause policy goroutine
@@ -102,15 +102,15 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 	// dispatch goroutine never blocks.
 	handlerPausedCh := make(chan core.HandlerPausedPayload, 4)
 
-	// captureBus holds the EventBus reference extracted from TestOnlyBusObserver.
-	// Populated before daemon.Start calls bus.Seal().
+	// captureBus holds the EventBus reference extracted from the WithBusObserver hook.
+	// Populated before startWithHooks calls bus.Seal().
 	var captureBus eventbus.EventBus
 
 	// captureBusSet is closed once captureBus is populated so the emitter goroutine
-	// can proceed after Start exits.
+	// can proceed after StartForTesting exits.
 	captureBusSet := make(chan struct{})
 
-	// TestOnlyBusObserver fires inside daemon.Start after all pre-Seal subscriptions
+	// WithBusObserver fires inside startWithHooks after all pre-Seal subscriptions
 	// are registered and BEFORE bus.Seal() is called. We:
 	//   (a) save the bus reference for post-Start event injection;
 	//   (b) subscribe our test observer for handler_paused events.
@@ -155,19 +155,20 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		close(captureBusSet)
 	}
 
-	// daemon.Start with BrPath="" skips the work loop; ProjectDir="" skips
-	// the filesystem-dependent paths (pidfile, socket, WAL checkpoint).
+	// daemon.StartForTesting with BrPath="" skips the work loop; ProjectDir=""
+	// skips the filesystem-dependent paths (pidfile, socket, WAL checkpoint).
 	// This exercises the composition root's bus setup and subscription wiring
 	// without requiring a real br binary or project directory.
 	cfg := daemon.Config{
-		BrPath:              "", // no work loop; no bead ledger required
-		ProjectDir:          "", // no filesystem-dependent paths
-		TestOnlyBusObserver: busObserver,
+		BrPath:     "", // no work loop; no bead ledger required
+		ProjectDir: "", // no filesystem-dependent paths
 	}
 
 	startDone := make(chan error, 1)
 	go func() {
-		startDone <- daemon.Start(context.Background(), cfg)
+		startDone <- daemon.StartForTesting(context.Background(), cfg,
+			daemon.WithBusObserver(busObserver),
+		)
 	}()
 
 	// Wait for the observer to fire (captureBus populated) with a generous
@@ -176,7 +177,7 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 	case <-captureBusSet:
 		// Observer fired; captureBus is set.
 	case <-time.After(5 * time.Second):
-		t.Fatal("hpScenario: TestOnlyBusObserver did not fire within 5s; daemon.Start may be stalled")
+		t.Fatal("hpScenario: WithBusObserver did not fire within 5s; daemon.startWithHooks may be stalled")
 	}
 
 	// Wait for daemon.Start to return. With BrPath="" and ProjectDir="" it returns

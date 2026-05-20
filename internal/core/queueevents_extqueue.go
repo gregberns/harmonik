@@ -496,3 +496,94 @@ func (p QueueItemReconciledPayload) Valid() bool {
 	}
 	return true
 }
+
+// ReconciliationMismatchObservedPayload is the typed event payload for the
+// reconciliation_mismatch_observed event (§8.6.15; added by hk-nvfvj).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — observability log; mismatch state is corrected
+// by complementary queue mutation or left for operator inspection).
+//
+// Emitted during daemon startup three-way reconciliation (QM-002b) for each
+// mismatch class that is observed, regardless of whether an in-place correction
+// is also applied. Three mismatch classes are defined at v0.1:
+//
+//   - "bead_closed_queue_pending"    — queue item is pending/deferred but the Beads
+//     ledger shows the bead is already closed; item is advanced to completed.
+//   - "bead_inprogress_queue_absent" — Beads ledger shows the bead in_progress but
+//     there is no queue item for it at all; logged for operator inspection.
+//   - "bead_closed_queue_inprogress" — queue item is completed/failed but the Beads
+//     ledger still shows in_progress; logged for operator inspection.
+//
+// # Payload fields
+//
+//   - queue_id       — UUIDv7 as string identifying the active queue; empty when
+//     the mismatch class has no associated queue item (bead_inprogress_queue_absent)
+//   - group_index    — zero-based group index; -1 when no queue item exists
+//   - bead_id        — the bead ID involved in the mismatch
+//   - mismatch_class — one of the three string constants above
+//   - ledger_status  — CoarseStatus string from the Beads ledger at observation time
+//   - queue_status   — ItemStatus string from queue.json; empty when no queue item
+//   - observed_at    — RFC 3339 wall-clock timestamp
+type ReconciliationMismatchObservedPayload struct {
+	// QueueID identifies the active queue. Empty string when there is no queue
+	// item for the bead (mismatch_class == "bead_inprogress_queue_absent").
+	QueueID string `json:"queue_id"`
+
+	// GroupIndex is the zero-based group index. -1 when no queue item exists.
+	GroupIndex int `json:"group_index"`
+
+	// BeadID is the bead involved in the mismatch. Required (non-empty).
+	BeadID string `json:"bead_id"`
+
+	// MismatchClass identifies the mismatch type. Required; one of:
+	// "bead_closed_queue_pending", "bead_inprogress_queue_absent",
+	// "bead_closed_queue_inprogress".
+	MismatchClass string `json:"mismatch_class"`
+
+	// LedgerStatus is the CoarseStatus string from the Beads ledger. Required.
+	LedgerStatus string `json:"ledger_status"`
+
+	// QueueStatus is the ItemStatus string from queue.json. Empty when the bead
+	// has no queue item (mismatch_class == "bead_inprogress_queue_absent").
+	QueueStatus string `json:"queue_status"`
+
+	// ObservedAt is the RFC 3339 wall-clock timestamp. Required (non-empty).
+	ObservedAt string `json:"observed_at"`
+}
+
+// validMismatchClasses is the exhaustive set of mismatch_class values per
+// queue-model.md §3.2b QM-002b.
+var validMismatchClasses = map[string]struct{}{
+	"bead_closed_queue_pending":    {},
+	"bead_inprogress_queue_absent": {},
+	"bead_closed_queue_inprogress": {},
+}
+
+// Valid reports whether p is a well-formed ReconciliationMismatchObservedPayload.
+//
+// Rules:
+//   - BeadID must be non-empty.
+//   - MismatchClass must be one of the three declared constants.
+//   - LedgerStatus must be non-empty.
+//   - ObservedAt must be non-empty.
+//   - GroupIndex must be >= -1.
+func (p ReconciliationMismatchObservedPayload) Valid() bool {
+	if p.BeadID == "" {
+		return false
+	}
+	if _, ok := validMismatchClasses[p.MismatchClass]; !ok {
+		return false
+	}
+	if p.LedgerStatus == "" {
+		return false
+	}
+	if p.ObservedAt == "" {
+		return false
+	}
+	if p.GroupIndex < -1 {
+		return false
+	}
+	return true
+}

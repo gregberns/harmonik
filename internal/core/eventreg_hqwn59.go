@@ -201,6 +201,7 @@ func registerReconciliationEvents() {
 	mustRegister("reconciliation_detector_panic", func() EventPayload { return &ReconciliationDetectorPanicPayload{} })
 	mustRegister("reconciliation_verdict_execution_retry", func() EventPayload { return &ReconciliationVerdictExecutionRetryPayload{} })
 	mustRegister("bead_terminal_transition_recovered", func() EventPayload { return &BeadTerminalTransitionRecoveredPayload{} })
+	mustRegister("reconciliation_mismatch_observed", func() EventPayload { return &ReconciliationMismatchObservedPayload{} })
 }
 
 // registerDaemonLifecycleEvents registers all §8.7 operator-control and daemon

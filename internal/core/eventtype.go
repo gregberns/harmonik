@@ -316,6 +316,17 @@ const (
 	// (post-MVH) Reserved per OQ-BI-008. No MVH emitter exists; structured-log
 	// via ON-035 at MVH per event-model.md §8.6.14.
 	EventTypeBeadTerminalTransitionRecovered EventType = "bead_terminal_transition_recovered"
+
+	// EventTypeReconciliationMismatchObserved is the reconciliation_mismatch_observed
+	// event type (§8.6.15 — added by hk-nvfvj full three-way reconciliation).
+	// Durability class: O.
+	//
+	// Emitted during daemon startup three-way reconciliation (QM-002b) for every
+	// mismatch class that does not produce a queue_item_reconciled correction:
+	//   - bead_closed_queue_pending    — queue item pending but ledger shows closed
+	//   - bead_inprogress_queue_absent — ledger in_progress with no queue record
+	//   - bead_closed_queue_inprogress — queue item completed/failed but ledger in_progress
+	EventTypeReconciliationMismatchObserved EventType = "reconciliation_mismatch_observed"
 )
 
 // ---------------------------------------------------------------------------

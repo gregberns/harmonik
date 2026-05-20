@@ -38,17 +38,24 @@ import (
 var ErrQueueSchemaUnsupported = fmt.Errorf("lifecycle: queue.json schema_version is not in the supported read-set; exit code 2 required per QM-002")
 
 // BeadLedger is the minimal interface LoadQueueAtStartup needs to query the
-// Beads ledger for item status during QM-002a startup cross-check.
+// Beads ledger for item status during QM-002a/QM-002b startup cross-checks.
 //
 // The production implementation is *brcli.Adapter. Tests inject a deterministic
 // fake.
 //
 // Spec ref: specs/queue-model.md §3.2a QM-002a — "call `br show <bead_id>`".
-// Spec ref: specs/beads-integration.md §4.5 BI-015.
+// Spec ref: specs/queue-model.md §3.2b QM-002b — full three-way reconciliation.
+// Spec ref: specs/beads-integration.md §4.5 BI-015, §4.5 BI-016.
 type BeadLedger interface {
 	// ShowBead invokes `br show <id> --format json` and returns the parsed
 	// BeadRecord for the given bead ID.
 	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
+
+	// ListInFlightBeads invokes `br list --status in_progress --json` and
+	// returns a BeadRecord slice for all beads currently in_progress.
+	// Used by QM-002b three-way reconciliation to detect beads that are
+	// in_progress in the ledger but have no queue record.
+	ListInFlightBeads(ctx context.Context) ([]core.BeadRecord, error)
 }
 
 // QueueEventEmitter is the minimal event-emission interface needed by
@@ -139,6 +146,13 @@ func LoadQueueAtStartup(
 	// QM-002a: Beads cross-check for dispatched items.
 	if err := reconcileDispatchedItems(ctx, projectDir, q, ledger, emitter, logger); err != nil {
 		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup: QM-002a reconcile: %w", err)
+	}
+
+	// QM-002b: Full three-way reconciliation — catches mismatch classes not
+	// covered by QM-002a (dispatched-only). Runs after QM-002a so that any
+	// claim_write_lost reverts are already applied before the broader scan.
+	if err := reconcileThreeWay(ctx, projectDir, q, ledger, emitter, logger); err != nil {
+		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup: QM-002b three-way reconcile: %w", err)
 	}
 
 	return q, nil
@@ -250,6 +264,236 @@ func reconcileDispatchedItems(
 	for _, ev := range pending {
 		if err := emitter.Emit(ctx, core.EventTypeQueueItemReconciled, ev.payload); err != nil {
 			logger.WarnContext(ctx, "QM-002a: failed to emit queue_item_reconciled event",
+				"error", err,
+			)
+		}
+	}
+
+	return nil
+}
+
+// reconcileThreeWay implements QM-002b: the full three-way reconciliation pass
+// that runs after QM-002a to catch mismatch classes not covered by the
+// dispatched-items-only scan.
+//
+// Three mismatch classes are handled:
+//
+//  1. Class A — "bead_closed_queue_pending":
+//     A queue item has status=pending (or deferred-for-ledger-dep) but the Beads
+//     ledger reports the bead as closed/tombstone. The item is advanced to
+//     completed so the queue does not wait for a bead that already finished.
+//     Correction: mutate item status in memory, persist via QM-001, emit
+//     reconciliation_mismatch_observed.
+//
+//  2. Class B — "bead_inprogress_queue_absent":
+//     The Beads ledger reports a bead as in_progress but no queue item
+//     references that bead at all. This orphan is left for the orphan-sweep
+//     (hk-2ty0g's sweep handles the queue-owned case; this covers the
+//     no-record-at-all case). No queue mutation; emit
+//     reconciliation_mismatch_observed + log for operator visibility.
+//
+//  3. Class C — "bead_closed_queue_inprogress":
+//     A queue item has status=completed or failed but the Beads ledger still
+//     shows in_progress. No queue mutation (the queue-side terminal is already
+//     set); emit reconciliation_mismatch_observed + log for operator visibility.
+//
+// Ordering per QM-063 (persist BEFORE emit):
+//  1. Scan all queue items; collect Class A mutations + pending event payloads.
+//  2. If any Class A mutations: persist via QM-001.
+//  3. Enumerate in-progress ledger beads; collect Class B payloads.
+//  4. Emit all collected events.
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b (added by hk-nvfvj).
+// Spec ref: specs/queue-model.md §9.3 QM-063 — persist BEFORE emit.
+func reconcileThreeWay(
+	ctx context.Context,
+	projectDir string,
+	q *queue.Queue,
+	ledger BeadLedger,
+	emitter QueueEventEmitter,
+	logger *slog.Logger,
+) error {
+	observedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// beadsInQueue maps bead IDs referenced by any queue item to their item status.
+	// Used in the Class B pass to identify in-progress ledger beads not in the queue.
+	beadsInQueue := make(map[core.BeadID]queue.ItemStatus)
+
+	// pendingEvents collects all events to emit after any persist step.
+	type pendingEvent struct {
+		eventType core.EventType
+		payload   []byte
+	}
+	var pendingEvents []pendingEvent
+	var classACount int
+
+	// --- Class A and Class C scan: iterate queue items ---
+	for gi := range q.Groups {
+		for ii := range q.Groups[gi].Items {
+			item := &q.Groups[gi].Items[ii]
+
+			beadsInQueue[item.BeadID] = item.Status
+
+			// Class A: queue item is pending or deferred but bead is already closed.
+			isPendingLike := item.Status == queue.ItemStatusPending ||
+				item.Status == queue.ItemStatusDeferredForLedgerDep
+			if !isPendingLike {
+				// Class C check below.
+				isQueueTerminal := item.Status == queue.ItemStatusCompleted ||
+					item.Status == queue.ItemStatusFailed
+				if !isQueueTerminal {
+					continue
+				}
+				// Class C: queue says terminal; check ledger.
+				record, showErr := ledger.ShowBead(ctx, item.BeadID)
+				if showErr != nil {
+					logger.WarnContext(ctx, "QM-002b Class C: ShowBead failed; skipping",
+						"bead_id", string(item.BeadID),
+						"error", showErr,
+					)
+					continue
+				}
+				if record.Status != core.CoarseStatusInProgress {
+					continue
+				}
+				// Mismatch: queue terminal but ledger in_progress.
+				logger.WarnContext(ctx, "QM-002b Class C: queue item terminal but ledger in_progress (bead_closed_queue_inprogress)",
+					"bead_id", string(item.BeadID),
+					"queue_status", string(item.Status),
+					"group_index", gi,
+				)
+				if emitter != nil {
+					p := core.ReconciliationMismatchObservedPayload{
+						QueueID:       q.QueueID,
+						GroupIndex:    gi,
+						BeadID:        string(item.BeadID),
+						MismatchClass: "bead_closed_queue_inprogress",
+						LedgerStatus:  string(record.Status),
+						QueueStatus:   string(item.Status),
+						ObservedAt:    observedAt,
+					}
+					payloadBytes, marshalErr := json.Marshal(p)
+					if marshalErr != nil {
+						logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
+							"bead_id", string(item.BeadID),
+							"error", marshalErr,
+						)
+					} else {
+						pendingEvents = append(pendingEvents, pendingEvent{
+							eventType: core.EventTypeReconciliationMismatchObserved,
+							payload:   payloadBytes,
+						})
+					}
+				}
+				continue
+			}
+
+			// isPendingLike — check ledger for Class A.
+			record, showErr := ledger.ShowBead(ctx, item.BeadID)
+			if showErr != nil {
+				logger.WarnContext(ctx, "QM-002b Class A: ShowBead failed; skipping",
+					"bead_id", string(item.BeadID),
+					"error", showErr,
+				)
+				continue
+			}
+			isLedgerClosed := record.Status == core.CoarseStatusClosed ||
+				record.Status == core.CoarseStatusTombstone
+			if !isLedgerClosed {
+				continue
+			}
+
+			// Mismatch: queue pending but ledger closed.
+			logger.InfoContext(ctx, "QM-002b Class A: advancing pending item to completed (bead_closed_queue_pending)",
+				"bead_id", string(item.BeadID),
+				"group_index", gi,
+				"ledger_status", string(record.Status),
+			)
+
+			item.Status = queue.ItemStatusCompleted
+			classACount++
+
+			if emitter != nil {
+				p := core.ReconciliationMismatchObservedPayload{
+					QueueID:       q.QueueID,
+					GroupIndex:    gi,
+					BeadID:        string(item.BeadID),
+					MismatchClass: "bead_closed_queue_pending",
+					LedgerStatus:  string(record.Status),
+					QueueStatus:   "pending",
+					ObservedAt:    observedAt,
+				}
+				payloadBytes, marshalErr := json.Marshal(p)
+				if marshalErr != nil {
+					logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
+						"bead_id", string(item.BeadID),
+						"error", marshalErr,
+					)
+				} else {
+					pendingEvents = append(pendingEvents, pendingEvent{
+						eventType: core.EventTypeReconciliationMismatchObserved,
+						payload:   payloadBytes,
+					})
+				}
+			}
+		}
+	}
+
+	// QM-063 step 2: persist queue if Class A mutations were applied.
+	if classACount > 0 {
+		if err := queue.Persist(ctx, projectDir, q); err != nil {
+			return fmt.Errorf("QM-002b: persist Class A corrections: %w", err)
+		}
+	}
+
+	// --- Class B scan: enumerate in-progress ledger beads ---
+	// Only run if the emitter is non-nil (Class B produces no queue mutation,
+	// only an observability event).
+	if emitter != nil {
+		inFlight, listErr := ledger.ListInFlightBeads(ctx)
+		if listErr != nil {
+			// Non-fatal: log and skip Class B entirely.
+			// ListInFlightBeads failure must not block startup.
+			logger.WarnContext(ctx, "QM-002b Class B: ListInFlightBeads failed; skipping orphan check",
+				"error", listErr,
+			)
+		} else {
+			for _, rec := range inFlight {
+				if _, inQueue := beadsInQueue[rec.BeadID]; inQueue {
+					continue // bead has a queue item — not a Class B orphan
+				}
+				logger.WarnContext(ctx, "QM-002b Class B: ledger in_progress bead has no queue item (bead_inprogress_queue_absent)",
+					"bead_id", string(rec.BeadID),
+				)
+				p := core.ReconciliationMismatchObservedPayload{
+					QueueID:       "",
+					GroupIndex:    -1,
+					BeadID:        string(rec.BeadID),
+					MismatchClass: "bead_inprogress_queue_absent",
+					LedgerStatus:  string(rec.Status),
+					QueueStatus:   "",
+					ObservedAt:    observedAt,
+				}
+				payloadBytes, marshalErr := json.Marshal(p)
+				if marshalErr != nil {
+					logger.WarnContext(ctx, "QM-002b: failed to marshal Class B mismatch payload",
+						"bead_id", string(rec.BeadID),
+						"error", marshalErr,
+					)
+				} else {
+					pendingEvents = append(pendingEvents, pendingEvent{
+						eventType: core.EventTypeReconciliationMismatchObserved,
+						payload:   payloadBytes,
+					})
+				}
+			}
+		}
+	}
+
+	// QM-063 step 4: emit all collected events.
+	for _, ev := range pendingEvents {
+		if err := emitter.Emit(ctx, ev.eventType, ev.payload); err != nil {
+			logger.WarnContext(ctx, "QM-002b: failed to emit reconciliation_mismatch_observed event",
 				"error", err,
 			)
 		}

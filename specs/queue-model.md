@@ -280,6 +280,29 @@ After loading `queue.json` successfully per QM-002, the daemon MUST cross-check 
 
 This check MUST run before the daemon reaches `ready` state and before any dispatch-loop tick that could re-dispatch an item. The reconciliation action maps to Cat 3 per [/Users/gb/github/harmonik/specs/reconciliation/spec.md §8] (claim-write-lost store disagreement). In v0.1 the daemon executes the revert directly rather than routing through the reconciliation investigator, because the correction is fully deterministic (ledger says `open` → item reverts to `pending`).
 
+### 3.2b QM-002b — Three-way reconciliation on startup
+
+After QM-002a completes, the daemon MUST run a full three-way reconciliation pass that covers mismatch classes not reachable by the `dispatched`-items-only scan. Three mismatch classes are defined:
+
+**Class A — `bead_closed_queue_pending`:** A queue item has `status=pending` (or `status=deferred-for-ledger-dep`) but the Beads ledger shows the bead as `closed` or `tombstone`. The item is waiting for a bead that has already finished. The daemon MUST:
+
+1. Advance the item's status to `completed` in the in-memory queue envelope.
+2. Persist the corrected queue envelope via QM-001 atomic write (per QM-063 — persist BEFORE emit).
+3. Emit `reconciliation_mismatch_observed` per [/Users/gb/github/harmonik/specs/event-model.md §8.6.15] with `mismatch_class: "bead_closed_queue_pending"`.
+
+**Class B — `bead_inprogress_queue_absent`:** The Beads ledger reports a bead as `in_progress` but no queue item references that bead. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_inprogress_queue_absent"` and log a structured warning for operator visibility. No queue mutation is applied — the orphan-sweep (hk-2ty0g) handles queue-owned remediation.
+
+**Class C — `bead_closed_queue_inprogress`:** A queue item has `status=completed` or `status=failed` but the Beads ledger still shows the bead as `in_progress`. The queue-side terminal is already set; no queue mutation is applied. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_closed_queue_inprogress"` and log a structured warning for operator visibility.
+
+**Execution ordering (per QM-063):**
+
+1. Scan all queue items; collect Class A mutations and all pending event payloads for Classes A and C.
+2. If any Class A mutations were collected: persist the corrected queue envelope via QM-001 before proceeding.
+3. Enumerate in-progress Beads ledger entries (via `br list --status in_progress`); collect Class B payloads for any bead not referenced by a queue item.
+4. Emit all collected events in the order: Class A, then Class C, then Class B.
+
+This pass MUST complete before the daemon reaches `ready` state and before any dispatch-loop tick. In v0.1 corrections are applied directly (no reconciliation-investigator routing) because all three classes are fully deterministic given the observed store state.
+
 ### 3.3 QM-003 — Removal on completion
 
 When the queue transitions to `status=completed` per §8.4, the daemon MUST unlink `.harmonik/queue.json` and `fsync(parent_directory_fd)`. The in-memory queue object is then cleared. Subsequent `queue-status` calls return `queue_not_active`. The next `queue-submit` re-creates the file.
@@ -304,6 +327,7 @@ Envelope for the queue-model subsystem per [/Users/gb/github/harmonik/specs/arch
   - `queue_appended` — emission rule §7.3; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.5]. Class O.
   - `queue_item_deferred_for_ledger_dep` — emission rule §2.8, §6.5 QM-025; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.6]. Class O.
   - `queue_item_reconciled` — emission rule §3.2a QM-002a; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.7]. Class F.
+  - `reconciliation_mismatch_observed` — emission rule §3.2b QM-002b; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.6.15]. Class O.
   - `infrastructure_unavailable{failed_prerequisite: queue_write_error}` — emission rule §3.1 QM-001 (I/O error path); payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.7.15] (the event type itself is event-model-owned; queue is one of several emitters).
 
 (b) Events consumed:
@@ -354,6 +378,7 @@ Envelope for the queue-model subsystem per [/Users/gb/github/harmonik/specs/arch
   | `unlink_queue_json` (§3.3 QM-003) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `startup_load_queue` (§3.2 QM-002) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `startup_cross_check` (§3.2a QM-002a) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `three_way_reconcile` (§3.2b QM-002b) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `group_advance` (§5, §8.2) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
   | `item_defer_for_ledger_dep` (§2.8) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `queue_pause` / `queue_resume_on_drain` (§8.3, §8.5) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
@@ -777,6 +802,14 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.3 — 2026-05-20 — QM-002b three-way reconciliation on startup (hk-nvfvj / hk-11xlj). One additive amendment documenting the implementation that landed in 15c0ad8:
+
+1. **§3.2b (new) — QM-002b three-way reconciliation.** After QM-002a, the daemon runs a full three-way pass covering three mismatch classes: Class A (`bead_closed_queue_pending` — pending/deferred item for an already-closed bead → advance to completed + persist + emit); Class B (`bead_inprogress_queue_absent` — in_progress ledger bead with no queue item → emit only); Class C (`bead_closed_queue_inprogress` — queue terminal but ledger in_progress → emit only). Ordering: Class A mutations collected and persisted via QM-001 before any event emission (QM-063); Class B enumerated via `br list --status in_progress`; events emitted in A → C → B order. All corrections are direct (no reconciliation-investigator routing) because all three classes are fully deterministic.
+
+2. **§4.a events-produced (additive):** Added `reconciliation_mismatch_observed` (Class O; payload schema reserved at [event-model.md §8.6.15]; emission rule §3.2b QM-002b).
+
+3. **§4.a boundary table (additive):** Added `three_way_reconcile` (§3.2b QM-002b) row; all axes identical to `startup_cross_check`.
 
 v0.1.2 — 2026-05-19 — QM-052a handler-pause gate amendment (hk-75rij). Three additive amendments landing `ReasonHandlerPaused` implemented at 298624d (hk-siuo2) as a normative spec requirement:
 

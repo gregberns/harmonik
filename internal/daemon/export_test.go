@@ -424,6 +424,31 @@ func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID co
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SC-6 test seams (hk-nx5wu)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedWiringEntry is the exported shape of wiringEntry for SC-6 wiring-table tests.
+//
+// Bead ref: hk-nx5wu.
+type ExportedWiringEntry struct {
+	Symbol   string
+	CallSite string
+	Wires    string
+}
+
+// ExportedCompositionRootWirings returns the canonical wiring table as exported
+// entries so SC-6 can verify all pre-Seal Subscribe entries are present.
+//
+// Bead ref: hk-nx5wu.
+func ExportedCompositionRootWirings() []ExportedWiringEntry {
+	out := make([]ExportedWiringEntry, len(compositionRootWirings))
+	for i, e := range compositionRootWirings {
+		out[i] = ExportedWiringEntry{Symbol: e.symbol, CallSite: e.callSite, Wires: e.wires}
+	}
+	return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────
 

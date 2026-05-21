@@ -573,8 +573,9 @@ type HookSessionStoreExported = hookSessionStore
 //
 // Bead ref: hk-gql20.22.
 type ExitInfoExported struct {
-	ExitCode int
-	WaitErr  error
+	ExitCode   int
+	WaitErr    error
+	StderrTail []byte
 }
 
 // ExportedWaitWithSocketGrace exposes waitWithSocketGrace for tests in package
@@ -589,7 +590,7 @@ func ExportedWaitWithSocketGrace(
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
 	outcome, ei := waitWithSocketGrace(ctx, store, watcher, sess, runID, claudeSessID)
-	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr}
+	return outcome, ExitInfoExported{ExitCode: ei.exitCode, WaitErr: ei.waitErr, StderrTail: ei.stderrTail}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

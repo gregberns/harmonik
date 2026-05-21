@@ -1425,6 +1425,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			} else {
 				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
 			}
+			// Surface stderr tail when available — helps diagnose exit=-1 crashes
+			// where the agent produced no NDJSON output (hk-ajhqw).
+			if len(ei.stderrTail) > 0 {
+				const maxTailInReason = 200
+				tail := ei.stderrTail
+				truncated := ""
+				if len(tail) > maxTailInReason {
+					tail = tail[len(tail)-maxTailInReason:]
+					truncated = " (truncated)"
+				}
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s stderr tail%s:\n%s\n",
+					beadID, runID.String(), truncated, tail)
+				failReason += fmt.Sprintf(" stderr_tail%s=%q", truncated, tail)
+			}
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
 			emitDone(false, fmt.Sprintf("auto-reopen: %s", failReason))
 		}

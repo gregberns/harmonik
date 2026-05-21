@@ -39,10 +39,11 @@ import (
 // waitWithSocketGrace tests.  It reports a configurable exit code and can be
 // told to block Wait until an external signal.
 type waitGraceFixtureSession struct {
-	mu       sync.Mutex
-	exitCode int
-	waitErr  error
-	killed   bool
+	mu         sync.Mutex
+	exitCode   int
+	waitErr    error
+	killed     bool
+	stderrTail []byte
 
 	// readyCh is closed by the test to unblock Wait.
 	readyCh chan struct{}
@@ -54,6 +55,12 @@ func waitGraceFixtureNewSession(exitCode int, waitErr error) *waitGraceFixtureSe
 		waitErr:  waitErr,
 		readyCh:  make(chan struct{}),
 	}
+}
+
+func waitGraceFixtureNewSessionWithStderr(exitCode int, waitErr error, stderr []byte) *waitGraceFixtureSession {
+	s := waitGraceFixtureNewSession(exitCode, waitErr)
+	s.stderrTail = stderr
+	return s
 }
 
 // unblockWait closes readyCh, allowing Wait to return.
@@ -88,7 +95,7 @@ func (s *waitGraceFixtureSession) Wait(_ context.Context) error {
 func (s *waitGraceFixtureSession) Outcome() handler.Outcome {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return handler.Outcome{ExitCode: s.exitCode}
+	return handler.Outcome{ExitCode: s.exitCode, StderrTail: s.stderrTail}
 }
 
 func (s *waitGraceFixtureSession) Stdout() io.Reader   { return nil }
@@ -318,5 +325,45 @@ func TestWaitWithSocketGrace_CtxCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("waitWithSocketGrace did not return after ctx cancel")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 5: stderr tail is propagated in exitInfo (hk-ajhqw)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestWaitWithSocketGrace_StderrTailPropagated verifies that when a subprocess
+// exits non-zero and its Session.Outcome carries StderrTail bytes, the returned
+// exitInfo carries those bytes so the workloop can include them in the failReason
+// and surface them to operators (hk-ajhqw: exit=-1 crash diagnostics).
+func TestWaitWithSocketGrace_StderrTailPropagated(t *testing.T) {
+	const runID = "run-wsg-stderr-01"
+	const sessionID = "claude-sess-wsg-stderr-01"
+
+	const stderrContent = "panic: runtime error: invalid memory address\ngoroutine 1 [running]"
+
+	store := daemon.ExportedNewHookSessionStore()
+	daemon.ExportedHookRegister(store, runID, sessionID)
+
+	sess := waitGraceFixtureNewSessionWithStderr(-1, nil, []byte(stderrContent))
+	watcher, closeDone := handlercontract.NewWatcherForTest()
+
+	// Signal exit without delivering any outcome.
+	closeDone()
+	sess.unblockWait()
+
+	outcome, ei := daemon.ExportedWaitWithSocketGrace(
+		t.Context(), store, watcher, sess, runID, sessionID,
+	)
+
+	// No outcome was delivered — branch 3.
+	if outcome != nil {
+		t.Errorf("expected nil outcome (branch 3), got Kind=%q", outcome.Kind)
+	}
+	if ei.ExitCode != -1 {
+		t.Errorf("exitCode=%d, want -1", ei.ExitCode)
+	}
+	if string(ei.StderrTail) != stderrContent {
+		t.Errorf("StderrTail=%q, want %q", ei.StderrTail, stderrContent)
 	}
 }

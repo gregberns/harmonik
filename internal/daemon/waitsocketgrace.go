@@ -41,8 +41,9 @@ const stopHookGrace = 3 * time.Second
 
 // exitInfo carries the process exit metadata captured after sess.Wait() returns.
 type exitInfo struct {
-	exitCode int
-	waitErr  error
+	exitCode   int
+	waitErr    error
+	stderrTail []byte // last ~4 KiB of subprocess stderr; nil for substrate sessions
 }
 
 // waitWithSocketGrace races ctx cancellation against watcher completion, reaps
@@ -93,7 +94,7 @@ func waitWithSocketGrace(
 	// Step 2: reap the subprocess.
 	waitErr := sess.Wait(ctx)
 	outcome := sess.Outcome()
-	ei := exitInfo{exitCode: outcome.ExitCode, waitErr: waitErr}
+	ei := exitInfo{exitCode: outcome.ExitCode, waitErr: waitErr, stderrTail: outcome.StderrTail}
 
 	// Step 3: fast path — check for an outcome already present in the store.
 	if outcome := parseLatestOutcome(store.LatestOutcome(runID, claudeSessID)); outcome != nil {

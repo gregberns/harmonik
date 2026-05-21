@@ -841,6 +841,62 @@ func ExportedProjectCfgOf(deps workLoopDeps) ProjectConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// pasteInjectQuitOnCommit timeout-recovery test seams (hk-trjef)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedCommitPollTimeout is a pointer to the package-level commitPollTimeout
+// var.  Tests set *ExportedCommitPollTimeout to a short duration to avoid
+// waiting 10 min for the timeout path.
+//
+// Bead: hk-trjef.
+var ExportedCommitPollTimeout = &commitPollTimeout
+
+// ExportedNoChangeKillDelay is a pointer to the package-level noChangeKillDelay
+// var.  Tests set *ExportedNoChangeKillDelay to a short duration to avoid
+// waiting 30 s for the kill path.
+//
+// Bead: hk-trjef.
+var ExportedNoChangeKillDelay = &noChangeKillDelay
+
+// ExportedCommitPollInterval is a pointer to the package-level commitPollInterval
+// var.  Tests set *ExportedCommitPollInterval to a short duration to keep
+// polling tight during timeout tests.
+//
+// Bead: hk-trjef.
+var ExportedCommitPollInterval = &commitPollInterval
+
+// ExportedSessionKiller is the exported alias for the sessionKiller interface so
+// tests can implement it without naming the unexported type.
+//
+// Bead: hk-trjef.
+type ExportedSessionKiller = sessionKiller
+
+// ExportedPasteInjectQuitOnCommit exposes pasteInjectQuitOnCommit for tests.
+//
+// Bead: hk-trjef.
+func ExportedPasteInjectQuitOnCommit(
+	ctx context.Context,
+	qs quitSenderExported,
+	killer sessionKiller,
+	wtPath string,
+	initialSHA string,
+	noChangeTimeoutCh chan<- struct{},
+) {
+	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh)
+}
+
+// quitSenderExported is the exported alias for quitSender so the exported
+// wrapper can accept it.
+type quitSenderExported = quitSender
+
+// ExportedBeadAlreadySubsumedInMain exposes beadAlreadySubsumedInMain for tests.
+//
+// Bead: hk-trjef.
+func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
+	return beadAlreadySubsumedInMain(ctx, projectDir, beadID)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // QueueOperatorEventConsumer test seams (hk-7urls)
 // ─────────────────────────────────────────────────────────────────────────────
 

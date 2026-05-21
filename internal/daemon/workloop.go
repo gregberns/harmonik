@@ -1263,8 +1263,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead: hk-cmybm.
+	// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
+	// session after commitPollTimeout without a new commit (hk-trjef).  The
+	// workloop checks it non-blockingly in the default switch branch to
+	// distinguish a forced-kill from a genuine agent failure.
+	var noChangeTimeoutCh chan struct{}
 	if qs, ok := runPasteTarget.(quitSender); ok {
-		go pasteInjectQuitOnCommit(ctx, qs, wtPath, headSHA)
+		noChangeTimeoutCh = make(chan struct{})
+		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then
@@ -1352,20 +1358,40 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 
 	default:
-		// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
-		// watcher failure (malformed NDJSON, panic, etc.).
-		var failReason string
-		if watcherFailed {
-			failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
-				watcherErr, ei.exitCode, runID.String())
-		} else if term.SubReason != "" {
-			failReason = fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d run_id=%s",
-				term.Class, term.SubReason, ei.exitCode, runID.String())
-		} else {
-			failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
+		// noChange-timeout path (hk-trjef): pasteInjectQuitOnCommit killed the
+		// session after commitPollTimeout fired without a new commit.  Check whether
+		// the bead was already subsumed by a prior run that landed on main.
+		select {
+		case <-noChangeTimeoutCh:
+			if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (noChange-subsumed) %s: %v\n", beadID, closeErr)
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				} else {
+					emitBeadClosed(ctx, deps.bus, runID, beadID)
+					emitDone(true, "noChange-subsumed: bead found in main")
+				}
+			} else {
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, "noChange-timeout")
+				emitDone(false, "noChange-timeout: no commit in commitPollTimeout window")
+			}
+		default:
+			// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
+			// watcher failure (malformed NDJSON, panic, etc.).
+			var failReason string
+			if watcherFailed {
+				failReason = fmt.Sprintf("watcher error: %v exit=%d run_id=%s",
+					watcherErr, ei.exitCode, runID.String())
+			} else if term.SubReason != "" {
+				failReason = fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d run_id=%s",
+					term.Class, term.SubReason, ei.exitCode, runID.String())
+			} else {
+				failReason = fmt.Sprintf("exit=%d run_id=%s", ei.exitCode, runID.String())
+			}
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+			emitDone(false, fmt.Sprintf("auto-reopen: %s", failReason))
 		}
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-		emitDone(false, fmt.Sprintf("auto-reopen: %s", failReason))
 	}
 }
 
@@ -1379,6 +1405,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 // Bead ref: hk-gql20.14.
 func isWatcherErrCanceled(err error) bool {
 	return errors.Is(err, handlercontract.ErrCanceled)
+}
+
+// beadAlreadySubsumedInMain checks whether beadID appears as a "Refs: <id>"
+// trailer in any of the last 20 commits on main in projectDir.
+//
+// This is used after a noChange-timeout kill to determine whether the work
+// was already completed by a prior run that merged to main — in which case
+// the bead should be closed (not reopened).
+//
+// Returns false on any git error (conservative: treat as not subsumed).
+//
+// Bead: hk-trjef.
+func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
+	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B", "-20")
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "Refs: "+string(beadID))
 }
 
 // drainCancelledQueue transitions the active queue (if any) to

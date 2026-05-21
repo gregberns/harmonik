@@ -328,7 +328,9 @@ func runReviewLoop(
 			if resolveErr != nil {
 				implInitialSHA = parentSHA // fallback to known-good parent SHA
 			}
-			go pasteInjectQuitOnCommit(ctx, qs, wtPath, implInitialSHA)
+			// Pass implSess as the killer so commitPollTimeout forces an exit;
+			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
+			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).

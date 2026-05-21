@@ -90,12 +90,37 @@ type quitSender interface {
 // commitPollInterval is the interval between git HEAD checks in
 // pasteInjectQuitOnCommit.  500ms balances responsiveness with avoiding
 // excessive git subprocess overhead.
-const commitPollInterval = 500 * time.Millisecond
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+var commitPollInterval = 500 * time.Millisecond
 
 // commitPollTimeout is the maximum time pasteInjectQuitOnCommit will wait
 // for a new commit before giving up.  Chosen to exceed typical bead execution
 // times while avoiding infinite hangs.
-const commitPollTimeout = 10 * time.Minute
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+var commitPollTimeout = 10 * time.Minute
+
+// noChangeKillDelay is the grace period between the unconditional /quit send
+// (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code
+// time to respond to /quit and exit cleanly; if the pane is still alive after
+// this window the session is killed unconditionally.
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-trjef.
+var noChangeKillDelay = 30 * time.Second
+
+// sessionKiller is a subset of handler.Session used by pasteInjectQuitOnCommit
+// to force-kill the hosted session when commitPollTimeout fires without a commit.
+//
+// Bead: hk-trjef.
+type sessionKiller interface {
+	Kill(ctx context.Context) error
+}
 
 // pasteInjectQuitOnCommit watches the worktree at wtPath for a new commit
 // (HEAD changing from initialSHA).  When detected, it sends `/quit Enter`
@@ -108,19 +133,23 @@ const commitPollTimeout = 10 * time.Minute
 //
 // The function runs in a goroutine and returns when:
 //   - A new commit is detected and /quit is sent (success).
-//   - commitPollTimeout elapses without a new commit (non-fatal: log only).
+//   - commitPollTimeout elapses without a new commit: /quit is sent
+//     unconditionally, noChangeKillDelay is waited, then killer.Kill is called,
+//     and noChangeTimeoutCh is closed to signal the workloop (hk-trjef).
 //   - ctx is cancelled (daemon shutting down).
 //
-// Non-fatal: errors are logged to stderr; the caller's waitWithSocketGrace
-// will eventually time out via stopHookGrace (3s) if /quit is never sent.
+// killer and noChangeTimeoutCh may be nil (the kill and signal steps are
+// skipped when either is absent).
 //
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Bead: hk-cmybm.
+// Beads: hk-cmybm, hk-trjef.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSender,
+	killer sessionKiller,
 	wtPath string,
 	initialSHA string,
+	noChangeTimeoutCh chan<- struct{},
 ) {
 	deadline := time.Now().Add(commitPollTimeout)
 	ticker := time.NewTicker(commitPollInterval)
@@ -133,8 +162,31 @@ func pasteInjectQuitOnCommit(
 		case <-ticker.C:
 			if time.Now().After(deadline) {
 				fmt.Fprintf(os.Stderr,
-					"daemon: pasteinject: quit-on-commit: timeout waiting for new commit in %s (initial=%s)\n",
+					"daemon: pasteinject: quit-on-commit: timeout waiting for new commit in %s (initial=%s); sending /quit unconditionally\n",
 					wtPath, initialSHA)
+				// Step 1: send /quit unconditionally — Claude may have self-quit
+				// without committing (e.g. detected nothing-to-do).
+				if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: timeout SendQuitToLastPane: %v\n", qErr)
+				}
+				// Step 2: wait noChangeKillDelay for Claude to exit cleanly, then
+				// force-kill so sess.Wait unblocks in the workloop.
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(noChangeKillDelay):
+				}
+				if killer != nil {
+					if kErr := killer.Kill(ctx); kErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-commit: timeout Kill: %v\n", kErr)
+					}
+				}
+				// Step 3: signal the workloop that we killed due to noChange-timeout.
+				if noChangeTimeoutCh != nil {
+					close(noChangeTimeoutCh)
+				}
 				return
 			}
 

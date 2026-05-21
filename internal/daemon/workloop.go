@@ -523,63 +523,100 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
 		if deps.queueStore != nil {
-			q := deps.queueStore.Queue()
-			if q != nil {
-				// Queue is loaded: check its status per §7.4 pseudocode.
-				switch q.Status {
-				case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
-					// Queue is paused or completed — no dispatch; idle-wait.
-					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						return exitClean()
+			// Phase 1 — snapshot queue state under write lock.
+			//
+			// The previous pattern called deps.queueStore.Queue() (which immediately
+			// releases the read lock) and then read q.Status, group statuses, and item
+			// statuses without holding any lock. This raced with per-run goroutines that
+			// write those fields inside evaluateGroupAdvanceWithOutcome under the write
+			// lock. Fix: hold the write lock for the entire initial read so the two
+			// never overlap.
+			//
+			// After Phase 1 the lock is released; all queue-derived values are captured
+			// as local copies. Phase 2 (handler-pause gate) runs without the lock.
+			// Phase 3 (dispatch stamp) re-acquires the write lock for a TOCTOU check.
+			var (
+				snapItemIdx        int         = -1 // -1 → no item found (q==nil or nothing ready)
+				snapItemBeadID     core.BeadID
+				snapItemContext    string
+				snapItemWFMode     string
+				snapGroupIndex     int
+				snapQueueID        string
+			)
+			{
+				lq := deps.queueStore.LockForMutation()
+				q := lq.Queue()
+				if q != nil {
+					// Queue is loaded: check its status per §7.4 pseudocode.
+					switch q.Status {
+					case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
+						// Queue is paused or completed — no dispatch; idle-wait.
+						lq.Done()
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							return exitClean()
+						}
+						continue
 					}
-					continue
-				}
 
-				// Find the active group and its eligible items.
-				var activeGroup *queue.Group
-				for i := range q.Groups {
-					if q.Groups[i].Status == queue.GroupStatusActive {
-						activeGroup = &q.Groups[i]
-						break
+					// Find the active group and its eligible items.
+					activeGroupIdx := -1
+					for i := range q.Groups {
+						if q.Groups[i].Status == queue.GroupStatusActive {
+							activeGroupIdx = i
+							break
+						}
 					}
-				}
-				if activeGroup == nil {
-					// No active group yet (all pending or all terminal) — idle-wait.
-					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						return exitClean()
+					if activeGroupIdx < 0 {
+						// No active group yet (all pending or all terminal) — idle-wait.
+						lq.Done()
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							return exitClean()
+						}
+						continue
 					}
-					continue
-				}
 
-				items := queue.EligibleItems(activeGroup)
-				if len(items) == 0 {
-					// All items dispatched or deferred — wait for group progress.
-					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						return exitClean()
+					items := queue.EligibleItems(&q.Groups[activeGroupIdx])
+					if len(items) == 0 {
+						// All items dispatched or deferred — wait for group progress.
+						lq.Done()
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							return exitClean()
+						}
+						continue
 					}
-					continue
-				}
 
-				// Pick the first eligible item.
-				item := items[0]
-				// Find the item's index within the group for post-run update.
-				itemIdx := -1
-				for j := range activeGroup.Items {
-					if activeGroup.Items[j].BeadID == item.BeadID && activeGroup.Items[j].Status == queue.ItemStatusPending {
-						itemIdx = j
-						break
+					// Pick the first eligible item and find its index.
+					item := items[0]
+					for j := range q.Groups[activeGroupIdx].Items {
+						it := &q.Groups[activeGroupIdx].Items[j]
+						if it.BeadID == item.BeadID && it.Status == queue.ItemStatusPending {
+							snapItemIdx = j
+							break
+						}
 					}
-				}
-				if itemIdx < 0 {
-					// Item not found (stale reference) — retry.
-					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-						return exitClean()
+					if snapItemIdx < 0 {
+						// Item not found (stale reference) — retry.
+						lq.Done()
+						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+							return exitClean()
+						}
+						continue
 					}
-					continue
-				}
 
-				// Handler-pause gate (hk-kac8g): check whether the resolved agent
-				// type is paused before claiming/dispatching the item.  At MVH all
+					// Capture all values needed after lock release as local copies so
+					// we do not access the shared *Queue pointer outside the lock.
+					snapItemBeadID = item.BeadID
+					snapItemContext = item.Context
+					snapItemWFMode = item.WorkflowMode
+					snapGroupIndex = q.Groups[activeGroupIdx].GroupIndex
+					snapQueueID = q.QueueID
+				}
+				lq.Done()
+			}
+
+			if snapItemIdx >= 0 {
+				// Phase 2 — handler-pause gate (hk-kac8g): check whether the resolved
+				// agent type is paused before claiming/dispatching the item.  At MVH all
 				// beads map to AgentTypeClaudeCode; multi-agent resolution is post-MVH.
 				//
 				// When paused:
@@ -593,7 +630,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if deps.handlerPauseController != nil {
 					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
 					if isPaused {
-						emitHeldEvent(ctx, deps, item.BeadID, core.AgentTypeClaudeCode, epoch)
+						emitHeldEvent(ctx, deps, snapItemBeadID, core.AgentTypeClaudeCode, epoch)
 						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
@@ -601,10 +638,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
-				// Stamp item as dispatched under the write lock.
+				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
 				{
 					lq := deps.queueStore.LockForMutation()
-					// Re-fetch the group and item under the write lock to prevent TOCTOU.
 					liveQ := lq.Queue()
 					if liveQ == nil {
 						lq.Done()
@@ -619,16 +655,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						if liveQ.Groups[gi].Status != queue.GroupStatusActive {
 							continue
 						}
-						if liveQ.Groups[gi].GroupIndex != activeGroup.GroupIndex {
+						if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
 							continue
 						}
-						if itemIdx < len(liveQ.Groups[gi].Items) &&
-							liveQ.Groups[gi].Items[itemIdx].BeadID == item.BeadID &&
-							liveQ.Groups[gi].Items[itemIdx].Status == queue.ItemStatusPending {
+						if snapItemIdx < len(liveQ.Groups[gi].Items) &&
+							liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
+							liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
 							runUUIDStr := "" // filled after uuid generation below
-							liveQ.Groups[gi].Items[itemIdx].Status = queue.ItemStatusDispatched
-							liveQ.Groups[gi].Items[itemIdx].RunID = &runUUIDStr // placeholder; updated after
-							_ = runUUIDStr                                      // suppress lint
+							liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDispatched
+							liveQ.Groups[gi].Items[snapItemIdx].RunID = &runUUIDStr // placeholder; updated after
+							_ = runUUIDStr                                          // suppress lint
 							foundItem = true
 						}
 					}
@@ -652,14 +688,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					lq.Done()
 				}
 
-				beadRecord = core.BeadRecord{BeadID: item.BeadID}
-				queueItemIndex = itemIdx
-				qID := q.QueueID
-				gIdx := activeGroup.GroupIndex
+				beadRecord = core.BeadRecord{BeadID: snapItemBeadID}
+				queueItemIndex = snapItemIdx
+				qID := snapQueueID
+				gIdx := snapGroupIndex
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
-				capturedExtraContext = item.Context    // hk-boiwe
-				capturedItemWFMode = item.WorkflowMode // hk-hiqrl
+				capturedExtraContext = snapItemContext // hk-boiwe
+				capturedItemWFMode = snapItemWFMode   // hk-hiqrl
 			}
 		}
 
@@ -1755,12 +1791,16 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 				queueID, err)
 			// Non-fatal: in-memory state is still updated; file will resync on next persist.
 		}
+		pausedByFailure := q.Status == queue.QueueStatusPausedByFailure
 		lq.SetQueue(q)
 		lq.Done()
 		// hk-8jh26 Fix 1: if the queue is now paused-by-failure and an exit-cancel
 		// is registered (harmonik run path), cancel the daemon context so the work
 		// loop exits promptly instead of idle-spinning waiting for more work.
-		if q.Status == queue.QueueStatusPausedByFailure && deps.cancelOnQueueExit != nil {
+		// pausedByFailure is captured before lq.Done() to avoid a data race with
+		// another goroutine that may call CompleteAndUnlink (which writes q.Status)
+		// after acquiring the lock we just released.
+		if pausedByFailure && deps.cancelOnQueueExit != nil {
 			deps.cancelOnQueueExit()
 		}
 	}

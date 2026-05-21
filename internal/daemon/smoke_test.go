@@ -46,7 +46,15 @@ import (
 // project dir and the JSONL events log path.
 func smokeFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
-	projectDir = t.TempDir()
+	// Resolve symlinks so that br — which rejects symlinked paths — receives
+	// the canonical path. On macOS t.TempDir() returns /var/folders/... but /var
+	// is a symlink to /private/var, which br refuses.
+	raw := t.TempDir()
+	resolved, resolveErr := filepath.EvalSymlinks(raw)
+	if resolveErr != nil {
+		t.Fatalf("smokeFixtureProjectDir: EvalSymlinks %q: %v", raw, resolveErr)
+	}
+	projectDir = resolved
 	eventsDir := filepath.Join(projectDir, ".harmonik", "events")
 	//nolint:gosec // G301: test-only temp directory; not production
 	if err := os.MkdirAll(eventsDir, 0o755); err != nil {

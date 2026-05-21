@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-20 main — v52. Orchestration v2 LIVE: harmonik is the default dispatcher (HARD-RULE in directives + AGENTS.md Daily loop + harmonik-dispatch skill). Three Phase-2 dogfood-blocker bugs FIXED: hk-rp48p (priority-sort), hk-wx8z8 (parallel pane allocator), hk-ppt32 (queue-on-cancel cleanup). Go-touching probe revealed daemon was misclassifying success as crash — Stop-hook not delivering outcome_emitted (hk-cj0gm P1). Open P1: hk-8jh26 only. -->
+<!-- PP-TRIAL:v2 2026-05-21 main — v53. 20-bead dogfood session: 18 commits to origin/main via harmonik (10 round-1 docs/fixes + 5 round-2 friction-fixes including hk-trjef pasteinject recovery + hk-ibilr --notify-stream + hk-j1aq5 rebase-before-merge + 3 round-2 SC scenario tests). Append CLI validated. 4 NEW directives added below per user instruction. P0 open: hk-g0ckv (make --review-loop default). High-priority P1 open: hk-yejfj (rewrite stale AGENTS.md Monitor block), hk-trjef (CLOSED in session — pasteinject auto-recovery now in daemon, Monitor block is fallback only). DOT work (kerf phase-3-dot) still in design pass — no beads yet. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -14,11 +14,29 @@ Per-return acknowledgment is ≤2 lines. Full session summary lives at `/session
 
 **HARMONIK IS THE DEFAULT DISPATCHER (HARD RULE, v51).** Substantive work routes through `harmonik run --beads <ids>` unless an exception applies. The intended daily loop: `bv --robot-triage` → `kerf next` → pick batch of 3–5 → `harmonik run --beads id1,id2,... --max-concurrent N` → while it runs, queue next batch / drain triage / file follow-ups → on exit, review + dispatch next batch. Target: ≥75% of substantive commits per session land via `harmonik run` (committer identity / `Refs:` trailer in `git log`). The three exceptions: (a) the bead is a bug-fix to harmonik itself in code that breaks dispatch; (b) ≤2-line typo/cross-reference fix where ~30s daemon overhead isn't worth it; (c) untested workload class per the readiness-audit caveats (priority-sensitive routing — until hk-rp48p's regression test lands; `--max-concurrent > 1` — until hk-wx8z8 lands; code-touching — until the Go-touching probe passes). Sub-agent dispatch is otherwise the WRONG move. If you find yourself reaching for the Agent tool on a 4th task in a row, STOP — batch them and run `harmonik run --beads`. Full design: `docs/orchestration-protocol-v2.md`.
 
+**EVERY BEAD GETS A REVIEW PHASE (HARD RULE, v53 NEW — USER-ORDERED 2026-05-21).** `harmonik run` MUST be invoked with `--review-loop` on every batch. No exceptions. The point of harmonik's per-bead workflow IS implement → review → fix — skipping review defeats it. Round-2 session ran 12 commits without `--review-loop` and the user flagged it; do not repeat. P0 bead **hk-g0ckv** flips the default in `cmd/harmonik/run.go` (move from opt-in `--review-loop` to opt-out `--no-review-loop`) — until that lands, the orchestrator MUST pass `--review-loop` explicitly. Verification: each landed commit should carry a `Reviewed-By: agent-reviewer` + `Review-Verdict:` trailer; if absent on a `Refs: <bead-id>` commit, the review was skipped and the bead should be re-opened.
+
+**HARMONIK DOES (BASICALLY) ALL THE WORK (HARD RULE, v53 REINFORCEMENT).** The Agent tool is for the THREE narrow exceptions in the harmonik-default-dispatcher rule above. Any Agent-tool dispatch must justify itself against those exceptions in the same message that issues the call. Anything that looks like "I'll just have a sub-agent do this" without an exception applied is the WRONG choice — file it as a bead and route via `harmonik run --beads ... --review-loop`.
+
+**FRICTION GETS PRIORITY (HARD RULE, v53 NEW — USER-ORDERED 2026-05-21).** Any bead labeled `phase2-dogfood-friction`, `kerf-upstream`, `review-gate`, or otherwise tagged as breaking the orchestrator's loop MUST be filed at P1 minimum (P0 if it's hit the operator twice in the same session). When choosing the next batch, friction beads jump ahead of substantive feature work. Rationale: friction compounds — every unfixed daemon hang is a tax on every future dispatch.
+
+**KERF IS THE PRIORITY SOURCE OF TRUTH (HARD RULE, v53 NEW — USER-ORDERED 2026-05-21).** Use `kerf next` as the dispatch feed. If you disagree with kerf's ranking, do NOT silently pick a different bead — investigate the disagreement. Likely causes: (a) the kerf work's `bead_filter` is missing a `codename:` label on the bead, (b) the kerf work itself has wrong area/priority weights, (c) the bead is mis-labeled (file `label:kerf-upstream` if it's a kerf bug). Document the resolution as a kerf-feedback entry under `docs/kerf-feedback/<date>.md`. Goal: kerf's recommendation = the right answer; agent-overrides are evidence of a fixable upstream defect.
+
+**PHASE-3 DOT IS THE NEAR-TERM ENDGAME (v53 NEW — USER-ORDERED 2026-05-21).** The DOT-defined bead-process workflow (`~/.kerf/projects/gregberns-harmonik/phase-3-dot/`) is the planned replacement for the current `--review-loop` pattern. The work is still in change-design pass — no beads exist yet. Next-session priorities for advancing DOT: (1) finish the design pass, (2) draft the spec, (3) spawn implement/review/test beads, (4) ship enough of the DOT runtime that we can dispatch a single bead through it end-to-end. Until DOT ships, `--review-loop` remains the gate. Once DOT is operational, the implement/review/fix loop becomes structural rather than per-bead-CLI-flag.
+
 PHASE 2 IS UNBLOCKED (NEW v38). With harmonik operational you CAN now dispatch beads via the daemon instead of via the Agent tool — file a bead with `br create`, start harmonik against the project, watch it execute. Trade-off: harmonik overhead is ~30s+ per bead vs sub-agent's seconds; use it when (a) durability matters, (b) the work spans sessions, (c) tmux inspectability matters, or (d) parallel `--max-concurrent N` amortizes the overhead. For trivial inline work, sub-agent dispatch still wins.
 
 `harmonik run <bead-id>` IS LIVE (NEW v48). Single-bead invocation: `harmonik run <id> [--project DIR]` builds a queue-of-one, runs the daemon, exits on completion. Exit code: 0 success / 1 paused-by-failure / 2 unexpected. Refuses overwrite of an active queue.json. Hangs avoided via `CancelOnQueueExit`. THIS IS the canonical Phase-2 dispatch UX — use it instead of priority-bump tricks.
 
 `harmonik run --beads` MULTI-BEAD + --context + --review-loop (v49 NEW). Multi-bead one-shot: `harmonik run --beads id1,id2,... --max-concurrent N [--context "string|@file"] [--review-loop]`. Builds a queue of N items, parallel dispatch up to max-concurrent, single daemon, exits on completion. `--context` adds an Extra Context section to the agent-task.md for the handler. `--review-loop` selects WorkflowModeReviewLoop. Landed at `0da3a71`/`ebd25a4` via hk-w3cp1+hk-boiwe+hk-hiqrl.
+
+`harmonik run --notify-stream` (v53 LIVE). Per-bead completion lines `[hk-XXX] success|failed` emitted to stdout; combine with a Monitor wrapper to surface mid-batch progress. Landed at `ce9d0e4` via hk-ibilr.
+
+PASTEINJECT AUTO-RECOVERY IS IN THE DAEMON NOW (v53, hk-trjef commit f2c395e). The Monitor-based auto-hang-kill pattern from earlier sessions is REDUNDANT for the rebuilt binary — `pasteinject.go:146-208` does quit → 30s grace → kill → noChange-subsumed check natively. **Always rebuild harmonik before dispatching** (`go install ./cmd/harmonik`); stale binary is the #1 cause of "the daemon hung again". The AGENTS.md "Orchestrator wrappers" Monitor block is now FALLBACK ONLY (hk-yejfj filed P1 to revise).
+
+QUEUE SEMANTICS (v53 FINDINGS). `harmonik run --beads` creates `kind=wave` queues that do NOT accept appends. Mid-flight extension requires `kind=stream` via `harmonik queue submit <file>` + `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Daemon doesn't wake on submit if idle (workaround: keep an active `harmonik run` so the workloop stays hot). Quick-win beads filed: **hk-7nbey** (default `--beads` to `kind=stream`), **hk-24xn1** (daemon wake-on-submit), **hk-b0cyc** (UX gap). **hk-ze3op** (default `--notify-stream` on for multi-bead). **hk-lhv8i** (pre-screen subsumed at submit-time — eliminates the noChange slot-waste that hit ~10 beads in this session).
+
+PRE-SCREEN STALE-OPEN BEADS BEFORE DISPATCH. Until hk-lhv8i lands, manually screen each bead in the batch: `git log --all --grep "Refs: <id>" --oneline`. If it returns a hit, the implementation already landed — `br close <id> --reason "Subsumed: landed as <sha>"` instead of dispatching. Today's session caught 10+ pre-merged beads this way; each saved a wasted ~5-min dispatch.
 
 IMPLEMENTER COMMIT DISCIPLINE (REINFORCED v38). Most implementers in the v38 session ran self-review APPROVE BUT NEVER COMMITTED in their worktree. The orchestrator had to commit-on-behalf. Briefs MUST end with "COMMIT EXPLICITLY (`git add` + `git commit`) before exiting" and the orchestrator MUST verify the commit landed before merging. If diff is uncommitted, the orchestrator stages + commits on behalf using `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.
 
@@ -103,7 +121,7 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
 If a branch is lost: `git reflog --all | grep worktree-agent-<id>` then `git cherry-pick <SHA>`. If merge-dance leaks code into main's working tree without committing (v48 observed): discard the leaked working tree edits, cherry-pick the actual commit by SHA found in reflog.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v48 used ~heavy across 15+ background sub-agents — kerf/bead/plan hygiene + 4 worktree implementers + 3 reviewers. 16 commits. v49 used ~51% across ~15 audit agents + 4 implementers + dogfooding cycle. 35 commits.
+CONTEXT BUDGET (orchestrator). ~700 k effective. v48 used ~heavy across 15+ background sub-agents — kerf/bead/plan hygiene + 4 worktree implementers + 3 reviewers. 16 commits. v49 used ~51% across ~15 audit agents + 4 implementers + dogfooding cycle. 35 commits. v53 used ~25% across 20-bead dogfood (2 rounds via harmonik) + 3 follow-up audit agents. 18 commits.
 
 HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (v47 NEW). Some sub-agents hit a system-prompt rule blocking `.md` writes for "findings/analysis/summary" files — they return content inline. Orchestrator (main thread) must persist via `Write` tool. When dispatching kerf-pass or audit sub-agents that must write `.md` artifacts, expect this friction and plan for orchestrator persistence.
 
@@ -113,81 +131,66 @@ PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_pla
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v52, 2026-05-20)
+# Where we are (v53, 2026-05-21)
 
-**Main at `49b6fd1`.** ~12 commits past v51. Working tree clean apart from the long-running untracked `harmonik-twin-claude/` stray directory.
+**Main at `d223fd7`.** 18 commits past v52 baseline (`68f0e69`). origin/main is parity (0 ahead, 0 behind). Working tree clean.
 
 ## What landed this session
 
-The session was about turning "Phase 2 occasionally works" into "Phase 2 is the default." Five pieces:
+Two rounds of harmonik dogfood — 20 beads dispatched, 18 substantive commits on main, all daemon-pushed. Highlights by impact:
 
-1. **Orchestration v2 protocol LIVE** (`5e295dd`). Three changes wired together: (a) HANDOFF.md ORCHESTRATION DIRECTIVES gained a HARD-RULE block "HARMONIK IS THE DEFAULT DISPATCHER" with the ≥75% criterion and 3 documented exceptions, (b) AGENTS.md gained a "Daily loop (canonical)" section placed BEFORE the kerf-planning section, (c) new project-local skill `.claude/skills/harmonik-dispatch/SKILL.md` loads on session-resume and gates dispatch decisions. Full design in `docs/orchestration-protocol-v2.md`.
-2. **hk-rp48p priority-claim bug FIXED** (`2e48555`). Root cause: `brcli.Ready` invoked `br ready --format json` with NO `--sort` flag; br's default is `hybrid` (age-weighted), not `priority`. One-line fix: pin `--sort priority`. Reviewer APPROVE with 2 follow-ups filed (`hk-tul2a` scenario test, `hk-uhvjo` spec amendment).
-3. **hk-wx8z8 parallel pane allocator FIXED** (`5e8f868`). Root cause: `tmuxSubstrate` held a substrate-wide `lastPaneID` mutated by every `SpawnWindow`; concurrent calls raced. Fix: per-session `paneID` captured atomically from `tmux new-window -P -F "#{pane_id}"`; new `WritePane`/`SendEnter`/`SendQuit` methods. Two new race-tests pass. PL-021d spec amended. Substrate-level `lastPaneID` kept vestigial for hk-aievp/hk-zrj83 test back-compat (small follow-up cleanup possible).
-4. **hk-ppt32 queue-on-cancel FIXED** (`5e651c2`). SIGINT/timeout now drains the queue to `cancelled` and renames `queue.json` to `queue.json.cancelled-<ts>` so the next run loads clean. Exit code 1 on cancel (was 2 + stuck queue). Two new tests pass.
-5. **Plain-English re-framing of "Go-touching dogfood RED":** the Go-touching probe (hk-6x7dw) DID NOT fail — claude completed work, committed `d36c4d2`, exited via `/exit`. Daemon misclassified because no `outcome_emitted` reached the socket (Stop-hook wiring gap). Recovered: cherry-picked the work, closed hk-6x7dw, demoted hk-ajhqw to P2-umbrella. **Real fix lives in `hk-cj0gm` (P1) — Stop-hook delivery audit.**
+- **Pasteinject auto-recovery (hk-trjef, `f2c395e`)** — the recurring "daemon hangs forever after claude self-quits without committing" bug is FIXED in-daemon. Monitor-based auto-kill is now redundant.
+- **--notify-stream (hk-ibilr, `ce9d0e4`)** — per-bead `[hk-XXX] success|failed` lines to stdout; lets the orchestrator see mid-batch progress through a simple Monitor grep.
+- **Rebase-before-merge (hk-j1aq5, `882d527`)** — kills the non-ff merge friction we hit earlier in the day.
+- **3 SC scenario tests landed via harmonik** (SC-1, SC-2, SC-6 — `84b02c9`, `64b6b79`, `5980253`). SC-3 + SC-4 closed as already-covered.
+- **Race fixes + pre-existing test failures** — hk-j6l7l (`a027808`), hk-b5bc0 (`9d077b9`).
+- **Stop-hook E2E test (hk-6pbe3, `32620a5`)** — orchestrator-committed-on-behalf, then retroactive reviewer APPROVE with one minor `weak-timing-assertion` flag (hk-3jmke filed).
 
-## The single remaining blocker for "code-touching through harmonik"
+Plus 10 stale-open beads CLOSED as subsumed (pre-screen caught implementations that had already landed but the ledger never updated).
 
-`hk-cj0gm` (P1): in worktree-provisioned `.claude/settings.json` the Stop hook may not be wired (or `/exit` bypasses Stop hooks in claude-code 2.1.145 vs `/quit`). Until this lands, harmonik will keep flagging successful code-touching runs as `claude_crashed`. Diagnosis (with file:line cites) was written to `docs/kerf-feedback/2026-05-20-hk-ajhqw-crash.md` by the investigator but is currently lost in the working-tree dance — re-derive from hk-cj0gm description and `~/.claude/projects/-Users-gb-github-harmonik--harmonik-worktrees-019e4396-bc65-7860-8dde-d5e76dbbfb90/019e4396-bfde-72b7-af19-fa91246ea3c4.jsonl` (the claude session transcript proving success).
+## CRITICAL: Reviews were skipped on most of this session's commits
 
-## Priority cleanup applied
+User flagged it explicitly. Only 7 of today's 19 commits carry `Reviewed-By: agent-reviewer` trailers — the rest landed unreviewed because `--review-loop` is opt-in and the orchestrator did not pass it. This violates the global "Review gate is not optional" rule.
 
-- `hk-judtf` (Plan 009 umbrella) — CLOSED (all 6 children landed)
-- `hk-ux915`, `hk-5mjrs`, `hk-51ivc`, `hk-kx498` — demoted P1 → P2
-- `hk-ajhqw` — demoted P1 → P2 (umbrella; children own the real fix)
+**For the next session: ALWAYS pass `--review-loop` on every `harmonik run` invocation until hk-g0ckv (P0) flips the default.** See the new directive block above.
 
-**Open P1 list is now ONE bead**: `hk-8jh26` (harmonik run: hang on bead failure + always exits 0 + silent queue overwrite). Reviewer-flagged from v48; not yet fixed.
+## Top priorities for next session
 
-## Next session — priorities
-
-1. **Dispatch `hk-cj0gm` through a sub-agent** (this IS the "harmonik bug" exception under the new HARD-RULE). Once Stop-hook delivery is reliable, code-touching dispatch through `harmonik run` becomes routine.
-2. **Re-probe code-touching dispatch** after hk-cj0gm lands. Pick a tiny `internal/core/` const-rename bead. Confirm daemon reports success (not crash) end-to-end.
-3. **Re-probe `--max-concurrent 2`** dispatch — hk-wx8z8 should make this work now. Pick two non-conflicting docs beads from the candidate list below.
-4. **If both probes GREEN, start batching.** Route 3-5 P2 beads at a time through `harmonik run --beads`. Target ≥75% of substantive commits via harmonik this session.
-5. **Tackle `hk-8jh26`** (the last P1) once code-touching dispatch is reliable.
-
-## Candidate beads ready for batch-routing through harmonik
-
-- `hk-ynn8u` — `.gitignore`: add `.harmonik/agent-task*` pattern (small, docs-ish)
-- `hk-xlq2e` — Handler-pause: submitter-agent query docs + AGENTS.md note
-- `hk-vh1bw` — Spec drift: queue-model.md §8.7 input-event vocabulary
-- `hk-m0uop` — queue-model.md spec drift on -32018 + missing test cases
-- `hk-tul2a` — scenario test for daemon br-ready priority claim path (hk-rp48p follow-up)
-- `hk-uhvjo` — BI-013 spec amendment documenting --sort priority
+1. **hk-g0ckv (P0)** — flip `--review-loop` from opt-in to default in `cmd/harmonik/run.go`. Quick win (~30 LOC). Until it lands, dispatch the orchestrator's own batches with `--review-loop` explicitly. **This is the highest-leverage single bead in the queue.**
+2. **hk-yejfj (P1)** — rewrite the AGENTS.md "Orchestrator wrappers" section (committed `d4b0820` earlier today) to mark the Monitor block as fallback-only, since pasteinject auto-recovery (hk-trjef) is now in the daemon. **Dispatch this via harmonik FIRST so future agents read the corrected version.**
+3. **Friction backlog (priority-bump to P1 minimum):** hk-ze3op (default --notify-stream on for multi-bead), hk-7nbey (default `kind=stream` for `--beads`), hk-lhv8i (pre-screen subsumed at submit), hk-24xn1 (daemon wake-on-submit), hk-b0cyc (queue UX gap). Each <50 LOC; each retires a chunk of orchestrator manual discipline.
+4. **DOT advance (kerf phase-3-dot)** — still in design pass at `~/.kerf/projects/gregberns-harmonik/phase-3-dot/`. No beads yet. Next moves: finish design pass (`04-design/`), draft `spec.yaml`, spawn implement/review/test beads. Goal: ship enough of DOT to dispatch a single bead through it end-to-end. Once operational, DOT replaces `--review-loop` as the implement/review/fix mechanism.
+5. **Reviewer-gap follow-up:** if hk-g0ckv ships fast, dispatch a one-shot reviewer agent on the 12 unreviewed commits from this session (audit-only, just emit verdicts; no fix passes unless BLOCK).
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `AGENTS.md` §"Daily loop (canonical)" + `.claude/skills/harmonik-dispatch/SKILL.md` — the new default protocol.
-3. `docs/orchestration-protocol-v2.md` — full design + rationale.
-4. `docs/kerf-feedback/2026-05-19-phase2-{exit-path,readiness-audit}.md` — what's still untested.
-5. `internal/daemon/tmuxsubstrate.go` + `internal/daemon/pasteinject.go` — wx8z8 fix landing zone (per-session paneID).
-6. `internal/queue/persistence.go` `CancelQueueOnShutdown` — ppt32 fix.
+2. `AGENTS.md` §"Orchestrator wrappers for `harmonik run`" + §"Daily loop (canonical)" — orientation. **Note the Monitor block is fallback-only now (hk-yejfj).**
+3. `.claude/skills/harmonik-dispatch/SKILL.md` — the canonical orchestrator skill (load-bearing on every resume).
+4. `cmd/harmonik/run.go:127` — `--review-loop` flag wiring (target of hk-g0ckv).
+5. `internal/daemon/pasteinject.go:146-208` — confirms the auto-recovery is live; no Monitor needed.
+6. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/` — the DOT work to advance.
 
 ## Plain-English glossary
 
-- **`harmonik run --beads <id>`** — single-shot dispatch CLI. Spawns claude, watches, commits, merges to main, pushes, closes the bead. Validated for docs in v51; parallel + code-touching now fixed and need re-probe.
-- **harmonik-dispatch skill** — new project-local skill, loads on session-resume; gates dispatch decisions to default to `harmonik run`.
-- **Daily loop / Orchestration v2** — `bv --robot-triage` → `kerf next` → pick batch → `harmonik run --beads ... --max-concurrent N` → review + repeat. Sub-agent dispatch is the exception, not the default.
-- **75% rule** — target ≥75% of substantive commits per session land via `harmonik run` (committer identity / `Refs:` trailer).
-- **hk-rp48p** — CLOSED. br ready was sorting by `hybrid` (age) not `priority`. Fix pins `--sort priority`.
-- **hk-wx8z8** — CLOSED. Parallel sessions shared a single `pane_target` via substrate-wide state. Fix: per-session paneID.
-- **hk-ppt32** — CLOSED. SIGINT/timeout now drains queue to `cancelled` and renames `queue.json` so the next run starts clean.
-- **hk-cj0gm** — OPEN P1. Stop-hook `outcome_emitted` not reaching daemon socket. The thing blocking reliable code-touching dispatch.
-- **hk-17eci** — OPEN P3. tmuxSubstrate runWait reports `ExitCode=-1` on ctx-cancel; should reconcile with `processDead(pid)` first.
-- **hk-ajhqw** — OPEN P2 umbrella. NOT a crash; daemon misclassified hk-6x7dw success. Children hk-cj0gm + hk-17eci own real fixes.
-- **hk-8jh26** — OPEN P1, pre-existing. harmonik run: hang on bead failure + always exits 0 + silent queue overwrite.
-- **hk-tul2a / hk-uhvjo** — OPEN follow-ups from hk-rp48p reviewer (scenario test, spec amendment).
-- **Half-built systems pattern** — feature unit-tested + reviewer-APPROVED but broken at runtime. Dogfood is the canonical test.
+- **harmonik** — the project-local daemon that dispatches beads to claude sub-sessions, watches for completion, commits, merges to main, pushes, and closes the bead.
+- **--review-loop** — `harmonik run` flag that selects WorkflowModeReviewLoop = implement → review → fix iteration (capped at 3 per ON-004a). Currently opt-in; MUST be passed on every batch until hk-g0ckv flips the default.
+- **--notify-stream** — `harmonik run` flag (new today) that emits per-bead `[hk-XXX] success|failed` to stdout. Pair with a Monitor tool that greps the log for these lines to get mid-batch progress notifications.
+- **pasteinject** — the daemon's "watch the worktree for a new commit, then send `/quit` to claude" subsystem. Was the root cause of the recurring hang. Now self-recovers (hk-trjef).
+- **kerf** — the planning tool for non-trivial work (specs, plans, bugs). `kerf next` is the dispatch feed; if you disagree with it, fix the kerf work's `bead_filter` or file `label:kerf-upstream`. Don't silently override.
+- **DOT** — short for the kerf `phase-3-dot` work, the planned DAG-defined bead-process runtime. Replaces `--review-loop` once operational. Still in design pass.
+- **friction beads** — anything labeled `phase2-dogfood-friction`, `kerf-upstream`, `review-gate`, or otherwise blocking the orchestrator loop. Priority-bump to P1 minimum.
+- **hk-g0ckv (P0)** — flip `--review-loop` default. **Top priority.**
+- **hk-yejfj (P1)** — rewrite stale AGENTS.md Monitor block. Dispatch FIRST so the corrected text loads on next session-resume.
+- **hk-trjef (CLOSED today, `f2c395e`)** — pasteinject auto-recovery in-daemon.
+- **hk-ibilr (CLOSED today, `ce9d0e4`)** — `--notify-stream` flag.
+- **hk-j1aq5 (CLOSED today, `882d527`)** — rebase run-branch before ff-merge.
+- **Subsumed bead** — bead whose implementation already landed on main but the ledger never closed it. Pre-screen with `git log --all --grep "Refs: <id>"` before dispatching.
 
-## Loose ends / blockers
+## Loose ends
 
-- **`harmonik-twin-claude/` stray untracked directory** at repo root — persists across multiple sessions now. Inspect contents before deleting; likely a worktree-dispatch leak.
+- **`harmonik-twin-claude/` stray untracked directory** at repo root — still present from earlier sessions. Inspect before deleting.
 - **`.beads/.br_history.226mb-archived/`** (226MB) — safe to delete.
-- **`docs/kerf-feedback/2026-05-20-hk-ajhqw-crash.md`** — investigator wrote it, got lost in working-tree dance. Re-create from hk-cj0gm description + the claude session transcript if needed.
-- **`.gitignore` strip-on-`br doctor`** — `br doctor --repair` removes `.beads/*` from the ignore file; revert manually if it happens again. File feedback at `docs/kerf-feedback/2026-05-20.md`.
-- **kerf was UPDATED AGAIN** mid-session per user note — friction in `docs/kerf-feedback/2026-05-20.md` may already be fixed in the newest version. Re-probe `kerf next` early next session and log any new findings to a fresh dated file (NOT amending 2026-05-20.md).
-- **Pre-existing `TestBI010c_SpecContainsWorkflowLabelDiscipline` failure** — fixture reads wrong paragraph. File a small bead.
+- **`docs/kerf-feedback/2026-05-21.md`** — was not written this session; the friction findings live in the new bead descriptions (hk-b0cyc, hk-24xn1, hk-yejfj, hk-ze3op, hk-7nbey, hk-lhv8i, hk-g0ckv, hk-3jmke). File a consolidated kerf-feedback entry next session.
 
 ## No hard blockers requiring user input.

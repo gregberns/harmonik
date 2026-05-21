@@ -1304,7 +1304,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID)
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -1331,7 +1331,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID)
+		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -1787,7 +1787,7 @@ type workingTreeRefreshFailedPayload struct {
 //
 // Spec ref: specs/execution-model.md §4.12 EM-052, EM-053, EM-054.
 // Bead: hk-ftyvo, hk-4goy3.
-func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID) mergeOutcome {
+func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string) mergeOutcome {
 	runBranch := workspace.TaskBranchName(runID.String())
 
 	// Step 1: resolve run-branch tip.
@@ -1815,6 +1815,15 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 
 	if mainTip == runTip {
 		// Run-branch tip == main tip: no commits were made by the agent.
+		return mergeOutcome{noChange: true}
+	}
+
+	// hk-cwxow: false-positive guard. If runTip equals the fork-point SHA
+	// (headSHA), the agent made no commits regardless of where main now points.
+	// Without this check, when main has advanced past headSHA the is-ancestor
+	// test correctly fails and the daemon misreports "non_ff_merge" even though
+	// the agent did nothing.
+	if headSHA != "" && runTip == headSHA {
 		return mergeOutcome{noChange: true}
 	}
 

@@ -107,7 +107,9 @@ func mergeToMainFixtureHeadSHA(t *testing.T, repoRoot, branch string) string {
 }
 
 // mergeToMainFixtureAdvanceMain creates a diverging commit on main in repoRoot
-// so that any run-branch is no longer a fast-forward. Used to exercise EM-053.
+// so that any run-branch is no longer a fast-forward. The commit touches a
+// different file than the agent's work.txt, so a rebase will succeed without
+// conflicts. Used to test the rebase-success path (hk-j1aq5).
 func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -126,6 +128,29 @@ func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 	}
 	run("add", "DIVERGE")
 	run("commit", "-m", "diverging commit on main")
+}
+
+// mergeToMainFixtureAdvanceMainConflicting creates a diverging commit on main
+// that edits work.txt — the same file the agent writes — producing a rebase
+// conflict. Used to exercise the EM-053 rebase_conflict reopen path.
+func mergeToMainFixtureAdvanceMainConflicting(t *testing.T, repoRoot string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = repoRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("mergeToMainFixtureAdvanceMainConflicting: git %v: %v\n%s", args, err, out)
+		}
+	}
+	conflictPath := filepath.Join(repoRoot, "work.txt")
+	//nolint:gosec // G306: 0644 is fine for a test fixture file
+	if err := os.WriteFile(conflictPath, []byte("conflicting main content\n"), 0o644); err != nil {
+		t.Fatalf("mergeToMainFixtureAdvanceMainConflicting: WriteFile: %v", err)
+	}
+	run("add", "work.txt")
+	run("commit", "-m", "conflicting commit on main")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -477,19 +502,21 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 // Test: non-FF path (EM-053 assertions f–h)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestMergeToMain_NonFFReopen verifies that when main has advanced beyond the
-// run-branch's fork point (non-fast-forward), the daemon:
+// TestMergeToMain_NonFFReopen verifies that when main has advanced with a
+// conflicting commit (same file the agent modified), the daemon hits a rebase
+// conflict and:
 //
 //	(f) calls ReopenBead,
-//	(g) emits outcome_emitted{kind=rejected, reason containing "non_ff_merge"},
+//	(g) emits outcome_emitted{kind=rejected, reason containing "rebase_conflict"},
 //	(h) does NOT call CloseBead.
 //
 // Setup: after the worktree is created (forking from main), we add a diverging
-// commit to main before the daemon's Step 9 runs. The handler exits 0 so
-// branch 2 is taken. The merge check then finds main non-ancestor → EM-053 path.
+// commit to main that edits the same file as the agent — producing a rebase
+// conflict. The handler exits 0 so branch 2 is taken. The rebase then fails →
+// EM-053 rebase_conflict reopen path.
 //
-// Spec refs: specs/execution-model.md §4.12 EM-053.
-// Bead: hk-ftyvo.
+// Spec refs: specs/execution-model.md §4.12 EM-052 step 2, EM-053.
+// Bead: hk-ftyvo, hk-j1aq5.
 func TestMergeToMain_NonFFReopen(t *testing.T) {
 	t.Parallel()
 
@@ -502,29 +529,27 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// Use a custom worktreeFactory that:
-	//   1. Creates the real run-branch + commits a file (same as success test).
-	//   2. Then advances main with a diverging commit so the FF check fails.
-	nonFFFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
-		// Create worktree + commit (agent work).
+	//   1. Creates the real run-branch + commits work.txt (agent work).
+	//   2. Then advances main with a conflicting commit to work.txt so the rebase fails.
+	conflictFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 		wtPath, cleanup, err := mergeToMainCommittingFactory(t)(ctx, projectDir, runID, headSHA)
 		if err != nil {
 			return "", nil, err
 		}
-		// Advance main in the main repo after the branch is cut.
-		mergeToMainFixtureAdvanceMain(t, projectDir)
+		mergeToMainFixtureAdvanceMainConflicting(t, projectDir)
 		return wtPath, cleanup, nil
 	}
 
 	// Handler exits 0 — triggers the auto-close heuristic branch.
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:       ledger,
-		Bus:             collector,
-		ProjectDir:      projectDir,
-		HandlerBinary:   "/bin/sh",
-		HandlerArgs:     []string{"-c", "exit 0"},
-		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory: nonFFFactory,
+		WorktreeFactory:  conflictFactory,
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -551,15 +576,15 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 
 	// ── Assertion (f): ReopenBead called. ────────────────────────────────────
 	if got := ledger.getReopenedCount(); got < 1 {
-		t.Errorf("ReopenBead call count = %d; want ≥ 1 on non-FF path", got)
+		t.Errorf("ReopenBead call count = %d; want ≥ 1 on rebase-conflict path", got)
 	}
 
 	// ── Assertion (h): CloseBead NOT called. ─────────────────────────────────
 	if got := ledger.getClosedCount(); got != 0 {
-		t.Errorf("CloseBead call count = %d; want 0 on non-FF path (EM-053)", got)
+		t.Errorf("CloseBead call count = %d; want 0 on rebase-conflict path (EM-053)", got)
 	}
 
-	// ── Assertion (g): outcome_emitted{kind=rejected, reason=non_ff_merge}. ──
+	// ── Assertion (g): outcome_emitted{kind=rejected, reason=rebase_conflict}. ──
 	outcomeEvs := mergeToMainFindEvents(collector, "outcome_emitted")
 	if len(outcomeEvs) == 0 {
 		t.Errorf("no outcome_emitted events found; event stream: %v", mergeToMainEventOrder(collector))
@@ -569,16 +594,16 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 			t.Errorf("outcome_emitted kind = %q; want %q", kind, "rejected")
 		}
 		reason := mergeToMainPayloadReason(t, outcomeEvs[0])
-		if !strings.Contains(reason, "non_ff_merge") {
-			t.Errorf("outcome_emitted reason %q does not contain %q", reason, "non_ff_merge")
+		if !strings.Contains(reason, "rebase_conflict") {
+			t.Errorf("outcome_emitted reason %q does not contain %q", reason, "rebase_conflict")
 		}
 	}
 
 	// bead_closed must NOT appear.
 	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
-		t.Errorf("bead_closed emitted on non-FF path; want absent (EM-053): %v", evs)
+		t.Errorf("bead_closed emitted on rebase-conflict path; want absent (EM-053): %v", evs)
 	}
 
 	types := mergeToMainEventOrder(collector)
-	t.Logf("merge-to-main non-FF path OK: events: %v", types)
+	t.Logf("merge-to-main rebase-conflict path OK: events: %v", types)
 }

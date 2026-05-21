@@ -1819,10 +1819,11 @@ type workingTreeRefreshFailedPayload struct {
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
 //
 //  1. Resolve run-branch tip.
-//  2. Fast-forward check (non-FF → EM-053 reopen path).
-//  3. git update-ref refs/heads/main <tip>.
-//  4. git push origin main.
-//  5. git reset --hard HEAD (working-tree refresh, EM-054).
+//  2. Rebase run-branch onto main (hk-j1aq5; rebase_conflict → EM-053 reopen path).
+//  3. Fast-forward check (non-FF → EM-053 reopen path).
+//  4. git update-ref refs/heads/main <tip>.
+//  5. git push origin main.
+//  6. git reset --hard HEAD (working-tree refresh, EM-054).
 //
 // Returns a mergeOutcome. The caller is responsible for all event emission
 // and the CloseBead call; this function is a pure git-operation helper.
@@ -1873,7 +1874,42 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		return mergeOutcome{noChange: true}
 	}
 
-	// Step 2: fast-forward check.  main MUST be an ancestor of runTip.
+	// Step 2: rebase run-branch onto current main (hk-j1aq5).
+	//
+	// If main has advanced since the worktree was cut (parallel agents landing
+	// concurrently), rebase the run-branch onto main before the FF check.  This
+	// turns what would be a non_ff_merge failure into a successful merge as long
+	// as there are no conflicts.  On conflict: abort and return rebase_conflict
+	// so the bead is reopened (EM-053).
+	//
+	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
+	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
+	if _, statErr := os.Stat(wtPath); statErr == nil {
+		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
+		rebaseCmd.Dir = wtPath
+		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
+			abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+			abortCmd.Dir = wtPath
+			_ = abortCmd.Run()
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
+			}
+		}
+		// Rebase succeeded — re-resolve runTip and mainTip (both may have changed).
+		rebasedTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
+		rebasedTipCmd.Dir = projectDir
+		if rebasedOut, rebasedErr := rebasedTipCmd.Output(); rebasedErr == nil {
+			runTip = strings.TrimRight(string(rebasedOut), "\n")
+		}
+		rebasedMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
+		rebasedMainCmd.Dir = projectDir
+		if rebasedMainOut, rebasedMainErr := rebasedMainCmd.Output(); rebasedMainErr == nil {
+			mainTip = strings.TrimRight(string(rebasedMainOut), "\n")
+		}
+	}
+
+	// Step 3: fast-forward check.  main MUST be an ancestor of runTip.
 	// git merge-base --is-ancestor <main> <runTip> exits 0 iff main ⊆ runTip.
 	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
 	isAncCmd.Dir = projectDir

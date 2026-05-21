@@ -767,45 +767,58 @@ steps BEFORE calling `CloseBead`:
    `run/<run_id>` via `git rev-parse refs/heads/run/<run_id>` in the project
    repository root. If the run-branch has no commits beyond the HEAD that was
    current at dispatch time, the daemon MUST treat the run as no-change and
-   proceed to step 5 (skip merge, still close bead).
+   proceed to step 6 (skip merge, still close bead).
 
-2. **Fast-forward check.** Resolve the current tip SHA of `main` via
+2. **Rebase run-branch onto main.** If the worktree directory for the run still
+   exists on disk, the daemon MUST execute `git rebase main` from within the
+   worktree directory immediately before the fast-forward check. This allows
+   concurrent runs to succeed even when `main` has advanced since the worktree
+   was cut (hk-j1aq5). If the rebase exits non-zero, the daemon MUST run
+   `git rebase --abort` in the worktree directory, then proceed to the
+   `rebase_conflict` reopen path (EM-053). After a successful rebase, the
+   daemon MUST re-resolve the run-branch tip and the `main` tip before
+   continuing (both may have changed). If the worktree directory does not exist,
+   this step is skipped.
+
+3. **Fast-forward check.** Resolve the current tip SHA of `main` via
    `git rev-parse refs/heads/main`. If `main` is an ancestor of the run-branch
-   tip (i.e., the merge is a fast-forward), proceed to step 3. If `main` is NOT
-   an ancestor (non-FF — a concurrent push occurred), the daemon MUST NOT merge;
-   instead it MUST invoke `ReopenBead` with reason `non_ff_merge: main advanced
-   concurrently` and emit `outcome_emitted{kind=rejected, reason=non_ff_merge}`
-   (per EM-053 below), then `run_failed`, and return without closing the bead.
+   tip (i.e., the merge is a fast-forward), proceed to step 4. If `main` is NOT
+   an ancestor (non-FF — a concurrent push occurred after the rebase), the
+   daemon MUST NOT merge; instead it MUST invoke `ReopenBead` with reason
+   `non_ff_merge: main advanced concurrently` and emit
+   `outcome_emitted{kind=rejected, reason=non_ff_merge}` (per EM-053 below),
+   then `run_failed`, and return without closing the bead.
 
-3. **Fast-forward main.** Update `refs/heads/main` to the run-branch tip via
+4. **Fast-forward main.** Update `refs/heads/main` to the run-branch tip via
    `git update-ref refs/heads/main <run_branch_tip_sha>` in the project
    repository root.
 
-4. **Push origin main.** Execute `git push origin main` from the project
+5. **Push origin main.** Execute `git push origin main` from the project
    repository root (per push-autonomy directive). A push failure MUST NOT leave
    the bead closed; if push fails, the daemon MUST reopen the bead with reason
    `push_failed: <error>` and emit `outcome_emitted{kind=rejected,
    reason=push_failed}`, then `run_failed`.
 
-5. **Emit outcome and close.** Emit `outcome_emitted{kind=approved}` via the
+6. **Emit outcome and close.** Emit `outcome_emitted{kind=approved}` via the
    event bus. Then call `CloseBead`. On `CloseBead` error, emit `run_failed`
    (not `run_completed`) as for the existing close-error path.
 
-6. **Emit bead_closed.** After `CloseBead` succeeds, emit `bead_closed` via the
+7. **Emit bead_closed.** After `CloseBead` succeeds, emit `bead_closed` via the
    event bus, carrying `run_id` and `bead_id`.
 
-7. **Emit run_completed.** Emit `run_completed{success:true}` as the final event.
+8. **Emit run_completed.** Emit `run_completed{success:true}` as the final event.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
-Refs: hk-ftyvo
+Refs: hk-ftyvo, hk-j1aq5
 
-#### EM-053 — Non-FF and push-failure reopen path
+#### EM-053 — Non-FF, rebase-conflict, and push-failure reopen path
 
-When step 2 of §4.12.EM-052 detects a non-fast-forward condition, OR when step 4
-detects a push failure, the daemon MUST:
+When step 2 of §4.12.EM-052 detects a rebase conflict, OR when step 3 detects a
+non-fast-forward condition, OR when step 5 detects a push failure, the daemon
+MUST:
 
-1. Emit `outcome_emitted{kind=rejected, reason=<"non_ff_merge"|"push_failed">}`
+1. Emit `outcome_emitted{kind=rejected, reason=<"rebase_conflict"|"non_ff_merge"|"push_failed">}`
    via the event bus.
 2. Call `ReopenBead` with a descriptive reason string.
 3. Emit `run_failed` (not `run_completed`).
@@ -816,11 +829,11 @@ and retry or merge manually.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
-Refs: hk-ftyvo
+Refs: hk-ftyvo, hk-j1aq5
 
 #### EM-054 — Working-tree refresh after successful merge-to-main
 
-After step 3 (`git update-ref`) and step 4 (`git push`) of §4.12.EM-052 both
+After step 4 (`git update-ref`) and step 5 (`git push`) of §4.12.EM-052 both
 succeed, the daemon MUST refresh the project working tree to match the new HEAD.
 The required mechanism is:
 
@@ -1383,7 +1396,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EM-038 — EM-040 (validation).** Validator unit tests for every failure mode listed in EM-038, including sub-workflow-reference cycle detection and missing `start_node_id` / empty `terminal_node_ids`.
 - **EM-041 — EM-046, EM-046a, EM-046b (edge selection, backtracking, cycles).** Edge-cascade unit tests enumerating every precedence case; cycle-cap tests verifying `compilation_loop` failure at cap (disjoint from `structural`); traversal-counter recovery across restart verified by re-derivation from git log; rollback-transition tests verifying new `transition_id` and unchanged earlier commit; no-matching-edge scenario produces `structural` failure with reason `no_outgoing_edge_matches` (EM-046a); gate-deny enters `gate-pending` and waits for gate-resolution signal (EM-042a); RETRY re-dispatches the same node with context_updates applied pre-redispatch and fails as `transient` at retry-cap exhaustion (EM-046b).
 - **EM-049 — EM-051 (concurrency primitives).** Capacity-gate tests: with `max_concurrent = K` and a wave of N > K items, verify at most K runs are in-flight at any instant; verify slot-release on terminal triggers next dispatch (EM-049). Claim-serialization tests: concurrent ClaimBead writes are serialized through the token-pool of size `max_concurrent` (EM-050). Configuration tests: `--max-concurrent` accepts integer ≥ 1, defaults to 1, is sealed at startup (EM-051).
-- **EM-052 — EM-053 (merge-to-main on success).** Integration test: simulate a successful run on a worktree branch (`run/<run_id>`) with one commit; verify (a) `refs/heads/main` advances to the run-branch tip after Step 9 success branch executes, (b) a push-origin-main attempt is made, (c) `outcome_emitted{kind=approved}` event is emitted before `bead_closed`, (d) `bead_closed` event is emitted after `CloseBead`, (e) `run_completed{success:true}` is the final lifecycle event. Non-FF test: place an out-of-ancestry commit on `main` after the worktree branch is cut; verify (f) `ReopenBead` is called, (g) `outcome_emitted{kind=rejected, reason=non_ff_merge}` is emitted, (h) `CloseBead` is NOT called (EM-053).
+- **EM-052 — EM-053 (merge-to-main on success).** Integration test: simulate a successful run on a worktree branch (`run/<run_id>`) with one commit; verify (a) `refs/heads/main` advances to the run-branch tip after Step 9 success branch executes, (b) a push-origin-main attempt is made, (c) `outcome_emitted{kind=approved}` event is emitted before `bead_closed`, (d) `bead_closed` event is emitted after `CloseBead`, (e) `run_completed{success:true}` is the final lifecycle event. Non-FF test: place an out-of-ancestry commit on `main` after the worktree branch is cut AND after the rebase completes; verify (f) `ReopenBead` is called, (g) `outcome_emitted{kind=rejected, reason=non_ff_merge}` is emitted, (h) `CloseBead` is NOT called (EM-053). Rebase test: advance `main` concurrently without conflicts; verify (i) rebase succeeds, (j) `refs/heads/main` advances to the rebased run-branch tip, (k) `outcome_emitted{kind=approved}` is emitted. Rebase-conflict test: advance `main` with a conflicting change; verify (l) `ReopenBead` is called with `rebase_conflict` reason, (m) `CloseBead` is NOT called.
 - **EM-054 (working-tree refresh after successful merge).** Integration test: after a successful merge-to-main (EM-052 path), verify that `git status --porcelain` in the project root is empty for files modified by the run-branch commit (i.e., the project working tree reflects HEAD). Refresh-failure test: inject a stub that makes `git reset --hard HEAD` fail; verify (a) `CloseBead` is still called (merge succeeded), (b) a `working_tree_refresh_failed` event is emitted, (c) `ReopenBead` is NOT called.
 
 Migration to `[testing.md §<layer>]` cross-references occurs within one revision cycle once testing.md lands; this obligation is tracked in OQ-EM-003.
@@ -1450,6 +1463,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-21 | 0.5.4 | agent (hk-j1aq5) | **Pre-merge rebase step: EM-052 step 2, EM-053 extended.** Inserts a new step 2 into EM-052: if the run worktree directory still exists, the daemon MUST `git rebase main` in the worktree before the FF check (hk-j1aq5). On rebase conflict: `git rebase --abort` then fall through to the EM-053 reopen path with reason `rebase_conflict`. On rebase success: re-resolve both the run-branch tip and `main` tip before the FF check. This eliminates spurious `non_ff_merge` failures when parallel agents land concurrently. Steps renumbered: old 2→3, 3→4, 4→5, 5→6, 6→7, 7→8. References in EM-053 ("step 2", "step 4"), EM-054 ("step 3 and step 4"), and §10.2 test obligations updated accordingly. EM-053 title extended to include `rebase_conflict` as a third trigger. No new requirement IDs; strictly amendatory over v0.5.3. Refs: hk-j1aq5. |
 | 2026-05-18 | 0.5.3 | agent (hk-rwdvm) | **EM-015e grammar catchup: add ENUM ReviewLoopCompletionReason to §6.1.** EM-015e prose at §4.3 already carried all five values (`approved`, `cap_hit`, `blocked`, `no_progress`, `error`) and the code in `internal/core/reviewloopevents_hk7om2q4.go` already emits `error` on malformed-verdict paths. The §6.1 grammar section lacked a formal `ENUM ReviewLoopCompletionReason` block — added here to close the code↔spec surface gap. The `error` value's one-line rationale cites [event-model.md §8.1a.3] which is the normative authority for the `review_loop_cycle_complete` payload. No requirement IDs added, renumbered, or retired; strictly additive over v0.5.2. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. |
 | 2026-04-23 | 0.2.0 | foundation-author | Round-1 reviewer integration. Dropped event-model from `depends-on` (breaks cycle; moved to §9.3). Added typed ID aliases (RunID/StateID/TransitionID/NodeID/BeadID/CommitRange). Added `start_node_id` and `terminal_node_ids` to Workflow schema. Added `context` field to Run schema. Added new requirements EM-017a (corrupted-checkpoint fallback), EM-018a (transition_id uniqueness contract — chose UUIDv7 uniqueness over run-scoped path as less disruptive), EM-020a (audit tool rule), EM-023a (durability decision table; includes PARTIAL_SUCCESS handling), EM-031a (active-run discovery), EM-034a (sub-workflow node-ID namespacing), EM-034b (sub-workflow reference acyclicity), EM-041a (context-update ordering), EM-043a (traversal-counter storage locus). Retired invariants EM-INV-002 (duplicate of EM-023), EM-INV-003 (duplicate of EM-019), and EM-INV-006 (duplicate of EM-012) per §5 selection test; surviving invariants keep original IDs EM-INV-001, EM-INV-004, EM-INV-005 (retired IDs are not reused per template). Fixed MUST/SHOULD discipline on EM-010 (normative defaults), EM-017 (added fallback), EM-020 (removed redundant Axes per declaration exemption — moved to EM-017/EM-018 write requirements), EM-025 (strengthened to MUST NOT at MVH), EM-039 (positive phrasing), EM-041 (collapsed double-modal). Defined "durable transition" mechanically in glossary + EM-023a. Defined "terminal node" and "in-flight run" in glossary. Deferred sub-workflow event names to event-model per §2.2 scope discipline (EM-036). Fixed emission ownership in §7.1 and §8 (operator_stopped, budget_exhausted owned upstream). Clarified `compilation_loop` vs `structural` as disjoint at emission. Removed `Harmonik-Verdict-Executed` from §6.2 trailer table (deferred to reconciliation §9.5b). Added EM-016 atomic-commit plumbing (write-tree / commit-tree / update-ref). Added EM-046 rollback-to-state-id constraint for context-restore. Added OQ-EM-005 (bootstrap migration), OQ-EM-006 (ErrCompilationLoop coordination), OQ-EM-007 (sub-workflow terminal outcome composition). |

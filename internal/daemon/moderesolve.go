@@ -88,7 +88,9 @@ func resolveWorkflowMode(
 	}
 
 	// ── Tier 4: hard fallback ──────────────────────────────────────────────
-	return core.WorkflowModeSingle
+	// hk-g0ckv: review-loop is the system default; single is available via
+	// per-bead label or the --no-review-loop CLI flag.
+	return core.WorkflowModeReviewLoop
 }
 
 // emitBeadLabelConflict emits a bead_label_conflict event per

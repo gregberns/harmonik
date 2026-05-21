@@ -12,7 +12,7 @@ Read [AGENT_INDEX.md](AGENT_INDEX.md) first. It is the master map of the knowled
 
 1. `bv --robot-triage` and `kerf next` — surface the prioritized work.
 2. Pick a batch of 3–5 beads from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats" until the probes land).
-3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead.
+3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead. Review-loop is **on by default** (hk-g0ckv); pass `--no-review-loop` to opt out.
 4. While harmonik runs: queue the next batch, drain `kerf triage` untriaged items, file follow-ups from prior runs, review recently-merged commits.
 5. On exit: review outcomes, dispatch next batch.
 

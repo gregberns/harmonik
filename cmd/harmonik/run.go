@@ -20,7 +20,8 @@ package main
 //	--context <string>     Free-form text injected as "## Extra Context" in the
 //	                       agent-task.md for every dispatched item (hk-boiwe).
 //	--context @<file>      Same, but read context from a file (hk-boiwe).
-//	--review-loop          Route all items through WorkflowModeReviewLoop (hk-hiqrl).
+//	--no-review-loop       Opt out of review-loop workflow; items run single-node (hk-g0ckv).
+//	--review-loop          Deprecated alias; review-loop is now the default (hk-g0ckv).
 //	--notify-stream        Write one line per bead completion to stdout (hk-ibilr).
 //	--notify-stream=<path> Same, but write to a FIFO or file instead of stdout.
 //
@@ -76,7 +77,7 @@ func runBeadSubcommand(subArgs []string) int {
 	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
 	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
 	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
-	reviewLoop := false    // --review-loop (hk-hiqrl)
+	reviewLoop := true    // default ON per hk-g0ckv; --no-review-loop opts out
 	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
 	positional := []string{}
@@ -123,8 +124,10 @@ func runBeadSubcommand(subArgs []string) int {
 		case strings.HasPrefix(arg, "--context="):
 			contextFlag = strings.TrimPrefix(arg, "--context=")
 
-		// --review-loop (hk-hiqrl)
-		case arg == "--review-loop":
+		// --no-review-loop (hk-g0ckv): opt out; --review-loop kept as deprecated alias
+		case arg == "--no-review-loop":
+			reviewLoop = false
+		case arg == "--review-loop": // deprecated: review-loop is now the default (hk-g0ckv)
 			reviewLoop = true
 
 		// --notify-stream[=path] (hk-ibilr)
@@ -176,8 +179,8 @@ func runBeadSubcommand(subArgs []string) int {
 		beadIDs = []core.BeadID{core.BeadID(positional[0])}
 	case len(positional) == 0:
 		fmt.Fprintln(os.Stderr, "harmonik run: missing <bead-id> argument")
-		fmt.Fprintln(os.Stderr, "usage: harmonik run <bead-id> [--project DIR] [--context TEXT] [--review-loop]")
-		fmt.Fprintln(os.Stderr, "       harmonik run --beads id1,id2,... [--max-concurrent N] [--project DIR] [--context TEXT] [--review-loop]")
+		fmt.Fprintln(os.Stderr, "usage: harmonik run <bead-id> [--project DIR] [--context TEXT] [--no-review-loop]")
+		fmt.Fprintln(os.Stderr, "       harmonik run --beads id1,id2,... [--max-concurrent N] [--project DIR] [--context TEXT] [--no-review-loop]")
 		return 1
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik run: too many positional arguments (got %d, expected 1); use --beads for multiple\n", len(positional))
@@ -200,10 +203,12 @@ func runBeadSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Resolve workflow mode for --review-loop.
-	itemWorkflowMode := ""
+	// Resolve workflow mode. Review-loop is the default (hk-g0ckv); --no-review-loop opts out.
+	var itemWorkflowMode string
 	if reviewLoop {
 		itemWorkflowMode = string(core.WorkflowModeReviewLoop)
+	} else {
+		itemWorkflowMode = string(core.WorkflowModeSingle)
 	}
 
 	// --- Resolve --notify-stream writer (hk-ibilr) ---
@@ -525,7 +530,8 @@ FLAGS
   --max-concurrent N     Maximum simultaneous beads (default 1)
   --context TEXT         Free-form extra context injected into each agent task
   --context @FILE        Same, but read context from a file
-  --review-loop          Route all beads through the review-loop workflow
+  --no-review-loop       Opt out of review-loop workflow (default: on); beads run single-node
+  --review-loop          Deprecated: review-loop is now the default; this flag is a no-op
   --notify-stream        Write one line per bead completion to stdout
   --notify-stream=PATH   Same, but write to a FIFO or file
   --project DIR          Project directory (default: current working directory)
@@ -541,7 +547,7 @@ EXAMPLES
   harmonik run --beads hk-abc123,hk-def456 --max-concurrent 2
   harmonik run hk-abc123 --context "Focus on the migration spec only"
   harmonik run hk-abc123 --context @/path/to/context.txt
-  harmonik run hk-abc123 --review-loop
+  harmonik run hk-abc123 --no-review-loop
   harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
   harmonik run --beads hk-abc123,hk-def456 --notify-stream
   harmonik run --beads hk-abc123,hk-def456 --notify-stream=/tmp/hk-events.fifo

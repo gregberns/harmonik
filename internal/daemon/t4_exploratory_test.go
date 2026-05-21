@@ -698,9 +698,9 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// synthLaunchSpecBuilder (injected by default in ExportedWorkLoopDeps) bypasses
-	// bridge file I/O, so CloseBead should be called within milliseconds. Keep a
-	// generous 10s safety margin for CI variability (hk-kqdpf.1).
+	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; the handler
+	// exits 0, stopHookGrace (~3s) fires, then CloseBead is called. 15s total
+	// budget covers git worktree creation + grace window + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

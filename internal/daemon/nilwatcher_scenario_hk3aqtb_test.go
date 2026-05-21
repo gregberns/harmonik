@@ -302,13 +302,12 @@ func TestScenario_ReviewLoop_NilWatcherNoRace(t *testing.T) {
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 		Substrate:           sub,
-		// AdapterRegistry2 must be non-nil after hk-d8u1y deleted the nil-guard.
-		// The nil-watcher path under test is about watcher==nil (substrate path),
-		// not the registry. ForAgent will find the adapter and waitAgentReady will
-		// run, but the handler exits quickly so watcher.Done() fires first, causing
-		// context.Canceled which falls through to waitWithSocketGrace — the same
-		// observable behaviour as before (hk-d8u1y).
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty sealed registry: ForAgent(claude-code) returns an error so
+		// waitAgentReady is skipped in reviewloop.go. The nil-watcher path under
+		// test is about watcher==nil (substrate path); the reviewer is a shell
+		// fixture that never delivers agent_ready via hook relay, so skipping
+		// waitAgentReady is correct (hk-d8u1y, hk-ngw3d).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

@@ -38,3 +38,18 @@ func NewSealedAdapterRegistryForTest(t *testing.T) *handlercontract.AdapterRegis
 	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) // seal
 	return reg
 }
+
+// NewEmptySealedAdapterRegistryForTest constructs and seals an AdapterRegistry
+// with NO adapters registered. ForAgent always returns an error, causing
+// waitAgentReady to be skipped in both workloop.go and reviewloop.go.
+//
+// Use this in shell-fixture tests whose reviewer/implementer is a script (not
+// real Claude Code) and therefore never delivers agent_ready via the hook relay.
+// With no claude-code adapter, the waitAgentReady gate is bypassed entirely and
+// the bead run proceeds on process exit code alone (hk-ngw3d).
+func NewEmptySealedAdapterRegistryForTest(t *testing.T) *handlercontract.AdapterRegistry {
+	t.Helper()
+	reg := handlercontract.NewAdapterRegistry()
+	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) // seal; ForAgent returns error (no adapter registered)
+	return reg
+}

@@ -12,9 +12,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -76,16 +74,15 @@ type WorkLoopDepsParams struct {
 	// RegisterHookSession / CloseHookSession / WaitForOutcome calls (hk-gql20.21,
 	// hk-kqdpf.1).
 	//
-	// When nil, ExportedWorkLoopDeps installs a synthHookStore that immediately
-	// synthesises a WORK_COMPLETE outcome_emitted on every RegisterHookSession
-	// call. This prevents the 3-second stopHookGrace window from firing in
-	// shell-fixture tests whose handlers exit quickly without a real Stop-hook
-	// relay.
+	// When nil, ExportedWorkLoopDeps installs a real hookSessionStore (via
+	// newHookSessionStore). Shell-fixture tests whose handlers exit without a
+	// real Stop-hook relay will hit the 3-second stopHookGrace window in
+	// waitWithSocketGrace before proceeding on exit code.
 	//
 	// Supply an explicit *hookSessionStore (via ExportedNewHookSessionStore) for
 	// tests that need to observe or control hook-relay routing directly.
 	//
-	// Bead ref: hk-gql20.21, hk-kqdpf.1.
+	// Bead ref: hk-gql20.21, hk-kqdpf.1, hk-ngw3d.
 	HookStore hookStoreIface
 
 	// AdapterRegistry2 is the sealed adapter registry forwarded to beadRunOne
@@ -117,25 +114,28 @@ type WorkLoopDepsParams struct {
 	ProjectCfg ProjectConfig
 
 	// LaunchSpecBuilder, when non-nil, overrides the buildClaudeLaunchSpec
-	// function called by beadRunOne. Production tests leave this nil; the
-	// ExportedWorkLoopDeps default installs synthLaunchSpecBuilder, which
-	// returns a minimal spec with no file I/O, avoiding MaterializeClaudeSettings
-	// fsyncs that would otherwise slow down shell-fixture tests.
+	// function called by beadRunOne. When nil, the production buildClaudeLaunchSpec
+	// is used (via the nil-guard in beadRunOne). Tests that use this path must
+	// have projectDir pointing at a real git repository so that
+	// productionWorktreeFactory can create a worktree before LaunchSpecBuilder
+	// writes into it.
 	//
-	// Supply an explicit builder to exercise the real bridge setup path (e.g. to
-	// test CHB-001..005 or CHB-024 behaviours).
+	// Supply an explicit builder only to override specific CHB-001..005 / CHB-024
+	// behaviours; prefer nil (production path) for correctness.
 	//
-	// Bead ref: hk-kqdpf.1.
+	// Bead ref: hk-kqdpf.1, hk-ngw3d.
 	LaunchSpecBuilder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
 
 	// WorktreeFactory, when non-nil, overrides the worktree creation function
-	// in beadRunOne. Production tests leave this nil; the ExportedWorkLoopDeps
-	// default installs synthWorktreeFactory, which creates a plain temp directory
-	// instead of a git worktree, avoiding git worktree contention under parallel
-	// load. Tests that need a real git worktree (e.g. workspace integration tests)
-	// should supply productionWorktreeFactory explicitly.
+	// in beadRunOne. When nil, the production productionWorktreeFactory (real
+	// git worktree) is used via the nil-guard in beadRunOne. Tests must therefore
+	// have projectDir pointing at a real git repository with at least one commit
+	// so that `git worktree add` succeeds.
 	//
-	// Bead ref: hk-kqdpf.1.
+	// Supply an explicit factory only to intercept or wrap worktree creation
+	// (e.g. mergeToMainCommittingFactory for merge-to-main tests).
+	//
+	// Bead ref: hk-kqdpf.1, hk-ngw3d.
 	WorktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
 	// QueueStore, when non-nil, enables the queue-pull dispatch path in
@@ -205,33 +205,23 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		adapterReg = handlercontract.NewAdapterRegistry()
 	}
 
-	// Use the caller-supplied HookStore or fall back to a synthHookStore (hk-kqdpf.1).
-	// synthHookStore immediately returns a WORK_COMPLETE outcome_emitted on
-	// WaitForOutcome, avoiding the 3-second stopHookGrace window in shell-fixture
-	// tests whose handlers exit quickly without a real Stop-hook relay.
+	// Use the caller-supplied HookStore or fall back to a real hookSessionStore
+	// (hk-ngw3d). Shell-fixture tests whose handlers exit without a real
+	// Stop-hook relay will hit the 3-second stopHookGrace window before
+	// proceeding on exit code.
 	var hookStore hookStoreIface
 	if p.HookStore != nil {
 		hookStore = p.HookStore
 	} else {
-		hookStore = newSynthHookStore()
+		hookStore = newHookSessionStore()
 	}
 
-	// Use the caller-supplied LaunchSpecBuilder or fall back to synthLaunchSpecBuilder
-	// (hk-kqdpf.1). synthLaunchSpecBuilder skips MaterializeClaudeSettings fsyncs and
-	// other bridge file I/O, keeping shell-fixture tests fast.
+	// LaunchSpecBuilder and WorktreeFactory: pass the caller-supplied value
+	// (which may be nil) directly to workLoopDeps. When nil, beadRunOne uses
+	// the production nil-guards to wire buildClaudeLaunchSpec and
+	// productionWorktreeFactory respectively (hk-ngw3d).
 	lsb := p.LaunchSpecBuilder
-	if lsb == nil {
-		lsb = synthLaunchSpecBuilder
-	}
-
-	// Use the caller-supplied WorktreeFactory or fall back to synthWorktreeFactory
-	// (hk-kqdpf.1). synthWorktreeFactory uses os.MkdirTemp instead of git worktree
-	// add, avoiding git subprocess overhead and cross-test git contention under
-	// parallel load.
 	wtf := p.WorktreeFactory
-	if wtf == nil {
-		wtf = synthWorktreeFactory
-	}
 
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
@@ -360,98 +350,12 @@ func ExportedNewHookSessionStore() *hookSessionStore {
 	return newHookSessionStore()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// synthWorktreeFactory — test-only stub that bypasses git worktree creation
-// ─────────────────────────────────────────────────────────────────────────────
-
-// synthWorktreeFactory is the default worktreeFactory for ExportedWorkLoopDeps
-// (hk-kqdpf.1). It creates a plain temporary directory instead of a real git
-// worktree, avoiding the git subprocess overhead and cross-test git contention
-// that occurs under parallel test load on macOS.
-//
-// The cleanup removes the temp dir. Tests that need a real git worktree should
-// supply WorktreeFactory: productionWorktreeFactory (exported via
-// ExportedProductionWorktreeFactory) in WorkLoopDepsParams.
-func synthWorktreeFactory(_ context.Context, _, runID, _ string) (string, func(), error) {
-	wtPath, err := os.MkdirTemp("", "synth-wt-"+runID+"-")
-	if err != nil {
-		return "", nil, fmt.Errorf("synthWorktreeFactory: MkdirTemp: %w", err)
-	}
-	return wtPath, func() { _ = os.RemoveAll(wtPath) }, nil
-}
-
 // ExportedProductionWorktreeFactory exposes productionWorktreeFactory for tests
-// that need a real git worktree (e.g. integration tests exercising workspace ops).
+// that need to wrap or observe real git worktree creation (e.g. merge-to-main
+// integration tests).
 //
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
-
-// ─────────────────────────────────────────────────────────────────────────────
-// synthLaunchSpecBuilder — test-only stub that bypasses bridge file I/O
-// ─────────────────────────────────────────────────────────────────────────────
-
-// synthLaunchSpecBuilder is the default launchSpecBuilder for ExportedWorkLoopDeps
-// (hk-kqdpf.1). It returns a minimal handler.LaunchSpec — only Binary is set —
-// with no file I/O (no MaterializeClaudeSettings fsyncs, no MintClaudeSessionID,
-// no CheckSettingsLocalJSON). The claudeRunArtifacts carries a synthetic session
-// ID so that RegisterHookSession / CloseHookSession calls (both no-ops in
-// synthHookStore) have a non-empty key.
-//
-// The caller (beadRunOne) prepends any HandlerArgs to spec.Args after this
-// function returns, so shell-fixture tests continue to work with only Binary set.
-func synthLaunchSpecBuilder(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
-	artifacts := claudeRunArtifacts{
-		claudeSessionID: "synth-" + rc.runID.String(),
-	}
-	spec := handler.LaunchSpec{
-		Binary: rc.handlerBinary,
-	}
-	return spec, artifacts, nil
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// synthHookStore — test-only stub that synthesises WORK_COMPLETE outcomes
-// ─────────────────────────────────────────────────────────────────────────────
-
-// synthHookStore is a hookStoreIface stub used as the default HookStore in
-// ExportedWorkLoopDeps (hk-kqdpf.1).
-//
-// It is designed for shell-fixture tests where no real Stop-hook relay connects.
-// Rather than blocking for the 3-second stopHookGrace window in
-// waitWithSocketGrace, WaitForOutcome returns (nil, nil) immediately so that
-// branch 2 (exit=0 → CloseBead) or the default branch (exit≠0 → ReopenBead)
-// handles the outcome based purely on the subprocess exit code.
-//
-// Tests that need to observe or control real hook-relay routing should supply
-// an explicit *hookSessionStore via WorkLoopDepsParams.HookStore.
-type synthHookStore struct{}
-
-// newSynthHookStore returns a synthHookStore.
-func newSynthHookStore() *synthHookStore { return &synthHookStore{} }
-
-// RegisterHookSession is a no-op: synthHookStore never blocks on outcome delivery.
-func (s *synthHookStore) RegisterHookSession(_, _ string) {}
-
-// CloseHookSession is a no-op.
-func (s *synthHookStore) CloseHookSession(_, _ string) {}
-
-// LatestOutcome always returns nil — no outcome is pre-seeded.
-func (s *synthHookStore) LatestOutcome(_, _ string) *json.RawMessage { return nil }
-
-// WaitForOutcome returns (nil, nil) immediately, skipping the stopHookGrace window.
-func (s *synthHookStore) WaitForOutcome(_ context.Context, _, _ string) (json.RawMessage, error) {
-	return nil, nil
-}
-
-// SetAgentReadyCallback fires the callback immediately in a goroutine so that
-// waitAgentReady receives agent_ready without waiting for a real hook-bridge.
-// This matches the production path (callback is fired from the socket-acceptor
-// goroutine) and unblocks waitAgentReady for tests using synthHookStore (hk-d8u1y).
-func (s *synthHookStore) SetAgentReadyCallback(_, _ string, cb func()) {
-	if cb != nil {
-		go cb()
-	}
-}
 
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {

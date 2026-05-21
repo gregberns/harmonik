@@ -247,10 +247,9 @@ func TestScenario_ReviewLoop_AgentReadyTimeoutRequeues(t *testing.T) {
 		// agentReadyTimeout of 100ms" — the reviewer script hangs for 3600s, so
 		// the timeout fires long before the script would exit naturally.
 		AgentReadyTimeout: 100 * time.Millisecond,
-		// Use a real hookSessionStore rather than synthHookStore so that
-		// SetAgentReadyCallback does NOT fire immediately. The reviewer script
-		// hangs and never emits agent_ready; we need the timeout path to fire,
-		// not the synth fast-path that immediately signals ready (hk-d8u1y).
+		// Explicit hookSessionStore so SetAgentReadyCallback wires correctly;
+		// the reviewer script hangs and never emits agent_ready, so the
+		// AgentReadyTimeout path fires (hk-d8u1y, hk-ngw3d).
 		HookStore: daemon.ExportedNewHookSessionStore(),
 	})
 

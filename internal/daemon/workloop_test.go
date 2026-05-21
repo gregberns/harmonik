@@ -287,8 +287,8 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
-	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
+	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -383,8 +383,8 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
-	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
+	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -571,8 +571,9 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		MaxConcurrent: 2,
 	})
 
-	// synthWorktreeFactory + synthLaunchSpecBuilder make each bead fast (<200ms in
-	// isolation). Keep generous margins for CI parallel load (hk-kqdpf.1).
+	// Real productionWorktreeFactory + buildClaudeLaunchSpec run concurrently for
+	// both beads; stopHookGrace (~3s) per bead runs in parallel at MaxConcurrent=2.
+	// 30s budget covers git + grace + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -701,8 +702,8 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// synthWorktreeFactory + synthLaunchSpecBuilder make this fast (<200ms in
-	// isolation). Keep a generous 15s safety margin for CI parallel load (hk-kqdpf.1).
+	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
+	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -883,9 +884,8 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		MaxConcurrent: maxConcurrent,
 	})
 
-	// synthLaunchSpecBuilder (injected by default in ExportedWorkLoopDeps) bypasses
-	// MaterializeClaudeSettings fsyncs, so each bead runs in milliseconds.
-	// Keep the context generous (30s) as a safety margin (hk-kqdpf.1).
+	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; stopHookGrace
+	// (~3s) fires per bead. 30s budget covers git + grace + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

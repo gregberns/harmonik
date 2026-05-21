@@ -200,14 +200,14 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 
 	// Construct a hookSessionStore where we can inject relay envelopes and
 	// track what the relay dispatched. We use ExportedNewHookSessionStore()
-	// so the store is real (not synthHookStore), letting us observe dispatch.
+	// so we can observe and control relay dispatch independent of the work loop.
 	store := daemon.ExportedNewHookSessionStore()
 
 	// Track every relay-dispatched envelope type. We will register a session
 	// key matching what the work loop will register, then dispatch relay events
 	// before the handler exits.
 	const relayRunID = "chbinv002-wl-run-01"
-	const relaySessionID = "synth-chbinv002-wl-run-01" // matches synthLaunchSpecBuilder pattern
+	const relaySessionID = "chbinv002-relay-sess-01" // independent of work loop's session ID
 
 	// Pre-register the session so relay dispatches before the handler exits
 	// are accepted. The work loop registers its own key with runID generated
@@ -269,9 +269,9 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 	//    from the relay). The work loop is the handler-process's emitter of the
 	//    single terminal event.
 	//
-	//    We use ExportedWorkLoopDeps with synthHookStore (default) so the work
-	//    loop resolves immediately on handler exit, rather than waiting for the
-	//    3-second stopHookGrace window. The handler exits non-zero → ReopenBead.
+	//    ExportedWorkLoopDeps uses a real hookSessionStore (hk-ngw3d); the work
+	//    loop hits the 3-second stopHookGrace window after handler exit before
+	//    proceeding on exit code. The handler exits non-zero → ReopenBead.
 	//    The bus (collector) captures all emitted events including agent_failed
 	//    from the watcher (via handler stdout).
 	//
@@ -298,9 +298,8 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{scriptPath},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		// HookStore: nil → uses synthHookStore (immediate WORK_COMPLETE synthesis
+		// HookStore: nil → real hookSessionStore; stopHookGrace (~3s) fires on exit.
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		// on WaitForOutcome), preventing the 3-second grace window in shell-fixture tests.
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

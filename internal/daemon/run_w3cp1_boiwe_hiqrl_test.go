@@ -403,11 +403,11 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	// The synthHookStore installed by ExportedWorkLoopDeps synthesises WORK_COMPLETE
-	// on every RegisterHookSession so the review-loop's WaitForOutcome unblocks.
-	// The handler exits 0; without a real verdict file the review loop exits via
-	// its error path and reopens the bead. Either closed or reopened is acceptable:
-	// both confirm the bead reached a terminal state via review-loop dispatch.
+	// The real hookSessionStore installed by ExportedWorkLoopDeps will wait up
+	// to stopHookGrace (3s) in WaitForOutcome. The handler exits 0; without a
+	// real verdict file the review loop exits via its error path and reopens
+	// the bead. Either closed or reopened is acceptable: both confirm the bead
+	// reached a terminal state via review-loop dispatch (hk-ngw3d).
 	p := daemon.WorkLoopDepsParams{
 		BrAdapter:          ledger,
 		Bus:                bus,

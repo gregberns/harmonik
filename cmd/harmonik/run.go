@@ -2,8 +2,8 @@ package main
 
 // run.go — `harmonik run <bead-id>` subcommand implementation.
 //
-// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl):
-//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop.
+// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr):
+//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream.
 //  2. Resolve br binary via PATH.
 //  3. Validate every bead exists and is in a claimable state (open/ready).
 //  4. Guard against an existing active queue (QM-027).
@@ -21,6 +21,8 @@ package main
 //	                       agent-task.md for every dispatched item (hk-boiwe).
 //	--context @<file>      Same, but read context from a file (hk-boiwe).
 //	--review-loop          Route all items through WorkflowModeReviewLoop (hk-hiqrl).
+//	--notify-stream        Write one line per bead completion to stdout (hk-ibilr).
+//	--notify-stream=<path> Same, but write to a FIFO or file instead of stdout.
 //
 // Exit-code contract:
 //
@@ -36,6 +38,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -70,10 +73,12 @@ func runBeadSubcommand(subArgs []string) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
-	beadsFlag := ""     // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1  // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""   // --context <inline|@file> (hk-boiwe)
-	reviewLoop := false // --review-loop (hk-hiqrl)
+	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
+	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
+	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
+	reviewLoop := false    // --review-loop (hk-hiqrl)
+	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
+	notifyStreamSet := false
 	positional := []string{}
 
 	for i := 0; i < len(subArgs); i++ {
@@ -121,6 +126,17 @@ func runBeadSubcommand(subArgs []string) int {
 		// --review-loop (hk-hiqrl)
 		case arg == "--review-loop":
 			reviewLoop = true
+
+		// --notify-stream[=path] (hk-ibilr)
+		case arg == "--notify-stream":
+			notifyStreamSet = true
+			notifyStream = "-" // stdout
+		case strings.HasPrefix(arg, "--notify-stream="):
+			notifyStreamSet = true
+			notifyStream = strings.TrimPrefix(arg, "--notify-stream=")
+			if notifyStream == "" {
+				notifyStream = "-"
+			}
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
@@ -188,6 +204,25 @@ func runBeadSubcommand(subArgs []string) int {
 	itemWorkflowMode := ""
 	if reviewLoop {
 		itemWorkflowMode = string(core.WorkflowModeReviewLoop)
+	}
+
+	// --- Resolve --notify-stream writer (hk-ibilr) ---
+
+	var notifyWriter io.Writer
+	var notifyFile *os.File
+	if notifyStreamSet {
+		if notifyStream == "-" {
+			notifyWriter = os.Stdout
+		} else {
+			var openErr error
+			//nolint:gosec // G304: operator-controlled path from CLI flag
+			notifyFile, openErr = os.OpenFile(notifyStream, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+			if openErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik run: --notify-stream: cannot open %q: %v\n", notifyStream, openErr)
+				return 1
+			}
+			notifyWriter = notifyFile
+		}
 	}
 
 	// --- Resolve project directory ---
@@ -382,9 +417,10 @@ func runBeadSubcommand(subArgs []string) int {
 		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
 		DaemonBinaryPath:   daemonBinaryPath,
 		BinaryCommitHash:   commitHash,
-		CancelOnQueueDrain: cancelRun, // success path (hk-icecw)
-		CancelOnQueueExit:  cancelRun, // failure path (hk-8jh26 Fix 1)
-		QueueStore:         qs,        // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		CancelOnQueueDrain: cancelRun,    // success path (hk-icecw)
+		CancelOnQueueExit:  cancelRun,    // failure path (hk-8jh26 Fix 1)
+		QueueStore:         qs,           // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:       notifyWriter, // hk-ibilr: per-bead completion lines
 	}
 
 	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.
@@ -425,6 +461,9 @@ func runBeadSubcommand(subArgs []string) int {
 
 	startErr := daemon.Start(runCtx, cfg)
 	close(daemonDone) // disarm watchdog
+	if notifyFile != nil {
+		_ = notifyFile.Close()
+	}
 	if startErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: %v\n", startErr)
 		if errors.Is(startErr, lifecycle.ErrPidfileLocked) {
@@ -487,6 +526,8 @@ FLAGS
   --context TEXT         Free-form extra context injected into each agent task
   --context @FILE        Same, but read context from a file
   --review-loop          Route all beads through the review-loop workflow
+  --notify-stream        Write one line per bead completion to stdout
+  --notify-stream=PATH   Same, but write to a FIFO or file
   --project DIR          Project directory (default: current working directory)
 
 EXIT CODES
@@ -502,5 +543,7 @@ EXAMPLES
   harmonik run hk-abc123 --context @/path/to/context.txt
   harmonik run hk-abc123 --review-loop
   harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
+  harmonik run --beads hk-abc123,hk-def456 --notify-stream
+  harmonik run --beads hk-abc123,hk-def456 --notify-stream=/tmp/hk-events.fifo
 `)
 }

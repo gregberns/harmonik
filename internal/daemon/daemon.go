@@ -281,6 +281,19 @@ type Config struct {
 	//
 	// Bead ref: hk-kac8g.
 	HandlerPauseController *HandlerPauseController
+
+	// NotifyStream, when non-nil, receives one line per bead completion event
+	// as each bead's run_completed or run_failed event lands.
+	//
+	// Format: "[hk-XXX] success (commit abcdef)" or "[hk-XXX] failed (reason: ...)".
+	// Lines are written in real time; the stream is not closed by the daemon.
+	//
+	// Production callers set this to os.Stdout (--notify-stream default) or to
+	// an open FIFO/file (--notify-stream=path). When nil no per-bead lines are
+	// written (backward-compatible default).
+	//
+	// Bead ref: hk-ibilr.
+	NotifyStream io.Writer
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the
@@ -538,6 +551,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	})
 	if subscribeErr := queueOpConsumer.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: QueueOperatorEventConsumer.Subscribe: %w", subscribeErr)
+	}
+
+	// Wire the per-bead completion notifier when --notify-stream is set (hk-ibilr).
+	if cfg.NotifyStream != nil {
+		notifyConsumer := NewNotifyStreamConsumer(cfg.NotifyStream)
+		if subscribeErr := notifyConsumer.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: NotifyStreamConsumer.Subscribe: %w", subscribeErr)
+		}
 	}
 
 	// Notify the test-only observer (when set) so tests can inspect bus

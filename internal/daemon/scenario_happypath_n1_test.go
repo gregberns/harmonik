@@ -92,7 +92,13 @@ var _ interface{ Write([]byte) (int, error) } = testLogWriter{}
 // and the JSONL events log path.
 func scenarioN1ProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	t.Helper()
-	projectDir = t.TempDir()
+	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
+	raw := t.TempDir()
+	resolved, resolveErr := filepath.EvalSymlinks(raw)
+	if resolveErr != nil {
+		t.Fatalf("scenarioN1ProjectDir: EvalSymlinks %q: %v", raw, resolveErr)
+	}
+	projectDir = resolved
 	for _, sub := range []string{
 		filepath.Join(".harmonik", "events"),
 		filepath.Join(".harmonik", "beads-intents"),

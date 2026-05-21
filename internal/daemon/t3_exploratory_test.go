@@ -42,7 +42,12 @@ import (
 // .harmonik/beads-intents/ sub-dirs. Returns (projectDir, jsonlPath).
 func t3FixtureProjectDir(t *testing.T) (string, string) {
 	t.Helper()
-	projectDir := t.TempDir()
+	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
+	raw := t.TempDir()
+	projectDir, resolveErr := filepath.EvalSymlinks(raw)
+	if resolveErr != nil {
+		t.Fatalf("t3FixtureProjectDir: EvalSymlinks %q: %v", raw, resolveErr)
+	}
 	for _, sub := range []string{
 		filepath.Join(".harmonik", "events"),
 		filepath.Join(".harmonik", "beads-intents"),

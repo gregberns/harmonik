@@ -30,7 +30,13 @@ import (
 // Returns projectDir, jsonlPath, brWrapperPath, handlerPath.
 func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript string) {
 	t.Helper()
-	projectDir = t.TempDir()
+	// Resolve symlinks so that br receives the canonical path (macOS /var → /private/var).
+	raw := t.TempDir()
+	resolved, resolveErr := filepath.EvalSymlinks(raw)
+	if resolveErr != nil {
+		t.Fatalf("t6FixtureDir: EvalSymlinks %q: %v", raw, resolveErr)
+	}
+	projectDir = resolved
 
 	// Init git repo
 	gitRun := func(args ...string) {

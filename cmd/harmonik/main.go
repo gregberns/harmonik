@@ -275,6 +275,13 @@ EXAMPLES
 		return runBeadSubcommand(os.Args[2:])
 	}
 
+	// harmonik subscribe — stream daemon events on the Unix socket (hk-6ynv4).
+	// Long-running observation-only command; routed through ON-055 (subscribe
+	// is read-only observation, no control-plane authority).
+	if len(os.Args) >= 2 && os.Args[1] == "subscribe" {
+		return runSubscribeSubcommand(os.Args[2:])
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

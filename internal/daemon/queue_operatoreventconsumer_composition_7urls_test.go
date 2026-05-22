@@ -54,13 +54,15 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 	}
 
 	// HandlerPausePolicyGoroutine registers 2 subscribers; QueueOperatorEventConsumer
-	// registers 2 more for a total of 4.
+	// registers 2 more; SubscribeHub (hk-6ynv4) registers 1 wildcard observer
+	// for a total of 5.
 	//
 	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis
 	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic
 	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain
 	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active
-	const wantSubscriptions = 4
+	//   5. * (wildcard)            — SubscribeHub (hk-6ynv4) fans events to socket subscribers
+	const wantSubscriptions = 5
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"QueueOperatorEventConsumer.Subscribe must be called pre-Seal in daemon.Start (hk-7urls)",

@@ -84,8 +84,9 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 				"startWithHooks must invoke the observer after pre-Seal subscriptions")
 		}
 
-		// 2 from HandlerPausePolicyGoroutine + 2 from QueueOperatorEventConsumer = 4.
-		const wantBase = 4
+		// 2 from HandlerPausePolicyGoroutine + 2 from QueueOperatorEventConsumer
+		// + 1 from SubscribeHub (hk-6ynv4) = 5.
+		const wantBase = 5
 		if capturedCount != wantBase {
 			t.Errorf("SC6/without-notify: pre-Seal subscription count = %d, want %d; "+
 				"a subscribe call is missing or spurious in daemon.Start composition root (hk-nx5wu / EV-009)",
@@ -121,9 +122,9 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 				"startWithHooks must invoke the observer after pre-Seal subscriptions")
 		}
 
-		// 4 base + 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
-		// run_completed, run_failed) = 8.
-		const wantWithNotify = 8
+		// 5 base + 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
+		// run_completed, run_failed) = 9. Base includes 1 SubscribeHub (hk-6ynv4).
+		const wantWithNotify = 9
 		if capturedCount != wantWithNotify {
 			t.Errorf("SC6/with-notify: pre-Seal subscription count = %d, want %d; "+
 				"NotifyStreamConsumer.Subscribe must add 4 subscriptions when NotifyStream is set (hk-nx5wu)",

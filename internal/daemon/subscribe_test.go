@@ -1,0 +1,350 @@
+package daemon
+
+// subscribe_test.go — unit tests for SubscribeHub / subscriptionStream
+// (bead hk-6ynv4). Tests cover:
+//
+//   - back-pressure: slow subscriber doesn't stall the bus; drop-oldest emits
+//     subscription_gap with accumulated drop count.
+//   - type filter: subscriber requesting [a,b] doesn't receive [c] events.
+//   - heartbeat: idle subscription emits heartbeat at configured cadence.
+//   - graceful close on client disconnect.
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// subscribeTestMakeEvent constructs a minimal core.Event with the given type.
+func subscribeTestMakeEvent(t *testing.T, evtType string) core.Event {
+	t.Helper()
+	evID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("subscribeTestMakeEvent: uuid: %v", err)
+	}
+	return core.Event{
+		EventID:         core.EventID(evID),
+		SchemaVersion:   1,
+		Type:            evtType,
+		TimestampWall:   time.Now(),
+		SourceSubsystem: "test",
+		Payload:         json.RawMessage(`{}`),
+	}
+}
+
+// TestSubscriptionStream_TypeFilter verifies offer() drops events that don't
+// match the type filter before consuming a channel slot.
+func TestSubscriptionStream_TypeFilter(t *testing.T) {
+	t.Parallel()
+
+	s := &subscriptionStream{
+		ch:         make(chan core.Event, 4),
+		typeFilter: map[string]struct{}{"a": {}, "b": {}},
+		wildcard:   false,
+	}
+	s.offer(subscribeTestMakeEvent(t, "a"))
+	s.offer(subscribeTestMakeEvent(t, "c")) // filtered
+	s.offer(subscribeTestMakeEvent(t, "b"))
+	s.offer(subscribeTestMakeEvent(t, "d")) // filtered
+
+	if got := len(s.ch); got != 2 {
+		t.Fatalf("channel depth after filter: got %d, want 2", got)
+	}
+	got1 := <-s.ch
+	got2 := <-s.ch
+	if got1.Type != "a" || got2.Type != "b" {
+		t.Errorf("got types %q,%q; want a,b", got1.Type, got2.Type)
+	}
+}
+
+// TestSubscriptionStream_DropOldestBackpressure verifies that when the channel
+// fills, offer() drops the OLDEST queued event (not the incoming one) and
+// increments the drop counter — the bus dispatch path never blocks.
+func TestSubscriptionStream_DropOldestBackpressure(t *testing.T) {
+	t.Parallel()
+
+	s := &subscriptionStream{
+		ch:       make(chan core.Event, 2),
+		wildcard: true,
+	}
+	// Fill: 2 events in a 2-cap channel.
+	e1 := subscribeTestMakeEvent(t, "first")
+	e2 := subscribeTestMakeEvent(t, "second")
+	s.offer(e1)
+	s.offer(e2)
+	// Overflow: each subsequent offer drops one oldest and enqueues new.
+	e3 := subscribeTestMakeEvent(t, "third")
+	e4 := subscribeTestMakeEvent(t, "fourth")
+
+	// Start a goroutine to verify offer() never blocks the producer.
+	done := make(chan struct{})
+	go func() {
+		s.offer(e3)
+		s.offer(e4)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("offer() blocked the producer — drop-oldest invariant violated (EV-012)")
+	}
+
+	if got := s.dropped.Load(); got != 2 {
+		t.Errorf("dropped counter: got %d, want 2", got)
+	}
+	// Channel should now hold the two newest events.
+	g1 := <-s.ch
+	g2 := <-s.ch
+	if g1.Type != "third" || g2.Type != "fourth" {
+		t.Errorf("channel content after drop-oldest: got %q,%q; want third,fourth", g1.Type, g2.Type)
+	}
+
+	if swapped := s.swapDropped(); swapped != 2 {
+		t.Errorf("swapDropped: got %d, want 2", swapped)
+	}
+	if reswapped := s.swapDropped(); reswapped != 0 {
+		t.Errorf("swapDropped (second call): got %d, want 0 (counter must reset)", reswapped)
+	}
+}
+
+// TestSubscribeHub_HeartbeatFires verifies the heartbeat line is written
+// when the subscription is idle for the configured cadence.
+func TestSubscribeHub_HeartbeatFires(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus: nil, // dispatch path not exercised here
+	})
+
+	// Use HeartbeatSeconds=10 (the minimum after clamp) but rely on the
+	// clamp-min so test latency is bounded. We override the heartbeat ticker
+	// by setting HeartbeatSeconds to a small value pre-clamp; the clamp will
+	// raise it to 10s, which exceeds our 5s test timeout, so instead we use
+	// a custom code path: invoke makeHeartbeat() directly to validate the
+	// heartbeat payload shape, and assert that HandleSubscribe writes it
+	// when the timer fires (separate timing-tolerant subtest).
+
+	// Validate heartbeat payload shape directly.
+	hb := hub.makeHeartbeat()
+	if hb.Type != "heartbeat" {
+		t.Errorf("heartbeat type: got %q, want %q", hb.Type, "heartbeat")
+	}
+	if hb.Timestamp == "" {
+		t.Errorf("heartbeat ts is empty")
+	}
+	if hb.ActiveRuns == nil {
+		t.Errorf("heartbeat active_runs must be non-nil slice (even if empty) for JSON consumers")
+	}
+}
+
+// TestSubscribeHub_HeartbeatTimerFiresOnIdle drives a real HandleSubscribe
+// session and asserts at least one heartbeat line arrives during an idle
+// window of ~heartbeat_seconds * 1.5.
+func TestSubscribeHub_HeartbeatTimerFiresOnIdle(t *testing.T) {
+	t.Parallel()
+
+	// Build a hub with a custom clock-source — we still rely on the real
+	// 10s minimum, so this test is gated by a 15s deadline.
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	srv, cli := net.Pipe()
+	defer func() { _ = srv.Close() }()
+	// cli is closed at end to terminate the subscriber's read goroutine.
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 1}) // clamps to 10s
+		close(done)
+	}()
+
+	// Read until we see a heartbeat line or deadline.
+	rdr := bufio.NewReader(cli)
+	deadline := time.Now().Add(15 * time.Second)
+	var sawHeartbeat bool
+	for time.Now().Before(deadline) {
+		_ = cli.SetReadDeadline(time.Now().Add(15 * time.Second))
+		line, err := rdr.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if jsonErr := json.Unmarshal(line, &probe); jsonErr != nil {
+			continue
+		}
+		if probe.Type == "heartbeat" {
+			sawHeartbeat = true
+			break
+		}
+	}
+	_ = cli.Close()
+	<-done
+
+	if !sawHeartbeat {
+		t.Errorf("no heartbeat observed within 15s; cadence clamp may be broken")
+	}
+}
+
+// TestSubscribeHub_GracefulCloseOnClientDisconnect verifies that closing
+// the client side of the conn causes HandleSubscribe to return cleanly.
+func TestSubscribeHub_GracefulCloseOnClientDisconnect(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	srv, cli := net.Pipe()
+	defer func() { _ = srv.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
+		close(done)
+	}()
+
+	// Wait for hub to register the subscriber.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n := len(hub.subscribers)
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Close the client side; the read goroutine in HandleSubscribe should
+	// detect EOF and cancel the inner context, causing HandleSubscribe to
+	// return.
+	_ = cli.Close()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("HandleSubscribe did not return within 3s of client close")
+	}
+
+	// Subscriber must be deregistered.
+	hub.mu.RLock()
+	n := len(hub.subscribers)
+	hub.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("subscriber not deregistered after HandleSubscribe returned; got %d", n)
+	}
+}
+
+// TestSubscribeHub_DispatchFanOut wires dispatch() against two subscribers
+// with overlapping filters and asserts each receives only its matching events.
+func TestSubscribeHub_DispatchFanOut(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	s1 := &subscriptionStream{ch: make(chan core.Event, 8), typeFilter: map[string]struct{}{"a": {}}}
+	s2 := &subscriptionStream{ch: make(chan core.Event, 8), wildcard: true}
+	hub.mu.Lock()
+	hub.subscribers[s1] = struct{}{}
+	hub.subscribers[s2] = struct{}{}
+	hub.mu.Unlock()
+
+	// Drive dispatch with three events.
+	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "a"))
+	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "b"))
+	_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "a"))
+
+	if got := len(s1.ch); got != 2 {
+		t.Errorf("s1 (filter=[a]): got %d events, want 2", got)
+	}
+	if got := len(s2.ch); got != 3 {
+		t.Errorf("s2 (wildcard): got %d events, want 3", got)
+	}
+
+	// last_event_id must reflect the most recently dispatched event.
+	if hub.loadLastEventID() == "" {
+		t.Error("last_event_id should be non-empty after dispatch")
+	}
+}
+
+// TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles spawns and tears
+// down many subscriber sessions and asserts the hub's subscriber map is
+// empty at the end.
+func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	var wg sync.WaitGroup
+	const N = 20
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv, cli := net.Pipe()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			inner := make(chan struct{})
+			go func() {
+				hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
+				close(inner)
+			}()
+			// Allow registration to take effect.
+			time.Sleep(5 * time.Millisecond)
+			_ = cli.Close()
+			_ = srv.Close()
+			<-inner
+		}()
+	}
+	wg.Wait()
+
+	hub.mu.RLock()
+	n := len(hub.subscribers)
+	hub.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("subscribers map leaked: got %d after all sessions closed", n)
+	}
+}
+
+// TestSubscribeHub_HeartbeatActiveRunsFromRegistry verifies that the
+// heartbeat payload's active_runs array reflects a non-nil ActiveRunsSource.
+func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRunRegistry()
+	runID, _ := uuid.NewV7()
+	startedAt := time.Now().Add(-30 * time.Second)
+	reg.Register(core.RunID(runID), &RunHandle{
+		BeadID:    core.BeadID("hk-test-123"),
+		StartedAt: startedAt,
+	})
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:        nil,
+		ActiveRuns: reg,
+		Now:        func() time.Time { return startedAt.Add(45 * time.Second) },
+	})
+
+	hb := hub.makeHeartbeat()
+	if len(hb.ActiveRuns) != 1 {
+		t.Fatalf("active_runs: got %d entries, want 1", len(hb.ActiveRuns))
+	}
+	if hb.ActiveRuns[0].BeadID != "hk-test-123" {
+		t.Errorf("active_runs[0].bead_id: got %q", hb.ActiveRuns[0].BeadID)
+	}
+	if hb.ActiveRuns[0].AgeSeconds != 45 {
+		t.Errorf("active_runs[0].age_seconds: got %d, want 45", hb.ActiveRuns[0].AgeSeconds)
+	}
+}

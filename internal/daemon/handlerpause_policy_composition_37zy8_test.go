@@ -52,15 +52,16 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 		t.Fatal("WithBusObserver was never called; daemon.startWithHooks must invoke the observer pre-Seal")
 	}
 
-	// The composition root registers exactly 4 asynchronous consumers pre-Seal:
+	// The composition root registers exactly 5 consumers pre-Seal:
 	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis (hk-37zy8)
 	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic (hk-37zy8)
 	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain (hk-7urls)
 	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
+	//   5. * (wildcard)            — SubscribeHub fans events to socket 'subscribe' op (hk-6ynv4)
 	//
 	// Any deviation indicates a composition-root wiring regression.
-	// Updated from 2 → 4 when QueueOperatorEventConsumer.Subscribe was wired (hk-7urls).
-	const wantSubscriptions = 4
+	// Updated 4 → 5 when SubscribeHub.Subscribe was wired (hk-6ynv4).
+	const wantSubscriptions = 5
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"HandlerPausePolicyGoroutine.Subscribe must be called pre-Seal in daemon.Start (hk-37zy8)",

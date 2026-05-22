@@ -561,6 +561,17 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 	}
 
+	// Wire the SubscribeHub — long-lived wildcard observer that fans events
+	// out to "subscribe" socket-op connections (hk-6ynv4). Always registered;
+	// the hub is dormant until a subscribe op connects.
+	subscribeHub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:        bus,
+		ActiveRuns: sharedRunRegistry,
+	})
+	if subscribeErr := subscribeHub.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
+	}
+
 	// Notify the test-only observer (when set) so tests can inspect bus
 	// subscription state before Seal locks it.  Only reachable via
 	// StartForTesting; production Start always passes a zero-value daemonTestHooks.
@@ -867,9 +878,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		socketDone := make(chan error, 1)
 		go func() {
 			if queueHandler != nil {
-				socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore, queueHandler)
+				socketDone <- RunSocketListenerWithSubscribe(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, queueHandler)
 			} else {
-				socketDone <- RunSocketListener(ctx, sockPath, &noopRequestHandler{}, hookStore)
+				socketDone <- RunSocketListenerWithSubscribe(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub)
 			}
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)

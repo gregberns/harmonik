@@ -88,6 +88,16 @@ var compositionRootWirings = []wiringEntry{
 		wires:    "operator_pause_status + operator_resuming → qs",
 	},
 	{
+		symbol:   "subscribeHub",
+		callSite: "daemon.go:565",
+		wires:    "NewSubscribeHub → SubscribeHandler for 'subscribe' socket op (hk-6ynv4)",
+	},
+	{
+		symbol:   "subscribeHub.Subscribe",
+		callSite: "daemon.go:569",
+		wires:    "wildcard observer → fans events to per-conn subscriptionStream",
+	},
+	{
 		symbol:   "bus.Seal",
 		callSite: "daemon.go:541",
 		wires:    "locks subscriber list; no further Subscribe calls allowed",

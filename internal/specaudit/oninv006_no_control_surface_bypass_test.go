@@ -184,6 +184,10 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// (CompleteAndUnlink + cancelOnQueueDrain), not by operator abort; fully
 	// ON-008 drain-gated (no in-flight run impact).
 	"run": "hk-icecw; single-bead queue submission; exits on drain, ON-008 compliant",
+	// hk-6ynv4: read-only observation CLI; opens daemon socket and streams
+	// NDJSON envelopes to stdout. No daemon-state mutation, no run impact.
+	// Authorised by operator-nfr.md §4.9 ON-055.
+	"subscribe": "operator-nfr.md §4.9 ON-055; read-only event stream, no run impact",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled
@@ -208,6 +212,10 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	"queue-append":  "queue-model.md §8; append to pending group, drain-safe ON-008",
 	"queue-status":  "queue-model.md §9; read-only status query, no run impact",
 	"queue-dry-run": "queue-model.md §8; validation-only, no state mutation, ON-008",
+	// hk-6ynv4: read-only observation surface; streams NDJSON envelopes on
+	// the connection until close. Cannot mutate daemon state, cannot abort
+	// in-flight runs. Authorised by operator-nfr.md §4.9 ON-055.
+	"subscribe": "operator-nfr.md §4.9 ON-055; read-only observation, no run impact",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

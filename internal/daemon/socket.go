@@ -228,7 +228,20 @@ func removeStaleSocket(sockPath string) error {
 // request loop for emit-outcome / claim-next from agent subprocesses."
 // Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
 // Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method set).
+// SubscribeRouter holds the optional SubscribeHandler used by the "subscribe"
+// op. A nil router means no SubscribeHandler is wired and the socket returns
+// an error response for "subscribe" requests.
+type SubscribeRouter struct {
+	Handler SubscribeHandler
+}
+
 func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, qh ...QueueHandler) error {
+	return RunSocketListenerWithSubscribe(ctx, sockPath, h, hr, nil, qh...)
+}
+
+// RunSocketListenerWithSubscribe is RunSocketListener with an optional
+// SubscribeHandler. When sub is nil, "subscribe" ops return an error response.
+func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, qh ...QueueHandler) error {
 	if err := removeStaleSocket(sockPath); err != nil {
 		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
 	}
@@ -265,7 +278,7 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub)
 	}
 }
 
@@ -283,7 +296,7 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -381,6 +394,25 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueDryRun(ctx, reEncoded)
 		})
+
+	case "subscribe":
+		// Long-running op: streams NDJSON events on conn until the client
+		// disconnects or ctx is cancelled. No SocketResponse is written —
+		// the caller's connection IS the stream.
+		//
+		// Spec ref: operator-nfr.md §4.9 ON-055 (subscribe is read-only observation).
+		// Bead ref: hk-6ynv4.
+		if sub == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: SubscribeHandler not registered"}
+			break
+		}
+		var subReq SubscribeRequest
+		if err := json.Unmarshal(reEncoded, &subReq); err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)}
+			break
+		}
+		sub.HandleSubscribe(ctx, conn, subReq)
+		return // suppress SocketResponse write; conn is closed by defer
 
 	default:
 		resp = SocketResponse{

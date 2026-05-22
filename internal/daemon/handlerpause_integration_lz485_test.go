@@ -131,12 +131,13 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 	// A regression that removes HandlerPausePolicyGoroutine.Subscribe drops
 	// the count by 2 (agent_rate_limit_status + budget_exhausted) and fails here.
 	//
-	// wantSubscriptions is 4:
+	// wantSubscriptions is 5:
 	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis (hk-37zy8)
 	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic (hk-37zy8)
 	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain (hk-7urls)
 	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
-	const wantSubscriptions = 4
+	//   5. * (wildcard)            — SubscribeHub fans events to socket 'subscribe' op (hk-6ynv4)
+	const wantSubscriptions = 5
 
 	busObserver := func(bus eventbus.EventBus) {
 		count := eventbus.BusSubscriptionCount(bus)

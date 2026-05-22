@@ -570,6 +570,14 @@ If a drain timeout escalation per ON-029 produces a SIGKILL to a still-running a
 
 Tags: mechanism
 
+#### ON-055 — Subscribe is read-only observation, not a control surface
+
+The `subscribe` socket op (and its CLI wrapper `harmonik subscribe`) is a long-running observation surface that streams NDJSON event envelopes to the connecting client. It MUST NOT mutate daemon state. It MUST NOT abort, pause, resume, or otherwise affect any in-flight run. It is therefore exempt from §4.3.ON-INV-006's "no new control surface" prohibition by construction: it is not a control surface.
+
+Specifically: `subscribe` (a) registers a transient observer-class consumer on the live event bus per [event-model.md §4.2 EV-012]; (b) emits only connection-local payloads (`heartbeat`, `subscription_gap`) that are NOT bus-published and do NOT appear in `events.jsonl`; (c) applies drop-oldest back-pressure to slow subscribers so a wedged client cannot stall the bus emission goroutine (EV-012 invariant). The op is allowlisted in `internal/specaudit/oninv006_no_control_surface_bypass_test.go` with a citation to this section.
+
+Tags: mechanism
+
 ### 4.10 Multi-daemon coordination and multi-tenancy deferral
 
 #### ON-041 — Multi-daemon commands obligation

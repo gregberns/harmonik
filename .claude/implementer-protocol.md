@@ -10,6 +10,22 @@ Standing rules for implementer agents dispatched by the orchestrator. The bead b
 4. Read 1–2 canonical sibling files in the target package for pattern conventions.
 5. Then implement.
 
+## Commit-early discipline (REQUIRED — protects against budget exhaustion)
+
+You have a finite wall-clock budget (currently ~10 min). If you spend most of it exploring and then `/quit` interrupts you mid-edit, the run produces **zero commits** and the daemon classifies the bead as failed — even though you did meaningful work.
+
+**Rule:** after your FIRST file modification (Edit or Write), immediately stage and commit a WIP checkpoint:
+
+```bash
+git add -A && git commit -m "WIP: <bead-id> — checkpoint after first edit" --no-verify
+```
+
+Then continue. You can amend (`git commit --amend`) or squash (`git rebase -i HEAD~N`) at the end before exit — see the "Commit format" section below for the final commit shape. The WIP commit is a safety net: if `/quit` arrives unexpectedly, at least the daemon sees progress and your partial work is preserved.
+
+**Why `--no-verify` here:** the WIP isn't expected to pass tests/lint; the final commit (after amend/squash) does. The pre-exit verification (`go build`, `go test`, `gofmt -d`) gates only the final commit.
+
+Skip the WIP only when the bead is a one-line typo/cross-reference fix.
+
 ## Helper-prefix discipline
 
 When adding tests to an existing Go package, package-level test helpers MUST use a per-bead camelCase prefix (e.g., `leaseFixtureWriteLockAtomic`, NOT `leaseFixture_writeLockAtomic`). The brief tells you the prefix; if it doesn't, derive one from the bead's concept (e.g., `auditFixture`, `pidfileFixture`). Never collide with sibling-bead helpers.

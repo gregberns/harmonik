@@ -101,6 +101,11 @@ type reviewLoopState struct {
 	// computed after the most recent implementer run (just before the reviewer
 	// launches). Empty before iteration 1's reviewer.
 	lastDiffHash string
+
+	// priorVerdicts accumulates per-iteration verdict summaries for the
+	// `## Prior verdicts` section of review-target.md (EM-015d-RIA). Empty for
+	// iteration 1's reviewer; appended after each verdict is read. Bead: hk-0xmwq.
+	priorVerdicts []workspace.ReviewTargetPriorVerdict
 }
 
 // runReviewLoop executes the review-loop dispatch cycle for a single bead run.
@@ -471,6 +476,38 @@ func runReviewLoop(
 			}
 		}
 
+		// ── Write review-target.md BEFORE reviewer launch (hk-0xmwq) ─────
+		//
+		// Per EM-015d-RIA: the reviewer kick-off pasteinject expects
+		// .harmonik/review-target.md to exist on disk before the reviewer pane
+		// is launched. Without this write, pasteinject hits
+		// "structural invariant violated: task file absent: review-target.md"
+		// and the reviewer sits idle forever. The implementer counterpart is
+		// WriteAgentTask inside buildClaudeLaunchSpec (CHB-028); the reviewer
+		// brief is materialized here rather than there because the reviewer
+		// requires diff-range SHAs that are only known to runReviewLoop.
+		reviewHeadSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
+		if headErr != nil {
+			result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD before reviewer at iteration %d: %v", state.iterationCount, headErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		reviewTargetPayload := workspace.ReviewTargetPayload{
+			WorkspacePath: wtPath,
+			BeadID:        string(beadID),
+			Iteration:     state.iterationCount,
+			BeadTitle:     beadTitle,
+			BeadBody:      beadDescription,
+			BaseSHA:       parentSHA,
+			HeadSHA:       reviewHeadSHA,
+			PriorVerdicts: state.priorVerdicts,
+		}
+		if rtErr := workspace.WriteReviewTarget(reviewTargetPayload); rtErr != nil {
+			result := rlErrorResult(fmt.Sprintf("WriteReviewTarget at iteration %d: %v", state.iterationCount, rtErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+
 		// ── Dispatch reviewer ─────────────────────────────────────────────
 		//
 		// CHB-009: reviewer ALWAYS mints a fresh claudeSessionID (priorClaudeSessID=nil).
@@ -698,6 +735,22 @@ func runReviewLoop(
 
 		// Record verdict notes for use as prior_verdict_summary on next implementer resume.
 		state.lastVerdictNotes = verdict.Notes
+
+		// Append to priorVerdicts so the next iteration's review-target.md
+		// renders a populated `## Prior verdicts` section (EM-015d-RIA). Notes
+		// are truncated to the first 200 chars with an ellipsis per spec.
+		// Bead: hk-0xmwq.
+		const priorNotesMax = 200
+		notesSummary := verdict.Notes
+		if len(notesSummary) > priorNotesMax {
+			notesSummary = rlTruncateUTF8(notesSummary, priorNotesMax) + "…"
+		}
+		state.priorVerdicts = append(state.priorVerdicts, workspace.ReviewTargetPriorVerdict{
+			Iteration:    state.iterationCount,
+			Verdict:      verdict.Verdict,
+			Flags:        verdict.Flags,
+			NotesSummary: notesSummary,
+		})
 
 		// ── Route on verdict ──────────────────────────────────────────────
 		switch verdict.Verdict {

@@ -397,6 +397,45 @@ func AssertNoOrphanTmuxWindows(t *testing.T, adapter tmuxPkg.Adapter) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// AssertNoOrphanTmuxWindowsRequired — adapter-required variant
+// ──────────────────────────────────────────────────────────────────────────────
+
+// AssertNoOrphanTmuxWindowsRequired is like AssertNoOrphanTmuxWindows but
+// fails the test with t.Fatal when adapter is nil instead of returning silently.
+// Use this variant in tests that must explicitly verify tmux window cleanup
+// (covers the hk-e6mtt failure mode: orphan panes not asserted after run_failed).
+//
+// Bead: hk-59lg8.
+func AssertNoOrphanTmuxWindowsRequired(t *testing.T, adapter tmuxPkg.Adapter) {
+	t.Helper()
+	if adapter == nil {
+		t.Fatal("AssertNoOrphanTmuxWindowsRequired: adapter must not be nil; " +
+			"pass a non-nil tmux.Adapter to assert window cleanup explicitly")
+		return
+	}
+	AssertNoOrphanTmuxWindows(t, adapter)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// AssertWorktreeGone — verify worktree directory was removed
+// ──────────────────────────────────────────────────────────────────────────────
+
+// AssertWorktreeGone asserts that the git worktree directory for the given
+// runID no longer exists under .harmonik/worktrees/ in projectDir. A run_failed
+// event must cause the daemon to remove the worktree via its cleanup function.
+//
+// Bead: hk-59lg8.
+func AssertWorktreeGone(t *testing.T, projectDir, runID string) {
+	t.Helper()
+	wtPath := filepath.Join(projectDir, ".harmonik", "worktrees", runID)
+	if _, err := os.Stat(wtPath); err == nil {
+		t.Errorf("AssertWorktreeGone: worktree %q still exists after run_failed", wtPath)
+	} else if !os.IsNotExist(err) {
+		t.Errorf("AssertWorktreeGone: Stat %q: unexpected error: %v", wtPath, err)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // AssertBeadStatus — verify br status for a bead ID
 // ──────────────────────────────────────────────────────────────────────────────
 

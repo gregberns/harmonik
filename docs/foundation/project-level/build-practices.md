@@ -94,6 +94,20 @@ Reviewer emits a structured JSON verdict in the `Review-Verdict:` trailer. Three
 
 **Human review happens asynchronously after commit.** The user reads `git log` + diffs on their own cadence; catches what agents miss (premature abstraction, scope creep, subtle spec-misinterpretation, "technically works but wrong"). Human review is NOT a gate — nothing blocks on it.
 
+## Bug fixes require a reproducing scenario test
+
+**2026-05-21 user direction.** Several runtime bugs in the 2026-05-21 dogfood session (hk-37zy8, hk-yjduq, hk-2hb2y, hk-5s7tg, hk-trjef) passed unit tests and reviewer agents but failed in live runs. Unit-level coverage is insufficient for behavior that only manifests across subsystem boundaries or under real process lifecycle. New rule:
+
+**Trigger.** Any bead labeled `bug`, OR any bead filed in response to a runtime failure observed in dogfooding (regardless of label).
+
+**Requirement.** The fix-commit MUST land alongside a scenario test (per `docs/methodology/TESTING.md` scenario tier) that reproduces the bug. The scenario test SHOULD be written first and committed in a failing state; the fix flips it green. Landing both in a single commit is acceptable when the bisect-history value is low — document the choice in the commit body under `## Test plan`.
+
+**Exemptions.** Trivial typo/docs fixes; fixes whose reproduction requires an irreproducible environment (flaky third-party service, race only observed on a since-retired machine). Exemption MUST be named explicitly in the commit body under `## Risk` with the phrase `scenario-test exempt: <reason>`.
+
+**Reviewer check.** `agent-reviewer` MUST verify the bug bead has a corresponding scenario test in the diff (new file under `tests/scenarios/` or new `Test*` function in an existing scenario file). If absent and no exemption is claimed → `REQUEST_CHANGES` with flag `missing-scenario-test`. If the exemption clause is present but unjustified (e.g. bug is reproducible from the bead description) → `BLOCK` with the same flag.
+
+Cross-refs: `docs/methodology/TESTING.md` (scenario-tier definition); `.claude/skills/agent-reviewer/SKILL.md §Flag vocabulary` (flag registration); `CLAUDE.md §Daily loop` (dogfood is the bug-discovery channel).
+
 ## Versioning
 
 **Semver, pre-1.0.** Current line is `0.y.z`.

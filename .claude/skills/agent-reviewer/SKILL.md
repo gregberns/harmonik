@@ -132,6 +132,19 @@ For every new exported symbol, goroutine, or subscription introduced by the diff
 
 Findings → flag: `x-missing-wire-up`
 
+### 7. Scenario test for bug beads
+
+Per `docs/foundation/project-level/build-practices.md §Bug fixes require a reproducing scenario test`: if the bead is labeled `bug` or was filed against a runtime failure observed in dogfooding:
+
+- Verify the diff adds (or modifies) a scenario test (per `docs/methodology/TESTING.md` scenario tier) that exercises the bug's repro path.
+- Confirm the test would have failed before the fix — either by inspection of the assertion or by an explicit note in the commit body.
+- If no scenario test is present, check for an exemption clause (`scenario-test exempt: <reason>`) in the commit body's `## Risk` section. Accept only trivial-fix or irreproducible-environment justifications.
+
+Missing scenario test, no exemption → `REQUEST_CHANGES` with `missing-scenario-test`.
+Exemption claimed but bug is clearly reproducible from the bead body → `BLOCK` with `missing-scenario-test`.
+
+Findings → flag: `missing-scenario-test`
+
 ---
 
 ## Flag vocabulary
@@ -152,6 +165,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `rule-file-bundled` | Rule-file change bundled with code change (must be separate commit). |
 | `constitution-edit-missing-trailer` | CONSTITUTION.md touched without `Constitution-Edit-Approved-By:` trailer. |
 | `x-missing-wire-up` | New symbol/goroutine/subscription not wired into production composition root. |
+| `missing-scenario-test` | Bug bead has no reproducing scenario test in the diff and no valid exemption. |
 
 ---
 

@@ -24,96 +24,78 @@ Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remain
 
 ## Orchestrator wrappers for `harmonik run`
 
-The orchestrator is a Claude Code session. When it dispatches `harmonik run` as a bash background task, several friction points emerge that require wrapper discipline. Patterns below were discovered during the 2026-05-21 20-bead dogfood session.
+The orchestrator is a Claude Code session. When it dispatches `harmonik run` as a bash background task, the Bash tool only delivers ONE completion notification when the whole batch exits. For multi-bead runs (or any run >a few minutes) the orchestrator must run a **Claude Code Monitor** alongside to surface per-bead progress, hangs, and daemon failures. Without a Monitor, the orchestrator is blind from dispatch to batch-exit.
 
-### 1. Multi-bead runs are one opaque bash task — use `--notify-stream` + active Monitor
+### Canonical pattern (until `harmonik subscribe` lands — hk-6ynv4)
 
-**Problem:** `harmonik run --beads a,b,c` exits only when the *whole* batch finishes. The Bash-tool completion notification fires once at batch-exit, so the orchestrator is blind to per-bead progress and to mid-batch hangs (e.g. the pasteinject quit-on-commit hang that landed earlier today).
+Three pieces, always together:
 
-**Fix:**
-- Always pass `--notify-stream`. Each bead emits `[hk-XXX] success|failed` to stdout when it finishes, so a Monitor grep can surface per-bead notifications mid-batch (landed ce9d0e4, bead hk-ibilr).
-- Run a Monitor (the Claude Code Monitor tool) that polls every 30s for (i) new commits on `main`, (ii) hung worktrees matching the daemon-log `pasteinject quit-on-commit timeout` signal — and auto-kills the claude PID to unblock the daemon's `sess.Wait` (pattern from bead hk-trjef).
-
-### 2. CWD discipline — never `cd` into a worktree
-
-**Problem:** `harmonik` writes per-run worktrees at `.harmonik/worktrees/<run_id>/`. The daemon may `git worktree remove` one out from under you on bead completion. If your shell's CWD is inside that worktree, subsequent commands fail in confusing ways.
-
-**Fix:** Always operate from the repo root via absolute paths. Use `git -C /Users/gb/github/harmonik <cmd>` rather than `cd`. The orchestrator's CWD must remain `/Users/gb/github/harmonik` for the whole session.
+1. **Dispatch in background:** `Bash(run_in_background=true)` with `harmonik run --beads id1,id2,... --notify-stream` (review-loop is on by default per hk-g0ckv; pass `--no-review-loop` only to opt out).
+2. **Monitor the bash task's stdout** (the file printed by the Bash-tool result) — that's where `--notify-stream` writes per-bead `[hk-XXX] success|failed` lines.
+3. **Monitor `.harmonik/events/events.jsonl`** — that's where the daemon writes typed events (`run_started`, `run_completed`, `run_failed`, `reviewer_verdict`, etc.). NOTE: there is no `daemon.log` file; ignore older guidance that says to grep one.
 
 ```bash
-git -C /Users/gb/github/harmonik log --oneline -5 main
-git -C /Users/gb/github/harmonik/.harmonik/worktrees/<run_id> rev-parse HEAD
+# In a Monitor tool call (timeout_ms = 3600000, persistent = false):
+( tail -F /private/tmp/claude-XXX/.../tasks/<bash-task-id>.output 2>/dev/null \
+    | grep --line-buffered -E "\[hk-[a-z0-9]+\] (success|failed)|ERROR|panic|fatal|FATAL" ) &
+( tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
+    | grep --line-buffered -E "run_completed|run_failed|merge_conflict|reviewer_verdict" ) &
+wait
 ```
 
-### 3. Pre-screen beads for already-landed work
+Each matched line becomes a notification to the orchestrator. The Monitor exits when both tail processes do (e.g., daemon dies). Re-arm if it hits the 1-hour timeout.
 
-**Problem:** Beads can be stale-open — implementation already landed on `main` but the bead never got closed. Dispatching one wastes a slot (it hits the noChange path).
+### CWD discipline — never `cd` into a worktree
 
-**Fix:** Before dispatching, grep git history for the bead ID. Today's session caught 10+ pre-merged beads this way.
+The daemon may `git worktree remove` a worktree out from under you on bead completion. Always operate from the repo root via absolute paths: `git -C /Users/gb/github/harmonik <cmd>` rather than `cd`. The orchestrator's CWD must remain `/Users/gb/github/harmonik` for the whole session.
+
+### Pre-screen beads for already-landed work
+
+Beads can be stale-open — implementation landed on `main` but the bead never got closed. Dispatching one wastes a slot (hits the noChange path). Before dispatching, grep history:
 
 ```bash
 for id in hk-aaa hk-bbb hk-ccc; do
   hits=$(git -C /Users/gb/github/harmonik log --all --grep "Refs: $id" --oneline | wc -l)
   echo "$id $hits"
 done
-# any id with hits>0 → close as already-landed, don't dispatch
+# any id with hits>0 → br close <id> --reason "Subsumed: landed as <sha>"
 ```
 
-### 4. Queue semantics — `wave` vs `stream`
+(Gap filed as hk-lhv8i to do this at submit-time inside the daemon.)
 
-**Problem:** `harmonik run --beads` creates a `kind=wave` queue, which does NOT accept appends. To append mid-run you need `kind=stream` (gap filed as hk-b0cyc). Separately, the daemon doesn't wake on `queue submit` if it's idle (gap filed as hk-24xn1).
+### Queue semantics — `wave` vs `stream`
 
-**Fix:** For appendable runs, submit a stream-kind queue JSON first, then append:
-
-```bash
-harmonik queue submit /path/to/stream-queue.json    # kind=stream
-harmonik queue append --queue-id <uuid> grp1 hk-xxx hk-yyy
-# workaround for hk-24xn1: keep an active `harmonik run` so the workloop stays hot
-```
-
-### Copy-paste Monitor block
-
-The exact bash that worked this session. Wrap your `harmonik run` background task with this loop in the Monitor tool — it streams new-commit lines, auto-kills hung claude PIDs, and surfaces the batch-exit signal.
-
-```bash
-REPO=/Users/gb/github/harmonik
-LAST_MAIN=$(git -C "$REPO" rev-parse main)
-RUN_LOG="$REPO/.harmonik/daemon.log"
-until ! pgrep -f "harmonik run --beads" >/dev/null; do
-  # (1) new commit on main?
-  CUR_MAIN=$(git -C "$REPO" rev-parse main)
-  if [ "$CUR_MAIN" != "$LAST_MAIN" ]; then
-    git -C "$REPO" log --oneline "$LAST_MAIN..$CUR_MAIN"
-    LAST_MAIN=$CUR_MAIN
-  fi
-  # (2) hung worktree? — daemon log shows "pasteinject quit-on-commit timeout"
-  for wt in "$REPO"/.harmonik/worktrees/*/; do
-    [ -d "$wt" ] || continue
-    rid=$(basename "$wt")
-    if grep -q "run=$rid.*pasteinject quit-on-commit timeout" "$RUN_LOG" 2>/dev/null; then
-      pid=$(pgrep -f "claude.*$rid" | head -1)
-      [ -n "$pid" ] && { echo "auto-kill hung claude pid=$pid run=$rid"; kill "$pid"; }
-    fi
-  done
-  sleep 30
-done
-echo "BATCH-EXIT: harmonik run finished"
-```
+`harmonik run --beads` creates a `kind=wave` queue that does NOT accept appends. Mid-flight extension requires `kind=stream` via `harmonik queue submit <file>` + `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Daemon doesn't wake on submit if idle — keep an active `harmonik run` so the workloop stays hot (gaps: hk-b0cyc, hk-24xn1, hk-7nbey for stream-default).
 
 ### Pre-flight checklist
 
-1. Rebuild harmonik first (`go build -o ~/bin/harmonik ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
-2. Pre-screen the batch: `git log --all --grep "Refs: <id>"` for each bead; drop already-landed ones.
-3. Choose `--max-concurrent` — keep at `1` until hk-wx8z8 (parallel-run stability) is verified.
-4. Wrap the run in the Monitor block above.
-5. Dispatch in background (`run_in_background=true`) and pass `--notify-stream`.
+1. Rebuild harmonik first (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
+2. Pre-screen the batch (see above); drop already-landed beads.
+3. Choose `--max-concurrent` — keep at `1` until hk-wx8z8 (parallel-run stability) verifies it.
+4. Dispatch in background with `--notify-stream` (review-loop is default on per hk-g0ckv).
+5. Arm a Monitor tailing the bash stdout file AND `.harmonik/events/events.jsonl`.
 
 ### When dispatch hangs
 
+The pasteinject quit-on-commit hang is now **auto-recovered in the daemon** (hk-trjef, `f2c395e`, `internal/daemon/pasteinject.go:146-208`) — quit → 30s grace → kill → noChange-subsumed check. You should rarely need manual intervention for that class.
+
+For other hangs (e.g. hk-5s7tg reviewer-spawn hang):
+
 1. Identify the stuck `run_id` from `.harmonik/queue.json` or the worktree listing.
-2. Compare `git -C .harmonik/worktrees/<run_id> rev-parse HEAD` against `main` — if it differs, work was done but not merged.
-3. Check the daemon log for `run=<run_id>` and look for `pasteinject quit-on-commit timeout`.
-4. `kill $(pgrep -f "claude.*<run_id>")` — the daemon's `sess.Wait` unblocks and resumes the merge path.
+2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; daemon is stuck on the next step (merge, reviewer, push).
+3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired? Which expected ones did not?
+4. If implementer claude has already exited but daemon is hung: kill the harmonik PID (`pkill -f "harmonik run"`), ff-merge the worktree branch by hand, push, close bead. File a friction bead with the missing-event signature.
+
+### Future: `harmonik subscribe` (hk-6ynv4)
+
+The current "tail two files" pattern is a stop-gap. Once `harmonik subscribe` lands, the canonical pattern becomes:
+
+```bash
+# In a Monitor tool call:
+harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
+```
+
+— one process, NDJSON to stdout, server-side heartbeat (default 60s) so the orchestrator wakes periodically even if the daemon goes quiet. Until that ships, use the tail-pair pattern above.
 
 ## Planning with kerf
 

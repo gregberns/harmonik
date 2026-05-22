@@ -354,6 +354,40 @@ func runReviewLoop(
 			}
 		}
 
+		// ── No-commit guard (hk-9c1v4) ────────────────────────────────────
+		//
+		// If the implementer phase exits without advancing the worktree HEAD
+		// past parentSHA, there is nothing for the reviewer to review.
+		// Previously this case fell through to diff-hash + reviewer dispatch,
+		// emitting reviewer_launched with a synthetic claude_session_id and
+		// crashing the reviewer with "task file absent: review-target.md".
+		//
+		// Per EM-015d (implementer phase MUST advance HEAD before the daemon
+		// launches the reviewer): short-circuit with a failed run when HEAD ==
+		// parentSHA on iteration 1. On iteration ≥ 2 the existing
+		// no_progress_detected check handles the analogous case (HEAD did not
+		// advance from the prior iteration's HEAD).
+		//
+		// Bead: hk-9c1v4.
+		if state.iterationCount == 1 {
+			headSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			if headErr != nil {
+				result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD after implementer at iteration %d: %v", state.iterationCount, headErr))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			if headSHA == parentSHA {
+				result := reviewLoopResult{
+					success:          false,
+					completionReason: core.ReviewLoopCompletionReasonError,
+					summary:          fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration %d", parentSHA, state.iterationCount),
+					needsAttention:   true,
+				}
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+		}
+
 		// Capture claude_session_id for iteration 1.
 		// Prefer the value persisted to git via the interceptor (CHB-023).
 		// Fall back to synthesis when the handler did not emit claude_session_id in

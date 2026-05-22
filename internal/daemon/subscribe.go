@@ -91,7 +91,9 @@ type SubscribeRequest struct {
 
 	// SinceEventID is reserved for replay-from-cursor; not implemented in v1
 	// (would require coordination with bus.ReplayFrom and a per-consumer
-	// stable ID). Currently ignored.
+	// stable ID). The daemon REJECTS subscribe requests where this field is
+	// non-empty with an explicit error (filed as hk-a5sil). The field is
+	// retained on the wire so the protocol shape is stable when replay lands.
 	SinceEventID string `json:"since_event_id,omitempty"`
 
 	// HeartbeatSeconds is the idle heartbeat cadence. Clamped to [10, 600];

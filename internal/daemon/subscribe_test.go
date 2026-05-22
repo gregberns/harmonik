@@ -14,6 +14,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -347,4 +349,96 @@ func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
 	if hb.ActiveRuns[0].AgeSeconds != 45 {
 		t.Errorf("active_runs[0].age_seconds: got %d, want 45", hb.ActiveRuns[0].AgeSeconds)
 	}
+}
+
+// TestSubscribe_RejectsSinceEventID asserts that the daemon REJECTS a
+// subscribe request carrying a non-empty since_event_id with an explicit
+// error, rather than silently ignoring the field. Closes the foot-gun
+// flagged by the hk-6ynv4 reviewer; replay implementation is filed as
+// hk-a5sil.
+func TestSubscribe_RejectsSinceEventID(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("/tmp", "hk-mkroe-")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sockPath := filepath.Join(dir, "daemon.sock")
+
+	// A minimal hub is sufficient — the rejection happens BEFORE
+	// HandleSubscribe is invoked, so the hub never sees the request.
+	hub := NewSubscribeHub(SubscribeHubConfig{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = RunSocketListenerWithSubscribe(ctx, sockPath, nil, nil, hub)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	// Wait for socket to bind.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(sockPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	req := map[string]any{
+		"op":             "subscribe",
+		"since_event_id": "0190000000000000000000000000",
+	}
+	reqBytes, _ := json.Marshal(req)
+	if _, err := conn.Write(reqBytes); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	rdr := bufio.NewReader(conn)
+	line, err := rdr.ReadBytes('\n')
+	// Server may close after writing — partial-read with err is fine if we got bytes.
+	if len(line) == 0 && err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+
+	var resp SocketResponse
+	if jsonErr := json.Unmarshal(line, &resp); jsonErr != nil {
+		t.Fatalf("decode response %q: %v", string(line), jsonErr)
+	}
+	if resp.Ok {
+		t.Fatalf("subscribe with since_event_id should be rejected; got ok=true (resp=%+v)", resp)
+	}
+	if resp.Error == "" {
+		t.Fatalf("rejection missing error message; got %+v", resp)
+	}
+	// Verify the error references the follow-up bead so future debuggers can find it.
+	wantSubstr := "since_event_id"
+	if !contains(resp.Error, wantSubstr) {
+		t.Errorf("error %q should mention %q", resp.Error, wantSubstr)
+	}
+	if !contains(resp.Error, "hk-a5sil") {
+		t.Errorf("error %q should reference follow-up bead hk-a5sil", resp.Error)
+	}
+}
+
+// contains is a tiny substring helper to avoid pulling in strings just for this test.
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

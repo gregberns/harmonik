@@ -228,13 +228,6 @@ func removeStaleSocket(sockPath string) error {
 // request loop for emit-outcome / claim-next from agent subprocesses."
 // Spec ref: specs/claude-hook-bridge.md §4.6 CHB-015, §4.10 CHB-025.
 // Spec ref: specs/process-lifecycle.md §4.4 PL-003a (queue method set).
-// SubscribeRouter holds the optional SubscribeHandler used by the "subscribe"
-// op. A nil router means no SubscribeHandler is wired and the socket returns
-// an error response for "subscribe" requests.
-type SubscribeRouter struct {
-	Handler SubscribeHandler
-}
-
 func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, qh ...QueueHandler) error {
 	return RunSocketListenerWithSubscribe(ctx, sockPath, h, hr, nil, qh...)
 }
@@ -409,6 +402,13 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		var subReq SubscribeRequest
 		if err := json.Unmarshal(reEncoded, &subReq); err != nil {
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)}
+			break
+		}
+		// Reject since_event_id until replay-from-cursor is implemented
+		// (filed as hk-a5sil). Fails loud rather than silently ignoring,
+		// per hk-mkroe review follow-up.
+		if subReq.SinceEventID != "" {
+			resp = SocketResponse{Ok: false, Error: "daemon: since_event_id replay not yet implemented; filed as hk-a5sil"}
 			break
 		}
 		sub.HandleSubscribe(ctx, conn, subReq)

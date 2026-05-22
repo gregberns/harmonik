@@ -610,6 +610,37 @@ func BusSubscriptionCount(bus EventBus) int {
 	return -1
 }
 
+// SubscribedConsumerIDs returns the ConsumerIDs of all subscriptions registered
+// on the bus.
+//
+// Bead ref: hk-ndysh.
+func (b *busImpl) SubscribedConsumerIDs() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ids := make([]string, len(b.subscriptions))
+	for i, s := range b.subscriptions {
+		ids[i] = s.ConsumerID
+	}
+	return ids
+}
+
+// BusSubscribedConsumerIDs returns the ConsumerIDs of all subscriptions on bus.
+//
+// It uses a type assertion against an unexported interface to avoid adding
+// SubscribedConsumerIDs to the public EventBus interface. Returns nil when bus
+// does not implement the lister (e.g. a mock in tests).
+//
+// Bead ref: hk-ndysh.
+func BusSubscribedConsumerIDs(bus EventBus) []string {
+	type lister interface {
+		SubscribedConsumerIDs() []string
+	}
+	if l, ok := bus.(lister); ok {
+		return l.SubscribedConsumerIDs()
+	}
+	return nil
+}
+
 // checkSyncCardinality enforces EV-014 / EV-INV-003: at most one synchronous
 // consumer per event type. Called under b.mu.
 func (b *busImpl) checkSyncCardinality(incoming core.Subscription) error {

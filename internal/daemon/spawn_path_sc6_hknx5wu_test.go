@@ -6,36 +6,38 @@ package daemon_test
 //
 // SC-6 verifies that daemon.Start registers ALL expected pre-Seal subscriptions
 // before bus.Seal() is called (EV-009). The WithBusObserver hook fires immediately
-// after all pre-Seal Subscribe calls and before Seal, so the BusSubscriptionCount
-// captured there is the authoritative pre-Seal count.
+// after all pre-Seal Subscribe calls and before Seal, so the captured bus state
+// is the authoritative pre-Seal snapshot.
 //
-// Three sub-tests:
+// Four sub-tests:
 //
-//  1. pre-seal-without-notify-stream: count = 4
+//  1. pre-seal-without-notify-stream: count = 5
 //     - 2 from HandlerPausePolicyGoroutine (agent_rate_limit_status, budget_exhausted)
 //     - 2 from QueueOperatorEventConsumer  (operator_pause_status, operator_resuming)
+//     - 1 from SubscribeHub (wildcard observer)
 //
-//  2. pre-seal-with-notify-stream: count = 8
-//     - 4 base subscriptions (same as above)
+//  2. pre-seal-with-notify-stream: count = 9
+//     - 5 base subscriptions (same as above)
 //     - 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
 //       run_completed, run_failed)
 //
-//  3. wiring-table-pre-seal-entries: structural scan
-//     - The exported compositionRootWirings table MUST contain at least two
-//       ".Subscribe" symbols before the "bus.Seal" symbol.
-//     - This guards against silent drops from the canonical wiring map
-//       (docs/audits/2026-05-20/composition-root-wiring-map.md).
+//  3. registry-all-pre-seal-entries: typed-registry check (hk-ndysh)
+//     - Enumerates RequiredPreSealSubscribers; verifies each ConsumerID is present
+//       in the bus before Seal. Fails with the subsystem name, not a count.
+//
+//  4. registry-notify-stream-entries: typed-registry check for NotifyStream path
+//     - Enumerates RequiredPreSealSubscribers + NotifyStreamSubscribers; same
+//       named-failure semantics.
 //
 // Spec refs:
 //   - specs/event-model.md §4 EV-009 (subscribers must register before Seal)
 //   - specs/process-lifecycle.md §4.2 PL-005 (Start step ordering)
 //
-// Bead: hk-nx5wu.
+// Bead: hk-nx5wu, hk-ndysh.
 
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -134,63 +136,69 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 		}
 	})
 
-	// ── Sub-test 3: wiring-table structural scan ──────────────────────────────
-	t.Run("wiring-table-pre-seal-entries", func(t *testing.T) {
+	// ── Sub-test 3: typed registry — base (no NotifyStream) ─────────────────
+	t.Run("registry-all-pre-seal-entries", func(t *testing.T) {
 		t.Parallel()
 
-		entries := daemon.ExportedCompositionRootWirings()
-		if len(entries) == 0 {
-			t.Fatal("SC6/wiring-table: compositionRootWirings is empty; expected ≥29 entries")
+		var capturedIDs []string
+
+		if err := daemon.StartForTesting(context.Background(), daemon.Config{},
+			daemon.WithBusObserver(func(bus eventbus.EventBus) {
+				capturedIDs = eventbus.BusSubscribedConsumerIDs(bus)
+			}),
+		); err != nil {
+			t.Fatalf("SC6/registry: daemon.StartForTesting: %v", err)
 		}
 
-		// Find the index of the bus.Seal entry.
-		sealIdx := -1
-		for i, e := range entries {
-			if e.Symbol == "bus.Seal" {
-				sealIdx = i
-				break
-			}
-		}
-		if sealIdx < 0 {
-			t.Fatal("SC6/wiring-table: 'bus.Seal' entry not found in compositionRootWirings; " +
-				"the wiring map must contain the Seal call site (hk-nx5wu)")
-		}
+		sc6FixtureCheckRegistry(t, "SC6/registry", capturedIDs,
+			daemon.RequiredPreSealSubscribers)
+	})
 
-		// Count and name all pre-Seal .Subscribe entries.
-		var preSealSubscribes []string
-		for i := 0; i < sealIdx; i++ {
-			if strings.HasSuffix(entries[i].Symbol, ".Subscribe") {
-				preSealSubscribes = append(preSealSubscribes, entries[i].Symbol)
-			}
+	// ── Sub-test 4: typed registry — with NotifyStream ────────────────────────
+	t.Run("registry-notify-stream-entries", func(t *testing.T) {
+		t.Parallel()
+
+		var capturedIDs []string
+		var notifyBuf bytes.Buffer
+
+		if err := daemon.StartForTesting(context.Background(), daemon.Config{NotifyStream: &notifyBuf},
+			daemon.WithBusObserver(func(bus eventbus.EventBus) {
+				capturedIDs = eventbus.BusSubscribedConsumerIDs(bus)
+			}),
+		); err != nil {
+			t.Fatalf("SC6/registry-notify: daemon.StartForTesting: %v", err)
 		}
 
-		// Mandatory pre-Seal subscriptions: pausePolicy.Subscribe + queueOpConsumer.Subscribe.
-		const wantMinPreSealSubscribes = 2
-		if len(preSealSubscribes) < wantMinPreSealSubscribes {
-			t.Errorf("SC6/wiring-table: found %d pre-Seal .Subscribe entries before bus.Seal (idx=%d), want ≥%d; "+
-				"entries found: %v (hk-nx5wu / EV-009)",
-				len(preSealSubscribes), sealIdx, wantMinPreSealSubscribes, preSealSubscribes)
-		} else {
-			t.Logf("SC6/wiring-table PASS: %d pre-Seal .Subscribe entries: %v", len(preSealSubscribes), preSealSubscribes)
-		}
-
-		// Verify specific mandatory entries are present.
-		sc6FixtureAssertPreSealEntry(t, preSealSubscribes, "pausePolicy.Subscribe")
-		sc6FixtureAssertPreSealEntry(t, preSealSubscribes, "queueOpConsumer.Subscribe")
-
-		t.Logf("SC6/wiring-table PASS: wiring table has %d entries; bus.Seal at index %d; "+
-			"%d pre-Seal .Subscribe entries confirmed", len(entries), sealIdx, len(preSealSubscribes))
+		sc6FixtureCheckRegistry(t, "SC6/registry-notify", capturedIDs,
+			daemon.RequiredPreSealSubscribers)
+		sc6FixtureCheckRegistry(t, "SC6/registry-notify", capturedIDs,
+			daemon.NotifyStreamSubscribers)
 	})
 }
 
-// sc6FixtureAssertPreSealEntry checks that want appears in the pre-Seal subscribe list.
-func sc6FixtureAssertPreSealEntry(t *testing.T, preSealSubscribes []string, want string) {
+// sc6FixtureCheckRegistry verifies that every ConsumerID declared in registry
+// appears in capturedIDs. Failures name the subsystem, not just the count.
+func sc6FixtureCheckRegistry(
+	t *testing.T,
+	label string,
+	capturedIDs []string,
+	registry map[daemon.PreSealSubsystem]daemon.SubscribeContract,
+) {
 	t.Helper()
-	for _, s := range preSealSubscribes {
-		if s == want {
-			return
+
+	idSet := make(map[string]bool, len(capturedIDs))
+	for _, id := range capturedIDs {
+		idSet[id] = true
+	}
+
+	for subsystem, contract := range registry {
+		for _, cid := range contract.ConsumerIDs {
+			if !idSet[cid] {
+				t.Errorf("%s: subsystem %q: ConsumerID %q not subscribed before Seal "+
+					"(hk-ndysh / EV-009)", label, subsystem, cid)
+			}
 		}
 	}
-	t.Errorf("SC6/wiring-table: mandatory pre-Seal entry %q not found in compositionRootWirings before bus.Seal; "+
-		"found: %v (hk-nx5wu / EV-009)", want, preSealSubscribes)
+	t.Logf("%s PASS: %d pre-Seal subscriptions verified against registry (%d subsystems)",
+		label, len(capturedIDs), len(registry))
 }

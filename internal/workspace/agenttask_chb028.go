@@ -281,6 +281,27 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	if p.BaseBranch != "" {
 		sb.WriteString(fmt.Sprintf("base_branch: %s\n", p.BaseBranch))
 	}
+	// Worktree-discipline guidance (hk-6zylj): inject explicit instructions
+	// telling the implementer to keep ALL file paths inside its worktree.
+	// Root cause of cross-contamination: implementers running discovery
+	// commands like `find /Users/gb/github/harmonik/internal -name '*.go'`
+	// receive MAIN-repo absolute paths back, then Write/Edit to those
+	// paths. The work lands in main; the worktree branch tip never moves;
+	// daemon never sees a commit on the run branch. This block is rendered
+	// IMMEDIATELY before the Task Description so it precedes any reading
+	// the implementer does of its brief.
+	if p.WorkspacePath != "" {
+		sb.WriteString("\n## Worktree Discipline (CRITICAL — read first)\n\n")
+		sb.WriteString(fmt.Sprintf("Your working directory is `%s`.\n", p.WorkspacePath))
+		sb.WriteString("ALL file paths you read, write, or edit MUST be inside this worktree.\n")
+		sb.WriteString("NEVER use absolute paths that begin with the MAIN repo root outside your worktree — writing there silently loses your work because the daemon merges from THIS worktree, not main.\n\n")
+		sb.WriteString("When running discovery commands (find, grep, ls, rg), use relative paths anchored to your worktree, NOT the main repo:\n\n")
+		sb.WriteString("  CORRECT:   find . -name '*.go'\n")
+		sb.WriteString(fmt.Sprintf("  CORRECT:   find %s/internal -name '*.go'\n", p.WorkspacePath))
+		sb.WriteString("  WRONG:     find /Users/gb/github/harmonik/internal -name '*.go'   (main repo — your edits will be lost)\n\n")
+		sb.WriteString("If a discovery command returns paths under the main repo root, translate them into your worktree before reading or editing.\n")
+	}
+
 	sb.WriteString("\n## Task Description\n\n")
 	sb.WriteString(p.Body)
 	if !strings.HasSuffix(p.Body, "\n") {

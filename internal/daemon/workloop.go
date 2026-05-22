@@ -1354,6 +1354,37 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
 	transitionTID, _ := deps.tidGen.Next()
 
+	// ── Implementer-escaped-worktree guard (hk-6zylj) ─────────────────
+	//
+	// Defense-in-depth check for implementer cross-contamination: after the
+	// implementer exits, inspect the MAIN repo's working tree. If dirty
+	// paths exist outside the normal harmonik churn allowlist
+	// (.harmonik/, .claude/, .beads/issues.jsonl), the implementer wrote
+	// files into the main repo via absolute MAIN-repo paths instead of
+	// staying inside its worktree — its run branch will have no commit
+	// but main is now dirty. Layer 1 of the fix (worktree-discipline
+	// guidance injected into agent-task.md) prevents the escape at the
+	// source; this Layer 2 check catches escapes that slip past Layer 1
+	// and fails the run loudly instead of letting it appear as a
+	// silent no-commit run.
+	//
+	// Fires BEFORE the no-commit guard so that escape (the more specific
+	// failure mode) is reported as such rather than as a generic
+	// "no commit" failure. We do NOT auto-restore main: forensic state is
+	// more useful than a clean tree, and the operator can recover via
+	// `git -C <main> diff` + manual cherry-pick or via the
+	// /tmp/escape-recovery.patch pattern.
+	//
+	// Bead: hk-6zylj.
+	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir); escapeErr == nil && mainDirty {
+		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
+		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
+			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		emitDone(false, failReason)
+		return
+	}
+
 	// ── No-commit guard (hk-mmh8f) ────────────────────────────────────
 	//
 	// Mirror of the review-loop no-commit guard (hk-9c1v4, reviewloop.go).
@@ -2119,4 +2150,83 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 		return
 	}
 	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
+}
+
+// checkMainWorkingTreeDirty (hk-6zylj) reports whether the main repo's working
+// tree contains dirty files outside the harmonik churn allowlist.
+//
+// It runs `git -C <mainPath> status --porcelain` and filters the output:
+//   - `.harmonik/...`           — daemon state (expected churn)
+//   - `.claude/...`             — orchestrator/Claude state (expected churn)
+//   - `.beads/issues.jsonl`     — bead ledger (expected churn from br sync)
+//
+// Anything else dirty is treated as an escape. The returned list contains the
+// path portion of each porcelain status line (with the leading XY-and-space
+// prefix stripped).
+//
+// Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
+// treat the check as informational and skip without failing the run.
+func checkMainWorkingTreeDirty(ctx context.Context, mainPath string) (bool, []string, error) {
+	if mainPath == "" {
+		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: empty mainPath")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: git status: %w", err)
+	}
+	var dirty []string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		// Porcelain v1 format: "XY <path>" (rename: "XY <oldpath> -> <newpath>").
+		// The first three runes are the XY status and the separating space.
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		// Handle rename "old -> new": consider the destination path.
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+4:]
+		}
+		// Strip surrounding quotes (git quotes paths with special chars).
+		path = strings.Trim(path, "\"")
+		if isHarmonikChurn(path) {
+			continue
+		}
+		dirty = append(dirty, path)
+	}
+	return len(dirty) > 0, dirty, nil
+}
+
+// isHarmonikChurn reports whether a path is part of the expected harmonik
+// churn surface that should be excluded from the escape check.
+func isHarmonikChurn(path string) bool {
+	switch {
+	case strings.HasPrefix(path, ".harmonik/"), path == ".harmonik":
+		return true
+	case strings.HasPrefix(path, ".claude/"), path == ".claude":
+		return true
+	case path == ".beads/issues.jsonl":
+		return true
+	}
+	return false
+}
+
+// emitImplementerEscapedWorktree emits an implementer_escaped_worktree event
+// (hk-6zylj) when the daemon detects post-implementer-exit dirty state in the
+// main repo working tree outside the churn allowlist.
+func emitImplementerEscapedWorktree(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, mainPath string, dirtyFiles []string) {
+	pl := core.ImplementerEscapedWorktreePayload{
+		RunID:      runID,
+		BeadID:     string(beadID),
+		MainPath:   mainPath,
+		DirtyFiles: dirtyFiles,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b)
 }

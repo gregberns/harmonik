@@ -71,6 +71,11 @@ func registerRunLifecycle() {
 	mustRegister("node_dispatch_requested", func() EventPayload { return &NodeDispatchRequestedPayload{} })
 	mustRegister("bead_closed", func() EventPayload { return &BeadClosedPayload{} })
 	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
+	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop
+	// when, after the implementer exits, the MAIN repo's working tree contains
+	// dirty files outside the .harmonik/.claude/.beads churn allowlist —
+	// indicating implementer cross-contamination. Durability class: F.
+	mustRegister("implementer_escaped_worktree", func() EventPayload { return &ImplementerEscapedWorktreePayload{} })
 }
 
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.

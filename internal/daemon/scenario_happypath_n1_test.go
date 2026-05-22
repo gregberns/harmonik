@@ -406,5 +406,20 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 
 	scenariotest.AssertNoOrphanTmuxWindows(t, nil)
 
+	// ── Assertion 5: causality invariants (hk-xegej) ─────────────────────────
+	// run_started must be followed by a terminal run event within 60 s.
+	// implementer_commit (when present) must be followed by reviewer_launched or
+	// run_completed within 30 s; passes vacuously when implementer_commit is absent.
+	scenariotest.AssertEventCausality(t, jsonlPath,
+		"run_started",
+		[]string{"run_completed", "run_failed", "run_cancelled"},
+		60*time.Second,
+	)
+	scenariotest.AssertEventCausality(t, jsonlPath,
+		"implementer_commit",
+		[]string{"reviewer_launched", "run_completed"},
+		30*time.Second,
+	)
+
 	t.Logf("ScenarioN1: PASS bead=%s", beadID)
 }

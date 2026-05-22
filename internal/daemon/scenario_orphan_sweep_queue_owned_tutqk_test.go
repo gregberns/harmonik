@@ -315,5 +315,18 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 	// (status=pending, not dispatched), and called ResetBead → br update --status open.
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "open")
 
+	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
+	// run_started is absent in this sweep-only scenario; both checks pass vacuously.
+	scenariotest.AssertEventCausality(t, jsonlPath,
+		"run_started",
+		[]string{"run_completed", "run_failed", "run_cancelled"},
+		60*time.Second,
+	)
+	scenariotest.AssertEventCausality(t, jsonlPath,
+		"implementer_commit",
+		[]string{"reviewer_launched", "run_completed"},
+		30*time.Second,
+	)
+
 	t.Logf("sweepQO: PASS bead=%s reset to open by queue-owned provenance path", beadID)
 }

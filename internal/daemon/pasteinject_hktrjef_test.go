@@ -56,18 +56,24 @@ func (k *hktrjefKiller) Kill(_ context.Context) error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // hktrjefShortTimeouts overrides the three timing vars and returns a restore
-// function.  Call defer restore() immediately.
+// function.  Call defer restore() immediately.  postQuitKillGrace is set to a
+// long value (1 hour) so the post-commit watchdog (hk-5s7tg) does not fire
+// during tests that only exercise the noChange-timeout path.  Tests that need
+// to exercise the post-commit watchdog override it explicitly.
 func hktrjefShortTimeouts(poll, timeout, killDelay time.Duration) func() {
 	origPoll := *daemon.ExportedCommitPollInterval
 	origTimeout := *daemon.ExportedCommitPollTimeout
 	origKillDelay := *daemon.ExportedNoChangeKillDelay
+	origPostQuit := *daemon.ExportedPostQuitKillGrace
 	*daemon.ExportedCommitPollInterval = poll
 	*daemon.ExportedCommitPollTimeout = timeout
 	*daemon.ExportedNoChangeKillDelay = killDelay
+	*daemon.ExportedPostQuitKillGrace = 1 * time.Hour
 	return func() {
 		*daemon.ExportedCommitPollInterval = origPoll
 		*daemon.ExportedCommitPollTimeout = origTimeout
 		*daemon.ExportedNoChangeKillDelay = origKillDelay
+		*daemon.ExportedPostQuitKillGrace = origPostQuit
 	}
 }
 
@@ -147,8 +153,8 @@ func TestPasteInjectQuitOnCommit_TimeoutSendsQuitAndKills(t *testing.T) {
 }
 
 // TestPasteInjectQuitOnCommit_NewCommitNoKill verifies that when a new commit
-// lands before commitPollTimeout, only SendQuitToLastPane fires (no Kill, no
-// channel close).
+// lands before commitPollTimeout, SendQuitToLastPane fires and (with a long
+// postQuitKillGrace) no Kill fires within the test window.
 func TestPasteInjectQuitOnCommit_NewCommitNoKill(t *testing.T) {
 	restore := hktrjefShortTimeouts(5*time.Millisecond, 5*time.Second, 30*time.Second)
 	defer restore()
@@ -190,8 +196,90 @@ func TestPasteInjectQuitOnCommit_NewCommitNoKill(t *testing.T) {
 	if got := qs.calls.Load(); got != 1 {
 		t.Errorf("SendQuitToLastPane calls: want 1, got %d", got)
 	}
+	// hk-5s7tg: with postQuitKillGrace overridden to 1 hour by
+	// hktrjefShortTimeouts, the post-commit watchdog must not fire within
+	// the test's 3-second window.
 	if got := kl.calls.Load(); got != 0 {
-		t.Errorf("Kill calls: want 0, got %d (must not kill on normal commit)", got)
+		t.Errorf("Kill calls: want 0 (postQuitKillGrace=1h is well past test window), got %d", got)
+	}
+	// Cancel the parent ctx so the watchdog goroutine exits before the test
+	// returns and the Kill counter is observed.
+	cancel()
+	// Give the goroutine a tick to exit cleanly.
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace verifies the
+// hk-5s7tg fix: when a commit lands and /quit is sent, but the session has
+// not exited within postQuitKillGrace, killer.Kill is called to unblock the
+// workloop's sess.Wait.
+func TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace(t *testing.T) {
+	// Override package vars: short pollInterval + long pollTimeout so the
+	// noChange-timeout path does NOT fire; short postQuitKillGrace so the
+	// watchdog fires quickly.
+	origPoll := *daemon.ExportedCommitPollInterval
+	origTimeout := *daemon.ExportedCommitPollTimeout
+	origKillDelay := *daemon.ExportedNoChangeKillDelay
+	origPostQuit := *daemon.ExportedPostQuitKillGrace
+	*daemon.ExportedCommitPollInterval = 5 * time.Millisecond
+	*daemon.ExportedCommitPollTimeout = 30 * time.Second
+	*daemon.ExportedNoChangeKillDelay = 30 * time.Second
+	*daemon.ExportedPostQuitKillGrace = 50 * time.Millisecond
+	defer func() {
+		// Sleep first so the watchdog goroutine has exited before we restore.
+		time.Sleep(200 * time.Millisecond)
+		*daemon.ExportedCommitPollInterval = origPoll
+		*daemon.ExportedCommitPollTimeout = origTimeout
+		*daemon.ExportedNoChangeKillDelay = origKillDelay
+		*daemon.ExportedPostQuitKillGrace = origPostQuit
+	}()
+
+	wtPath, headSHA := hktrjefWorktree(t)
+	qs := &hktrjefQuitSender{}
+	kl := &hktrjefKiller{}
+	noChangeCh := make(chan struct{})
+
+	// Advance HEAD after a short delay so the poller detects it and the
+	// post-commit branch is hit (which schedules the watchdog).
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0644); err != nil {
+			return
+		}
+		bgCtx := context.Background()
+		for _, args := range [][]string{
+			{"add", "."},
+			{"commit", "-m", "work\n\nRefs: hk-5s7tg"},
+		} {
+			cmd := exec.CommandContext(bgCtx, "git", args...)
+			cmd.Dir = wtPath
+			_ = cmd.Run()
+		}
+	}()
+
+	// Use a parent context that outlives postQuitKillGrace so the watchdog
+	// can fire before ctx-cancel.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh)
+
+	// pasteInjectQuitOnCommit returned after sending /quit and launching the
+	// watchdog goroutine.  Wait long enough for the watchdog grace to elapse
+	// and Kill to be invoked.
+	time.Sleep(150 * time.Millisecond)
+
+	if got := qs.calls.Load(); got != 1 {
+		t.Errorf("SendQuitToLastPane calls: want 1, got %d", got)
+	}
+	if got := kl.calls.Load(); got != 1 {
+		t.Errorf("Kill calls (post-commit watchdog): want 1 after grace elapsed, got %d (hk-5s7tg watchdog did not fire)", got)
+	}
+	// noChangeTimeoutCh must NOT be closed (the no-progress path did not fire).
+	select {
+	case <-noChangeCh:
+		t.Fatal("noChangeTimeoutCh unexpectedly closed; only the post-commit watchdog should have fired")
+	default:
 	}
 }
 

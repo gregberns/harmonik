@@ -79,7 +79,9 @@ done
 
 The pasteinject quit-on-commit hang is now **auto-recovered in the daemon** (hk-trjef, `f2c395e`, `internal/daemon/pasteinject.go:146-208`) — quit → 30s grace → kill → noChange-subsumed check. You should rarely need manual intervention for that class.
 
-For other hangs (e.g. hk-5s7tg reviewer-spawn hang):
+The post-commit /quit watchdog (hk-5s7tg, `internal/daemon/pasteinject.go` post-commit branch) similarly auto-recovers the case where the implementer claude committed but `sess.Wait` is stuck (stale tmux pane handle from a prior daemon's killed run, or surrounding shell pid surviving claude exit). After commit-detection + /quit, a 60s grace fires before the session is force-killed so the workloop's `sess.Wait` unblocks and the reviewer launches.
+
+For other hangs:
 
 1. Identify the stuck `run_id` from `.harmonik/queue.json` or the worktree listing.
 2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; daemon is stuck on the next step (merge, reviewer, push).

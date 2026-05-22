@@ -884,6 +884,13 @@ var ExportedCommitPollTimeout = &commitPollTimeout
 // Bead: hk-trjef.
 var ExportedNoChangeKillDelay = &noChangeKillDelay
 
+// ExportedPostQuitKillGrace is a pointer to the package-level postQuitKillGrace
+// var.  Tests set *ExportedPostQuitKillGrace to a short duration to exercise the
+// post-commit /quit watchdog without waiting 60 s of wall time.
+//
+// Bead: hk-5s7tg.
+var ExportedPostQuitKillGrace = &postQuitKillGrace
+
 // ExportedCommitPollInterval is a pointer to the package-level commitPollInterval
 // var.  Tests set *ExportedCommitPollInterval to a short duration to keep
 // polling tight during timeout tests.

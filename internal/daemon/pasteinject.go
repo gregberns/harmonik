@@ -114,6 +114,22 @@ var commitPollTimeout = 10 * time.Minute
 // Bead: hk-trjef.
 var noChangeKillDelay = 30 * time.Second
 
+// postQuitKillGrace is the grace period between the post-commit /quit send and
+// the forced sess.Kill call on the substrate-path session.  Without this kill,
+// sess.Wait (which polls the tmux pane PID for liveness) can hang indefinitely
+// when claude has exited but the surrounding shell pid is still alive, or when
+// /quit landed in the wrong pane (stale handle from a prior daemon's killed
+// run).  60 s gives Claude Code plenty of time to respond to /quit and exit
+// cleanly under normal conditions; if the pane is still alive after that the
+// session is force-killed so the workloop's sess.Wait unblocks and the review
+// loop proceeds to the reviewer phase.
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-5s7tg.
+var postQuitKillGrace = 60 * time.Second
+
 // sessionKiller is a subset of handler.Session used by pasteInjectQuitOnCommit
 // to force-kill the hosted session when commitPollTimeout fires without a commit.
 //
@@ -132,7 +148,10 @@ type sessionKiller interface {
 // injects /quit programmatically.
 //
 // The function runs in a goroutine and returns when:
-//   - A new commit is detected and /quit is sent (success).
+//   - A new commit is detected and /quit is sent (success).  A post-quit
+//     watchdog goroutine is also launched (hk-5s7tg): it waits
+//     postQuitKillGrace then calls killer.Kill so sess.Wait unblocks even
+//     when the pane is stuck (stale tmux handle, surviving shell pid).
 //   - commitPollTimeout elapses without a new commit: /quit is sent
 //     unconditionally, noChangeKillDelay is waited, then killer.Kill is called,
 //     and noChangeTimeoutCh is closed to signal the workloop (hk-trjef).
@@ -142,7 +161,7 @@ type sessionKiller interface {
 // skipped when either is absent).
 //
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Beads: hk-cmybm, hk-trjef.
+// Beads: hk-cmybm, hk-trjef, hk-5s7tg.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSender,
@@ -151,8 +170,14 @@ func pasteInjectQuitOnCommit(
 	initialSHA string,
 	noChangeTimeoutCh chan<- struct{},
 ) {
-	deadline := time.Now().Add(commitPollTimeout)
-	ticker := time.NewTicker(commitPollInterval)
+	// Snapshot the tunable durations into locals so tests that restore
+	// package vars after the surrounding run returns do not race with our
+	// reads inside the for loop.  Only the values captured here matter.
+	pollTimeout := commitPollTimeout
+	pollInterval := commitPollInterval
+	killDelay := noChangeKillDelay
+	deadline := time.Now().Add(pollTimeout)
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -175,7 +200,7 @@ func pasteInjectQuitOnCommit(
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(noChangeKillDelay):
+				case <-time.After(killDelay):
 				}
 				if killer != nil {
 					if kErr := killer.Kill(ctx); kErr != nil {
@@ -200,6 +225,36 @@ func pasteInjectQuitOnCommit(
 				if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-commit: SendQuitToLastPane: %v\n", qErr)
+				}
+				// hk-5s7tg: schedule a post-quit watchdog that force-kills the
+				// session if it has not exited after postQuitKillGrace.  Without
+				// this, sess.Wait (substrate path) can hang indefinitely when
+				// /quit landed in the wrong pane (stale handle from a prior
+				// daemon's killed run) or when the surrounding shell pid stays
+				// alive after claude exits.  The 1.75-hour daemon hang on the
+				// hk-g0ckv dispatch (2026-05-21) had exactly this shape: the
+				// implementer committed cleanly but the daemon's sess.Wait never
+				// unblocked, so reviewer_launched was never emitted.
+				//
+				// killer may be nil (some callers pass nil); in that case we
+				// skip the kill step but still return — the workloop will then
+				// fall back to its own (much longer) ctx-cancel timeout.
+				if killer != nil {
+					// Snapshot the grace duration here so the goroutine does
+					// not race with test code that restores the package var
+					// after the run returns.
+					grace := postQuitKillGrace
+					go func() {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(grace):
+						}
+						if kErr := killer.Kill(ctx); kErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: pasteinject: quit-on-commit: post-quit Kill: %v\n", kErr)
+						}
+					}()
 				}
 				return
 			}

@@ -1354,6 +1354,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	watcherFailed := watcherErr != nil && !isWatcherErrCanceled(watcherErr)
 	transitionTID, _ := deps.tidGen.Next()
 
+	// ── No-commit guard (hk-mmh8f) ────────────────────────────────────
+	//
+	// Mirror of the review-loop no-commit guard (hk-9c1v4, reviewloop.go).
+	// If the single-mode implementer exits without advancing the worktree
+	// HEAD past parentSHA, there is no work to merge or close.  Previously
+	// this fell through to the auto-close branch (mergeRes.noChange=true
+	// → outcome_emitted=approved + bead_closed + run_completed success=true)
+	// even though no code was produced.
+	//
+	// Per EM-015d (implementer MUST advance HEAD): short-circuit with a
+	// failed run when HEAD == headSHA.
+	//
+	// Bead: hk-mmh8f.
+	if curHeadSHA, curHeadErr := resolveWorktreeHEAD(ctx, wtPath); curHeadErr == nil && curHeadSHA == headSHA {
+		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		emitDone(false, failReason)
+		return
+	}
+
 	switch {
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.

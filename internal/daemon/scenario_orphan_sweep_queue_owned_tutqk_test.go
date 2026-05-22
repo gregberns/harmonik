@@ -291,22 +291,23 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 	// daemon_orphan_sweep_completed, which is emitted immediately after the sweep.
 	// Budget: 10 s is generous; the sweep itself is sub-second in CI.
 	const sweepPollBudget = 10 * time.Second
-	if !sweepQOPollOrphanSweepCompleted(t, jsonlPath, sweepPollBudget) {
-		t.Error("sweepQO: daemon_orphan_sweep_completed not found within budget")
-	}
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, sweepPollBudget, func() {
+		for {
+			if scenariotest.WaitForEvent(t, jsonlPath, "daemon_orphan_sweep_completed", "", 50*time.Millisecond) {
+				return
+			}
+		}
+	})
 
 	// Cancel the daemon context to stop the work loop.
 	loopCancel()
 
 	// Wait for daemon.Start to return (up to 5 s).
-	select {
-	case err := <-startDone:
-		if err != nil {
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 5*time.Second, func() {
+		if err := <-startDone; err != nil {
 			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after context cancel")
-	}
+	})
 
 	// ── Assertion: bead reset to open ────────────────────────────────────────
 	//

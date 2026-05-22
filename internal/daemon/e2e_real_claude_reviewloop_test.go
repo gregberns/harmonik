@@ -53,6 +53,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -308,8 +311,13 @@ func TestE2ERealClaudeReviewLoopMode(t *testing.T) {
 	stopDaemon := func() { stopOnce.Do(rawStop) }
 	defer stopDaemon()
 
-	// Wait for events (run_completed or timeout).
-	events := <-eventsCh
+	// Wait for events (run_completed or timeout). MustCompleteWithin adds a
+	// 30 s grace beyond the 240 s watchCtx so we get diagnostics if the
+	// goroutine ever hangs rather than just a silent test timeout.
+	var events []rcsmEvent
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", tmux.OSAdapter{}, 270*time.Second, func() {
+		events = <-eventsCh
+	})
 
 	// Stop the daemon gracefully before asserting.
 	stopDaemon()

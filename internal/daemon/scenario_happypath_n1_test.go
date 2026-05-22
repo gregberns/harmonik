@@ -356,20 +356,24 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	// that CloseBead is not interrupted mid-retry (which would produce run_failed
 	// instead of run_completed and leave the bead in_progress).
 	const terminalPollBudget = 20 * time.Second
-	_ = scenarioN1PollRunTerminal(t, jsonlPath, terminalPollBudget)
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, terminalPollBudget, func() {
+		for {
+			if scenariotest.WaitForEvent(t, jsonlPath, "run_completed", "", 50*time.Millisecond) ||
+				scenariotest.WaitForEvent(t, jsonlPath, "run_failed", "", 50*time.Millisecond) {
+				return
+			}
+		}
+	})
 
 	// Stop the work loop now that the run has reached a terminal JSONL event.
 	loopCancel()
 
 	// Wait for daemon.Start to return (up to 5 s).
-	select {
-	case err := <-startDone:
-		if err != nil {
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 5*time.Second, func() {
+		if err := <-startDone; err != nil {
 			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after context cancel")
-	}
+	})
 
 	// ── Assertion 1: bead closed ─────────────────────────────────────────────
 

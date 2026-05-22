@@ -337,7 +337,8 @@ func runReviewLoop(
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
 		_, implEI := waitWithSocketGrace(ctx, deps.hookStore, implWatcher, implSess,
 			runID.String(), implArtifacts.claudeSessionID)
-		_ = implEI // exit info available for diagnostics; iteration control uses verdict file
+		// implEI carries exit code + stderr tail; surfaced into the no-commit
+		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
 
 		// Close this phase's hook session — late hooks from a completed implementer
 		// must not bleed into the next phase (reviewer or implementer-resume).
@@ -377,10 +378,28 @@ func runReviewLoop(
 				return result
 			}
 			if headSHA == parentSHA {
+				summary := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration %d exit=%d",
+					parentSHA, state.iterationCount, implEI.exitCode)
+				// Surface stderr tail when available — helps diagnose silent
+				// implementer crashes where the agent produced no NDJSON output.
+				// Mirrors workloop.go:1428-1441 (hk-ajhqw single-mode fix).
+				// Bead: hk-loga9.
+				if len(implEI.stderrTail) > 0 {
+					const maxTailInReason = 200
+					tail := implEI.stderrTail
+					truncated := ""
+					if len(tail) > maxTailInReason {
+						tail = tail[len(tail)-maxTailInReason:]
+						truncated = " (truncated)"
+					}
+					fmt.Fprintf(os.Stderr, "daemon: review-loop: implementer exited without commit; bead %s run %s exit=%d stderr tail%s:\n%s\n",
+						beadID, runID.String(), implEI.exitCode, truncated, tail)
+					summary += fmt.Sprintf(" stderr_tail%s=%q", truncated, tail)
+				}
 				result := reviewLoopResult{
 					success:          false,
 					completionReason: core.ReviewLoopCompletionReasonError,
-					summary:          fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration %d", parentSHA, state.iterationCount),
+					summary:          summary,
 					needsAttention:   true,
 				}
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)

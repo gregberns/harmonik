@@ -118,6 +118,21 @@ You will not get an answer — the orchestrator dispatches you and moves on. **M
 
 If any of the above fails, fix before committing. Do not commit broken code expecting the reviewer to flag it.
 
+## Pre-exit rebase (REQUIRED — run after committing, before /quit)
+
+After your commit, rebase your branch against the run's configured base to pick up any upstream advances during your work:
+
+```bash
+BASE_BRANCH=$(grep '^base_branch:' .harmonik/agent-task.md | awk '{print $2}')
+BASE_BRANCH=${BASE_BRANCH:-main}
+git fetch origin
+git rebase origin/$BASE_BRANCH
+```
+
+The `base_branch` value is in the `agent-task.md` header (e.g. `base_branch: main` or `base_branch: integration/my-feature`). Use it verbatim — do NOT hardcode `main`. If `base_branch` is absent, default to `main`.
+
+Rationale: the base may have advanced while you worked. Rebasing here avoids a daemon-side rebase conflict during `mergeRunBranchToMain`. If the rebase conflicts, resolve them and re-run the pre-commit checks before exiting.
+
 ## Appendix — Brief template (orchestrator-facing)
 
 The orchestrator composes briefs as a parameter-fill against this template. The implementer reads the bead body via `br show`; the brief should NOT paraphrase it. Target ≤15 lines.

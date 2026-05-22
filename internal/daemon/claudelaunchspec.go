@@ -152,6 +152,12 @@ type claudeRunCtx struct {
 	// into the agent-task.md as an "## Extra Context" section (hk-boiwe).
 	// Empty means no section is rendered. Passed through to AgentTaskPayload.
 	extraContext string
+
+	// baseBranch is the resolved lands_on branch for this run (hk-mtm0w).
+	// Passed into AgentTaskPayload so the implementer sees base_branch in the
+	// agent-task header and can rebase against origin/$baseBranch pre-exit.
+	// Empty when the caller cannot resolve branching config (non-fatal).
+	baseBranch string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -263,6 +269,7 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		ReviewHeadSHA:       rc.reviewHeadSHA,
 		ReAttach:            rc.agentTaskReAttach,
 		ExtraContext:        rc.extraContext,
+		BaseBranch:          rc.baseBranch,
 	}
 	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(

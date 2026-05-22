@@ -107,6 +107,12 @@ type AgentTaskPayload struct {
 	// carry predecessor-commit SHAs, dependency-landing notes, or orchestrator
 	// briefs that are not part of the bead body itself.
 	ExtraContext string
+
+	// BaseBranch is the resolved lands_on branch for this run per WM-005b
+	// (hk-mtm0w). Rendered as base_branch in the agent-task header so the
+	// implementer can rebase against origin/$BaseBranch before exiting.
+	// When empty, the header line is omitted.
+	BaseBranch string
 }
 
 // AgentTaskPath returns the canonical path for the per-launch task-delivery
@@ -272,6 +278,9 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	sb.WriteString(fmt.Sprintf("iteration: %d\n", p.Iteration))
 	sb.WriteString(fmt.Sprintf("run_id: %s\n", p.RunID))
 	sb.WriteString(fmt.Sprintf("workspace_path: %s\n", p.WorkspacePath))
+	if p.BaseBranch != "" {
+		sb.WriteString(fmt.Sprintf("base_branch: %s\n", p.BaseBranch))
+	}
 	sb.WriteString("\n## Task Description\n\n")
 	sb.WriteString(p.Body)
 	if !strings.HasSuffix(p.Body, "\n") {

@@ -536,12 +536,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// as local copies. Phase 2 (handler-pause gate) runs without the lock.
 			// Phase 3 (dispatch stamp) re-acquires the write lock for a TOCTOU check.
 			var (
-				snapItemIdx        int         = -1 // -1 → no item found (q==nil or nothing ready)
-				snapItemBeadID     core.BeadID
-				snapItemContext    string
-				snapItemWFMode     string
-				snapGroupIndex     int
-				snapQueueID        string
+				snapItemIdx     int = -1 // -1 → no item found (q==nil or nothing ready)
+				snapItemBeadID  core.BeadID
+				snapItemContext string
+				snapItemWFMode  string
+				snapGroupIndex  int
+				snapQueueID     string
 			)
 			{
 				lq := deps.queueStore.LockForMutation()
@@ -695,7 +695,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
 				capturedExtraContext = snapItemContext // hk-boiwe
-				capturedItemWFMode = snapItemWFMode   // hk-hiqrl
+				capturedItemWFMode = snapItemWFMode    // hk-hiqrl
 			}
 		}
 
@@ -997,6 +997,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 	}
 
+	// Resolve lands_on (base branch) for the pre-exit rebase step (hk-mtm0w).
+	// resolveBranching is called a second time here (also called inside
+	// resolveParentCommit) to extract LandsOn without restructuring
+	// resolveParentCommit's return type. The call is cheap (YAML parse + stat).
+	// Non-fatal: if resolveBranching fails here, baseBranch is left empty and
+	// the agent-task header omits the base_branch line.
+	var baseBranch string
+	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, deps.projectDir); brErr == nil {
+		baseBranch = brCfg.LandsOn
+	}
+
 	wtFactory := deps.worktreeFactory
 	if wtFactory == nil {
 		wtFactory = productionWorktreeFactory
@@ -1023,7 +1034,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// single mode (default MVH): one-shot implementer dispatch.
 	if workflowMode == core.WorkflowModeReviewLoop {
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext)
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
@@ -1067,6 +1078,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// per HC-055b. Derived from projectDir via the standard worktree root formula.
 		worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
+		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {

@@ -129,6 +129,22 @@ KERF IS IN BETA + REALIGNED (v48 NEW). `kerf next`, `kerf triage`, `kerf pin`, `
 
 PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_plan.md` to include an explicit "Done means..." section listing observable behavioral acceptance criteria, NOT "the beads shipped." Guards against minimum-viable shipping. Applied to `plans/007_handler_pause_and_resume/_plan.md` as the example. hk-b6ls5 extends to require scenario-test + exploratory-test beads at plan-end; hk-85trr applies the same to kerf jig templates locally.
 
+**HEARTBEAT-STALENESS WATCH (HARD RULE, v55 NEW 2026-05-23 — survival layer until kerf `daemon-liveness` redesign lands).** Every `harmonik run` dispatch MUST arm a heartbeat-staleness watcher in addition to the existing bash-task + events.jsonl monitors. Daemon emits `agent_heartbeat` events at ~5 min intervals; staleness >6 min on any active run means the implementer has gone silent BEFORE the 10-min `commitPollTimeout` wall-kill (`pasteinject.go:104`) fires. Background: the wall-kill destroys productive work — even trivial 1-line beads failed at the 10-min mark on the 2026-05-22 post-eb43a6b batch. Watcher pattern (Bash background, 60s poll):
+
+```bash
+while true; do
+  for rid in $(python3 -c "import json; q=json.load(open('.harmonik/queue.json')); [print(i['run_id']) for g in q['groups'] for i in g['items'] if i.get('status')=='dispatched' and i.get('run_id')]"); do
+    last_hb=$(grep "\"run_id\":\"$rid\"" .harmonik/events/events.jsonl | grep agent_heartbeat | tail -1 | python3 -c "import sys,json,datetime; print(int(datetime.datetime.fromisoformat(json.loads(sys.stdin.readline())['timestamp_wall']).timestamp()))" 2>/dev/null)
+    [ -z "$last_hb" ] && continue
+    age=$(( $(date +%s) - last_hb ))
+    [ $age -gt 360 ] && echo "HEARTBEAT-STALE: run $rid age=${age}s (>6min) — implementer silent, decide before 10min wall-kill"
+  done
+  sleep 60
+done
+```
+
+Proper redesign tracked in kerf work **`daemon-liveness`** (`~/.kerf/projects/gregberns-harmonik/daemon-liveness/`). Eventual DOT (kerf `phase-3-dot`) replaces this entire brittle layer.
+
 <!-- END DIRECTIVES -->
 
 # Where we are (v53, 2026-05-21)

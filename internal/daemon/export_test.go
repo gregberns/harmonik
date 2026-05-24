@@ -720,9 +720,9 @@ func ExportedPolicyHandleBudgetExhausted(p *HandlerPausePolicyGoroutine, ctx con
 }
 
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
-// daemon_test.
+// daemon_test.  Returns the briefDelivered channel (hk-930o3).
 //
-// Bead ref: hk-zrj83.
+// Bead ref: hk-zrj83, hk-930o3.
 func ExportedPasteInjectOnLaunch(
 	ctx context.Context,
 	substrate handler.Substrate,
@@ -730,8 +730,8 @@ func ExportedPasteInjectOnLaunch(
 	phase handlercontract.ReviewLoopPhase,
 	iterCount int,
 	wtPath string,
-) {
-	pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath)
+) <-chan struct{} {
+	return pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath)
 }
 
 // ExportedBufferName exposes the bufferName helper for tests in package
@@ -870,6 +870,13 @@ func ExportedProjectCfgOf(deps workLoopDeps) ProjectConfig {
 // pasteInjectQuitOnCommit timeout-recovery test seams (hk-trjef)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ExportedBriefDeliveredTimeout is a pointer to the package-level
+// briefDeliveredTimeout var.  Tests set *ExportedBriefDeliveredTimeout to a
+// short duration to exercise the timeout path without waiting 2 minutes.
+//
+// Bead: hk-930o3.
+var ExportedBriefDeliveredTimeout = &briefDeliveredTimeout
+
 // ExportedCommitPollTimeout is a pointer to the package-level commitPollTimeout
 // var.  Tests set *ExportedCommitPollTimeout to a short duration to avoid
 // waiting 10 min for the timeout path.
@@ -906,7 +913,7 @@ type ExportedSessionKiller = sessionKiller
 
 // ExportedPasteInjectQuitOnCommit exposes pasteInjectQuitOnCommit for tests.
 //
-// Bead: hk-trjef.
+// Beads: hk-trjef, hk-930o3.
 func ExportedPasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSenderExported,
@@ -914,8 +921,9 @@ func ExportedPasteInjectQuitOnCommit(
 	wtPath string,
 	initialSHA string,
 	noChangeTimeoutCh chan<- struct{},
+	briefDelivered <-chan struct{},
 ) {
-	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh)
+	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered)
 }
 
 // quitSenderExported is the exported alias for quitSender so the exported

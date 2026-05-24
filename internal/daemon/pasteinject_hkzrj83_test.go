@@ -179,11 +179,12 @@ func TestPasteInjectOnLaunch_ImplementerInitial(t *testing.T) {
 	sub := pasteInjectFixtureSubstrate(t, adapter)
 
 	const sessionID = "01hwxyz-abc123"
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), sub, sessionID,
 		handlercontract.ReviewLoopPhase(""), // empty = single-mode / implementer-initial
 		1, wtPath,
 	)
+	<-briefDelivered
 
 	calls := adapter.calls()
 	if len(calls) != 1 {
@@ -215,11 +216,12 @@ func TestPasteInjectOnLaunch_Reviewer(t *testing.T) {
 	sub := pasteInjectFixtureSubstrate(t, adapter)
 
 	const sessionID = "01hwxyz-rev456"
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), sub, sessionID,
 		handlercontract.ReviewLoopPhaseReviewer,
 		1, wtPath,
 	)
+	<-briefDelivered
 
 	calls := adapter.calls()
 	if len(calls) != 1 {
@@ -250,11 +252,12 @@ func TestPasteInjectOnLaunch_ImplementerResume(t *testing.T) {
 	sub := pasteInjectFixtureSubstrate(t, adapter)
 
 	const sessionID = "01hwxyz-resume789"
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), sub, sessionID,
 		handlercontract.ReviewLoopPhaseImplementerResume,
 		2, wtPath,
 	)
+	<-briefDelivered
 
 	calls := adapter.calls()
 	if len(calls) != 2 {
@@ -289,11 +292,12 @@ func TestPasteInjectOnLaunch_TaskFileMissing(t *testing.T) {
 	adapter := &pasteInjectFixtureAdapter{}
 	sub := pasteInjectFixtureSubstrate(t, adapter)
 
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), sub, "session-missing",
 		handlercontract.ReviewLoopPhase(""), // implementer-initial
 		1, wtPath,
 	)
+	<-briefDelivered
 
 	if calls := adapter.calls(); len(calls) != 0 {
 		t.Errorf("task file missing: expected 0 WriteToPane calls, got %d", len(calls))
@@ -308,11 +312,13 @@ func TestPasteInjectOnLaunch_NilSubstrate(t *testing.T) {
 	adapter := &pasteInjectFixtureAdapter{}
 
 	// nil substrate — no panic, no calls.
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), nil, "session-nil",
 		handlercontract.ReviewLoopPhase(""),
 		1, wtPath,
 	)
+	<-briefDelivered
+
 	if calls := adapter.calls(); len(calls) != 0 {
 		t.Errorf("nil substrate: expected 0 WriteToPane calls, got %d", len(calls))
 	}
@@ -330,11 +336,13 @@ func TestPasteInjectOnLaunch_WriteToPaneError(t *testing.T) {
 	sub := pasteInjectFixtureSubstrate(t, adapter)
 
 	// Must not panic — error is logged to stderr and swallowed.
-	daemon.ExportedPasteInjectOnLaunch(
+	briefDelivered := daemon.ExportedPasteInjectOnLaunch(
 		t.Context(), sub, "session-err",
 		handlercontract.ReviewLoopPhase(""),
 		1, wtPath,
 	)
+	<-briefDelivered
+
 	// WriteToPane WAS called (it just returned an error).
 	if calls := adapter.calls(); len(calls) != 1 {
 		t.Errorf("write error: expected 1 WriteToPane call (error is non-fatal), got %d", len(calls))

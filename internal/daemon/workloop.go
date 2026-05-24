@@ -1289,7 +1289,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-	go pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
+	briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
 		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
 
 	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
@@ -1309,8 +1309,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// run's pane, not the shared "last pane" which may have been overwritten by
 	// a concurrent beadRunOne goroutine.
 	//
+	// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
+	// brief delivery before starting the commit poll loop, preventing a stale
+	// tmux pane /exit race.
+	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
-	// Bead: hk-cmybm.
+	// Beads: hk-cmybm, hk-930o3.
 	// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
 	// session after commitPollTimeout without a new commit (hk-trjef).  The
 	// workloop checks it non-blockingly in the default switch branch to
@@ -1318,7 +1322,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var noChangeTimeoutCh chan struct{}
 	if qs, ok := runPasteTarget.(quitSender); ok {
 		noChangeTimeoutCh = make(chan struct{})
-		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh)
+		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

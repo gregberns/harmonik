@@ -309,6 +309,7 @@ func runReviewLoop(
 		// Paste-inject: deliver the kick-off message to the implementer pane (hk-zrj83).
 		// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
 		// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
+		// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
 		//
 		// NOTE: The review-loop implementer path does not currently call waitAgentReady
 		// (it uses waitWithSocketGrace directly), so no SetAgentReadyCallback wire is
@@ -316,8 +317,8 @@ func runReviewLoop(
 		// a per-run tap must be constructed before Launch and wired via SetAgentReadyCallback.
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-		// Bead ref: hk-lj1p9.4, hk-zrj83.
-		go pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
+		// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3.
+		implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
 			implPhase, state.iterationCount, wtPath)
 
 		// Quit-on-commit: after the implementer's task commit lands in the worktree,
@@ -327,9 +328,10 @@ func runReviewLoop(
 		//
 		// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
 		// iteration's pane, not the shared "last pane".
+		// hk-930o3: implBriefDelivered gates commit-polling until the brief paste lands.
 		//
 		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-		// Bead: hk-cmybm.
+		// Beads: hk-cmybm, hk-930o3.
 		if qs, ok := implPasteTarget.(quitSender); ok {
 			implInitialSHA, resolveErr := resolveWorktreeHEAD(ctx, wtPath)
 			if resolveErr != nil {
@@ -337,7 +339,7 @@ func runReviewLoop(
 			}
 			// Pass implSess as the killer so commitPollTimeout forces an exit;
 			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil)
+			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
@@ -685,8 +687,11 @@ func runReviewLoop(
 		// consumes the trailing \n and leaves the buffered text unsubmitted.
 		// hk-012af: use revPasteTarget (per-run wrapper) so inject targets this
 		// reviewer's pane rather than the shared "last pane".
+		// pasteInjectOnLaunch is non-blocking (spawns an internal goroutine);
+		// the returned briefDelivered channel is not needed here — the reviewer
+		// does not call pasteInjectQuitOnCommit.
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-		go pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
+		_ = pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
 			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

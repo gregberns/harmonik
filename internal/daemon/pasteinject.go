@@ -87,6 +87,22 @@ type quitSender interface {
 	SendQuitToLastPane(ctx context.Context) error
 }
 
+// briefDeliveredTimeout is the maximum time pasteInjectQuitOnCommit will wait
+// for the briefDelivered channel to be closed (i.e. for pasteInjectOnLaunch to
+// confirm the kick-off paste landed in the pane) before proceeding with the
+// commit poll loop.
+//
+// 2 minutes is generous: paste delivery normally completes within ~1 second
+// (splashDismissDelay + WriteLastPane).  If briefDelivered is not signalled
+// within this window, the session is likely broken and the commit poll loop is
+// started anyway — the subsequent commitPollTimeout will clean it up.
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-930o3.
+var briefDeliveredTimeout = 2 * time.Minute
+
 // commitPollInterval is the interval between git HEAD checks in
 // pasteInjectQuitOnCommit.  500ms balances responsiveness with avoiding
 // excessive git subprocess overhead.
@@ -147,6 +163,16 @@ type sessionKiller interface {
 // commands from their tool API; the daemon detects the commit landing and
 // injects /quit programmatically.
 //
+// briefDelivered is a channel that pasteInjectOnLaunch closes after the
+// kick-off message has been written to the pane via WriteLastPane.  The
+// function blocks on briefDelivered (up to briefDeliveredTimeout) before
+// entering the commit poll loop.  This prevents a stale-pane /exit race:
+// without the gate, if a stale tmux handle from a prior run receives the
+// /quit before the newly-launched claude sees the brief, the implementer
+// session is torn down with zero assistant turns (hk-930o3).  briefDelivered
+// may be nil — when nil the gate is skipped (backward-compat for callers
+// that do not have paste-inject capability).
+//
 // The function runs in a goroutine and returns when:
 //   - A new commit is detected and /quit is sent (success).  A post-quit
 //     watchdog goroutine is also launched (hk-5s7tg): it waits
@@ -161,7 +187,7 @@ type sessionKiller interface {
 // skipped when either is absent).
 //
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Beads: hk-cmybm, hk-trjef, hk-5s7tg.
+// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSender,
@@ -169,7 +195,27 @@ func pasteInjectQuitOnCommit(
 	wtPath string,
 	initialSHA string,
 	noChangeTimeoutCh chan<- struct{},
+	briefDelivered <-chan struct{},
 ) {
+	// hk-930o3: wait for brief delivery confirmation before entering the commit
+	// poll loop.  This prevents a /quit racing the brief when a stale tmux pane
+	// handle from a prior run is reused: without this gate the commit watcher
+	// may fire /quit before the newly-launched claude has read agent-task.md,
+	// tearing down the session with zero assistant turns.
+	if briefDelivered != nil {
+		bdTimeout := briefDeliveredTimeout // snapshot before blocking
+		select {
+		case <-ctx.Done():
+			return
+		case <-briefDelivered:
+			// Brief delivered — proceed to commit polling.
+		case <-time.After(bdTimeout):
+			fmt.Fprintf(os.Stderr,
+				"daemon: pasteinject: quit-on-commit: brief_delivered timeout after %v for %s; proceeding with commit poll (session may be broken)\n",
+				bdTimeout, wtPath)
+		}
+	}
+
 	// Snapshot the tunable durations into locals so tests that restore
 	// package vars after the surrounding run returns do not race with our
 	// reads inside the for loop.  Only the values captured here matter.
@@ -279,6 +325,11 @@ func pasteInjectQuitOnCommit(
 //   - iterCount    — the 1-based iteration count (used in the feedback file name).
 //   - wtPath       — absolute worktree path; used to stat the task/review files.
 //
+// Returns a channel that is closed once the kick-off paste has been written
+// (or immediately when no paste is performed because the substrate does not
+// implement pasteInjecter).  The caller passes this channel to
+// pasteInjectQuitOnCommit as the briefDelivered gate (hk-930o3).
+//
 // Errors are non-fatal to the caller: a failed paste-inject is logged to
 // stderr but does not reopen the bead.  The operator may manually trigger a
 // paste using tmux.
@@ -289,26 +340,31 @@ func pasteInjectOnLaunch(
 	phase handlercontract.ReviewLoopPhase,
 	iterCount int,
 	wtPath string,
-) {
-	if substrate == nil {
-		return
-	}
-	inj, ok := substrate.(pasteInjecter)
-	if !ok {
-		return
-	}
+) <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		defer close(ch)
+		if substrate == nil {
+			return
+		}
+		inj, ok := substrate.(pasteInjecter)
+		if !ok {
+			return
+		}
 
-	switch phase {
-	case handlercontract.ReviewLoopPhaseReviewer:
-		pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
+		switch phase {
+		case handlercontract.ReviewLoopPhaseReviewer:
+			pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
 
-	case handlercontract.ReviewLoopPhaseImplementerResume:
-		pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath)
+		case handlercontract.ReviewLoopPhaseImplementerResume:
+			pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath)
 
-	default:
-		// Single-mode or implementer-initial: deliver agent-task.md kick-off.
-		pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
-	}
+		default:
+			// Single-mode or implementer-initial: deliver agent-task.md kick-off.
+			pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+		}
+	}()
+	return ch
 }
 
 // splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.

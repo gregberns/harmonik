@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-21 main — v53. 20-bead dogfood session: 18 commits to origin/main via harmonik (10 round-1 docs/fixes + 5 round-2 friction-fixes including hk-trjef pasteinject recovery + hk-ibilr --notify-stream + hk-j1aq5 rebase-before-merge + 3 round-2 SC scenario tests). Append CLI validated. 4 NEW directives added below per user instruction. P0 open: hk-g0ckv (make --review-loop default). High-priority P1 open: hk-yejfj (rewrite stale AGENTS.md Monitor block), hk-trjef (CLOSED in session — pasteinject auto-recovery now in daemon, Monitor block is fallback only). DOT work (kerf phase-3-dot) still in design pass — no beads yet. -->
+<!-- PP-TRIAL:v2 2026-05-23 main — v55. DOT (kerf phase-3-dot) advanced from change-design (5-day stall) → integration (pass-6) in one session: 5 component spec drafts written (1414 lines, WG/EM/HC/CP IDs assigned), pass-4 + pass-5 reviewers APPROVED, 10 test beads filed and pinned. 9 harmonik commits landed earlier (hk-mtm0w/xegej/ndysh/59lg8/0xmwq/8uy6m/mmh8f/6zylj/yozgd-protocol). 2 daemon bug-fixes via sub-agent (hk-0xmwq reviewer-brief, hk-6zylj worktree-escape). Heartbeat-staleness HARD-RULE added (v55 directive — d339fca) + kerf work `daemon-liveness` opened. 10-min wall-kill in pasteinject.go:104 is NOT fixed (user pushback; survival-layer-only). Salvage patches parked: /tmp/escape-recovery.{patch,untracked.tgz}. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -147,60 +147,60 @@ Proper redesign tracked in kerf work **`daemon-liveness`** (`~/.kerf/projects/gr
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v53, 2026-05-21)
+# Where we are (v55, 2026-05-23)
 
-**Main at `d223fd7`.** 18 commits past v52 baseline (`68f0e69`). origin/main is parity (0 ahead, 0 behind). Working tree clean.
+**Main at `d339fca`** (origin parity, working tree clean). Status: **clean** — no in-flight dispatch, no orphan worktrees, no uncommitted code in main.
 
-## What landed this session
+## What happened this session (the short version)
 
-Two rounds of harmonik dogfood — 20 beads dispatched, 18 substantive commits on main, all daemon-pushed. Highlights by impact:
+Two threads: (1) a brittle harmonik dispatch cycle that exposed three real daemon bugs and got them fixed; (2) a big DOT (kerf phase-3-dot) push that moved a 5-day-stalled change-design through to integration. Net: 9 substantive code commits via harmonik+sub-agents (hk-mtm0w / hk-xegej / hk-ndysh / hk-59lg8 / hk-0xmwq / hk-8uy6m / hk-mmh8f / hk-6zylj / hk-yozgd-protocol) + 5 full DOT spec drafts (1414 lines).
 
-- **Pasteinject auto-recovery (hk-trjef, `f2c395e`)** — the recurring "daemon hangs forever after claude self-quits without committing" bug is FIXED in-daemon. Monitor-based auto-kill is now redundant.
-- **--notify-stream (hk-ibilr, `ce9d0e4`)** — per-bead `[hk-XXX] success|failed` lines to stdout; lets the orchestrator see mid-batch progress through a simple Monitor grep.
-- **Rebase-before-merge (hk-j1aq5, `882d527`)** — kills the non-ff merge friction we hit earlier in the day.
-- **3 SC scenario tests landed via harmonik** (SC-1, SC-2, SC-6 — `84b02c9`, `64b6b79`, `5980253`). SC-3 + SC-4 closed as already-covered.
-- **Race fixes + pre-existing test failures** — hk-j6l7l (`a027808`), hk-b5bc0 (`9d077b9`).
-- **Stop-hook E2E test (hk-6pbe3, `32620a5`)** — orchestrator-committed-on-behalf, then retroactive reviewer APPROVE with one minor `weak-timing-assertion` flag (hk-3jmke filed).
+**Daemon bugs fixed this session:**
+- `61f084a` hk-0xmwq P0 — reviewer-brief file `review-target.md` was never written; reviewer panes idled forever
+- `f7f2cff` hk-mmh8f P0 — no-review-loop path falsely reported success when implementer never committed
+- `eb43a6b` hk-6zylj P0 — implementer was escaping its worktree by anchoring absolute MAIN-repo paths after `find /Users/gb/github/harmonik/...` discovery; fix injects worktree-discipline preamble into agent-task.md + daemon-side post-implementer dirty-tree check
 
-Plus 10 stale-open beads CLOSED as subsumed (pre-screen caught implementations that had already landed but the ledger never updated).
+**Still NOT fixed (deliberately deferred — survival-layer-only until DOT lands):**
+- `internal/daemon/pasteinject.go:104` `commitPollTimeout = 10 * time.Minute` kills implementers wall-clock-regardless-of-progress. Even a 1-line test-arity fix (hk-ortkx) failed at the 10-min mark when the daemon ran 3 parallel agents. **User pushed back on "design a proper liveness check"**; opened kerf work **`daemon-liveness`** to track the redesign. Survival layer is the v55 HARD-RULE: orchestrator MUST arm a heartbeat-staleness watcher on every dispatch (Bash poll on `agent_heartbeat` events; alert at >6min staleness).
 
-## CRITICAL: Reviews were skipped on most of this session's commits
+## DOT progress (kerf phase-3-dot)
 
-User flagged it explicitly. Only 7 of today's 19 commits carry `Reviewed-By: agent-reviewer` trailers — the rest landed unreviewed because `--review-loop` is opt-in and the orchestrator did not pass it. This violates the global "Review gate is not optional" rule.
+| Pass | This session | Output |
+|------|--------------|--------|
+| 4 — Change Design | APPROVE round-2 | C1/C2/C3/C5 design docs (C4 pre-existing) + 7 D-decisions all locked |
+| 5 — Spec Draft | APPROVE round-1 (3 cross-component contradictions caught & patched inline pre-reviewer) | 5 drafts in `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/` (1414 lines) + `05-changelog.md` + `spec-draft-review.md` |
+| 6 — Integration | **CURRENT — not started** | next session writes `06-integration.md` |
 
-**For the next session: ALWAYS pass `--review-loop` on every `harmonik run` invocation until hk-g0ckv (P0) flips the default.** See the new directive block above.
+**10 test beads filed + pinned** (5 scenario, 5 exploratory): hk-fiq55, hk-lphyf, hk-aoz34, hk-yfm05, hk-isp3y, hk-w3eip, hk-4fvid, hk-6zvki, hk-zqr6f, hk-geype. They surface in `kerf next` already.
 
 ## Top priorities for next session
 
-1. **hk-g0ckv (P0)** — flip `--review-loop` from opt-in to default in `cmd/harmonik/run.go`. Quick win (~30 LOC). Until it lands, dispatch the orchestrator's own batches with `--review-loop` explicitly. **This is the highest-leverage single bead in the queue.**
-2. **hk-yejfj (P1)** — rewrite the AGENTS.md "Orchestrator wrappers" section (committed `d4b0820` earlier today) to mark the Monitor block as fallback-only, since pasteinject auto-recovery (hk-trjef) is now in the daemon. **Dispatch this via harmonik FIRST so future agents read the corrected version.**
-3. **Friction backlog (priority-bump to P1 minimum):** hk-ze3op (default --notify-stream on for multi-bead), hk-7nbey (default `kind=stream` for `--beads`), hk-lhv8i (pre-screen subsumed at submit), hk-24xn1 (daemon wake-on-submit), hk-b0cyc (queue UX gap). Each <50 LOC; each retires a chunk of orchestrator manual discipline.
-4. **DOT advance (kerf phase-3-dot)** — still in design pass at `~/.kerf/projects/gregberns-harmonik/phase-3-dot/`. No beads yet. Next moves: finish design pass (`04-design/`), draft `spec.yaml`, spawn implement/review/test beads. Goal: ship enough of DOT to dispatch a single bead through it end-to-end. Once operational, DOT replaces `--review-loop` as the implement/review/fix mechanism.
-5. **Reviewer-gap follow-up:** if hk-g0ckv ships fast, dispatch a one-shot reviewer agent on the 12 unreviewed commits from this session (audit-only, just emit verdicts; no fix passes unless BLOCK).
+1. **DOT pass-6 integration.** Write `~/.kerf/projects/gregberns-harmonik/phase-3-dot/06-integration.md` — cross-spec coordination plan + dependency order + ship-readiness check + the C6 implementation epic (the spec→code bead decomposition). Then pass-6 reviewer → advance to pass-7 (tasks) → spawn implementation beads. **This is the DOT critical path.**
+2. **Salvage parked work.** `/tmp/escape-recovery.patch` (277 lines) + `/tmp/escape-recovery-untracked.tgz` (6.9 KB) contain the hk-wkzlc + hk-jon6r implementations that escaped to main during the buggy dispatch cycle. Probably correct work (codename in filename, follows the bead spec); needs a sub-agent to extract, verify, commit with proper `Refs:` trailers. Cheap to skip if DOT integration is more valuable.
+3. **Friction backlog still real:** hk-930o3 (pasteinject `/exit`-before-brief race, P1) is the one substantive daemon bug filed-but-not-fixed; will reappear under heavy dispatch.
+4. **Heartbeat-watcher discipline.** If you dispatch anything via `harmonik run` next session, the v55 HARD-RULE requires the heartbeat-staleness watcher in addition to the bash-task + events.jsonl monitors. The watcher pattern is in the directives block above.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `AGENTS.md` §"Orchestrator wrappers for `harmonik run`" + §"Daily loop (canonical)" — orientation. **Note the Monitor block is fallback-only now (hk-yejfj).**
-3. `.claude/skills/harmonik-dispatch/SKILL.md` — the canonical orchestrator skill (load-bearing on every resume).
-4. `cmd/harmonik/run.go:127` — `--review-loop` flag wiring (target of hk-g0ckv).
-5. `internal/daemon/pasteinject.go:146-208` — confirms the auto-recovery is live; no Monitor needed.
-6. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/` — the DOT work to advance.
+2. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/05-changelog.md` — DOT pass-5 traceability + the 3 cross-component contradictions resolved at pass-5 close (read this BEFORE the design docs).
+3. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/spec-draft-review.md` — pass-5 APPROVE verdict + 3 NIT/MINOR findings carried into integration.
+4. `~/.kerf/projects/gregberns-harmonik/daemon-liveness/01-problem-space.md` — the survival-layer-vs-DOT framing for the timeout discussion.
 
 ## Plain-English glossary
 
-- **harmonik** — the project-local daemon that dispatches beads to claude sub-sessions, watches for completion, commits, merges to main, pushes, and closes the bead.
-- **--review-loop** — `harmonik run` flag that selects WorkflowModeReviewLoop = implement → review → fix iteration (capped at 3 per ON-004a). Currently opt-in; MUST be passed on every batch until hk-g0ckv flips the default.
-- **--notify-stream** — `harmonik run` flag (new today) that emits per-bead `[hk-XXX] success|failed` to stdout. Pair with a Monitor tool that greps the log for these lines to get mid-batch progress notifications.
-- **pasteinject** — the daemon's "watch the worktree for a new commit, then send `/quit` to claude" subsystem. Was the root cause of the recurring hang. Now self-recovers (hk-trjef).
-- **kerf** — the planning tool for non-trivial work (specs, plans, bugs). `kerf next` is the dispatch feed; if you disagree with it, fix the kerf work's `bead_filter` or file `label:kerf-upstream`. Don't silently override.
-- **DOT** — short for the kerf `phase-3-dot` work, the planned DAG-defined bead-process runtime. Replaces `--review-loop` once operational. Still in design pass.
-- **friction beads** — anything labeled `phase2-dogfood-friction`, `kerf-upstream`, `review-gate`, or otherwise blocking the orchestrator loop. Priority-bump to P1 minimum.
-- **hk-g0ckv (P0)** — flip `--review-loop` default. **Top priority.**
-- **hk-yejfj (P1)** — rewrite stale AGENTS.md Monitor block. Dispatch FIRST so the corrected text loads on next session-resume.
-- **hk-trjef (CLOSED today, `f2c395e`)** — pasteinject auto-recovery in-daemon.
-- **hk-ibilr (CLOSED today, `ce9d0e4`)** — `--notify-stream` flag.
-- **hk-j1aq5 (CLOSED today, `882d527`)** — rebase run-branch before ff-merge.
+- **harmonik** — project-local daemon dispatching beads to claude sub-sessions; commits, merges, pushes, closes.
+- **DOT (kerf `phase-3-dot`)** — DAG-defined bead-process runtime; planned replacement for `--review-loop`. Now in pass-6 integration.
+- **kerf `daemon-liveness`** — survival-layer work tracking the proper replacement for the 10-min wall-kill (`commitPollTimeout`). Will be subsumed by DOT but useful in the gap.
+- **commitPollTimeout** — the 10-min hardcoded wall-kill at `pasteinject.go:104`. Kills implementers regardless of progress. NOT fixed this session; survival layer is the heartbeat-staleness watcher.
+- **worktree-escape (hk-6zylj, FIXED `eb43a6b`)** — implementer running `find /Users/gb/github/harmonik/...` (absolute MAIN path) got back MAIN paths and Wrote to them; work landed in main's working tree, not the worktree. Fix: agent-task.md preamble + daemon post-implementer dirty-tree check.
+- **review-target.md (hk-0xmwq, FIXED `61f084a`)** — reviewer brief file the daemon was never writing; reviewers idled.
+- **no-review-loop false-positive (hk-mmh8f, FIXED `f7f2cff`)** — `--no-review-loop` path reported success when implementer never committed.
+- **heartbeat-staleness watcher (v55 HARD-RULE, `d339fca`)** — orchestrator-side Bash poll alerting at >6min staleness on `agent_heartbeat` events. Stop-gap.
+- **C1–C5** — DOT spec-draft components: C1=`specs/workflow-graph.md` (NEW), C2=`execution-model.md §7.5`, C3=`handler-contract.md §Outcome ext`, C4=`control-points.md §node-type binding`, C5=`specs/examples/review-loop.dot`.
+- **/tmp/escape-recovery.{patch,untracked.tgz}** — uncommitted hk-wkzlc + hk-jon6r work that escaped main during buggy dispatch; salvage candidate.
+
+## No hard blockers requiring user input.
 - **Subsumed bead** — bead whose implementation already landed on main but the ledger never closed it. Pre-screen with `git log --all --grep "Refs: <id>"` before dispatching.
 
 ## Loose ends

@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-23 main — v55. DOT (kerf phase-3-dot) advanced from change-design (5-day stall) → integration (pass-6) in one session: 5 component spec drafts written (1414 lines, WG/EM/HC/CP IDs assigned), pass-4 + pass-5 reviewers APPROVED, 10 test beads filed and pinned. 9 harmonik commits landed earlier (hk-mtm0w/xegej/ndysh/59lg8/0xmwq/8uy6m/mmh8f/6zylj/yozgd-protocol). 2 daemon bug-fixes via sub-agent (hk-0xmwq reviewer-brief, hk-6zylj worktree-escape). Heartbeat-staleness HARD-RULE added (v55 directive — d339fca) + kerf work `daemon-liveness` opened. 10-min wall-kill in pasteinject.go:104 is NOT fixed (user pushback; survival-layer-only). Salvage patches parked: /tmp/escape-recovery.{patch,untracked.tgz}. -->
+<!-- PP-TRIAL:v2 2026-05-23 main — v56 (commit 6ff85df). DOT (kerf phase-3-dot) advanced pass-6 (integration) → pass-7 (tasks) → pass-8 (ready/square) all this session. Pass-6 APPROVED with 1 BLOCKER + 7 SHOULD-FIX (incl. CI-8 reviewer addendum: EM `ENUM NodeType` still lists `control-point`) + 6 NIT. Pass-7 APPROVED — 07-tasks.md drafted (~600 lines): 5 spec-transcription tasks (T-SPEC-C1..C5), 15 Go impl tasks (T-IMPL-001..015), 10 test tasks mapping pre-filed beads, 13 remediation tasks (T-FIX-*), full DAG, 7-wave parallelization, 100% requirement-ID coverage matrix. T-FIX-C5-BLOCK applied on the kerf bench (C5-review-loop.dot now uses `type` not `node_type`, closed-enum re-categorization, `start_node="start"`, uppercase verdict literals). `kerf square phase-3-dot` PASSES. v55 carryover still applies: heartbeat-staleness watcher HARD-RULE, 10-min wall-kill NOT fixed (kerf `daemon-liveness` tracks). Salvage patches `/tmp/escape-recovery.{patch,untracked.tgz}` still parked. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -147,9 +147,36 @@ Proper redesign tracked in kerf work **`daemon-liveness`** (`~/.kerf/projects/gr
 
 <!-- END DIRECTIVES -->
 
-# Where we are (v55, 2026-05-23)
+# Where we are (v56, 2026-05-23 PM)
 
-**Main at `d339fca`** (origin parity, working tree clean). Status: **clean** — no in-flight dispatch, no orphan worktrees, no uncommitted code in main.
+**Main at `6ff85df`** (origin parity, working tree clean). Status: **clean** — no in-flight dispatch, no orphan worktrees, no uncommitted code in main.
+
+## What v56 added on top of v55
+
+Three kerf passes advanced in one session: pass-6 (Integration) drafted + reviewed + APPROVED; pass-7 (Tasks) drafted + reviewed + APPROVED; pass-8 (Ready) entered and `kerf square` passes. The DOT spec corpus is now task-decomposed end-to-end with 100% requirement-ID coverage and a 7-wave parallelization plan ready for implementation-epic dispatch.
+
+**Pass-6 (Integration) headlines:**
+- 1 BLOCKER (Contradiction 1): C5 `review-loop.dot` declared `node_type="entry"` / `"agentic"` / `"terminal"` — both wrong attribute name (`node_type` vs C1's `type`) AND values outside C1's closed enum `{agentic, non-agentic, gate, sub-workflow}`. The canonical example wouldn't have round-tripped C1's validator as written.
+- 6 SHOULD-FIX: `workflow_ref`→`sub_workflow_ref` rename in C1; lowercase→uppercase verdict literals in C5; drop BI-005 reference in C2 (BI-005 doesn't define `workflow_ref`); 3 citation-error sweeps (C2 named anchors → WG-NNN IDs).
+- 1 reviewer addendum (CI-8): existing `specs/execution-model.md` `ENUM NodeType` block still lists `control-point` — needs in-place edit when T-SPEC-C2 lands.
+- 6 NIT: terminology, `failure_class` three-shape alignment, `payload` type-widening, `start_node`/`start_node_id` naming, citation sweeps.
+
+**Pass-7 (Tasks) headlines:**
+- 5 spec-transcription tasks (T-SPEC-C1..C5) — one per component, each folding the relevant pass-6 remediations.
+- 15 Go implementation tasks (T-IMPL-001..015) — parser, validator, loader, daemon wiring, Outcome envelope, failure-class classifier, edge-condition evaluator, 5-step cascade, context-updates plumbing, gate-node dispatch + GateDecisionPayload, sub-workflow dispatch, `policy_ref` rejection, two CLI surfaces (`harmonik run --workflow-mode dot` + `harmonik graph validate`), fixture round-trip test.
+- 10 test tasks (T-TEST-*) mapping the pre-filed beads to impl-task dependencies.
+- 13 remediation tasks (T-FIX-C5-BLOCK + T-FIX-SHOULD-01..07 + T-FIX-NIT-01..06), most folded into spec-transcription for cohesion.
+- Dependency DAG verified cycle-free.
+- 7 waves: Wave 0 = T-FIX-C5-BLOCK; Wave 1 = spec transcription (partial parallel); Wave 2-5 = Go impl tiers; Wave 6 = fixture + test beads; Wave 7 = cleanup. Cross-file conflicts called out (T-SPEC-C2 and T-SPEC-C3 both edit `execution-model.md` → serialized).
+- Pass-7 reviewer NIT (non-blocking): existing `internal/workflowvalidator/` package has `dotparser.go` + `validator.go` — T-IMPL-001 was updated post-review to mandate a pre-impl audit so the implementer doesn't ship parallel parsers.
+
+**T-FIX-C5-BLOCK applied on the kerf bench this session.** `C5-review-loop.dot` now declares all 5 nodes with `type` ∈ closed-enum (start/close/close-needs-attention as `non-agentic` + `handler_ref="noop"`; implementer/reviewer as `agentic`), adds `start_node="start"`, uses uppercase `APPROVE`/`REQUEST_CHANGES`/`BLOCK` verdict literals, and fixes the README's `§WG-T03` phantom anchor (→ `§8 WG-021..WG-023`).
+
+## v55 carryover still in force
+
+- 10-min wall-kill (`internal/daemon/pasteinject.go:104` `commitPollTimeout`) NOT fixed — kerf `daemon-liveness` tracks the proper replacement; survival layer is the v55 HARD-RULE heartbeat-staleness watcher on every `harmonik run` dispatch.
+- Daemon bugs fixed in v55 commits still apply: `61f084a` (hk-0xmwq reviewer-brief file), `f7f2cff` (hk-mmh8f no-review-loop false success), `eb43a6b` (hk-6zylj worktree-escape).
+- Salvage patches at `/tmp/escape-recovery.patch` (277 lines) + `/tmp/escape-recovery-untracked.tgz` (6.9 KB) still parked.
 
 ## What happened this session (the short version)
 
@@ -175,22 +202,30 @@ Two threads: (1) a brittle harmonik dispatch cycle that exposed three real daemo
 
 ## Top priorities for next session
 
-1. **DOT pass-6 integration.** Write `~/.kerf/projects/gregberns-harmonik/phase-3-dot/06-integration.md` — cross-spec coordination plan + dependency order + ship-readiness check + the C6 implementation epic (the spec→code bead decomposition). Then pass-6 reviewer → advance to pass-7 (tasks) → spawn implementation beads. **This is the DOT critical path.**
-2. **Salvage parked work.** `/tmp/escape-recovery.patch` (277 lines) + `/tmp/escape-recovery-untracked.tgz` (6.9 KB) contain the hk-wkzlc + hk-jon6r implementations that escaped to main during the buggy dispatch cycle. Probably correct work (codename in filename, follows the bead spec); needs a sub-agent to extract, verify, commit with proper `Refs:` trailers. Cheap to skip if DOT integration is more valuable.
-3. **Friction backlog still real:** hk-930o3 (pasteinject `/exit`-before-brief race, P1) is the one substantive daemon bug filed-but-not-fixed; will reappear under heavy dispatch.
-4. **Heartbeat-watcher discipline.** If you dispatch anything via `harmonik run` next session, the v55 HARD-RULE requires the heartbeat-staleness watcher in addition to the bash-task + events.jsonl monitors. The watcher pattern is in the directives block above.
+1. **DOT — file the T-* tasks as beads OR run `kerf finalize`.** Two paths to the same place:
+   - **Path A — finalize first, file beads from the finalized branch.** `kerf finalize phase-3-dot --branch dot-phase-3-impl` packages the work (creates a git branch with the spec drafts copied to `specs/`). Then `br create` each T-IMPL-* / T-SPEC-* / T-FIX-* / T-TEST-* with the bead body pulled from `07-tasks.md`, labelled `codename:phase-3-dot`. Test beads (hk-fiq55..hk-geype) are already filed; don't re-create.
+   - **Path B — file beads on main, skip finalize for now.** Treat `07-tasks.md` as the authoritative task list; file beads referencing the kerf-bench files directly; let T-SPEC-C1..C5 each write the corresponding `specs/` file via `harmonik run`. Skips the finalize-branch step entirely.
+   - Recommend Path B — `kerf finalize` copies drafts as-is, so it would land `specs/workflow-graph.md` with the SHOULD-FIX items (workflow_ref rename, policy_ref note, etc.) still pending. Path B has each T-SPEC-* commit apply its remediations during transcription, which is what 07-tasks.md was designed around. Either way, the BLOCKER is already pre-patched on the bench (this session).
+2. **First dispatch wave (Wave-0 or Wave-1 of pass-7 plan).** Once beads are filed, dispatch T-FIX-C5-BLOCK if Path A (since the kerf bench patch lives on a per-session disk path the implementer wouldn't see), OR T-SPEC-C1 + T-SPEC-C4 in parallel if Path B (the BLOCKER is already in the bench file).
+3. **Salvage parked work.** `/tmp/escape-recovery.patch` + `/tmp/escape-recovery-untracked.tgz` still contain the hk-wkzlc + hk-jon6r implementations that escaped to main during the buggy v54 dispatch cycle. Cheap to skip if DOT critical path is the priority.
+4. **Friction backlog still real:** hk-930o3 (pasteinject `/exit`-before-brief race, P1) is the one substantive daemon bug filed-but-not-fixed; will reappear under heavy dispatch.
+5. **Heartbeat-watcher discipline.** If you dispatch anything via `harmonik run` next session, the v55 HARD-RULE requires the heartbeat-staleness watcher in addition to the bash-task + events.jsonl monitors. Pattern in the directives block above.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this).
-2. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/05-changelog.md` — DOT pass-5 traceability + the 3 cross-component contradictions resolved at pass-5 close (read this BEFORE the design docs).
-3. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/spec-draft-review.md` — pass-5 APPROVE verdict + 3 NIT/MINOR findings carried into integration.
-4. `~/.kerf/projects/gregberns-harmonik/daemon-liveness/01-problem-space.md` — the survival-layer-vs-DOT framing for the timeout discussion.
+2. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/07-tasks.md` — the task list. Wave plan + DAG + coverage matrix. Tells you what to file as beads.
+3. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/06-integration.md` — the contradictions + remediations each T-SPEC-* must apply during transcription.
+4. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/tasks-review.md` + `integration-review.md` — the pass-6/7 reviewer verdicts.
+5. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/` — the spec drafts that T-SPEC-* transcribe. C5-review-loop.dot was patched this session (T-FIX-C5-BLOCK applied).
+6. `~/.kerf/projects/gregberns-harmonik/daemon-liveness/01-problem-space.md` — survival-layer-vs-DOT framing for the timeout discussion (carryover from v55).
 
 ## Plain-English glossary
 
 - **harmonik** — project-local daemon dispatching beads to claude sub-sessions; commits, merges, pushes, closes.
-- **DOT (kerf `phase-3-dot`)** — DAG-defined bead-process runtime; planned replacement for `--review-loop`. Now in pass-6 integration.
+- **DOT (kerf `phase-3-dot`)** — DAG-defined bead-process runtime; planned replacement for `--review-loop`. Now at pass-8 (ready/square) — all task decomposition done, ready for implementation-epic dispatch.
+- **T-SPEC-Cn / T-IMPL-NNN / T-TEST-* / T-FIX-***— stable task IDs from `07-tasks.md`. Will become bead bodies when filed.
+- **Wave 0..7** — the parallelization plan in `07-tasks.md §6`. Tells you which tasks can dispatch concurrently.
 - **kerf `daemon-liveness`** — survival-layer work tracking the proper replacement for the 10-min wall-kill (`commitPollTimeout`). Will be subsumed by DOT but useful in the gap.
 - **commitPollTimeout** — the 10-min hardcoded wall-kill at `pasteinject.go:104`. Kills implementers regardless of progress. NOT fixed this session; survival layer is the heartbeat-staleness watcher.
 - **worktree-escape (hk-6zylj, FIXED `eb43a6b`)** — implementer running `find /Users/gb/github/harmonik/...` (absolute MAIN path) got back MAIN paths and Wrote to them; work landed in main's working tree, not the worktree. Fix: agent-task.md preamble + daemon post-implementer dirty-tree check.

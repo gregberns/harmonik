@@ -200,13 +200,9 @@ Two threads: (1) a brittle harmonik dispatch cycle that exposed three real daemo
 - **C1–C5** — DOT spec-draft components: C1=`specs/workflow-graph.md` (NEW), C2=`execution-model.md §7.5`, C3=`handler-contract.md §Outcome ext`, C4=`control-points.md §node-type binding`, C5=`specs/examples/review-loop.dot`.
 - **/tmp/escape-recovery.{patch,untracked.tgz}** — uncommitted hk-wkzlc + hk-jon6r work that escaped main during buggy dispatch; salvage candidate.
 
-## No hard blockers requiring user input.
-- **Subsumed bead** — bead whose implementation already landed on main but the ledger never closed it. Pre-screen with `git log --all --grep "Refs: <id>"` before dispatching.
+## Loose ends (low priority)
 
-## Loose ends
-
-- **`harmonik-twin-claude/` stray untracked directory** at repo root — still present from earlier sessions. Inspect before deleting.
-- **`.beads/.br_history.226mb-archived/`** (226MB) — safe to delete.
-- **`docs/kerf-feedback/2026-05-21.md`** — was not written this session; the friction findings live in the new bead descriptions (hk-b0cyc, hk-24xn1, hk-yejfj, hk-ze3op, hk-7nbey, hk-lhv8i, hk-g0ckv, hk-3jmke). File a consolidated kerf-feedback entry next session.
+- `harmonik-twin-claude/` stray untracked directory at repo root — inspect before deleting.
+- `.beads/.br_history.226mb-archived/` (226MB) — safe to delete.
 
 ## No hard blockers requiring user input.

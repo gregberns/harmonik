@@ -76,6 +76,11 @@ func registerRunLifecycle() {
 	// dirty files outside the .harmonik/.claude/.beads churn allowlist —
 	// indicating implementer cross-contamination. Durability class: F.
 	mustRegister("implementer_escaped_worktree", func() EventPayload { return &ImplementerEscapedWorktreePayload{} })
+	// implementer_phase_complete (hk-cd8yu): emitted immediately after the
+	// implementer session ends (normal exit, noChange-timeout kill, or context
+	// cancellation) and before any reviewer phase begins. Closes the diagnostic
+	// gap between run_started and reviewer_launched. Durability class: F.
+	mustRegister("implementer_phase_complete", func() EventPayload { return &ImplementerPhaseCompletePayload{} })
 }
 
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.

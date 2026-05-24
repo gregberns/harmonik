@@ -1142,6 +1142,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+	implementerLaunchedAt := time.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
@@ -1329,6 +1330,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.claudeSessionID)
+
+	// Step 7a: emit implementer_phase_complete (hk-cd8yu).
+	//
+	// Fires immediately after the implementer session ends regardless of how —
+	// normal exit, noChange-timeout kill, or context cancellation — closing the
+	// diagnostic gap between run_started and reviewer_launched where silent
+	// implementer failures previously produced no structured event.
+	//
+	// commitLanded is determined by comparing the current worktree HEAD against
+	// headSHA.  resolveWorktreeHEAD errors are treated as "not landed" (conservative).
+	{
+		curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+		commitLanded := curHead != "" && curHead != headSHA
+		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
+			commitLanded, time.Since(implementerLaunchedAt))
+	}
 
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
 	term := handler.MapWaitReturnToTerminalEvent(
@@ -2216,6 +2233,38 @@ func isHarmonikChurn(path string) bool {
 		return true
 	}
 	return false
+}
+
+// emitImplementerPhaseComplete emits an implementer_phase_complete event
+// (hk-cd8yu) immediately after the implementer session ends.
+//
+// stderrTail is the raw stderr bytes captured by waitWithSocketGrace; only the
+// first 200 bytes are included in the event payload per the spec.
+// duration is the wall-clock time from implementer launch to session end.
+//
+// Spec ref: hk-cd8yu.
+func emitImplementerPhaseComplete(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, exitCode int, stderrTail []byte, commitLanded bool, duration time.Duration) {
+	const maxStderrHead = 200
+	stderrHead := ""
+	if len(stderrTail) > 0 {
+		head := stderrTail
+		if len(head) > maxStderrHead {
+			head = head[:maxStderrHead]
+		}
+		stderrHead = string(head)
+	}
+	pl := core.ImplementerPhaseCompletePayload{
+		RunID:           runID,
+		ExitCode:        exitCode,
+		StderrTailHead:  stderrHead,
+		CommitLanded:    commitLanded,
+		DurationSeconds: duration.Seconds(),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerPhaseComplete, b)
 }
 
 // emitImplementerEscapedWorktree emits an implementer_escaped_worktree event

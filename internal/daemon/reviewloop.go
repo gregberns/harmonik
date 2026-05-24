@@ -296,6 +296,7 @@ func runReviewLoop(
 
 		var implWatcher *handlercontract.Watcher
 		var implLaunchErr error
+		implLaunchedAt := time.Now()
 		implSess, implWatcher, implLaunchErr = deps.h.Launch(ctx, implSpec)
 		if implLaunchErr != nil {
 			if deps.hookStore != nil {
@@ -348,6 +349,17 @@ func runReviewLoop(
 			runID.String(), implArtifacts.claudeSessionID)
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
+
+		// Emit implementer_phase_complete (hk-cd8yu) immediately after the
+		// implementer session ends and before any reviewer phase begins.
+		// commitLanded is true when the worktree HEAD has advanced past
+		// parentSHA; HEAD resolution errors are treated as "not landed".
+		{
+			curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+			commitLanded := curHead != "" && curHead != parentSHA
+			emitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
+				implEI.stderrTail, commitLanded, time.Since(implLaunchedAt))
+		}
 
 		// Close this phase's hook session — late hooks from a completed implementer
 		// must not bleed into the next phase (reviewer or implementer-resume).

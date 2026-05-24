@@ -90,6 +90,15 @@ const (
 	// run is failed on this event).
 	// Refs: hk-6zylj.
 	EventTypeImplementerEscapedWorktree EventType = "implementer_escaped_worktree"
+
+	// EventTypeImplementerPhaseComplete is emitted by the daemon immediately
+	// after the implementer session ends (regardless of how: normal exit,
+	// noChange-timeout kill, or context cancellation) and before any reviewer
+	// phase begins. Closes the diagnostic gap between run_started and
+	// reviewer_launched where silent implementer failures previously produced
+	// no event. Durability class: F.
+	// Refs: hk-cd8yu.
+	EventTypeImplementerPhaseComplete EventType = "implementer_phase_complete"
 )
 
 // ---------------------------------------------------------------------------

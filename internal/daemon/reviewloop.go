@@ -340,7 +340,11 @@ func runReviewLoop(
 			}
 			// Pass implSess as the killer so commitPollTimeout forces an exit;
 			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered)
+			// nil eventCh — the reviewloop implementer phase does not construct a
+			// per-run event tap (waitAgentReady is not called here), so heartbeat
+			// staleness detection is not yet available on this path.
+			// hk-7srrd: wiring heartbeat staleness to the reviewloop is deferred.
+			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, nil)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).

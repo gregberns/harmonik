@@ -1320,10 +1320,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// session after commitPollTimeout without a new commit (hk-trjef).  The
 	// workloop checks it non-blockingly in the default switch branch to
 	// distinguish a forced-kill from a genuine agent failure.
+	//
+	// hk-7srrd: pass tapCh so pasteInjectQuitOnCommit can track agent_heartbeat
+	// events and use heartbeat staleness as the primary kill trigger instead of
+	// a fixed wall-clock deadline.  tapCh is the same channel used by
+	// waitAgentReady; both goroutines consume from it concurrently (each sees
+	// a copy of each event because perRunEventTap fans out to the channel).
+	// waitAgentReady returns before this goroutine is launched (step 6 above),
+	// so there is no competition for the agent_ready event.
 	var noChangeTimeoutCh chan struct{}
 	if qs, ok := runPasteTarget.(quitSender); ok {
 		noChangeTimeoutCh = make(chan struct{})
-		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered)
+		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, tapCh)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -111,13 +112,33 @@ var briefDeliveredTimeout = 2 * time.Minute
 // wall time.
 var commitPollInterval = 500 * time.Millisecond
 
-// commitPollTimeout is the maximum time pasteInjectQuitOnCommit will wait
-// for a new commit before giving up.  Chosen to exceed typical bead execution
-// times while avoiding infinite hangs.
+// commitPollTimeout is the maximum total wall-clock time pasteInjectQuitOnCommit
+// will wait for a new commit before giving up.  This is a safety backstop only;
+// the primary kill trigger is heartbeat staleness (heartbeatStalenessThreshold).
+// Raised from 10 min to 30 min to give productive long-running beads more room.
 //
 // Declared as var (not const) so tests can override it without waiting real
 // wall time.
-var commitPollTimeout = 10 * time.Minute
+var commitPollTimeout = 30 * time.Minute
+
+// heartbeatStalenessThreshold is the maximum time pasteInjectQuitOnCommit will
+// tolerate without receiving an agent_heartbeat event before it fires the kill
+// path (sends /quit, waits noChangeKillDelay, calls killer.Kill).
+//
+// The daemon emits agent_heartbeat every ~5 minutes (handler.HeartbeatInterval =
+// 300 s).  8 minutes of staleness means we allow ~1.6 missed heartbeats before
+// concluding the session is stuck — long enough to survive a single missed beat
+// while still killing sessions that have gone dark.
+//
+// The threshold only applies when an event channel is provided (eventCh != nil).
+// When eventCh is nil the check is skipped and the function falls back to the
+// wall-clock commitPollTimeout as the sole guard.
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-7srrd.
+var heartbeatStalenessThreshold = 8 * time.Minute
 
 // noChangeKillDelay is the grace period between the unconditional /quit send
 // (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code
@@ -178,16 +199,25 @@ type sessionKiller interface {
 //     watchdog goroutine is also launched (hk-5s7tg): it waits
 //     postQuitKillGrace then calls killer.Kill so sess.Wait unblocks even
 //     when the pane is stuck (stale tmux handle, surviving shell pid).
-//   - commitPollTimeout elapses without a new commit: /quit is sent
+//   - Heartbeat staleness exceeds heartbeatStalenessThreshold (when eventCh
+//     is non-nil): the session has gone dark without committing; /quit is sent
 //     unconditionally, noChangeKillDelay is waited, then killer.Kill is called,
-//     and noChangeTimeoutCh is closed to signal the workloop (hk-trjef).
+//     and noChangeTimeoutCh is closed (hk-7srrd).
+//   - commitPollTimeout (total wall-clock backstop) elapses without a new
+//     commit: same kill sequence as heartbeat-stale path (hk-trjef).
 //   - ctx is cancelled (daemon shutting down).
+//
+// eventCh receives core.EventEnvelope values from the per-run event tap (the
+// same channel used by waitAgentReady).  When an agent_heartbeat event arrives,
+// the last-heartbeat timestamp is refreshed and the staleness clock resets.
+// When eventCh is nil the heartbeat-staleness check is skipped; only the
+// wall-clock commitPollTimeout acts as the kill trigger.
 //
 // killer and noChangeTimeoutCh may be nil (the kill and signal steps are
 // skipped when either is absent).
 //
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3.
+// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3, hk-7srrd.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSender,
@@ -196,6 +226,7 @@ func pasteInjectQuitOnCommit(
 	initialSHA string,
 	noChangeTimeoutCh chan<- struct{},
 	briefDelivered <-chan struct{},
+	eventCh <-chan core.EventEnvelope,
 ) {
 	// hk-930o3: wait for brief delivery confirmation before entering the commit
 	// poll loop.  This prevents a /quit racing the brief when a stale tmux pane
@@ -222,42 +253,80 @@ func pasteInjectQuitOnCommit(
 	pollTimeout := commitPollTimeout
 	pollInterval := commitPollInterval
 	killDelay := noChangeKillDelay
-	deadline := time.Now().Add(pollTimeout)
+	stalenessThreshold := heartbeatStalenessThreshold
+
+	totalDeadline := time.Now().Add(pollTimeout)
+	lastHeartbeat := time.Now() // initialised to now; first real beat resets it
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+
+	// fireNoChangePath sends /quit, waits killDelay, kills, and closes
+	// noChangeTimeoutCh.  Extracted to avoid duplication between the heartbeat-
+	// stale and total-deadline paths.
+	fireNoChangePath := func(reason string) {
+		fmt.Fprintf(os.Stderr,
+			"daemon: pasteinject: quit-on-commit: %s in %s (initial=%s); sending /quit unconditionally\n",
+			reason, wtPath, initialSHA)
+		// Step 1: send /quit unconditionally — Claude may have self-quit
+		// without committing (e.g. detected nothing-to-do).
+		if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: pasteinject: quit-on-commit: noChange SendQuitToLastPane: %v\n", qErr)
+		}
+		// Step 2: wait noChangeKillDelay for Claude to exit cleanly, then
+		// force-kill so sess.Wait unblocks in the workloop.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(killDelay):
+		}
+		if killer != nil {
+			if kErr := killer.Kill(ctx); kErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-commit: noChange Kill: %v\n", kErr)
+			}
+		}
+		// Step 3: signal the workloop that we killed due to noChange-timeout.
+		if noChangeTimeoutCh != nil {
+			close(noChangeTimeoutCh)
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
+		case env, ok := <-eventCh:
+			// eventCh is nil-safe: a nil channel blocks forever, so this case
+			// is never selected when eventCh is nil.
+			if !ok {
+				// Channel closed — treat as lost heartbeat source; fall through
+				// to poll-tick logic by nulling the channel so future selects
+				// don't re-enter this branch.
+				eventCh = nil
+				continue
+			}
+			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+				lastHeartbeat = time.Now()
+			}
+
 		case <-ticker.C:
-			if time.Now().After(deadline) {
-				fmt.Fprintf(os.Stderr,
-					"daemon: pasteinject: quit-on-commit: timeout waiting for new commit in %s (initial=%s); sending /quit unconditionally\n",
-					wtPath, initialSHA)
-				// Step 1: send /quit unconditionally — Claude may have self-quit
-				// without committing (e.g. detected nothing-to-do).
-				if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
-					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-commit: timeout SendQuitToLastPane: %v\n", qErr)
-				}
-				// Step 2: wait noChangeKillDelay for Claude to exit cleanly, then
-				// force-kill so sess.Wait unblocks in the workloop.
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(killDelay):
-				}
-				if killer != nil {
-					if kErr := killer.Kill(ctx); kErr != nil {
-						fmt.Fprintf(os.Stderr,
-							"daemon: pasteinject: quit-on-commit: timeout Kill: %v\n", kErr)
-					}
-				}
-				// Step 3: signal the workloop that we killed due to noChange-timeout.
-				if noChangeTimeoutCh != nil {
-					close(noChangeTimeoutCh)
-				}
+			now := time.Now()
+
+			// Check total wall-clock backstop first.
+			if now.After(totalDeadline) {
+				fireNoChangePath("total-timeout waiting for new commit")
+				return
+			}
+
+			// Check heartbeat staleness (only when eventCh was provided).
+			if eventCh != nil && now.Sub(lastHeartbeat) > stalenessThreshold {
+				fireNoChangePath(fmt.Sprintf(
+					"heartbeat stale for >%v (no agent_heartbeat received)",
+					stalenessThreshold,
+				))
 				return
 			}
 

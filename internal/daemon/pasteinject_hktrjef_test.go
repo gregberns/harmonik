@@ -137,7 +137,7 @@ func TestPasteInjectQuitOnCommit_TimeoutSendsQuitAndKills(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil)
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil, nil)
 
 	select {
 	case <-noChangeCh:
@@ -186,7 +186,7 @@ func TestPasteInjectQuitOnCommit_NewCommitNoKill(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil)
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil, nil)
 
 	select {
 	case <-noChangeCh:
@@ -262,7 +262,7 @@ func TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil)
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, nil, nil)
 
 	// pasteInjectQuitOnCommit returned after sending /quit and launching the
 	// watchdog goroutine.  Wait long enough for the watchdog grace to elapse

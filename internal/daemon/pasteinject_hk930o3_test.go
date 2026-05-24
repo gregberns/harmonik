@@ -179,7 +179,7 @@ func TestPasteInjectQuitOnCommit_NoBriefDeliveredBlocksCommitPoll(t *testing.T) 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, nil, wtPath, headSHA, noChangeCh, briefDelivered)
+		daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, nil, wtPath, headSHA, noChangeCh, briefDelivered, nil)
 	}()
 
 	// Observe for 100ms — during this window, briefDelivered is never closed,
@@ -227,7 +227,7 @@ func TestPasteInjectQuitOnCommit_BriefDeliveredGateOpensOnClose(t *testing.T) {
 		close(briefDelivered)
 	}()
 
-	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, nil, wtPath, headSHA, noChangeCh, briefDelivered)
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, nil, wtPath, headSHA, noChangeCh, briefDelivered, nil)
 
 	// After the function returns (commit detected + /quit sent), assert.
 	if got := qs.calls.Load(); got != 1 {
@@ -269,7 +269,7 @@ func TestPasteInjectQuitOnCommit_BriefDeliveredTimeoutProceedsWithPoll(t *testin
 	// After the briefDeliveredTimeout (30ms) elapses, the commit poll loop
 	// starts.  After commitPollTimeout (300ms) with no commit, /quit + Kill + close
 	// noChangeCh fires.
-	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, briefDelivered)
+	daemon.ExportedPasteInjectQuitOnCommit(ctx, qs, kl, wtPath, headSHA, noChangeCh, briefDelivered, nil)
 
 	// noChangeTimeoutCh must be closed (noChange-timeout path executed).
 	select {

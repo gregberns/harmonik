@@ -913,7 +913,10 @@ type ExportedSessionKiller = sessionKiller
 
 // ExportedPasteInjectQuitOnCommit exposes pasteInjectQuitOnCommit for tests.
 //
-// Beads: hk-trjef, hk-930o3.
+// eventCh may be nil; when nil the heartbeat-staleness check is skipped and
+// only the wall-clock commitPollTimeout acts as the kill trigger.
+//
+// Beads: hk-trjef, hk-930o3, hk-7srrd.
 func ExportedPasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSenderExported,
@@ -922,9 +925,17 @@ func ExportedPasteInjectQuitOnCommit(
 	initialSHA string,
 	noChangeTimeoutCh chan<- struct{},
 	briefDelivered <-chan struct{},
+	eventCh <-chan core.EventEnvelope,
 ) {
-	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered)
+	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh)
 }
+
+// ExportedHeartbeatStalenessThreshold is a pointer to the package-level
+// heartbeatStalenessThreshold var.  Tests set *ExportedHeartbeatStalenessThreshold
+// to a short duration to exercise the heartbeat-stale kill path quickly.
+//
+// Bead: hk-7srrd.
+var ExportedHeartbeatStalenessThreshold = &heartbeatStalenessThreshold
 
 // quitSenderExported is the exported alias for quitSender so the exported
 // wrapper can accept it.

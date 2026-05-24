@@ -257,6 +257,7 @@ func pasteInjectQuitOnCommit(
 
 	totalDeadline := time.Now().Add(pollTimeout)
 	lastHeartbeat := time.Now() // initialised to now; first real beat resets it
+	heartbeatProvided := eventCh != nil
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -321,8 +322,8 @@ func pasteInjectQuitOnCommit(
 				return
 			}
 
-			// Check heartbeat staleness (only when eventCh was provided).
-			if eventCh != nil && now.Sub(lastHeartbeat) > stalenessThreshold {
+			// Check heartbeat staleness (only when eventCh was provided at init).
+			if heartbeatProvided && now.Sub(lastHeartbeat) > stalenessThreshold {
 				fireNoChangePath(fmt.Sprintf(
 					"heartbeat stale for >%v (no agent_heartbeat received)",
 					stalenessThreshold,

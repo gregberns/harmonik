@@ -251,6 +251,21 @@ type workLoopDeps struct {
 	// Bead ref: hk-8jh26.
 	cancelOnQueueExit context.CancelFunc
 
+	// stopDispatchCtx, when non-nil, is the context checked by the outer poll
+	// loop to decide whether to stop pulling new beads. When this context is
+	// cancelled the loop exits via exitClean() and waits for in-flight goroutines
+	// to drain — but in-flight goroutines continue running on the main ctx
+	// passed to runWorkLoop.
+	//
+	// This separates "stop dispatching" from "cancel in-flight work" so that
+	// CancelOnQueueDrain/CancelOnQueueExit do not propagate into reviewer
+	// goroutines (hk-2o2i9).
+	//
+	// When nil, the outer poll loop falls back to the main ctx (backward-compat).
+	//
+	// Bead ref: hk-2o2i9.
+	stopDispatchCtx context.Context
+
 	// handlerPauseController, when non-nil, is consulted before every dispatch
 	// to implement the skip-on-paused gate (hk-kac8g).  When nil the gate is
 	// disabled: all items are dispatched regardless of handler pause state.
@@ -475,6 +490,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		deps.heldEventDedup = make(map[string]struct{})
 	}
 
+	// dispatchCtx is the context checked by the outer poll loop to decide
+	// whether to halt dispatch. It is separate from ctx (the main daemon context)
+	// so that CancelOnQueueDrain/CancelOnQueueExit can stop the dispatch loop
+	// without cancelling in-flight goroutines (hk-2o2i9).
+	//
+	// When deps.stopDispatchCtx is set (wired from Config.StopDispatchCtx by the
+	// harmonik run subcommand), the outer loop halts when stopDispatchCtx is
+	// cancelled. In-flight goroutines still receive ctx and are unaffected.
+	//
+	// When deps.stopDispatchCtx is nil, dispatchCtx falls back to ctx, preserving
+	// the prior behavior for normal daemon operation and existing tests.
+	dispatchCtx := ctx
+	if deps.stopDispatchCtx != nil {
+		dispatchCtx = deps.stopDispatchCtx
+	}
+
 	// exitClean terminates the loop cleanly: it waits for in-flight goroutines,
 	// then drains any still-active queue to QueueStatusCancelled so the next
 	// harmonik run can start without the QM-027 "already active" guard blocking
@@ -487,16 +518,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	}
 
 	for {
-		// Step 1: check for cancellation before any new dispatch.
+		// Step 1: check for dispatch-halt before pulling new work.
+		// Uses dispatchCtx (not ctx) so that CancelOnQueueDrain/CancelOnQueueExit
+		// stop dispatch without cancelling in-flight goroutines (hk-2o2i9).
 		select {
-		case <-ctx.Done():
+		case <-dispatchCtx.Done():
 			return exitClean()
 		default:
 		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
 		if deps.runRegistry.Len() >= effectiveMax {
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -552,7 +585,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
 						// Queue is paused or completed — no dispatch; idle-wait.
 						lq.Done()
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -569,7 +602,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if activeGroupIdx < 0 {
 						// No active group yet (all pending or all terminal) — idle-wait.
 						lq.Done()
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -579,7 +612,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if len(items) == 0 {
 						// All items dispatched or deferred — wait for group progress.
 						lq.Done()
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -597,7 +630,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if snapItemIdx < 0 {
 						// Item not found (stale reference) — retry.
 						lq.Done()
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -631,7 +664,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
 					if isPaused {
 						emitHeldEvent(ctx, deps, snapItemBeadID, core.AgentTypeClaudeCode, epoch)
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -644,7 +677,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					liveQ := lq.Queue()
 					if liveQ == nil {
 						lq.Done()
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -671,7 +704,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if !foundItem {
 						lq.Done()
 						// Already dispatched by a concurrent path — retry.
-						if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -705,20 +738,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			readyRecords, err := deps.brAdapter.Ready(ctx)
 			if err != nil {
 				// Treat poll errors as transient: log and backoff.
-				if ctx.Err() != nil {
+				if dispatchCtx.Err() != nil {
 					return exitClean()
 				}
 				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
 				// misconfiguration (hk-c1ln2: silent-failure fix).
 				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
-				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 					return exitClean()
 				}
 				continue
 			}
 
 			if len(readyRecords) == 0 {
-				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -736,7 +769,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
 				if isPaused {
 					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
-					if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -805,19 +838,19 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// label hydration is handled below after the claim write.
 			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
 			if showErr != nil {
-				if ctx.Err() != nil {
-					return nil
+				if dispatchCtx.Err() != nil {
+					return exitClean()
 				}
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
-				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-					return nil
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+					return exitClean()
 				}
 				continue
 			}
 			if showRecord.Status != core.CoarseStatusOpen {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
-				if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
-					return nil
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+					return exitClean()
 				}
 				continue
 			}
@@ -826,11 +859,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
-		// The select allows ctx cancellation to abort the acquire so the loop
-		// does not block indefinitely on shutdown.
+		// The select allows dispatch-halt to abort the acquire so the loop
+		// does not block indefinitely on shutdown (hk-2o2i9: use dispatchCtx).
 		select {
 		case claimSem <- struct{}{}:
-		case <-ctx.Done():
+		case <-dispatchCtx.Done():
 			return exitClean()
 		}
 		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)
@@ -838,7 +871,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		<-claimSem
 		if claimErr != nil {
 			// Claim conflict or transient error — surface to stderr and retry.
-			if ctx.Err() != nil {
+			if dispatchCtx.Err() != nil {
 				return exitClean()
 			}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
@@ -865,7 +898,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				lq.Done()
 			}
-			if sleepErr := workloopSleep(ctx, workloopPollInterval); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
 				return exitClean()
 			}
 			continue

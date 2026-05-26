@@ -161,6 +161,14 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-8jh26.
 	CancelOnQueueExit context.CancelFunc
 
+	// StopDispatchCtx, when non-nil, is used by the work loop's outer poll to
+	// halt dispatch without cancelling in-flight goroutines (hk-2o2i9). Mirrors
+	// daemon.Config.StopDispatchCtx. When nil the loop falls back to the ctx
+	// passed to runWorkLoop (backward-compat).
+	//
+	// Bead ref: hk-2o2i9.
+	StopDispatchCtx context.Context
+
 	// HandlerPauseController, when non-nil, is wired into the work loop to
 	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
 	// is disabled: all items are dispatched regardless of handler pause state.
@@ -249,6 +257,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		queueStore:             p.QueueStore,
 		cancelOnQueueDrain:     p.CancelOnQueueDrain,
 		cancelOnQueueExit:      p.CancelOnQueueExit,
+		stopDispatchCtx:        p.StopDispatchCtx,
 		handlerPauseController: p.HandlerPauseController,
 	}
 }

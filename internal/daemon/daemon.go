@@ -232,6 +232,22 @@ type Config struct {
 	// Bead ref: hk-8jh26.
 	CancelOnQueueExit context.CancelFunc
 
+	// StopDispatchCtx, when non-nil, is the context checked by the work loop's
+	// outer poll to decide whether to pull new beads. When this context is
+	// cancelled the loop stops dispatching and waits for in-flight goroutines to
+	// drain — but in-flight goroutines continue running on the main ctx.
+	//
+	// This separates "stop dispatching new work" (StopDispatchCtx) from "cancel
+	// in-flight work" (ctx passed to daemon.Start). Without this split,
+	// CancelOnQueueDrain/CancelOnQueueExit cancel the shared runCtx, which kills
+	// in-flight reviewer goroutines (hk-2o2i9).
+	//
+	// When nil the work loop uses ctx (the daemon context) for both dispatch-halt
+	// and in-flight lifetime, preserving backward-compatible behaviour.
+	//
+	// Bead ref: hk-2o2i9.
+	StopDispatchCtx context.Context
+
 	// SkipWALCheckpoint, when true, disables the advisory WAL-checkpoint
 	// pre-flight that runs at PL-005 step 0 before the first brcli call.
 	//
@@ -936,6 +952,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// all-success AND paused-by-failure outcomes (hk-8jh26 Fix 1).
 		// The zero value (nil) preserves normal daemon behaviour.
 		deps.cancelOnQueueExit = cfg.CancelOnQueueExit
+
+		// Inject the stop-dispatch context (hk-2o2i9): when set, the work loop's
+		// outer poll checks this context for dispatch-halt instead of the main ctx,
+		// so CancelOnQueueDrain/Exit do not kill in-flight reviewer goroutines.
+		// The zero value (nil) falls back to ctx (backward-compat).
+		deps.stopDispatchCtx = cfg.StopDispatchCtx
 
 		// Inject the HandlerPauseController so the work loop can gate dispatch
 		// on handler pause state (hk-m0k0a).

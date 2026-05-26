@@ -631,6 +631,32 @@ func TestDotFixtureReviewLoopFile(t *testing.T) {
 	}
 }
 
+// ── specs/examples/review-loop.dot round-trip ────────────────────────────────
+
+func TestDotFixtureSpecsExamplesReviewLoop(t *testing.T) {
+	//nolint:gosec // G304: path is a test-local constant, not user-supplied.
+	src, err := os.ReadFile("../../../specs/examples/review-loop.dot")
+	if err != nil {
+		t.Skipf("specs/examples/review-loop.dot not found (C5 not yet landed): %v", err)
+	}
+	g, parseErr := Parse(string(src), "specs/examples/review-loop.dot")
+	if parseErr != nil {
+		t.Fatalf("Parse(specs/examples/review-loop.dot): %v", parseErr)
+	}
+	if g.SchemaVersion != "1" {
+		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1")
+	}
+	if g.StartNodeID != "start" {
+		t.Errorf("StartNodeID = %q, want %q", g.StartNodeID, "start")
+	}
+	if len(g.TerminalNodeIDs) != 2 {
+		t.Errorf("TerminalNodeIDs = %v, want 2 entries", g.TerminalNodeIDs)
+	}
+	if len(g.Nodes) < 4 {
+		t.Errorf("Nodes = %d, want ≥4", len(g.Nodes))
+	}
+}
+
 // ── round-trip: ConditionRaw retained ────────────────────────────────────────
 
 func TestDotFixtureConditionRawRetained(t *testing.T) {

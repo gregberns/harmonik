@@ -26,13 +26,13 @@ digraph "review-loop-example" {
     // ─── Graph-level attributes ──────────────────────────────────────────────
     // schema_version pins the DOT dialect (D10: v1 examples ship at schema 1).
     // start_node names the unique entry point per WG-027.
-    // terminal_node_ids is encoded as a semicolon-delimited string per C1's
-    // attribute-value convention; C1 §11 WG-033 normatively defines the
+    // terminal_node_ids is encoded as a comma-delimited string per the
+    // parser's splitIDs convention; C1 §11 WG-033 normatively defines the
     // parse rule.
     schema_version="1";
     workflow_id="review-loop-example";
     start_node="start";
-    terminal_node_ids="close;close-needs-attention";
+    terminal_node_ids="close,close-needs-attention";
 
     // ─── Nodes ───────────────────────────────────────────────────────────────
     // start: the workflow entry point. Declared non-agentic with the noop

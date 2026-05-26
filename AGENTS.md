@@ -6,6 +6,8 @@
 
 Read [AGENT_INDEX.md](AGENT_INDEX.md) first. It is the master map of the knowledge base and every document is reachable from there within two hops. Then read [STATUS.md](STATUS.md) for current project state and [TASKS.md](TASKS.md) for the active work list.
 
+**Orchestrator permanent directives:** [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md) — all stable rules (dispatch discipline, priority, bead lifecycle, autonomy, dispatch shape, monitor pattern). Load alongside HANDOFF.md on every `/session-resume`. **Known workarounds** (worktree bugs, harness quirks): [`docs/known-workarounds.md`](docs/known-workarounds.md).
+
 ## Orchestrator discipline (HARD RULE)
 
 The orchestrator MUST NOT do inline code reading, investigation, or debugging on the main thread. Every session the main thread exists to dispatch — not to be an implementer or investigator.

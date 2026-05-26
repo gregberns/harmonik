@@ -279,6 +279,38 @@ func TestHookVerdictRecord_JSONKeys(t *testing.T) {
 	}
 }
 
+// TestHookVerdictRecord_JSONRoundTrip_WithCognitionMeta verifies that a
+// HookVerdictRecord with a non-nil CognitionMeta survives a JSON round-trip
+// with the CognitionMeta field intact.
+func TestHookVerdictRecord_JSONRoundTrip_WithCognitionMeta(t *testing.T) {
+	t.Parallel()
+
+	cm := cognitionMetaFixture(t)
+	orig := outcomeSpineFixtureHookVerdictRecord(t)
+	orig.CognitionMeta = &cm
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var got HookVerdictRecord
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	if got.CognitionMeta == nil {
+		t.Fatal("CognitionMeta: got nil after round-trip, want non-nil")
+	}
+	if got.CognitionMeta.ModelResponseDigest != cm.ModelResponseDigest {
+		t.Errorf("CognitionMeta.ModelResponseDigest: got %q, want %q",
+			got.CognitionMeta.ModelResponseDigest, cm.ModelResponseDigest)
+	}
+	if !got.Valid() {
+		t.Error("Valid() returned false after round-trip with CognitionMeta set")
+	}
+}
+
 // TestHookVerdictRecord_SpineTyping verifies that HookVerdictRecord is the
 // typed output of the hook-dispatch segment in the outcome spine per
 // execution-model.md §4.6.EM-027. This test documents the segment boundary:

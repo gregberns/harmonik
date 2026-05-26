@@ -2,7 +2,10 @@ package core
 
 // twopassreg_hka8bg85_test.go — Two-pass registration fixture
 //
-// Covers specs/control-points.md §10.2 (CP-043..CP-046 + CP-INV-001 + §7.1):
+// Covers specs/control-points.md §10.2 (CP-003 + CP-043..CP-046 + CP-INV-001 + §7.1):
+//   - Evaluator boundary-classification: every ControlPoint evaluator MUST be
+//     classified as mechanism or cognition; unclassified evaluators MUST fail
+//     registration (CP-003 — hk-a8bg.3).
 //   - Idempotent-by-name: re-register identical body succeeds silently (CP-044).
 //   - Divergent-body rejection: registering a different body under an existing
 //     name MUST fail at startup with a specific error (CP-044).
@@ -81,12 +84,24 @@ var errDivergentBody = errors.New("twopassreg: duplicate registration with diver
 // MUST fail with a structural error.
 var errCognitionGuard = errors.New("twopassreg: cognition-tagged Guard forbidden (CP-020)")
 
+// errUnclassifiedEvaluator is returned by Register when a ControlPoint's
+// evaluator mode is neither mechanism nor cognition. Per CP-003, every
+// ControlPoint's evaluator MUST be classified as mechanism or cognition at
+// registration time.
+var errUnclassifiedEvaluator = errors.New("twopassreg: evaluator is not boundary-classified (CP-003): mode must be mechanism or cognition")
+
 // Register implements the re-registration-safe contract per CP-044:
 //   - Same name + same BodyHash → succeed silently (idempotent).
 //   - Same name + different BodyHash → fail with errDivergentBody.
+//   - Unclassified evaluator → fail with errUnclassifiedEvaluator (CP-003).
 //   - Guard + cognition evaluator → fail with errCognitionGuard (CP-020).
 //   - New name → register and return nil.
 func (r *twoPassRegRegistry) Register(cp twoPassRegControlPoint) error {
+	// CP-003: evaluator MUST be boundary-classified as mechanism or cognition.
+	if !cp.EvaluatorMode.Valid() {
+		return fmt.Errorf("%w: name=%q mode=%q", errUnclassifiedEvaluator, cp.Name, string(cp.EvaluatorMode))
+	}
+
 	// CP-020: cognition-tagged Guards are forbidden.
 	if cp.Kind == KindGuard && cp.EvaluatorMode == ModeTagCognition {
 		return errCognitionGuard
@@ -684,5 +699,118 @@ func TestTwoPassReg_CognitionGuardFixtureIsInvalidForRegistration(t *testing.T) 
 	}
 	if !errors.Is(err, errCognitionGuard) {
 		t.Errorf("expected errCognitionGuard, got: %v", err)
+	}
+}
+
+// --- CP-003: Evaluator is boundary-classified (hk-a8bg.3) ---
+
+// TestTwoPassReg_CP003_UnclassifiedEvaluatorRejected verifies that a
+// ControlPoint whose evaluator mode is neither mechanism nor cognition is
+// rejected at registration with errUnclassifiedEvaluator.
+//
+// specs/control-points.md §4.1.CP-003: "Every ControlPoint's `evaluator` MUST
+// be classified as `mechanism` or `cognition`."
+func TestTwoPassReg_CP003_UnclassifiedEvaluatorRejected(t *testing.T) {
+	t.Parallel()
+
+	unclassifiedModes := []ModeTag{
+		ModeTag(""),        // empty — no classification
+		ModeTag("unknown"), // non-empty but not a declared constant
+		ModeTag("MECHANISM"), // wrong case
+		ModeTag("cognition "), // trailing whitespace
+	}
+
+	for _, mode := range unclassifiedModes {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			reg := newTwoPassRegRegistry()
+			cp := twoPassRegControlPoint{
+				Name:          "bad-evaluator-cp",
+				Kind:          KindGate,
+				EvaluatorMode: mode,
+				BodyHash:      "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+			}
+
+			err := reg.Register(cp)
+			if err == nil {
+				t.Fatalf("Register with EvaluatorMode=%q: expected errUnclassifiedEvaluator, got nil", mode)
+			}
+			if !errors.Is(err, errUnclassifiedEvaluator) {
+				t.Errorf("Register with EvaluatorMode=%q: got %v, want errUnclassifiedEvaluator", mode, err)
+			}
+
+			// Registry must remain empty after the rejection.
+			all := reg.All()
+			if len(all) != 0 {
+				t.Errorf("registry has %d entries after CP-003 rejection, want 0", len(all))
+			}
+		})
+	}
+}
+
+// TestTwoPassReg_CP003_MechanismAndCognitionBothAccepted verifies the positive
+// path for CP-003: both mechanism-tagged and cognition-tagged evaluators are
+// accepted at registration. Gate and Hook kinds are tested for each mode.
+//
+// specs/control-points.md §4.1.CP-003: mechanism or cognition are the only two
+// accepted classifications.
+func TestTwoPassReg_CP003_MechanismAndCognitionBothAccepted(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		cp   twoPassRegControlPoint
+	}{
+		{
+			name: "gate/mechanism",
+			cp: twoPassRegControlPoint{
+				Name:          "mechanism-gate",
+				Kind:          KindGate,
+				EvaluatorMode: ModeTagMechanism,
+				BodyHash:      "aa" + hashPad(62),
+			},
+		},
+		{
+			name: "gate/cognition",
+			cp: twoPassRegControlPoint{
+				Name:          "cognition-gate",
+				Kind:          KindGate,
+				EvaluatorMode: ModeTagCognition,
+				BodyHash:      "bb" + hashPad(62),
+			},
+		},
+		{
+			name: "hook/mechanism",
+			cp: twoPassRegControlPoint{
+				Name:          "mechanism-hook",
+				Kind:          KindHook,
+				EvaluatorMode: ModeTagMechanism,
+				BodyHash:      "cc" + hashPad(62),
+			},
+		},
+		{
+			name: "hook/cognition",
+			cp: twoPassRegControlPoint{
+				Name:          "cognition-hook",
+				Kind:          KindHook,
+				EvaluatorMode: ModeTagCognition,
+				BodyHash:      "dd" + hashPad(62),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := newTwoPassRegRegistry()
+			if err := reg.Register(tc.cp); err != nil {
+				t.Errorf("Register(%q, EvaluatorMode=%q): unexpected error: %v",
+					tc.name, tc.cp.EvaluatorMode, err)
+			}
+		})
 	}
 }

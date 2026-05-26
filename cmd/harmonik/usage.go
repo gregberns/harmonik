@@ -20,6 +20,7 @@ SUBCOMMANDS
   handler      Inspect or resume a paused handler
   queue        Submit or inspect the bead queue (daemon must be running)
   reconcile    Close in_progress beads whose implementation has merged
+  beads-merge  Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   tmux-start   Bootstrap a tmux session and start the daemon inside it
   hook-relay   Forward a Claude hook event to the daemon (internal use)
 

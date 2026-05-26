@@ -190,6 +190,16 @@ EXAMPLES
 		return runReconcileSubcommand(os.Args[2:])
 	}
 
+	// harmonik beads-merge %O %A %B %P — custom git merge-driver for .beads/issues.jsonl.
+	//
+	// Union-by-bead-ID merge with last-writer-wins collision resolution on updated_at.
+	// Registered via .gitattributes + .git/config per bead hk-jon6r.
+	//
+	// Bead ref: hk-jon6r.
+	if len(os.Args) >= 2 && os.Args[1] == "beads-merge" {
+		return runBeadsMergeSubcommand(os.Args[2:])
+	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "queue" {
 		verb := ""
 		if len(os.Args) >= 3 {

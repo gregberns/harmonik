@@ -32,12 +32,11 @@ func TestBackfillFailureClass(t *testing.T) {
 	nodeID := core.NodeID("test-node")
 
 	tests := []struct {
-		name           string
-		status         core.OutcomeStatus
-		handlerFC      *core.FailureClass
-		sessionErr     error
-		wantFC         *core.FailureClass
-		wantNilOnNonFail bool
+		name       string
+		status     core.OutcomeStatus
+		handlerFC  *core.FailureClass
+		sessionErr error
+		wantFC     *core.FailureClass
 	}{
 		// ── Non-FAIL: failure_class is always cleared ──────────────────────────
 

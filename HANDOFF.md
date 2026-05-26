@@ -20,7 +20,7 @@ Per-return acknowledgment is ≤2 lines. Full session summary lives at `/session
 
 **STREAM-DEFAULT IS NOW LIVE (v59, hk-7nbey).** `harmonik run --beads` now creates `kind=stream` queues by default. Pass `--wave` to opt back into wave-mode. Remaining gap: hk-24xn1 (daemon wake-on-submit).
 
-**EVERY BEAD GETS A REVIEW PHASE (HARD RULE, v53 — USER-ORDERED 2026-05-21).** `harmonik run` MUST be invoked with `--review-loop` on every batch. No exceptions. P0 bead **hk-g0ckv** flips the default — until that lands, the orchestrator MUST pass `--review-loop` explicitly.
+**EVERY BEAD GETS A REVIEW PHASE (HARD RULE, v53 — USER-ORDERED 2026-05-21).** `harmonik run` includes a review phase on every batch by default (hk-g0ckv landed). Pass `--no-review-loop` only to explicitly opt out.
 
 **HARMONIK DOES (BASICALLY) ALL THE WORK (HARD RULE, v53 REINFORCEMENT).** The Agent tool is for the THREE narrow exceptions. Any Agent-tool dispatch must justify itself against those exceptions.
 

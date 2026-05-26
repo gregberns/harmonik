@@ -65,19 +65,13 @@ done
 
 ### Queue semantics — `wave` vs `stream`
 
-`harmonik run --beads` creates a `kind=wave` queue that does NOT accept appends. Mid-flight extension requires `kind=stream` via `harmonik queue submit <file>` + `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Daemon doesn't wake on submit if idle — keep an active `harmonik run` so the workloop stays hot (gaps: hk-b0cyc, hk-24xn1, hk-7nbey for stream-default).
+`harmonik run --beads` creates a `kind=stream` queue by default (hk-7nbey landed, v59). Stream queues accept appends mid-flight via `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Pass `--wave` to opt into wave-mode, which does NOT accept appends. Daemon doesn't wake on submit if idle — remaining gap: hk-24xn1 (daemon wake-on-submit). Note: stream-mode enforces head-of-line blocking via `streamEligible()` — use `--wave` when you need true concurrent dispatch with `--max-concurrent > 1`.
 
-### Appending to a running queue (current limitation + workaround)
+### Appending to a running queue
 
-**Status (2026-05-26):** Queue-append is implemented in the daemon (socket RPC, validation, events), but `harmonik run --beads` hardcodes `kind=wave` at `cmd/harmonik/run.go:316`. Three P1 beads must land before seamless mid-flight append works:
+**Status (2026-05-26):** `harmonik run --beads` now creates `kind=stream` queues by default (hk-7nbey landed, v59). Mid-flight appends work via `harmonik queue append --queue-id <uuid> <group-index> <bead-ids...>`. Remaining gap: hk-24xn1 — daemon doesn't wake on `queue-submit` when idle, so appended beads sit `pending` until the next workloop tick.
 
-- **hk-7nbey** — flip `harmonik run --beads` default to `kind=stream` (~10 LOC, `cmd/harmonik/run.go:316`). Quick win.
-- **hk-b0cyc** — the UX gap: wave groups reject append with `append_target_invalid` (-32011). Fixed by hk-7nbey.
-- **hk-24xn1** — daemon doesn't wake on `queue-submit` when idle. Appended beads sit `pending` until the next workloop tick. Separate fix: queue-submit RPC must signal the workloop.
-
-**Workaround (until hk-7nbey lands):** To get an appendable queue today, create a `queue.json` file with `kind: stream` and submit it via `harmonik queue submit <file>` instead of using `harmonik run --beads`. Then append with `harmonik queue append --queue-id <uuid> <group-index> <bead-ids...>`. The daemon must already be running (`harmonik run` with any initial batch).
-
-**When the queue is full (wave-mode):** You cannot extend it. Wait for the wave to drain, then dispatch a new `harmonik run --beads` batch. This is why stream-default (hk-7nbey) is P1 — it removes this friction from the daily loop.
+**When using wave-mode (`--wave`):** Wave queues do NOT accept appends. Wait for the wave to drain, then dispatch a new `harmonik run --beads` batch.
 
 The `extqueue` kerf work (status=ready) covers the full spec for this surface. See `specs/queue-model.md` for the normative wave/stream/append contract.
 
@@ -85,9 +79,17 @@ The `extqueue` kerf work (status=ready) covers the full spec for this surface. S
 
 1. Rebuild harmonik first (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
 2. Pre-screen the batch (see above); drop already-landed beads.
-3. Choose `--max-concurrent` — keep at `1` until hk-wx8z8 (parallel-run stability) verifies it.
+3. Choose `--max-concurrent` — use `--wave` when `--max-concurrent > 1` (stream-mode HOL blocks concurrent dispatch; hk-wx8z8 tracks parallel-run stability validation).
 4. Dispatch in background with `--notify-stream` (review-loop is default on per hk-g0ckv).
 5. Arm a Monitor tailing the bash stdout file AND `.harmonik/events/events.jsonl`.
+
+### Post-flight: failure triage
+
+After each batch completes, review outcomes before queuing the next batch:
+
+- **Failed once:** eligible for re-dispatch in the next batch.
+- **Failed twice in the same session:** STOP. Dispatch an investigator sub-agent before any further re-dispatch. The investigator should check: (a) bead description quality (is there enough context?), (b) prior failure events in `.harmonik/events/events.jsonl`, (c) whether the work is already landed via `git log --grep "Refs: <id>"`.
+- **Never dispatch the same bead more than twice without investigation.** Repeating a failing dispatch without diagnosis wastes slots and obscures the root cause.
 
 ### When dispatch hangs
 

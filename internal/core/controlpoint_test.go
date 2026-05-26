@@ -204,6 +204,40 @@ func TestControlPointValid_InvalidSchemaVersion(t *testing.T) {
 	}
 }
 
+// TestControlPointValid_InvalidAxes verifies that a ControlPoint with an
+// invalid AxisTags tuple is invalid (architecture.md §4.1 AR-001; §6.1).
+func TestControlPointValid_InvalidAxes(t *testing.T) {
+	t.Parallel()
+
+	cp := registryFixtureControlPoint(t, KindGate)
+	cp.Axes = AxisTags{
+		LLMFreedom:    LLMFreedom("bad"),
+		IODeterminism: IODeterminismDeterministic,
+		ReplaySafety:  ReplaySafetySafe,
+		Idempotency:   AxisIdempotencyIdempotent,
+	}
+	if cp.Valid() {
+		t.Error("ControlPoint with invalid AxisTags.Valid() = true, want false")
+	}
+}
+
+// TestControlPointValid_InvalidModeTag verifies that a ControlPoint carrying an
+// unrecognised ModeTag fails Valid() even when Evaluator.Mode is valid
+// (specs/control-points.md §6.1: mode_tag must be a declared constant).
+func TestControlPointValid_InvalidModeTag(t *testing.T) {
+	t.Parallel()
+
+	cp := registryFixtureControlPoint(t, KindGate)
+	// Patch both ModeTag and Evaluator.Mode to the same unknown string so that
+	// the mode-mismatch guard does not fire before the ModeTag.Valid() guard.
+	unknown := ModeTag("unknown")
+	cp.ModeTag = unknown
+	cp.Evaluator.Mode = unknown
+	if cp.Valid() {
+		t.Error("ControlPoint with unknown ModeTag.Valid() = true, want false")
+	}
+}
+
 // TestOutcomeActionValidForKind verifies the per-Kind vocabulary declared in
 // specs/control-points.md §4.1.CP-005.
 func TestOutcomeActionValidForKind(t *testing.T) {

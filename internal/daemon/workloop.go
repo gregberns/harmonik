@@ -2049,7 +2049,6 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 					reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
 				}
 			}
-			_ = out // suppress unused-variable lint after auto-resolve path
 		}
 		// Rebase succeeded — re-resolve runTip and mainTip (both may have changed).
 		rebasedTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)

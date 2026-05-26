@@ -223,6 +223,15 @@ const (
 	// agent_ready on first SessionStart receipt (CHB-013 / HC-039).
 	// Durability class: O.
 	EventTypeLaunchInitiated EventType = "launch_initiated"
+
+	// EventTypeAgentReadyTimeout is the agent_ready_timeout event type.
+	// Emitted by the daemon workloop when HC-056 fires: no agent_ready event
+	// arrived within the configured timeout window (default 30s). Carries
+	// run_id, claude_session_id, and timeout_ms so post-hoc analysis can
+	// correlate which runs never became ready (hk-5cox8 observability).
+	// Durability class: O.
+	// Refs: hk-5cox8.
+	EventTypeAgentReadyTimeout EventType = "agent_ready_timeout"
 )
 
 // ---------------------------------------------------------------------------

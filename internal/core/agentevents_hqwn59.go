@@ -118,6 +118,14 @@ type AgentReadyPayload struct {
 	// Required (non-nil; may be empty slice if no capabilities are declared).
 	Capabilities []string `json:"capabilities"`
 
+	// ClaudeSessionID is the Claude Code session identifier that generated the
+	// SessionStart hook event triggering this agent_ready synthesis. Only
+	// populated when Provenance == "claude_session_start" (i.e. relay-synthesized
+	// under the tmux substrate). Empty for conventional handler subprocess emission.
+	// Added by hk-5cox8 to allow post-hoc correlation of which runs received
+	// agent_ready and which did not.
+	ClaudeSessionID string `json:"claude_session_id,omitempty"`
+
 	// Provenance is the source of the agent_ready signal.  Set to
 	// "claude_session_start" when the message was synthesized by the
 	// hook-relay on first SessionStart receipt (CHB-013 / HC-039 under the
@@ -186,6 +194,53 @@ func (p LaunchInitiatedPayload) Valid() bool {
 		return false
 	}
 	if p.ClaudeSessionID == "" {
+		return false
+	}
+	return true
+}
+
+// AgentReadyTimeoutPayload is the typed event payload for the agent_ready_timeout
+// event (hk-5cox8 observability).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — HC-056 timeout observability; lets post-hoc
+// analysis distinguish "never ready" from "ready but not logged").
+//
+// Emitted by the daemon workloop when the HC-056 agent_ready timeout fires —
+// i.e. no agent_ready relay message arrived within the configured deadline.
+//
+// # Payload fields
+//
+//   - run_id            — the run in whose context the timeout fired
+//   - claude_session_id — the Claude session ID targeted by this run
+//   - timeout_ms        — the effective timeout in milliseconds (default 30000)
+//
+// Refs: hk-5cox8.
+type AgentReadyTimeoutPayload struct {
+	// RunID is the run in whose context the timeout fired.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// ClaudeSessionID is the Claude Code session identifier that was expected
+	// to emit agent_ready but did not within the timeout window.
+	// Required (non-empty).
+	ClaudeSessionID string `json:"claude_session_id"`
+
+	// TimeoutMs is the effective HC-056 timeout in milliseconds.
+	// Required (positive).
+	TimeoutMs int64 `json:"timeout_ms"`
+}
+
+// Valid reports whether p is a well-formed AgentReadyTimeoutPayload.
+func (p AgentReadyTimeoutPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.ClaudeSessionID == "" {
+		return false
+	}
+	if p.TimeoutMs <= 0 {
 		return false
 	}
 	return true

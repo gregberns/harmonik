@@ -147,6 +147,9 @@ func registerAgentEvents() {
 	mustRegister("agent_soft_terminating", func() EventPayload { return &AgentSoftTerminatingPayload{} })
 	mustRegister("agent_hard_terminating", func() EventPayload { return &AgentHardTerminatingPayload{} })
 	mustRegister("launch_initiated", func() EventPayload { return &LaunchInitiatedPayload{} })
+	// agent_ready_timeout (hk-5cox8): emitted by the daemon workloop when HC-056
+	// fires — no agent_ready arrived within the timeout window. Durability class: O.
+	mustRegister("agent_ready_timeout", func() EventPayload { return &AgentReadyTimeoutPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

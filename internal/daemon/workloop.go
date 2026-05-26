@@ -1182,8 +1182,30 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
 	// Bead ref: hk-lj1p9.4.
+	// Capture values for the callback closure; claudeSessionID is a plain string
+	// (not core.SessionID) so copy it explicitly to avoid capturing a loop var.
+	cbRunID := runID
+	cbClaudeSessionID := artifacts.claudeSessionID
 	deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
-		_ = tap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+		// hk-5cox8 observability: populate run_id, claude_session_id, and provenance
+		// so the emitted agent_ready event in events.jsonl can be correlated per-run.
+		// Previously this called tap.Emit with nil payload, producing payload:null
+		// in the JSONL and making it impossible to determine which runs received
+		// agent_ready and which timed out.
+		pl := core.AgentReadyPayload{
+			RunID:           cbRunID,
+			SessionID:       core.SessionID(cbClaudeSessionID),
+			Capabilities:    []string{},
+			ClaudeSessionID: cbClaudeSessionID,
+			Provenance:      "claude_session_start",
+		}
+		b, marshalErr := json.Marshal(pl)
+		if marshalErr != nil {
+			// Fallback: emit without payload rather than silently dropping the event.
+			_ = tap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+			return
+		}
+		_ = tap.Emit(context.Background(), core.EventTypeAgentReady, b)
 	})
 
 	// Step 4b: paste-inject the kick-off message into the Claude pane (hk-zrj83).
@@ -1267,6 +1289,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually\n",
 					beadID, runID.String(), reopenErr)
 			}
+			// hk-5cox8 observability: emit agent_ready_timeout to events.jsonl so
+			// post-hoc analysis can distinguish "never ready" runs from runs that
+			// received agent_ready. Previously the only evidence of this failure
+			// was a stderr log line and ErrAgentReadyTimeout return; neither was
+			// captured in the durable event stream.
+			emitAgentReadyTimeout(ctx, deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
 			emitDone(false, "agent_ready_timeout")
 			return
 		}
@@ -2359,6 +2387,29 @@ func emitImplementerPhaseComplete(ctx context.Context, bus handlercontract.Event
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerPhaseComplete, b)
+}
+
+// emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
+// the HC-056 timeout fires — no agent_ready relay message arrived within the
+// configured deadline. The event carries run_id, claude_session_id, and
+// timeout_ms so post-hoc analysis can correlate which runs never became ready.
+//
+// effectiveTimeout: zero is replaced by defaultAgentReadyTimeout (30s) to
+// match the semantics of waitAgentReady.
+func emitAgentReadyTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, claudeSessionID string, effectiveTimeout time.Duration) {
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = defaultAgentReadyTimeout
+	}
+	pl := core.AgentReadyTimeoutPayload{
+		RunID:           runID,
+		ClaudeSessionID: claudeSessionID,
+		TimeoutMs:       effectiveTimeout.Milliseconds(),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyTimeout, b)
 }
 
 // emitImplementerEscapedWorktree emits an implementer_escaped_worktree event

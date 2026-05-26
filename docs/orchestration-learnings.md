@@ -37,6 +37,7 @@ This is **dual-purpose**:
 - [L-017 — `defer_until` is a separate field from `status=deferred` and silently filters `br ready`](#l-017) — `process-fix-applied` · `product-input`
 - [L-020 — Queue-with-context discipline (don't queue hygiene; when queuing, include enough to decide)](#l-020) — `process-fix-applied` · `product-input`
 - [L-021 — Re-dispatch without investigation wastes slots (v60)](#l-021) — `process-fix-applied` · `product-input`
+- [L-022 — Never rm worktree directories while the daemon is running](#l-022) — `process-fix-applied`
 
 ---
 
@@ -322,3 +323,13 @@ L-020 is the integration point: a pre-queue checklist that takes the union of th
 **Product input.** Consider daemon-side tracking of per-bead failure count across batches. If a bead fails ≥2 times, the daemon could auto-flag it `needs-investigation` and exclude it from the dispatch queue until a human or investigator agent clears the flag. This removes reliance on the orchestrator-agent remembering cross-batch failure history.
 
 Tags: `process-fix-applied` · `product-input`
+
+### L-022 — Never rm worktree directories while the daemon is running <a name="l-022"></a>
+
+**Observed 2026-05-26 (session v63).** Orchestrator cleaned up stale worktree directories from prior sessions using `rm -rf .harmonik/worktrees/<id>` while the daemon had 3 active runs. The cleanup script's active-run filter worked correctly in logic but the directories were removed before the implementer claude processes finished. Result: 2 beads failed with `resolveWorktreeHEAD: no such file or directory` and 1 failed with `no_commit_during_implementer`. All 3 needed re-dispatch.
+
+**Root cause.** The daemon owns worktree lifecycle (create, merge, remove). External cleanup of `.harmonik/worktrees/` while the daemon is running races with the daemon's own operations. Even "stale" directories may be referenced by orphan processes the daemon hasn't yet reaped.
+
+**Rule.** Never touch `.harmonik/worktrees/` while a harmonik daemon is running. Clean stale worktrees only when the daemon is stopped, or let the daemon handle it (future: auto-cleanup on startup).
+
+Tags: `process-fix-applied`

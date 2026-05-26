@@ -1247,7 +1247,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	hbDone := make(chan struct{})
 	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
 		handler.HeartbeatInterval, hbDone,
-		newDaemonHeartbeatEmitter(deps.bus, runID))
+		newDaemonHeartbeatEmitter(tap, runID))
 	defer close(hbDone)
 
 	// Step 6: waitAgentReady — HC-056 agent_ready timeout guard.

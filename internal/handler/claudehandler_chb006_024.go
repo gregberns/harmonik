@@ -522,6 +522,12 @@ type HeartbeatEmitter func(ctx context.Context, sessionID string, phase string) 
 //
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-019; HC-026a.
 func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Duration, done <-chan struct{}, emit HeartbeatEmitter) {
+	// Emit the first heartbeat immediately so pasteInjectQuitOnCommit sees
+	// a heartbeat within its 60s launchHeartbeatTimeout window, even though
+	// the ticker interval (300s) is much longer.
+	if emitErr := emit(ctx, sessionID, string(handlercontract.HeartbeatPhaseReasoning)); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "handler: claude-code: heartbeat emit error: %v\n", emitErr)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -532,7 +538,6 @@ func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Durat
 			return
 		case <-ticker.C:
 			if emitErr := emit(ctx, sessionID, string(handlercontract.HeartbeatPhaseReasoning)); emitErr != nil {
-				// Non-fatal: log to stderr and continue.
 				fmt.Fprintf(os.Stderr, "handler: claude-code: heartbeat emit error: %v\n", emitErr)
 			}
 		}

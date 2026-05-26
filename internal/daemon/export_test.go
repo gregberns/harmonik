@@ -969,6 +969,25 @@ func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, b
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// pane liveness checker test seams (hk-fbydv)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// PaneLivenessCheckerExported is an exported alias for the paneLivenessChecker
+// interface so tests in package daemon_test can implement stubs without naming
+// the unexported type.
+//
+// Bead: hk-fbydv.
+type PaneLivenessCheckerExported = paneLivenessChecker
+
+// ExportedHasChildProcess exposes hasChildProcess for tests in package
+// daemon_test.
+//
+// Bead: hk-fbydv.
+func ExportedHasChildProcess(pid int) bool {
+	return hasChildProcess(pid)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // QueueOperatorEventConsumer test seams (hk-7urls)
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -86,6 +87,53 @@ type quitSender interface {
 	// spawned window's first pane.  Returns a non-nil error if no window has
 	// been spawned yet or if the underlying send-keys call fails.
 	SendQuitToLastPane(ctx context.Context) error
+}
+
+// paneLivenessChecker is an optional interface that quitSender implementations
+// may also satisfy to report whether the tmux pane has an active child process
+// (i.e. claude is running under the shell).
+//
+// pasteInjectQuitOnCommit probes the qs parameter for this interface at
+// construction time.  When present, the liveness check is consulted before
+// firing the noChange kill path on a launch-heartbeat-timeout or heartbeat-
+// staleness event: if the pane has an active child process, the session is
+// still alive (thinking phase, not yet emitting heartbeats) and the kill is
+// suppressed; lastHeartbeat is reset so the staleness clock restarts.
+//
+// This distinguishes two cases the heartbeat watchdog cannot separate on its
+// own:
+//   1. Empty pane — paste delivered but claude never started → kill fast (~60s).
+//   2. Active thinking — claude is running and downloading tokens but has not
+//      yet made a tool call → do NOT kill.
+//
+// Bead: hk-fbydv.
+type paneLivenessChecker interface {
+	// PaneHasActiveProcess returns true when the tmux pane shell has at least
+	// one child process (i.e. the hosted claude process is still running).
+	// Returns false on any error (conservative: treat unknown as dead).
+	PaneHasActiveProcess(ctx context.Context) bool
+}
+
+// hasChildProcess reports whether the process with the given PID has any child
+// processes in the OS process table.
+//
+// Implementation: runs `pgrep -P <pid>` and treats an exit-0 result (at least
+// one match) as "has children".  A non-zero exit or any error returns false
+// (conservative — treat unknown as "no children", which causes the kill to
+// proceed rather than loop forever).
+//
+// pgrep is present on macOS and all mainstream Linux distributions; it is the
+// canonical cross-platform tool for this query and avoids parsing /proc on
+// Linux or using sysctl on macOS.
+//
+// Bead: hk-fbydv.
+func hasChildProcess(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	cmd := exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid))
+	err := cmd.Run()
+	return err == nil // exit 0 → at least one child process found
 }
 
 // briefDeliveredTimeout is the maximum time pasteInjectQuitOnCommit will wait
@@ -288,6 +336,10 @@ func pasteInjectQuitOnCommit(
 	launchDeadline := time.Now().Add(launchWindow)
 	firstHeartbeatSeen := false
 
+	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
+	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
+	livenessChecker, _ := qs.(paneLivenessChecker)
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -356,18 +408,44 @@ func pasteInjectQuitOnCommit(
 			// not arrived within launchWindow after brief delivery, the paste
 			// likely landed in an empty/dead pane.  Kill so the workloop reopens
 			// the bead for retry.  Skipped once firstHeartbeatSeen is true.
+			//
+			// hk-fbydv: before killing, consult the pane liveness checker.  If
+			// the pane shell has an active child process, Claude is in its initial
+			// thinking phase (context loading, planning) and has not yet emitted
+			// a heartbeat.  Reset lastHeartbeat and extend the launch deadline so
+			// the kill does not fire until the session actually goes dark.
 			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
-				fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery")
-				return
+				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout suppressed: pane has active child process in %s; resetting staleness clock\n",
+						wtPath)
+					lastHeartbeat = now
+					launchDeadline = now.Add(launchWindow)
+				} else {
+					fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery")
+					return
+				}
 			}
 
 			// Check heartbeat staleness (only when eventCh was provided at init).
+			//
+			// hk-fbydv: before killing, consult the pane liveness checker.  If
+			// the pane shell still has an active child process, the session is
+			// alive but not emitting heartbeats (still in thinking phase).  Reset
+			// lastHeartbeat so the staleness clock restarts from now.
 			if heartbeatProvided && now.Sub(lastHeartbeat) > stalenessThreshold {
-				fireNoChangePath(fmt.Sprintf(
-					"heartbeat stale for >%v (no agent_heartbeat received)",
-					stalenessThreshold,
-				))
-				return
+				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: heartbeat-staleness suppressed: pane has active child process in %s; resetting staleness clock\n",
+						wtPath)
+					lastHeartbeat = now
+				} else {
+					fireNoChangePath(fmt.Sprintf(
+						"heartbeat stale for >%v (no agent_heartbeat received)",
+						stalenessThreshold,
+					))
+					return
+				}
 			}
 
 			headSHA, err := resolveWorktreeHEAD(ctx, wtPath)

@@ -268,6 +268,7 @@ var _ handler.Substrate = (*perRunSubstrate)(nil)
 var _ pasteInjecter = (*perRunSubstrate)(nil)
 var _ enterSender = (*perRunSubstrate)(nil)
 var _ quitSender = (*perRunSubstrate)(nil)
+var _ paneLivenessChecker = (*perRunSubstrate)(nil)
 
 // paneTargeter is an optional interface a SubstrateSession may implement to
 // expose its specific tmux pane target string (e.g. "%1964").  perRunSubstrate
@@ -396,6 +397,32 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 		return fmt.Errorf("daemon: perRunSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
 	return p.inner.adapter.SendKeysQuit(ctx, target)
+}
+
+// PaneHasActiveProcess returns true when the tmux pane shell (identified by the
+// pane target captured at SpawnWindow time) has at least one child process —
+// i.e. the hosted claude process is still running under the shell.
+//
+// The implementation retrieves the shell PID via WindowPanePID (using the
+// stable per-run pane target), then calls hasChildProcess to check for children
+// via `pgrep -P <pid>`.  Returns false on any error (conservative).
+//
+// Implements paneLivenessChecker.
+//
+// Bead: hk-fbydv.
+func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
+	target := p.paneTarget()
+	if target == "" {
+		return false
+	}
+	// Use a tmux.WindowHandle from the per-run pane target. WindowPanePID
+	// accepts either a "%NNNN" pane ID or a "session:window.index" handle;
+	// paneTarget() already returns the stable pane ID captured at spawn time.
+	pid, err := p.inner.adapter.WindowPanePID(ctx, tmux.WindowHandle(target))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return hasChildProcess(pid)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

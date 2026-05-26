@@ -67,6 +67,20 @@ done
 
 `harmonik run --beads` creates a `kind=wave` queue that does NOT accept appends. Mid-flight extension requires `kind=stream` via `harmonik queue submit <file>` + `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Daemon doesn't wake on submit if idle — keep an active `harmonik run` so the workloop stays hot (gaps: hk-b0cyc, hk-24xn1, hk-7nbey for stream-default).
 
+### Appending to a running queue (current limitation + workaround)
+
+**Status (2026-05-26):** Queue-append is implemented in the daemon (socket RPC, validation, events), but `harmonik run --beads` hardcodes `kind=wave` at `cmd/harmonik/run.go:316`. Three P1 beads must land before seamless mid-flight append works:
+
+- **hk-7nbey** — flip `harmonik run --beads` default to `kind=stream` (~10 LOC, `cmd/harmonik/run.go:316`). Quick win.
+- **hk-b0cyc** — the UX gap: wave groups reject append with `append_target_invalid` (-32011). Fixed by hk-7nbey.
+- **hk-24xn1** — daemon doesn't wake on `queue-submit` when idle. Appended beads sit `pending` until the next workloop tick. Separate fix: queue-submit RPC must signal the workloop.
+
+**Workaround (until hk-7nbey lands):** To get an appendable queue today, create a `queue.json` file with `kind: stream` and submit it via `harmonik queue submit <file>` instead of using `harmonik run --beads`. Then append with `harmonik queue append --queue-id <uuid> <group-index> <bead-ids...>`. The daemon must already be running (`harmonik run` with any initial batch).
+
+**When the queue is full (wave-mode):** You cannot extend it. Wait for the wave to drain, then dispatch a new `harmonik run --beads` batch. This is why stream-default (hk-7nbey) is P1 — it removes this friction from the daily loop.
+
+The `extqueue` kerf work (status=ready) covers the full spec for this surface. See `specs/queue-model.md` for the normative wave/stream/append contract.
+
 ### Pre-flight checklist
 
 1. Rebuild harmonik first (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".

@@ -58,6 +58,21 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
+// resolveGroupKind returns the queue.GroupKind that runBeadSubcommand would use
+// for the given subArgs slice. It is exported for test use only — it parses
+// just the --wave flag and returns GroupKindWave or GroupKindStream accordingly.
+// All other flags in subArgs are ignored.
+//
+// Bead ref: hk-7nbey.
+func resolveGroupKind(subArgs []string) queue.GroupKind {
+	for _, arg := range subArgs {
+		if arg == "--wave" {
+			return queue.GroupKindWave
+		}
+	}
+	return queue.GroupKindStream
+}
+
 // signalGracePeriod is the maximum time runBeadSubcommand waits for daemon.Start
 // to return after SIGINT/SIGTERM before calling os.Exit(1) unconditionally.
 //
@@ -77,9 +92,10 @@ func runBeadSubcommand(subArgs []string) int {
 	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
 	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
 	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
-	reviewLoop := true    // default ON per hk-g0ckv; --no-review-loop opts out
+	reviewLoop := true     // default ON per hk-g0ckv; --no-review-loop opts out
 	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
+	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
 
 	for i := 0; i < len(subArgs); i++ {
@@ -140,6 +156,10 @@ func runBeadSubcommand(subArgs []string) int {
 			if notifyStream == "" {
 				notifyStream = "-"
 			}
+
+		// --wave (hk-7nbey): opt into wave-mode (no appends); resolved via resolveGroupKind
+		case arg == "--wave":
+			// handled by resolveGroupKind(subArgs) at queue-build time
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
@@ -313,7 +333,7 @@ func runBeadSubcommand(subArgs []string) int {
 		Groups: []queue.Group{
 			{
 				GroupIndex: 0,
-				Kind:       queue.GroupKindWave,
+				Kind:       resolveGroupKind(subArgs),
 				Status:     queue.GroupStatusActive,
 				Items:      items,
 				CreatedAt:  now,

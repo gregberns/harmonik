@@ -99,11 +99,20 @@ At the end of every dispatch, report:
 - Any follow-up beads you created (with their IDs)
 - Any deviations from the bead body or brief, with reasoning
 
-## Bead-close ownership (CLARIFIED — agent owns)
+## Bead-close ownership (DAEMON-OWNED — do NOT close beads)
 
-Per HANDOFF v20 directives + memory `feedback_br_ownership`, **the agent (you) owns `br close`**. After your commit lands and tests are green, run `br close <bead-id> -r "<one-line>"` yourself. Earlier protocol drafts said the orchestrator owned closes — that was wrong; not closing your own beads forces the orchestrator into per-bead cleanup passes that waste throughput. Close as you go.
+DO NOT run `br close`, `br update --status closed`, or any terminal bead transition.
+The daemon owns all bead lifecycle transitions (open -> in_progress -> closed/failed).
+Running `br close` from the worktree causes premature closure that leaks to the parent
+repo even when no implementation has landed — this was the root cause of the ~80%
+"close-without-impl" failure rate in v60.
 
-For SUBSUMED beads where no commit is made, still close: `br close <id> -r "SUBSUMED: <file:line ref>"`.
+Your job: implement, commit, and `/quit`. The daemon closes the bead after verifying
+your commit landed and passed review.
+
+If the work appears already done (SUBSUMED), commit a verification test or a
+documentation note rather than closing the bead and exiting. The daemon will detect
+a no-commit exit and classify it as a failure.
 
 ## Do your assigned bead(s) and exit (HARD RULE — replaces "continue claiming until 250k", L-015)
 

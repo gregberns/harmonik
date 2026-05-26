@@ -950,6 +950,13 @@ func ExportedPasteInjectQuitOnCommit(
 // Bead: hk-7srrd.
 var ExportedHeartbeatStalenessThreshold = &heartbeatStalenessThreshold
 
+// ExportedLaunchHeartbeatTimeout is a pointer to the package-level
+// launchHeartbeatTimeout var.  Tests set *ExportedLaunchHeartbeatTimeout to a
+// short duration to exercise the launch-verification kill path quickly.
+//
+// Bead: hk-3gq0b.
+var ExportedLaunchHeartbeatTimeout = &launchHeartbeatTimeout
+
 // quitSenderExported is the exported alias for quitSender so the exported
 // wrapper can accept it.
 type quitSenderExported = quitSender

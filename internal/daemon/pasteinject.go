@@ -140,6 +140,29 @@ var commitPollTimeout = 30 * time.Minute
 // Bead: hk-7srrd.
 var heartbeatStalenessThreshold = 8 * time.Minute
 
+// launchHeartbeatTimeout is the maximum time pasteInjectQuitOnCommit will wait
+// for the first agent_heartbeat event after brief delivery before concluding
+// the paste landed in an empty pane and killing the session.
+//
+// The "launch verification" window begins when briefDelivered closes (or when
+// the function enters the poll loop, if briefDelivered is nil) and ends when
+// either the first heartbeat arrives or launchHeartbeatTimeout elapses.  If it
+// elapses without a heartbeat (and without a commit landing), the session is
+// killed via the noChange path so the workloop reopens the bead for retry.
+//
+// 60s gives Claude Code ample time to start, read the brief, and emit its
+// first activity — even on slow machines.  Without this guard, an empty-pane
+// stall (paste delivered to a dead tmux pane) would not be detected until the
+// 8-minute heartbeat-staleness threshold fires, wasting a full slot.
+//
+// Only active when eventCh is non-nil (heartbeatProvided = true).
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-3gq0b.
+var launchHeartbeatTimeout = 60 * time.Second
+
 // noChangeKillDelay is the grace period between the unconditional /quit send
 // (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code
 // time to respond to /quit and exit cleanly; if the pane is still alive after
@@ -254,10 +277,16 @@ func pasteInjectQuitOnCommit(
 	pollInterval := commitPollInterval
 	killDelay := noChangeKillDelay
 	stalenessThreshold := heartbeatStalenessThreshold
+	launchWindow := launchHeartbeatTimeout
 
 	totalDeadline := time.Now().Add(pollTimeout)
 	lastHeartbeat := time.Now() // initialised to now; first real beat resets it
 	heartbeatProvided := eventCh != nil
+	// hk-3gq0b: launch-verification window — starts after brief delivery.
+	// When heartbeatProvided, the first heartbeat must arrive within launchWindow
+	// or the session is killed (paste likely landed in an empty pane).
+	launchDeadline := time.Now().Add(launchWindow)
+	firstHeartbeatSeen := false
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -311,6 +340,7 @@ func pasteInjectQuitOnCommit(
 			}
 			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
 				lastHeartbeat = time.Now()
+				firstHeartbeatSeen = true
 			}
 
 		case <-ticker.C:
@@ -319,6 +349,15 @@ func pasteInjectQuitOnCommit(
 			// Check total wall-clock backstop first.
 			if now.After(totalDeadline) {
 				fireNoChangePath("total-timeout waiting for new commit")
+				return
+			}
+
+			// hk-3gq0b: launch-verification check — if the first heartbeat has
+			// not arrived within launchWindow after brief delivery, the paste
+			// likely landed in an empty/dead pane.  Kill so the workloop reopens
+			// the bead for retry.  Skipped once firstHeartbeatSeen is true.
+			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
+				fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery")
 				return
 			}
 

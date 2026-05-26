@@ -30,7 +30,7 @@ type wiringEntry struct {
 	wires string
 }
 
-// compositionRootWirings is the canonical list of the 29 wiring points in
+// compositionRootWirings is the canonical list of the 31 wiring points in
 // daemon.Start, ordered by call-site line number.  When a new wiring is added
 // to Start, add a corresponding entry here so the log stays complete.
 //
@@ -96,6 +96,16 @@ var compositionRootWirings = []wiringEntry{
 		symbol:   "subscribeHub.Subscribe",
 		callSite: "daemon.go:569",
 		wires:    "wildcard observer → fans events to per-conn subscriptionStream",
+	},
+	{
+		symbol:   "staleWatcher",
+		callSite: "daemon.go:575",
+		wires:    "NewStaleWatcher(bus, bus, sharedRunRegistry) → run_stale emitter",
+	},
+	{
+		symbol:   "staleWatcher.Subscribe",
+		callSite: "daemon.go:581",
+		wires:    "wildcard observer → tracks last event time per run_id (hk-wkzlc)",
 	},
 	{
 		symbol:   "bus.Seal",

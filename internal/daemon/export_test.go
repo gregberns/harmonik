@@ -449,6 +449,19 @@ func ExportedCompositionRootWirings() []ExportedWiringEntry {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// StaleWatcher test seams (hk-wkzlc)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedStalewatchScan triggers a single scan pass on w, identical to what
+// the background loop does on each ticker tick. Allows tests to drive stale
+// detection deterministically without real time passing.
+//
+// Bead ref: hk-wkzlc.
+func ExportedStalewatchScan(w *StaleWatcher, ctx context.Context) {
+	w.scan(ctx)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────
 

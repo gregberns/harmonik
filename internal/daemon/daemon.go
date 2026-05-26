@@ -572,6 +572,22 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
 	}
 
+	// Wire the StaleWatcher — wildcard observer that emits run_stale when an
+	// active run produces no event for M minutes (hk-wkzlc). Subscribed before
+	// Seal so event delivery is wired for the production run (EV-009).
+	// StartWatcher is called after Seal so the background goroutine runs within
+	// the daemon's normal context lifetime.
+	//
+	// Bead ref: hk-wkzlc.
+	staleWatcher := NewStaleWatcher(StaleWatcherConfig{
+		SubscribeBus: bus,
+		Emitter:      bus,
+		Registry:     sharedRunRegistry,
+	})
+	if subscribeErr := staleWatcher.Subscribe(); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)
+	}
+
 	// Notify the test-only observer (when set) so tests can inspect bus
 	// subscription state before Seal locks it.  Only reachable via
 	// StartForTesting; production Start always passes a zero-value daemonTestHooks.
@@ -584,6 +600,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)
 	}
+
+	// Start the stale-watch background goroutine after Seal so the bus is in
+	// live-delivery mode (EV-009 sealed bus semantics). The goroutine runs until
+	// ctx is cancelled. Non-fatal: if context is already cancelled the goroutine
+	// exits immediately.
+	//
+	// Bead ref: hk-wkzlc.
+	staleWatcher.StartWatcher(ctx)
 
 	// Emit daemon_started (§8.7.1, hk-iarcy): F-class event marking the
 	// startup landmark for post-crash-window detection (EV-023).
@@ -927,7 +951,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		deps.runRegistry = sharedRunRegistry
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
-		// is set in the operator environment.  All 29 wiring points have been
+		// is set in the operator environment.  All 31 wiring points have been
 		// established at this point; the log is a stable diff surface for catching
 		// silent drops between daemon versions.
 		//

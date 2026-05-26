@@ -35,6 +35,10 @@ const (
 	// PreSealSubsystemNotifyStream is the NotifyStreamConsumer, wired only
 	// when cfg.NotifyStream is set (hk-ibilr).
 	PreSealSubsystemNotifyStream PreSealSubsystem = "NotifyStreamConsumer"
+
+	// PreSealSubsystemStaleWatcher is the StaleWatcher wildcard observer that
+	// emits run_stale when an active run produces no event for M minutes (hk-wkzlc).
+	PreSealSubsystemStaleWatcher PreSealSubsystem = "StaleWatcher"
 )
 
 // SubscribeContract declares the ConsumerIDs a subsystem registers via Subscribe.
@@ -61,6 +65,9 @@ var RequiredPreSealSubscribers = map[PreSealSubsystem]SubscribeContract{
 	}},
 	PreSealSubsystemSubscribeHub: {ConsumerIDs: []string{
 		"subscribe-hub",
+	}},
+	PreSealSubsystemStaleWatcher: {ConsumerIDs: []string{
+		"stale-watcher",
 	}},
 }
 

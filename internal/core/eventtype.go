@@ -542,3 +542,17 @@ const (
 	// Added in QM-002a v0.1.1.
 	EventTypeQueueItemReconciled EventType = "queue_item_reconciled"
 )
+
+// ---------------------------------------------------------------------------
+// §8.12 Staleness-detection event types (hk-wkzlc)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeRunStale is the run_stale event type (§8.12.1).
+	// Emitted by the stale-watch goroutine when an active run has produced no
+	// event of any kind for M minutes (configurable; default 10). Re-emitted
+	// at 2M, 4M, … (exponential, capped) until the run terminates.
+	// Durability class: O (ordinary — observational; orchestrator decides action).
+	// Refs: hk-wkzlc.
+	EventTypeRunStale EventType = "run_stale"
+)

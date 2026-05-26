@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-23 main — v57 (commit 4706904). Clean. DOT (kerf phase-3-dot) is task-decomposed and bead-filed end-to-end: pass-6/7/8 APPROVED + square; 34 T-* beads filed (5 T-SPEC + 15 T-IMPL + 14 T-FIX) with 77 dep edges. T-FIX-C5-BLOCK (hk-p1v33) DONE on the kerf bench + closed. **Next session: start FIVE dispatches** — 4 daemon-friction beads (hk-7srrd heartbeat-progress / hk-930o3 /exit-before-brief / hk-cd8yu implementer_phase_complete / hk-yozgd 10-min-no-commit RCA) AND Wave-1 DOT (T-SPEC-C1 hk-2slpu + T-SPEC-C4 hk-rawwq in parallel). v55 carryover still applies: heartbeat-staleness watcher HARD-RULE on every dispatch; 10-min wall-kill in pasteinject.go:104 NOT fixed (hk-7srrd is the fix). Salvage patches /tmp/escape-recovery.{patch,untracked.tgz} still parked. -->
+<!-- PP-TRIAL:v2 2026-05-26 main — v58 (commit 67afac3). Clean. All v57 next-session work DONE: 3 daemon-friction fixes (hk-930o3 brief-delivery gate, hk-cd8yu implementer_phase_complete event, hk-7srrd heartbeat-based progress check) + DOT Wave-1 (hk-2slpu workflow-graph.md NEW, hk-rawwq C4 control-points + event-model) + hk-yozgd closed subsumed. All reviewed by 3 agents each. **Next session: DOT Wave-2** (T-SPEC-C2 hk-f2bfv execution-model amendments + T-SPEC-C3 handler-contract Outcome amendments) — these resolve the forward-reference gaps reviewers flagged in Wave-1 (HC-058, HC-062, EM §7.5, gate_decision OutcomeKind). Then T-SPEC-C5 (hk-ac2yx examples directory). After spec-transcription: T-IMPL beads (DOT parser, validator, etc.). -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -33,6 +33,8 @@ PHASE 2 IS UNBLOCKED (NEW v38). With harmonik operational you CAN now dispatch b
 `harmonik run --notify-stream` (v53 LIVE). Per-bead completion lines `[hk-XXX] success|failed` emitted to stdout; combine with a Monitor wrapper to surface mid-batch progress. Landed at `ce9d0e4` via hk-ibilr.
 
 PASTEINJECT AUTO-RECOVERY IS IN THE DAEMON NOW (v53, hk-trjef commit f2c395e). The Monitor-based auto-hang-kill pattern from earlier sessions is REDUNDANT for the rebuilt binary — `pasteinject.go:146-208` does quit → 30s grace → kill → noChange-subsumed check natively. **Always rebuild harmonik before dispatching** (`go install ./cmd/harmonik`); stale binary is the #1 cause of "the daemon hung again". The AGENTS.md "Orchestrator wrappers" Monitor block is now FALLBACK ONLY (hk-yejfj filed P1 to revise).
+
+**HEARTBEAT-BASED PROGRESS CHECK IS NOW IN THE DAEMON (v58, hk-7srrd).** The old 10-min `commitPollTimeout` wall-kill has been replaced: `pasteinject.go` now monitors `agent_heartbeat` events via an event channel and kills sessions only when heartbeat staleness exceeds `heartbeatStalenessThreshold` (8 min default). The 30-min `commitPollTimeout` is a safety backstop only. The v55 orchestrator-side heartbeat-staleness watcher Bash script is NO LONGER NEEDED — the daemon does it natively. Also landed: `briefDeliveredTimeout` gate (hk-930o3) prevents /quit from racing the brief paste, and `implementer_phase_complete` event (hk-cd8yu) provides diagnostic visibility in events.jsonl.
 
 QUEUE SEMANTICS (v53 FINDINGS). `harmonik run --beads` creates `kind=wave` queues that do NOT accept appends. Mid-flight extension requires `kind=stream` via `harmonik queue submit <file>` + `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Daemon doesn't wake on submit if idle (workaround: keep an active `harmonik run` so the workloop stays hot). Quick-win beads filed: **hk-7nbey** (default `--beads` to `kind=stream`), **hk-24xn1** (daemon wake-on-submit), **hk-b0cyc** (UX gap). **hk-ze3op** (default `--notify-stream` on for multi-bead). **hk-lhv8i** (pre-screen subsumed at submit-time — eliminates the noChange slot-waste that hit ~10 beads in this session).
 
@@ -121,7 +123,7 @@ MERGE DANCE — RUN FROM `/Users/gb/github/harmonik`.
 
 If a branch is lost: `git reflog --all | grep worktree-agent-<id>` then `git cherry-pick <SHA>`. If merge-dance leaks code into main's working tree without committing (v48 observed): discard the leaked working tree edits, cherry-pick the actual commit by SHA found in reflog.
 
-CONTEXT BUDGET (orchestrator). ~700 k effective. v48 used ~heavy across 15+ background sub-agents — kerf/bead/plan hygiene + 4 worktree implementers + 3 reviewers. 16 commits. v49 used ~51% across ~15 audit agents + 4 implementers + dogfooding cycle. 35 commits. v53 used ~25% across 20-bead dogfood (2 rounds via harmonik) + 3 follow-up audit agents. 18 commits.
+CONTEXT BUDGET (orchestrator). ~700 k effective. v58 used ~18% across 5 implementers + 15 reviewers (3 per bead). 10 commits + 1 subsumed close.
 
 HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (v47 NEW). Some sub-agents hit a system-prompt rule blocking `.md` writes for "findings/analysis/summary" files — they return content inline. Orchestrator (main thread) must persist via `Write` tool. When dispatching kerf-pass or audit sub-agents that must write `.md` artifacts, expect this friction and plan for orchestrator persistence.
 
@@ -129,73 +131,52 @@ KERF IS IN BETA + REALIGNED (v48 NEW). `kerf next`, `kerf triage`, `kerf pin`, `
 
 PLANS HAVE "DONE MEANS..." (v49 NEW). `plans/README.md` now requires every `_plan.md` to include an explicit "Done means..." section listing observable behavioral acceptance criteria, NOT "the beads shipped." Guards against minimum-viable shipping. Applied to `plans/007_handler_pause_and_resume/_plan.md` as the example. hk-b6ls5 extends to require scenario-test + exploratory-test beads at plan-end; hk-85trr applies the same to kerf jig templates locally.
 
-**HEARTBEAT-STALENESS WATCH (HARD RULE, v55 NEW 2026-05-23 — survival layer until kerf `daemon-liveness` redesign lands).** Every `harmonik run` dispatch MUST arm a heartbeat-staleness watcher in addition to the existing bash-task + events.jsonl monitors. Daemon emits `agent_heartbeat` events at ~5 min intervals; staleness >6 min on any active run means the implementer has gone silent BEFORE the 10-min `commitPollTimeout` wall-kill (`pasteinject.go:104`) fires. Background: the wall-kill destroys productive work — even trivial 1-line beads failed at the 10-min mark on the 2026-05-22 post-eb43a6b batch. Watcher pattern (Bash background, 60s poll):
-
-```bash
-while true; do
-  for rid in $(python3 -c "import json; q=json.load(open('.harmonik/queue.json')); [print(i['run_id']) for g in q['groups'] for i in g['items'] if i.get('status')=='dispatched' and i.get('run_id')]"); do
-    last_hb=$(grep "\"run_id\":\"$rid\"" .harmonik/events/events.jsonl | grep agent_heartbeat | tail -1 | python3 -c "import sys,json,datetime; print(int(datetime.datetime.fromisoformat(json.loads(sys.stdin.readline())['timestamp_wall']).timestamp()))" 2>/dev/null)
-    [ -z "$last_hb" ] && continue
-    age=$(( $(date +%s) - last_hb ))
-    [ $age -gt 360 ] && echo "HEARTBEAT-STALE: run $rid age=${age}s (>6min) — implementer silent, decide before 10min wall-kill"
-  done
-  sleep 60
-done
-```
-
-Proper redesign tracked in kerf work **`daemon-liveness`** (`~/.kerf/projects/gregberns-harmonik/daemon-liveness/`). Eventual DOT (kerf `phase-3-dot`) replaces this entire brittle layer.
-
 <!-- END DIRECTIVES -->
 
-# Where we are (v57, 2026-05-23 evening)
+# Where we are (v58, 2026-05-26)
 
-**Main at `4706904`** (origin parity, working tree clean). Status: **clean** — no in-flight dispatch, no orphan worktrees, no uncommitted code in main.
+**Main at `67afac3`** (origin parity, working tree clean). Harmonik binary rebuilt.
 
-## What v57 added on top of v56
+## What v58 landed (this session)
 
-- Filed 34 phase-3-dot task beads (5 T-SPEC + 15 T-IMPL + 14 T-FIX) with 77 dependency edges; commit `2dd1c85` has the full T-* → hk-* mapping table.
-- Closed hk-p1v33 (T-FIX-C5-BLOCK) — the patch is on the kerf bench already; will land in `specs/examples/` via T-SPEC-C5 (hk-ac2yx) transcription.
+10 commits across 6 beads — all 3-agent reviewed, all tests passing:
 
-## Next-session intent (USER-ORDERED 2026-05-23 evening)
+- **hk-2slpu** (T-SPEC-C1): `specs/workflow-graph.md` NEW (619 lines, WG-001..WG-038 + WG-031a). 6 remediations applied (workflow_ref→sub_workflow_ref, policy_ref deprecation, context_keys declaration, terminology lock, two-sided failure_class contract, start_node naming).
+- **hk-rawwq** (T-SPEC-C4): `specs/control-points.md` v0.4.0 (CP-053..CP-058 + CP-038a) + `specs/event-model.md` v0.5.3 (§8.2.13-14 + §6.3 payloads). Citation remediations applied.
+- **hk-930o3**: `briefDeliveredTimeout` gate in pasteinject.go — prevents /quit from racing the brief paste. 3 new tests.
+- **hk-cd8yu**: `implementer_phase_complete` event with exit_code, stderr_tail_head (200B), commit_landed, duration_seconds. Fires in both single-mode and review-loop. 3 new tests.
+- **hk-7srrd**: Heartbeat-based progress check replaces 10-min wall-kill. `heartbeatStalenessThreshold` = 8 min, `commitPollTimeout` raised to 30 min backstop. Reviewer-caught bug (channel-close disabling staleness) fixed before merge. 5 new tests.
+- **hk-yozgd**: Closed as subsumed (commit-early discipline in implementer-protocol landed in 2aef7f5).
 
-Start **all five** in parallel where possible — don't prioritize friction-before-DOT:
+## Next-session intent
 
-1. **hk-7srrd** — daemon/pasteinject: replace `commitPollTimeout` wall-clock with heartbeat-based progress check. *This is the proper fix for the 10-min wall-kill; same surface as kerf `daemon-liveness`.*
-2. **hk-930o3** — daemon/pasteinject: `/exit` fires before brief delivery, session torn down with zero assistant turns.
-3. **hk-cd8yu** — emit `implementer_phase_complete` event with `exit_code` + stderr tail (diagnostic gap closure).
-4. **hk-yozgd** — RCA: implementer didn't commit during 10-min budget on hk-xegej dispatch (root cause TBD).
-5. **DOT Wave-1** — `T-SPEC-C1` (hk-2slpu) + `T-SPEC-C4` (hk-rawwq) in parallel. Both edit different files (`specs/workflow-graph.md` NEW + `specs/control-points.md` + `specs/event-model.md`); safe to dispatch concurrently. Implementer reads kerf-bench drafts at `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/Cn-*.md`, applies pass-6 remediations during transcription per the bead body, writes to `specs/`.
+**DOT Wave-2 — resolve forward-reference gaps from Wave-1:**
 
-Suggested first call (one `harmonik run` per group; daemon stays hot between):
+1. **T-SPEC-C2** (hk-f2bfv) — Apply C2 to `specs/execution-model.md`: EM-007 amendment (gate node carries handler_ref), §7.5 (DOT workflow-mode dispatcher), extend OutcomeKind with `gate_decision`. This resolves the `[execution-model.md §7.5]` dangling refs that all 3 Wave-1 reviewers flagged.
+2. **T-SPEC-C3** — Apply C3 to `specs/handler-contract.md`: HC-058 (failure_class), HC-062 (context_keys), §4.2a, Outcome kind enum update. This resolves the `[handler-contract.md §4.2a HC-058]` and `HC-062` dangling refs.
+3. **T-SPEC-C5** (hk-ac2yx) — Land `specs/examples/` directory + canonical DOT example. Depends on C1 (done).
 
-    harmonik run --beads hk-7srrd,hk-930o3,hk-cd8yu,hk-yozgd --max-concurrent 2 --notify-stream
-    # …when that exits, dispatch DOT Wave-1:
-    harmonik run --beads hk-2slpu,hk-rawwq --max-concurrent 2 --notify-stream
+After spec-transcription completes: T-IMPL beads (DOT parser hk-nvzur, workflow-graph validator hk-0a60l, etc.).
 
-Or start them all at once via a `kind=stream` queue if you want overlap; risk is the daemon-friction beads may break the daemon mid-DOT-dispatch. Recommend sequencing friction-then-DOT so the heartbeat-progress fix (hk-7srrd) is live before DOT dispatches.
-
-Pre-flight: rebuild harmonik (`go install ./cmd/harmonik`), arm the v55 heartbeat-staleness watcher (pattern in directives block), pre-screen each bead for already-landed commits (`git log --all --grep "Refs: <id>"`).
+**Follow-up beads to file (low priority):**
+- Template conformance restructure for `specs/workflow-graph.md` (reviewer flagged: section numbering diverges from spec template; Tags: uses "mechanism, normative" instead of bare "mechanism"; missing §5 Invariants / §6 Schemas / §10 Conformance sections)
+- Stale internal cross-ref fix: WG-007 cites "§8 WG-016" but WG-016 is in §6
 
 ## Files to open first
 
-1. `HANDOFF.md` (this).
-2. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/07-tasks.md` — the DOT task list; T-SPEC-C1/C4 bead bodies derive from §1.
-3. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/06-integration.md` — remediations each T-SPEC-* applies during transcription.
-4. `br show hk-7srrd` / `hk-930o3` / `hk-cd8yu` / `hk-yozgd` — friction-bead bodies.
+1. `HANDOFF.md` (this)
+2. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/05-spec-drafts/` — C2/C3/C5 drafts
+3. `~/.kerf/projects/gregberns-harmonik/phase-3-dot/06-integration.md` — remediations
+4. `br show hk-f2bfv` — T-SPEC-C2 bead body
 
 ## Plain-English glossary
 
-- **DOT (kerf `phase-3-dot`)** — DAG-defined bead-process runtime, pass-8/ready. 34 task beads filed, ready for impl dispatch.
-- **T-SPEC-Cn / T-IMPL-NNN / T-FIX-*** — stable kerf task IDs from `07-tasks.md`; mapping to `hk-*` bead IDs is in commit `2dd1c85`.
-- **Wave-1 DOT** — T-SPEC-C1 (hk-2slpu, workflow-graph.md NEW) + T-SPEC-C4 (hk-rawwq, control-points.md + event-model.md). File-disjoint, parallel-safe.
-- **commitPollTimeout** — the 10-min wall-kill at `internal/daemon/pasteinject.go:104`. hk-7srrd replaces it.
-- **heartbeat-staleness watcher** — v55 HARD-RULE orchestrator-side Bash poll alerting at >6min staleness on `agent_heartbeat` events. Stop-gap until hk-7srrd lands.
-
-## v55–v56 carryover (still in force)
-
-- 10-min wall-kill `commitPollTimeout` at `internal/daemon/pasteinject.go:104` is the bug **hk-7srrd** (above) fixes. Until hk-7srrd lands, the v55 HARD-RULE heartbeat-staleness watcher is required on every dispatch.
-- Worktree-escape fix (hk-6zylj, `eb43a6b`), reviewer-brief fix (hk-0xmwq, `61f084a`), no-review-loop false-success fix (hk-mmh8f, `f7f2cff`) all still apply.
-- Salvage patches at `/tmp/escape-recovery.{patch,untracked.tgz}` still parked — cheap to extract if DOT impl isn't the immediate priority.
-- Loose ends (low priority): stray untracked `harmonik-twin-claude/` directory; 226MB `.beads/.br_history.226mb-archived/` safe to delete.
+- **DOT (kerf `phase-3-dot`)** — DAG-defined bead-process runtime. Wave-1 (C1+C4) landed; Wave-2 (C2+C3+C5) next.
+- **T-SPEC-Cn** — stable kerf task IDs from `07-tasks.md`; C1=workflow-graph, C2=execution-model, C3=handler-contract, C4=control-points, C5=examples.
+- **hk-f2bfv** — T-SPEC-C2 bead (execution-model DOT amendments).
+- **hk-ac2yx** — T-SPEC-C5 bead (examples directory).
+- **heartbeatStalenessThreshold** — 8-min daemon-native kill trigger replacing the old 10-min wall-clock (hk-7srrd, now live).
+- **briefDeliveredTimeout** — 2-min gate preventing /quit from racing the brief paste (hk-930o3, now live).
+- **implementer_phase_complete** — new daemon event carrying exit_code + stderr tail + commit status (hk-cd8yu, now live).
 
 ## No hard blockers requiring user input.

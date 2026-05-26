@@ -795,12 +795,17 @@ func runReviewLoop(
 		// consumes the trailing \n and leaves the buffered text unsubmitted.
 		// hk-012af: use revPasteTarget (per-run wrapper) so inject targets this
 		// reviewer's pane rather than the shared "last pane".
-		// pasteInjectOnLaunch is non-blocking (spawns an internal goroutine);
-		// the returned briefDelivered channel is not needed here — the reviewer
-		// does not call pasteInjectQuitOnCommit.
+		// pasteInjectOnLaunch is non-blocking (spawns an internal goroutine).
+		// hk-zimkh: the returned briefDelivered channel gates
+		// pasteInjectQuitOnReviewFile, which watches for .harmonik/review.json
+		// and sends /quit once the verdict is written — without this the
+		// reviewer claude hangs indefinitely at a prompt.
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-		_ = pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
+		revBriefDelivered := pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
 			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
+		if qs, ok := revPasteTarget.(quitSender); ok {
+			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, wtPath, revBriefDelivered)
+		}
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
 		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,

@@ -703,6 +703,95 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	}
 }
 
+// reviewFileTimeout is the maximum time to wait for .harmonik/review.json to
+// appear after the reviewer brief is delivered. After this, /quit is sent
+// unconditionally.
+//
+// Declared as var so tests can override.
+//
+// Bead: hk-zimkh.
+var reviewFileTimeout = 10 * time.Minute
+
+// reviewFilePollInterval is how often to check for the review verdict file.
+var reviewFilePollInterval = 2 * time.Second
+
+// pasteInjectQuitOnReviewFile watches for <wtPath>/.harmonik/review.json to
+// appear (indicating the reviewer has written its verdict), then sends /quit
+// to terminate the reviewer session. Without this, the reviewer claude sits
+// idle at a prompt after writing the verdict, blocking the daemon indefinitely.
+//
+// Mirrors pasteInjectQuitOnCommit for the implementer phase, but watches for
+// a file instead of a git commit.
+//
+// Bead: hk-zimkh.
+func pasteInjectQuitOnReviewFile(
+	ctx context.Context,
+	qs quitSender,
+	killer sessionKiller,
+	wtPath string,
+	briefDelivered <-chan struct{},
+) {
+	if briefDelivered != nil {
+		bdTimeout := briefDeliveredTimeout
+		select {
+		case <-ctx.Done():
+			return
+		case <-briefDelivered:
+		case <-time.After(bdTimeout):
+			fmt.Fprintf(os.Stderr,
+				"daemon: pasteinject: quit-on-review-file: brief_delivered timeout after %v for %s; proceeding\n",
+				bdTimeout, wtPath)
+		}
+	}
+
+	verdictPath := filepath.Join(wtPath, ".harmonik", "review.json")
+	timeout := reviewFileTimeout
+	pollInterval := reviewFilePollInterval
+	killDelay := noChangeKillDelay
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-review-file: timeout waiting for %s; sending /quit\n",
+					verdictPath)
+				_ = qs.SendQuitToLastPane(ctx)
+				select {
+				case <-ctx.Done():
+				case <-time.After(killDelay):
+				}
+				if killer != nil {
+					_ = killer.Kill(ctx)
+				}
+				return
+			}
+
+			if info, err := os.Stat(verdictPath); err == nil && info.Size() > 0 {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-review-file: verdict detected at %s; sending /quit\n",
+					verdictPath)
+				_ = qs.SendQuitToLastPane(ctx)
+				// Grace period for claude to process /quit before force-kill.
+				select {
+				case <-ctx.Done():
+				case <-time.After(postQuitKillGrace):
+				}
+				if killer != nil {
+					_ = killer.Kill(ctx)
+				}
+				return
+			}
+		}
+	}
+}
+
 // bufferName constructs the PL-021d buffer name "harmonik-<sessionID>-<purpose>".
 //
 // The sessionID component is the claudeSessionID for the current launch;

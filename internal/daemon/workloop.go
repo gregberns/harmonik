@@ -1071,10 +1071,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
+			// §4.12.EM-052: merge run-branch to main before CloseBead.
+			// Mirrors the single-mode merge path (hk-ftyvo).
+			mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			if !mergeRes.noChange && !mergeRes.success {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
+				emitDone(false, fmt.Sprintf("merge-failed (review-loop): %s", mergeRes.reason))
+				return
+			}
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
 			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
+				emitBeadClosed(ctx, deps.bus, runID, beadID)
 				emitDone(true, rlResult.summary)
 			}
 		} else {

@@ -6,6 +6,28 @@
 
 Read [AGENT_INDEX.md](AGENT_INDEX.md) first. It is the master map of the knowledge base and every document is reachable from there within two hops. Then read [STATUS.md](STATUS.md) for current project state and [TASKS.md](TASKS.md) for the active work list.
 
+## Orchestrator discipline (HARD RULE)
+
+The orchestrator MUST NOT do inline code reading, investigation, or debugging on the main thread. Every session the main thread exists to dispatch — not to be an implementer or investigator.
+
+When a batch fails or a bug surfaces:
+1. File a bead if one doesn't exist (`br create --title="..." --type=bug --priority=1`).
+2. Dispatch a sub-agent to investigate — anchor it to **durable artifacts** (file paths, line numbers, events.jsonl entries), NOT ephemeral state (tmux pane contents, live process output).
+3. Keep the main thread dispatching other work while the investigator runs.
+
+**Investigation dispatch template:** "Start with `<file>:<line>`, read the code and comments there, then check `<specific durable artifact>`. Report root cause in under 200 words."
+
+The main-thread context window is precious — protect it. Inline investigation is the #1 cause of context exhaustion (v60: ~30% of context wasted on inline reads).
+
+## On batch failure
+
+When a `harmonik run` batch returns failures:
+1. Read the failure class from `.harmonik/events/events.jsonl` (`no_commit`, `context_cancelled`, etc.).
+2. If the **same bead failed twice** this session → dispatch an investigator sub-agent; do NOT re-dispatch the bead.
+3. If a **new failure class** → file a bead, dispatch an investigator.
+4. Never re-dispatch a bead more than twice without investigation.
+5. Reopen any beads incorrectly closed by implementers (`br update <id> --status=open`).
+
 ## Daily loop (canonical)
 
 **`harmonik run` is the default dispatcher for this project's own development.** The intended loop:

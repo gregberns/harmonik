@@ -186,6 +186,11 @@ var ErrMissingPolicySection = errors.New("policy document missing required secti
 // declaration is missing its permission_schema block (§4.6.CP-028).
 var ErrMissingPermissionSchema = errors.New("role missing required permission_schema")
 
+// ErrNonEmptyDeferredRoleShell is returned by ValidateDeferredRoleShells when
+// a declared-but-deferred role carries a non-empty allowed_tools, writable_paths,
+// or default_skills field (§4.6.CP-030).
+var ErrNonEmptyDeferredRoleShell = errors.New("declared-but-deferred role must carry empty shell: allowed_tools, writable_paths, and default_skills must all be empty")
+
 // requiredSections lists the seven required top-level keys per CP-035.
 var requiredSections = []string{
 	"metadata",
@@ -257,6 +262,41 @@ func (d *PolicyDocument) ValidateRoles() error {
 				name = fmt.Sprintf("roles[%d]", i)
 			}
 			return fmt.Errorf("%w: role %q", ErrMissingPermissionSchema, name)
+		}
+	}
+	return nil
+}
+
+// ValidateDeferredRoleShells reports the first CP-030 violation found in
+// d.Roles, or nil when all declared-but-deferred roles carry empty permission
+// shells.
+//
+// CP-030 requires that every role with status "declared-but-deferred" carries
+// a permission shell where allowed_tools, writable_paths, and default_skills
+// are all empty. Activation of a deferred role requires a foundation amendment
+// per §4.6; shell fields are filled at activation time, not declaration time.
+func (d *PolicyDocument) ValidateDeferredRoleShells() error {
+	for i, r := range d.Roles {
+		if r.Status != "declared-but-deferred" {
+			continue
+		}
+		name := r.Name
+		if name == "" {
+			name = fmt.Sprintf("roles[%d]", i)
+		}
+		ps := r.PermissionSchema
+		if ps == nil {
+			// CP-028 catches this; skip here to avoid double-reporting.
+			continue
+		}
+		if len(ps.AllowedTools) > 0 {
+			return fmt.Errorf("%w: role %q has non-empty allowed_tools", ErrNonEmptyDeferredRoleShell, name)
+		}
+		if len(ps.WritablePaths) > 0 {
+			return fmt.Errorf("%w: role %q has non-empty writable_paths", ErrNonEmptyDeferredRoleShell, name)
+		}
+		if len(ps.DefaultSkills) > 0 {
+			return fmt.Errorf("%w: role %q has non-empty default_skills", ErrNonEmptyDeferredRoleShell, name)
 		}
 	}
 	return nil

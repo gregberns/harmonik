@@ -889,10 +889,33 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Release the semaphore immediately after the write completes.
 		<-claimSem
 		if claimErr != nil {
-			// Claim conflict or transient error — surface to stderr and retry.
 			if dispatchCtx.Err() != nil {
 				return exitClean()
 			}
+
+			// Queue-path: detect bead-level blocking (hk-n91y0).
+			//
+			// When ClaimBead fails for a queue item, check whether the bead is in
+			// "blocked" status in the Beads ledger.  A blocked bead cannot be claimed
+			// (the open→in_progress transition is rejected), so reverting to pending
+			// and retrying creates a live-lock that starves the remaining pending
+			// items in the wave group.
+			//
+			// If blocked: mark the item failed and call evaluateGroupAdvanceWithOutcome
+			// so the wave can proceed without re-queuing this item.
+			//
+			// If the ShowBead call itself fails (transient ledger error), or the bead
+			// is in any other status, fall through to the existing retry path.
+			if queueItemIndex >= 0 && deps.queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
+				if showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID); showErr == nil &&
+					showRecord.Status == core.CoarseStatusBlocked {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked in ledger — failing queue item (hk-n91y0)\n", beadID)
+					evaluateGroupAdvanceWithOutcome(ctx, deps, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
+					continue
+				}
+			}
+
+			// Claim conflict or transient error — surface to stderr and retry.
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			if queueItemIndex >= 0 && deps.queueStore != nil {

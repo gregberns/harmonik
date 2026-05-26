@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-26 main — v63 (commit cf5f5b1). Clean. P0 heartbeat-emitter-bypass FIXED (3d57033). 4 commits landed, hk-muvk9 closed (was misdiagnosed rate limit). New issue: reviewer-phase hang (hk-zimkh). -->
+<!-- PP-TRIAL:v2 2026-05-26 main — v64 (commit 90f2426). Clean. 5 daemon bugs fixed, 14 commits, 9 beads closed. Harmonik full pipeline (implement→review→merge→close→push) working end-to-end for the first time. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -8,73 +8,69 @@ ROLE. You are the orchestrator. Delegate substantively. Keep the main thread min
 
 LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read on `/session-resume`. Append new entries when you observe friction. Promote durable rules to `docs/orchestrator-rules.md` or `.claude/implementer-protocol.md`.
 
-# Where we are (v63, 2026-05-26)
+# Where we are (v64, 2026-05-26)
 
-**Main at `cf5f5b1`** (origin parity, working tree clean). 4 commits landed in this session.
+**Main at `90f2426`** (origin parity, working tree clean). 14 commits landed this session.
 
-## What v63 landed
+## What v64 landed
 
-- **P0 FIX (3d57033): Heartbeat emitter routed through per-run event tap + immediate first heartbeat.** Root cause of ALL v62 "rate limit" failures: `newDaemonHeartbeatEmitter` used `deps.bus` instead of `tap`, so heartbeats never reached `pasteInjectQuitOnCommit`'s event channel. `launchHeartbeatTimeout` (60s) always fired, killing every session. Additionally, `HeartbeatInterval` (300s) >> `launchHeartbeatTimeout` (60s), so even with the routing fix, the first heartbeat wouldn't arrive in time — now emitted immediately on loop start. **This closes hk-muvk9** (the "rate limit" was misdiagnosed).
-- EV-030 breaking-change classification (6bebde2, hk-hqwn.39, 384 lines)
-- ControlPoint test guards for AxisTags + ModeTag (cf5f5b1 merge, hk-a8bg.57)
-- HookVerdictRecord test (cf5f5b1 merge, hk-a8bg.72)
+**5 daemon bugs fixed — harmonik full pipeline now works end-to-end:**
+1. **Reviewer quit-on-verdict (312b872, hk-zimkh):** New `pasteInjectQuitOnReviewFile` polls for `.harmonik/review.json` and sends `/quit`. Reviewers no longer hang.
+2. **Review-loop merge-to-main (312b872):** The approval path was skipping `mergeRunBranchToMain`. Now mirrors single-mode.
+3. **Reopen on failure (5adcdcf):** Review-loop failure path was calling `CloseBead` instead of `ReopenBead`. Beads no longer vanish on no_commit.
+4. **launchHeartbeatTimeout 60→180s (e3183dc):** Sessions run 5-30 min now instead of dying at 60s. Liveness checker provides secondary defense.
+5. **Bead description hydration (806f4e7):** `ShowBead` Title+Description weren't being copied into `BeadRecord` — implementers saw just the bead ID as their entire task. ~70% no_commit rate root cause.
 
-## NEW ISSUE: Reviewer-phase hang (hk-zimkh, P1)
+**DOT chain: 4/6 impl beads landed:**
+- hk-mwqxg (edge evaluator, 4ae0552), hk-waj4b (loader+wiring, 5c0a34b), hk-rhj3t (cascade context, 73cdc7e), hk-jtyzz (policy_ref rejection, 7c6dc8a).
+- Still open: hk-bf85t (cascade engine), hk-qo9pq (CLI dot mode).
 
-Reviewers write `review.json` with APPROVE verdict but don't exit — they get stuck at a prompt. The daemon has no timeout/watchdog for the reviewer phase (line 800: "the reviewer does not call `pasteInjectQuitOnCommit`"). Workaround: manually `kill <reviewer-pid>` after checking `review.json` exists.
+**Spec-corpus: 3 CP beads landed:** hk-a8bg.3 (boundary-classification), hk-a8bg.1 (typed primitive), hk-a8bg.2 (name uniqueness).
 
-## ISSUE: Daemon merge-to-main not working
+**Tests: 3 beads landed:** hk-trfif (reopen-on-failure regression), hk-jimbc (quit-on-review-file tests), plus beads sync.
 
-All 4 commits that landed were merged to main MANUALLY by the orchestrator. The daemon reports `run_completed` but the run branch is not merged to main. Filed as known bug — likely the `mergeRunBranchToMain` step is failing silently (possibly because the orchestrator's working tree is dirty or HEAD advanced mid-wave). Investigation needed.
+## Observed no_commit rate
 
-## No_commit failures at ~55-60s (NEW PATTERN)
+With all 5 fixes, commit rate is ~40% (9 landed / ~22 dispatched). Remaining failures are genuine — implementers run 5-10 min with full bead descriptions but exit without committing. Likely causes: bead complexity exceeds single-session capacity, or implementer protocol needs "commit early" reinforcement. The description fix was the biggest lever; further improvements are incremental.
 
-After the heartbeat fix, ~50% of implementers still fail with `no_commit_during_implementer` after 55-60 seconds. The implementer claude processes start, read the bead, explore the codebase, then EXIT ON THEIR OWN without committing. The heartbeat fix prevents the daemon from killing them, but the implementers are exiting voluntarily.
+## Known issues
 
-Possible causes:
-- API rate limit when 3+ concurrent sessions run (sessions exit after a single thinking phase)
-- Beads too complex for the 55-second thinking window (implementer reads code but can't act before session budget expires)
-- Something in the implementer protocol or CLAUDE.md causing early exit
+1. **Push race on concurrent merges:** When two beads in the same wave both succeed, the second push fails (non-FF). Daemon reopens the bead but it's already closed. Workaround: cherry-pick from the run branch. Filed as known pattern.
+2. **REQUEST_CHANGES → implementer-resume fragile:** hk-a8bg.2 iteration 2 hit `agent_ready_timeout` after 31s. The resume path may have tmux pane issues.
+3. **Batch 6 may still be running** when next session starts — check `ps aux | grep harmonik`.
 
-Successful beads (hqwn.39, a8bg.57, a8bg.72) all ran for 3-6 minutes with productive output. Failed beads exit at ~55s. This is NOT the heartbeat kill — the implementer sessions genuinely exit.
+## Test health (audited this session)
 
-## PRIORITY 1: DOT implementation chain
+4,676 tests, 748 test files, 7/8 packages pass (specaudit fails on doc schema). **P1 gap: hk-fgy9o (lifecycle subsystem: 5.7K LOC, 6 tests, crash recovery untested).** 3 new test beads filed this session for v64 daemon fixes (hk-jimbc closed, hk-2suwl + hk-trfif open).
 
-- hk-7okmx (T-IMPL-003 loader) — **CLOSED** (landed in v62)
-- hk-waj4b (T-IMPL-004 daemon wiring) — OPEN, failed twice this session (no_commit). Needs investigation or manual implementation.
-- hk-qo9pq (T-IMPL-013 CLI dot mode) — blocked by hk-waj4b
-- hk-mwqxg (T-IMPL-007 edge evaluator) — OPEN, failed once (no_commit)
-- hk-rhj3t (T-IMPL-009 cascade context) — OPEN, failed once (no_commit)
-- hk-jtyzz (T-IMPL-012 policy_ref rejection) — dispatched in current wave
+## Next session priorities
 
-## PRIORITY 2: Spec-corpus + quality work
-
-- hk-hqwn.39 — **CLOSED** (landed this session)
-- hk-a8bg.57 — **CLOSED** (landed this session)
-- hk-a8bg.72 — **CLOSED** (landed this session)
-- Still open: hk-hqwn.51 (event tagging sensor), hk-a8bg.3 (evaluator boundary), hk-lhv8i (pre-screen at submit)
-
-## Three caveats
-
-1. **Reviewer hang** — every successful run requires manual `kill <reviewer-pid>` to unblock the daemon.
-2. **Daemon merge failure** — run branches are not being merged to main automatically. Orchestrator must merge manually.
-3. **~50% no_commit rate** — many implementers exit in ~55s without producing commits. Beads that succeed take 3-6 minutes.
+1. **Keep dispatching via harmonik** — the pipeline works. Target 6-bead waves, `--wave --max-concurrent 3`.
+2. **DOT chain:** hk-bf85t (cascade engine) and hk-qo9pq (CLI dot mode) need landing — both failed as harmonik beads (complexity). Consider sub-agent dispatch.
+3. **hk-fgy9o (P1 test uplift):** 6 days old, zero progress. Lifecycle crash recovery is untested.
+4. **Repeatedly-failing beads:** hk-hqwn.38 (N-1 compat), hk-hqwn.51 (event tagging), hk-lhv8i (pre-screen at submit), hk-buy0j (watchdog follow-ups) all failed 2+ times. May need richer descriptions or sub-agent implementation.
 
 ## Files to open first
 
 1. `HANDOFF.md` (this)
-2. `docs/orchestrator-rules.md` — all permanent directives
-3. `internal/daemon/workloop.go:1250` — heartbeat fix site
-4. `internal/daemon/reviewloop.go:800` — reviewer has no pasteInjectQuitOnCommit (source of reviewer hang)
+2. `docs/orchestrator-rules.md` — permanent directives
+3. `internal/daemon/pasteinject.go:706` — new `pasteInjectQuitOnReviewFile`
+4. `internal/daemon/workloop.go:1073` — review-loop merge-to-main fix site
+5. `internal/workspace/agenttask_chb028.go:271` — `buildAgentTaskContent` (where bead descriptions render)
 
 ## Plain-English glossary
 
-- **hk-s5szr** — P0 heartbeat-emitter bypass bug. **FIXED** in v63 (3d57033).
-- **hk-muvk9** — "Concurrent-session rate limit." **CLOSED** — was misdiagnosed; root cause was heartbeat bug.
-- **hk-zimkh** — NEW: reviewer phase hangs after writing verdict (no timeout/watchdog).
-- **DOT** — workflow-graph-defined bead processes, replaces --review-loop.
-- **perRunEventTap** — wrapper that forwards events to both the global bus AND a per-run channel for the commit/heartbeat watchdog.
-- **`launchHeartbeatTimeout`** — 60s window; if no heartbeat arrives, session is killed. Fixed by emitting first heartbeat immediately.
-- **L-022** — NEW learning: never rm worktree directories while daemon is running.
+- **hk-zimkh** — reviewer hang bug (FIXED in v64)
+- **hk-eknhz** — review-loop merge-to-main bug (FIXED in v64)
+- **hk-waj4b** — DOT daemon wiring (T-IMPL-004, CLOSED)
+- **hk-mwqxg** — edge-condition evaluator (T-IMPL-007, CLOSED)
+- **hk-rhj3t** — cascade context plumbing (T-IMPL-009, CLOSED)
+- **hk-jtyzz** — policy_ref rejection (T-IMPL-012, CLOSED)
+- **hk-bf85t** — cascade engine (T-IMPL-008, still OPEN)
+- **hk-qo9pq** — CLI dot mode (T-IMPL-013, still OPEN)
+- **hk-fgy9o** — P1 test uplift epic (lifecycle crash recovery)
+- **DOT** — workflow-graph-defined bead processes, replaces `--review-loop`
+- **`pasteInjectQuitOnReviewFile`** — new function that watches for review.json and sends `/quit` to the reviewer
+- **`launchHeartbeatTimeout`** — window for first heartbeat; was 60s (too tight), now 180s
 
 ## No hard blockers requiring user input.

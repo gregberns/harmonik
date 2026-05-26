@@ -133,6 +133,12 @@ func checkSchemaVersion(g *Graph) []Diagnostic {
 
 func checkNodeAttrs(n *Node) []Diagnostic {
 	var diags []Diagnostic
+	// CP-056: policy_ref is deprecated and MUST be rejected on any node type.
+	// Checked here for defense-in-depth; the parser also rejects it via ParseError.
+	if _, ok := n.UnknownAttrs["policy_ref"]; ok {
+		diags = append(diags, diagError(n.Line, "CP-056",
+			fmt.Sprintf("node %q: attribute \"policy_ref\" is deprecated and must not be used (CP-056); use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055)", n.ID)))
+	}
 	// Parser already rejected unknown type values (WG-001) and policy_ref (CP-056).
 	// We handle the remaining per-type required/forbidden contracts here.
 	switch n.Type {

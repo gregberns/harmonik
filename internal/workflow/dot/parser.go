@@ -646,7 +646,7 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			errs = append(errs, &ParseError{
 				Line: pair.line,
 				Message: fmt.Sprintf(
-					"node %q: attribute \"policy_ref\" is reserved-and-rejected (CP-056 / WG-031); use skills_ref or freedom_profile_ref",
+					"node %q: attribute \"policy_ref\" is reserved-and-rejected (CP-056 / WG-031); use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055)",
 					rn.id),
 			})
 		case "schema_version":

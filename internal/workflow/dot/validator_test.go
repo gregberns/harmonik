@@ -17,7 +17,10 @@ package dot
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -536,6 +539,76 @@ func TestValFixtureWG028SelfLoopNoCap(t *testing.T) {
 	diags := Validate(g)
 	if !hasCode(diagErrors(diags), "WG-028") {
 		t.Errorf("expected WG-028 for self-loop without traversal_cap, got: %v", diags)
+	}
+}
+
+// ── CP-056: policy_ref rejection ─────────────────────────────────────────────
+
+// TestValFixtureCP056PolicyRefRejected verifies CP-056: any node with policy_ref
+// in UnknownAttrs produces a Diagnostic with code CP-056 and SeverityError.
+// The graph is constructed programmatically because the parser already rejects
+// policy_ref at the ParseError layer; this test covers defense-in-depth
+// (programmatic graph construction bypassing the parser).
+func TestValFixtureCP056PolicyRefRejected(t *testing.T) {
+	g := &Graph{
+		SchemaVersion:   "1",
+		Version:         "1.0",
+		StartNodeID:     "n",
+		TerminalNodeIDs: []string{"n"},
+		Nodes: []*Node{
+			{
+				ID:               "n",
+				Line:             6,
+				Type:             core.NodeTypeNonAgentic,
+				RawType:          "non-agentic",
+				HandlerRef:       "h",
+				IdempotencyClass: "idempotent",
+				UnknownAttrs:     map[string]string{"policy_ref": "some-policy"},
+			},
+		},
+	}
+	diags := Validate(g)
+	errs := diagErrors(diags)
+	if !hasCode(errs, "CP-056") {
+		t.Errorf("expected CP-056 diagnostic for policy_ref, got: %v", diags)
+	}
+}
+
+// TestValFixtureCP056PolicyRefMessageSuggestions verifies that the CP-056
+// diagnostic message names all three replacement attributes per CP-055.
+func TestValFixtureCP056PolicyRefMessageSuggestions(t *testing.T) {
+	g := &Graph{
+		SchemaVersion:   "1",
+		Version:         "1.0",
+		StartNodeID:     "n",
+		TerminalNodeIDs: []string{"n"},
+		Nodes: []*Node{
+			{
+				ID:               "n",
+				Line:             6,
+				Type:             core.NodeTypeNonAgentic,
+				RawType:          "non-agentic",
+				HandlerRef:       "h",
+				IdempotencyClass: "idempotent",
+				UnknownAttrs:     map[string]string{"policy_ref": "some-policy"},
+			},
+		},
+	}
+	diags := Validate(g)
+	var cp056 *Diagnostic
+	for i := range diags {
+		if diags[i].Code == "CP-056" {
+			cp056 = &diags[i]
+			break
+		}
+	}
+	if cp056 == nil {
+		t.Fatal("expected CP-056 diagnostic, got none")
+	}
+	for _, want := range []string{"gate_ref", "skills_ref", "freedom_profile_ref"} {
+		if !strings.Contains(cp056.Message, want) {
+			t.Errorf("CP-056 message %q does not mention %q", cp056.Message, want)
+		}
 	}
 }
 

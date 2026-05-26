@@ -69,6 +69,10 @@ func registerRunLifecycle() {
 	mustRegister("sub_workflow_entered", func() EventPayload { return &SubWorkflowEnteredPayload{} })
 	mustRegister("sub_workflow_exited", func() EventPayload { return &SubWorkflowExitedPayload{} })
 	mustRegister("node_dispatch_requested", func() EventPayload { return &NodeDispatchRequestedPayload{} })
+	// node_dispatch_decided: emitted by the DOT-mode cascade engine after EM-041
+	// edge selection resolves the next node (or determines terminal state / failure).
+	// Durability class: O. Bead ref: hk-bf85t (T-IMPL-008).
+	mustRegister("node_dispatch_decided", func() EventPayload { return &NodeDispatchDecidedPayload{} })
 	mustRegister("bead_closed", func() EventPayload { return &BeadClosedPayload{} })
 	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
 	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop

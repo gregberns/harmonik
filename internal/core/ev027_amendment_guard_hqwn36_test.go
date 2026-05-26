@@ -23,10 +23,11 @@ import "testing"
 // taxonomy per EV-027. Changing wantCount requires a foundation amendment per
 // event-model.md §4.6 EV-027 and architecture.md §4.6.
 //
-// Current taxonomy breakdown (106 types total):
+// Current taxonomy breakdown (107 types total):
 //
-//	§8.1  Run lifecycle (15 types including bead_closed, working_tree_refresh_failed,
-//	      implementer_escaped_worktree, implementer_phase_complete)
+//	§8.1  Run lifecycle (16 types including bead_closed, working_tree_refresh_failed,
+//	      implementer_escaped_worktree, implementer_phase_complete,
+//	      node_dispatch_decided [hk-bf85t T-IMPL-008])
 //	§8.1a Review-loop cycle (6 types)
 //	§8.2  Control-point lifecycle (12 types)
 //	§8.3  Agent/handler lifecycle (15 types including launch_initiated)
@@ -39,7 +40,10 @@ import "testing"
 //	§8.11 Handler-pause lifecycle (3 types)
 //	§8.12 Staleness-detection (1 type: run_stale)
 //
-// Total: 106 EventType constants registered in allEventTypeCohort.
+// Total: 107 EventType constants registered in allEventTypeCohort.
+// Amendment: node_dispatch_decided added for DOT-mode cascade engine (hk-bf85t T-IMPL-008;
+// EV-027 foundation amendment — new O-class event emitted after EM-041 cascade
+// resolves next node per specs/execution-model.md §7.5.2 EM-056).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -56,7 +60,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 106
+	const wantCount = 107
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

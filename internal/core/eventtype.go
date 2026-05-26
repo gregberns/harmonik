@@ -66,6 +66,13 @@ const (
 	// Durability class: O.
 	EventTypeNodeDispatchRequested EventType = "node_dispatch_requested"
 
+	// EventTypeNodeDispatchDecided is the node_dispatch_decided event type.
+	// Emitted by the DOT-mode cascade engine after EM-041 edge selection resolves
+	// the next node (or determines terminal state / cascade failure).
+	// Durability class: O.
+	// Bead ref: hk-bf85t (T-IMPL-008).
+	EventTypeNodeDispatchDecided EventType = "node_dispatch_decided"
+
 	// EventTypeBeadClosed is the bead_closed event type (§4.12.EM-052).
 	// Emitted after CloseBead succeeds on a success branch, before run_completed.
 	// Durability class: F.

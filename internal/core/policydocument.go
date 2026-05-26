@@ -78,12 +78,19 @@ type PolicyDocumentMeta struct {
 }
 
 // PolicyRole is a role declaration from the policy YAML roles[] section (§6.3).
+//
+// PermissionSchema is a pointer so that a nil value signals that the
+// permission_schema key was absent from the YAML source, enabling CP-028
+// detection in ValidateRoles. A non-nil pointer (even with all zero fields)
+// means the key was explicitly declared.
 type PolicyRole struct {
 	// Name is the role name per [architecture.md §4.8]. Required.
 	Name string `yaml:"name"`
 
 	// PermissionSchema carries the tool and path allowances for this role (§6.2).
-	PermissionSchema PolicyPermissionSchema `yaml:"permission_schema"`
+	// Nil means the permission_schema key was absent from the YAML source,
+	// which is a CP-028 violation detected by ValidateRoles.
+	PermissionSchema *PolicyPermissionSchema `yaml:"permission_schema"`
 
 	// Status is "mvh-required" or "declared-but-deferred" (§4.6.CP-028).
 	Status string `yaml:"status"`
@@ -175,6 +182,10 @@ type PolicySkillSet struct {
 // top-level YAML section is absent from the document (§4.7.CP-035).
 var ErrMissingPolicySection = errors.New("policy document missing required section")
 
+// ErrMissingPermissionSchema is returned by ValidateRoles when a role
+// declaration is missing its permission_schema block (§4.6.CP-028).
+var ErrMissingPermissionSchema = errors.New("role missing required permission_schema")
+
 // requiredSections lists the seven required top-level keys per CP-035.
 var requiredSections = []string{
 	"metadata",
@@ -230,6 +241,25 @@ func (d *PolicyDocument) ValidateSections() error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrMissingPolicySection, strings.Join(missing, ", "))
+}
+
+// ValidateRoles reports the first CP-028 violation found in d.Roles, or nil
+// when every role carries a permission_schema block.
+//
+// CP-028 requires every role declared in a policy document to carry a
+// permission_schema (specs/control-points.md §4.6.CP-028). A nil
+// PermissionSchema pointer means the key was absent from the YAML source.
+func (d *PolicyDocument) ValidateRoles() error {
+	for i, r := range d.Roles {
+		if r.PermissionSchema == nil {
+			name := r.Name
+			if name == "" {
+				name = fmt.Sprintf("roles[%d]", i)
+			}
+			return fmt.Errorf("%w: role %q", ErrMissingPermissionSchema, name)
+		}
+	}
+	return nil
 }
 
 // missingSections returns the names of required sections that were absent.

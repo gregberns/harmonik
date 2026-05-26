@@ -645,6 +645,38 @@ func ExportedWaitWithSocketGrace(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
+// pasteInjectQuitOnReviewFile test seams (hk-jimbc)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedReviewFileTimeout is a pointer to the package-level reviewFileTimeout
+// var.  Tests set *ExportedReviewFileTimeout to a short duration to exercise
+// the timeout path without waiting 10 minutes.
+//
+// Bead: hk-jimbc.
+var ExportedReviewFileTimeout = &reviewFileTimeout
+
+// ExportedReviewFilePollInterval is a pointer to the package-level
+// reviewFilePollInterval var.  Tests set *ExportedReviewFilePollInterval to a
+// short duration to keep polling tight during unit tests.
+//
+// Bead: hk-jimbc.
+var ExportedReviewFilePollInterval = &reviewFilePollInterval
+
+// ExportedPasteInjectQuitOnReviewFile exposes pasteInjectQuitOnReviewFile for
+// tests in package daemon_test.
+//
+// Bead: hk-jimbc.
+func ExportedPasteInjectQuitOnReviewFile(
+	ctx context.Context,
+	qs quitSenderExported,
+	killer sessionKiller,
+	wtPath string,
+	briefDelivered <-chan struct{},
+) {
+	pasteInjectQuitOnReviewFile(ctx, qs, killer, wtPath, briefDelivered)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // branching test seams (hk-oe6zt, hk-umxx4)
 // ─────────────────────────────────────────────────────────────────────────────
 

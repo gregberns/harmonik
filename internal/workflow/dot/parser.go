@@ -881,12 +881,6 @@ func isNonNegInt(s string) bool {
 
 // isValidWG001NodeType reports whether nt is one of the four WG-001 node type
 // members: {agentic, non-agentic, gate, sub-workflow}.
-//
-// NOTE: core.NodeType.Valid() currently accepts a fifth member (control-point)
-// from a pre-Phase-3 version of execution-model.md §4.2 EM-006.  WG-001
-// collapses the enum to four per §16.2; this local predicate enforces the
-// narrower spec contract at the workflow/dot parser layer.  Follow-up:
-// hk-nvzur-drift — update core.NodeType to remove NodeTypeControlPoint.
 func isValidWG001NodeType(nt core.NodeType) bool {
 	switch nt {
 	case core.NodeTypeAgentic, core.NodeTypeNonAgentic, core.NodeTypeGate, core.NodeTypeSubWorkflow:

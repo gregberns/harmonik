@@ -183,8 +183,8 @@ func TestSubWorkflowCompositionOnly_EmptySubWorkflowRefInvalid(t *testing.T) {
 }
 
 // TestSubWorkflowCompositionOnly_OnlySubWorkflowNodeType confirms that the type
-// enum permits exactly five node types and that NodeTypeSubWorkflow is the one
-// type capable of encoding workflow composition per EM-037.
+// enum permits exactly four node types (WG-001) and that NodeTypeSubWorkflow is
+// the one type capable of encoding workflow composition per EM-037.
 func TestSubWorkflowCompositionOnly_OnlySubWorkflowNodeType(t *testing.T) {
 	t.Parallel()
 
@@ -192,7 +192,6 @@ func TestSubWorkflowCompositionOnly_OnlySubWorkflowNodeType(t *testing.T) {
 		NodeTypeAgentic,
 		NodeTypeNonAgentic,
 		NodeTypeGate,
-		NodeTypeControlPoint,
 		NodeTypeSubWorkflow,
 	}
 

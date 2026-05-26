@@ -37,10 +37,9 @@ func TestNodeTypeUnmarshalText(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "valid control-point",
+			name:    "rejected control-point (WG-001: removed from enum)",
 			input:   `{"type":"control-point"}`,
-			want:    NodeTypeControlPoint,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "valid sub-workflow",
@@ -106,7 +105,6 @@ func TestNodeTypeValid(t *testing.T) {
 		NodeTypeAgentic,
 		NodeTypeNonAgentic,
 		NodeTypeGate,
-		NodeTypeControlPoint,
 		NodeTypeSubWorkflow,
 	}
 	for _, nt := range valid {
@@ -115,7 +113,7 @@ func TestNodeTypeValid(t *testing.T) {
 		}
 	}
 
-	invalid := []NodeType{"", "AGENTIC", "Agentic", "human", "decision", "fork"}
+	invalid := []NodeType{"", "AGENTIC", "Agentic", "human", "decision", "fork", "control-point"}
 	for _, nt := range invalid {
 		if nt.Valid() {
 			t.Errorf("expected %q to be invalid", nt)

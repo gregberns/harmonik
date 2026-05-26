@@ -85,7 +85,6 @@ func TestNodeValid_AllNodeTypes(t *testing.T) {
 		{NodeTypeAgentic, true},
 		{NodeTypeNonAgentic, false},
 		{NodeTypeGate, false},
-		{NodeTypeControlPoint, false},
 		{NodeTypeSubWorkflow, false},
 	}
 
@@ -159,18 +158,6 @@ func TestNodeValid_GateWithHandlerRef(t *testing.T) {
 	n.HandlerRef = &ref
 	if n.Valid() {
 		t.Error("Valid() = true for gate Node with non-nil HandlerRef, want false")
-	}
-}
-
-func TestNodeValid_ControlPointWithHandlerRef(t *testing.T) {
-	t.Parallel()
-
-	ref := HandlerRef("handlers/foo")
-	n := b3f73NodeNonAgentic(t)
-	n.Type = NodeTypeControlPoint
-	n.HandlerRef = &ref
-	if n.Valid() {
-		t.Error("Valid() = true for control-point Node with non-nil HandlerRef, want false")
 	}
 }
 
@@ -362,19 +349,6 @@ func TestNodeValid_SubWorkflowWithHandlerRef(t *testing.T) {
 	}
 }
 
-// TestNodeValid_ControlPointWithSubWorkflowRef verifies that SubWorkflowRef is
-// forbidden when Type == NodeTypeControlPoint (EM-007 / §6.1 invariant).
-func TestNodeValid_ControlPointWithSubWorkflowRef(t *testing.T) {
-	t.Parallel()
-
-	ref := SubWorkflowRef("workflows/wf-001")
-	n := b3f73NodeNonAgentic(t)
-	n.Type = NodeTypeControlPoint
-	n.SubWorkflowRef = &ref
-	if n.Valid() {
-		t.Error("Valid() = true for control-point Node with non-nil SubWorkflowRef, want false")
-	}
-}
 
 // TestNodeTimeoutJSONRoundTrip verifies that Timeout serialises as an integer
 // number of seconds (not nanoseconds) per execution-model.md §6.1

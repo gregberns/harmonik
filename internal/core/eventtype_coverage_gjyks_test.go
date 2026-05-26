@@ -110,6 +110,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeReconciliationDetectorPanic, func() EventPayload { return &ReconciliationDetectorPanicPayload{} }},
 	{EventTypeReconciliationVerdictExecutionRetry, func() EventPayload { return &ReconciliationVerdictExecutionRetryPayload{} }},
 	{EventTypeBeadTerminalTransitionRecovered, func() EventPayload { return &BeadTerminalTransitionRecoveredPayload{} }},
+	{EventTypeReconciliationMismatchObserved, func() EventPayload { return &ReconciliationMismatchObservedPayload{} }},
 
 	// §8.7 Operator-control and daemon lifecycle
 	{EventTypeDaemonStarted, func() EventPayload { return &DaemonStartedPayload{} }},
@@ -150,6 +151,9 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeHandlerPaused, func() EventPayload { return &HandlerPausedPayload{} }},
 	{EventTypeHandlerResumed, func() EventPayload { return &HandlerResumedPayload{} }},
 	{EventTypeQueueItemHeldForHandlerPause, func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} }},
+
+	// §8.12 Staleness-detection
+	{EventTypeRunStale, func() EventPayload { return &RunStalePayload{} }},
 
 	// §8.10 Queue lifecycle
 	{EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} }},

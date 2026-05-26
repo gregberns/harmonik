@@ -9,11 +9,11 @@ description: >
 
 # Harmonik dispatch — the daily loop
 
-When working in this project (`/Users/gb/github/harmonik`), the FIRST tool calls of the working phase should be `bv --robot-triage` and `kerf next` (in parallel), then a proposed `harmonik run --beads` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
+When working in this project (`/Users/gb/github/harmonik`), the FIRST tool call of the working phase should be `kerf next` (ranked bead feed with work-context), then a proposed `harmonik run --beads` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
 
 ## The loop
 
-1. **Triage in parallel.** `bv --robot-triage` (graph-aware ranking) + `kerf next` (work-attachment-aware feed). Both views are complementary.
+1. **Triage.** `kerf next` — ranked feed of beads with work-context. Use `kerf triage` for drift detection (untriaged beads, external changes).
 2. **Pick a batch of 3–5 beads.** Previously-flagged caveats (hk-rp48p priority-sort, hk-wx8z8 parallel pane allocator, hk-cj0gm Stop-hook delivery) are all FIXED; broad-class dispatch is now safe. The remaining caveat is the test-coverage gap for the spawn-path itself (parent `hk-p3diy`) — until scenario tests land, prefer single-class batches when validating new daemon changes.
 3. **Dispatch in background.** `harmonik run --beads id1,id2,id3 --max-concurrent 1 2>&1 | tee /tmp/dogfood-<date>.log &` (background-mode pattern; do NOT block inline). The daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead.
 4. **Stay active while harmonik runs.** Queue the next batch's candidates; drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.

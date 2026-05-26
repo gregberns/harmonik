@@ -34,7 +34,7 @@ When a `harmonik run` batch returns failures:
 
 **`harmonik run` is the default dispatcher for this project's own development.** The intended loop:
 
-1. `bv --robot-triage` and `kerf next` — surface the prioritized work.
+1. `kerf next` — surface the prioritized work (ranked feed of beads with work-context).
 2. Pick a batch of 3–5 beads from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats" until the probes land).
 3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead. Review-loop is **on by default** (hk-g0ckv); pass `--no-review-loop` to opt out.
 4. While harmonik runs: queue the next batch, drain `kerf triage` untriaged items, file follow-ups from prior runs, review recently-merged commits.
@@ -220,54 +220,22 @@ MVH (Minimum Viable Harmonik) was a project-level milestone achieved 2026-05-14.
 
 ## Beads Workflow Integration
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) (`bv`) for graph-aware triage. Issues are stored in `.beads/` and tracked in git.
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [kerf](docs/components/internal/kerf.md) for prioritization and triage. Issues are stored in `.beads/` and tracked in git.
 
-### Using bv as an AI sidecar
+### Prioritization: use kerf, not bv
 
-bv is a graph-aware triage engine for Beads projects (.beads/beads.jsonl). Instead of parsing JSONL or hallucinating graph traversal, use robot flags for deterministic, dependency-aware outputs with precomputed metrics (PageRank, betweenness, critical path, cycles, HITS, eigenvector, k-core).
-
-**Scope boundary:** bv handles *what to work on* (triage, priority, planning). `br` handles creating, modifying, and closing beads.
-
-**CRITICAL: Use ONLY --robot-* flags. Bare bv launches an interactive TUI that blocks your session.**
-
-#### The Workflow: Start With Triage
-
-**`bv --robot-triage` is your single entry point.** It returns everything you need in one call:
-- `quick_ref`: at-a-glance counts + top 3 picks
-- `recommendations`: ranked actionable items with scores, reasons, unblock info
-- `quick_wins`: low-effort high-impact items
-- `blockers_to_clear`: items that unblock the most downstream work
-- `project_health`: status/type/priority distributions, graph metrics
-- `commands`: copy-paste shell commands for next steps
+**`kerf next` is the single entry point for "what to work on."** It returns a ranked feed of beads with work-context (which kerf work owns each bead), cleanup tasks, and warnings. `kerf triage` handles drift detection (untriaged beads, external closes/reopens, multi-matched beads).
 
 ```bash
-bv --robot-triage        # THE MEGA-COMMAND: start here
-bv --robot-next          # Minimal: just the single top pick + claim command
-
-# Token-optimized output (TOON) for lower LLM context usage:
-bv --robot-triage --format toon
+kerf next                        # Ranked feed: top item is what to do next
+kerf next --format=json          # Machine-readable output
+kerf next --only=bead            # Only bead items (skip cleanup/warnings)
+kerf triage                      # Drift report: untriaged, multi-matched, external drift
+kerf triage --ack                # Advance baseline after acting on the report
+kerf map                         # Works grouped by area
 ```
 
-#### Other bv Commands
-
-| Command | Returns |
-|---------|---------|
-| `--robot-plan` | Parallel execution tracks with unblocks lists |
-| `--robot-priority` | Priority misalignment detection with confidence |
-| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core |
-| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
-| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions, cycle breaks |
-| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues |
-| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
-
-#### Scoping & Filtering
-
-```bash
-bv --robot-plan --label backend              # Scope to label's subgraph
-bv --robot-insights --as-of HEAD~30          # Historical point-in-time
-bv --recipe actionable --robot-plan          # Pre-filter: ready to work (no blockers)
-bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
-```
+`bv` (beads_viewer) is installed but **not used for prioritization** — kerf owns that. `bv` is only useful for graph-metric analysis (`--robot-insights` for PageRank/betweenness) or dependency graph export (`--robot-graph`), which kerf does not cover. **CRITICAL: Use ONLY --robot-* flags with bv. Bare bv launches an interactive TUI that blocks your session.**
 
 ### br Commands for Issue Management
 
@@ -284,7 +252,7 @@ br sync --flush-only  # Export DB to JSONL
 
 ### Workflow Pattern
 
-1. **Triage**: Run `bv --robot-triage` to find the highest-impact actionable work
+1. **Triage**: Run `kerf next` to find the highest-impact actionable work
 2. **Claim**: Use `br update <id> --status=in_progress`
 3. **Work**: Implement the task
 4. **Complete**: Use `br close <id>`

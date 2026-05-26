@@ -18,6 +18,7 @@ package dot
 // Tags: mechanism
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -567,6 +568,66 @@ func TestDotFixtureMultipleStrictErrors(t *testing.T) {
 	}
 	if len(pe) < 3 {
 		t.Errorf("expected ≥3 strict errors, got %d: %v", len(pe), pe)
+	}
+}
+
+// ── testdata/review-loop.dot round-trip ──────────────────────────────────────
+
+// TestDotFixtureReviewLoopFile parses the testdata/review-loop.dot fixture that
+// mirrors the future specs/examples/review-loop.dot (C5 of phase-3-dot).
+// This satisfies the acceptance criterion "round-trips specs/examples/review-loop.dot
+// (if missing, use a test fixture)" from bead hk-nvzur.
+func TestDotFixtureReviewLoopFile(t *testing.T) {
+	//nolint:gosec // G304: path is a test-local constant, not user-supplied.
+	src, err := os.ReadFile("testdata/review-loop.dot")
+	if err != nil {
+		t.Fatalf("read testdata/review-loop.dot: %v", err)
+	}
+	g, parseErr := Parse(string(src), "testdata/review-loop.dot")
+	if parseErr != nil {
+		t.Fatalf("Parse(review-loop.dot): %v", parseErr)
+	}
+	if g.SchemaVersion != "1" {
+		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1")
+	}
+	if g.StartNodeID != "implement" {
+		t.Errorf("StartNodeID = %q, want %q", g.StartNodeID, "implement")
+	}
+	if len(g.TerminalNodeIDs) != 2 {
+		t.Errorf("len(TerminalNodeIDs) = %d, want 2", len(g.TerminalNodeIDs))
+	}
+	if len(g.ContextKeys) != 2 {
+		t.Errorf("len(ContextKeys) = %d, want 2 (bead_id, pr_url)", len(g.ContextKeys))
+	}
+	if len(g.Nodes) != 4 {
+		t.Errorf("len(Nodes) = %d, want 4", len(g.Nodes))
+	}
+	if len(g.Edges) != 6 {
+		t.Errorf("len(Edges) = %d, want 6", len(g.Edges))
+	}
+	// Verify preferred_label conditions are parsed (WG-019).
+	var approveEdge *Edge
+	for _, e := range g.Edges {
+		if e.Condition != nil {
+			for _, cl := range e.Condition.Clauses {
+				if cl.LHS == "outcome.preferred_label" && cl.RHS == "APPROVE" {
+					approveEdge = e
+				}
+			}
+		}
+	}
+	if approveEdge == nil {
+		t.Error("no edge with outcome.preferred_label == 'APPROVE' found")
+	}
+	// Verify traversal_cap is retained in UnknownAttrs.
+	var capCount int
+	for _, e := range g.Edges {
+		if _, ok := e.UnknownAttrs["traversal_cap"]; ok {
+			capCount++
+		}
+	}
+	if capCount == 0 {
+		t.Error("no edge with traversal_cap found in UnknownAttrs")
 	}
 }
 

@@ -1,0 +1,86 @@
+// review-loop.dot — canonical review-loop workflow graph fixture.
+// This is the test-fixture version used for round-trip tests in the dot parser.
+// The canonical specs/examples/review-loop.dot is authored as C5 of phase-3-dot
+// (post-T-FIX-C5-BLOCK); until that lands, this file is the authoritative fixture.
+//
+// Exercises: WG-001, WG-002, WG-009, WG-013, WG-014, WG-017, WG-019, WG-021,
+//            WG-022, WG-031, WG-033, WG-035.
+
+digraph review_loop {
+  schema_version="1";
+  version="1.0";
+  start_node="implement";
+  terminal_node_ids="close,close-needs-attention";
+  context_keys="bead_id,pr_url";
+
+  implement [
+    type="agentic",
+    agent_type="implementer",
+    handler_ref="claude-code",
+    idempotency_class="non-idempotent"
+  ];
+
+  review [
+    type="agentic",
+    agent_type="reviewer",
+    handler_ref="claude-code",
+    idempotency_class="idempotent"
+  ];
+
+  close [
+    type="non-agentic",
+    handler_ref="merge-and-close",
+    idempotency_class="idempotent"
+  ];
+
+  "close-needs-attention" [
+    type="non-agentic",
+    handler_ref="needs-attention-close",
+    idempotency_class="idempotent"
+  ];
+
+  // implement -> review on SUCCESS
+  implement -> review [
+    condition="outcome.status == 'SUCCESS'",
+    weight="10",
+    ordering_key="a",
+    traversal_cap="3"
+  ];
+
+  // review -> close on APPROVE verdict
+  review -> close [
+    condition="outcome.status == 'SUCCESS' && outcome.preferred_label == 'APPROVE'",
+    weight="10",
+    ordering_key="a"
+  ];
+
+  // review -> implement on REQUEST_CHANGES
+  review -> implement [
+    condition="outcome.status == 'SUCCESS' && outcome.preferred_label == 'REQUEST_CHANGES'",
+    weight="10",
+    ordering_key="b",
+    traversal_cap="3"
+  ];
+
+  // review -> close-needs-attention on BLOCK
+  review -> "close-needs-attention" [
+    condition="outcome.status == 'SUCCESS' && outcome.preferred_label == 'BLOCK'",
+    weight="10",
+    ordering_key="c"
+  ];
+
+  // structural failure from implement -> needs-attention
+  implement -> "close-needs-attention" [
+    condition="outcome.status == FAIL && outcome.failure_class == structural",
+    weight="5",
+    ordering_key="d"
+  ];
+
+  // transient failure: retry implement
+  implement -> implement [
+    condition="outcome.status == FAIL && outcome.failure_class == transient",
+    weight="5",
+    ordering_key="e",
+    traversal_cap="5"
+  ];
+}

@@ -2034,13 +2034,22 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
-			abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-			abortCmd.Dir = wtPath
-			_ = abortCmd.Run()
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
+			// hk-pphof: auto-resolve if ONLY .beads/issues.jsonl is conflicting.
+			// The beads ledger file is a JSONL append-only log whose canonical
+			// source of truth is main; taking --theirs (main's version) is safe
+			// because the daemon owns all terminal bead transitions.
+			if conflictOut, autoResolved := mergeRebaseAutoResolveBeadsLedger(ctx, wtPath, out, rebaseErr); autoResolved {
+				out = conflictOut // replace output so re-resolve block below runs
+			} else {
+				abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+				abortCmd.Dir = wtPath
+				_ = abortCmd.Run()
+				return mergeOutcome{
+					success: false,
+					reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
+				}
 			}
+			_ = out // suppress unused-variable lint after auto-resolve path
 		}
 		// Rebase succeeded — re-resolve runTip and mainTip (both may have changed).
 		rebasedTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
@@ -2125,6 +2134,84 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	}
 
 	return mergeOutcome{success: true}
+}
+
+// mergeRebaseAutoResolveBeadsLedger attempts to auto-resolve a rebase conflict
+// when the ONLY conflicting file is .beads/issues.jsonl.
+//
+// The beads ledger is an append-only JSONL log.  main's copy is the canonical
+// source of truth (the daemon owns all terminal bead transitions), so "theirs"
+// (main's version) always wins.  This eliminates the most common class of
+// merge_conflict outcomes caused by parallel agents writing bead close/reopen
+// records into the ledger on the same CI run.
+//
+// If the conflict set contains ANY file other than .beads/issues.jsonl the
+// function does nothing and returns (nil, false) so the caller can abort and
+// escalate as before.
+//
+// On success the function:
+//  1. Runs git checkout --theirs .beads/issues.jsonl inside the worktree.
+//  2. Stages the resolved file with git add.
+//  3. Continues the rebase with git rebase --continue.
+//
+// Returns the combined output of git rebase --continue (for logging) and true
+// on success, or (nil, false) if auto-resolve is not applicable or fails.
+//
+// Bead: hk-pphof.
+func mergeRebaseAutoResolveBeadsLedger(ctx context.Context, wtPath string, _ []byte, _ error) ([]byte, bool) {
+	const beadsLedgerPath = ".beads/issues.jsonl"
+
+	// Identify conflicting files.
+	conflictCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--diff-filter=U")
+	conflictCmd.Dir = wtPath
+	conflictOut, conflictErr := conflictCmd.Output()
+	if conflictErr != nil {
+		// Cannot determine conflict set; fall back to abort.
+		return nil, false
+	}
+
+	conflicting := strings.Fields(strings.TrimRight(string(conflictOut), "\n"))
+	if len(conflicting) == 0 {
+		// No files listed as unmerged — not a conflict we recognise.
+		return nil, false
+	}
+
+	for _, f := range conflicting {
+		if f != beadsLedgerPath {
+			// Real code-file conflict; escalate.
+			return nil, false
+		}
+	}
+
+	// Only .beads/issues.jsonl is conflicting — resolve with main's version.
+	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--theirs", beadsLedgerPath)
+	checkoutCmd.Dir = wtPath
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRebaseAutoResolveBeadsLedger: git checkout --theirs: %v\n%s", err, out)
+		return nil, false
+	}
+
+	addCmd := exec.CommandContext(ctx, "git", "add", beadsLedgerPath)
+	addCmd.Dir = wtPath
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRebaseAutoResolveBeadsLedger: git add: %v\n%s", err, out)
+		return nil, false
+	}
+
+	continueCmd := exec.CommandContext(ctx, "git", "-c", "core.editor=true", "rebase", "--continue")
+	continueCmd.Dir = wtPath
+	continueOut, continueErr := continueCmd.CombinedOutput()
+	if continueErr != nil {
+		// --continue failed; the caller should abort.
+		fmt.Fprintf(os.Stderr, "daemon: mergeRebaseAutoResolveBeadsLedger: git rebase --continue: %v\n%s", continueErr, continueOut)
+		// Abort so the worktree is left in a clean state.
+		abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+		abortCmd.Dir = wtPath
+		_ = abortCmd.Run()
+		return nil, false
+	}
+
+	return continueOut, true
 }
 
 // emitOutcomeEmitted emits an outcome_emitted event with the given kind and

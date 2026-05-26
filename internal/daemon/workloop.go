@@ -1400,6 +1400,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.claudeSessionID)
 
+	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
+	// do not persist after run-fail/cancel. On the natural-exit path (claude /quit),
+	// only the process exited; the tmux pane window remains until explicitly killed.
+	// Kill is idempotent on the substrate path (killOnce guard in tmuxSubstrateSession);
+	// the cancel path already called Kill inside waitWithSocketGrace so this is a no-op.
+	// Guarded by watcher==nil which is the tmux-substrate indicator (exec path: watcher!=nil).
+	if watcher == nil {
+		_ = sess.Kill(context.Background())
+	}
+
 	// Step 7a: emit implementer_phase_complete (hk-cd8yu).
 	//
 	// Fires immediately after the implementer session ends regardless of how —

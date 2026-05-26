@@ -87,6 +87,9 @@ type Node struct {
 	// ID is the DOT node identifier.
 	ID string
 
+	// Line is the 1-based source line of the node declaration; 0 = unknown.
+	Line int
+
 	// Type is the node type; one of the four members of the closed enum
 	// {agentic, non-agentic, gate, sub-workflow} per WG-001.
 	// A node with an unknown type is a strict ingest error per WG-024;
@@ -158,6 +161,9 @@ type Edge struct {
 
 	// ToNodeID is the destination node ID.
 	ToNodeID string
+
+	// Line is the 1-based source line of the edge declaration; 0 = unknown.
+	Line int
 
 	// Condition is the parsed edge condition per the restricted dialect of §6
 	// WG-013.  Nil means the edge is unconditional.

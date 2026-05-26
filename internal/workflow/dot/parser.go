@@ -590,6 +590,7 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 	node := &Node{
 		ID:           rn.id,
+		Line:         rn.line,
 		UnknownAttrs: make(map[string]string),
 	}
 	var errs []*ParseError
@@ -673,6 +674,7 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 	edge := &Edge{
 		FromNodeID:   re.from,
 		ToNodeID:     re.to,
+		Line:         re.line,
 		UnknownAttrs: make(map[string]string),
 	}
 	var errs []*ParseError

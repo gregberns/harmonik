@@ -12,9 +12,8 @@
 //
 // Design notes (from phase-3-dot pass-4, C5):
 //   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
-//   - The iteration cap (EM-015e, cap=3) is enforced exclusively by the daemon;
-//     the cascade falls through to the unconditional `close-needs-attention`
-//     edge when the cap fires. This is the D-edge-cascade-invariant fallback.
+//   - The iteration cap (EM-015e, cap=3) is enforced by the traversal_cap on
+//     the reviewer→implementer back-edge (WG-028 / EM-043).
 //   - Verdict routing uses `outcome.preferred_label` per D-verdict-surfacing
 //     and the D4 LHS whitelist (row 3). Values are uppercase per the EM-015d
 //     verdict enum and the agent-reviewer JSON schema v1 (APPROVE /
@@ -25,11 +24,13 @@
 digraph "review-loop-example" {
     // ─── Graph-level attributes ──────────────────────────────────────────────
     // schema_version pins the DOT dialect (D10: v1 examples ship at schema 1).
+    // version is the workflow author's own version field (WG-035).
     // start_node names the unique entry point per WG-027.
     // terminal_node_ids is encoded as a comma-delimited string per the
     // parser's splitIDs convention; C1 §11 WG-033 normatively defines the
     // parse rule.
     schema_version="1";
+    version="1.0";
     workflow_id="review-loop-example";
     start_node="start";
     terminal_node_ids="close,close-needs-attention";
@@ -41,6 +42,7 @@ digraph "review-loop-example" {
     start [
         type="non-agentic",
         handler_ref="noop",
+        idempotency_class="idempotent",
         role="workflow entry point"
     ];
 
@@ -49,7 +51,9 @@ digraph "review-loop-example" {
     // whether to resume a prior session vs. fresh-start on each visit).
     implementer [
         type="agentic",
+        agent_type="implementer",
         handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
         role="produce or revise the change"
     ];
 
@@ -58,16 +62,19 @@ digraph "review-loop-example" {
     // Emits an Outcome whose preferred_label drives the cascade below.
     reviewer [
         type="agentic",
+        agent_type="reviewer",
         handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
         role="render verdict on the change"
     ];
 
     // close: terminal node for the APPROVE path. The change merged cleanly.
     // Terminal-by-list (terminal_node_ids) plus type=non-agentic + noop
-    // handler so every node satisfies WG-024 (type attribute required).
+    // handler so every node satisfies WG-024 (handler_ref required).
     close [
         type="non-agentic",
         handler_ref="noop",
+        idempotency_class="idempotent",
         role="APPROVE path — change accepted"
     ];
 
@@ -76,6 +83,7 @@ digraph "review-loop-example" {
     "close-needs-attention" [
         type="non-agentic",
         handler_ref="noop",
+        idempotency_class="idempotent",
         role="BLOCK / cap-hit / no-progress — needs operator attention"
     ];
 
@@ -91,13 +99,14 @@ digraph "review-loop-example" {
         condition="outcome.preferred_label == 'APPROVE'"
     ];
 
-    // (4) REQUEST_CHANGES → loop back to implementer. NOTE: no inline
-    // iteration_count bound — D5 v1 dialect is equality + && only. The
-    // EM-015e cap is enforced daemon-side; when the cap fires, this edge
-    // is suppressed by the daemon and the cascade falls through to the
-    // unconditional fallback edge (6) below.
+    // (4) REQUEST_CHANGES → loop back to implementer.
+    // traversal_cap="3" enforces the EM-015e iteration cap at the graph layer
+    // (WG-028 / EM-043): after 3 traversals the daemon's cap-enforcement
+    // suppresses this edge and the cascade falls through to the unconditional
+    // fallback edge (6) below.
     reviewer -> implementer [
-        condition="outcome.preferred_label == 'REQUEST_CHANGES'"
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
     ];
 
     // (5) BLOCK → close-needs-attention. Reviewer signalled the change

@@ -198,10 +198,14 @@ var heartbeatStalenessThreshold = 8 * time.Minute
 // elapses without a heartbeat (and without a commit landing), the session is
 // killed via the noChange path so the workloop reopens the bead for retry.
 //
-// 60s gives Claude Code ample time to start, read the brief, and emit its
-// first activity — even on slow machines.  Without this guard, an empty-pane
-// stall (paste delivered to a dead tmux pane) would not be detected until the
-// 8-minute heartbeat-staleness threshold fires, wasting a full slot.
+// 180s gives Claude Code time to start, read the brief, load context, and
+// emit its first activity.  The original 60s was too tight for complex beads
+// that require multi-file reads before the first tool call (which emits a
+// heartbeat).  Without this guard, an empty-pane stall (paste delivered to a
+// dead tmux pane) would not be detected until the 8-minute heartbeat-staleness
+// threshold fires, wasting a full slot.  The paneLivenessChecker provides a
+// secondary defense: when the pane has an active child process, the timeout
+// is suppressed and the deadline extended.
 //
 // Only active when eventCh is non-nil (heartbeatProvided = true).
 //
@@ -209,7 +213,7 @@ var heartbeatStalenessThreshold = 8 * time.Minute
 // wall time.
 //
 // Bead: hk-3gq0b.
-var launchHeartbeatTimeout = 60 * time.Second
+var launchHeartbeatTimeout = 180 * time.Second
 
 // noChangeKillDelay is the grace period between the unconditional /quit send
 // (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code

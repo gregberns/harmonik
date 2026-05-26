@@ -339,7 +339,11 @@ func TestReviewLoop_LaunchAfterCommit_Hk5s7tg_WatchdogUnblocksStuckWait(t *testi
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
-		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
+		// hk-kunm4: use empty registry so waitAgentReady is skipped for the
+		// shell-script handler (which never emits agent_ready). With the real
+		// adapter registered, the 30s default timeout would consume the entire
+		// test context before the implementer could commit.
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		Substrate:           stuck,
 	})
 

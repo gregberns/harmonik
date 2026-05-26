@@ -294,10 +294,22 @@ func runReviewLoop(
 			}
 		}
 
+		// Create a per-run tapping emitter so waitAgentReady can observe
+		// watcher events from the implementer launch without a post-seal bus
+		// subscription (EV-009). A new handler is constructed using the tap so
+		// events flow through the channel — same pattern as the reviewer phase
+		// (lines ~592-598) and single-mode beadRunOne (workloop.go lines 1173-1176).
+		// Precondition: deps.adapterRegistry must be non-nil (enforced by
+		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
+		//
+		// Bead ref: hk-kunm4.
+		implTap, implTapCh := newPerRunEventTap(deps.bus, runID)
+		implRunH := handler.NewHandler(implTap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
+
 		var implWatcher *handlercontract.Watcher
 		var implLaunchErr error
 		implLaunchedAt := time.Now()
-		implSess, implWatcher, implLaunchErr = deps.h.Launch(ctx, implSpec)
+		implSess, implWatcher, implLaunchErr = implRunH.Launch(ctx, implSpec)
 		if implLaunchErr != nil {
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
@@ -307,18 +319,97 @@ func runReviewLoop(
 			return result
 		}
 
+		// Wire the implementer's agent-ready callback into implTap so that
+		// relay-synthesized agent_ready envelopes from the hook-relay subprocess
+		// reach implTapCh, which waitAgentReady (below) blocks on. Without this
+		// call notifyAgentReady finds a nil callback and implTapCh stays empty,
+		// causing HC-056 to fire every 30s.
+		//
+		// Same wiring as reviewer phase and single-mode beadRunOne
+		// (workloop.go lines 1222-1242). Bead ref: hk-lj1p9.4, hk-kunm4.
+		//
+		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
+		if deps.hookStore != nil {
+			capturedImplTap := implTap
+			deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() {
+				_ = capturedImplTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+			})
+		}
+
+		// HC-056: waitAgentReady — implementer phase must observe agent_ready
+		// within the configured timeout before paste-injecting the task.
+		// Without this gate, ~60% of concurrent dispatches land the paste before
+		// Claude's REPL is input-ready, resulting in empty panes (hk-kunm4).
+		//
+		// Pattern mirrors reviewer phase and single-mode beadRunOne
+		// (workloop.go lines 1265-1337).
+		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+		if implAdapterErr != nil {
+			// No adapter for claude-code — non-fatal; skip ready-wait.
+			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) implementer bead %s iter %d: %v (skipping ready-wait)\n",
+				beadID, state.iterationCount, implAdapterErr)
+		} else {
+			// Derive a child context that cancels when the implementer watcher
+			// finishes (handler exit), preventing a full-timeout block on crash.
+			//
+			// Substrate path: implWatcher is nil when deps.substrate != nil
+			// (tmux-hosted sessions return nil from handler.launchViaSubstrate).
+			// Skip the watcher-done goroutine in that case — readyCtx is still
+			// valid and will be cancelled by the outer ctx or readyCancel below.
+			// Bead ref: hk-yjduq.
+			implReadyCtx, implReadyCancel := context.WithCancel(ctx)
+			if implWatcher != nil {
+				go func() {
+					select {
+					case <-implWatcher.Done():
+						implReadyCancel()
+					case <-implReadyCtx.Done():
+					}
+				}()
+			}
+
+			implEventSrc := newChanAgentEventSource(implTapCh)
+			implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, deps.agentReadyTimeout)
+			implReadyCancel() // always release the watcher-done goroutine above
+
+			if implReadyErr == ErrAgentReadyTimeout {
+				// HC-056: implementer agent_ready_timeout — kill, reap, error result.
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
+					beadID, state.iterationCount, runID.String(), implReadyErr)
+				_ = implSess.Kill(ctx)
+				if implWatcher != nil {
+					select {
+					case <-implWatcher.Done():
+					case <-time.After(agentReadyKillReapTimeout):
+						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+							beadID, state.iterationCount, runID.String())
+					}
+				}
+				_ = implSess.Wait(ctx)
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+				}
+				emitAgentReadyTimeout(ctx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
+				result := rlErrorResult(fmt.Sprintf("implementer agent_ready_timeout at iteration %d", state.iterationCount))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			// implReadyErr == nil (agent_ready observed) OR context.Canceled
+			// (watcher exited first or ctx cancelled). Fall through to paste-inject.
+		}
+
 		// Paste-inject: deliver the kick-off message to the implementer pane (hk-zrj83).
 		// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
 		// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
 		// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
 		//
-		// NOTE: The review-loop implementer path does not currently call waitAgentReady
-		// (it uses waitWithSocketGrace directly), so no SetAgentReadyCallback wire is
-		// needed here. If a future pass adds waitAgentReady to the implementer phase,
-		// a per-run tap must be constructed before Launch and wired via SetAgentReadyCallback.
+		// MUST run AFTER waitAgentReady returns (hk-kunm4): when paste-inject fires
+		// before agent_ready, the trailing \n is consumed by Claude Code's welcome-splash
+		// render before the REPL input state is active; the buffered text sits in the
+		// input bar unsubmitted, claude never reads agent-task.md, and the run hangs.
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-		// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3.
+		// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
 		implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
 			implPhase, state.iterationCount, wtPath)
 
@@ -340,10 +431,8 @@ func runReviewLoop(
 			}
 			// Pass implSess as the killer so commitPollTimeout forces an exit;
 			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-			// nil eventCh — the reviewloop implementer phase does not construct a
-			// per-run event tap (waitAgentReady is not called here), so heartbeat
-			// staleness detection is not yet available on this path.
-			// hk-7srrd: wiring heartbeat staleness to the reviewloop is deferred.
+			// nil eventCh — although implTapCh now exists (hk-kunm4), heartbeat
+			// staleness detection in pasteInjectQuitOnCommit is deferred (hk-7srrd).
 			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, nil)
 		}
 

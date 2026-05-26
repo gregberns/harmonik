@@ -131,8 +131,14 @@ type Item struct {
 	// WorkflowMode is an optional per-item workflow-mode override (hk-hiqrl).
 	// When non-empty it takes precedence over the per-bead workflow:<mode>
 	// label (tier-1) and the daemon default (tier-3) in the EM-012a resolution
-	// walk. Valid values: "single", "review-loop". Empty means no override.
+	// walk. Valid values: "single", "review-loop", "dot". Empty means no override.
 	WorkflowMode string `json:"workflow_mode,omitempty"`
+
+	// WorkflowRef is an optional path to the workflow definition file used when
+	// WorkflowMode is "dot" (hk-qo9pq). Relative paths are resolved against the
+	// project directory at dispatch time. Empty falls back to the project-level
+	// convention (workflow.dot in the project root).
+	WorkflowRef string `json:"workflow_ref,omitempty"`
 }
 
 // Group is one execution group within the Queue envelope

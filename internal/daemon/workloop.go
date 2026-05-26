@@ -553,6 +553,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			queueGroupIdxFd      *int
 			capturedExtraContext string // hk-boiwe: per-item context from queue.Item.Context
 			capturedItemWFMode   string // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
+			capturedItemWFRef    string // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -574,6 +575,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				snapItemBeadID  core.BeadID
 				snapItemContext string
 				snapItemWFMode  string
+				snapItemWFRef   string
 				snapGroupIndex  int
 				snapQueueID     string
 			)
@@ -642,6 +644,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					snapItemBeadID = item.BeadID
 					snapItemContext = item.Context
 					snapItemWFMode = item.WorkflowMode
+					snapItemWFRef = item.WorkflowRef
 					snapGroupIndex = q.Groups[activeGroupIdx].GroupIndex
 					snapQueueID = q.QueueID
 				}
@@ -729,7 +732,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
 				capturedExtraContext = snapItemContext // hk-boiwe
-				capturedItemWFMode = snapItemWFMode    // hk-hiqrl
+				capturedItemWFMode = snapItemWFMode   // hk-hiqrl
+				capturedItemWFRef = snapItemWFRef     // hk-qo9pq
 			}
 		}
 
@@ -931,6 +935,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Per-item overrides captured here; empty for br-ready path.
 		capturedCtx := capturedExtraContext  // hk-boiwe
 		capturedWFMode := capturedItemWFMode // hk-hiqrl
+		capturedWFRef := capturedItemWFRef   // hk-qo9pq
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -940,18 +945,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)
-		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode string) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string) {
 			defer wg.Done()
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode)
+			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode, itemWFRef)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
 			}
-		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode)
+		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef)
 	}
 }
 
@@ -974,7 +979,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string) {
 	beadID := beadRecord.BeadID
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -1116,10 +1121,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// then fall through to single-mode dispatch as a stub until the full
 		// cascade engine (hk-bf85t) is implemented.
 		//
-		// Resolve .dot path: convention is <projectDir>/workflow.dot.
-		// TODO(hk-bf85t): add --workflow-ref flag or per-bead config to specify
-		// an arbitrary .dot path; for now we use the project-level convention.
+		// Resolve .dot path: use itemWorkflowRef when set (hk-qo9pq CLI --workflow-ref);
+		// fall back to the project-level convention <projectDir>/workflow.dot.
+		// Relative itemWorkflowRef is resolved against projectDir.
 		dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		if itemWorkflowRef != "" {
+			if filepath.IsAbs(itemWorkflowRef) {
+				dotPath = itemWorkflowRef
+			} else {
+				dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
+			}
+		}
 		graph, loadErr := workflow.LoadDotWorkflow(dotPath)
 		if loadErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",

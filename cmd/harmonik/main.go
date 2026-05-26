@@ -292,6 +292,13 @@ EXAMPLES
 		return runSubscribeSubcommand(os.Args[2:])
 	}
 
+	// harmonik graph <verb> — workflow graph utilities (hk-voyf4).
+	// Currently supports: graph validate <path>
+	// No daemon required; reads files directly.
+	if len(os.Args) >= 2 && os.Args[1] == "graph" {
+		return runGraphSubcommand(os.Args[2:])
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

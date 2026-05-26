@@ -114,22 +114,53 @@ Tags: mechanism
 
 An `Outcome` MUST carry `status ∈ {SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS}`, `preferred_label` (optional routing hint), `suggested_next_ids` (optional routing hint; the deterministic cascade of §4.10 consults this as a hint after condition and `preferred_label` match and does not override them), `context_updates` (a key-value map applied to the run's shared context per §4.10.EM-041a), `notes` (freeform), `kind` (an `OutcomeKind` discriminator per §4.1.EM-005a; defaults to `default`), and `payload` (an optional kind-discriminated extension envelope per §4.1.EM-005a; absent when `kind = default`). The outcome shape is the handler's obligation per [handler-contract.md §4.1]; this spec owns the type.
 
+Additionally, an `Outcome` MAY carry `failure_class ∈ {transient, structural, deterministic, canceled, budget_exhausted, compilation_loop}` (the `FailureClass` enum declared in §8), present ONLY when `status = FAIL`. The field is a handler-emitted HINT; the daemon back-fills from the §8 sentinel classification path per [handler-contract.md §4.5 HC-020] when the handler omits the field, and the daemon's classification is authoritative on disagreement per [handler-contract.md §4.2a HC-059]. The post-classifier engine-side `Outcome` MUST carry `failure_class` when `status = FAIL`. The field is carrier-only; classification authority remains with the daemon.
+
 Classifier input for the failure taxonomy (§8) is the handler-returned `ErrX` sentinel per [handler-contract.md §4.5], NOT fields of the `Outcome` record.
 
 Tags: mechanism
 
 #### EM-005a — Outcome carries a kind discriminator and optional kind-typed payload
 
-An `Outcome` MUST carry a `kind ∈ {default, reconciliation_verdict}` discriminator that names the shape of its extension `payload`. The discriminator's wire-level alias is the `outcome_kind` field on the handler-contract `outcome_emitted` event per [handler-contract.md §4.3 HC-008]; the daemon MUST set `Outcome.kind` from the handler-returned `outcome_kind` without rewriting.
+An `Outcome` MUST carry a `kind ∈ {default, reconciliation_verdict, gate_decision}` discriminator that names the shape of its extension `payload`. The discriminator's wire-level alias is the `outcome_kind` field on the handler-contract `outcome_emitted` event per [handler-contract.md §4.3 HC-008]; the daemon MUST set `Outcome.kind` from the handler-returned `outcome_kind` without rewriting.
 
 The discriminator's semantics:
 
 - `kind = default` — the legacy ordinary outcome shape. `payload` MUST be absent. Every requirement in this spec that consumes `Outcome` (the cascade per §4.10.EM-041, the durability decision per §4.5.EM-023a, the Transition.outcome_status mapping per §6.1) operates on `default` outcomes unchanged; no §4 requirement reads `payload` for routing or durability decisions.
 - `kind = reconciliation_verdict` — the outcome carries a reconciliation investigator's verdict. `payload` MUST be the `VerdictEvent` record per [reconciliation/schemas.md §6.1]; this spec does NOT redeclare the `VerdictEvent` fields. Per [reconciliation/spec.md §4.5 RC-022a], the daemon's verdict-executor consumes the payload to construct the verdict-and-verdict-executed commit pair on the investigator's task branch under the §4.5.EM-026 verdict-only-commit exception. The `VerdictEvent` payload is opaque to the cascade and to the durability decision (which consumes `outcome_status` per §4.5.EM-023a and §6.1); the verdict-executor consumes the payload via the reconciliation outcome-spine path, not via the ordinary cascade.
+- `kind = gate_decision` — the outcome carries a gate evaluator's structured decision rationale. `payload` MUST be the `GateDecisionPayload` record per [control-points.md §6.1.8 CP-058]; this spec does NOT redeclare the record's fields. Per EM-005b below, the gate-evaluator handler MUST emit this kind when the gate's policy requires structured rationale capture per [control-points.md §4.8 CP-040]; otherwise `kind = default` is permitted. The `GateDecisionPayload` is opaque to the cascade and to the durability decision (the cascade reads `status`, `preferred_label`, and `kind` only; `payload.*` is not a legal edge-condition LHS per the D4 LHS whitelist). The handler-side gate emission discipline is normative per [handler-contract.md §4.2a HC-060]. Gate-decision payload cross-reference: `[control-points.md §6.1.8 CP-058]`.
 
-The enum is closed at MVH; future outcome variants (e.g., improvement-loop verdicts, operator-CLI dispatch outcomes) extend the enum via the amendment protocol per [architecture.md §4.6] and MUST cite their payload schema in the owning subsystem spec. Adding a discriminator value is an additive schema change per §6.4 (N-1 readable per §4.4.EM-022); a reader observing an unknown `kind` value MUST route the outcome to reconciliation per [reconciliation/spec.md §8.11 Cat 6a] rather than silently degrading to `default`.
+The enum is closed at v1; future outcome variants (e.g., improvement-loop verdicts, operator-CLI dispatch outcomes) extend the enum via the amendment protocol per [architecture.md §4.6] and MUST cite their payload schema in the owning subsystem spec. Adding a discriminator value is an additive schema change per §6.4 (N-1 readable per §4.4.EM-022); a reader observing an unknown `kind` value MUST route the outcome to reconciliation per [reconciliation/spec.md §8.11 Cat 6a] rather than silently degrading to `default`.
+
+(Example application of the amendment protocol: the `gate_decision` value is added at v0.3.4 per EM-005b and is paired with the `GateDecisionPayload` record at [control-points.md §6.1.8 CP-058]; the existing N-1 routing rule applies — a v0.3.3 reader encountering `kind = gate_decision` MUST route to reconciliation Cat 6a, NOT silently degrade to `default`.)
 
 Existing consumers of the v0.3.2 `Outcome` shape remain conforming: `kind` defaults to `default` and `payload` defaults to absent, and no §4 requirement that predates v0.3.3 reads either field. The extension is strictly additive.
+
+Tags: mechanism
+
+#### EM-005b — Gate-decision Outcome variant
+
+A gate-evaluator handler (per [handler-contract.md §4.2a HC-058], gate row) emitting an Outcome that the gate's policy designates as requiring structured rationale capture per [control-points.md §4.8 CP-040] MUST emit `Outcome.kind = "gate_decision"` and `Outcome.payload = GateDecisionPayload(...)` per [control-points.md §6.1.8 CP-058]. When rationale capture is not required by policy, `Outcome.kind = "default"` is permitted and `payload` MUST be absent.
+
+The five `GateDecisionPayload` fields (declared in CP-058) carry the gate's audit record: `policy_id` (the gate's registry name per [control-points.md §4.1 CP-002]), `decision` (`{permit, deny}`), `decision_actor` (`{policy_engine, operator, timeout}`), `decision_evidence_ref` (optional audit pointer; commit SHA, event correlation id, etc.), and `resolution_signal_id` (optional; correlates the EM-042a gate-resolution signal when the daemon resolves a `gate-pending` sub-state). `decision = permit` MUST correlate with `status = SUCCESS`; `decision = deny` MUST correlate with `status = FAIL`.
+
+The cascade per §4.10 EM-041 MAY route on `outcome.kind = "gate_decision"` (the discriminator IS a legal edge-condition LHS); `payload.*` subfields are NOT legal LHS. Workflows that need to discriminate gate-decision outcomes from non-gate outcomes for routing purposes use the discriminator; workflows that need audit access to the payload consult it via the persisted-verdict path per [control-points.md §4.8 CP-040], not via the cascade.
+
+`kind = gate_decision` and the `failure_class` field per EM-005c are orthogonal carriers. A gate deny due to budget exhaustion MAY emit ALL of: `status = FAIL`, `failure_class = budget_exhausted`, `kind = gate_decision`, `payload = GateDecisionPayload{policy_id: "budget-gate", decision: deny, ...}`. The two fields encode different facts (classification vs. rationale) and compose without conflict.
+
+The schema-version bump for the `gate_decision` enum value is the same v0.3.3 → v0.3.4 bump as EM-005c (the `failure_class` addition); the two extensions land coordinated at v0.3.4. Per the closing paragraph of EM-005a, adding a discriminator value is itself an additive schema change; v0.3.3 readers route unknown `kind = gate_decision` to reconciliation Cat 6a per [reconciliation/spec.md §8.11].
+
+Tags: mechanism
+
+#### EM-005c — Outcome schema v2: `failure_class` additive field
+
+The `Outcome` record is bumped from schema v0.3.3 → v0.3.4 to admit the optional `failure_class` field per the EM-005 paragraph above. The bump is strictly additive: no existing field changes name, type, default, or position; no §4 requirement that predates v0.3.4 reads the new field.
+
+Consumers of the v0.3.3 shape remain conforming: `failure_class` defaults to absent on handler emission, and the daemon-side classification path of [handler-contract.md §4.5 HC-020] (the sentinel classifier) remains the authoritative input for the failure taxonomy of §8. The v0.3.4 field is a carrier added so that `failure_class` becomes a first-class edge-condition LHS term per the D4 whitelist — the cascade of §4.10 EM-041 MAY consult `outcome.failure_class` as an edge predicate input.
+
+N-1 readability per §6.4 is preserved: a v0.3.3 reader observing a v0.3.4 outcome with `failure_class` present MUST treat the field as unknown-and-optional and fall through to sentinel-based classification per HC-020. A v0.3.4 reader observing a v0.3.3 outcome with `failure_class` absent MUST consult HC-020 for the classification (same path as today — the field's absence is the default state).
+
+`compilation_loop` is a daemon-only classification per [handler-contract.md §4.2a HC-059]; a v0.3.4 reader MAY refuse a handler-emitted `failure_class = compilation_loop` and override to `structural` with a logged disagreement.
 
 Tags: mechanism
 
@@ -1094,8 +1125,9 @@ RECORD Outcome:
     suggested_next_ids  : List<NodeID>        -- routing hint; not an override per §4.10.EM-041
     context_updates     : Map<String, Any>    -- applied to run.context per §4.10.EM-041a (pre-cascade)
     notes               : String              -- freeform
+    failure_class       : FailureClass | None  -- present only when status = FAIL; §8 enum; handler-emitted HINT, daemon-back-filled from HC-020 sentinel when handler omits; engine-side MUST be populated on FAIL; §4.1.EM-005c
     kind                : OutcomeKind         -- discriminator per §4.1.EM-005a; defaults to `default`
-    payload             : VerdictPayload | None -- kind-discriminated extension envelope per §4.1.EM-005a; absent when kind=default; when kind=reconciliation_verdict, MUST be a VerdictEvent per [reconciliation/schemas.md §6.1]
+    payload             : VerdictPayload | None -- kind-discriminated extension envelope per §4.1.EM-005a; absent when kind=default; when kind=reconciliation_verdict, MUST be a VerdictEvent per [reconciliation/schemas.md §6.1]; when kind=gate_decision, MUST be a GateDecisionPayload per [control-points.md §6.1.8 CP-058]
 ```
 
 ```
@@ -1110,9 +1142,16 @@ ENUM OutcomeStatus:
 ENUM OutcomeKind:
     default                     -- ordinary handler outcome; payload MUST be absent
     reconciliation_verdict      -- reconciliation investigator verdict; payload MUST be a VerdictEvent per [reconciliation/schemas.md §6.1] (RC-022a)
+    gate_decision               -- gate evaluator structured rationale; payload MUST be a GateDecisionPayload per [control-points.md §6.1.8 CP-058] (EM-005b)
 ```
 
-> INFORMATIVE: The `VerdictPayload` type alias is the discriminated-union payload shape; at MVH it resolves only to `VerdictEvent` per [reconciliation/schemas.md §6.1]. Future `OutcomeKind` values introduced via the amendment protocol per [architecture.md §4.6] add their own variant; the `VerdictPayload` name is retained as the umbrella alias to keep the schema slot stable. EM does NOT redeclare `VerdictEvent` fields — it cites the RC-owned record by name. The v0.3.3 wire-protocol stability commitment for `OQ-RC-010` is delivered by this slot.
+```
+ENUM FailureClass:
+    transient | structural | deterministic | canceled | budget_exhausted | compilation_loop
+    -- declared in §8; surfaced here as Outcome's optional carrier per §4.1.EM-005c
+```
+
+> INFORMATIVE: The `VerdictPayload` type alias is the discriminated-union payload shape. It resolves to a union: `VerdictEvent` (for `kind=reconciliation_verdict`, per [reconciliation/schemas.md §6.1]) and `GateDecisionPayload` (for `kind=gate_decision`, per [control-points.md §6.1.8 CP-058]). Future `OutcomeKind` values introduced via the amendment protocol per [architecture.md §4.6] add their own variant; the `VerdictPayload` name is retained as the umbrella alias to keep the schema slot stable. EM does NOT redeclare `VerdictEvent` or `GateDecisionPayload` fields — it cites the RC-owned and CP-owned records by name. The v0.3.3 wire-protocol stability commitment for `OQ-RC-010` is delivered by this slot.
 
 ### 6.2 Checkpoint commit trailer format
 
@@ -1137,6 +1176,8 @@ See §8 for per-class detection rule, default response, escalation path, and emi
 ### 6.4 Schema evolution
 
 All schemas in this spec carry a `schema_version` integer. The compatibility contract is N-1 readable per [operator-nfr.md §4.5]: a reader MUST accept the immediately prior schema version (N-1); breaking changes require a migration release scheduled at an operator pause per [operator-nfr.md §4.3]. Additive changes (new optional field) are non-breaking and bump the version; renaming or removing fields is breaking.
+
+**v0.3.3 → v0.3.4 — `Outcome.failure_class` additive + `gate_decision` kind value.** EM-005c adds the optional `failure_class` field to the `Outcome` record; EM-005b adds `gate_decision` to the `OutcomeKind` enum. Both changes are coordinated at v0.3.4. v0.3.3 readers treat `failure_class` as unknown-and-optional and fall through to sentinel-based classification per [handler-contract.md §4.5 HC-020]; v0.3.4 readers consult the field as a hint and override with the daemon's classification on disagreement. v0.3.3 readers encountering `kind = gate_decision` MUST route to reconciliation Cat 6a per [reconciliation/spec.md §8.11], NOT silently degrade to `default`. The bump is additive — no existing field is renamed or removed — and N-1 readability per §6.4 is preserved on both directions.
 
 ### 6.5 Co-owned event payloads
 
@@ -1574,6 +1615,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-26 | 0.7.0 | agent (hk-wclep) | **C3 amendments: EM-005 v0.3.3→v0.3.4 schema bump, EM-005a `gate_decision` extension, new EM-005b + EM-005c.** EM-005 (§4.1) amended to add optional `failure_class` field description: handler-emitted HINT, daemon-back-fills from §8 sentinel when omitted, engine-side MUST be populated on FAIL, daemon authoritative on disagreement per HC-059 (CI-5 remediation: two-sided contract, handler-side optional, daemon-side mandatory post-classifier). EM-005a (§4.1) amended: `kind` enum extended from `{default, reconciliation_verdict}` to `{default, reconciliation_verdict, gate_decision}`; new bullet for `gate_decision` semantics; N-1 routing parenthetical clarification added. New **EM-005b** (§4.1) — gate-decision Outcome variant; `GateDecisionPayload` per [control-points.md §6.1.8 CP-058]; five-field record; `decision=permit` correlates `status=SUCCESS`, `decision=deny` correlates `status=FAIL`; cascade routes on `kind` discriminator only; `failure_class` and `kind=gate_decision` are orthogonal. New **EM-005c** (§4.1) — Outcome schema v2 bump rationale; v0.3.3→v0.3.4 additive; N-1 preserved. §6.1 RECORD Outcome: added `failure_class : FailureClass | None` row (before `kind`); `payload` row type-annotation widened to note `GateDecisionPayload` for `kind=gate_decision` (CI-6 remediation). §6.1 ENUM OutcomeKind: added `gate_decision` value. §6.1 new ENUM FailureClass: surfaced from §8 as Outcome carrier citation. §6.1 INFORMATIVE note (VerdictPayload): amended to clarify alias resolves to union of `VerdictEvent` (for `kind=reconciliation_verdict`) AND `GateDecisionPayload` (for `kind=gate_decision`) — CI-6 remediation preserving umbrella-alias design. §6.4 schema evolution: added v0.3.3→v0.3.4 rationale paragraph. CITATION CLEANUP: `[workflow-graph.md §C1 design — context-key registry]` → `[workflow-graph.md §10 WG-031]` (applied in HC-062, references EM not directly affected here). No existing EM IDs renumbered or retired. Refs: hk-wclep. |
 | 2026-05-26 | 0.6.0 | agent (hk-f2bfv) | **C2 DOT amendments: new §7.5 (`dot` mode binding), EM-007 amendment, §10.1 conformance lift, NodeType enum update.** New §7.5 (five sub-sections) introduces the `dot` workflow input contract (EM-055), dispatch equivalence statement (EM-056), `dot`-specific validator obligations (EM-057), per-node-type dispatch table (EM-058), and conformance lift + parallel-fan-out reservation (EM-059). EM-007 (§4.2) amended in place to admit `handler_ref` on `non-agentic` and `gate` nodes; pre-C4 prohibition superseded (EM-060 bookkeeping handle). §10.1 Core MVH and Post-MVH paragraphs updated to include EM-055..EM-059 as mandatory conformance targets and add gating clause (EM-061 bookkeeping handle). §6.1 ENUM NodeType updated to drop `control-point` (CI-8; breaking change — §6.4 bump recorded here). §4.2.EM-006 updated to reflect four-type catalog. §3 Glossary `workflow_mode` entry extended with §7.5 cross-ref. §4.3.EM-015d cross-ref placeholder resolved to §7.5. §4.3.EM-012 `dot` context-key clause rewritten per §7.5.5.EM-059. §10.2 test obligations added for EM-055..EM-059. CI-1 remediation: all C1 named-anchor references in §7.5 rewritten to use WG-NNN IDs. Contradiction 4 remediation: BI-005 `workflow_ref` reference dropped from EM-055 step 1; artifact path sourced from per-daemon config only at v1. NIT citation fixes: `[handler-contract.md §Outcome]` → `[handler-contract.md §4.2a HC-058]`; `[control-points.md §Node-Type Binding]` → `[control-points.md §4.12 CP-053/CP-054]`. Cross-spec sequencing: C1 + C3 + C4 + C5 + C6 required for full conformance lift (gating clause). Refs: hk-f2bfv. |
 | 2026-05-21 | 0.5.4 | agent (hk-j1aq5) | **Pre-merge rebase step: EM-052 step 2, EM-053 extended.** Inserts a new step 2 into EM-052: if the run worktree directory still exists, the daemon MUST `git rebase main` in the worktree before the FF check (hk-j1aq5). On rebase conflict: `git rebase --abort` then fall through to the EM-053 reopen path with reason `rebase_conflict`. On rebase success: re-resolve both the run-branch tip and `main` tip before the FF check. This eliminates spurious `non_ff_merge` failures when parallel agents land concurrently. Steps renumbered: old 2→3, 3→4, 4→5, 5→6, 6→7, 7→8. References in EM-053 ("step 2", "step 4"), EM-054 ("step 3 and step 4"), and §10.2 test obligations updated accordingly. EM-053 title extended to include `rebase_conflict` as a third trigger. No new requirement IDs; strictly amendatory over v0.5.3. Refs: hk-j1aq5. |
 | 2026-05-18 | 0.5.3 | agent (hk-rwdvm) | **EM-015e grammar catchup: add ENUM ReviewLoopCompletionReason to §6.1.** EM-015e prose at §4.3 already carried all five values (`approved`, `cap_hit`, `blocked`, `no_progress`, `error`) and the code in `internal/core/reviewloopevents_hk7om2q4.go` already emits `error` on malformed-verdict paths. The §6.1 grammar section lacked a formal `ENUM ReviewLoopCompletionReason` block — added here to close the code↔spec surface gap. The `error` value's one-line rationale cites [event-model.md §8.1a.3] which is the normative authority for the `review_loop_cycle_complete` payload. No requirement IDs added, renumbered, or retired; strictly additive over v0.5.2. |

@@ -213,6 +213,61 @@ The handler subprocess MUST emit a `session_log_location` progress-stream messag
 
 Tags: mechanism
 
+### 4.2a Outcome surface (handler-facing cross-check)
+
+The `Outcome` type is owned normatively by [execution-model.md §4.1 EM-005] + EM-005a. Handlers MUST emit Outcomes that conform to that schema; the present section is informative for handler authors **except** for the per-node-type emission obligations enumerated in HC-058 below, which are normative. Where this section and EM-005 conflict, EM-005 wins; this section catalogues handler-facing obligations only.
+
+The handler subprocess delivers the `Outcome` per §4.2.HC-008 as the payload of the final `outcome_emitted` progress-stream message. The watcher (§4.3.HC-011) is the publisher of the bus-side `outcome_emitted` event; the handler does not write the bus directly. Schema-shape changes to the Outcome record are not handler-contract changes — they are coordinated via EM-005a's amendment protocol per [architecture.md §4.6] and surface here only as new emission obligations.
+
+#### HC-058 — Per-node-type Outcome emission obligations
+
+The Outcome a handler emits MUST conform to the per-node-type emission obligations in the table below. The table is normative for the MUST / MUST-NOT clauses each cell names; cells marked "MAY" or "permitted" are informative.
+
+The node-type taxonomy is the collapsed 4-type taxonomy from [execution-model.md §4.2 EM-006] reduced for handler-contract purposes (`control-point` is not a handler-dispatched node per D3 and does not appear in the table). The taxonomy axis here is the **node type that produced the run-dispatch**, not the workflow-graph type — sub-workflow nodes do not themselves dispatch handlers; their expanded children do (see the sub-workflow row note).
+
+| Node type | `status` values | Allowed `payload.kind` values | `failure_class` semantics | `preferred_label` semantics | `context_updates` discipline |
+|---|---|---|---|---|---|
+| **agentic** | `SUCCESS`, `FAIL`, `RETRY`, `PARTIAL_SUCCESS` | `default`; `reconciliation_verdict` ONLY when the agentic node is a reconciliation investigator per [reconciliation/spec.md] | OPTIONAL on `FAIL`; MUST be absent on non-`FAIL`; handler-emitted value is a HINT; daemon back-fills from HC-020 sentinel when handler omits; daemon override is authoritative per HC-059. | MAY carry a verdict string when the workflow uses verdict-routing per the D-verdict-surfacing pattern (e.g. `"APPROVE"`, `"REQUEST_CHANGES"`, `"BLOCK"`). MUST NOT be used as machine-readable rationale carrier — that is `payload`'s role per HC-060. | Handler MAY emit any string keys; only **registered keys** per the active workflow's context-key list (see HC-062) are routable as edge-LHS terms per [execution-model.md §4.10 EM-041]. |
+| **non-agentic** (tool-style) | `SUCCESS`, `FAIL`, `RETRY`, `PARTIAL_SUCCESS` | `default` only at v1. Future tool-style payload kinds extend EM-005a per [architecture.md §4.6]. | OPTIONAL on `FAIL`; MUST be absent on non-`FAIL`; same handler-hint + daemon-back-fill rule as agentic. | MAY carry a routing hint string; same prose-vs-rationale split as agentic. | Same registered-key discipline as agentic; tool outputs typically populate `context_updates` with captured summaries. |
+| **gate** | `SUCCESS` (≡ permit) OR `FAIL` (≡ deny). `RETRY` and `PARTIAL_SUCCESS` MUST NOT be emitted — gate evaluation is a single-shot decision per [control-points.md §4.2 CP-006]. | `default` OR `gate_decision`. `kind = gate_decision` is REQUIRED when the gate's audit posture (per [control-points.md §4.8 CP-040]) requires structured rationale capture; otherwise `default` is acceptable. A deny emitted as `default` without rationale capture is permitted at v1; pass-2-and-beyond may tighten this. | OPTIONAL on `FAIL`; MUST be absent on non-`FAIL`; the failure class for a gate deny is informationally distinct from the gate rationale and MAY be set alongside `kind = gate_decision` (e.g. a `budget_exhausted` deny carries both `failure_class = budget_exhausted` and `kind = gate_decision` with `policy_id = budget-gate`). | The verdict-routing pattern: `preferred_label = "permit"` on `SUCCESS`, `"deny"` on `FAIL`. This is the cascade's routing carrier; `payload` is the audit carrier. | Gate evaluators SHOULD NOT emit `context_updates` (a gate's job is to permit / deny, not to mutate context); when emitted, the same registered-key discipline applies. |
+| **sub-workflow** | N/A — sub-workflow boundary nodes MUST NOT emit an Outcome. | N/A | N/A | N/A | N/A. The parent's cascade observes the last-expanded-node's Outcome verbatim per [execution-model.md §4.10 EM-036a], including `kind`, `payload`, `failure_class`, and `context_updates`. Sub-workflow handler authors MUST NOT write a synthetic terminal Outcome at the boundary; the boundary is a graph-level construct, not a handler dispatch site. |
+
+**Testability note** (mirrors §4.2.HC-006a): each row is independently testable against the twin handler harness per §4.8. A conforming handler asserts MUST clauses by Outcome shape (e.g. a gate handler emitting `RETRY` is non-conforming and the twin MUST flag it).
+
+Tags: mechanism
+
+#### HC-059 — `failure_class` is a handler hint; daemon classification is authoritative
+
+A handler emitting `Outcome.status = FAIL` MAY set `Outcome.failure_class` to one of the six values declared in [execution-model.md §8] (`transient`, `structural`, `deterministic`, `canceled`, `budget_exhausted`, `compilation_loop`). The handler-emitted value is a HINT; the daemon back-fills `failure_class` from the §4.5 HC-020 sentinel classification path when the handler omits it, and the daemon's classification is AUTHORITATIVE when handler and daemon disagree. The engine-side post-classifier `Outcome` MUST carry `failure_class` when `status = FAIL`; the handler-side value is optional.
+
+On handler / daemon disagreement, the daemon MUST log the disagreement (event-model record `failure_class_disagreement` carrying both values plus the run-id and node-id) and proceed with the daemon's classification. At v1 the disagreement is log-only; whether to promote disagreement to a reconciliation Cat 6 escalation is OQ-HC-013 (see §11).
+
+The value `compilation_loop` is **daemon-only**: handlers MUST NOT self-classify as `compilation_loop` because compilation-loop detection requires daemon-side state (per-node attempt history per [execution-model.md §4.10 EM-046b]) the handler does not have. A handler-emitted `failure_class = compilation_loop` MUST be overridden to `structural` by the daemon (treated as a malformed hint) and logged via the same `failure_class_disagreement` event.
+
+The `failure_class` field is carrier-only; classification authority remains with the daemon per HC-020 and [execution-model.md §8]. EM-005 v2's `failure_class` row (per [execution-model.md §4.1 EM-005c]) is the schema home; this requirement governs handler-side emission discipline.
+
+Tags: mechanism
+
+#### HC-060 — `kind = gate_decision` is the rationale carrier for gate Outcomes
+
+Handlers emitting Outcomes from a gate node (per HC-058) MUST follow the gate-decision rationale-carrier rule: when the gate's policy requires structured rationale capture per [control-points.md §4.8 CP-040], the handler MUST emit `outcome.kind = "gate_decision"` with `payload` conforming to the `GateDecisionPayload` schema declared in [control-points.md §6.1.8 CP-058]. When rationale capture is not required by policy, `kind = default` is permitted and `payload` MUST be absent.
+
+The five `GateDecisionPayload` fields (per CP-058) are: `policy_id`, `decision`, `decision_actor`, `decision_evidence_ref` (optional), `resolution_signal_id` (optional; correlates the EM-042a gate-pending resolution signal). Handlers MUST populate `policy_id` and `decision` whenever they emit `kind = gate_decision`; the other fields are populated as available. `decision = permit` MUST correlate with `status = SUCCESS`; `decision = deny` MUST correlate with `status = FAIL`; cross-pairings are non-conforming.
+
+The cascade per [execution-model.md §4.10 EM-041] reads `outcome.status` and `outcome.preferred_label` only; `outcome.payload.*` is NOT a legal LHS in edge conditions per [execution-model.md §4.10 — see D4 edge-condition LHS whitelist]. Workflows that need to discriminate gate-decision outcomes from non-gate outcomes structurally MAY route on `outcome.kind = "gate_decision"` (the discriminator IS legal LHS per D4); `payload` subfields are not LHS-routable.
+
+`notes` (per [execution-model.md §4.1 EM-005]) is freeform string and MUST NOT be parsed by the engine. Handlers that need machine-readable gate rationale MUST use `payload` under `kind = gate_decision` — leaking rationale into `notes` is non-conforming because it defeats audit-replay (the persisted-verdict envelope hash of [control-points.md §4.8 CP-040a] depends on structured payloads, not freeform prose).
+
+Tags: mechanism
+
+#### HC-061 — Sub-workflow boundary handlers MUST NOT emit an Outcome
+
+Per HC-058's sub-workflow row, a node of type `sub-workflow` is a graph-level expansion construct; it does NOT dispatch a handler subprocess. Therefore handler authors writing the implementation of a sub-workflow's *expanded children* MUST NOT emit a synthetic Outcome at the sub-workflow boundary. The parent's cascade observes the last-expanded-node's Outcome verbatim per [execution-model.md §4.10 EM-036a]; emitting a synthetic boundary Outcome would shadow the verbatim-propagation rule and is a structural error.
+
+Twin parity (§4.8) MUST flag any handler that emits an Outcome on a node bound to a sub-workflow expansion as non-conforming with sentinel `ErrStructural` and sub-reason `subworkflow_boundary_emit`.
+
+Tags: mechanism
+
 ### 4.3 Concurrency model
 
 #### HC-011 — Daemon owns exactly one watcher goroutine per active session
@@ -827,6 +882,26 @@ For every handler-lifecycle event type enumerated in §6.4 and §4.2.HC-007, the
 
 Tags: mechanism
 
+### 5.6 Context update discipline (per-workflow registered keys)
+
+The `Outcome.context_updates` map (per [execution-model.md §4.10 EM-041a]) is a free-form key-value map at the wire-protocol level. Handlers MAY emit any string keys. However, only keys that are **registered for the active workflow** are routable as edge-condition LHS terms per the D4 LHS whitelist; unregistered keys are silently dropped from the routing-relevant context with a daemon-side WARNING log.
+
+#### HC-062 — Context-update registered-key list is per-workflow; unregistered keys warn-and-drop
+
+Every workflow MUST declare its `context_keys` registered-key list as a workflow-graph attribute. The list's declaration site is the `.dot` graph-level attribute `context_keys = "key1,key2,..."` per [workflow-graph.md §10 WG-031], NOT a separate YAML file (rationale: the keys are workflow-routing-relevant and belong in the workflow definition, co-located with the edges that route on them; the workflow validator is the natural enforcement site).
+
+A handler emitting `Outcome.context_updates` containing a key NOT in the active workflow's registered list MUST trigger the following daemon-side discipline (resolves design OQ-C3-2 — lean: warn-and-drop):
+
+1. The daemon MUST log an event `context_update_unregistered_key` carrying `{run_id, node_id, key, value_type, workflow_id}`; the value itself is NOT logged (it may contain PII).
+2. The daemon MUST drop the key from the run's shared context update — the post-update context that the §4.10 EM-041a cascade observes does NOT include the unregistered key.
+3. The handler-emitted Outcome remains otherwise conforming; the unregistered key does NOT cause the Outcome to fail validation or classification.
+
+The warn-and-drop posture (rather than reject-as-structural) is deliberate: handler authors should NOT be obligated to know the workflow author's edge-LHS surface. The registered-key list is a routability registry, not an emission-legality registry. A handler that emits a key the workflow does not consume is harmless; the warning surfaces drift so workflow authors can either extend the registry or remove the emission.
+
+Registered keys MUST conform to the identifier grammar declared by [workflow-graph.md §10 WG-031] (a subset of the policy-expression grammar of [control-points.md §6.4]); the validator rejects malformed registered-key declarations at workflow ingest. Reserved keys per [execution-model.md §4.3 EM-012] (`iteration_count`, `last_verdict`, `claude_session_id`, `last_diff_hash` under `workflow_mode = review-loop`) are implicitly registered for review-loop workflows and MUST NOT be re-declared in the workflow's `context_keys` attribute (re-declaration is a validator error).
+
+Tags: mechanism
+
 ## 6. Schemas and data shapes
 
 ### 6.1 Interface and record schemas
@@ -891,7 +966,7 @@ RECORD SessionID:
 
 ```
 RECORD Outcome:
-    -- see [execution-model.md §6.1 Outcome]
+    -- see [execution-model.md §6.1 Outcome v2]
 ```
 
 **Sentinel errors (Go var declarations).** Five primary classes plus two structural sub-sentinels. See §8 for detection rules; routing is owned by [execution-model.md §8].
@@ -1074,6 +1149,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 - **[architecture.md §6.1]** — `agent_type` identifier shape; LaunchSpec carries the identifier.
 - **[architecture.md §4.9]** — centralized-controller principle; the watcher/adapter split (§4.3) and cross-queue handoff rule (§4.3.HC-016) pin this principle at the concurrency layer.
 - **[execution-model.md §4.1]** — `Outcome` type used as the payload of `outcome_emitted` (§4.2.HC-008).
+- **[control-points.md §6.1.8 CP-058 (GateDecisionPayload schema)]** — HC-060 cites this record; the fields are declared there and not redeclared here.
 - **[execution-model.md §4.3]** — `Run` and `bead_id` fields; LaunchSpec carries `run_id` and optional `bead_id`.
 - **[execution-model.md §4.9]** — workflow validator resolves `handler_ref` and `required_skills` before launch.
 - **[execution-model.md §8]** — failure taxonomy and routing; the five primary sentinel classes of §4.5 map to the failure classes there, and routing of `agent_failed` / `budget_exhausted` / `run_failed` to retry / re-plan / terminal paths is owned there.
@@ -1098,6 +1174,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 - **[reconciliation/spec.md §4.4 Snapshot-token binding]** — LaunchSpec's `snapshot_token` is read by investigator-agent handlers; the token semantics live in reconciliation.
 - **[operator-nfr.md §4.9 Observability protocol]** — the redaction registry (§4.7) is one of the enforcement points for operator-nfr's "no secrets in event log / audit record" invariant.
 - **[operator-nfr.md §4.7 Security posture]** — skill-injection policy enforcement (network egress, sandbox) consumes this spec's provisioning hook.
+- **[execution-model.md §4.1 EM-005b (gate-decision Outcome variant)]** — co-owned with EM; HC-060 is the handler-side emission rule for gate-decision Outcomes; EM-005b is the spec-side schema requirement.
 
 ## 10. Conformance
 
@@ -1217,10 +1294,18 @@ Owner: foundation-author
 Blocks: none (MVH: accepted risk for single-operator local execution)
 Default-if-unresolved: Accept TOCTOU risk at MVH; revisit with binary-signing post-MVH.
 
+#### OQ-HC-013 — Handler/daemon `failure_class` disagreement: log-only or escalate?
+
+Question: HC-059 specifies that handler/daemon `failure_class` disagreement is log-only at v1 (event `failure_class_disagreement`). Should disagreements above a threshold rate be promoted to a reconciliation Cat 6 escalation during operational hardening?
+Owner: HC + reconciliation
+Blocks: none (v1: log-only)
+Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagreement rate exceeds a threshold during pass-2 operational hardening. Threshold calibration is deferred.
+
 ## 12. Revision history
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-26 | 0.5.0 | agent (hk-wclep) | **C3 amendments: new §4.2a Outcome surface + §5.6 context-update discipline (HC-058..HC-062).** New **§4.2a** (inserted between §4.2 and §4.3): per-node-type Outcome emission obligations table (HC-058); `failure_class` handler-hint + daemon-back-fill two-sided contract (HC-059; CI-5 remediation: handler-side OPTIONAL on FAIL, MUST be absent on non-FAIL; engine-side MUST be populated post-classifier); `kind=gate_decision` rationale-carrier rule (HC-060); sub-workflow boundary handler MUST NOT emit Outcome (HC-061). New **§5.6**: context-update registered-key discipline (HC-062); `context_keys` DOT graph-level attribute per [workflow-graph.md §10 WG-031] (CITATION CLEANUP: `[workflow-graph.md §C1 design — context-key registry]` → `[workflow-graph.md §10 WG-031]`); warn-and-drop semantics for unregistered keys. §6.1 `RECORD Outcome` cite updated from `§6.1 Outcome` to `§6.1 Outcome v2`. §9.1 adds `[control-points.md §6.1.8 CP-058]` dependency. §9.3 adds `[execution-model.md §4.1 EM-005b]` co-reference. §11 adds OQ-HC-013 (failure_class disagreement escalation threshold). No existing HC IDs renumbered. Refs: hk-wclep. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. Handler + Session + Adapter interfaces; wire protocol with stdin/file-path LaunchSpec delivery and `handler_capabilities` version negotiation; six sentinel classes plus `ErrProtocolMismatch`; silent-hang state machine with T = 120s default; secrets redaction registry with compile-time payload check; twin parity invariant; skill-injection obligation; handler-as-modularity-boundary. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 review integration. Pinned Unix-domain-socket transport and NDJSON framing (HC-007, HC-007a, HC-044 consolidated). Added post-outcome shutdown window HC-008a (T_shutdown=10s). Reworded session_log_location / outcome_emitted emitter identity: handler emits on progress stream; watcher translates to bus event (HC-007, HC-008, HC-010, §6.4). Restructured error taxonomy as 5 primary + 2 structural sub-sentinels (HC-020, HC-021, HC-022); §8 rewritten as detection-only, routing owned by execution-model §8. Split skill-injection fail-launch into structural (HC-048 unresolvable) and transient (HC-048a resolved-but-provisioning-failed, retry with backoff); added `provisioning_timeout` LaunchSpec field. Added handler heartbeat obligation HC-026a (≤T/2 cadence); raised silent-hang default T to 600s; silent-hang triggers on absent heartbeats. Carved out in-process unit-test fakes from HC-035/HC-036 twin-binary rule. Added HC-INV-005 (no launch without verified binary). Tightened HC-INV-004 watcher-emission ordering. Fixed HC-042 `system_handler=true` declaration subject. Added control-points Registry cross-ref to §9.1. Added OQ-HC-006 (cross-generation GC), OQ-HC-007 (skill-on-disk shape). |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N / §6.1 map per the v0.2 NOTE: §1.1→§4.1 (×1 in §9 cross-refs), §1.2→§4.2 (×1 in §9 cross-refs), §1.4→§4.4 (×1 in §9 cross-refs), §1.6→§4.8 (×1 in §4.3.HC-016 work-queue clause), §1.6a→§6.1 (×3 in §6.1 Handler.AgentType() comment, §6.1 LaunchSpec.agent_type comment, and §9 cross-refs — chose §6.1 since each site cites the identifier shape, not the normative requirement), §1.8→§4.9 (×2 in §9 cross-refs and §A.3 rationale footer). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §4.2.HC-010 (session_log_location progress-stream payload; note: task doc listed HC-008, but the bare identifier actually lives in HC-010 which owns `session_log_location` emission per the v0.2 HC-010 split). No requirement IDs, invariants, or schemas were touched. |

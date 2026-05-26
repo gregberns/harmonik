@@ -629,73 +629,70 @@ func runReviewLoop(
 		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
 		// the configured timeout, same as the implementer phase.
 		//
-		// When adapterRegistry is nil (test mode with no adapters) skip the guard
-		// and fall through to waitWithSocketGrace as before. When ErrAgentReadyTimeout
-		// fires: kill, reap, emit rlErrorResult so the caller (workloop) can reopen
-		// the bead via the same error envelope shape as the implementer phase.
-		_ = revTapCh // suppress lint if adapterRegistry is nil and block is skipped
-		if deps.adapterRegistry != nil {
-			revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
-			if revAdapterErr != nil {
-				// No adapter for claude-code — non-fatal; skip ready-wait.
-				fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) bead %s iter %d: %v (skipping ready-wait)\n",
-					beadID, state.iterationCount, revAdapterErr)
-			} else {
-				// Derive a child context that cancels when the reviewer watcher finishes
-				// (handler exit), preventing a full-timeout block on reviewer crash.
-				//
-				// Substrate path: revWatcher is nil when deps.substrate != nil
-				// (tmux-hosted sessions return nil from handler.launchViaSubstrate
-				// when subSess.Stdout() is nil — see internal/handler/handler.go:291).
-				// In that case there is no progress-stream goroutine to await; the
-				// watcher-done coordination goroutine is simply skipped and the
-				// ready-wait below relies on context cancellation alone.
-				// Bead ref: hk-yjduq (DOGFOOD-BLOCKER #2 — nil watcher in tmux path).
-				revReadyCtx, revReadyCancel := context.WithCancel(ctx)
-				if revWatcher != nil {
-					go func() {
-						select {
-						case <-revWatcher.Done():
-							revReadyCancel()
-						case <-revReadyCtx.Done():
-						}
-					}()
-				}
-
-				revEventSrc := newChanAgentEventSource(revTapCh)
-				revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, deps.agentReadyTimeout)
-				revReadyCancel() // always release the watcher-done goroutine above
-
-				if revReadyErr == ErrAgentReadyTimeout {
-					// HC-056: reviewer agent_ready_timeout — kill, reap, error result.
-					fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
-						beadID, state.iterationCount, runID.String(), revReadyErr)
-					_ = revSess.Kill(ctx)
-					// Wait for the reviewer watcher goroutine to exit with a
-					// deadline — agentReadyKillReapTimeout prevents indefinite
-					// blocking if the killed subprocess does not cooperate.
-					// Substrate path: revWatcher is nil when tmux-hosted (no
-					// stdout pipe — see handler.go:291); skip the watcher reap
-					// and rely on sess.Wait below. Bead ref: hk-yjduq.
-					if revWatcher != nil {
-						select {
-						case <-revWatcher.Done():
-						case <-time.After(agentReadyKillReapTimeout):
-							fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
-								beadID, state.iterationCount, runID.String())
-						}
+		// Precondition: deps.adapterRegistry is non-nil (enforced by newWorkLoopDeps;
+		// hk-d8u1y deleted the nil-guard). When ErrAgentReadyTimeout fires: kill,
+		// reap, emit rlErrorResult so the caller (workloop) can reopen the bead via
+		// the same error envelope shape as the implementer phase.
+		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+		if revAdapterErr != nil {
+			// No adapter for claude-code — non-fatal; skip ready-wait.
+			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) bead %s iter %d: %v (skipping ready-wait)\n",
+				beadID, state.iterationCount, revAdapterErr)
+		} else {
+			// Derive a child context that cancels when the reviewer watcher finishes
+			// (handler exit), preventing a full-timeout block on reviewer crash.
+			//
+			// Substrate path: revWatcher is nil when deps.substrate != nil
+			// (tmux-hosted sessions return nil from handler.launchViaSubstrate
+			// when subSess.Stdout() is nil — see internal/handler/handler.go:291).
+			// In that case there is no progress-stream goroutine to await; the
+			// watcher-done coordination goroutine is simply skipped and the
+			// ready-wait below relies on context cancellation alone.
+			// Bead ref: hk-yjduq (DOGFOOD-BLOCKER #2 — nil watcher in tmux path).
+			revReadyCtx, revReadyCancel := context.WithCancel(ctx)
+			if revWatcher != nil {
+				go func() {
+					select {
+					case <-revWatcher.Done():
+						revReadyCancel()
+					case <-revReadyCtx.Done():
 					}
-					_ = revSess.Wait(ctx)
-					if deps.hookStore != nil {
-						deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
-					}
-					result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))
-					emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-					return result
-				}
-				// revReadyErr == nil (agent_ready observed) OR context.Canceled (watcher
-				// exited first or ctx cancelled). Fall through to waitWithSocketGrace.
+				}()
 			}
+
+			revEventSrc := newChanAgentEventSource(revTapCh)
+			revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, deps.agentReadyTimeout)
+			revReadyCancel() // always release the watcher-done goroutine above
+
+			if revReadyErr == ErrAgentReadyTimeout {
+				// HC-056: reviewer agent_ready_timeout — kill, reap, error result.
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
+					beadID, state.iterationCount, runID.String(), revReadyErr)
+				_ = revSess.Kill(ctx)
+				// Wait for the reviewer watcher goroutine to exit with a
+				// deadline — agentReadyKillReapTimeout prevents indefinite
+				// blocking if the killed subprocess does not cooperate.
+				// Substrate path: revWatcher is nil when tmux-hosted (no
+				// stdout pipe — see handler.go:291); skip the watcher reap
+				// and rely on sess.Wait below. Bead ref: hk-yjduq.
+				if revWatcher != nil {
+					select {
+					case <-revWatcher.Done():
+					case <-time.After(agentReadyKillReapTimeout):
+						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+							beadID, state.iterationCount, runID.String())
+					}
+				}
+				_ = revSess.Wait(ctx)
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+				}
+				result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			// revReadyErr == nil (agent_ready observed) OR context.Canceled (watcher
+			// exited first or ctx cancelled). Fall through to waitWithSocketGrace.
 		}
 
 		// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).

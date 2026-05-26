@@ -7,11 +7,13 @@ package core
 // The five fields capture both the evaluator's verdict and the audit trail
 // required to interpret the decision under replay per CP-058.
 //
-// # Status coupling
+// # Status coupling (OPEN QUESTION — EM-005b vs CP-058)
 //
-// A gate_decision Outcome's status MUST be SUCCESS regardless of the Decision
-// field value (a deny is a successfully-evaluated Gate per CP-058). A handler
-// that cannot evaluate the Gate MUST return status=FAIL with no payload instead.
+// CP-058 treats a deny as a successfully-evaluated Gate (status=SUCCESS).
+// EM-005b says decision=deny MUST correlate status=FAIL. The two specs
+// disagree; this code follows CP-058 (gate-semantics owner). See OQ bead
+// hk-lt0w7 for the tracking item. A handler that cannot evaluate
+// the Gate MUST return status=FAIL with no payload instead.
 //
 // # ResolutionSignalID coupling
 //

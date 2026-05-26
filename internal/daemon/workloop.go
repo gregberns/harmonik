@@ -855,8 +855,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				continue
 			}
-			// Hydrate labels from the full ShowBead record (hk-a0htu).
+			// Hydrate from the full ShowBead record (hk-a0htu).
 			beadRecord.Labels = showRecord.Labels
+			beadRecord.Title = showRecord.Title
+			beadRecord.Description = showRecord.Description
 		}
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
@@ -917,6 +919,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead label-hydrate %s error (labels nil, falling through): %v\n", beadID, showErr)
 			} else {
 				beadRecord.Labels = showRecord.Labels
+				beadRecord.Title = showRecord.Title
+				beadRecord.Description = showRecord.Description
 			}
 		}
 

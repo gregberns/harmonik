@@ -354,6 +354,12 @@ func runReviewLoop(
 		// implEI carries exit code + stderr tail; surfaced into the no-commit
 		// failure summary below (hk-loga9, extends hk-ajhqw's single-mode fix).
 
+		// hk-e6mtt: destroy the implementer tmux window after the session completes.
+		// Mirrors the single-mode fix in workloop.go. Guarded by implWatcher==nil (tmux path).
+		if implWatcher == nil {
+			_ = implSess.Kill(context.Background())
+		}
+
 		// Emit implementer_phase_complete (hk-cd8yu) immediately after the
 		// implementer session ends and before any reviewer phase begins.
 		// commitLanded is true when the worktree HEAD has advanced past
@@ -711,6 +717,12 @@ func runReviewLoop(
 		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,
 			runID.String(), revArtifacts.claudeSessionID)
 		_ = revEI
+
+		// hk-e6mtt: destroy the reviewer tmux window after the session completes.
+		// Mirrors the implementer fix above and the single-mode fix in workloop.go.
+		if revWatcher == nil {
+			_ = revSess.Kill(context.Background())
+		}
 
 		// Close reviewer's hook session — late hooks must not bleed into the
 		// next iteration's implementer-resume (CHB-025 isolation).

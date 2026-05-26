@@ -49,6 +49,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -1065,8 +1066,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
 	// handled by runReviewLoop in reviewloop.go.
 	//
+	// dot mode: DOT-defined workflow graph; loader validates the artifact,
+	// then (stub) falls through to single-mode until the cascade engine
+	// (hk-bf85t) lands.
+	//
 	// single mode (default MVH): one-shot implementer dispatch.
-	if workflowMode == core.WorkflowModeReviewLoop {
+	switch workflowMode {
+	case core.WorkflowModeReviewLoop:
 		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch)
 
 		transitionTID, _ := deps.tidGen.Next()
@@ -1097,6 +1103,36 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, rlResult.summary)
 		}
 		return
+
+	case core.WorkflowModeDot:
+		// DOT workflow mode (hk-waj4b): load and validate the .dot artifact,
+		// then fall through to single-mode dispatch as a stub until the full
+		// cascade engine (hk-bf85t) is implemented.
+		//
+		// Resolve .dot path: convention is <projectDir>/workflow.dot.
+		// TODO(hk-bf85t): add --workflow-ref flag or per-bead config to specify
+		// an arbitrary .dot path; for now we use the project-level convention.
+		dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		graph, loadErr := workflow.LoadDotWorkflow(dotPath)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), loadErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("workflow_load: %v", loadErr))
+			emitDone(false, fmt.Sprintf("workflow_load: %v", loadErr))
+			return
+		}
+		// DOT artifact loaded + validated successfully.
+		// TODO(hk-bf85t): hand graph to the cascade engine for full DOT-driven
+		// dispatch. Until then, log success and fall through to single-mode.
+		fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow loaded for bead %s (graph %q, %d nodes, %d edges); falling through to single-mode (cascade engine not yet wired — hk-bf85t)\n",
+			beadID, graph.Name, len(graph.Nodes), len(graph.Edges))
+		// Fall through to single-mode dispatch below.
+
+	default:
+		// WorkflowModeSingle or any normalised-to-single value: fall through
+		// to the single-mode dispatch path below.
 	}
 
 	// ─── Single-mode dispatch (production path) ───────────────────────────────

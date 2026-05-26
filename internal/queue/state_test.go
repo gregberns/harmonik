@@ -11,7 +11,7 @@ package queue_test
 //   - QM-032: no re-entry of terminal states.
 //   - QM-034: failed items do not interrupt sibling dispatches
 //     (active group with in-flight items stays active).
-//   - QM-035: stream HOL blocking.
+//   - QM-035: stream HOL blocking (deferred-only; dispatched head is skipped per hk-9a27q).
 //   - QM-036: wave unordered admission with deferred siblings skipped.
 //   - ErrGroupNil / ErrQueueIDEmpty sentinel errors.
 //
@@ -414,17 +414,22 @@ func TestEligibleItems_Stream_HOLBlocked_Deferred(t *testing.T) {
 	}
 }
 
-// TestEligibleItems_Stream_HOLBlocked_Dispatched verifies that a stream with
-// a dispatched head item returns no eligible items (QM-035).
-func TestEligibleItems_Stream_HOLBlocked_Dispatched(t *testing.T) {
+// TestEligibleItems_Stream_DispatchedHeadSkipped verifies that a stream with
+// an in-flight (dispatched) head skips to the next pending item (QM-035,
+// hk-9a27q). A dispatched head does NOT HOL-block subsequent pending items;
+// this enables --max-concurrent > 1 on stream groups.
+func TestEligibleItems_Stream_DispatchedHeadSkipped(t *testing.T) {
 	t.Parallel()
 	g := stateFixtureGroup(0, queue.GroupKindStream, queue.GroupStatusActive, []queue.Item{
-		stateFixtureItem("hk-mmm01", queue.ItemStatusDispatched), // head: in flight
-		stateFixtureItem("hk-mmm02", queue.ItemStatusPending),    // tail: must not skip
+		stateFixtureItem("hk-mmm01", queue.ItemStatusDispatched), // head: in flight — skipped
+		stateFixtureItem("hk-mmm02", queue.ItemStatusPending),    // tail: eligible
 	})
 	eligible := queue.EligibleItems(&g)
-	if len(eligible) != 0 {
-		t.Errorf("EligibleItems = %d items, want 0 (stream HOL blocked by dispatched head)", len(eligible))
+	if len(eligible) != 1 {
+		t.Fatalf("EligibleItems = %d items, want 1 (dispatched head skipped, tail pending eligible)", len(eligible))
+	}
+	if string(eligible[0].BeadID) != "hk-mmm02" {
+		t.Errorf("eligible[0].BeadID = %q, want %q", eligible[0].BeadID, "hk-mmm02")
 	}
 }
 

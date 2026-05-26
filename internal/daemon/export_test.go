@@ -19,6 +19,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -175,6 +176,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-kac8g, hk-m0k0a.
 	HandlerPauseController *HandlerPauseController
+
+	// StaleBlockerCloser, when non-nil, enables the claim-failure auto-close
+	// path (hk-rnsjs). When nil the behaviour is disabled (safe default for
+	// tests that do not exercise this path).
+	//
+	// Bead ref: hk-rnsjs.
+	StaleBlockerCloser lifecycle.BeadCat3cCloser
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -268,6 +276,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		cancelOnQueueExit:      p.CancelOnQueueExit,
 		stopDispatchCtx:        p.StopDispatchCtx,
 		handlerPauseController: p.HandlerPauseController,
+		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
 	}
 }
 
@@ -1016,6 +1025,14 @@ type quitSenderExported = quitSender
 // Bead: hk-trjef.
 func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
 	return beadAlreadySubsumedInMain(ctx, projectDir, beadID)
+}
+
+// ExportedAutoCloseStaleBlockersOnClaimFailure exposes
+// autoCloseStaleBlockersOnClaimFailure for unit tests via WorkLoopDepsParams.
+//
+// Bead: hk-rnsjs.
+func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p WorkLoopDepsParams, beadID core.BeadID) {
+	autoCloseStaleBlockersOnClaimFailure(ctx, ExportedWorkLoopDeps(p), beadID)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

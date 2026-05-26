@@ -304,6 +304,16 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-kac8g, hk-m0k0a.
 	heldEventDedup map[string]struct{}
+
+	// staleBlockerCloser, when non-nil, is used by the claim-failure path to
+	// auto-close stale blockers (beads already subsumed in main) so the blocked
+	// bead can be retried on the next workloop iteration. When nil the
+	// auto-close behaviour is disabled (backward-compat for test stubs that do
+	// not need it). Production wires the *brcli.Adapter (which satisfies
+	// lifecycle.BeadCat3cCloser via SweepCloseBead).
+	//
+	// Bead ref: hk-rnsjs.
+	staleBlockerCloser lifecycle.BeadCat3cCloser
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -428,7 +438,8 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil, // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueStore:          nil,    // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		staleBlockerCloser:  adapter, // hk-rnsjs: auto-close stale blockers on claim failure
 	}, nil
 }
 
@@ -917,6 +928,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			// Claim conflict or transient error — surface to stderr and retry.
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
+			// hk-rnsjs: if the bead is blocked by stale dependencies already in
+			// main, auto-close them so the next workloop retry can claim the bead.
+			autoCloseStaleBlockersOnClaimFailure(ctx, deps, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			if queueItemIndex >= 0 && deps.queueStore != nil {
 				lq := deps.queueStore.LockForMutation()
@@ -1741,6 +1755,63 @@ func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID co
 		return false
 	}
 	return strings.Contains(string(out), "Refs: "+string(beadID))
+}
+
+// autoCloseStaleBlockersOnClaimFailure is called after a ClaimBead failure to
+// detect and auto-close stale blocker beads whose implementations have already
+// landed on main. When br rejects a claim because the target bead is "blocked"
+// (has open dependencies not yet closed in Beads), but those dependencies were
+// already merged to main, the bead cannot be claimed until the stale blocker
+// records are closed.
+//
+// The function:
+//  1. Calls ShowBead to confirm the bead's current status is CoarseStatusBlocked.
+//  2. Collects all bead IDs referenced in the bead's edge list (both directions).
+//  3. For each candidate blocker, calls beadAlreadySubsumedInMain.
+//  4. If subsumed, calls SweepCloseBead to close the stale record.
+//
+// On the next workloop retry the bead should no longer be blocked and
+// ClaimBead will succeed.
+//
+// No-op when deps.staleBlockerCloser is nil (backward-compat for test stubs
+// that do not set this field).
+//
+// Bead ref: hk-rnsjs.
+func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps, beadID core.BeadID) {
+	if deps.staleBlockerCloser == nil {
+		return
+	}
+	record, err := deps.brAdapter.ShowBead(ctx, beadID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers ShowBead %s: %v\n", beadID, err)
+		return
+	}
+	if record.Status != core.CoarseStatusBlocked {
+		return
+	}
+	// Collect unique bead IDs referenced in edges that are not beadID itself.
+	// Both directions are scanned: ShowBead encodes Dependencies (beads this
+	// bead blocks; edge From=beadID) and Dependents (beads that block this
+	// bead; edge To=beadID). Any bead appearing in either direction is a
+	// candidate stale blocker.
+	seen := make(map[core.BeadID]struct{})
+	for _, edge := range record.Edges {
+		if edge.FromBeadID != beadID {
+			seen[edge.FromBeadID] = struct{}{}
+		}
+		if edge.ToBeadID != beadID {
+			seen[edge.ToBeadID] = struct{}{}
+		}
+	}
+	for blockerID := range seen {
+		if !beadAlreadySubsumedInMain(ctx, deps.projectDir, blockerID) {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
+		if closeErr := deps.staleBlockerCloser.SweepCloseBead(ctx, deps.brTimeoutCfg, blockerID); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: SweepCloseBead stale blocker %s: %v\n", blockerID, closeErr)
+		}
+	}
 }
 
 // drainCancelledQueue transitions the active queue (if any) to

@@ -554,6 +554,7 @@ FLAGS
   --review-loop          Deprecated: review-loop is now the default; this flag is a no-op
   --notify-stream        Write one line per bead completion to stdout
   --notify-stream=PATH   Same, but write to a FIFO or file
+  --wave                 Use wave-mode queue (no mid-flight appends; default: stream)
   --project DIR          Project directory (default: current working directory)
 
 EXIT CODES

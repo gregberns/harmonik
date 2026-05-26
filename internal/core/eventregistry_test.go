@@ -17,7 +17,7 @@ import (
 func eventRegistryReset() {
 	globalEventRegistry.mu.Lock()
 	defer globalEventRegistry.mu.Unlock()
-	globalEventRegistry.constructors = make(map[string]func() EventPayload)
+	globalEventRegistry.entries = make(map[string]typeEntry)
 }
 
 // Test-only payload types — defined here so they never leak to production code.
@@ -190,6 +190,146 @@ func TestRegistry(t *testing.T) {
 		evB := minimalEvent(t, typeB, rawB)
 		if _, err := evB.DecodePayload(); err != nil {
 			t.Errorf("DecodePayload for typeB after concurrent registration: %v", err)
+		}
+	})
+}
+
+// TestEV028_LookupTypeSchemaVersion verifies per-type schema version tracking
+// per EV-028 (event-model.md §4.7).
+//
+// Spec ref: event-model.md §4.7 EV-028 — "schema_version is an integer on the
+// envelope and MUST match the schema version of the payload for that type."
+func TestEV028_LookupTypeSchemaVersion(t *testing.T) {
+	t.Run("DefaultVersion1_ViaRegisterEventType", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		const typeName = "test.ev028.default"
+		if err := RegisterEventType(typeName, func() EventPayload { return &testPayloadAlpha{} }); err != nil {
+			t.Fatalf("RegisterEventType: %v", err)
+		}
+
+		got, ok := LookupTypeSchemaVersion(typeName)
+		if !ok {
+			t.Fatal("LookupTypeSchemaVersion: type not found after registration")
+		}
+		if got != 1 {
+			t.Errorf("LookupTypeSchemaVersion: got %d, want 1 (default for RegisterEventType)", got)
+		}
+	})
+
+	t.Run("ExplicitVersion_ViaRegisterEventTypeAtVersion", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		const typeName = "test.ev028.explicit"
+		const wantVersion = 3
+		if err := RegisterEventTypeAtVersion(typeName, func() EventPayload { return &testPayloadAlpha{} }, wantVersion); err != nil {
+			t.Fatalf("RegisterEventTypeAtVersion: %v", err)
+		}
+
+		got, ok := LookupTypeSchemaVersion(typeName)
+		if !ok {
+			t.Fatal("LookupTypeSchemaVersion: type not found after versioned registration")
+		}
+		if got != wantVersion {
+			t.Errorf("LookupTypeSchemaVersion: got %d, want %d", got, wantVersion)
+		}
+	})
+
+	t.Run("UnknownType_ReturnsFalse", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		_, ok := LookupTypeSchemaVersion("no-such-type")
+		if ok {
+			t.Error("LookupTypeSchemaVersion: expected (0, false) for unregistered type, got ok=true")
+		}
+	})
+
+	t.Run("InvalidVersion_ReturnsError", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		err := RegisterEventTypeAtVersion("test.ev028.invalid", func() EventPayload { return &testPayloadAlpha{} }, 0)
+		if err == nil {
+			t.Fatal("RegisterEventTypeAtVersion with version=0: expected error, got nil")
+		}
+	})
+}
+
+// TestEV028_ValidateEnvelopeSchemaVersion verifies the EV-028 envelope
+// schema_version validation.
+//
+// Spec ref: event-model.md §4.7 EV-028 — "schema_version ... MUST match the
+// schema version of the payload for that type."
+func TestEV028_ValidateEnvelopeSchemaVersion(t *testing.T) {
+	t.Run("MatchingVersion_ReturnsNil", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		const typeName = "test.ev028.match"
+		if err := RegisterEventType(typeName, func() EventPayload { return &testPayloadAlpha{} }); err != nil {
+			t.Fatalf("RegisterEventType: %v", err)
+		}
+
+		ev := minimalEvent(t, typeName, json.RawMessage(`{}`))
+		// minimalEvent sets SchemaVersion=1 and RegisterEventType defaults to 1.
+		if err := ValidateEnvelopeSchemaVersion(ev); err != nil {
+			t.Errorf("ValidateEnvelopeSchemaVersion: expected nil for matching versions, got %v", err)
+		}
+	})
+
+	t.Run("MismatchedVersion_ReturnsErrSchemaVersionMismatch", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		const typeName = "test.ev028.mismatch"
+		if err := RegisterEventTypeAtVersion(typeName, func() EventPayload { return &testPayloadAlpha{} }, 2); err != nil {
+			t.Fatalf("RegisterEventTypeAtVersion: %v", err)
+		}
+
+		// Envelope carries version 1 but type is registered at version 2.
+		ev := minimalEvent(t, typeName, json.RawMessage(`{}`)) // minimalEvent sets SchemaVersion=1
+		err := ValidateEnvelopeSchemaVersion(ev)
+		if err == nil {
+			t.Fatal("ValidateEnvelopeSchemaVersion: expected ErrSchemaVersionMismatch, got nil")
+		}
+		if !errors.Is(err, ErrSchemaVersionMismatch) {
+			t.Errorf("ValidateEnvelopeSchemaVersion: got %v, want errors.Is(ErrSchemaVersionMismatch)", err)
+		}
+	})
+
+	t.Run("UnknownType_ReturnsErrUnknownEventType", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		ev := minimalEvent(t, "no-such-type", json.RawMessage(`{}`))
+		err := ValidateEnvelopeSchemaVersion(ev)
+		if err == nil {
+			t.Fatal("ValidateEnvelopeSchemaVersion: expected ErrUnknownEventType, got nil")
+		}
+		if !errors.Is(err, ErrUnknownEventType) {
+			t.Errorf("ValidateEnvelopeSchemaVersion: got %v, want errors.Is(ErrUnknownEventType)", err)
+		}
+	})
+
+	t.Run("ExplicitVersionMatch_ReturnsNil", func(t *testing.T) {
+		t.Cleanup(eventRegistryReset)
+
+		const typeName = "test.ev028.explicit.match"
+		const version = 5
+		if err := RegisterEventTypeAtVersion(typeName, func() EventPayload { return &testPayloadAlpha{} }, version); err != nil {
+			t.Fatalf("RegisterEventTypeAtVersion: %v", err)
+		}
+
+		id, err := uuid.NewV7()
+		if err != nil {
+			t.Fatalf("uuid.NewV7: %v", err)
+		}
+		ev := Event{
+			EventID:         EventID(id),
+			SchemaVersion:   version,
+			Type:            typeName,
+			TimestampWall:   time.Now(),
+			SourceSubsystem: "test",
+			Payload:         json.RawMessage(`{}`),
+		}
+		if err := ValidateEnvelopeSchemaVersion(ev); err != nil {
+			t.Errorf("ValidateEnvelopeSchemaVersion: expected nil for matching version %d, got %v", version, err)
 		}
 	})
 }

@@ -34,7 +34,20 @@ var ErrUnknownEventType = errors.New("core: unknown event type")
 // name is registered more than once.
 var ErrDuplicateEventType = errors.New("core: event type already registered")
 
-// eventRegistry holds the per-type constructor map guarded by a mutex.
+// ErrSchemaVersionMismatch is returned by ValidateEnvelopeSchemaVersion when
+// the envelope's schema_version does not match the per-type version declared in
+// the registry per EV-028 (event-model.md §4.7).
+var ErrSchemaVersionMismatch = errors.New("core: envelope schema_version does not match registered per-type schema version")
+
+// typeEntry holds the constructor and per-type schema version for one
+// registered event type. Per-type versions evolve independently per EV-028 /
+// §6.4; bumping one type's version requires an EV-027 foundation amendment.
+type typeEntry struct {
+	constructor   func() EventPayload
+	schemaVersion int // declared schema version for this type's payload; >= 1
+}
+
+// eventRegistry holds the per-type entry map guarded by a mutex.
 //
 // Registration is startup-time per EV-034 (see TODO below), but the mutex
 // prevents data-race during init-order weirdness where multiple init() calls
@@ -55,15 +68,17 @@ var ErrDuplicateEventType = errors.New("core: event type already registered")
 var secretPrefixRe = regexp.MustCompile(`(?i)(secret|token|password|api[_-]?key|auth)`)
 
 type eventRegistry struct {
-	mu           sync.Mutex
-	constructors map[string]func() EventPayload // TODO(hk-hqwn.59.82): hoist registry key from string to EventType when the enum lands. Non-breaking — string-constant assignment to EventType is assignable.
+	mu      sync.Mutex
+	entries map[string]typeEntry // TODO(hk-hqwn.59.82): hoist key from string to EventType when the enum lands.
 }
 
 var globalEventRegistry = &eventRegistry{
-	constructors: make(map[string]func() EventPayload),
+	entries: make(map[string]typeEntry),
 }
 
-// RegisterEventType registers a constructor for the given event type name.
+// RegisterEventType registers a constructor for the given event type name at
+// schema version 1 (the MVH baseline per EV-028 / OQ-EV-004).
+//
 // The constructor is called by DecodePayload to obtain a fresh zero-value
 // target for JSON unmarshaling.
 //
@@ -77,22 +92,88 @@ var globalEventRegistry = &eventRegistry{
 // §8-declared event type; types not in §8 MUST NOT be registered here (see
 // EV-026 for internal-only events that are out of scope for this registry).
 //
+// To register a type at a schema version other than 1, use
+// RegisterEventTypeAtVersion.
+//
 // Returns ErrDuplicateEventType if typeName has already been registered.
 // Thread-safe.
 func RegisterEventType(typeName string, constructor func() EventPayload) error {
+	return RegisterEventTypeAtVersion(typeName, constructor, 1)
+}
+
+// RegisterEventTypeAtVersion registers a constructor for the given event type
+// name at the specified schemaVersion. schemaVersion MUST be >= 1.
+//
+// Per EV-028 (event-model.md §4.7), the declared schemaVersion is the value
+// that ValidateEnvelopeSchemaVersion checks against an incoming event's
+// envelope schema_version field. Per-type versions MAY increment independently;
+// each increment requires an EV-027 foundation amendment per §6.4.
+//
+// Returns ErrDuplicateEventType if typeName has already been registered.
+// Thread-safe.
+func RegisterEventTypeAtVersion(typeName string, constructor func() EventPayload, schemaVersion int) error {
 	if typeName == "" {
-		return fmt.Errorf("core: RegisterEventType: typeName must not be empty")
+		return fmt.Errorf("core: RegisterEventTypeAtVersion: typeName must not be empty")
 	}
 	if constructor == nil {
-		return fmt.Errorf("core: RegisterEventType: constructor must not be nil")
+		return fmt.Errorf("core: RegisterEventTypeAtVersion: constructor must not be nil")
+	}
+	if schemaVersion < 1 {
+		return fmt.Errorf("core: RegisterEventTypeAtVersion: schemaVersion must be >= 1, got %d", schemaVersion)
 	}
 	r := globalEventRegistry
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.constructors[typeName]; exists {
+	if _, exists := r.entries[typeName]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateEventType, typeName)
 	}
-	r.constructors[typeName] = constructor
+	r.entries[typeName] = typeEntry{constructor: constructor, schemaVersion: schemaVersion}
+	return nil
+}
+
+// LookupTypeSchemaVersion returns the per-type schema version registered for
+// typeName. Returns (version, true) when found, or (0, false) when typeName
+// has no registered entry.
+//
+// Per EV-028 (event-model.md §4.7), the envelope's schema_version MUST equal
+// the per-type version returned here. Use ValidateEnvelopeSchemaVersion to
+// enforce this invariant on an incoming Event.
+//
+// Thread-safe.
+func LookupTypeSchemaVersion(typeName string) (int, bool) {
+	r := globalEventRegistry
+	r.mu.Lock()
+	entry, ok := r.entries[typeName]
+	r.mu.Unlock()
+	if !ok {
+		return 0, false
+	}
+	return entry.schemaVersion, true
+}
+
+// ValidateEnvelopeSchemaVersion checks that e.SchemaVersion matches the
+// per-type schema version declared in the registry for e.Type per EV-028.
+//
+// Returns nil when the versions match, ErrUnknownEventType when e.Type is not
+// registered, or a non-nil error wrapping ErrSchemaVersionMismatch when the
+// envelope version differs from the registered per-type version.
+//
+// Spec ref: event-model.md §4.7 EV-028 — "schema_version is an integer on the
+// envelope and MUST match the schema version of the payload for that type."
+//
+// Thread-safe.
+func ValidateEnvelopeSchemaVersion(e Event) error {
+	r := globalEventRegistry
+	r.mu.Lock()
+	entry, ok := r.entries[e.Type]
+	r.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownEventType, e.Type)
+	}
+	if e.SchemaVersion != entry.schemaVersion {
+		return fmt.Errorf("%w: type %q has registered version %d but envelope carries %d",
+			ErrSchemaVersionMismatch, e.Type, entry.schemaVersion, e.SchemaVersion)
+	}
 	return nil
 }
 
@@ -109,12 +190,12 @@ func RegisterEventType(typeName string, constructor func() EventPayload) error {
 func (e Event) DecodePayload() (EventPayload, error) {
 	r := globalEventRegistry
 	r.mu.Lock()
-	constructor, ok := r.constructors[e.Type]
+	entry, ok := r.entries[e.Type]
 	r.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownEventType, e.Type)
 	}
-	payload := constructor()
+	payload := entry.constructor()
 	if err := json.Unmarshal(e.Payload, payload); err != nil {
 		return nil, err
 	}
@@ -189,9 +270,9 @@ func scanConstructors(ctors map[string]func() EventPayload) error {
 func ScanRegisteredPayloadsForSecretFields() error {
 	r := globalEventRegistry
 	r.mu.Lock()
-	snapshot := make(map[string]func() EventPayload, len(r.constructors))
-	for k, v := range r.constructors {
-		snapshot[k] = v
+	snapshot := make(map[string]func() EventPayload, len(r.entries))
+	for k, v := range r.entries {
+		snapshot[k] = v.constructor
 	}
 	r.mu.Unlock()
 	return scanConstructors(snapshot)

@@ -301,15 +301,22 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	// are stamped here, inside the emitter, per EV-001. source_subsystem uses
 	// the eventbus package identifier; callers that need a subsystem-specific
 	// value should set it before dispatch (post-MVH daemon-watcher stamping per
-	// EV-002b will own this). schema_version=1 is the current envelope version.
+	// EV-002b will own this). schema_version is taken from the per-type registry
+	// per EV-028 so it matches the declared payload version for this event type.
 	eventID, idErr := b.idGen.Next()
 	if idErr != nil {
 		return fmt.Errorf("eventbus.Emit: generate event_id: %w", idErr)
 	}
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(string(eventType))
+	if !knownType {
+		// Unknown type: fall back to version 1 rather than failing here; the
+		// registry-coverage sensor (EV-034) catches unregistered types at startup.
+		typeSchemaVersion = 1
+	}
 	now := time.Now()
 	evt := core.Event{
 		EventID:         eventID,
-		SchemaVersion:   1,
+		SchemaVersion:   typeSchemaVersion,
 		Type:            string(eventType),
 		TimestampWall:   now,
 		SourceSubsystem: "eventbus",
@@ -420,11 +427,15 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	if idErr != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: generate event_id: %w", idErr)
 	}
+	typeSchemaVersionWithRun, knownTypeWithRun := core.LookupTypeSchemaVersion(string(eventType))
+	if !knownTypeWithRun {
+		typeSchemaVersionWithRun = 1
+	}
 	now := time.Now()
 	runIDVal := runID
 	evt := core.Event{
 		EventID:         eventID,
-		SchemaVersion:   1,
+		SchemaVersion:   typeSchemaVersionWithRun,
 		Type:            string(eventType),
 		TimestampWall:   now,
 		RunID:           &runIDVal,

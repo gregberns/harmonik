@@ -875,6 +875,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				return exitClean()
 			}
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
+			// When the bead is blocked by stale open dependencies that are already
+			// subsumed in main, auto-close those blockers so the next iteration can
+			// claim successfully (hk-rnsjs).
+			autoCloseStaleBlockers(ctx, deps, runID, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			if queueItemIndex >= 0 && deps.queueStore != nil {
 				lq := deps.queueStore.LockForMutation()
@@ -1638,6 +1642,47 @@ func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID co
 		return false
 	}
 	return strings.Contains(string(out), "Refs: "+string(beadID))
+}
+
+// autoCloseStaleBlockers checks whether beadID is in "blocked" status because
+// it has open dependencies that are already subsumed in main. For each such
+// stale blocker it issues a CloseBead write so the bead can be claimed on the
+// next workloop iteration.
+//
+// This is called immediately after a ClaimBead failure to break the
+// retry-forever loop that occurs when a queue bead is blocked by a stale open
+// dependency (hk-rnsjs).
+//
+// Non-fatal: ShowBead or CloseBead errors are logged to stderr and do not
+// abort the workloop.
+func autoCloseStaleBlockers(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
+	showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+	if showErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers: ShowBead %s error: %v\n", beadID, showErr)
+		return
+	}
+	if showRecord.Status != core.CoarseStatusBlocked {
+		return
+	}
+	for _, edge := range showRecord.Edges {
+		if edge.FromBeadID != beadID {
+			continue // skip incoming edges (dependents, not blockers)
+		}
+		blockerID := edge.ToBeadID
+		if !beadAlreadySubsumedInMain(ctx, deps.projectDir, blockerID) {
+			continue
+		}
+		closeTID, tidErr := deps.tidGen.Next()
+		if tidErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers: generate TID for blocker %s: %v\n", blockerID, tidErr)
+			continue
+		}
+		if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, closeTID, blockerID, false); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers: CloseBead %s: %v\n", blockerID, closeErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers: closed stale blocker %s (subsumed in main, unblocking %s)\n", blockerID, beadID)
+		}
+	}
 }
 
 // drainCancelledQueue transitions the active queue (if any) to

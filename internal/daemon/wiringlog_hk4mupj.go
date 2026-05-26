@@ -188,6 +188,11 @@ var compositionRootWirings = []wiringEntry{
 		wires:    "cfg.CancelOnQueueExit → work loop exit-on-failure (hk-8jh26)",
 	},
 	{
+		symbol:   "deps.stopDispatchCtx",
+		callSite: "daemon.go:868",
+		wires:    "cfg.StopDispatchCtx → work loop dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)",
+	},
+	{
 		symbol:   "deps.handlerPauseController",
 		callSite: "daemon.go:867",
 		wires:    "handlerPauseCtrl (SHARED) → work loop dispatch gate (hk-m0k0a; overrides cfg field)",

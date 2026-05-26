@@ -421,11 +421,20 @@ func runBeadSubcommand(subArgs []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// cancelOnExit cancels ctx when the queue reaches any terminal state
-	// (all-success OR paused-by-failure), ensuring the process exits promptly
-	// on both outcome paths (hk-8jh26 Fix 1).
+	// runCtx is cancelled only by SIGINT/SIGTERM (inherited from ctx) or after
+	// all in-flight goroutines drain. It must NOT be cancelled by queue-drain /
+	// queue-exit callbacks — those would kill in-flight reviewers (hk-2o2i9).
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+
+	// stopDispatchCtx is a child of runCtx that is cancelled when the queue
+	// reaches a terminal state (all-success OR paused-by-failure). The work
+	// loop's outer poll checks this context to stop pulling new beads, while
+	// in-flight goroutines continue running on runCtx.
+	//
+	// Bead ref: hk-2o2i9.
+	stopDispatchCtx, cancelStopDispatch := context.WithCancel(runCtx)
+	defer cancelStopDispatch()
 
 	beadIDStrs := make([]string, len(beadIDs))
 	for i, id := range beadIDs {
@@ -442,10 +451,11 @@ func runBeadSubcommand(subArgs []string) int {
 		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
 		DaemonBinaryPath:   daemonBinaryPath,
 		BinaryCommitHash:   commitHash,
-		CancelOnQueueDrain: cancelRun,    // success path (hk-icecw)
-		CancelOnQueueExit:  cancelRun,    // failure path (hk-8jh26 Fix 1)
-		QueueStore:         qs,           // retained for post-Start status inspection (hk-8jh26 Fix 2)
-		NotifyStream:       notifyWriter, // hk-ibilr: per-bead completion lines
+		CancelOnQueueDrain: cancelStopDispatch, // stop dispatch on success (hk-icecw, hk-2o2i9)
+		CancelOnQueueExit:  cancelStopDispatch, // stop dispatch on failure (hk-8jh26, hk-2o2i9)
+		StopDispatchCtx:    stopDispatchCtx,    // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
+		QueueStore:         qs,                 // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:       notifyWriter,        // hk-ibilr: per-bead completion lines
 	}
 
 	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.

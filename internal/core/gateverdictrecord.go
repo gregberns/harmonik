@@ -17,12 +17,6 @@ package core
 // custom marshal/unmarshal is a future option if a parsing use-case emerges.
 // Mirrors the CapturedAtTimestamp rationale in SnapshotToken.
 //
-// # CognitionMeta deferral
-//
-// CognitionMeta is not yet implemented. CognitionMeta uses *string as a
-// placeholder pending typed-alias implementation.
-// TODO hk-a8bg.73: replace *string with *CognitionMeta once defined.
-//
 // # Reason cross-field invariant
 //
 // Reason is REQUIRED when Action != GateActionAllow. Valid() enforces this
@@ -51,9 +45,8 @@ type GateVerdictRecord struct {
 	// CognitionMeta carries metadata about the cognition-tagged evaluator that
 	// produced this verdict. Nil when the verdict was not produced by a
 	// cognition-tagged evaluator.
-	// TODO hk-a8bg.73: replace *string with *CognitionMeta once defined.
 	// Spec: specs/control-points.md §6.1.6 (cognition_meta : CognitionMeta | None).
-	CognitionMeta *string `json:"cognition_meta,omitempty"`
+	CognitionMeta *CognitionMeta `json:"cognition_meta,omitempty"`
 
 	// InputEnvelopeHash is the SHA-256 hex digest of the input envelope
 	// presented to the evaluator, per specs/control-points.md §4.8.CP-040a.

@@ -601,6 +601,12 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial WriteLastPane: %v\n", err)
 	}
+	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial post-paste SendEnterToLastPane: %v\n", err)
+		}
+	}
 }
 
 // pasteInjectImplementerResume delivers two paste-inject messages for the
@@ -629,6 +635,12 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 		if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane(task): %v\n", err)
 		}
+		// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+		if es, ok := inj.(enterSender); ok {
+			if err := es.SendEnterToLastPane(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane(task): %v\n", err)
+			}
+		}
 	}
 
 	// Inject 2: reviewer feedback for prior iteration (N-1).
@@ -647,6 +659,12 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	)
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane(feedback): %v\n", err)
+	}
+	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane(feedback): %v\n", err)
+		}
 	}
 }
 
@@ -676,6 +694,12 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer WriteLastPane: %v\n", err)
+	}
+	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	if es, ok := inj.(enterSender); ok {
+		if err := es.SendEnterToLastPane(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer post-paste SendEnterToLastPane: %v\n", err)
+		}
 	}
 }
 

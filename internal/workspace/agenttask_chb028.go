@@ -302,6 +302,17 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString("If a discovery command returns paths under the main repo root, translate them into your worktree before reading or editing.\n")
 	}
 
+	// Bead Lifecycle prohibition (hk-4jipv, hk-2hb2y): rendered BEFORE the Task
+	// Description so implementers see it before reading their brief.  Prior
+	// placement at end-of-file meant agents stopped reading after the task body
+	// and never reached this guard.  Consistent with the Session Completion
+	// comment block below (which documents the same guard from the daemon side).
+	sb.WriteString("\n## Bead Lifecycle (CRITICAL — read before acting)\n\n")
+	sb.WriteString("DO NOT run `br close`, `br update --status closed`, or any terminal bead transition from inside this worktree.\n")
+	sb.WriteString("The daemon owns all bead lifecycle transitions (open → in_progress → closed/failed).\n")
+	sb.WriteString("Running `br close` from the worktree causes premature closure that leaks to the parent repo even when no implementation has landed.\n")
+	sb.WriteString("Your job is to implement, commit, and `/quit`. The daemon will close the bead on your behalf after verifying the commit.\n")
+
 	sb.WriteString("\n## Task Description\n\n")
 	sb.WriteString(p.Body)
 	if !strings.HasSuffix(p.Body, "\n") {
@@ -363,11 +374,6 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	sb.WriteString("Do not ask the user to run it — you must type `/quit` yourself and submit it.\n")
 	sb.WriteString("The daemon cannot detect that your task is complete until you exit this session.\n")
 	sb.WriteString("Failure to run `/quit` will leave the workflow permanently stalled.\n")
-	sb.WriteString("\n## Bead Lifecycle (CRITICAL — read before acting)\n\n")
-	sb.WriteString("DO NOT run `br close`, `br update --status closed`, or any terminal bead transition from inside this worktree.\n")
-	sb.WriteString("The daemon owns all bead lifecycle transitions (open → in_progress → closed/failed).\n")
-	sb.WriteString("Running `br close` from the worktree causes premature closure that leaks to the parent repo even when no implementation has landed.\n")
-	sb.WriteString("Your job is to implement, commit, and `/quit`. The daemon will close the bead on your behalf after verifying the commit.\n")
 
 	return sb.String()
 }

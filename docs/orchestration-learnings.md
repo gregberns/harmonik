@@ -36,6 +36,7 @@ This is **dual-purpose**:
 - [L-016 — `git worktree remove` does not kill the sub-agent process](#l-016) — `process-improvement-pending` · `product-input`
 - [L-017 — `defer_until` is a separate field from `status=deferred` and silently filters `br ready`](#l-017) — `process-fix-applied` · `product-input`
 - [L-020 — Queue-with-context discipline (don't queue hygiene; when queuing, include enough to decide)](#l-020) — `process-fix-applied` · `product-input`
+- [L-021 — Re-dispatch without investigation wastes slots (v60)](#l-021) — `process-fix-applied` · `product-input`
 
 ---
 
@@ -307,3 +308,17 @@ The two rules compose: rule 1 catches the hygiene case; rule 2 catches the label
 L-020 is the integration point: a pre-queue checklist that takes the union of those rules and turns them into a single test the orchestrator runs *before* drafting any user-facing queue item.
 
 **Product input.** A daemon-side dispatch surface should expose two channels: an autonomous-execute channel (hygiene, test-driven, routine) and a human-decision channel (direction-shaping, irreversible). The orchestrator-agent's judgment about *which channel a unit of work belongs in* is itself a deterministic function of the work's properties (label set, blast radius, reversibility). Encoding the channel choice in the bead — rather than re-deriving it per-event in the orchestrator — would eliminate the entire class of queue-the-wrong-thing failures. Candidate bead labels: `requires-direction` (always queue), `routine` (never queue), default behavior = follow rule 1.
+
+---
+
+### L-021 — Re-dispatch without investigation wastes slots (v60) <a name="l-021"></a>
+
+**Observed 2026-05-26 (session v60).** 4 beads (hk-rnsjs, hk-24xn1, hk-aq17j, hk-7okmx) were dispatched across 3 consecutive batches, each failing with "close-without-impl." 12 dispatch slots consumed; 0 implementations landed. The orchestrator re-dispatched without investigating why the failures repeated.
+
+**Root cause.** No post-failure triage step in the dispatch loop. The orchestrator treated "failed" as "retry-eligible" unconditionally, instead of checking whether the failure pattern indicated a structural problem (bad bead description, already-landed work, spec ambiguity).
+
+**Fix applied.** Added a "Post-flight: failure triage" section to `AGENTS.md` (after the pre-flight checklist): first failure = retry-eligible; second failure = mandatory investigation before any further re-dispatch. Investigator checks: bead description quality, prior failure events in `events.jsonl`, already-landed grep.
+
+**Product input.** Consider daemon-side tracking of per-bead failure count across batches. If a bead fails ≥2 times, the daemon could auto-flag it `needs-investigation` and exclude it from the dispatch queue until a human or investigator agent clears the flag. This removes reliance on the orchestrator-agent remembering cross-batch failure history.
+
+Tags: `process-fix-applied` · `product-input`

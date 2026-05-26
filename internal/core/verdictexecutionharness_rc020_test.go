@@ -279,9 +279,12 @@ func TestRC022a_OutcomeEnvelopeRoutingForReconciliationVerdict(t *testing.T) {
 	if outcome.Payload == nil {
 		t.Error("RC-022a: Outcome.Payload is nil; VerdictEvent must be non-nil for reconciliation verdicts")
 	}
-	if outcome.Payload.Verdict != VerdictResumeHere {
+	vePayload, ok := outcome.Payload.(*VerdictEvent)
+	if !ok || vePayload == nil {
+		t.Error("RC-022a: Outcome.Payload is not a *VerdictEvent")
+	} else if vePayload.Verdict != VerdictResumeHere {
 		t.Errorf("RC-022a: Outcome.Payload.Verdict = %q, want %q",
-			outcome.Payload.Verdict, VerdictResumeHere)
+			vePayload.Verdict, VerdictResumeHere)
 	}
 }
 

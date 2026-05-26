@@ -937,8 +937,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
 		deps.queueStore = qs
+			// Wire the wake channel so queue-submit RPCs immediately unblock the
+			// workloop's idle sleep (hk-24xn1).
+			deps.submitWakeC = qs.WakeCh()
 
-		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
+			// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
 		// (hk-kac8g) can consult pause state before claiming each item.
 		// nil → gate disabled; pre-hk-kac8g behaviour preserved for callers that
 		// don't set the field.

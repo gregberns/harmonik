@@ -36,6 +36,11 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
+// submitWakeCBufSize is the buffer depth for the wake channel. Buffer of 1
+// ensures a non-blocking send never blocks and coalesces rapid bursts into a
+// single wakeup (hk-24xn1).
+const submitWakeCBufSize = 1
+
 // QueueStore is the daemon-singleton holder for the active *queue.Queue.
 //
 // One QueueStore instance is created at daemon.Start (composition root) and
@@ -53,13 +58,18 @@ import (
 type QueueStore struct {
 	queueMu sync.RWMutex
 	q       *queue.Queue
+	// wakeC receives a signal after every SetQueue call so the workloop can
+	// break out of its idle sleep immediately on queue-submit (hk-24xn1).
+	// Buffer of 1 coalesces rapid bursts; a full buffer is silently dropped
+	// (non-blocking send).
+	wakeC chan struct{}
 }
 
 // newQueueStore returns a ready-to-use QueueStore with no active queue.
 //
 // Bead ref: hk-j808w.
 func newQueueStore() *QueueStore {
-	return &QueueStore{}
+	return &QueueStore{wakeC: make(chan struct{}, submitWakeCBufSize)}
 }
 
 // NewQueueStore is the exported constructor for callers outside the daemon
@@ -84,6 +94,14 @@ func (s *QueueStore) SetQueue(q *queue.Queue) {
 	s.queueMu.Lock()
 	s.q = q
 	s.queueMu.Unlock()
+	// Signal the workloop that a new queue is available so it wakes immediately
+	// instead of waiting for the next poll tick (hk-24xn1). Non-blocking: a
+	// full buffer means a wake is already pending, so no additional signal is
+	// needed.
+	select {
+	case s.wakeC <- struct{}{}:
+	default:
+	}
 }
 
 // Queue returns the active *queue.Queue under the read lock, or nil when
@@ -116,6 +134,18 @@ func (s *QueueStore) ClearQueue() {
 	s.queueMu.Lock()
 	s.q = nil
 	s.queueMu.Unlock()
+}
+
+// WakeCh returns the channel that receives a signal after every SetQueue call.
+// The workloop selects on this channel alongside its poll timer to wake
+// immediately when a new queue is submitted (hk-24xn1).
+//
+// Receiving from a nil channel blocks forever — callers that pass a nil
+// *QueueStore safely ignore the channel via workloopSleep's nil-channel case.
+//
+// Bead ref: hk-24xn1.
+func (s *QueueStore) WakeCh() <-chan struct{} {
+	return s.wakeC
 }
 
 // LockForMutation acquires the write lock and returns a *LockedQueueStore

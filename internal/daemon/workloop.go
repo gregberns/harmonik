@@ -231,6 +231,18 @@ type workLoopDeps struct {
 	// Bead ref: hk-45ude.
 	queueStore *QueueStore
 
+	// submitWakeC, when non-nil, is the channel returned by queueStore.WakeCh().
+	// The workloop's idle sleeps select on this channel so that a queue-submit
+	// RPC immediately wakes the loop rather than waiting for the next poll tick
+	// (hk-24xn1). When nil (no queue surface / legacy path) the select case
+	// on a nil channel blocks forever and is effectively skipped — workloopSleep
+	// falls back to the timer-only path.
+	//
+	// Wired from QueueStore.WakeCh() by daemon.Start alongside deps.queueStore.
+	//
+	// Bead ref: hk-24xn1.
+	submitWakeC <-chan struct{}
+
 	// cancelOnQueueDrain, when non-nil, is called once after the queue
 	// transitions to all-success and ClearQueue completes. Used by the
 	// `harmonik run <bead-id>` subcommand (hk-icecw) to exit the daemon
@@ -530,7 +542,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
 		if deps.runRegistry.Len() >= effectiveMax {
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -588,7 +600,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
 						// Queue is paused or completed — no dispatch; idle-wait.
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -605,7 +617,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if activeGroupIdx < 0 {
 						// No active group yet (all pending or all terminal) — idle-wait.
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -615,7 +627,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if len(items) == 0 {
 						// All items dispatched or deferred — wait for group progress.
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -633,7 +645,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if snapItemIdx < 0 {
 						// Item not found (stale reference) — retry.
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -668,7 +680,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
 					if isPaused {
 						emitHeldEvent(ctx, deps, snapItemBeadID, core.AgentTypeClaudeCode, epoch)
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -681,7 +693,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					liveQ := lq.Queue()
 					if liveQ == nil {
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -708,7 +720,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					if !foundItem {
 						lq.Done()
 						// Already dispatched by a concurrent path — retry.
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -749,14 +761,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
 				// misconfiguration (hk-c1ln2: silent-failure fix).
 				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
 			}
 
 			if len(readyRecords) == 0 {
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -774,7 +786,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
 				if isPaused {
 					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -847,14 +859,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					return exitClean()
 				}
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
 			}
 			if showRecord.Status != core.CoarseStatusOpen {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -905,7 +917,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				lq.Done()
 			}
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -1748,12 +1760,16 @@ func drainCancelledQueue(ctx context.Context, deps workLoopDeps) {
 }
 
 // workloopSleep sleeps for d or until ctx is cancelled. Returns a non-nil
-// error only when ctx is cancelled (non-nil ctx.Err()).
-func workloopSleep(ctx context.Context, d time.Duration) error {
+// error only when ctx is cancelled. wakeC may be nil: receive from a nil
+// channel blocks forever, so the nil case is never selected and the function
+// degrades to a plain timer sleep. Bead ref: hk-24xn1 (wakeC parameter).
+func workloopSleep(ctx context.Context, d time.Duration, wakeC <-chan struct{}) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(d):
+		return nil
+	case <-wakeC:
 		return nil
 	}
 }

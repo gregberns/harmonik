@@ -233,6 +233,14 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
+	// Derive the submit-wake channel from the QueueStore when one is provided
+	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
+	// the same wake-on-submit behaviour as production.
+	var submitWakeC <-chan struct{}
+	if p.QueueStore != nil {
+		submitWakeC = p.QueueStore.WakeCh()
+	}
+
 	return workLoopDeps{
 		brAdapter:              p.BrAdapter,
 		bus:                    p.Bus,
@@ -255,6 +263,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentReadyTimeout:      p.AgentReadyTimeout,
 		projectCfg:             p.ProjectCfg,
 		queueStore:             p.QueueStore,
+		submitWakeC:            submitWakeC,
 		cancelOnQueueDrain:     p.CancelOnQueueDrain,
 		cancelOnQueueExit:      p.CancelOnQueueExit,
 		stopDispatchCtx:        p.StopDispatchCtx,

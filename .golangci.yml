@@ -171,12 +171,17 @@ linters:
         policy:
           files: ["**/internal/policy/**"]
           allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
-        # handler-contract: DEFERRED — 36 violations (uuid + test self-imports + real violations).
-        # Path corrected from internal/handler/contract (stub typo) to internal/handlercontract.
-        # Follow-up: hk-t5h2p.
-        # handler-contract:
-        #   files: ["**/internal/handlercontract/**"]
-        #   allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        # handler-contract: core + uuid (sessionid.go) + self-import (external test pattern).
+        # uuid is a leaf utility needed by sessionid.go (NewSessionID) and test fixtures.
+        # Self-import allows the standard Go external test pattern (package handlercontract_test).
+        # No other subsystem imports present in production code — audited hk-t5h2p.
+        handler-contract:
+          files: ["**/internal/handlercontract/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/google/uuid"
 
         # Adapters: core only.
         adapter-br:

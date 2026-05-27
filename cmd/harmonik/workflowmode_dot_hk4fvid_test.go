@@ -62,7 +62,6 @@ func dotExploreFixtureCaptureStderr(t *testing.T, fn func()) string {
 // Acceptance: hk-4fvid — absence of --workflow-ref when mode=dot yields
 // helpful error.
 func TestWorkflowModeDot_MissingWorkflowRef(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -89,7 +88,6 @@ func TestWorkflowModeDot_MissingWorkflowRef(t *testing.T) {
 // Acceptance: hk-4fvid — unknown --workflow-mode value rejected with usage
 // error.
 func TestWorkflowMode_UnknownValueRejected(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -118,7 +116,6 @@ func TestWorkflowMode_UnknownValueRejected(t *testing.T) {
 //
 // Acceptance: hk-4fvid — --workflow-ref requires --workflow-mode dot.
 func TestWorkflowRef_WithoutDotModeRejected(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -141,7 +138,6 @@ func TestWorkflowRef_WithoutDotModeRejected(t *testing.T) {
 // TestWorkflowRef_WithSingleModeRejected verifies that --workflow-ref
 // combined with --workflow-mode=single is rejected.
 func TestWorkflowRef_WithSingleModeRejected(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -173,7 +169,6 @@ func TestWorkflowRef_WithSingleModeRejected(t *testing.T) {
 // Acceptance: hk-4fvid — --workflow-ref + valid review-loop.dot dispatches
 // successfully through the parsing/loading phase.
 func TestWorkflowModeDot_ValidRefPassesFlagParse(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -208,7 +203,6 @@ func TestWorkflowModeDot_ValidRefPassesFlagParse(t *testing.T) {
 // TestWorkflowModeDot_EqualsSyntax verifies that --workflow-mode=dot and
 // --workflow-ref=<path> (equals-separated form) also work.
 func TestWorkflowModeDot_EqualsSyntax(t *testing.T) {
-	t.Parallel()
 
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
@@ -241,7 +235,6 @@ func TestWorkflowModeDot_EqualsSyntax(t *testing.T) {
 // documents both --workflow-mode and --workflow-ref so operators can discover
 // the DOT surface.
 func TestRunHelp_DocumentsWorkflowModeFlags(t *testing.T) {
-	t.Parallel()
 
 	r, w, err := os.Pipe()
 	if err != nil {

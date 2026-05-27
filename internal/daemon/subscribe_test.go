@@ -351,25 +351,17 @@ func TestSubscribeHub_HeartbeatActiveRunsFromRegistry(t *testing.T) {
 	}
 }
 
-// TestSubscribe_RejectsSinceEventID asserts that the daemon REJECTS a
-// subscribe request carrying a non-empty since_event_id with an explicit
-// error, rather than silently ignoring the field. Closes the foot-gun
-// flagged by the hk-6ynv4 reviewer; replay implementation is filed as
-// hk-a5sil.
-func TestSubscribe_RejectsSinceEventID(t *testing.T) {
-	t.Parallel()
-
-	dir, err := os.MkdirTemp("/tmp", "hk-mkroe-")
+// subscribeTestStartSocketHub starts a socket listener backed by a SubscribeHub
+// and returns the socket path. The listener is torn down via t.Cleanup.
+func subscribeTestStartSocketHub(t *testing.T, hub *SubscribeHub) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hk-subscribe-")
 	if err != nil {
 		t.Fatalf("mkdtemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
 	sockPath := filepath.Join(dir, "daemon.sock")
-
-	// A minimal hub is sufficient — the rejection happens BEFORE
-	// HandleSubscribe is invoked, so the hub never sees the request.
-	hub := NewSubscribeHub(SubscribeHubConfig{})
-
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -389,26 +381,43 @@ func TestSubscribe_RejectsSinceEventID(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	return sockPath
+}
 
+// subscribeTestDial opens a connection and sends a subscribe request.
+// Caller must close the returned conn.
+func subscribeTestDial(t *testing.T, sockPath string, req map[string]any) (net.Conn, *bufio.Reader) {
+	t.Helper()
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
-
-	req := map[string]any{
-		"op":             "subscribe",
-		"since_event_id": "0190000000000000000000000000",
-	}
 	reqBytes, _ := json.Marshal(req)
 	if _, err := conn.Write(reqBytes); err != nil {
-		t.Fatalf("write: %v", err)
+		_ = conn.Close()
+		t.Fatalf("write request: %v", err)
 	}
+	return conn, bufio.NewReader(conn)
+}
+
+// TestSubscribe_RejectsMalformedSinceEventID verifies that a subscribe request
+// with a non-empty but non-UUID since_event_id is rejected with an error. Valid
+// UUIDs are accepted and proceed to replay (tested in TestSubscribe_ReplaySinceEventID).
+// Replaces the old TestSubscribe_RejectsSinceEventID test; replay lands via hk-a5sil.
+func TestSubscribe_RejectsMalformedSinceEventID(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{})
+	sockPath := subscribeTestStartSocketHub(t, hub)
+
+	conn, rdr := subscribeTestDial(t, sockPath, map[string]any{
+		"op":             "subscribe",
+		"since_event_id": "not-a-uuid",
+	})
+	defer func() { _ = conn.Close() }()
 
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	rdr := bufio.NewReader(conn)
 	line, err := rdr.ReadBytes('\n')
-	// Server may close after writing — partial-read with err is fine if we got bytes.
 	if len(line) == 0 && err != nil {
 		t.Fatalf("read response: %v", err)
 	}
@@ -418,19 +427,246 @@ func TestSubscribe_RejectsSinceEventID(t *testing.T) {
 		t.Fatalf("decode response %q: %v", string(line), jsonErr)
 	}
 	if resp.Ok {
-		t.Fatalf("subscribe with since_event_id should be rejected; got ok=true (resp=%+v)", resp)
+		t.Fatalf("subscribe with malformed since_event_id should be rejected; got ok=true")
 	}
 	if resp.Error == "" {
-		t.Fatalf("rejection missing error message; got %+v", resp)
+		t.Fatalf("rejection missing error message")
 	}
-	// Verify the error references the follow-up bead so future debuggers can find it.
-	wantSubstr := "since_event_id"
-	if !contains(resp.Error, wantSubstr) {
-		t.Errorf("error %q should mention %q", resp.Error, wantSubstr)
+	if !contains(resp.Error, "since_event_id") {
+		t.Errorf("error %q should mention since_event_id", resp.Error)
 	}
-	if !contains(resp.Error, "hk-a5sil") {
-		t.Errorf("error %q should reference follow-up bead hk-a5sil", resp.Error)
+}
+
+// TestSubscribe_ReplaySinceEventID verifies replay-then-live:
+//  1. JSONL is pre-seeded with two events E1 and E2.
+//  2. Subscribe with since_event_id=E0 (before E1).
+//  3. E1 and E2 are replayed from JSONL first.
+//  4. A live event E3 dispatched after the subscriber registers arrives next.
+func TestSubscribe_ReplaySinceEventID(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("/tmp", "hk-replay-")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	jsonlPath := filepath.Join(dir, "events.jsonl")
+
+	makeEvt := func(evtType string) core.Event {
+		id, uuidErr := uuid.NewV7()
+		if uuidErr != nil {
+			t.Fatalf("uuid: %v", uuidErr)
+		}
+		time.Sleep(2 * time.Millisecond) // ensure strictly ordered UUIDv7
+		return core.Event{
+			EventID:         core.EventID(id),
+			SchemaVersion:   1,
+			Type:            evtType,
+			TimestampWall:   time.Now(),
+			SourceSubsystem: "test",
+			Payload:         json.RawMessage(`{}`),
+		}
+	}
+
+	e0 := makeEvt("cursor")
+	e1 := makeEvt("historical_1")
+	e2 := makeEvt("historical_2")
+
+	// Write E1 and E2 to JSONL.
+	f, openErr := os.Create(jsonlPath)
+	if openErr != nil {
+		t.Fatalf("create jsonl: %v", openErr)
+	}
+	enc := json.NewEncoder(f)
+	if err := enc.Encode(e1); err != nil {
+		t.Fatalf("encode e1: %v", err)
+	}
+	if err := enc.Encode(e2); err != nil {
+		t.Fatalf("encode e2: %v", err)
+	}
+	_ = f.Close()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:             nil,
+		EventsJSONLPath: jsonlPath,
+	})
+	sockPath := subscribeTestStartSocketHub(t, hub)
+
+	conn, rdr := subscribeTestDial(t, sockPath, map[string]any{
+		"op":                "subscribe",
+		"since_event_id":    uuid.UUID(e0.EventID).String(),
+		"heartbeat_seconds": 600,
+	})
+	defer func() { _ = conn.Close() }()
+
+	readEvent := func(label string) core.Event {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		line, readErr := rdr.ReadBytes('\n')
+		if len(line) == 0 && readErr != nil {
+			t.Fatalf("%s: read: %v", label, readErr)
+		}
+		var ev core.Event
+		if jsonErr := json.Unmarshal(line, &ev); jsonErr != nil {
+			var errResp SocketResponse
+			if json.Unmarshal(line, &errResp) == nil && !errResp.Ok {
+				t.Fatalf("%s: error response: %s", label, errResp.Error)
+			}
+			t.Fatalf("%s: decode: %v (line=%q)", label, jsonErr, string(line))
+		}
+		return ev
+	}
+
+	got1 := readEvent("replayed e1")
+	if got1.Type != "historical_1" {
+		t.Errorf("replayed[0].type: got %q, want historical_1", got1.Type)
+	}
+	if got1.EventID != e1.EventID {
+		t.Errorf("replayed[0].event_id mismatch")
+	}
+
+	got2 := readEvent("replayed e2")
+	if got2.Type != "historical_2" {
+		t.Errorf("replayed[1].type: got %q, want historical_2", got2.Type)
+	}
+	if got2.EventID != e2.EventID {
+		t.Errorf("replayed[1].event_id mismatch")
+	}
+
+	// Send a live event and verify it arrives after replay.
+	e3 := makeEvt("live_1")
+	hub.dispatch(context.Background(), e3) //nolint:errcheck
+
+	got3 := readEvent("live e3")
+	if got3.Type != "live_1" {
+		t.Errorf("live[0].type: got %q, want live_1", got3.Type)
+	}
+}
+
+// TestSubscribe_ReplayTypeFilter verifies the type filter is honoured during
+// JSONL replay: only events matching the subscriber's requested types appear.
+func TestSubscribe_ReplayTypeFilter(t *testing.T) {
+	t.Parallel()
+
+	dir, err := os.MkdirTemp("/tmp", "hk-replay-filter-")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	jsonlPath := filepath.Join(dir, "events.jsonl")
+
+	makeEvt := func(evtType string) core.Event {
+		id, _ := uuid.NewV7()
+		time.Sleep(time.Millisecond)
+		return core.Event{
+			EventID:         core.EventID(id),
+			SchemaVersion:   1,
+			Type:            evtType,
+			TimestampWall:   time.Now(),
+			SourceSubsystem: "test",
+			Payload:         json.RawMessage(`{}`),
+		}
+	}
+
+	e0 := makeEvt("cursor")
+	eA := makeEvt("want")
+	eB := makeEvt("skip")
+	eC := makeEvt("want")
+
+	f, _ := os.Create(jsonlPath)
+	enc := json.NewEncoder(f)
+	_ = enc.Encode(eA)
+	_ = enc.Encode(eB)
+	_ = enc.Encode(eC)
+	_ = f.Close()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:             nil,
+		EventsJSONLPath: jsonlPath,
+	})
+	sockPath := subscribeTestStartSocketHub(t, hub)
+
+	conn, rdr := subscribeTestDial(t, sockPath, map[string]any{
+		"op":                "subscribe",
+		"types":             []string{"want"},
+		"since_event_id":    uuid.UUID(e0.EventID).String(),
+		"heartbeat_seconds": 600,
+	})
+	defer func() { _ = conn.Close() }()
+
+	readType := func(label string) string {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		line, readErr := rdr.ReadBytes('\n')
+		if len(line) == 0 && readErr != nil {
+			t.Fatalf("%s: read: %v", label, readErr)
+		}
+		var ev core.Event
+		if jsonErr := json.Unmarshal(line, &ev); jsonErr != nil {
+			var errResp SocketResponse
+			if json.Unmarshal(line, &errResp) == nil && !errResp.Ok {
+				t.Fatalf("%s: error response: %s", label, errResp.Error)
+			}
+			t.Fatalf("%s: decode: %v (line=%q)", label, jsonErr, string(line))
+		}
+		return ev.Type
+	}
+
+	// eA and eC ("want") should arrive; eB ("skip") should be filtered.
+	if got := readType("first"); got != "want" {
+		t.Errorf("first replayed type: got %q, want %q", got, "want")
+	}
+	if got := readType("second"); got != "want" {
+		t.Errorf("second replayed type: got %q, want %q", got, "want")
+	}
+}
+
+// TestSubscribe_ReplayEmptyLog verifies that since_event_id against a
+// non-existent JSONL file proceeds cleanly as a live-only stream.
+func TestSubscribe_ReplayEmptyLog(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:             nil,
+		EventsJSONLPath: "/tmp/hk-replay-nonexistent-events-" + t.Name() + ".jsonl",
+	})
+	sockPath := subscribeTestStartSocketHub(t, hub)
+
+	cursorID, _ := uuid.NewV7()
+	conn, rdr := subscribeTestDial(t, sockPath, map[string]any{
+		"op":                "subscribe",
+		"since_event_id":    cursorID.String(),
+		"heartbeat_seconds": 600,
+	})
+	defer func() { _ = conn.Close() }()
+
+	// Allow HandleSubscribe to register and complete (empty) replay.
+	time.Sleep(20 * time.Millisecond)
+
+	// Dispatch a live event — confirms the stream is active after empty replay.
+	liveEvt := subscribeTestMakeEvent(t, "live_after_empty_replay")
+	hub.dispatch(context.Background(), liveEvt) //nolint:errcheck
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	line, readErr := rdr.ReadBytes('\n')
+	if len(line) == 0 && readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+
+	// Must NOT be a SocketResponse error (distinguished by non-empty Error field).
+	// A core.Event has no "ok" field, so errResp.Ok will be false on unmarshal;
+	// we detect a real error response by checking Error != "".
+	var errResp SocketResponse
+	if jsonErr := json.Unmarshal(line, &errResp); jsonErr == nil && !errResp.Ok && errResp.Error != "" {
+		t.Fatalf("unexpected error from replay on missing JSONL: %s", errResp.Error)
+	}
+	// Live event or heartbeat proves the stream is active after empty replay.
+	var hb struct{ Type string `json:"type"` }
+	if json.Unmarshal(line, &hb) == nil && (hb.Type != "") {
+		// Got a typed line (event or heartbeat) — stream is live.
+		return
+	}
+	t.Errorf("first line is neither a valid event nor heartbeat: %q", string(line))
 }
 
 // contains is a tiny substring helper to avoid pulling in strings just for this test.

@@ -156,6 +156,9 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	// §8.12 Staleness-detection
 	{EventTypeRunStale, func() EventPayload { return &RunStalePayload{} }},
 
+	// §8.2a Gate-node dispatch
+	{EventTypeGateDecisionRecorded, func() EventPayload { return &GateDecisionRecordedPayload{} }},
+
 	// §8.10 Queue lifecycle
 	{EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} }},
 	{EventTypeQueueGroupStarted, func() EventPayload { return &QueueGroupStartedPayload{} }},

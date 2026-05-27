@@ -572,3 +572,17 @@ const (
 	// Refs: hk-wkzlc.
 	EventTypeRunStale EventType = "run_stale"
 )
+
+// ---------------------------------------------------------------------------
+// §8.2a Gate-node dispatch event types (hk-jtxnr)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeGateDecisionRecorded is the gate_decision_recorded event type.
+	// Emitted by the gate-node dispatch module after a gate evaluator produces
+	// a GateDecisionPayload outcome (CP §6.5). Captures the full decision
+	// envelope for audit and replay.
+	// Durability class: O (ordinary — observability and audit).
+	// Refs: hk-jtxnr (T-IMPL-010).
+	EventTypeGateDecisionRecorded EventType = "gate_decision_recorded"
+)

@@ -37,6 +37,7 @@ func init() {
 	registerReviewLoopEvents()
 	registerQueueEvents()
 	registerHandlerPauseEvents()
+	registerGateDispatchEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -333,6 +334,15 @@ func registerHandlerPauseEvents() {
 	mustRegister("handler_paused", func() EventPayload { return &HandlerPausedPayload{} })
 	mustRegister("handler_resumed", func() EventPayload { return &HandlerResumedPayload{} })
 	mustRegister("queue_item_held_for_handler_pause", func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} })
+}
+
+// registerGateDispatchEvents registers the §8.2a gate-node dispatch event
+// payload constructors (hk-jtxnr, T-IMPL-010).
+//
+// Durability classes per §8.2a:
+//   - gate_decision_recorded: O (ordinary — observability and audit)
+func registerGateDispatchEvents() {
+	mustRegister("gate_decision_recorded", func() EventPayload { return &GateDecisionRecordedPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

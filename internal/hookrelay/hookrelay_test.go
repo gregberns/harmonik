@@ -134,14 +134,33 @@ func hookRelayFixtureListenSequence(t *testing.T, ackSequence []string) (socketP
 func TestHookRelay_UnknownEventKind_NoOp(t *testing.T) {
 	t.Parallel()
 
-	// CHB-011: unknown event kind must exit 0 without writing to socket.
+	// CHB-011: unknown event kind MUST exit 0 without writing to the daemon
+	// socket and without writing to stderr.  This is the distinct conformance
+	// invariant for CHB-011 — all three properties are asserted explicitly.
+
+	// Set up a real listener so we can confirm nothing arrives on the socket.
+	sockPath, received := hookRelayFixtureListenAndRespond(t, `{"status":"ok"}`)
+	e := hookRelayFixtureEnv(t.TempDir())
+	e.DaemonSocket = sockPath
+
 	stdin := strings.NewReader(`{"session_id":"x","hook_event_name":"FutureEvent"}`)
 	var stderr bytes.Buffer
-	e := hookRelayFixtureEnv(t.TempDir())
 	code := hookrelay.Run("FutureEvent", stdin, &stderr, &e)
 
+	// (1) Must exit 0.
 	if code != 0 {
-		t.Errorf("unknown event kind: exit %d, want 0; stderr=%q", code, stderr.String())
+		t.Errorf("CHB-011: unknown event kind: exit %d, want 0; stderr=%q", code, stderr.String())
+	}
+	// (2) Must not write to stderr.
+	if s := stderr.String(); s != "" {
+		t.Errorf("CHB-011: unknown event kind: non-empty stderr %q, want empty", s)
+	}
+	// (3) Must not write to the daemon socket.
+	select {
+	case msg := <-received:
+		t.Errorf("CHB-011: unknown event kind: unexpected socket message %q", msg)
+	default:
+		// No message received — correct.
 	}
 }
 

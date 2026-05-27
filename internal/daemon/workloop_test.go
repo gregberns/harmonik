@@ -80,6 +80,18 @@ func workloopFixtureGitRepo(t *testing.T, dir string) {
 	}
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+
+	// Create a bare clone as "origin" so that mergeRunBranchToMain's
+	// `git push origin main` step succeeds in tests that produce worktree
+	// commits (e.g. via workloopFixturePreCommitWorktreeFactory).
+	bareDir := dir + "-bare"
+	//nolint:gosec // G204: git args are test-internal literals; not user input
+	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--bare", dir, bareDir)
+	cloneOut, cloneErr := cloneCmd.CombinedOutput()
+	if cloneErr != nil {
+		t.Fatalf("workloopFixtureGitRepo: git clone --bare: %v\n%s", cloneErr, cloneOut)
+	}
+	run("remote", "add", "origin", bareDir)
 }
 
 // workloopFixtureReadJSONLLines reads all non-empty JSONL lines from path.
@@ -290,9 +302,10 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
@@ -522,10 +535,11 @@ func (c *concurrentFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli
 	return nil
 }
 
-func (c *concurrentFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+func (c *concurrentFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.inFlight--
+	c.ready = append(c.ready, beadID)
 	return nil
 }
 
@@ -573,10 +587,11 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "sleep 0.2; exit 0"},
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		HandlerArgs:      []string{"-c", "sleep 0.2; exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		MaxConcurrent: 2,
+		MaxConcurrent:    2,
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run concurrently for
@@ -705,9 +720,10 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
@@ -886,10 +902,11 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		MaxConcurrent: maxConcurrent,
+		MaxConcurrent:    maxConcurrent,
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; stopHookGrace

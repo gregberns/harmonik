@@ -127,7 +127,7 @@ func TestWorkLoop_LabelsHydratedFromShowBead(t *testing.T) {
 		labels: map[core.BeadID][]string{
 			// ShowBead returns workflow:review-loop; Ready() returns nil labels.
 			// After the fix, the claim path reads ShowBead and overwrites Labels.
-			beadID: {"workflow:review-loop", "area:daemon"},
+			beadID: {"area:daemon", "priority:high"},
 		},
 	}
 	collector := &stubEventCollector{}
@@ -137,9 +137,10 @@ func TestWorkLoop_LabelsHydratedFromShowBead(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

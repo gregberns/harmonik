@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-26 main — v65 (commit 9fdccb5). Clean. 20 commits, ~32 beads closed, critical workloop infinite-loop bug found and designed. -->
+<!-- PP-TRIAL:v2 2026-05-27 main — v66 (commit 6245a34). Clean. 23 commits, 24 beads resolved, bounded-retry shipped + harmonik dispatch exercised. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -8,61 +8,59 @@ ROLE. You are the orchestrator. Delegate substantively. Keep the main thread min
 
 LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read on `/session-resume`. Append new entries when you observe friction. Promote durable rules to `docs/orchestrator-rules.md` or `.claude/implementer-protocol.md`.
 
-# Where we are (v65, 2026-05-26)
+# Where we are (v66, 2026-05-27)
 
-**Main at `9fdccb5`** (origin parity, working tree clean). 20 commits landed this session.
+**Main at `6245a34`** (origin parity, working tree clean). 23 commits landed this session.
 
-## Priority 1: Workloop bounded-retry (hk-mb8x4)
+## What v66 landed
 
-**The daemon's workloop enters infinite retry loops when ClaimBead fails for unexpected reasons.** Three investigation agents + two reviewers converged on adding an `Attempts` counter to `queue.Item` with `maxItemAttempts=3`. Design doc: `docs/design/workloop-bounded-retry.md`. This is the top priority — harmonik cannot safely dispatch beads until this is fixed.
+- **Bounded-retry shipped (hk-mb8x4 epic closed):** `Attempts` counter on `queue.Item`, `MaxItemAttempts=3` enforcement in workloop dispatch, defense-in-depth in `waveEligible`/`streamEligible`, br-ready path bounded via `readyPathAttempts` map. 8 test beads covering all retry scenarios.
+- **Hook-relay fix (hk-f0xb6):** exit 0 outside harmonik sessions — no more `bridge_malformed_hook_payload` errors in user Claude Code sessions.
+- **Auto-archive queue (hk-ly4w5):** `harmonik run` auto-archives paused-by-failure/cancelled queues so re-dispatch is one command.
+- **Subscribe connection cap (hk-bra0j):** MaxConnections=32 with CAS-protected counter and `subscribe_capacity_exceeded` rejection.
+- **Depguard handler-contract rule (hk-t5h2p):** activated the previously-deferred lint rule.
+- **Chores:** heldEventDedup cleanup on epoch change (hk-o48pb), handler disk struct dedup (hk-n8yyk), rate-limit docs (hk-kumjl).
+- **11 stale-open beads closed** via pre-screening (already-implemented CHB/handler/workspace features).
 
-**12 beads filed — ALL must be handled this session:**
-- **hk-6pspu** (P0) — core fix: add Attempts counter + enforce bound
-- **hk-kupeo** (P0) — ShowBead pre-claim retry also unbounded
-- **hk-8ai2u** (P1) — test: permanent ClaimBead failure terminates after N attempts
-- **hk-tmhak** (P1) — test: all-unclaimable wave reaches terminal state
-- **hk-fvpz5** (P1) — test: ShowBead error doesn't cause infinite retry
-- **hk-cun4l** (P2) — test: unexpected br exit codes
-- **hk-xorlb** (P2) — test: ClaimBead timeout
-- **hk-2hygc** (P2) — test: bead blocked during run
-- **hk-5t0s6** (P2) — test: autoCloseStaleBlockers integration
-- **hk-oylis** (P3) — test: 50-item wave with stuck head (property test)
-- **hk-r6opz** (P3) — test: semaphore shutdown race
-- **hk-f0xb6** (P1) — stop hook `HARMONIK_RUN_ID` env var absent
+## Harmonik dispatch learnings (CRITICAL for next session)
 
-**Implementation order:** hk-6pspu first (the structural fix), then P1 tests in parallel, then P2/P3.
+1. **Don't commit to local main while harmonik is running.** The daemon rebases worktree branches onto local main — any divergence causes rebase conflicts. Queue commits until the wave completes.
+2. **Cherry-pick from `run/*` branches when reviewer approves but merge fails.** Check `git log run/<run-id> --oneline -3`.
+3. **Concrete beads succeed, abstract beads fail ~90%.** Beads with specific file paths and line numbers in descriptions land; beads saying "implement X per spec" produce no_commit.
+4. **Use `--context @file` for enriched dispatches.** The context lands in agent-task.md's "Extra Context" section.
+5. **Stale tmux windows accumulate.** Daemon doesn't clean up tmux windows on wave completion. Filed hk-j6npz.
+6. **4 pre-existing test failures** in `workloop_test.go`: `TestWorkLoop_DispatchClosesBead`, `TestWorkLoop_TwoConcurrentBeads`, `TestWorkLoop_LabelsHydratedFromShowBead`, `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency`. All timeout waiting for bead close. Pre-date this session.
 
-## What v65 landed
+## Unsalvaged work worth reviewing
 
-- **DOT complete on main:** All 6 core DOT impl beads merged (cascade engine, CLI dot mode, loader, edge evaluator, context updates, policy_ref rejection). Cherry-picked from orphaned run branches.
-- **~32 beads closed:** 20 stale-open pre-screening + 12 cherry-picks from orphaned run branches.
-- **3 daemon bug fixes:** wake-on-submit (hk-24xn1), blocked-bead detection (hk-n91y0), stale-blocker auto-close (hk-rnsjs).
-- **Notify-stream auto-enable (hk-ze3op):** `--notify-stream` defaults on for multi-bead runs.
-- **Temporary n91y0 follow-up (450a4c9):** Added error-message-based detection for blocked-by-deps. This is a STOPGAP — the bounded-retry counter (hk-6pspu) is the real fix.
+- **hk-a5sil** (subscribe since_event_id replay): commit `981ea82` on deleted branch `feat/hk-a5sil-since-event-id-replay` — 398 lines, 5 files. Was NOT reviewed. Retrievable via `git reflog` or re-dispatch.
 
-## Observed harmonik dispatch issues
+## Next priorities
 
-1. **10 concurrent sessions = 100% failure rate** — API rate limit kills all sessions in ~2 min. Use `--max-concurrent 3` with `--wave`.
-2. **Abstract spec beads fail ~90%** — bead descriptions like "N-1 compat window per EV-029" don't tell implementers WHERE to write code. Use `--context @file` with concrete file paths.
-3. **Orphaned run branches accumulate** — the daemon creates worktrees but doesn't always merge. Check `git branch --list "run/*"` for salvageable commits.
-4. **Blocked beads in dispatch cause infinite loop** — the design fix (hk-mb8x4) must land before further dispatch.
-5. **Harmonik run + ≥10 parallel sub-agents = 56-minute stall (hk-kumjl / hk-ocbh2)** — When the orchestrator dispatched ~40 Agent-tool sub-agents while a harmonik run was in flight, the harmonik-launched claude processes were rate-limited behind the sub-agents. `run_started` fired but `handler_capabilities` did not arrive for 56 minutes with no error surfaced. **Hard rule:** pick one mode per phase — harmonik-run phase OR sub-agent-dispatch phase. Never run both at scale simultaneously. If interleaving is unavoidable, cap total concurrent claude sessions (harmonik + sub-agents) to ≤5.
+1. **Fix the 4 pre-existing test failures** — likely a workloop regression from a prior session. File beads and investigate.
+2. **hk-j6npz** (tmux window cleanup on daemon exit) — needs sub-agent, too architectural for harmonik.
+3. **hk-a5sil** (subscribe replay) — re-dispatch with context or review the orphaned commit.
+4. **hk-6232r** (subscribe test improvements) — split into smaller beads, each with one test.
+5. Continue closing stale-open beads — `br list --status=open` still has ~50.
 
 ## Files to open first
 
-1. `docs/design/workloop-bounded-retry.md` — the design doc for the P0 fix
-2. `internal/daemon/workloop.go:920` — current stopgap fix site
-3. `internal/queue/types.go` — where `Attempts` field goes
-4. `internal/daemon/workloop_hkn91y0_test.go` — existing test to extend
+1. `internal/daemon/workloop.go` — bounded-retry code at lines 60-65 (maxItemAttempts), 525-530 (readyPathAttempts), 740-765 (Phase 3 enforcement)
+2. `internal/queue/types.go:15-21` — `MaxItemAttempts` constant, `Attempts`/`LastFailureReason` fields
+3. `internal/hookrelay/hookrelay.go:148-159` — exit 0 fix for non-harmonik sessions
+4. `cmd/harmonik/run.go:422-450` — auto-archive logic
 
 ## Plain-English glossary
 
-- **hk-mb8x4** — workloop bounded-retry epic (eliminate infinite loops)
-- **hk-6pspu** — core structural fix (Attempts counter on queue items)
-- **hk-kupeo** — ShowBead retry also unbounded (same bug class)
-- **hk-f0xb6** — stop hook env var missing (HARMONIK_RUN_ID)
-- **hk-n91y0** — prior blocked-bead fix (string-matching, now a fast-path)
-- **DOT** — workflow-graph-defined bead processes (Phase 3 endgame)
-- **maxItemAttempts** — proposed constant (3) bounding dispatch retries per item
+- **hk-mb8x4** — workloop bounded-retry epic (all children landed, closed)
+- **hk-6pspu** — Attempts counter on queue items (core structural fix)
+- **hk-kupeo** — ShowBead pre-claim retry bound
+- **hk-f0xb6** — hook-relay env var error fix
+- **hk-ly4w5** — auto-archive queue.json on re-run
+- **hk-bra0j** — subscribe connection cap (MaxConnections=32)
+- **hk-t5h2p** — depguard lint rule for handlercontract
+- **hk-j6npz** — tmux window cleanup bug (filed, not yet fixed)
+- **hk-a5sil** — subscribe since_event_id replay (orphaned commit, needs review)
+- **maxItemAttempts** — constant (3) bounding dispatch retries per queue item
 
 ## No hard blockers requiring user input.

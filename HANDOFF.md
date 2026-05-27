@@ -46,6 +46,7 @@ LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — frict
 2. **Abstract spec beads fail ~90%** — bead descriptions like "N-1 compat window per EV-029" don't tell implementers WHERE to write code. Use `--context @file` with concrete file paths.
 3. **Orphaned run branches accumulate** — the daemon creates worktrees but doesn't always merge. Check `git branch --list "run/*"` for salvageable commits.
 4. **Blocked beads in dispatch cause infinite loop** — the design fix (hk-mb8x4) must land before further dispatch.
+5. **Harmonik run + ≥10 parallel sub-agents = 56-minute stall (hk-kumjl / hk-ocbh2)** — When the orchestrator dispatched ~40 Agent-tool sub-agents while a harmonik run was in flight, the harmonik-launched claude processes were rate-limited behind the sub-agents. `run_started` fired but `handler_capabilities` did not arrive for 56 minutes with no error surfaced. **Hard rule:** pick one mode per phase — harmonik-run phase OR sub-agent-dispatch phase. Never run both at scale simultaneously. If interleaving is unavoidable, cap total concurrent claude sessions (harmonik + sub-agents) to ≤5.
 
 ## Files to open first
 

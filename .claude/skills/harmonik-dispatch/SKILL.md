@@ -29,6 +29,18 @@ Sub-agent dispatch (via the Agent tool) is justified ONLY when:
 
 Anything else: route through harmonik. If you're on the 4th Agent-tool call in a row, STOP and batch them.
 
+## API rate-limit concurrency rule (HARD RULE — hk-kumjl / hk-ocbh2)
+
+**Do NOT dispatch `harmonik run` AND ≥10 parallel Agent-tool sub-agents at the same time on the same Anthropic account.**
+
+Observed failure mode: orchestrator dispatched ~40 parallel sub-agents while a harmonik run was in flight. The harmonik-launched claude processes were queued behind the sub-agents by the Claude API rate-limiter. `run_started` fired at 09:24; `handler_capabilities` did not arrive until 10:20 — a **56-minute stall** with no error surfaced.
+
+**Rule:** Pick one mode per work phase:
+- **Harmonik phase** — `harmonik run --beads ...` in background; ≤3 Agent-tool sub-agents concurrently (monitoring, triage, review).
+- **Sub-agent phase** — heavy Agent-tool dispatch (research, parallel investigation); hold off on new `harmonik run` invocations until the sub-agent wave drains.
+
+If you must interleave, cap total concurrent claude sessions (harmonik + sub-agents) to **≤5** across both modes to stay safely within the rate limit.
+
 ## Failure handling
 
 Exit code 1 → read the paused queue.json, classify the failing bead:

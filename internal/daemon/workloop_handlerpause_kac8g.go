@@ -82,3 +82,18 @@ func emitHeldEvent(ctx context.Context, deps workLoopDeps, beadID core.BeadID, a
 		deps.heldEventDedup[heldDedupKey(beadID, epoch)] = struct{}{}
 	}
 }
+
+// pruneHeldDedupOnEpochChange clears the heldEventDedup map when the pause
+// epoch advances past lastSeenEpoch.  All entries keyed to prior epochs are
+// stale (the pause window they belonged to is over), so a full clear is
+// correct and avoids unbounded map growth across many pause/resume cycles.
+//
+// Returns the new lastSeenEpoch value the caller should store.
+//
+// Bead ref: hk-o48pb (unbounded-growth fix), hk-kac8g.
+func pruneHeldDedupOnEpochChange(deps *workLoopDeps, epoch int, lastSeenEpoch int) int {
+	if epoch != lastSeenEpoch && deps.heldEventDedup != nil {
+		clear(deps.heldEventDedup)
+	}
+	return epoch
+}

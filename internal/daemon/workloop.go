@@ -298,6 +298,7 @@ type workLoopDeps struct {
 	//
 	// Spec ref: specs/handler-pause.md §6.
 	// Bead ref: hk-kac8g, hk-m0k0a.
+	// Dep: hk-m0k0a (persistence) — paused_epoch survives daemon restart once that lands.
 	handlerPauseController *HandlerPauseController
 
 	// heldEventDedup tracks (beadID + ":" + epoch) pairs for which a
@@ -307,7 +308,8 @@ type workLoopDeps struct {
 	//
 	// Keyed by the string "<beadID>:<pausedEpoch>" (e.g. "hk-abc:2").
 	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
-	// Map stays bounded.  Access is single-threaded.
+	// Map is pruned on epoch change (hk-o48pb) so it stays bounded.
+	// Access is single-threaded.
 	//
 	// Bead ref: hk-kac8g, hk-m0k0a.
 	heldEventDedup map[string]struct{}
@@ -521,6 +523,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	if deps.heldEventDedup == nil {
 		deps.heldEventDedup = make(map[string]struct{})
 	}
+	// lastSeenPauseEpoch tracks the most recent pause epoch observed by the
+	// dispatcher.  When the epoch advances (pause lifted or new pause window),
+	// all prior-epoch dedup entries are stale and pruned (hk-o48pb).
+	lastSeenPauseEpoch := 0
 
 	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
 	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
@@ -704,6 +710,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// Bead ref: hk-kac8g.
 				if deps.handlerPauseController != nil {
 					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+					lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(&deps, epoch, lastSeenPauseEpoch)
 					if isPaused {
 						emitHeldEvent(ctx, deps, snapItemBeadID, core.AgentTypeClaudeCode, epoch)
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
@@ -843,6 +850,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// Bead ref: hk-kac8g.
 			if deps.handlerPauseController != nil {
 				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+				lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(&deps, epoch, lastSeenPauseEpoch)
 				if isPaused {
 					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {

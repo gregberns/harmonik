@@ -386,6 +386,68 @@ func TestClaudeEnvVars_BaseEnv_SecretKeysRedacted(t *testing.T) {
 	}
 }
 
+// TestClaudeEnvVars_NoExtraHarmonikVars verifies the "schema-shape" requirement:
+// ClaudeEnvVars MUST NOT inject any HARMONIK_* vars beyond the 13 defined by
+// CHB-006.  This catches accidental additions that would require a spec amendment.
+//
+// Spec: specs/claude-hook-bridge.md §4.2 CHB-006 ("NO other HARMONIK_* vars are
+// permitted; future fields require spec amendment").
+func TestClaudeEnvVars_NoExtraHarmonikVars(t *testing.T) {
+	t.Parallel()
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-006",
+		DaemonSocket:     "/tmp/d.sock",
+		WorkspacePath:    "/ws",
+		HandlerSessionID: "h-sess",
+		ClaudeSessionID:  "c-sess",
+		WorkflowID:       "wf-006",
+		NodeID:           "n-006",
+		WorkflowMode:     "review-loop",
+		Phase:            "implementer-initial",
+		IterationCount:   "2",
+		BeadID:           "hk-test001",
+		SecretVars: map[string]string{
+			"HARMONIK_SECRET_TOKEN": "tok",
+		},
+	}
+	env := handler.ClaudeEnvVars(cfg)
+
+	// The full set of permitted HARMONIK_* keys per §4.2 CHB-006.
+	permitted := map[string]bool{
+		"HARMONIK_RUN_ID":             true,
+		"HARMONIK_DAEMON_SOCKET":      true,
+		"HARMONIK_WORKSPACE_PATH":     true,
+		"HARMONIK_HANDLER_SESSION_ID": true,
+		"HARMONIK_CLAUDE_SESSION_ID":  true,
+		"HARMONIK_WORKFLOW_ID":        true,
+		"HARMONIK_NODE_ID":            true,
+		"HARMONIK_AGENT_TYPE":         true,
+		"HARMONIK_WORKFLOW_MODE":      true,
+		"HARMONIK_PHASE":              true,
+		"HARMONIK_ITERATION_COUNT":    true,
+		"HARMONIK_BEAD_ID":            true,
+		// HARMONIK_SECRET_* is the wildcard slot (HC-028); any key with this
+		// prefix is acceptable, so we check it separately below.
+	}
+
+	for _, kv := range env {
+		idx := strings.IndexByte(kv, '=')
+		if idx < 0 {
+			continue
+		}
+		key := kv[:idx]
+		if !strings.HasPrefix(key, "HARMONIK_") {
+			continue
+		}
+		if strings.HasPrefix(key, "HARMONIK_SECRET_") {
+			continue // wildcard slot (HC-028)
+		}
+		if !permitted[key] {
+			t.Errorf("unexpected HARMONIK_* env var injected: %q (not in CHB-006 schema; requires spec amendment)", key)
+		}
+	}
+}
+
 // claudeHandlerFixtureEnvMap parses a "KEY=VALUE" env slice into a map.
 func claudeHandlerFixtureEnvMap(t *testing.T, env []string) map[string]string {
 	t.Helper()

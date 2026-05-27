@@ -422,16 +422,29 @@ func runBeadSubcommand(subArgs []string) int {
 
 	// QM-027: refuse if an active (non-completed) queue already exists.
 	// Silently overwriting an in-flight queue would corrupt its state.
+	// Exception (hk-ly4w5): paused-by-failure and cancelled queues are
+	// auto-archived so that re-dispatch is one command.
 	existingQueue, loadErr := queue.Load(persistCtx, projectDir)
 	if loadErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot check existing queue: %v\n", loadErr)
 		return 1
 	}
 	if existingQueue != nil && existingQueue.Status != queue.QueueStatusCompleted {
-		fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
-		fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
-		fmt.Fprintln(os.Stderr, "  use 'harmonik queue status' to inspect, or remove .harmonik/queue.json to reset")
-		return 1
+		switch existingQueue.Status {
+		case queue.QueueStatusPausedByFailure, queue.QueueStatusCancelled:
+			// Auto-archive the stale queue so re-dispatch is one command (hk-ly4w5).
+			archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, time.Now())
+			if archiveErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik run: cannot archive stale queue: %v\n", archiveErr)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "harmonik run: archived stale queue to %s\n", archivePath)
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
+			fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
+			fmt.Fprintln(os.Stderr, "  use 'harmonik queue status' to inspect, or remove .harmonik/queue.json to reset")
+			return 1
+		}
 	}
 
 	if persistErr := queue.Persist(persistCtx, projectDir, q); persistErr != nil {

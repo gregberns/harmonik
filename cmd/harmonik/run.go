@@ -27,8 +27,10 @@ package main
 //	                             --workflow-mode dot (hk-qo9pq).
 //	--no-review-loop             Opt out of review-loop workflow; items run single-node (hk-g0ckv).
 //	--review-loop                Deprecated alias; review-loop is now the default (hk-g0ckv).
-//	--notify-stream              Write one line per bead completion to stdout (hk-ibilr).
+//	--notify-stream              Write one line per bead completion to stdout (hk-ibilr); auto-enabled
+//	                             for multi-bead runs (len>1 or max-concurrent>1) per hk-ze3op.
 //	--notify-stream=<path>       Same, but write to a FIFO or file instead of stdout.
+//	--no-notify-stream           Opt out of auto-enable; for scripted callers parsing exit code only (hk-ze3op).
 //
 // Exit-code contract:
 //
@@ -102,6 +104,7 @@ func runBeadSubcommand(subArgs []string) int {
 	notifyStreamSet := false
 	workflowModeFlag := "" // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
 	workflowRefFlag := ""  // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
+	noNotifyStream := false // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
 	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
 
@@ -177,6 +180,10 @@ func runBeadSubcommand(subArgs []string) int {
 			workflowRefFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--workflow-ref="):
 			workflowRefFlag = strings.TrimPrefix(arg, "--workflow-ref=")
+
+		// --no-notify-stream (hk-ze3op): opt out of auto-enable on multi-bead runs
+		case arg == "--no-notify-stream":
+			noNotifyStream = true
 
 		// --wave (hk-7nbey): opt into wave-mode (no appends); resolved via resolveGroupKind
 		case arg == "--wave":
@@ -284,6 +291,14 @@ func runBeadSubcommand(subArgs []string) int {
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik run: unknown --workflow-mode %q (valid: builtin, single, review-loop, dot)\n", workflowModeFlag)
 		return 1
+	}
+
+	// Auto-enable --notify-stream on multi-bead runs (hk-ze3op).
+	// Single-bead runs (len==1 and maxConcurrent==1) leave it off — no benefit.
+	// --no-notify-stream opts out for scripted callers parsing exit code only.
+	if !notifyStreamSet && !noNotifyStream && (len(beadIDs) > 1 || maxConcurrent > 1) {
+		notifyStream = "-" // stdout
+		notifyStreamSet = true
 	}
 
 	// --- Resolve --notify-stream writer (hk-ibilr) ---
@@ -620,8 +635,9 @@ FLAGS
   --workflow-ref PATH           Path to the .dot workflow file; required with --workflow-mode dot
   --no-review-loop              Opt out of review-loop workflow (default: on); beads run single-node
   --review-loop                 Deprecated: review-loop is now the default; this flag is a no-op
-  --notify-stream               Write one line per bead completion to stdout
+  --notify-stream               Write one line per bead completion to stdout (auto-enabled for multi-bead runs)
   --notify-stream=PATH          Same, but write to a FIFO or file
+  --no-notify-stream            Disable per-bead completion lines (opt out of auto-enable on multi-bead runs)
   --wave                        Use wave-mode queue (no mid-flight appends; default: stream)
   --project DIR                 Project directory (default: current working directory)
 

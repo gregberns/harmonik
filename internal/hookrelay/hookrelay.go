@@ -153,8 +153,10 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 		var err error
 		e, err = envFromOS()
 		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+			// Not a harmonik-managed session (e.g., user running Claude Code
+			// directly in a project that has hook-relay settings.json). Exit 0
+			// silently — the hook is a no-op outside harmonik. (hk-f0xb6)
+			return 0
 		}
 	}
 

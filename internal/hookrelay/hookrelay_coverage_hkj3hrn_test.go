@@ -386,14 +386,13 @@ func TestHookRelay_EnvFromOS_MissingRequired(t *testing.T) {
 	})
 
 	// nil envOverride forces envFromOS path.
+	// When HARMONIK_RUN_ID is absent, hook-relay exits 0 silently (hk-f0xb6):
+	// not a harmonik-managed session, so the hook is a no-op.
 	stdin := fmt.Sprintf(`{"session_id":"","hook_event_name":"Stop"}`)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", strings.NewReader(stdin), &stderr, nil)
-	if code != 1 {
-		t.Errorf("envFromOS missing required: exit %d, want 1; stderr=%q", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "bridge_malformed_hook_payload") {
-		t.Errorf("envFromOS missing required: stderr missing bridge_malformed_hook_payload, got %q", stderr.String())
+	if code != 0 {
+		t.Errorf("envFromOS missing required: exit %d, want 0 (no-op outside harmonik); stderr=%q", code, stderr.String())
 	}
 }
 

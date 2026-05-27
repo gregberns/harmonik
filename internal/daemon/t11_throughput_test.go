@@ -14,8 +14,9 @@ package daemon_test
 //  4. JSONL contains exactly 10 distinct run_started events with 10 distinct
 //     run_id values (verified via eventbus.Filter per hk-e61c3.5 / row 10).
 //
-// Perf (hk-l6dsb): sequential baseline uses N=3 and runs concurrently with
-// the parallel run in an independent project dir; net wall-clock ~17 s.
+// Perf (hk-l6dsb): sequential baseline uses N=3 (seqBeadCount) and runs
+// concurrently with the parallel run in an independent project dir via
+// sync.WaitGroup; net wall-clock ~17 s (down from ~57 s at N=10 sequential).
 //
 // Metrics emission (roadmap §4): sqlite_lock_retries, in_flight_count fields
 // are OUT OF SCOPE for this bead.  Populating new event fields is separate work.

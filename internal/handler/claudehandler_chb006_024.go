@@ -112,6 +112,8 @@ type ClaudeSessionIDResult struct {
 // For single-mode (LaunchSpec.Phase == nil), pass an empty string.
 //
 // Returns ErrStructural if phase = implementer-resume but launchSpec.ClaudeSessionID is nil/empty.
+// Returns ErrStructural if phase = reviewer and priorClaudeSessionID is non-nil (CHB-009 enforcement:
+// the caller MUST NOT pass a prior session ID for reviewer; doing so is a daemon defect).
 //
 // Spec: specs/claude-hook-bridge.md §4.3 CHB-008, CHB-009.
 func MintClaudeSessionID(phase string, priorClaudeSessionID *string) (ClaudeSessionIDResult, error) {
@@ -127,6 +129,18 @@ func MintClaudeSessionID(phase string, priorClaudeSessionID *string) (ClaudeSess
 			ClaudeSessionID: *priorClaudeSessionID,
 			ResumeMode:      true,
 		}, nil
+	}
+
+	// CHB-009 enforcement: reviewer MUST NOT receive a prior session ID.
+	// A non-nil priorClaudeSessionID for reviewer is a daemon defect — fail-fast
+	// rather than silently ignoring the value, which could mask an accidental
+	// inheritance bug in the call site.
+	if phase == string(handlercontract.ReviewLoopPhaseReviewer) && priorClaudeSessionID != nil {
+		return ClaudeSessionIDResult{}, fmt.Errorf(
+			"handler: claude-code: CHB-009: phase=reviewer but priorClaudeSessionID is non-nil (%q): "+
+				"reviewer must always mint fresh; passing a prior session ID is a daemon defect: %w",
+			*priorClaudeSessionID, ErrStructural,
+		)
 	}
 
 	// All other phases (single, implementer-initial, reviewer): mint fresh UUIDv7 (CHB-008, CHB-009).

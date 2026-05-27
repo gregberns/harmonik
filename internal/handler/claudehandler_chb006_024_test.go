@@ -206,6 +206,25 @@ func TestMintClaudeSessionID_ImplementerResume_NilPrior_ReturnsError(t *testing.
 	}
 }
 
+// TestMintClaudeSessionID_Reviewer_NonNilPrior_ReturnsError verifies that
+// passing a non-nil priorClaudeSessionID for phase=reviewer returns ErrStructural
+// per CHB-009 (reviewer-phase fresh-mint enforcement).
+//
+// The call site MUST always pass nil for reviewer; passing a non-nil value is a
+// daemon defect that MintClaudeSessionID actively rejects so the bug surfaces
+// immediately rather than being silently swallowed.
+func TestMintClaudeSessionID_Reviewer_NonNilPrior_ReturnsError(t *testing.T) {
+	t.Parallel()
+	prior := "stale-reviewer-session-from-prior-iteration"
+	_, err := handler.MintClaudeSessionID("reviewer", &prior)
+	if err == nil {
+		t.Fatal("expected ErrStructural when phase=reviewer with non-nil priorClaudeSessionID, got nil")
+	}
+	if !errors.Is(err, handler.ErrStructural) {
+		t.Errorf("error does not wrap ErrStructural: %v", err)
+	}
+}
+
 // TestMintClaudeSessionID_TwoMints_Distinct verifies that two fresh mints
 // produce distinct UUIDs.
 func TestMintClaudeSessionID_TwoMints_Distinct(t *testing.T) {

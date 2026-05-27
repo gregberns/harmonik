@@ -76,23 +76,19 @@ type handlerStateDisk struct {
 }
 
 // handlerEntryDisk represents one handler-type entry in handler-state.json.
+// Cause reuses core.HandlerPauseCause — same JSON shape (failure_class, sub_reason,
+// source_run_id, source_bead_id, tripped_at) per specs/handler-pause.md §5.1.
+// core.FailureClass is type string so serialisation is identical to a bare string field.
 type handlerEntryDisk struct {
-	Status          string            `json:"status"`
-	Cause           *handlerCauseDisk `json:"cause"`
-	InFlightAtPause []inFlightRunDisk `json:"in_flight_at_pause"`
-	PausedEpoch     int               `json:"paused_epoch"`
-}
-
-// handlerCauseDisk is the cause sub-object inside a paused handler entry.
-type handlerCauseDisk struct {
-	FailureClass string `json:"failure_class"`
-	SubReason    string `json:"sub_reason"`
-	SourceRunID  string `json:"source_run_id"`
-	SourceBeadID string `json:"source_bead_id"`
-	TrippedAt    string `json:"tripped_at"`
+	Status          string                   `json:"status"`
+	Cause           *core.HandlerPauseCause  `json:"cause"`
+	InFlightAtPause []inFlightRunDisk        `json:"in_flight_at_pause"`
+	PausedEpoch     int                      `json:"paused_epoch"`
 }
 
 // inFlightRunDisk is a single entry in in_flight_at_pause.
+// No equivalent core type exists (core.HandlerPausedPayload uses InFlightCount int,
+// not a per-run list), so this remains a CLI-local disk-schema struct.
 type inFlightRunDisk struct {
 	RunID        string `json:"run_id"`
 	BeadID       string `json:"bead_id"`
@@ -111,17 +107,18 @@ type handlerStatusJSONOutput struct {
 }
 
 // handlerEntryJSON is one handler entry in the JSON output.
+// Cause reuses core.HandlerPauseCause (same JSON shape as the disk struct).
 type handlerEntryJSON struct {
-	Status          string            `json:"status"`
-	Cause           *handlerCauseDisk `json:"cause"`
-	InFlightAtPause []inFlightRunDisk `json:"in_flight_at_pause"`
-	PausedEpoch     int               `json:"paused_epoch"`
+	Status          string                  `json:"status"`
+	Cause           *core.HandlerPauseCause `json:"cause"`
+	InFlightAtPause []inFlightRunDisk       `json:"in_flight_at_pause"`
+	PausedEpoch     int                     `json:"paused_epoch"`
 	// HeldCount is the number of pending queue items whose resolved agent_type
-	// is this handler. At MVH this is always 0 — the live count is owned by the
-	// dispatcher; the CLI cannot query it without a socket connection. Submitter
-	// agents MAY derive the count from queue-status if needed. Kept in the
-	// output schema for forward-compatibility (hk-m0k0a / hk-xlq2e).
-	HeldCount int `json:"held_count"`
+	// is this handler. Omitted when 0 — the live count is owned by the
+	// dispatcher; the CLI cannot query it without a socket connection (hk-9hwbw).
+	// Submitter agents MAY derive the count from queue-status if needed.
+	// Wiring site: once hk-m0k0a / hk-xlq2e land, populate from daemon socket.
+	HeldCount int `json:"held_count,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -255,13 +252,14 @@ const handlerResumedEventType = "handler_resumed"
 
 // handlerResumedEvent is the JSONL envelope written to events.jsonl on success.
 // Fields per event-model.md §8.11.2: agent_type, by, prior_cause, paused_epoch.
+// PriorCause reuses core.HandlerPauseCause directly — same JSON shape.
 type handlerResumedEvent struct {
-	EventType   string            `json:"event_type"`
-	EmittedAt   string            `json:"emitted_at"`
-	AgentType   string            `json:"agent_type"`
-	By          string            `json:"by"`
-	PriorCause  *handlerCauseDisk `json:"prior_cause"`
-	PausedEpoch int               `json:"paused_epoch"`
+	EventType   string                  `json:"event_type"`
+	EmittedAt   string                  `json:"emitted_at"`
+	AgentType   string                  `json:"agent_type"`
+	By          string                  `json:"by"`
+	PriorCause  *core.HandlerPauseCause `json:"prior_cause"`
+	PausedEpoch int                     `json:"paused_epoch"`
 }
 
 // runHandlerResume implements `harmonik handler resume --type <agent-type> [--force] [--project DIR]`.
@@ -493,19 +491,13 @@ func atomicWriteHandlerState(statePath string, state *handlerStateDisk, errOut i
 // (e.g. PausedEpoch < 1 or cause fields empty), the emit is skipped and a warning
 // is printed to stderr. This prevents replay tooling from ingesting a malformed
 // handler_resumed event that would fail schema validation.
-func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *handlerCauseDisk, pausedEpoch int) {
+func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.HandlerPauseCause, pausedEpoch int) {
 	// Build a typed HandlerResumedPayload and validate before emitting.
-	// This guards against payload-shape drift between the CLI's flat envelope and
-	// the core schema (event-model §8.11.2 / handlerpauseevents_ifqnj.go).
+	// priorCause is already core.HandlerPauseCause (no conversion needed — the disk
+	// struct now reuses the core type directly per hk-n8yyk dedupe).
 	var typedPriorCause core.HandlerPauseCause
 	if priorCause != nil {
-		typedPriorCause = core.HandlerPauseCause{
-			FailureClass: core.FailureClass(priorCause.FailureClass),
-			SubReason:    priorCause.SubReason,
-			SourceRunID:  priorCause.SourceRunID,
-			SourceBeadID: priorCause.SourceBeadID,
-			TrippedAt:    priorCause.TrippedAt,
-		}
+		typedPriorCause = *priorCause
 	}
 	typedPayload := core.HandlerResumedPayload{
 		AgentType:   core.AgentType(agentType),

@@ -170,24 +170,8 @@ func TestWorkLoop_BeadBlockedDuringRun(t *testing.T) {
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
-	// Create a bare remote so mergeRunBranchToMain's push succeeds and
-	// the code path reaches CloseBead (without a remote, push fails and
-	// the bead is reopened before CloseBead is ever called).
-	originDir := t.TempDir()
-	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
-	if out, err := initBareCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
-	addRemoteCmd := exec.CommandContext(t.Context(), "git", "remote", "add", "origin", originDir)
-	addRemoteCmd.Dir = projectDir
-	if out, err := addRemoteCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git remote add origin: %v\n%s", err, out)
-	}
-	pushInitCmd := exec.CommandContext(t.Context(), "git", "push", "origin", "main")
-	pushInitCmd.Dir = projectDir
-	if out, err := pushInitCmd.CombinedOutput(); err != nil {
-		t.Fatalf("git push origin main: %v\n%s", err, out)
-	}
+	// workloopFixtureGitRepo already creates a bare clone as "origin" and
+	// pushes the initial commit, so mergeRunBranchToMain's push succeeds.
 
 	const beadA = core.BeadID("hk-2hygc-blocked-during-run")
 

@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-26 main — v64 (commit 90f2426). Clean. 5 daemon bugs fixed, 14 commits, 9 beads closed. Harmonik full pipeline (implement→review→merge→close→push) working end-to-end for the first time. -->
+<!-- PP-TRIAL:v2 2026-05-26 main — v65 (commit 9fdccb5). Clean. 20 commits, ~32 beads closed, critical workloop infinite-loop bug found and designed. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -8,69 +8,60 @@ ROLE. You are the orchestrator. Delegate substantively. Keep the main thread min
 
 LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read on `/session-resume`. Append new entries when you observe friction. Promote durable rules to `docs/orchestrator-rules.md` or `.claude/implementer-protocol.md`.
 
-# Where we are (v64, 2026-05-26)
+# Where we are (v65, 2026-05-26)
 
-**Main at `90f2426`** (origin parity, working tree clean). 14 commits landed this session.
+**Main at `9fdccb5`** (origin parity, working tree clean). 20 commits landed this session.
 
-## What v64 landed
+## Priority 1: Workloop bounded-retry (hk-mb8x4)
 
-**5 daemon bugs fixed — harmonik full pipeline now works end-to-end:**
-1. **Reviewer quit-on-verdict (312b872, hk-zimkh):** New `pasteInjectQuitOnReviewFile` polls for `.harmonik/review.json` and sends `/quit`. Reviewers no longer hang.
-2. **Review-loop merge-to-main (312b872):** The approval path was skipping `mergeRunBranchToMain`. Now mirrors single-mode.
-3. **Reopen on failure (5adcdcf):** Review-loop failure path was calling `CloseBead` instead of `ReopenBead`. Beads no longer vanish on no_commit.
-4. **launchHeartbeatTimeout 60→180s (e3183dc):** Sessions run 5-30 min now instead of dying at 60s. Liveness checker provides secondary defense.
-5. **Bead description hydration (806f4e7):** `ShowBead` Title+Description weren't being copied into `BeadRecord` — implementers saw just the bead ID as their entire task. ~70% no_commit rate root cause.
+**The daemon's workloop enters infinite retry loops when ClaimBead fails for unexpected reasons.** Three investigation agents + two reviewers converged on adding an `Attempts` counter to `queue.Item` with `maxItemAttempts=3`. Design doc: `docs/design/workloop-bounded-retry.md`. This is the top priority — harmonik cannot safely dispatch beads until this is fixed.
 
-**DOT chain: 4/6 impl beads landed:**
-- hk-mwqxg (edge evaluator, 4ae0552), hk-waj4b (loader+wiring, 5c0a34b), hk-rhj3t (cascade context, 73cdc7e), hk-jtyzz (policy_ref rejection, 7c6dc8a).
-- Still open: hk-bf85t (cascade engine), hk-qo9pq (CLI dot mode).
+**12 beads filed — ALL must be handled this session:**
+- **hk-6pspu** (P0) — core fix: add Attempts counter + enforce bound
+- **hk-kupeo** (P0) — ShowBead pre-claim retry also unbounded
+- **hk-8ai2u** (P1) — test: permanent ClaimBead failure terminates after N attempts
+- **hk-tmhak** (P1) — test: all-unclaimable wave reaches terminal state
+- **hk-fvpz5** (P1) — test: ShowBead error doesn't cause infinite retry
+- **hk-cun4l** (P2) — test: unexpected br exit codes
+- **hk-xorlb** (P2) — test: ClaimBead timeout
+- **hk-2hygc** (P2) — test: bead blocked during run
+- **hk-5t0s6** (P2) — test: autoCloseStaleBlockers integration
+- **hk-oylis** (P3) — test: 50-item wave with stuck head (property test)
+- **hk-r6opz** (P3) — test: semaphore shutdown race
+- **hk-f0xb6** (P1) — stop hook `HARMONIK_RUN_ID` env var absent
 
-**Spec-corpus: 3 CP beads landed:** hk-a8bg.3 (boundary-classification), hk-a8bg.1 (typed primitive), hk-a8bg.2 (name uniqueness).
+**Implementation order:** hk-6pspu first (the structural fix), then P1 tests in parallel, then P2/P3.
 
-**Tests: 3 beads landed:** hk-trfif (reopen-on-failure regression), hk-jimbc (quit-on-review-file tests), plus beads sync.
+## What v65 landed
 
-## Observed no_commit rate
+- **DOT complete on main:** All 6 core DOT impl beads merged (cascade engine, CLI dot mode, loader, edge evaluator, context updates, policy_ref rejection). Cherry-picked from orphaned run branches.
+- **~32 beads closed:** 20 stale-open pre-screening + 12 cherry-picks from orphaned run branches.
+- **3 daemon bug fixes:** wake-on-submit (hk-24xn1), blocked-bead detection (hk-n91y0), stale-blocker auto-close (hk-rnsjs).
+- **Notify-stream auto-enable (hk-ze3op):** `--notify-stream` defaults on for multi-bead runs.
+- **Temporary n91y0 follow-up (450a4c9):** Added error-message-based detection for blocked-by-deps. This is a STOPGAP — the bounded-retry counter (hk-6pspu) is the real fix.
 
-With all 5 fixes, commit rate is ~40% (9 landed / ~22 dispatched). Remaining failures are genuine — implementers run 5-10 min with full bead descriptions but exit without committing. Likely causes: bead complexity exceeds single-session capacity, or implementer protocol needs "commit early" reinforcement. The description fix was the biggest lever; further improvements are incremental.
+## Observed harmonik dispatch issues
 
-## Known issues
-
-1. **Push race on concurrent merges:** When two beads in the same wave both succeed, the second push fails (non-FF). Daemon reopens the bead but it's already closed. Workaround: cherry-pick from the run branch. Filed as known pattern.
-2. **REQUEST_CHANGES → implementer-resume fragile:** hk-a8bg.2 iteration 2 hit `agent_ready_timeout` after 31s. The resume path may have tmux pane issues.
-3. **Batch 6 may still be running** when next session starts — check `ps aux | grep harmonik`.
-
-## Test health (audited this session)
-
-4,676 tests, 748 test files, 7/8 packages pass (specaudit fails on doc schema). **P1 gap: hk-fgy9o (lifecycle subsystem: 5.7K LOC, 6 tests, crash recovery untested).** 3 new test beads filed this session for v64 daemon fixes (hk-jimbc closed, hk-2suwl + hk-trfif open).
-
-## Next session priorities
-
-1. **Keep dispatching via harmonik** — the pipeline works. Target 6-bead waves, `--wave --max-concurrent 3`.
-2. **DOT chain:** hk-bf85t (cascade engine) and hk-qo9pq (CLI dot mode) need landing — both failed as harmonik beads (complexity). Consider sub-agent dispatch.
-3. **hk-fgy9o (P1 test uplift):** 6 days old, zero progress. Lifecycle crash recovery is untested.
-4. **Repeatedly-failing beads:** hk-hqwn.38 (N-1 compat), hk-hqwn.51 (event tagging), hk-lhv8i (pre-screen at submit), hk-buy0j (watchdog follow-ups) all failed 2+ times. May need richer descriptions or sub-agent implementation.
+1. **10 concurrent sessions = 100% failure rate** — API rate limit kills all sessions in ~2 min. Use `--max-concurrent 3` with `--wave`.
+2. **Abstract spec beads fail ~90%** — bead descriptions like "N-1 compat window per EV-029" don't tell implementers WHERE to write code. Use `--context @file` with concrete file paths.
+3. **Orphaned run branches accumulate** — the daemon creates worktrees but doesn't always merge. Check `git branch --list "run/*"` for salvageable commits.
+4. **Blocked beads in dispatch cause infinite loop** — the design fix (hk-mb8x4) must land before further dispatch.
 
 ## Files to open first
 
-1. `HANDOFF.md` (this)
-2. `docs/orchestrator-rules.md` — permanent directives
-3. `internal/daemon/pasteinject.go:706` — new `pasteInjectQuitOnReviewFile`
-4. `internal/daemon/workloop.go:1073` — review-loop merge-to-main fix site
-5. `internal/workspace/agenttask_chb028.go:271` — `buildAgentTaskContent` (where bead descriptions render)
+1. `docs/design/workloop-bounded-retry.md` — the design doc for the P0 fix
+2. `internal/daemon/workloop.go:920` — current stopgap fix site
+3. `internal/queue/types.go` — where `Attempts` field goes
+4. `internal/daemon/workloop_hkn91y0_test.go` — existing test to extend
 
 ## Plain-English glossary
 
-- **hk-zimkh** — reviewer hang bug (FIXED in v64)
-- **hk-eknhz** — review-loop merge-to-main bug (FIXED in v64)
-- **hk-waj4b** — DOT daemon wiring (T-IMPL-004, CLOSED)
-- **hk-mwqxg** — edge-condition evaluator (T-IMPL-007, CLOSED)
-- **hk-rhj3t** — cascade context plumbing (T-IMPL-009, CLOSED)
-- **hk-jtyzz** — policy_ref rejection (T-IMPL-012, CLOSED)
-- **hk-bf85t** — cascade engine (T-IMPL-008, still OPEN)
-- **hk-qo9pq** — CLI dot mode (T-IMPL-013, still OPEN)
-- **hk-fgy9o** — P1 test uplift epic (lifecycle crash recovery)
-- **DOT** — workflow-graph-defined bead processes, replaces `--review-loop`
-- **`pasteInjectQuitOnReviewFile`** — new function that watches for review.json and sends `/quit` to the reviewer
-- **`launchHeartbeatTimeout`** — window for first heartbeat; was 60s (too tight), now 180s
+- **hk-mb8x4** — workloop bounded-retry epic (eliminate infinite loops)
+- **hk-6pspu** — core structural fix (Attempts counter on queue items)
+- **hk-kupeo** — ShowBead retry also unbounded (same bug class)
+- **hk-f0xb6** — stop hook env var missing (HARMONIK_RUN_ID)
+- **hk-n91y0** — prior blocked-bead fix (string-matching, now a fast-path)
+- **DOT** — workflow-graph-defined bead processes (Phase 3 endgame)
+- **maxItemAttempts** — proposed constant (3) bounding dispatch retries per item
 
 ## No hard blockers requiring user input.

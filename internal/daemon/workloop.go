@@ -57,6 +57,14 @@ import (
 // ready queue is empty.
 const workloopPollInterval = 2 * time.Second
 
+// windowCleaner is the optional interface implemented by substrates that track
+// spawned tmux windows. exitClean probes deps.substrate for this interface and
+// calls KillAllWindows after wg.Wait() to clean up orphan tmux windows on wave
+// completion or daemon exit (hk-j6npz).
+type windowCleaner interface {
+	KillAllWindows(ctx context.Context) error
+}
+
 // maxItemAttempts mirrors queue.MaxItemAttempts for use in the workloop and
 // br-ready path. Kept as a package-level alias for readability; the canonical
 // value lives in queue.MaxItemAttempts.
@@ -552,12 +560,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	}
 
 	// exitClean terminates the loop cleanly: it waits for in-flight goroutines,
+	// kills any orphan tmux windows spawned by this daemon instance (hk-j6npz),
 	// then drains any still-active queue to QueueStatusCancelled so the next
 	// harmonik run can start without the QM-027 "already active" guard blocking
 	// it (hk-ppt32). The background context is intentional: by the time exitClean
-	// runs, ctx is always cancelled; queue.Persist needs a live context.
+	// runs, ctx is always cancelled; queue.Persist and KillAllWindows need a live
+	// context.
 	exitClean := func() error {
 		wg.Wait()
+		// Kill any tmux windows spawned during this run. deps.substrate is nil
+		// when tmux hosting is not used (exec.CommandContext path); the type
+		// assertion is a no-op in that case.
+		if wc, ok := deps.substrate.(windowCleaner); ok {
+			_ = wc.KillAllWindows(context.Background())
+		}
 		drainCancelledQueue(context.Background(), deps)
 		return nil
 	}

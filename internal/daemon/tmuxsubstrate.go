@@ -91,16 +91,31 @@ type pasteInjecter interface {
 // it spawned and routes paste-inject I/O there, ensuring per-goroutine
 // isolation under MaxConcurrent>1.
 //
+// tmuxSubstrate also tracks every window it spawns in spawnedHandles so that
+// KillAllWindows can clean them up on daemon exit or wave completion (hk-j6npz).
+//
 // All methods are safe for concurrent use.
 type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
+
+	// spawnedMu guards spawnedHandles.
+	spawnedMu sync.Mutex
+	// spawnedHandles accumulates the WindowHandle of every window created by
+	// SpawnWindow during this daemon instance's lifetime. KillAllWindows iterates
+	// this slice to clean up orphan windows on wave completion or daemon exit.
+	// Handles are appended-only; no removal on individual Kill calls (KillWindow
+	// is idempotent on a non-existent window so re-killing is harmless).
+	spawnedHandles []tmux.WindowHandle
 }
 
 // Compile-time assertion: tmuxSubstrate implements handler.Substrate.
 // Note: tmuxSubstrate does NOT implement pasteInjecter/enterSender/quitSender —
 // those are implemented by perRunSubstrate (hk-jfh59).
 var _ handler.Substrate = (*tmuxSubstrate)(nil)
+
+// Compile-time assertion: tmuxSubstrate implements windowCleaner.
+var _ windowCleaner = (*tmuxSubstrate)(nil)
 
 // NewTmuxSubstrate constructs a tmuxSubstrate that delegates to adapter and
 // creates new windows in sessionName.
@@ -170,6 +185,13 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	if outcome.Err != nil {
 		return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
 	}
+
+	// Track the spawned window handle for cleanup on wave completion / daemon
+	// exit (hk-j6npz). Appended under lock; reads happen only in KillAllWindows
+	// (called after wg.Wait(), so no concurrent SpawnWindow calls are live).
+	s.spawnedMu.Lock()
+	s.spawnedHandles = append(s.spawnedHandles, outcome.Handle)
+	s.spawnedMu.Unlock()
 
 	// Retrieve the pane PID immediately so SubstrateSession.PID() is available.
 	pid, pidErr := s.adapter.WindowPanePID(ctx, outcome.Handle)
@@ -300,6 +322,29 @@ type substrateWithAdapter interface {
 // tmuxAdapter exposes the adapter field of tmuxSubstrate so perRunSubstrate can
 // call it on the concrete type.  This satisfies substrateWithAdapter.
 func (s *tmuxSubstrate) tmuxAdapter() tmux.Adapter { return s.adapter }
+
+// KillAllWindows kills every tmux window spawned by this daemon instance.
+//
+// It is called from exitClean() in runWorkLoop after wg.Wait() returns, so all
+// in-flight goroutines have already exited before KillAllWindows runs.  Any
+// windows that were already killed by a prior tmuxSubstrateSession.Kill call
+// are simply no-ops (tmux kill-window on a missing window exits non-zero, which
+// is silently swallowed here).
+//
+// Implements windowCleaner. Bead: hk-j6npz.
+func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
+	s.spawnedMu.Lock()
+	handles := make([]tmux.WindowHandle, len(s.spawnedHandles))
+	copy(handles, s.spawnedHandles)
+	s.spawnedMu.Unlock()
+
+	for _, h := range handles {
+		// Ignore errors: the window may have already been killed by
+		// tmuxSubstrateSession.Kill or by an external tmux kill-window command.
+		_ = s.adapter.KillWindow(ctx, h)
+	}
+	return nil
+}
 
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
 // sub and captures the spawned pane target from the returned SubstrateSession.

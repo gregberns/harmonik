@@ -450,7 +450,9 @@ func TestHookRelay_EnvFromOS_AllVarsPresent(t *testing.T) {
 
 	// Use wrong session_id to get a predictable session-mismatch exit 1 —
 	// this proves envFromOS succeeded (otherwise we'd get a different error).
-	stdin := strings.NewReader(`{"session_id":"wrong","hook_event_name":"Stop"}`)
+	// All CHB-012 required fields must be present so that the session_id mismatch
+	// check (not the required-field check) is the first failure gate reached.
+	stdin := strings.NewReader(`{"session_id":"wrong","hook_event_name":"Stop","transcript_path":"/tmp/t.jsonl"}`)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, nil)
 	if code != 1 {

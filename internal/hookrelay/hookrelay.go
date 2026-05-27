@@ -173,6 +173,21 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 		return 1
 	}
 
+	// CHB-012: required fields must be present (non-empty).
+	// "required field missing" maps to bridge_malformed_hook_payload per §8 error taxonomy.
+	if inp.SessionID == "" {
+		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field session_id is absent\n")
+		return 1
+	}
+	if inp.TranscriptPath == "" {
+		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field transcript_path is absent\n")
+		return 1
+	}
+	if inp.HookEventName == "" {
+		fmt.Fprintf(stderr, "bridge_malformed_hook_payload: required field hook_event_name is absent\n")
+		return 1
+	}
+
 	// CHB-012: session_id MUST match HARMONIK_CLAUDE_SESSION_ID.
 	if inp.SessionID != e.ClaudeSessionID {
 		fmt.Fprintf(stderr,

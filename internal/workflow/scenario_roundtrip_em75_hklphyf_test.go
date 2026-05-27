@@ -273,14 +273,12 @@ func TestScenarioEM75_RequestChangesConditionEval(t *testing.T) {
 	}
 }
 
-// TestScenarioEM75_CascadeFallback_ReviewerUnconditional verifies the current
-// cascade behavior: when outcome.preferred_label is set to REQUEST_CHANGES,
-// the cascade includes both the matching conditional edge AND the unconditional
-// fallback. The unconditional fallback wins on tie-break (alphabetical
-// OrderingKey) because both edges have weight=0.
-//
-// This documents the current behavior — the DOT spec's intended
-// conditional-first ordering is a gap for a future bead.
+// TestScenarioEM75_CascadeFallback_ReviewerUnconditional verifies that when
+// outcome.preferred_label is set to REQUEST_CHANGES, the cascade selects the
+// conditional edge (reviewer -> implementer) over the unconditional fallback
+// (reviewer -> close-needs-attention). Both edges have weight=0, but
+// conditional edges sort before unconditional edges per WG-010/WG-011
+// (hk-hx8ja fix).
 func TestScenarioEM75_CascadeFallback_ReviewerUnconditional(t *testing.T) {
 	dotPath := scenarioEM75ReviewLoopDotPath(t)
 	graph, err := workflow.LoadDotWorkflow(dotPath)
@@ -295,16 +293,16 @@ func TestScenarioEM75_CascadeFallback_ReviewerUnconditional(t *testing.T) {
 	workflow.DecideNextNode(graph, "start", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
 	workflow.DecideNextNode(graph, "implementer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, ""), run, cycles)
 
-	// REQUEST_CHANGES outcome at reviewer: the cascade resolves to the
-	// unconditional fallback (close-needs-attention) due to the alphabetical
-	// OrderingKey tie-break documented above.
+	// REQUEST_CHANGES outcome at reviewer: the conditional edge to
+	// implementer wins over the unconditional fallback because conditional
+	// edges sort before unconditional edges at the same weight.
 	dec := workflow.DecideNextNode(graph, "reviewer", scenarioEM75OutcomeWithLabel(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
 	if !dec.Advance {
 		t.Fatalf("expected Advance=true, got Failed=%v", dec.Failed)
 	}
-	if dec.NextNodeID != "close-needs-attention" {
-		t.Errorf("NextNodeID = %q, want %q (unconditional fallback wins tie-break)",
-			dec.NextNodeID, "close-needs-attention")
+	if dec.NextNodeID != "implementer" {
+		t.Errorf("NextNodeID = %q, want %q (conditional edge wins over unconditional fallback)",
+			dec.NextNodeID, "implementer")
 	}
 }
 

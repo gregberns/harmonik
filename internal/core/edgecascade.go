@@ -62,8 +62,9 @@ type CascadeResult struct {
 //  4. [§4.10.EM-041 (c)] Else if outcome.SuggestedNextIDs is non-empty, narrow
 //     the matched set to edges whose ToNode is in SuggestedNextIDs. Same
 //     non-empty-replaces semantics as (b).
-//  5. [§4.10.EM-041 (d)+(e)] Sort the matched set by -Weight (descending)
-//     then by OrderingKey (lexical ascending) as the final tie-break.
+//  5. [§4.10.EM-041 (d)+(e)] Sort the matched set by -Weight (descending),
+//     then conditional-before-unconditional (WG-010/WG-011), then by
+//     OrderingKey (lexical ascending) as the final tie-break.
 //  6. If the matched set is empty, return
 //     FailureClassStructural / "no_outgoing_edge_matches".
 //  7. Select matched[0]. If its TraversalCap is set and cycles has already
@@ -136,10 +137,24 @@ func SelectNextEdge(
 		}
 	}
 
-	// §4.10.EM-041 (d)+(e) — sort by -Weight then by OrderingKey (lexical).
+	// §4.10.EM-041 (d)+(e) — sort by -Weight, then conditional-before-
+	// unconditional, then by OrderingKey (lexical) as the final tie-break.
+	//
+	// The conditional-before-unconditional tier implements WG-010/WG-011:
+	// conditional edges are evaluated before the unconditional fallback edge.
+	// Without this, an unconditional edge whose OrderingKey sorts
+	// alphabetically before a conditional edge would win the tie-break,
+	// preventing the conditional path from ever firing (hk-hx8ja).
 	sort.SliceStable(matched, func(i, j int) bool {
 		if matched[i].Weight != matched[j].Weight {
 			return matched[i].Weight > matched[j].Weight // higher weight first
+		}
+		// Conditional edges (non-nil Condition) sort before unconditional
+		// edges (nil Condition) at the same weight.
+		iCond := matched[i].Condition != nil
+		jCond := matched[j].Condition != nil
+		if iCond != jCond {
+			return iCond // conditional first
 		}
 		return matched[i].OrderingKey < matched[j].OrderingKey // lexical ascending
 	})

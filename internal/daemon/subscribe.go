@@ -125,6 +125,18 @@ type ActiveRunsSource interface {
 // ceiling that still bounds memory consumption (32 × 256 × core.Event).
 const subscribeMaxConnectionsDefault = 32
 
+// NewTimerFn is a factory that creates a timer for a given duration.
+// It returns a receive-only channel that fires when the timer expires,
+// a stop function (mirrors time.Timer.Stop), and a reset function
+// (mirrors time.Timer.Reset). Tests inject a fake via SubscribeHubConfig.NewTimer.
+type NewTimerFn func(d time.Duration) (c <-chan time.Time, stop func() bool, reset func(time.Duration))
+
+// realNewTimer wraps time.NewTimer to satisfy NewTimerFn.
+func realNewTimer(d time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
+	t := time.NewTimer(d)
+	return t.C, t.Stop, func(d time.Duration) { t.Reset(d) }
+}
+
 // SubscribeHubConfig wires bus + active-runs source into a SubscribeHub.
 type SubscribeHubConfig struct {
 	// Bus is the event bus. Required.
@@ -143,6 +155,11 @@ type SubscribeHubConfig struct {
 	// Now is the wall-clock function. Defaults to time.Now when nil.
 	// Tests override this; production wiring leaves it nil.
 	Now func() time.Time
+
+	// NewTimer is the timer factory used for heartbeat ticks.
+	// Defaults to realNewTimer (wrapping time.NewTimer) when nil.
+	// Tests inject a fake to avoid real-time waits and CI flakiness.
+	NewTimer NewTimerFn
 }
 
 // SubscribeHub is the long-lived bus consumer that fans matched events out
@@ -170,6 +187,9 @@ type SubscribeHub struct {
 func NewSubscribeHub(cfg SubscribeHubConfig) *SubscribeHub {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.NewTimer == nil {
+		cfg.NewTimer = realNewTimer
 	}
 	h := &SubscribeHub{
 		cfg:         cfg,
@@ -285,8 +305,8 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		}
 	}()
 
-	heartbeat := time.NewTimer(heartbeatInterval)
-	defer heartbeat.Stop()
+	hbC, hbStop, hbReset := h.cfg.NewTimer(heartbeatInterval)
+	defer hbStop()
 
 	enc := json.NewEncoder(conn)
 
@@ -309,20 +329,20 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				return
 			}
 			// Reset heartbeat — we just wrote, so the line is fresh.
-			if !heartbeat.Stop() {
+			if !hbStop() {
 				select {
-				case <-heartbeat.C:
+				case <-hbC:
 				default:
 				}
 			}
-			heartbeat.Reset(heartbeatInterval)
+			hbReset(heartbeatInterval)
 
-		case <-heartbeat.C:
+		case <-hbC:
 			payload := h.makeHeartbeat()
 			if err := enc.Encode(payload); err != nil {
 				return
 			}
-			heartbeat.Reset(heartbeatInterval)
+			hbReset(heartbeatInterval)
 		}
 	}
 }

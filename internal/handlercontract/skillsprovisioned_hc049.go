@@ -52,6 +52,14 @@ type SkillProvisionedEntry struct {
 // An empty skills slice is valid when LaunchSpec.required_skills is empty
 // (no skills were required or provisioned).
 //
+// Provisioning is mechanism-tagged per CP-051 (specs/control-points.md
+// §4.11.CP-051): the effective skill set is determined entirely by declared
+// LaunchSpec fields; no cognition participates in the selection or assembly
+// of the provisioned set.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+//
 // # Wire fields (event-model.md §8.3.8; handler-contract.md §4.11.HC-049)
 //
 //   - type       — always ProgressMsgTypeSkillsProvisioned ("skills_provisioned")

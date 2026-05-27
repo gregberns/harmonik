@@ -18,6 +18,15 @@ import (
 // and the absolute path of the first matching package directory on the search
 // path.
 //
+// Resolution is deterministic and mechanism-tagged per CP-051
+// (specs/control-points.md §4.11.CP-051): no cognition participates in the
+// declaration-to-provisioning pipeline. The skill contents themselves may be
+// consumed by cognition at runtime, but the resolution step is a pure
+// filesystem lookup over declared search paths.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+//
 // Spec: specs/handler-contract.md §4.11.HC-047.
 type ResolvedSkill struct {
 	// Name is the skill name as declared in LaunchSpec.required_skills[].

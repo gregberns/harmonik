@@ -65,6 +65,15 @@ var ErrInvalidControlPoint = errors.New("cpregistry: structurally invalid Contro
 // cognition-tagged Guard MUST fail registration."
 var ErrCognitionGuard = errors.New("cpregistry: cognition-tagged Guard forbidden (CP-020)")
 
+// ErrCognitionBudget is returned by MapRegistry.Register when a Budget
+// ControlPoint with a cognition-tagged evaluator is submitted for registration.
+//
+// specs/control-points.md §4.1.CP-005 boundary-classification table: Budget
+// MUST be mechanism-tagged. Cognition-tagged Budget evaluators are forbidden
+// because Budget enforcement (counter comparison, threshold check) is a
+// deterministic operation that must not delegate to a model.
+var ErrCognitionBudget = errors.New("cpregistry: cognition-tagged Budget forbidden (CP-005 boundary rule)")
+
 // MapRegistry is the concrete in-process implementation of [Registry].
 //
 // It implements §6.1.7 INTERFACE Registry using a Go map keyed by name, owned
@@ -96,6 +105,7 @@ func NewMapRegistry() *MapRegistry {
 // Returns nil on success. Returns an error when:
 //   - cp.Valid() is false → [ErrInvalidControlPoint]
 //   - cp.Kind is KindGuard and cp.Evaluator.Mode is ModeTagCognition → [ErrCognitionGuard]
+//   - cp.Kind is KindBudget and cp.Evaluator.Mode is ModeTagCognition → [ErrCognitionBudget]
 //   - cp.Name is already registered with a divergent body → [ErrDivergentBody]
 //
 // Re-registration with an identical body (same name + same body) succeeds
@@ -106,9 +116,17 @@ func (r *MapRegistry) Register(cp ControlPoint) error {
 		return fmt.Errorf("%w: name=%q", ErrInvalidControlPoint, cp.Name)
 	}
 
-	// CP-020: cognition-tagged Guards are forbidden.
-	if cp.Kind == KindGuard && cp.Evaluator.Mode == ModeTagCognition {
-		return fmt.Errorf("%w: name=%q", ErrCognitionGuard, cp.Name)
+	// CP-005 boundary-classification: Guard and Budget MUST be mechanism-tagged.
+	// Gate and Hook allow both mechanism and cognition per AllowsCognition().
+	if !cp.Kind.AllowsCognition() && cp.Evaluator.Mode == ModeTagCognition {
+		switch cp.Kind {
+		case KindGuard:
+			// CP-020: cognition-tagged Guards are forbidden.
+			return fmt.Errorf("%w: name=%q", ErrCognitionGuard, cp.Name)
+		case KindBudget:
+			// CP-005 boundary rule: cognition-tagged Budgets are forbidden.
+			return fmt.Errorf("%w: name=%q", ErrCognitionBudget, cp.Name)
+		}
 	}
 
 	existing, exists := r.entries[cp.Name]

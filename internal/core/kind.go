@@ -50,6 +50,27 @@ func (k Kind) Valid() bool {
 	}
 }
 
+// AllowsCognition reports whether a ControlPoint of this Kind may carry a
+// cognition-tagged evaluator per the §4.1.CP-005 boundary-classification table.
+//
+// Gate and Hook may be mechanism OR cognition per CP-011 and CP-017.
+// Guard and Budget MUST be mechanism-tagged (CP-020; Budget boundary rule from
+// the §4.1 table). A cognition-tagged evaluator on a Guard or Budget MUST fail
+// registration at the §7.1 registration sequence.
+//
+// AllowsCognition returns false for unknown Kind values; callers should check
+// Kind.Valid() first to distinguish "mechanism-only" from "invalid Kind".
+func (k Kind) AllowsCognition() bool {
+	switch k {
+	case KindGate, KindHook:
+		return true
+	case KindGuard, KindBudget:
+		return false
+	default:
+		return false
+	}
+}
+
 // MarshalText implements encoding.TextMarshaler so Kind serialises correctly
 // in JSON and YAML policy documents (control-points.md §6.3).
 // It rejects any value that is not one of the four declared constants at MVH.

@@ -258,7 +258,7 @@ func countOutcomes(g *Group) (successCount, failCount int) {
 func waveEligible(g *Group) []*Item {
 	var out []*Item
 	for i := range g.Items {
-		if g.Items[i].Status == ItemStatusPending {
+		if g.Items[i].Status == ItemStatusPending && g.Items[i].Attempts < MaxItemAttempts {
 			out = append(out, &g.Items[i])
 		}
 	}
@@ -284,6 +284,10 @@ func streamEligible(g *Group) []*Item {
 	for i := range g.Items {
 		switch g.Items[i].Status {
 		case ItemStatusPending:
+			if g.Items[i].Attempts >= MaxItemAttempts {
+				// Over-limit: skip as if terminal (defense-in-depth; hk-6pspu).
+				continue
+			}
 			return []*Item{&g.Items[i]}
 		case ItemStatusDeferredForLedgerDep:
 			// HOL blocked: deferred head prevents dispatch of subsequent items

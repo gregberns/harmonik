@@ -57,6 +57,13 @@ import (
 // ready queue is empty.
 const workloopPollInterval = 2 * time.Second
 
+// maxItemAttempts mirrors queue.MaxItemAttempts for use in the workloop and
+// br-ready path. Kept as a package-level alias for readability; the canonical
+// value lives in queue.MaxItemAttempts.
+//
+// Bead ref: hk-6pspu.
+const maxItemAttempts = queue.MaxItemAttempts
+
 // agentReadyKillReapTimeout is the maximum time to wait for watcher.Done()
 // after Kill() in the HC-056 agent_ready_timeout path. Kill() itself sends
 // SIGTERM then SIGKILL (3 s grace); this additional 10 s covers watcher
@@ -485,6 +492,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 // Spec ref: specs/execution-model.md §7.4 (TS-1 dispatch loop pseudocode);
 // §4.3.EM-015f (group-advance gate).
 // Bead ref: hk-45ude.
+
 func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
@@ -513,6 +521,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	if deps.heldEventDedup == nil {
 		deps.heldEventDedup = make(map[string]struct{})
 	}
+
+	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
+	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
+	// restart (acceptable — the br-ready path is the backward-compat fallback).
+	//
+	// Bead ref: hk-kupeo (ShowBead bounded retry), hk-6pspu (dispatch bound).
+	readyPathAttempts := make(map[core.BeadID]int)
 
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
@@ -711,6 +726,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 					// Locate the same group and item in the live snapshot.
 					foundItem := false
+					maxAttemptsHit := false
 					for gi := range liveQ.Groups {
 						if liveQ.Groups[gi].Status != queue.GroupStatusActive {
 							continue
@@ -721,12 +737,31 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						if snapItemIdx < len(liveQ.Groups[gi].Items) &&
 							liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
 							liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
+							// hk-6pspu: increment Attempts and enforce maxItemAttempts.
+							liveQ.Groups[gi].Items[snapItemIdx].Attempts++
+							if liveQ.Groups[gi].Items[snapItemIdx].Attempts >= maxItemAttempts {
+								liveQ.Groups[gi].Items[snapItemIdx].LastFailureReason = "max_attempts_exceeded"
+								fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
+									snapItemBeadID, maxItemAttempts)
+								maxAttemptsHit = true
+								break
+							}
 							runUUIDStr := "" // filled after uuid generation below
 							liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDispatched
 							liveQ.Groups[gi].Items[snapItemIdx].RunID = &runUUIDStr // placeholder; updated after
 							_ = runUUIDStr                                          // suppress lint
 							foundItem = true
 						}
+					}
+					if maxAttemptsHit {
+						lq.SetQueue(liveQ)
+						if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+							fmt.Fprintf(os.Stderr, "daemon: workloop: Persist max-attempts queueID=%s: %v\n",
+								liveQ.QueueID, persistErr)
+						}
+						lq.Done()
+						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueID, snapGroupIndex, snapItemIdx, false)
+						continue
 					}
 					if !foundItem {
 						lq.Done()
@@ -787,6 +822,19 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			// Pick first ready bead; labels carry workflow:<mode> for mode resolution.
 			beadRecord = readyRecords[0]
+
+			// hk-6pspu: br-ready path attempt bound. Skip beads that have
+			// exceeded maxItemAttempts on this path. The counter is incremented
+			// on ShowBead/claim failures (not on every poll). Resets on daemon
+			// restart (acceptable for the backward-compat fallback path).
+			if readyPathAttempts[beadRecord.BeadID] >= maxItemAttempts {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d on br-ready path — skipping (hk-6pspu)\n",
+					beadRecord.BeadID, maxItemAttempts)
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
+			}
 
 			// Handler-pause gate for the br-ready path (hk-kac8g): mirror the same
 			// check applied in the queue path above.  The bead remains in the br
@@ -869,7 +917,17 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if dispatchCtx.Err() != nil {
 					return exitClean()
 				}
-				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (will retry): %v\n", beadID, showErr)
+				readyPathAttempts[beadID]++
+				if readyPathAttempts[beadID] >= maxItemAttempts {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s failed %d times, skipping bead (hk-kupeo): %v\n",
+						beadID, readyPathAttempts[beadID], showErr)
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (attempt %d/%d, will retry): %v\n",
+					beadID, readyPathAttempts[beadID], maxItemAttempts, showErr)
 				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
@@ -932,6 +990,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			// Claim conflict or transient error — surface to stderr and retry.
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s error (will retry): %v\n", beadID, claimErr)
+			// hk-6pspu: increment br-ready path attempt counter on claim failure.
+			if queueItemIndex < 0 {
+				readyPathAttempts[beadID]++
+			}
 			// hk-rnsjs: if the bead is blocked by stale dependencies already in
 			// main, auto-close them so the next workloop retry can claim the bead.
 			autoCloseStaleBlockersOnClaimFailure(ctx, deps, beadID)
@@ -947,6 +1009,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						if queueItemIndex < len(liveQ.Groups[gi].Items) {
 							liveQ.Groups[gi].Items[queueItemIndex].Status = queue.ItemStatusPending
 							liveQ.Groups[gi].Items[queueItemIndex].RunID = nil
+							// hk-6pspu: record claim failure reason; do NOT reset Attempts (monotonic).
+							liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = claimErr.Error()
 						}
 					}
 					lq.SetQueue(liveQ)

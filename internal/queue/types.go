@@ -12,6 +12,14 @@ import (
 // Any envelope with a different value is rejected at unmarshal time.
 const schemaVersion = 1
 
+// MaxItemAttempts is the maximum number of outer-loop dispatch attempts per
+// queue item. Items that reach this limit are skipped and marked failed with
+// reason "max_attempts_exceeded". The workloop enforces this bound at Phase 3
+// (dispatch-stamp); waveEligible/streamEligible apply it as defense-in-depth.
+//
+// Bead ref: hk-6pspu; design: docs/design/workloop-bounded-retry.md.
+const MaxItemAttempts = 3
+
 // QueueStatus is the queue-level lifecycle state (specs/queue-model.md §2.2).
 type QueueStatus string
 
@@ -139,6 +147,22 @@ type Item struct {
 	// project directory at dispatch time. Empty falls back to the project-level
 	// convention (workflow.dot in the project root).
 	WorkflowRef string `json:"workflow_ref,omitempty"`
+
+	// Attempts counts outer-loop dispatch attempts for this item. Incremented
+	// each time the workloop stamps the item as dispatched (Phase 3). Monotonic
+	// within a queue lifetime — never reset on claim-failure revert. Items that
+	// reach MaxItemAttempts are skipped by the workloop and marked failed.
+	// Zero-value default is backward-compatible with existing queue.json files.
+	//
+	// Bead ref: hk-6pspu.
+	Attempts int `json:"attempts"`
+
+	// LastFailureReason records the most recent failure reason when a dispatch
+	// attempt fails (e.g. ClaimBead error, max_attempts_exceeded). Diagnostic
+	// only — not used for control flow.
+	//
+	// Bead ref: hk-6pspu.
+	LastFailureReason string `json:"last_failure_reason,omitempty"`
 }
 
 // Group is one execution group within the Queue envelope

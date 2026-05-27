@@ -16,6 +16,7 @@ func TestFailureClassValid(t *testing.T) {
 		FailureClassCanceled,
 		FailureClassBudgetExhausted,
 		FailureClassCompilationLoop,
+		FailureClassResourceExhausted,
 	}
 	for _, f := range valid {
 		if !f.Valid() {
@@ -81,6 +82,11 @@ func TestFailureClassUnmarshalText(t *testing.T) {
 			name:  "valid compilation_loop",
 			input: `{"class":"compilation_loop"}`,
 			want:  FailureClassCompilationLoop,
+		},
+		{
+			name:  "valid resource_exhausted",
+			input: `{"class":"resource_exhausted"}`,
+			want:  FailureClassResourceExhausted,
 		},
 		{
 			name:    "invalid made_up",
@@ -158,6 +164,7 @@ func TestFailureClassRoundTrip(t *testing.T) {
 		FailureClassCanceled,
 		FailureClassBudgetExhausted,
 		FailureClassCompilationLoop,
+		FailureClassResourceExhausted,
 	}
 
 	for _, f := range values {
@@ -192,7 +199,7 @@ func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"transient", "structural", "deterministic",
-		"canceled", "budget_exhausted", "compilation_loop",
+		"canceled", "budget_exhausted", "compilation_loop", "resource_exhausted",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message %q does not contain %q", msg, want)

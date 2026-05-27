@@ -6,12 +6,18 @@ package workflow
 // via dot.Validate, and returns the validated graph or a typed error the daemon
 // can map to failure_class=workflow_load.
 //
+// Provides LoadDotWorkflowWithPolicy: extends LoadDotWorkflow with skills_ref
+// resolution per control-points.md §4.13 CP-057. Returns one SkillsResolvedPayload
+// per node whose skills_ref resolved successfully.
+//
 // Spec refs:
 //   - specs/workflow-graph.md §10 WG-031/032 — parse policy.
 //   - specs/workflow-graph.md §9 WG-024..028 — validation obligations.
 //   - specs/execution-model.md §4.3 EM-012   — WorkflowModeDot dispatch.
+//   - specs/control-points.md §4.12 CP-056   — policy_ref deprecated.
+//   - specs/control-points.md §4.13 CP-057   — skills_ref semantics.
 //
-// Bead ref: hk-waj4b (T-IMPL-004).
+// Bead ref: hk-waj4b (T-IMPL-004), hk-zqr6f (CP-056/CP-057 surface).
 // Tags: mechanism
 
 import (
@@ -19,6 +25,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -42,6 +49,10 @@ func (e *ErrWorkflowLoad) Error() string {
 // On any failure (file read, parse, validation with SeverityError diagnostics),
 // returns nil and an *ErrWorkflowLoad that the daemon can map to
 // failure_class=workflow_load.
+//
+// When a policy_ref attribute is detected (deprecated per CP-056), a deprecation
+// warning is printed to stderr naming the typed replacements (gate_ref,
+// skills_ref, or freedom_profile_ref per CP-055) before returning the load error.
 func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 	src, err := os.ReadFile(dotPath)
 	if err != nil {
@@ -53,6 +64,15 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 
 	graph, parseErr := dot.Parse(string(src), dotPath)
 	if parseErr != nil {
+		// CP-056: if the parse error mentions policy_ref, emit a deprecation
+		// warning to stderr before returning the load error so operators see
+		// the migration guidance alongside the ingest failure.
+		if strings.Contains(parseErr.Error(), "CP-056") {
+			fmt.Fprintf(os.Stderr,
+				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
+					"Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\n",
+				dotPath)
+		}
 		return nil, &ErrWorkflowLoad{
 			Path:   dotPath,
 			Reason: fmt.Sprintf("parse failed: %v", parseErr),
@@ -74,4 +94,52 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 	}
 
 	return graph, nil
+}
+
+// LoadDotWorkflowWithPolicy extends LoadDotWorkflow with skills_ref resolution
+// per control-points.md §4.13 CP-057.
+//
+// After successfully loading and validating the graph, it iterates every node
+// that declares a skills_ref attribute and resolves the name against the
+// policy's skill_sets[] block. Successful resolution yields one
+// core.SkillsResolvedPayload per node; an unresolved skills_ref is returned as
+// an *ErrWorkflowLoad (structural failure — the same class as a missing *_ref).
+//
+// skills_ref is OPTIONAL on every node type per CP-057; nodes without skills_ref
+// are silently accepted and produce no payload entry.
+func LoadDotWorkflowWithPolicy(dotPath string, policy *core.PolicyDocument) (*dot.Graph, []core.SkillsResolvedPayload, error) {
+	graph, err := LoadDotWorkflow(dotPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Build a name→skills index from the policy's skill_sets block (CP-057 §6.3).
+	skillSetIndex := make(map[string][]string, len(policy.SkillSets))
+	for _, ss := range policy.SkillSets {
+		skillSetIndex[ss.Name] = ss.Skills
+	}
+
+	var resolved []core.SkillsResolvedPayload
+	for _, n := range graph.Nodes {
+		ref := strings.TrimSpace(n.SkillsRef)
+		if ref == "" {
+			continue
+		}
+		skills, ok := skillSetIndex[ref]
+		if !ok {
+			return nil, nil, &ErrWorkflowLoad{
+				Path: dotPath,
+				Reason: fmt.Sprintf(
+					"node %q: skills_ref %q does not resolve to any skill_sets[] entry in the policy (CP-057 / WG-026)",
+					n.ID, ref),
+			}
+		}
+		resolved = append(resolved, core.SkillsResolvedPayload{
+			NodeID:    n.ID,
+			SkillsRef: ref,
+			Skills:    skills,
+		})
+	}
+
+	return graph, resolved, nil
 }

@@ -41,7 +41,7 @@ type PolicyDocument struct {
 	Budgets []PolicyBudget `yaml:"budgets"`
 
 	// SkillSets is the optional list of named skill-set blocks referenceable
-	// from DOT policy_ref (§4.11.CP-049).
+	// from DOT skills_ref per control-points.md §4.13 CP-057 (formerly policy_ref, deprecated CP-056).
 	SkillSets []PolicySkillSet `yaml:"skill_sets,omitempty"`
 
 	// sectionPresence tracks which top-level keys were explicitly present in the

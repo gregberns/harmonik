@@ -160,6 +160,13 @@ const (
 	// EventTypePolicyExpressionExceededCost is the policy_expression_exceeded_cost
 	// event type (§8.2.12). Durability class: F.
 	EventTypePolicyExpressionExceededCost EventType = "policy_expression_exceeded_cost"
+
+	// EventTypeSkillsResolved is the skills_resolved event type.
+	// Emitted at workflow-ingest time when a node's skills_ref attribute is
+	// successfully resolved against the run's policy skill_sets[] block
+	// per [control-points.md §4.13 CP-057].
+	// Durability class: O.
+	EventTypeSkillsResolved EventType = "skills_resolved"
 )
 
 // ---------------------------------------------------------------------------

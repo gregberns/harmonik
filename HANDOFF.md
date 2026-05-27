@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-05-27 main — v66 (commit 6245a34). Clean. 23 commits, 24 beads resolved, bounded-retry shipped + harmonik dispatch exercised. -->
+<!-- PP-TRIAL:v2 2026-05-27 main — v67 (commit f47e344). Clean. 22 commits, 28 beads resolved, 7 CHB beads landed via harmonik, workloop tests fixed. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
 
@@ -8,59 +8,50 @@ ROLE. You are the orchestrator. Delegate substantively. Keep the main thread min
 
 LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read on `/session-resume`. Append new entries when you observe friction. Promote durable rules to `docs/orchestrator-rules.md` or `.claude/implementer-protocol.md`.
 
-# Where we are (v66, 2026-05-27)
+# Where we are (v67, 2026-05-27)
 
-**Main at `6245a34`** (origin parity, working tree clean). 23 commits landed this session.
+**Main at `f47e344`** (origin parity, working tree clean). 22 commits landed this session.
 
-## What v66 landed
+## What v67 landed
 
-- **Bounded-retry shipped (hk-mb8x4 epic closed):** `Attempts` counter on `queue.Item`, `MaxItemAttempts=3` enforcement in workloop dispatch, defense-in-depth in `waveEligible`/`streamEligible`, br-ready path bounded via `readyPathAttempts` map. 8 test beads covering all retry scenarios.
-- **Hook-relay fix (hk-f0xb6):** exit 0 outside harmonik sessions — no more `bridge_malformed_hook_payload` errors in user Claude Code sessions.
-- **Auto-archive queue (hk-ly4w5):** `harmonik run` auto-archives paused-by-failure/cancelled queues so re-dispatch is one command.
-- **Subscribe connection cap (hk-bra0j):** MaxConnections=32 with CAS-protected counter and `subscribe_capacity_exceeded` rejection.
-- **Depguard handler-contract rule (hk-t5h2p):** activated the previously-deferred lint rule.
-- **Chores:** heldEventDedup cleanup on epoch change (hk-o48pb), handler disk struct dedup (hk-n8yyk), rate-limit docs (hk-kumjl).
-- **11 stale-open beads closed** via pre-screening (already-implemented CHB/handler/workspace features).
+- **7 CHB beads via harmonik dispatch:** CHB-006 (env-var schema), CHB-007 (forbidden flags), CHB-009 (fresh-mint enforcement), CHB-011 (no-op exit), CHB-012 (stdin validation), CHB-013 (hook mapping table), CHB-014 (reviewer verdict read). All reviewer-approved except CHB-007 (impl verified manually).
+- **4 workloop test failures fixed (hk-95xm9):** Root cause was no-commit guard (hk-mmh8f) reopening beads when test handlers used `exit 0` without committing. Fix: `workloopFixturePreCommitWorktreeFactory` creates dummy commits in worktrees; `workloopFixtureGitRepo` adds bare origin remote.
+- **3 orphaned commits salvaged:** hk-6232r (subscribe test improvements), hk-j6npz (tmux window cleanup), hk-a5sil (subscribe since_event_id replay). All cherry-picked from deleted worktree branches.
+- **17 stale/probe beads closed:** 10 with implementations already on main, 3 probe artifacts, 4 test artifacts.
 
-## Harmonik dispatch learnings (CRITICAL for next session)
+## Harmonik dispatch learnings (CRITICAL — extends v66 list)
 
-1. **Don't commit to local main while harmonik is running.** The daemon rebases worktree branches onto local main — any divergence causes rebase conflicts. Queue commits until the wave completes.
-2. **Cherry-pick from `run/*` branches when reviewer approves but merge fails.** Check `git log run/<run-id> --oneline -3`.
-3. **Concrete beads succeed, abstract beads fail ~90%.** Beads with specific file paths and line numbers in descriptions land; beads saying "implement X per spec" produce no_commit.
-4. **Use `--context @file` for enriched dispatches.** The context lands in agent-task.md's "Extra Context" section.
-5. **Stale tmux windows accumulate.** Daemon doesn't clean up tmux windows on wave completion. Filed hk-j6npz.
-6. **4 pre-existing test failures** in `workloop_test.go`: `TestWorkLoop_DispatchClosesBead`, `TestWorkLoop_TwoConcurrentBeads`, `TestWorkLoop_LabelsHydratedFromShowBead`, `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency`. All timeout waiting for bead close. Pre-date this session.
-
-## Unsalvaged work worth reviewing
-
-- **hk-a5sil** (subscribe since_event_id replay): commit `981ea82` on deleted branch `feat/hk-a5sil-since-event-id-replay` — 398 lines, 5 files. Was NOT reviewed. Retrievable via `git reflog` or re-dispatch.
+1–5. (Unchanged from v66 — concrete beads succeed, use `--context @file`, etc.)
+6. **`.beads/issues.jsonl` blocks merges.** Every `br close` dirties this file; harmonik's rebase detects unstaged changes and fails. Commit beads changes BEFORE dispatching a batch, and don't run `br close` while a batch is in reviewer/merge phase.
+7. **Non-isolated sub-agents dirty main, blocking merges.** The workloop test investigator wrote to `workloop_test.go` in the main repo while harmonik was merging — caused 4 merge failures. NEVER dispatch non-isolated (`isolation != worktree`) sub-agents while harmonik is running.
+8. **Spec context improves commit rate.** Batch 3 used `--context @specs/claude-hook-bridge.md` — CHB-013 committed (previously failed). Still no silver bullet for beads that need nonexistent integration points.
+9. **4 CHB beads persistently no_commit:** hk-qo08q.8 (session-id), .16 (retry backoff), .17 (exit-code discipline), .18 (pre-exec ordering). Each failed 2× across batches. These reference code integration points that don't exist yet — they need prerequisite scaffolding or richer bead descriptions with exact file:line targets.
 
 ## Next priorities
 
-1. **Fix the 4 pre-existing test failures** — likely a workloop regression from a prior session. File beads and investigate.
-2. **hk-j6npz** (tmux window cleanup on daemon exit) — needs sub-agent, too architectural for harmonik.
-3. **hk-a5sil** (subscribe replay) — re-dispatch with context or review the orphaned commit.
-4. **hk-6232r** (subscribe test improvements) — split into smaller beads, each with one test.
-5. Continue closing stale-open beads — `br list --status=open` still has ~50.
+1. **Remaining 4 CHB beads** (.8, .16, .17, .18) — enrich descriptions with file paths or create prerequisite scaffold beads. Consider dispatching as a single focused sub-agent with full codebase context (exception (a): fixing harmonik's own hook-relay).
+2. **hk-cw56j** (CHB-023, implementer --resume correctness) — complex, cross-cutting. Needs kerf work or focused investigation.
+3. **Phase-3 DOT beads** — `kerf next` shows DOT exploration/scenario beads ready. These are the near-term endgame per orchestrator rules.
+4. **Continue stale-bead closure** — ~144 open, many likely subsumed.
+5. **Pre-existing test failure:** `TestSession_Outcome_StderrTail` in `internal/handler/session_test.go` — observed during CHB-009 test run. Not blocking.
+6. **38 stale stashes** accumulated from prior sessions — safe to drop (`git stash drop` the worktree-agent-* and leak entries).
 
 ## Files to open first
 
-1. `internal/daemon/workloop.go` — bounded-retry code at lines 60-65 (maxItemAttempts), 525-530 (readyPathAttempts), 740-765 (Phase 3 enforcement)
-2. `internal/queue/types.go:15-21` — `MaxItemAttempts` constant, `Attempts`/`LastFailureReason` fields
-3. `internal/hookrelay/hookrelay.go:148-159` — exit 0 fix for non-harmonik sessions
-4. `cmd/harmonik/run.go:422-450` — auto-archive logic
+1. `internal/hookrelay/hookrelay.go` — the hook-relay dispatch hub; CHB-013 mapping table tests at `hookrelay_chb013_qo08q_test.go`
+2. `internal/handler/claudehandler_chb006_024.go` — CHB-006/007/008/009 live here
+3. `internal/daemon/workloop_precommit_factory_test.go` — the new test factory (hk-95xm9 fix)
+4. `specs/claude-hook-bridge.md` — normative spec for remaining CHB beads
 
 ## Plain-English glossary
 
-- **hk-mb8x4** — workloop bounded-retry epic (all children landed, closed)
-- **hk-6pspu** — Attempts counter on queue items (core structural fix)
-- **hk-kupeo** — ShowBead pre-claim retry bound
-- **hk-f0xb6** — hook-relay env var error fix
-- **hk-ly4w5** — auto-archive queue.json on re-run
-- **hk-bra0j** — subscribe connection cap (MaxConnections=32)
-- **hk-t5h2p** — depguard lint rule for handlercontract
-- **hk-j6npz** — tmux window cleanup bug (filed, not yet fixed)
-- **hk-a5sil** — subscribe since_event_id replay (orphaned commit, needs review)
-- **maxItemAttempts** — constant (3) bounding dispatch retries per queue item
+- **hk-qo08q** — CHB (claude-hook-bridge) spec implementation epic
+- **hk-qo08q.8/.16/.17/.18** — four CHB beads that persistently fail no_commit (session-id mint, retry backoff, exit-code discipline, pre-exec ordering)
+- **hk-95xm9** — workloop test failure bug (FIXED this session)
+- **hk-j6npz** — tmux window cleanup on daemon exit (LANDED via cherry-pick)
+- **hk-a5sil** — subscribe since_event_id replay (LANDED via cherry-pick)
+- **hk-6232r** — subscribe test improvements (LANDED via cherry-pick)
+- **hk-cw56j** — implementer --resume correctness across daemon restart (CHB-023, still open)
+- **no_commit** — harmonik failure class: implementer exited without advancing HEAD
 
 ## No hard blockers requiring user input.

@@ -119,6 +119,12 @@ type ActiveRunsSource interface {
 	Snapshot() []*RunHandle
 }
 
+// subscribeMaxConnectionsDefault is the default per-process connection cap
+// applied when SubscribeHubConfig.MaxConnections is zero. A daemon is
+// single-user (0600 socket), so 32 concurrent subscribers is a generous
+// ceiling that still bounds memory consumption (32 × 256 × core.Event).
+const subscribeMaxConnectionsDefault = 32
+
 // SubscribeHubConfig wires bus + active-runs source into a SubscribeHub.
 type SubscribeHubConfig struct {
 	// Bus is the event bus. Required.
@@ -127,6 +133,12 @@ type SubscribeHubConfig struct {
 	// ActiveRuns is the source of active-run metadata for heartbeats.
 	// May be nil; the heartbeat payload's active_runs field will then be empty.
 	ActiveRuns ActiveRunsSource
+
+	// MaxConnections caps the number of concurrent subscribe connections. When
+	// zero, subscribeMaxConnectionsDefault (32) is used. A new subscribe
+	// request that would exceed the cap is rejected immediately with a
+	// "subscribe_capacity_exceeded" error written to the connection.
+	MaxConnections int
 
 	// Now is the wall-clock function. Defaults to time.Now when nil.
 	// Tests override this; production wiring leaves it nil.
@@ -145,6 +157,11 @@ type SubscribeHub struct {
 	mu          sync.RWMutex
 	subscribers map[*subscriptionStream]struct{}
 	lastEventID atomic.Value // string; last successfully fanned-out event_id
+
+	// connCount tracks the number of active HandleSubscribe goroutines. It is
+	// incremented after the capacity check passes and decremented when the
+	// goroutine returns. Used to enforce cfg.MaxConnections.
+	connCount atomic.Int64
 
 	closed atomic.Bool
 }
@@ -198,6 +215,24 @@ func (h *SubscribeHub) dispatch(_ context.Context, evt core.Event) error {
 // HandleSubscribe implements SubscribeHandler. It blocks until the client
 // disconnects or ctx is cancelled.
 func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req SubscribeRequest) {
+	// Enforce per-process connection cap. Use a compare-and-increment loop so
+	// two concurrent callers can't both pass the check and both exceed the cap.
+	maxConn := int64(h.cfg.MaxConnections)
+	if maxConn <= 0 {
+		maxConn = subscribeMaxConnectionsDefault
+	}
+	for {
+		cur := h.connCount.Load()
+		if cur >= maxConn {
+			writeSubscribeError(conn, "subscribe_capacity_exceeded")
+			return
+		}
+		if h.connCount.CompareAndSwap(cur, cur+1) {
+			break
+		}
+	}
+	defer h.connCount.Add(-1)
+
 	// Build the type filter.
 	typeFilter := make(map[string]struct{}, len(req.Types))
 	for _, t := range req.Types {

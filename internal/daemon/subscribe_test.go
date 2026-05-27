@@ -442,3 +442,107 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestSubscribeHub_CapacityExceeded verifies that once MaxConnections active
+// HandleSubscribe goroutines are in flight, the (MaxConnections+1)-th call
+// receives a "subscribe_capacity_exceeded" error written to the connection
+// and returns immediately without consuming a subscriber slot.
+func TestSubscribeHub_CapacityExceeded(t *testing.T) {
+	t.Parallel()
+
+	const cap = 3
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:            nil,
+		MaxConnections: cap,
+	})
+
+	// Hold connections open: cap × (srv, cli) pairs where HandleSubscribe blocks.
+	type pairHolder struct {
+		srv, cli net.Conn
+		done     chan struct{}
+		cancel   context.CancelFunc
+	}
+	holders := make([]pairHolder, cap)
+	for i := range holders {
+		srv, cli := net.Pipe()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
+			close(done)
+		}()
+		holders[i] = pairHolder{srv: srv, cli: cli, done: done, cancel: cancel}
+	}
+	// Wait until all cap slots are registered.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if hub.connCount.Load() == cap {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := hub.connCount.Load(); got != cap {
+		t.Fatalf("connCount after %d accepted connections: got %d, want %d", cap, got, cap)
+	}
+
+	// The (cap+1)-th connect must be rejected immediately.
+	srv1, cli1 := net.Pipe()
+	rejDone := make(chan struct{})
+	go func() {
+		hub.HandleSubscribe(context.Background(), srv1, SubscribeRequest{})
+		close(rejDone)
+	}()
+
+	// Read the error from the client side.
+	_ = cli1.SetReadDeadline(time.Now().Add(3 * time.Second))
+	rdr := bufio.NewReader(cli1)
+	line, err := rdr.ReadBytes('\n')
+	// Server writes then returns (srv1 not closed here yet), so EOF after
+	// the line is fine; what matters is we got bytes.
+	if len(line) == 0 {
+		t.Fatalf("expected error line from capacity-exceeded reject; got err=%v", err)
+	}
+	var resp SocketResponse
+	if jsonErr := json.Unmarshal(line, &resp); jsonErr != nil {
+		t.Fatalf("decode capacity-exceeded response %q: %v", string(line), jsonErr)
+	}
+	if resp.Ok {
+		t.Fatalf("capacity-exceeded subscribe should be rejected; got ok=true")
+	}
+	if !contains(resp.Error, "subscribe_capacity_exceeded") {
+		t.Errorf("error %q should contain %q", resp.Error, "subscribe_capacity_exceeded")
+	}
+
+	// HandleSubscribe for the rejected connection must have returned.
+	select {
+	case <-rejDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("HandleSubscribe did not return after capacity rejection")
+	}
+
+	// connCount must not have been incremented for the rejected connection.
+	if got := hub.connCount.Load(); got != cap {
+		t.Errorf("connCount after rejection: got %d, want %d (cap)", got, cap)
+	}
+
+	// Cleanup: cancel all held connections and verify count returns to 0.
+	_ = srv1.Close()
+	_ = cli1.Close()
+	for _, h := range holders {
+		h.cancel()
+		_ = h.srv.Close()
+		_ = h.cli.Close()
+		<-h.done
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if hub.connCount.Load() == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := hub.connCount.Load(); got != 0 {
+		t.Errorf("connCount after all connections closed: got %d, want 0", got)
+	}
+}

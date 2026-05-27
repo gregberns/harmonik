@@ -2,6 +2,7 @@ package eventbus
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -290,6 +291,57 @@ func (w *JSONLWriter) Close() error {
 	})
 	<-w.done
 	return nil
+}
+
+// ScanAfter returns an iterator over all events in the JSONL file at path
+// where event_id strictly follows sinceID (i.e. the event_id byte string is
+// lexicographically greater than sinceID's byte string). Because EventID is a
+// UUIDv7, lexicographic byte order is chronological order (EV-002).
+//
+// Events are yielded in file order. Malformed lines are skipped with a
+// log.Printf warning. A missing file is treated as an empty log (no events
+// yielded, no error) so callers do not need to special-case a fresh daemon.
+//
+// ScanAfter is a pure read-side function; it does NOT modify the file (EV-020).
+//
+// Spec ref: event-model.md §6.2 EV-020; EV-002 (UUIDv7 ordering).
+// Bead ref: hk-a5sil (since_event_id replay).
+//
+//nolint:gosec // G304: path is daemon-startup-resolved; not user input.
+func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
+	return func(yield func(core.Event) bool) {
+		f, err := os.Open(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Printf("eventbus.ScanAfter: open %s: %v", path, err)
+			}
+			return
+		}
+		defer func() { _ = f.Close() }()
+
+		since := [16]byte(sinceID)
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			lineBytes := scanner.Bytes()
+			var ev core.Event
+			if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
+				log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
+				continue
+			}
+			// bytes.Compare on raw UUID bytes: lexicographic order matches
+			// chronological order for UUIDv7 (EV-002). Skip events ≤ sinceID.
+			evUID := [16]byte(ev.EventID)
+			if bytes.Compare(evUID[:], since[:]) <= 0 {
+				continue
+			}
+			if !yield(ev) {
+				return
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			log.Printf("eventbus.ScanAfter: scan %s: %v", path, scanErr)
+		}
+	}
 }
 
 // Filter returns an iterator over the events in the JSONL file at path whose

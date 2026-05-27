@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -404,12 +405,14 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)}
 			break
 		}
-		// Reject since_event_id until replay-from-cursor is implemented
-		// (filed as hk-a5sil). Fails loud rather than silently ignoring,
-		// per hk-mkroe review follow-up.
+		// Validate since_event_id format when provided. Must be a parseable
+		// UUID (expected UUIDv7). Replay is implemented in HandleSubscribe
+		// per hk-a5sil; only format validation lives here.
 		if subReq.SinceEventID != "" {
-			resp = SocketResponse{Ok: false, Error: "daemon: since_event_id replay not yet implemented; filed as hk-a5sil"}
-			break
+			if _, parseErr := uuid.Parse(subReq.SinceEventID); parseErr != nil {
+				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: since_event_id %q is not a valid UUID: %v", subReq.SinceEventID, parseErr)}
+				break
+			}
 		}
 		sub.HandleSubscribe(ctx, conn, subReq)
 		return // suppress SocketResponse write; conn is closed by defer

@@ -61,6 +61,7 @@ package daemon
 // Bead ref: hk-6ynv4.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,6 +71,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -89,11 +91,11 @@ type SubscribeRequest struct {
 	// Types restricts delivery to the listed event types. Empty/nil = all types.
 	Types []string `json:"types,omitempty"`
 
-	// SinceEventID is reserved for replay-from-cursor; not implemented in v1
-	// (would require coordination with bus.ReplayFrom and a per-consumer
-	// stable ID). The daemon REJECTS subscribe requests where this field is
-	// non-empty with an explicit error (filed as hk-a5sil). The field is
-	// retained on the wire so the protocol shape is stable when replay lands.
+	// SinceEventID enables replay-from-cursor. When non-empty, the daemon
+	// replays all events from events.jsonl with event_id strictly after this
+	// value (subject to the Types filter), then attaches to the live stream.
+	// The value must be a valid UUID string; the socket layer validates the
+	// format and returns an error response if malformed. Implemented: hk-a5sil.
 	SinceEventID string `json:"since_event_id,omitempty"`
 
 	// HeartbeatSeconds is the idle heartbeat cadence. Clamped to [10, 600];
@@ -151,6 +153,12 @@ type SubscribeHubConfig struct {
 	// request that would exceed the cap is rejected immediately with a
 	// "subscribe_capacity_exceeded" error written to the connection.
 	MaxConnections int
+
+	// EventsJSONLPath is the absolute path to the events.jsonl log file used
+	// for since_event_id replay (hk-a5sil). When empty, replay is skipped and
+	// a subscribe request with since_event_id proceeds as a live-only stream.
+	// Production wiring supplies cfg.JSONLLogPath from DaemonConfig.
+	EventsJSONLPath string
 
 	// Now is the wall-clock function. Defaults to time.Now when nil.
 	// Tests override this; production wiring leaves it nil.
@@ -234,6 +242,16 @@ func (h *SubscribeHub) dispatch(_ context.Context, evt core.Event) error {
 
 // HandleSubscribe implements SubscribeHandler. It blocks until the client
 // disconnects or ctx is cancelled.
+//
+// When req.SinceEventID is non-empty, historical events are replayed from
+// events.jsonl (events strictly after since_event_id, subject to the type
+// filter) before the live stream begins. The subscriber channel is registered
+// on the hub BEFORE replay starts so no live events are lost during the replay
+// window. Events arriving on the live channel during replay that were already
+// sent via JSONL replay are silently deduplicated using a high-water-mark
+// comparison on event_id (UUIDv7 byte order = chronological order, EV-002).
+//
+// Bead ref: hk-a5sil.
 func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req SubscribeRequest) {
 	// Enforce per-process connection cap. Use a compare-and-increment loop so
 	// two concurrent callers can't both pass the check and both exceed the cap.
@@ -281,7 +299,8 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		wildcard:   wildcard,
 	}
 
-	// Register; deregister on return so the bus stops fanning out.
+	// Register BEFORE replay so live events are buffered while we replay from
+	// JSONL. Deregister on return so the bus stops fanning out.
 	h.mu.Lock()
 	h.subscribers[s] = struct{}{}
 	h.mu.Unlock()
@@ -305,10 +324,34 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		}
 	}()
 
+	enc := json.NewEncoder(conn)
+
+	var lastReplayedUID [16]byte
+
+	if req.SinceEventID != "" && h.cfg.EventsJSONLPath != "" {
+		if sinceUUID, parseErr := uuid.Parse(req.SinceEventID); parseErr == nil {
+			sinceID := core.EventID(sinceUUID)
+			for evt := range eventbus.ScanAfter(h.cfg.EventsJSONLPath, sinceID) {
+				select {
+				case <-streamCtx.Done():
+					return
+				default:
+				}
+				if !wildcard {
+					if _, ok := typeFilter[evt.Type]; !ok {
+						continue
+					}
+				}
+				if encErr := enc.Encode(evt); encErr != nil {
+					return
+				}
+				lastReplayedUID = [16]byte(evt.EventID)
+			}
+		}
+	}
+
 	hbC, hbStop, hbReset := h.cfg.NewTimer(heartbeatInterval)
 	defer hbStop()
-
-	enc := json.NewEncoder(conn)
 
 	for {
 		select {
@@ -316,6 +359,16 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			return
 
 		case evt := <-s.ch:
+			// Deduplicate events already sent during JSONL replay.
+			// UUIDv7 byte comparison: if this event's id ≤ the last replayed
+			// id it was covered by the replay window (EV-002).
+			if lastReplayedUID != ([16]byte{}) {
+				evtUID := [16]byte(evt.EventID)
+				if bytes.Compare(evtUID[:], lastReplayedUID[:]) <= 0 {
+					continue
+				}
+			}
+
 			// Drop-gap notice first if we accumulated drops.
 			if dropped := s.swapDropped(); dropped > 0 {
 				if err := enc.Encode(subscriptionGapLine{

@@ -8,6 +8,10 @@ package daemon
 //   - type filter: subscriber requesting [a,b] doesn't receive [c] events.
 //   - heartbeat: idle subscription emits heartbeat at configured cadence.
 //   - graceful close on client disconnect.
+//   - goroutine leak: goleak.VerifyNone after multiple close cycles (hk-6232r).
+//   - heartbeat clamp boundaries: 9s and 601s clamped to [10, 600] (hk-6232r).
+//   - slow-fast multi-subscriber asymmetry: fast drains, slow drops (hk-6232r).
+//   - daemon-shutdown-mid-subscribe: context cancel causes clean return (hk-6232r).
 
 import (
 	"bufio"
@@ -22,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
+	"go.uber.org/goleak"
 )
 
 // subscribeTestMakeEvent constructs a minimal core.Event with the given type.
@@ -148,33 +153,54 @@ func TestSubscribeHub_HeartbeatFires(t *testing.T) {
 
 // TestSubscribeHub_HeartbeatTimerFiresOnIdle drives a real HandleSubscribe
 // session and asserts at least one heartbeat line arrives during an idle
-// window of ~heartbeat_seconds * 1.5.
+// window. A fake clock is injected (hk-6232r) so the timer fires after
+// ~20ms instead of the real 10s minimum — eliminating CI flakiness.
 func TestSubscribeHub_HeartbeatTimerFiresOnIdle(t *testing.T) {
 	t.Parallel()
 
-	// Build a hub with a custom clock-source — we still rely on the real
-	// 10s minimum, so this test is gated by a 15s deadline.
-	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+	// fakeTimer fires once after 20ms regardless of the requested duration, then
+	// blocks so the test can observe the single heartbeat and terminate.
+	fakeTimer := func(_ time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
+		ch := make(chan time.Time, 1)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			ch <- time.Now()
+		}()
+		stopped := false
+		stop := func() bool {
+			if stopped {
+				return false
+			}
+			stopped = true
+			return true
+		}
+		reset := func(time.Duration) {} // no-op; test exits after first heartbeat
+		return ch, stop, reset
+	}
+
+	hub := NewSubscribeHub(SubscribeHubConfig{
+		Bus:      nil,
+		NewTimer: fakeTimer,
+	})
 
 	srv, cli := net.Pipe()
 	defer func() { _ = srv.Close() }()
-	// cli is closed at end to terminate the subscriber's read goroutine.
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	done := make(chan struct{})
 	go func() {
-		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 1}) // clamps to 10s
+		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 60})
 		close(done)
 	}()
 
-	// Read until we see a heartbeat line or deadline.
+	// Read until we see a heartbeat line or 500ms timeout.
 	rdr := bufio.NewReader(cli)
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(500 * time.Millisecond)
 	var sawHeartbeat bool
 	for time.Now().Before(deadline) {
-		_ = cli.SetReadDeadline(time.Now().Add(15 * time.Second))
+		_ = cli.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		line, err := rdr.ReadBytes('\n')
 		if err != nil {
 			break
@@ -194,7 +220,7 @@ func TestSubscribeHub_HeartbeatTimerFiresOnIdle(t *testing.T) {
 	<-done
 
 	if !sawHeartbeat {
-		t.Errorf("no heartbeat observed within 15s; cadence clamp may be broken")
+		t.Errorf("no heartbeat observed within 500ms using fake clock; timer injection may be broken")
 	}
 }
 
@@ -282,11 +308,12 @@ func TestSubscribeHub_DispatchFanOut(t *testing.T) {
 }
 
 // TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles spawns and tears
-// down many subscriber sessions and asserts the hub's subscriber map is
-// empty at the end.
+// down many subscriber sessions and asserts: (a) the hub's subscriber map is
+// empty at the end, and (b) no goroutines were leaked (goleak.VerifyNone,
+// hk-6232r). Not marked t.Parallel() because goleak snapshots all goroutines
+// in the process — running concurrently with other parallel tests produces
+// false positives from those tests' goroutines.
 func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
-	t.Parallel()
-
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
 
 	var wg sync.WaitGroup
@@ -312,12 +339,17 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 	}
 	wg.Wait()
 
+	// (a) subscriber map must be empty.
 	hub.mu.RLock()
 	n := len(hub.subscribers)
 	hub.mu.RUnlock()
 	if n != 0 {
 		t.Errorf("subscribers map leaked: got %d after all sessions closed", n)
 	}
+
+	// (b) goroutine leak check — goleak retries for ~400ms to allow any
+	// lingering conn-read goroutines to drain after the pipe closes.
+	goleak.VerifyNone(t)
 }
 
 // TestSubscribeHub_HeartbeatActiveRunsFromRegistry verifies that the
@@ -545,4 +577,184 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 	if got := hub.connCount.Load(); got != 0 {
 		t.Errorf("connCount after all connections closed: got %d, want 0", got)
 	}
+}
+
+// ── New tests added by hk-6232r ───────────────────────────────────────────────
+
+// TestSubscribeHub_HeartbeatClampBoundaries verifies that heartbeat_seconds
+// values outside the permitted range [10, 600] are clamped to the boundary.
+// The test injects a probe timer that records the first requested duration,
+// allowing us to confirm the clamp is applied before the timer is created.
+func TestSubscribeHub_HeartbeatClampBoundaries(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		requestedSec int
+		wantSec      int
+	}{
+		{"below-min: 9s clamped to 10s", 9, subscribeHeartbeatMin},
+		{"above-max: 601s clamped to 600s", 601, subscribeHeartbeatMax},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedDuration time.Duration
+			captureDone := make(chan struct{})
+
+			// Timer factory that records the first call's duration, then fires
+			// immediately so HandleSubscribe writes one heartbeat and can be
+			// shut down. Subsequent reset calls (after capture) also fire quickly.
+			mockTimer := func(d time.Duration) (<-chan time.Time, func() bool, func(time.Duration)) {
+				select {
+				case <-captureDone:
+				default:
+					capturedDuration = d
+					close(captureDone)
+				}
+				ch := make(chan time.Time, 1)
+				ch <- time.Now() // fire immediately
+				return ch, func() bool { return true }, func(time.Duration) {}
+			}
+
+			hub := NewSubscribeHub(SubscribeHubConfig{
+				Bus:      nil,
+				NewTimer: mockTimer,
+			})
+
+			srv, cli := net.Pipe()
+			defer func() { _ = srv.Close() }()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			done := make(chan struct{})
+			go func() {
+				hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: tc.requestedSec})
+				close(done)
+			}()
+
+			// Wait until the timer factory captures the duration.
+			select {
+			case <-captureDone:
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for timer factory to be called")
+			}
+
+			_ = cli.Close()
+			<-done
+
+			wantDur := time.Duration(tc.wantSec) * time.Second
+			if capturedDuration != wantDur {
+				t.Errorf("heartbeat interval: requested %ds → got %v, want %v (clamp not applied)",
+					tc.requestedSec, capturedDuration, wantDur)
+			}
+		})
+	}
+}
+
+// TestSubscribeHub_SlowFastMultiSubscriberAsymmetry verifies that a slow
+// subscriber and a fast subscriber coexist without the slow one blocking the
+// fast one. Fast consumer receives all events without drops; slow consumer
+// (1-slot channel) accumulates drops when the hub dispatches in bulk.
+func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	// fast: large buffer — should never drop.
+	fast := &subscriptionStream{ch: make(chan core.Event, 64), wildcard: true}
+	// slow: 1-slot buffer — drops oldest on overflow.
+	slow := &subscriptionStream{ch: make(chan core.Event, 1), wildcard: true}
+
+	hub.mu.Lock()
+	hub.subscribers[fast] = struct{}{}
+	hub.subscribers[slow] = struct{}{}
+	hub.mu.Unlock()
+
+	const total = 20
+	for i := 0; i < total; i++ {
+		_ = hub.dispatch(context.Background(), subscribeTestMakeEvent(t, "ping"))
+	}
+
+	// Fast consumer must have received all events without drops.
+	fastGot := len(fast.ch)
+	fastDropped := fast.dropped.Load()
+	if fastGot != total {
+		t.Errorf("fast consumer: got %d events, want %d", fastGot, total)
+	}
+	if fastDropped != 0 {
+		t.Errorf("fast consumer: unexpected drops %d", fastDropped)
+	}
+
+	// Slow consumer must have dropped some events (channel capacity = 1 < total).
+	slowGot := len(slow.ch)
+	slowDropped := slow.dropped.Load()
+	if slowDropped == 0 {
+		t.Errorf("slow consumer (cap=1): expected drops for %d dispatched events, got none (channel=%d)",
+			total, slowGot)
+	}
+	// Items in channel + drop count must account for all events.
+	if int64(slowGot)+slowDropped != total {
+		t.Errorf("slow consumer: got(%d) + dropped(%d) = %d, want %d",
+			slowGot, slowDropped, int64(slowGot)+slowDropped, total)
+	}
+}
+
+// TestSubscribeHub_DaemonShutdownMidSubscribe verifies that cancelling the
+// daemon context (simulating daemon shutdown) causes HandleSubscribe to return
+// cleanly, with no subscriber left in the map. Not marked t.Parallel() for
+// the same reason as TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles:
+// goleak snapshots the full process goroutine set.
+func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
+
+	srv, cli := net.Pipe()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
+		close(done)
+	}()
+
+	// Wait for the subscriber to register.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n := len(hub.subscribers)
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Simulate daemon shutdown: cancel the context. HandleSubscribe must return.
+	cancel()
+	// Close both conn ends so the read-goroutine inside HandleSubscribe unblocks.
+	_ = cli.Close()
+	_ = srv.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleSubscribe did not return within 2s of daemon context cancellation")
+	}
+
+	// Subscriber must be deregistered on shutdown.
+	hub.mu.RLock()
+	n := len(hub.subscribers)
+	hub.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("subscriber not deregistered after daemon shutdown; got %d", n)
+	}
+
+	// Goroutine leak check: after cancel + conn close, all internal goroutines
+	// (read-goroutine, heartbeat) must have exited.
+	goleak.VerifyNone(t)
 }

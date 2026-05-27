@@ -183,6 +183,16 @@ func NewHandler(publisher handlercontract.EventEmitter, deadLetter handlercontra
 func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	sessionID := handlercontract.NewSessionID()
 
+	// CHB-007: refuse launch if spec.Args contains a forbidden Claude flag or
+	// spec.Env contains a forbidden env var.  This guard runs before any
+	// subprocess is started so neither the exec.CommandContext path nor the
+	// substrate path can bypass it.
+	//
+	// Spec: specs/claude-hook-bridge.md §4.2 CHB-007.
+	if err := CheckForbiddenFlags(spec.Args, spec.Env); err != nil {
+		return nil, nil, fmt.Errorf("handler: Launch: %w", err)
+	}
+
 	// Substrate dispatch: when spec.Substrate is non-nil, delegate subprocess
 	// hosting to the substrate (e.g. a tmux window) instead of exec.CommandContext.
 	// The substrate path does not wire HandlerSpec delivery or SpawnWatcher when

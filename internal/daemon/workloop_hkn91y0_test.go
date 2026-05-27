@@ -30,11 +30,12 @@ import (
 // for a specific bead and ShowBead returns CoarseStatusBlocked for that bead.
 // All other beads behave normally.  claimedIDs records every successful claim.
 type blockedBeadLedger struct {
-	mu          sync.Mutex
-	blockedBead core.BeadID
-	claimed     []core.BeadID // beads where ClaimBead was called and succeeded
-	closed      []core.BeadID
-	reopened    []core.BeadID
+	mu               sync.Mutex
+	blockedBead      core.BeadID
+	showBlockedAsOpen bool // when true, ShowBead returns Open status for the blocked bead
+	claimed          []core.BeadID // beads where ClaimBead was called and succeeded
+	closed           []core.BeadID
+	reopened         []core.BeadID
 }
 
 func (b *blockedBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -44,6 +45,9 @@ func (b *blockedBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) 
 func (b *blockedBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if id == b.blockedBead && b.showBlockedAsOpen {
+		return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Title: "blocked-by-deps"}, nil
+	}
 	if id == b.blockedBead {
 		return core.BeadRecord{BeadID: id, Status: core.CoarseStatusBlocked}, nil
 	}
@@ -52,7 +56,7 @@ func (b *blockedBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.Be
 
 func (b *blockedBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID) error {
 	if id == b.blockedBead {
-		return errors.New("hk-n91y0-test: bead is blocked — claim rejected")
+		return errors.New("brcli: SchemaMismatch (exit 4): stderr=\"Error: Validation failed: claim: cannot claim blocked issue: hk-dep1, hk-dep2\\n\"")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -204,5 +208,93 @@ func TestWaveBlockedBead_DoesNotStarveOtherItems(t *testing.T) {
 		if finalQ.Groups[0].Status != queue.GroupStatusCompleteWithFailures {
 			t.Errorf("group 0 status = %q; want complete-with-failures", finalQ.Groups[0].Status)
 		}
+	}
+}
+
+// TestWaveBlockedByDeps_OpenStatusButClaimRejected verifies that when a bead
+// has status=open but br claim rejects it because its dependencies are open,
+// the workloop detects the "cannot claim blocked issue" error message and
+// marks the item failed instead of retrying forever.
+//
+// This is the real-world scenario: br show returns "OPEN" but br claim fails
+// with exit 4 "cannot claim blocked issue: hk-dep1, hk-dep2".
+func TestWaveBlockedByDeps_OpenStatusButClaimRejected(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const (
+		beadA = core.BeadID("hk-n91y0-open-blocked-a")
+		beadB = core.BeadID("hk-n91y0-open-normal-b")
+	)
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "n91y0-open-blocked-test",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{BeadID: beadA, Status: queue.ItemStatusPending},
+					{BeadID: beadB, Status: queue.ItemStatusPending},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+
+	ledger := &blockedBeadLedger{blockedBead: beadA, showBlockedAsOpen: true}
+	bus := &stubEventCollector{}
+	exitCtx, cancelExit := context.WithCancel(context.Background())
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:         ledger,
+		Bus:               bus,
+		ProjectDir:        projectDir,
+		HandlerBinary:     "/bin/sh",
+		HandlerArgs:       []string{"-c", "exit 0"},
+		IntentLogDir:      filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:        qs,
+		MaxConcurrent:     2,
+		AdapterRegistry2:  NewSealedAdapterRegistryForTest(t),
+		CancelOnQueueExit: cancelExit,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	testCtx, testCancel := context.WithTimeout(exitCtx, 30*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+	case <-time.After(25 * time.Second):
+		t.Fatal("runWorkLoop did not exit — open-but-blocked bead caused live-lock (error-message detection not working)")
+	}
+
+	claimed := ledger.claimedIDs()
+	foundB := false
+	for _, id := range claimed {
+		if id == beadB {
+			foundB = true
+		}
+	}
+	if !foundB {
+		t.Errorf("beadB was never claimed — starved by open-but-blocked beadA; claimed=%v", claimed)
 	}
 }

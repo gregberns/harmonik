@@ -906,21 +906,25 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			// Queue-path: detect bead-level blocking (hk-n91y0).
 			//
-			// When ClaimBead fails for a queue item, check whether the bead is in
-			// "blocked" status in the Beads ledger.  A blocked bead cannot be claimed
-			// (the open→in_progress transition is rejected), so reverting to pending
-			// and retrying creates a live-lock that starves the remaining pending
-			// items in the wave group.
+			// When ClaimBead fails because the bead has open dependencies, reverting
+			// to pending and retrying creates a live-lock that starves the remaining
+			// pending items in the wave group.
 			//
-			// If blocked: mark the item failed and call evaluateGroupAdvanceWithOutcome
-			// so the wave can proceed without re-queuing this item.
-			//
-			// If the ShowBead call itself fails (transient ledger error), or the bead
-			// is in any other status, fall through to the existing retry path.
+			// Detection: check both the error message from br claim (which includes
+			// "cannot claim blocked issue" when deps are open) AND the ShowBead
+			// status. A bead can be status=open but still unclaimable due to deps.
 			if queueItemIndex >= 0 && deps.queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
-				if showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID); showErr == nil &&
-					showRecord.Status == core.CoarseStatusBlocked {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked in ledger — failing queue item (hk-n91y0)\n", beadID)
+				claimErrStr := claimErr.Error()
+				isBlocked := strings.Contains(claimErrStr, "cannot claim blocked issue") ||
+					strings.Contains(claimErrStr, "blocked")
+				if !isBlocked {
+					if showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID); showErr == nil &&
+						showRecord.Status == core.CoarseStatusBlocked {
+						isBlocked = true
+					}
+				}
+				if isBlocked {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
 					evaluateGroupAdvanceWithOutcome(ctx, deps, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
 					continue
 				}

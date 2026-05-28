@@ -436,6 +436,19 @@ func dispatchDotAgenticNode(
 		}
 	}
 
+	// Start from the run-level resolved model/effort, then apply per-node
+	// overrides (WG-042 §I.5, EM-012b-NODE). Independent: only-model inherits
+	// run-level effort, vice versa. NOT a second resolution walk — static graph
+	// data layered at dispatch.
+	nodeModel := resolvedModel
+	if node.Model != "" {
+		nodeModel = node.Model
+	}
+	nodeEffort := resolvedEffort
+	if node.Effort != "" {
+		nodeEffort = node.Effort
+	}
+
 	rc := claudeRunCtx{
 		runID:             runID,
 		beadID:            string(beadID),
@@ -451,8 +464,8 @@ func dispatchDotAgenticNode(
 		beadTitle:         beadTitle,
 		beadDescription:   beadDescription,
 		nodePrompt:        node.Prompt,
-		model:             resolvedModel,
-		effort:            resolvedEffort,
+		model:             nodeModel,
+		effort:            nodeEffort,
 		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
 		extraContext:      nodeExtraContext,
 		baseBranch:        baseBranch,

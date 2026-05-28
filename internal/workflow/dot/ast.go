@@ -149,6 +149,20 @@ type Node struct {
 	// it produces a v1 WARNING and is retained (WG-031). Empty when absent.
 	Prompt string
 
+	// Model is the optional per-node model override for agentic nodes
+	// (WG-042 §I.5, EM-012b-NODE). When present, overrides the run-level
+	// resolvedModel at dispatch time for this node only. Shape: ^[A-Za-z0-9._:/-]+$,
+	// <=128 chars. On non-agentic/gate/sub-workflow nodes it is a
+	// reserved-out-of-position STRICT error (WG-031). Empty when absent.
+	Model string
+
+	// Effort is the optional per-node effort level for agentic nodes
+	// (WG-042 §I.5, EM-012b-NODE). When present, overrides the run-level
+	// resolvedEffort at dispatch time for this node only. Must be one of
+	// {low,medium,high,xhigh,max}. On non-agentic/gate/sub-workflow nodes it
+	// is a reserved-out-of-position STRICT error (WG-031). Empty when absent.
+	Effort string
+
 	// AxisTags is the optional axis_tags attribute (open set per WG-030).
 	AxisTags string
 

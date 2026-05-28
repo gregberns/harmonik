@@ -455,6 +455,53 @@ func ExportedCaptureNodePromptBuilder(ch chan<- string) func(context.Context, cl
 	}
 }
 
+// ModelEffortPair holds the model and effort values captured from a claudeRunCtx.
+// Used by ExportedCaptureModelEffortBuilder tests (hk-q8nqr).
+type ModelEffortPair struct {
+	Model  string
+	Effort string
+}
+
+// ExportedCaptureModelEffortBuilder returns a launchSpecBuilder stub that
+// sends the (model, effort) pair from the FIRST call into ch (non-blocking),
+// then returns an error to short-circuit the dispatch. Tests use this to
+// assert that per-node model= / effort= overrides are threaded into
+// claudeRunCtx (hk-q8nqr WG-042 §I.5 / EM-012b-NODE).
+func ExportedCaptureModelEffortBuilder(ch chan<- ModelEffortPair) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		select {
+		case ch <- ModelEffortPair{Model: rc.model, Effort: rc.effort}:
+		default:
+		}
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+	}
+}
+
+// ExportedDriveDotWorkflowWithModelEffort exposes driveDotWorkflow with
+// explicit resolvedModel and resolvedEffort parameters so tests can assert on
+// per-node model/effort override vs. run-level default (hk-q8nqr).
+func ExportedDriveDotWorkflowWithModelEffort(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	beadTitle string,
+	beadDescription string,
+	wtPath string,
+	parentSHA string,
+	graph *dot.Graph,
+	resolvedModel string,
+	resolvedEffort string,
+) DotWorkflowResultExported {
+	r := driveDotWorkflow(ctx, deps, runID, beadID, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "")
+	return DotWorkflowResultExported{
+		Success:        r.success,
+		TerminalNodeID: r.terminalNodeID,
+		NeedsAttention: r.needsAttention,
+		Summary:        r.summary,
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CHB-025 test seams (hk-w5vra.11)
 // ─────────────────────────────────────────────────────────────────────────────

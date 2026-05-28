@@ -30,6 +30,7 @@ package dot
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -505,6 +506,19 @@ func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 
 // ── WG-031 attribute classification ──────────────────────────────────────────
 
+// nodeModelRegex is the shape constraint for per-node model= attributes (WG-042 §I.5).
+// Mirrors the HC-055a constraint in daemon/modelpreference.go.
+var nodeModelRegex = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
+
+// nodeModelMaxLen is the maximum length for a per-node model= value (WG-042 §I.5).
+const nodeModelMaxLen = 128
+
+// validNodeEffortLevels is the closed enum for per-node effort= attributes (WG-042 §I.5).
+// Mirrors the HC-055a enum in daemon/modelpreference.go.
+var validNodeEffortLevels = map[string]bool{
+	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
+}
+
 // reservedGraphAttrs is the set of reserved graph-level attribute names per WG-031.
 // Unknown names at the graph level are permissive (warning + retained) per WG-031/032.
 var reservedGraphAttrs = map[string]bool{
@@ -640,6 +654,32 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			// Agentic-only per WG-040 §I.3. Retained on all node types;
 			// a v1 WARNING is emitted post-loop for non-agentic/gate nodes.
 			node.Prompt = pair.val
+		case "model":
+			// Agentic-only per WG-042 §I.5. Shape-validated here; reserved-out-of-position
+			// strict error for non-agentic nodes is emitted post-loop.
+			if pair.val == "" || !nodeModelRegex.MatchString(pair.val) || len(pair.val) > nodeModelMaxLen {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: model %q must match ^[A-Za-z0-9._:/-]+$ and be <=128 chars (WG-042 §I.5)",
+						rn.id, pair.val),
+				})
+			} else {
+				node.Model = pair.val
+			}
+		case "effort":
+			// Agentic-only per WG-042 §I.5. Enum-validated here; reserved-out-of-position
+			// strict error for non-agentic nodes is emitted post-loop.
+			if !validNodeEffortLevels[pair.val] {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: effort %q is not in {low,medium,high,xhigh,max} (WG-042 §I.5)",
+						rn.id, pair.val),
+				})
+			} else {
+				node.Effort = pair.val
+			}
 		case "axis_tags":
 			node.AxisTags = pair.val
 		case "hook_ref":
@@ -710,6 +750,29 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				"node %q: attribute \"prompt\" is agentic-only; on type %q it is retained but ignored at v1 (WG-040 §I.3)",
 				rn.id, node.RawType),
 		})
+	}
+	// Post-loop: model= and effort= are agentic-only per WG-042 §I.5.
+	// Emit reserved-out-of-position STRICT errors when they appear on
+	// non-agentic/gate/sub-workflow nodes. Only check when node.Type is resolved.
+	if node.Type != "" && node.Type != core.NodeTypeAgentic {
+		if node.Model != "" {
+			errs = append(errs, &ParseError{
+				Line: node.Line,
+				Message: fmt.Sprintf(
+					"node %q: attribute \"model\" is agentic-only; reserved-out-of-position on type %q (WG-042 §I.5 / WG-031)",
+					rn.id, node.RawType),
+			})
+			node.Model = ""
+		}
+		if node.Effort != "" {
+			errs = append(errs, &ParseError{
+				Line: node.Line,
+				Message: fmt.Sprintf(
+					"node %q: attribute \"effort\" is agentic-only; reserved-out-of-position on type %q (WG-042 §I.5 / WG-031)",
+					rn.id, node.RawType),
+			})
+			node.Effort = ""
+		}
 	}
 	return node, errs, warns
 }

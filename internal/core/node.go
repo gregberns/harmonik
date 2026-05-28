@@ -82,6 +82,18 @@ type Node struct {
 	// retained-but-ignored on non-agentic/gate nodes. Empty when absent.
 	Prompt string
 
+	// Model is the optional per-node model override (WG-042 §I.5, EM-012b-NODE).
+	// When non-empty, overrides the run-level resolvedModel at dispatch time
+	// for this node only. Shape: ^[A-Za-z0-9._:/-]+$, <=128 chars.
+	// Empty when absent (node inherits run-level model).
+	Model string
+
+	// Effort is the optional per-node effort level (WG-042 §I.5, EM-012b-NODE).
+	// When non-empty, must be one of {low,medium,high,xhigh,max} and overrides
+	// the run-level resolvedEffort at dispatch time for this node only.
+	// Empty when absent (node inherits run-level effort).
+	Effort string
+
 	// SubWorkflowRef is the reference to the sub-workflow definition for
 	// sub-workflow nodes. Required when Type == NodeTypeSubWorkflow; forbidden
 	// otherwise.

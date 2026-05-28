@@ -56,6 +56,312 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario/implement_review_fix_test.go` (drives mock handler responses against five scenarios — APPROVE-immediately, two-round retry then APPROVE, BLOCK, cap-hit fallback, and unconditional-fallback — each asserting both the terminal node reached and the dispatch decision sequence).
 
+### `dual-review-consolidate.dot`
+
+**Purpose.** The two-reviewer consolidation pattern, and the recommended first live smoke of the consolidation family. Two reviewers (correctness + tests, and design) each commit their findings to `reviews/reviewer-*.md` and write `.harmonik/review.json`; a consolidate reviewer severity-joins them and writes the verdict the branch edges read. The smaller cap (=2) makes the cap-hit path reachable quickly, confirming that reviewer-committed findings are readable by the consolidate node before landing the three-reviewer marquee.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §3` (dual-review-consolidate, the everyday MARQUEE smoke) and the corpus dialect contract (§"Dialect contract").
+- Uses the marquee brief discipline from `docs/sdlc-workflow-corpus.md §"Marquee brief discipline"`: each reviewer writes+commits `reviews/reviewer-<axis>.md` FIRST, then writes `.harmonik/review.json`; the consolidate node reads all findings files, severity-joins (`BLOCK > REQUEST_CHANGES > APPROVE`), and writes the final verdict.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"` demonstrates the WG-021..WG-023 contract.
+- Uses `type="agentic"` with `agent_type="implementer"` for the implement node, `agent_type="reviewer"` for the two per-axis and the consolidate nodes, and `type="non-agentic"` (with `handler_ref="noop"`) for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on the consolidate node's outgoing edges — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="2"` on the `consolidate→implement` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `consolidate -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/dual_review_consolidate_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, cap-hit fallback, and BLOCK escalation, each asserting the terminal node reached and the dispatch decision sequence).
+
+### `triple-review-consolidate.dot`
+
+**Purpose.** The headline three-reviewer consolidation pattern (THE MARQUEE). One implementer, three reviewers on distinct axes (correctness, design/idioms, tests), and a consolidate reviewer that severity-joins (`BLOCK > REQUEST_CHANGES > APPROVE`) their findings. A capped back-edge returns to the implementer until there is nothing left to fix. Each per-axis reviewer writes+commits findings to a durable worktree file before writing `.harmonik/review.json`, so the consolidate node can read all three. Subsumes the review-slice `multi-perspective-code-review`.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §2` (triple-review-consolidate, the MARQUEE) and the corpus dialect contract (§"Dialect contract").
+- Uses the marquee brief discipline from `docs/sdlc-workflow-corpus.md §"Marquee brief discipline"`: per-axis reviewers write+commit `reviews/reviewer-<axis>.md` FIRST, then write `.harmonik/review.json`; the consolidate node severity-joins all findings.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for the implement node, `agent_type="reviewer"` for the three per-axis and the consolidate nodes, and `type="non-agentic"` (with `handler_ref="noop"`) for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on the consolidate node's outgoing edges — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `consolidate→implement` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `consolidate -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/triple_review_consolidate_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, cap-hit fallback, and BLOCK escalation, each asserting the terminal node reached and the dispatch decision sequence).
+
+### `two-reviewer-consensus.dot`
+
+**Purpose.** Unanimous-APPROVE consensus: two independent reviewers each commit their verdicts to `reviews/reviewer-*.md`; a consolidate reviewer computes a boolean AND — APPROVE only if both approved, BLOCK if either blocked, REQUEST_CHANGES otherwise. The canonical answer to "n-of-m consensus" in the sequential v1 dialect: cross-node verdict combination lives inside a consolidate agent because an edge can only see the current node's `outcome.*`. Same single-slot brief discipline as `triple-review-consolidate`.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §4` (two-reviewer-consensus) and the corpus dialect contract (§"Dialect contract").
+- Uses the marquee brief discipline from `docs/sdlc-workflow-corpus.md §"Marquee brief discipline"`: reviewer_a and reviewer_b each write+commit their findings FIRST, then write `.harmonik/review.json`; consolidate reads both and applies the AND-of-verdicts rule.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for implement, `agent_type="reviewer"` for reviewer_a, reviewer_b, and consolidate, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on the consolidate node's outgoing edges — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `consolidate→implement` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `consolidate -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/two_reviewer_consensus_test.go` (drives mock handler responses against scenarios including unanimous APPROVE, dissenting REQUEST_CHANGES, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `plan-review-loop.dot`
+
+**Purpose.** The planning analogue of `implement-review-fix`: a `draft_plan` implementer writes or revises `plans/<codename>.md` (commit required each visit), a `plan_review` reviewer gates on scope, grounding, and decomposition quality; REQUEST_CHANGES loops back (capped at 3); BLOCK or cap-hit escalates to needs-attention. Subsumes `plan-single-pass` (cap=0 variant) and `plan-two-round` (cap=2 variant) — the round count is the `traversal_cap` value.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §5` (plan-review-loop, the planning analogue of #1) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/execution-model.md §EM-015d` (review-loop topology) and `§EM-015e` (iteration cap + no-progress detector). Applies the same capped back-edge discipline as the canonical review loop, targeting the planning phase.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="plan-approved,plan-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `draft_plan` and `agent_type="reviewer"` for `plan_review`, and `type="non-agentic"` (with `handler_ref="noop"`) for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `plan_review→draft_plan` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `plan_review -> "plan-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/plan_review_loop_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, multi-round REQUEST_CHANGES, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `plan-review-finalize.dot`
+
+**Purpose.** Extends `plan-review-loop` with a non-agentic `finalize_plan` node between APPROVE and the success terminal — a future seam for a bead-emitting tool node (`hk-l8rpd`). Validates terminal-by-identity classification through an intermediate non-agentic node: SUCCESS is determined by the terminal node's identity (`plan-approved`), not by the topology of edges leading to it. Isomorphic to `review-loop-finalize.dot` in the planning domain (the hk-z03e8 path).
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §6` (plan-review-finalize) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="plan-approved,plan-needs-attention"` with an intermediate non-agentic `finalize_plan` node between the APPROVE verdict and the terminal — validating that terminal classification is by node identity, not inbound-edge topology (the hk-z03e8 fix).
+- Uses `type="agentic"` with `agent_type="implementer"` for `draft_plan` and `agent_type="reviewer"` for `plan_review`, and `type="non-agentic"` (with `handler_ref="noop"`) for entry, `finalize_plan`, and terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `plan_review→draft_plan` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `plan_review -> "plan-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/plan_review_finalize_test.go` (drives mock handler responses against scenarios including APPROVE-through-finalize, BLOCK escalation, and cap-hit fallback, each asserting the terminal node reached via the intermediate non-agentic seam).
+
+### `security-review-loop.dot`
+
+**Purpose.** A re-role of the canonical `implement-review-fix` with a security-axis reviewer brief. Same topology, same dialect, same engine path — the only difference is the reviewer's `role`: instead of a general correctness verdict, the `security_review` node renders a verdict on the security posture of the change (injection, authz, secret handling, unsafe deserialization, supply-chain). BLOCK is the "ship-blocking security defect" escalation. Promoted to its own fixture to make "harmonik can run a security review" a checkable claim rather than a footnote in #1's role-variants note.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §14` (security-review-loop, review fix #1) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/execution-model.md §EM-015d` (review-loop topology) and `§EM-015e` (iteration cap + no-progress detector). Identical topology to `implement-review-fix.dot`; the security specialization is entirely in the reviewer node's `role` brief.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for the implement node and `agent_type="reviewer"` for `security_review`, and `type="non-agentic"` (with `handler_ref="noop"`) for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`. Verdict literals stay the canonical triad (`APPROVE` / `REQUEST_CHANGES` / `BLOCK`); `BLOCK` = ship-blocking security defect.
+- Uses `traversal_cap="3"` on the `security_review→implement` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `security_review -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/security_review_loop_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-pass, REQUEST_CHANGES with security feedback, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `spec-R1-R2-cycle.dot`
+
+**Purpose.** Two distinct review postures in sequence: R1 constructive (buildability + design critic), an `integrate_r1` author pass to fold R1 feedback, then R2 adversarial (skeptic + adversary), a final `integrate_r2`, then close. Mixes `outcome.preferred_label` cascades (reviewer edges) with `outcome.status == 'SUCCESS'` cascades (the integrate/author commit gates). R2 REQUEST_CHANGES loops back to `integrate_r1` (nearest author surface) to avoid needlessly re-running R1. Subsumes the spec-slice `spec-R1-multiperspective`.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §7` (spec-R1-R2-cycle) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `author`, `integrate_r1`, and `integrate_r2`, and `agent_type="reviewer"` for `r1_build`, `r1_critic`, `r2_skeptic`, and `r2_adversary`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses both `outcome.preferred_label` (reviewer verdict edges) and `outcome.status == 'SUCCESS'` (commit gates on `integrate_r1` and `integrate_r2`) as edge-condition LHS values — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on multiple back-edges (`r1_build→author`, `r1_critic→author`, `r2_skeptic→integrate_r1`, `r2_adversary→integrate_r1`) — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/spec_r1_r2_cycle_test.go` (drives mock handler responses against scenarios including clean R1→R2 pass, R1 REQUEST_CHANGES loop, R2 adversarial REQUEST_CHANGES looping back to integrate_r1, BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `spec-citation-cleanup.dot`
+
+**Purpose.** A two-phase spec authoring workflow: a `content_review` reviewer gates the spec body (ignoring citation formatting), then on APPROVE a dedicated `citation_fixer` implementer corrects all stale cross-references, and a `citation_verify` reviewer checks that every cross-reference resolves — with a tight fixer↔verifier sub-loop (capped). Demonstrates role-differentiation via node `role` briefs and `outcome.status == 'SUCCESS'` as the commit-gated handoff from an implementer to the next reviewer. Also covers the `spec-drift-rereview` pattern.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §8` (spec-citation-cleanup) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `author` and `citation_fixer`, and `agent_type="reviewer"` for `content_review` and `citation_verify`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses both `outcome.preferred_label` (reviewer verdict edges on `content_review` and `citation_verify`) and `outcome.status == 'SUCCESS'` (commit gate on `citation_fixer`) as edge-condition LHS values — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on both the `content_review→author` and the `citation_verify→citation_fixer` back-edges — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/spec_citation_cleanup_test.go` (drives mock handler responses against scenarios including clean content+citations pass, content REQUEST_CHANGES loop, citation-fixer sub-loop, and BLOCK escalation, each asserting the terminal node and dispatch sequence).
+
+### `decompose-review-load.dot`
+
+**Purpose.** Minimal spec-to-beads chain: a `decompose` implementer produces a committed `tasks.md`, a `decomp_review` reviewer gates on coverage and decomposition quality, then on APPROVE a `load_beads` implementer creates the beads (commits the `.beads` JSONL diff). The `load_beads` step uses `outcome.status == 'SUCCESS'` as its commit gate to `close`. Subsumes `decompose-quality-gate-loop` (add a multi-lens reviewer chain → consolidate before the load) and the load-tail of `spec-change-redecompose`.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §9` (decompose-review-load) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `decompose` and `load_beads`, and `agent_type="reviewer"` for `decomp_review`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses both `outcome.preferred_label` (reviewer verdict edges on `decomp_review`) and `outcome.status == 'SUCCESS'` (commit gate on `load_beads`) as edge-condition LHS values — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `decomp_review→decompose` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/decompose_review_load_test.go` (drives mock handler responses against scenarios including APPROVE-then-load, decomposition REQUEST_CHANGES, BLOCK, and load-commit failure, each asserting the terminal node and dispatch sequence).
+
+### `dependency-cycle-fix-loop.dot`
+
+**Purpose.** Detect → fix → recheck loop where the loop pivot is a non-verdict `preferred_label`: a `cycle_check` implementer runs `br dep cycles`, commits a `cycle-report.md`, and surfaces the result as a custom label (`CYCLE` / `ACYCLIC`). Demonstrates arbitrary `preferred_label` values (WG-019), `traversal_cap` on a `fix_cycle→cycle_check` back-edge, and `outcome.failure_class == 'structural'` routing for a tool-level error. The SOON-cleaner form replaces `cycle_check` with an `hk-l8rpd` tool node.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §10` (dependency-cycle-fix-loop) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for both `cycle_check` and `fix_cycle`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` with custom labels `CYCLE` and `ACYCLIC` on the `cycle_check` outgoing edges — demonstrating arbitrary preferred_label values per `specs/workflow-graph.md §6 WG-019` (authors may mint domain labels beyond the APPROVE/REQUEST_CHANGES/BLOCK triad).
+- Uses `outcome.failure_class == 'structural'` as an edge-condition LHS on the `cycle_check` failure path — per the D4 LHS whitelist (closed `failure_class` enum).
+- Uses `traversal_cap="3"` on the `fix_cycle→cycle_check` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `cycle_check -> "close-needs-attention"` fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/dependency_cycle_fix_loop_test.go` (drives mock handler responses against scenarios including ACYCLIC-on-first-check, CYCLE-then-fix-then-ACYCLIC, structural failure escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `docs-sync.dot`
+
+**Purpose.** A two-implementer spine (code change → docs update) followed by a reviewer that routes back to EITHER upstream implementer via a custom `preferred_label`: `REQUEST_CHANGES` → `update_docs` (docs-only fix); `CODE_CHANGE` → `change_code` (code needs rework). Demonstrates that `preferred_label` is an arbitrary string (WG-019) — authors can mint domain labels beyond the canonical APPROVE/REQUEST_CHANGES/BLOCK triad as long as the reviewer brief names them.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §11` (docs-sync) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `change_code` and `update_docs`, and `agent_type="reviewer"` for `review_sync`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` with custom label `CODE_CHANGE` (routes back to `change_code`) alongside the standard `REQUEST_CHANGES` (routes back to `update_docs`) — demonstrating arbitrary preferred_label values per `specs/workflow-graph.md §6 WG-019`.
+- Uses `traversal_cap="3"` on `review_sync→update_docs` and `traversal_cap="2"` on `review_sync→change_code` — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `review_sync -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/docs_sync_test.go` (drives mock handler responses against scenarios including APPROVE, REQUEST_CHANGES (docs-only fix), CODE_CHANGE (code requires rework), BLOCK, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
+### `review-route-by-failure-class.dot`
+
+**Purpose.** Branches on `outcome.failure_class` (the third LHS whitelist entry), mapping the closed failure-class taxonomy to disposition: `transient` → retry the implementer (capped); `structural` / `deterministic` / `canceled` / `budget_exhausted` / `compilation_loop` → needs-attention. A SUCCESS outcome carries no `failure_class`, so those edges miss and fall through to the unconditional handoff to the reviewer. Also covers the `review-escalate-to-human` pattern: BLOCK and cap-hit are both escalation triggers routed to the needs-attention terminal. Live-run honesty: agents cannot be reliably forced to emit a given `failure_class`, so the scenario test drives the non-transient branches with synthetic outcomes.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §12` (review-route-by-failure-class) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `implementer` and `agent_type="reviewer"` for `reviewer`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.failure_class` as the edge-condition LHS for the `implementer` outgoing edges, exercising all closed failure-class values (`transient`, `structural`, `deterministic`, `canceled`, `budget_exhausted`, `compilation_loop`) — per the D4 LHS whitelist and the closed `failure_class` enum in the dialect contract.
+- Uses `outcome.preferred_label` on the `reviewer` outgoing edges — per `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `implementer→implementer` transient-retry self-edge and `traversal_cap="3"` on the `reviewer→implementer` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains unconditional fallback edges on both `implementer` (final unconditional edge to `reviewer`) and `reviewer` (final unconditional edge to `"close-needs-attention"`) satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/review_route_by_failure_class_test.go` (drives synthetic outcomes against the failure-class taxonomy — transient retry, structural escalation, deterministic escalation, canceled escalation — and the verdict paths APPROVE/REQUEST_CHANGES/BLOCK, each asserting the terminal node and dispatch sequence).
+
+### `characterize-refactor-verify.dot`
+
+**Purpose.** Behavior-preserving refactor with a safety net: a `characterize` implementer commits tests pinning current behavior (the oracle), a `refactor` implementer restructures while keeping those tests green, and a `verify_review` reviewer confirms behavior is preserved. The REQUEST_CHANGES loop returns to `refactor` (NOT `characterize`) — the oracle must not be rewritten during the fix loop. Proves a back-edge can re-enter a mid-graph implementer node while leaving an earlier commit untouched, and that the canonical verdict enum serves "behavior preservation" intent purely via the brief.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §13` (characterize-refactor-verify) and the corpus dialect contract (§"Dialect contract").
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `characterize` and `refactor`, and `agent_type="reviewer"` for `verify_review`, and `type="non-agentic"` for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on `verify_review`'s outgoing edges — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `verify_review→refactor` back-edge (NOT back to `characterize`) — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`. The back-edge targets `refactor` rather than `characterize` so the oracle survives the fix loop unmodified.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Contains a final unconditional `verify_review -> "close-needs-attention"` edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/characterize_refactor_verify_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-verify, REQUEST_CHANGES loop back to refactor (not characterize), BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

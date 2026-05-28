@@ -1,0 +1,252 @@
+// spec-R1-R2-cycle.dot — two-round review workflow: R1 constructive → R2 adversarial (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §7 (spec-R1-R2-cycle, spec authoring topology)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (no-progress / cap-hit vocabulary)
+//   - specs/execution-model.md §EM-043  (traversal-cap enforcement)
+//
+// Two distinct review postures in sequence:
+//   R1 constructive: r1_build (buildability lens) + r1_critic (design lens).
+//   R2 adversarial:  r2_skeptic (attack assumptions) + r2_adversary (break scenarios).
+//
+// An integrate_r1 author pass sits between the two rounds; integrate_r2 finalizes
+// the spec before close. R1 reviewers loop back to `author`; R2 reviewers loop back
+// to `integrate_r1` — bypassing the R1 reviewers so they are not needlessly re-run.
+//
+// Cascade mix:
+//   - Reviewer nodes (r1_build, r1_critic, r2_skeptic, r2_adversary) use
+//     `outcome.preferred_label` (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - Integrate nodes (integrate_r1, integrate_r2) use `outcome.status == 'SUCCESS'`
+//     as the forward gate; failure falls through to the unconditional fallback.
+//
+// Walk paths:
+//   APPROVE (full): start → author → r1_build(APPROVE) → r1_critic(APPROVE)
+//                   → integrate_r1(SUCCESS) → r2_skeptic(APPROVE) → r2_adversary(APPROVE)
+//                   → integrate_r2(SUCCESS) → close
+//   R1 loop:        r1_build(RC) or r1_critic(RC) → author → r1_build → ... (cap=3)
+//   R2 loop:        r2_skeptic(RC) or r2_adversary(RC) → integrate_r1 → ... (cap=3)
+//   BLOCK:          any reviewer(BLOCK) → close-needs-attention
+//   integrate fail: integrate_r1 or integrate_r2 non-SUCCESS → close-needs-attention
+//   fallback:       unrecognized label → unconditional fallback → close-needs-attention
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - traversal_cap="3" on every back-edge enforces the EM-015e/WG-028 iteration limit.
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - Unconditional fallback edges appear LAST per WG-011 (D-edge-cascade-invariant).
+//   - R2 loops target integrate_r1 (not author) so the R1 reviewer pair is NOT re-run
+//     on an R2 rejection — nearest author surface per corpus §7.
+
+digraph "spec-R1-R2-cycle" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="spec-R1-R2-cycle";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // author: drafts the initial spec from the planning bead. On re-entry
+    // (after R1 REQUEST_CHANGES), revises the spec to address R1 feedback.
+    author [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="draft the initial spec from the planning bead; on re-entry address R1 feedback"
+    ];
+
+    // r1_build: R1 implementer-lens reviewer. Gates on buildability — is the
+    // spec concrete enough to implement without ambiguity?
+    r1_build [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="R1 implementer-lens: is it buildable?"
+    ];
+
+    // r1_critic: R1 design-critic reviewer. Gates on design soundness — are
+    // the abstractions right, are contracts clear, are edge cases addressed?
+    r1_critic [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="R1 design critic: is the design sound?"
+    ];
+
+    // integrate_r1: integrates all R1 feedback into the spec. Commit required
+    // (outcome.status == 'SUCCESS' gates the forward edge to R2).
+    integrate_r1 [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="integrate all R1 feedback into the spec"
+    ];
+
+    // r2_skeptic: R2 adversarial reviewer, skeptic posture. Attacks assumptions
+    // and surfaces unstated edge cases in the integrated spec.
+    r2_skeptic [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="R2 skeptic: attack assumptions, find unstated edge cases"
+    ];
+
+    // r2_adversary: R2 adversarial reviewer, adversary posture. Constructs
+    // concrete scenarios that could break the spec.
+    r2_adversary [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="R2 adversary: construct scenarios that break the spec"
+    ];
+
+    // integrate_r2: integrates R2 findings and finalizes the spec. Commit required
+    // (outcome.status == 'SUCCESS' gates the forward edge to close).
+    integrate_r2 [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="integrate R2 findings; finalize the spec"
+    ];
+
+    // close: terminal node — R1 + R2 both clean, spec accepted.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="R1+R2 clean — accepted"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, integrate failure,
+    // and unconditional-fallback paths. Operator attention required.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / integrate failure — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> author;
+
+    // (2) Author hands off to R1 build reviewer — unconditional.
+    author -> r1_build;
+
+    // (3a) r1_build APPROVE → proceed to r1_critic.
+    r1_build -> r1_critic [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (3b) r1_build REQUEST_CHANGES → loop back to author (capped at 3 per EM-015e/WG-028).
+    r1_build -> author [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (3c) r1_build BLOCK → close-needs-attention.
+    r1_build -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (3d) Unconditional fallback — catches unrecognized or absent preferred_label.
+    // Must appear last per WG-011.
+    r1_build -> "close-needs-attention";
+
+    // (4a) r1_critic APPROVE → integrate_r1 (author pass between R1 and R2).
+    r1_critic -> integrate_r1 [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4b) r1_critic REQUEST_CHANGES → loop back to author (capped at 3).
+    r1_critic -> author [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (4c) r1_critic BLOCK → close-needs-attention.
+    r1_critic -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (4d) Unconditional fallback. Must appear last per WG-011.
+    r1_critic -> "close-needs-attention";
+
+    // (5a) integrate_r1 SUCCESS → advance to R2 skeptic.
+    // outcome.status gate: only a committed integrate earns entry to R2.
+    integrate_r1 -> r2_skeptic [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (5b) integrate_r1 non-SUCCESS → close-needs-attention (unconditional fallback).
+    integrate_r1 -> "close-needs-attention";
+
+    // (6a) r2_skeptic APPROVE → advance to r2_adversary.
+    r2_skeptic -> r2_adversary [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (6b) r2_skeptic REQUEST_CHANGES → loop back to integrate_r1 (NOT author).
+    // R2 loops bypass the R1 reviewer pair — integrate_r1 is the nearest author
+    // surface per corpus §7 semantics. Capped at 3.
+    r2_skeptic -> integrate_r1 [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (6c) r2_skeptic BLOCK → close-needs-attention.
+    r2_skeptic -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6d) Unconditional fallback. Must appear last per WG-011.
+    r2_skeptic -> "close-needs-attention";
+
+    // (7a) r2_adversary APPROVE → integrate_r2 (final author pass).
+    r2_adversary -> integrate_r2 [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (7b) r2_adversary REQUEST_CHANGES → loop back to integrate_r1 (NOT author).
+    // Same R2-loops-to-integrate_r1 convention as r2_skeptic. Capped at 3.
+    r2_adversary -> integrate_r1 [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (7c) r2_adversary BLOCK → close-needs-attention.
+    r2_adversary -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (7d) Unconditional fallback. Must appear last per WG-011.
+    r2_adversary -> "close-needs-attention";
+
+    // (8a) integrate_r2 SUCCESS → close. Spec finalized.
+    integrate_r2 -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (8b) integrate_r2 non-SUCCESS → close-needs-attention (unconditional fallback).
+    integrate_r2 -> "close-needs-attention";
+}

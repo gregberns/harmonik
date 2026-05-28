@@ -1,0 +1,106 @@
+// dependency-cycle-fix-loop.dot — detect → fix → recheck cycle example (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §10 (dependency-cycle-fix-loop topology)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-028 (traversal_cap on fix→check back-edge)
+//   - specs/workflow-graph.md WG-019 (author-minted preferred_label values)
+//   - specs/execution-model.md EM-043 (traversal-cap enforcement)
+//
+// Topology: cycle_check runs `br dep cycles`, commits cycle-report.md, and
+// surfaces a custom preferred_label (CYCLE | ACYCLIC) — a non-verdict routing
+// pivot.  ACYCLIC closes cleanly; CYCLE dispatches fix_cycle which repairs deps
+// and loops back to cycle_check (cap=3).  failure_class==structural routes to
+// close-needs-attention before the unconditional fallback so tool-level errors
+// are distinguishable from unrecognized outcomes.
+//
+// Design notes:
+//   - preferred_label values (CYCLE / ACYCLIC) are author-minted per WG-019 —
+//     the spec permits arbitrary strings beyond the APPROVE/REQUEST_CHANGES/BLOCK
+//     triad as long as the emitting node is briefed to produce them.
+//   - The traversal_cap="3" on the fix_cycle→cycle_check back-edge bounds the
+//     detect-fix-recheck loop (WG-028 / EM-043): after 3 traversals the cap
+//     enforcement suppresses the edge and the run fails as cap_hit.
+//   - failure_class == 'structural' routes to needs-attention; it matches before
+//     the unconditional fallback per the 5-step cascade evaluation order.
+
+digraph "dependency-cycle-fix-loop" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="dependency-cycle-fix-loop";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry — beads loaded"
+    ];
+
+    // cycle_check: runs `br dep cycles`, commits cycle-report.md, and emits
+    // preferred_label CYCLE or ACYCLIC.  Non-idempotent because it commits.
+    cycle_check [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="run br dep cycles; commit cycle-report.md; preferred_label=CYCLE|ACYCLIC"
+    ];
+
+    // fix_cycle: reads cycle-report.md, breaks/reorders cyclic deps, commits
+    // the updated .beads JSONL, then returns to cycle_check for re-verification.
+    fix_cycle [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="break/reorder cyclic deps per cycle-report.md; commit .beads JSONL"
+    ];
+
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="ACYCLIC — graph clean"
+    ];
+
+    // close-needs-attention: cap-hit (≥3 fix attempts) or structural tool failure.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="cap-hit / structural fail — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> cycle_check;
+
+    // (2) ACYCLIC → close. Dependency graph is clean.
+    cycle_check -> close [
+        condition="outcome.preferred_label == 'ACYCLIC'"
+    ];
+
+    // (3) CYCLE → fix_cycle. Cycles detected; dispatch fixer.
+    cycle_check -> fix_cycle [
+        condition="outcome.preferred_label == 'CYCLE'"
+    ];
+
+    // (4) structural failure → close-needs-attention. `br dep cycles` itself
+    // failed (tool-level error); operator must intervene.
+    cycle_check -> "close-needs-attention" [
+        condition="outcome.failure_class == 'structural'"
+    ];
+
+    // (5) Unconditional fallback — REQUIRED by D-edge-cascade-invariant.
+    // Catches unrecognized / absent preferred_label.  MUST appear last.
+    cycle_check -> "close-needs-attention";
+
+    // (6) fix_cycle loops back to cycle_check for re-verification.
+    // traversal_cap="3" bounds the detect-fix-recheck loop (WG-028 / EM-043):
+    // after 3 traversals of this back-edge the cap-hit failure fires.
+    fix_cycle -> cycle_check [ traversal_cap="3" ];
+}

@@ -1,0 +1,133 @@
+// decompose-review-load.dot — SDLC decompose-review-load workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §9 (decompose-review-load)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// Workflow: reviewed spec → decompose into a committed tasks.md → review for
+// coverage/granularity → on APPROVE, load the beads (br create / br dep add,
+// commit .beads JSONL) → close.
+//
+// The commit = SUCCESS gate on implementer nodes (decompose, load_beads) is the
+// NOW-runnable form; the cleaner form uses tool nodes (hk-l8rpd).
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the decomp_review→decompose back-edge
+//     enforces EM-015e/WG-028: after 3 traversals the cascade reports a cap-hit
+//     failure (completion_reason=cap_hit).
+//   - decomp_review uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - load_beads uses outcome.status == 'SUCCESS' (commit-gate): the node commits
+//     the .beads JSONL diff; SUCCESS means the commit landed, anything else routes
+//     to close-needs-attention.
+//   - Terminal IDs use the hyphenated form (close, close-needs-attention) per C1.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011.
+
+digraph "decompose-review-load" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="decompose-review-load";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: workflow entry point — a reviewed spec is assumed in scope.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry — reviewed spec input"
+    ];
+
+    // decompose: implementer decomposes the reviewed spec into a tasks manifest
+    // and commits tasks.md. Commit = SUCCESS gate (the HEAD-advance is proof of
+    // work). On re-entry after REQUEST_CHANGES the node revises tasks.md.
+    decompose [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="decompose reviewed spec into a tasks manifest; commit tasks.md"
+    ];
+
+    // decomp_review: reviewer gates on spec coverage and decomposition quality.
+    // Emits an Outcome whose preferred_label drives the cascade below.
+    decomp_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="review tasks.md for spec coverage and decomposition quality"
+    ];
+
+    // load_beads: implementer creates beads from the approved tasks.md
+    // (br create / br dep add) and commits the .beads JSONL diff.
+    // Reached only on APPROVE from decomp_review.
+    load_beads [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="create beads from approved tasks.md (br create / br dep add); commit .beads JSONL"
+    ];
+
+    // close: terminal node — decomposed, reviewed, and beads loaded.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="decomposed, reviewed, loaded"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, load failure,
+    // and fallback paths. Operator attention required.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / load failure — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> decompose;
+
+    // (2) Decomposer hands off to reviewer — unconditional.
+    decompose -> decomp_review;
+
+    // (3) APPROVE → load_beads. Reviewer approved the decomposition.
+    decomp_review -> load_beads [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to decompose (capped per EM-015e/WG-028).
+    // traversal_cap="3": after 3 traversals the daemon's cap-enforcement
+    // suppresses this edge and the cascade falls through to the unconditional
+    // fallback edge (6) below.
+    decomp_review -> decompose [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5) BLOCK → close-needs-attention.
+    decomp_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    decomp_review -> "close-needs-attention";
+
+    // (7) load_beads SUCCESS → close. Commit landed; beads are in the ledger.
+    load_beads -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (8) load_beads fallback → close-needs-attention.
+    // Catches load failures (commit absent, br errors, etc.).
+    load_beads -> "close-needs-attention";
+}

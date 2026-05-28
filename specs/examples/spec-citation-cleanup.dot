@@ -1,0 +1,180 @@
+// spec-citation-cleanup.dot — content gate → citation fixer↔verifier sub-loop (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §8 (spec-citation-cleanup, spec authoring topology)
+//   - specs/workflow-graph.md §5 WG-010 (5-step edge-selection cascade)
+//   - specs/workflow-graph.md §5 WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md §10 WG-028 (cycle bounding / traversal_cap)
+//   - specs/execution-model.md §4.3 EM-015d (review-loop topology)
+//   - specs/execution-model.md §4.3 EM-015e (no-progress / cap-hit vocabulary)
+//   - specs/execution-model.md §4.9 EM-043 (traversal-cap enforcement)
+//
+// Two-phase structure:
+//   Phase 1 — Content gate: content_review checks spec BODY only (ignores citation
+//             formatting). APPROVE advances to the citation sub-loop. REQUEST_CHANGES
+//             loops back to author. BLOCK or unrecognized label terminates.
+//   Phase 2 — Citation sub-loop: citation_fixer repairs every stale cross-ref; commit
+//             required (outcome.status == 'SUCCESS') to hand off to citation_verify.
+//             citation_verify approves ONLY when all citations are live. REQUEST_CHANGES
+//             loops back to citation_fixer. BLOCK or unrecognized label terminates.
+//
+// Demonstrates:
+//   - Role-differentiation via node `role` briefs (content reviewer vs. citation verifier
+//     are distinct postures running on the same reviewer handler).
+//   - Commit-gated (outcome.status == 'SUCCESS') author→reviewer handoff between phases.
+//   - Tight fixer↔verifier sub-loop with independent traversal_cap.
+//   - Also covers the spec-drift-rereview pattern: a reconcile↔re-review loop is the
+//     same shape with different role briefs.
+//
+// Walk paths:
+//   Happy path:     start → author → content_review(APPROVE) → citation_fixer(SUCCESS)
+//                   → citation_verify(APPROVE) → close
+//   Content loop:   content_review(RC) → author → content_review → ... (cap=3)
+//   Citation loop:  citation_verify(RC) → citation_fixer(SUCCESS) → citation_verify → ... (cap=3)
+//   BLOCK:          content_review(BLOCK) or citation_verify(BLOCK) → close-needs-attention
+//   Fixer fail:     citation_fixer non-SUCCESS → close-needs-attention (unconditional fallback)
+//   Fallback:       unrecognized label on any reviewer → unconditional fallback → close-needs-attention
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - traversal_cap="3" on every back-edge enforces the EM-015e/WG-028 iteration limit.
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - Unconditional fallback edges appear LAST per WG-011 (D-edge-cascade-invariant).
+//   - citation_fixer uses outcome.status == 'SUCCESS' as the forward gate (commit-gated
+//     handoff); failure falls through to the unconditional fallback → close-needs-attention.
+
+digraph "spec-citation-cleanup" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="spec-citation-cleanup";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // author: drafts or revises the spec. On re-entry (after content_review
+    // REQUEST_CHANGES), addresses the content feedback from content_review.
+    author [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="draft/revise spec content"
+    ];
+
+    // content_review: reviews ONLY spec body content — structure, accuracy,
+    // completeness. Explicitly ignores citation formatting. APPROVE signals
+    // content is clean and the citation sub-loop may begin.
+    content_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="review spec CONTENT only (ignore citation formatting)"
+    ];
+
+    // citation_fixer: repair pass — fixes every stale cross-reference: section
+    // anchors, sibling-spec citations, bead refs. Must commit (SUCCESS) to
+    // advance to citation_verify.
+    citation_fixer [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="fix every stale cross-ref: section anchors, sibling-spec citations, bead refs"
+    ];
+
+    // citation_verify: verifies EVERY cross-reference resolves. APPROVEs only
+    // when all citations are live; REQUEST_CHANGES loops back to citation_fixer.
+    citation_verify [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="verify EVERY cross-reference resolves; APPROVE only if all citations are live"
+    ];
+
+    // close: terminal node — content clean and all citations verified live.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="content + citations clean"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, fixer failure,
+    // and unconditional-fallback paths. Operator attention required.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / fixer failure — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> author;
+
+    // (2) Author hands off to content reviewer — unconditional.
+    author -> content_review;
+
+    // (3a) content_review APPROVE → advance to citation_fixer (Phase 2 begins).
+    content_review -> citation_fixer [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (3b) content_review REQUEST_CHANGES → loop back to author (capped at 3
+    // per EM-015e/WG-028).
+    content_review -> author [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (3c) content_review BLOCK → close-needs-attention.
+    content_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (3d) Unconditional fallback — catches unrecognized or absent preferred_label.
+    // Must appear last per WG-011.
+    content_review -> "close-needs-attention";
+
+    // (4a) citation_fixer SUCCESS → advance to citation_verify (commit-gated handoff).
+    // outcome.status gate: only a committed fix earns entry to citation_verify.
+    citation_fixer -> citation_verify [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (4b) citation_fixer non-SUCCESS → close-needs-attention (unconditional fallback).
+    citation_fixer -> "close-needs-attention";
+
+    // (5a) citation_verify APPROVE → close. All citations live.
+    citation_verify -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (5b) citation_verify REQUEST_CHANGES → loop back to citation_fixer (capped
+    // at 3 per EM-015e/WG-028). Tight fixer↔verifier sub-loop.
+    citation_verify -> citation_fixer [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5c) citation_verify BLOCK → close-needs-attention.
+    citation_verify -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (5d) Unconditional fallback. Must appear last per WG-011.
+    citation_verify -> "close-needs-attention";
+}

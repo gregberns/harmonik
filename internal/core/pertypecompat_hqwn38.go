@@ -117,6 +117,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "gate_allowed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "gate_denied", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "gate_escalated", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "gate_decision_recorded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "skills_resolved", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "guard_reordered", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "guard_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "control_points_registered", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

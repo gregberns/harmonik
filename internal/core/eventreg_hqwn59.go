@@ -38,6 +38,7 @@ func init() {
 	registerQueueEvents()
 	registerHandlerPauseEvents()
 	registerGateDispatchEvents()
+	registerWorkflowLoaderEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -343,6 +344,12 @@ func registerHandlerPauseEvents() {
 //   - gate_decision_recorded: O (ordinary — observability and audit)
 func registerGateDispatchEvents() {
 	mustRegister("gate_decision_recorded", func() EventPayload { return &GateDecisionRecordedPayload{} })
+}
+
+// registerWorkflowLoaderEvents registers the workflow-loader event payload
+// constructors (hk-zqr6f, CP-057 skills_ref resolution).
+func registerWorkflowLoaderEvents() {
+	mustRegister("skills_resolved", func() EventPayload { return &SkillsResolvedPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

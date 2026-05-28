@@ -455,7 +455,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil,    // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueStore:          nil,     // populated by daemon.Start after wiring QueueStore (hk-45ude)
 		staleBlockerCloser:  adapter, // hk-rnsjs: auto-close stale blockers on claim failure
 	}, nil
 }
@@ -813,8 +813,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
 				capturedExtraContext = snapItemContext // hk-boiwe
-				capturedItemWFMode = snapItemWFMode   // hk-hiqrl
-				capturedItemWFRef = snapItemWFRef     // hk-qo9pq
+				capturedItemWFMode = snapItemWFMode    // hk-hiqrl
+				capturedItemWFRef = snapItemWFRef      // hk-qo9pq
 			}
 		}
 
@@ -1258,9 +1258,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		return
 
 	case core.WorkflowModeDot:
-		// DOT workflow mode (hk-waj4b): load and validate the .dot artifact,
-		// then fall through to single-mode dispatch as a stub until the full
-		// cascade engine (hk-bf85t) is implemented.
+		// DOT workflow mode: load + validate the .dot artifact, then hand the
+		// validated graph to the cascade driver (driveDotWorkflow, dot_cascade.go)
+		// which walks the graph node-by-node using workflow.DecideNextNode
+		// (hk-9dnak; cascade engine library hk-bf85t).
 		//
 		// Resolve .dot path: use itemWorkflowRef when set (hk-qo9pq CLI --workflow-ref);
 		// fall back to the project-level convention <projectDir>/workflow.dot.
@@ -1283,12 +1284,45 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("workflow_load: %v", loadErr))
 			return
 		}
-		// DOT artifact loaded + validated successfully.
-		// TODO(hk-bf85t): hand graph to the cascade engine for full DOT-driven
-		// dispatch. Until then, log success and fall through to single-mode.
-		fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow loaded for bead %s (graph %q, %d nodes, %d edges); falling through to single-mode (cascade engine not yet wired — hk-bf85t)\n",
-			beadID, graph.Name, len(graph.Nodes), len(graph.Edges))
-		// Fall through to single-mode dispatch below.
+
+		// Drive the cascade: walk start → … → terminal, dispatching each node by
+		// type (non-agentic synthesize-success, agentic substrate-dispatch,
+		// gate/sub-workflow out-of-scope error).
+		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description,
+			wtPath, headSHA, graph, resolvedModel, resolvedEffort, extraContext, baseBranch)
+
+		transitionTID, _ := deps.tidGen.Next()
+		if dotResult.success {
+			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
+			// single-mode and review-loop merge path).
+			mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			if !mergeRes.noChange && !mergeRes.success {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
+				emitDone(false, fmt.Sprintf("merge-failed (dot): %s", mergeRes.reason))
+				return
+			}
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot success) %s: %v\n", beadID, closeErr)
+				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+			} else {
+				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitDone(true, dotResult.summary)
+			}
+		} else {
+			// Non-success terminal (BLOCK / cap-hit / no-progress / structural
+			// failure / gate-out-of-scope) → reopen the bead so it can be retried
+			// or escalated. The needsAttention flag is carried in the summary.
+			reopenTID, _ := deps.tidGen.Next()
+			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, dotResult.summary); reopenErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (dot) %s: %v\n", beadID, reopenErr)
+			}
+			emitDone(false, dotResult.summary)
+		}
+		return
 
 	default:
 		// WorkflowModeSingle or any normalised-to-single value: fall through

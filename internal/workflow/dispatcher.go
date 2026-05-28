@@ -223,6 +223,16 @@ func dotEdgeToCoreEdge(e *dot.Edge) core.Edge {
 		}
 	}
 
+	// Bridge traversal_cap (retained by the parser in UnknownAttrs) into
+	// core.Edge.TraversalCap so core.SelectNextEdge enforces the EM-043 cap
+	// during the cascade (hk-i7yq8). A non-positive / malformed value is treated
+	// as no cap.
+	if raw, ok := e.UnknownAttrs["traversal_cap"]; ok {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			ce.TraversalCap = &n
+		}
+	}
+
 	return ce
 }
 

@@ -14,46 +14,43 @@ package daemon_test
 // real handler subprocess, and asserts how far the real DOT-mode path actually
 // executes today.
 //
-// # HONEST STATUS of --workflow-mode=dot through the daemon (as of this commit)
+// # STATUS of --workflow-mode=dot through the daemon (hk-9dnak: cascade WIRED)
 //
 // The daemon's DOT-mode branch in internal/daemon/workloop.go (beadRunOne,
-// `case core.WorkflowModeDot:`, ~L1260) does exactly THREE things today:
+// `case core.WorkflowModeDot:`) now:
 //
 //   1. Resolves the .dot path: itemWorkflowRef (CLI --workflow-ref) when set,
 //      else <projectDir>/workflow.dot. Relative refs resolve against projectDir.
 //   2. Calls workflow.LoadDotWorkflow(dotPath) — parse + validate. On failure it
 //      reopens the bead with failure_class=workflow_load.
-//   3. On success it logs "(cascade engine not yet wired — hk-bf85t)" and
-//      FALLS THROUGH to single-mode dispatch.
-//
-// In other words: the DOT graph is loaded and validated, then the FIRST node is
-// effectively dispatched as a one-shot single-mode run. The cascade engine
-// (node transitions, conditional edge evaluation, reviewer back-edge, terminal-
-// node walk) is NOT wired into the daemon — that is the open TODO(hk-bf85t).
+//   3. On success it hands the validated graph to driveDotWorkflow
+//      (internal/daemon/dot_cascade.go, hk-9dnak), which WALKS the graph
+//      node-by-node using workflow.DecideNextNode (the cascade engine, hk-bf85t):
+//      non-agentic nodes synthesize SUCCESS; agentic nodes dispatch into the
+//      substrate; the reviewer's verdict drives the conditional cascade; the walk
+//      ends at a terminal node (close → CloseBead; close-needs-attention → reopen).
 //
 // So the assertions below split into two tiers:
 //
-//   TIER 1 (real, asserted): boot work loop → DOT load+validate → run_started →
-//   single-mode dispatch → bead closed → queue drains. This is the genuine
-//   extent of the real DOT-mode daemon path today.
+//   TIER 1: boot work loop → DOT load+validate → run_started → cascade walk →
+//   bead closed → queue drains.
 //
-//   TIER 2 (unreached, documented + t.Skip): the cascade — node-transition
-//   events, reviewer verdict routing, REQUEST_CHANGES back-edge, terminal-node
-//   walk to `close` / `close-needs-attention`. These cannot be asserted because
-//   the daemon never hands the loaded graph to a cascade driver. The
-//   conditional-before-unconditional edge ordering fix (commit b7e23bc) is
-//   exercised by internal/workflow's scenario_roundtrip_em75 tests, NOT by the
-//   daemon, because the daemon never evaluates edges.
+//   TIER 2: the cascade node-transition walk itself — node_dispatch_requested /
+//   node_dispatch_decided events plus the start → implementer → reviewer →
+//   (APPROVE) → close terminal walk.
 //
 // GATE nodes are deliberately NOT exercised (per the bead brief): gate
 // deny/success semantics are under an unresolved spec contradiction (EM-005b vs
-// CP-058). The review-loop topology used here is agentic + non-agentic +
-// reviewer nodes only — no gate nodes.
+// CP-058), and the driver returns a deterministic error for gate/sub-workflow
+// nodes. The review-loop topology used here is agentic + non-agentic + reviewer
+// nodes only — no gate nodes.
 //
-// Spec refs: specs/execution-model.md §EM-015d (review-loop topology);
-// specs/workflow-graph.md §8 (terminal-node declaration); specs/examples/review-loop.dot.
-// Bead ref: hk-lphyf (DOT scenario round-trip); hk-bf85t (cascade-engine TODO);
-// hk-qo9pq (--workflow-ref CLI wiring); hk-waj4b (DOT-mode load+validate branch).
+// Spec refs: specs/execution-model.md §EM-015d (review-loop topology), §7.5
+// (dot-mode dispatcher); specs/workflow-graph.md §8 (terminal-node declaration);
+// specs/examples/review-loop.dot.
+// Bead ref: hk-lphyf (DOT scenario round-trip); hk-9dnak (cascade driver wiring);
+// hk-bf85t (cascade engine); hk-qo9pq (--workflow-ref CLI wiring); hk-waj4b
+// (DOT-mode load+validate branch).
 
 import (
 	"context"
@@ -75,35 +72,6 @@ func dotE2EModuleRoot() string {
 	_, thisFile, _, _ := runtime.Caller(0)
 	// thisFile = <root>/internal/daemon/workloop_dot_mode_e2e_hklphyf_test.go
 	return filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-}
-
-// dotE2ECommitHandlerScript returns a /bin/sh script (written to a temp file)
-// that, when launched with WorkDir = the run worktree, creates a file and
-// commits it — advancing the worktree HEAD past its parent — then exits 0.
-//
-// This is the minimal deterministic handler that lets the single-mode
-// fall-through path (the DOT-mode branch falls through to single-mode after
-// load+validate) reach the clean-close branch (workloop.go ~L1741): HEAD
-// advanced + exit 0 + no watcher error → mergeRunBranchToMain (FF to main) →
-// CloseBead. A bare `exit 0` handler instead trips the no-commit guard
-// (workloop.go ~L1710) and reopens, so it cannot prove the close path.
-func dotE2ECommitHandlerScript(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "commit-handler.sh")
-	// The handler runs in the worktree (its WorkDir). Commit a sentinel so HEAD
-	// advances; the run branch already has user.name/email from the fixture repo.
-	script := "#!/bin/sh\n" +
-		"set -e\n" +
-		"echo \"dot-e2e sentinel $$\" > dot-e2e-sentinel.txt\n" +
-		"git add dot-e2e-sentinel.txt\n" +
-		"git commit -m \"dot-e2e: handler commit\" >/dev/null 2>&1\n" +
-		"exit 0\n"
-	//nolint:gosec // G306: 0755 required to exec the handler script in a test tree.
-	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("dotE2ECommitHandlerScript: write %s: %v", scriptPath, err)
-	}
-	return scriptPath
 }
 
 // dotE2ESeedWorkflow copies a .dot fixture from the module-root-relative
@@ -133,22 +101,26 @@ func dotE2ESeedWorkflow(t *testing.T, projectDir, srcRel, destName string) strin
 
 // TestDotMode_E2E_LoadValidateDispatchClose drives the canonical
 // review-loop.dot through the REAL work loop with --workflow-mode=dot and a
-// deterministic /bin/sh handler that exits 0.
+// deterministic phase-aware /bin/sh handler.
 //
-// This is the honest end-to-end extent of the daemon DOT-mode path today:
+// This asserts the load+validate+dispatch+close extent of the daemon DOT-mode
+// path:
 //
 //   - The queue item carries WorkflowMode="dot" + WorkflowRef=<review-loop.dot>,
 //     exactly as `harmonik run --workflow-mode dot --workflow-ref` populates it.
 //   - beadRunOne resolves the ref, calls workflow.LoadDotWorkflow (parse +
 //     validate the FULL review-loop topology: start, implementer, reviewer,
 //     close, close-needs-attention + 6 edges including the conditional cascade).
-//   - On successful load it falls through to single-mode dispatch.
-//   - The handler exits 0, the bead is CLOSED (not reopened), the queue drains,
-//     and cancelOnQueueDrain fires so the loop exits.
+//   - On successful load it hands the graph to driveDotWorkflow (hk-9dnak), which
+//     walks start → implementer → reviewer → close.
+//   - The bead is CLOSED (not reopened), the queue drains, and cancelOnQueueDrain
+//     fires so the loop exits.
 //
 // The key signal: the bead is CLOSED, not REOPENED. A reopen would mean the DOT
-// artifact failed to load/validate (failure_class=workflow_load). A close means
-// the real path got all the way through load+validate+dispatch.
+// artifact failed to load/validate (failure_class=workflow_load) or the walk
+// failed. A close means the real path got all the way through to the APPROVE
+// success terminal. The deeper node-transition assertions live in
+// TestDotMode_E2E_CascadeTransitions below.
 func TestDotMode_E2E_LoadValidateDispatchClose(t *testing.T) {
 	t.Parallel()
 
@@ -163,6 +135,8 @@ func TestDotMode_E2E_LoadValidateDispatchClose(t *testing.T) {
 	dotPath := dotE2ESeedWorkflow(t, projectDir, "specs/examples/review-loop.dot", ".harmonik/workflow.dot")
 
 	const beadID = core.BeadID("hk-lphyf-dot-e2e-001")
+
+	stateDir := t.TempDir()
 
 	now := time.Now()
 	q := &queue.Queue{
@@ -180,7 +154,7 @@ func TestDotMode_E2E_LoadValidateDispatchClose(t *testing.T) {
 						BeadID:       beadID,
 						Status:       queue.ItemStatusPending,
 						WorkflowMode: string(core.WorkflowModeDot), // --workflow-mode dot
-						WorkflowRef:  dotPath,                       // --workflow-ref <path>
+						WorkflowRef:  dotPath,                      // --workflow-ref <path>
 					},
 				},
 				CreatedAt: now,
@@ -199,7 +173,7 @@ func TestDotMode_E2E_LoadValidateDispatchClose(t *testing.T) {
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
-		HandlerBinary:      dotE2ECommitHandlerScript(t), // commits in worktree → HEAD advances
+		HandlerBinary:      dotE2ECascadeHandlerScript(t, stateDir), // impl commits, reviewer APPROVEs
 		HandlerArgs:        nil,
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
@@ -366,40 +340,187 @@ assert:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TIER 2 — cascade (NOT wired into the daemon today): documented + skipped
+// TIER 2 — cascade WIRED into the daemon (hk-9dnak): real node-transition walk
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestDotMode_E2E_CascadeTransitions_NOT_WIRED documents — and guards with an
-// explicit t.Skip — the assertions that CANNOT pass today because the daemon
-// never hands the loaded DOT graph to a cascade driver.
+// dotE2ECascadeHandlerScript returns a /bin/sh script that is PHASE-AWARE so a
+// single handler binary can serve both the implementer and reviewer nodes of the
+// canonical review-loop topology when driven by driveDotWorkflow (hk-9dnak).
 //
-// If a future change wires hk-bf85t (the cascade engine) into beadRunOne, this
-// test should be un-skipped and fleshed out to assert the genuine node-transition
-// sequence. Until then it stands as an honest, machine-discoverable marker that
-// the DOT cascade does NOT execute through the daemon.
+// The DOT cascade walk for review-loop.dot (APPROVE path) dispatches handler
+// invocations in this order (the non-agentic start node never invokes a handler):
 //
-// The two paths that a wired cascade would need to exercise (per the bead brief):
+//	invocation 1 → implementer node  → must COMMIT (advance HEAD)
+//	invocation 2 → reviewer node     → must WRITE .harmonik/review.json (APPROVE)
 //
-//   PATH A — APPROVE:  start → implementer → reviewer → (APPROVE) → close
-//   PATH B — back-edge: start → implementer → reviewer → (REQUEST_CHANGES) →
-//            implementer → reviewer → (APPROVE) → close
+// The script discriminates by counting its own invocations via a counter file in
+// a caller-supplied state dir (outside the worktree so it survives across the two
+// handler processes). Odd invocations behave as the implementer; even invocations
+// behave as the reviewer and emit an APPROVE verdict, which drives the reviewer
+// cascade down the `reviewer -> close [APPROVE]` edge to the success terminal.
+func dotE2ECascadeHandlerScript(t *testing.T, stateDir string) string {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "cascade-handler.sh")
+	counterPath := filepath.Join(stateDir, "invocations")
+	// review.json schema v1: {schema_version, verdict, flags, notes}.
+	script := "#!/bin/sh\n" +
+		"set -e\n" +
+		"CTR=\"" + counterPath + "\"\n" +
+		"N=0\n" +
+		"if [ -f \"$CTR\" ]; then N=$(cat \"$CTR\"); fi\n" +
+		"N=$((N+1))\n" +
+		"echo \"$N\" > \"$CTR\"\n" +
+		"REM=$((N % 2))\n" +
+		"if [ \"$REM\" -eq 1 ]; then\n" +
+		"  # Implementer phase: commit a sentinel so HEAD advances.\n" +
+		"  echo \"dot-cascade impl $N $$\" > dot-cascade-impl-$N.txt\n" +
+		"  git add dot-cascade-impl-$N.txt\n" +
+		"  git commit -m \"dot-cascade: implementer commit $N\" >/dev/null 2>&1\n" +
+		"else\n" +
+		"  # Reviewer phase: write an APPROVE verdict to .harmonik/review.json.\n" +
+		"  mkdir -p .harmonik\n" +
+		"  printf '%s' '{\"schema_version\":1,\"verdict\":\"APPROVE\",\"flags\":[],\"notes\":\"dot-cascade e2e approve\"}' > .harmonik/review.json\n" +
+		"fi\n" +
+		"exit 0\n"
+	//nolint:gosec // G306: 0755 required to exec the handler script in a test tree.
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("dotE2ECascadeHandlerScript: write %s: %v", scriptPath, err)
+	}
+	return scriptPath
+}
+
+// TestDotMode_E2E_CascadeTransitions drives the canonical review-loop.dot through
+// the REAL work loop with --workflow-mode=dot and the cascade driver wired in
+// (hk-9dnak). It proves the genuine node-transition walk:
 //
-// PATH B exercises the conditional-before-unconditional edge ordering fix
-// (commit b7e23bc): the reviewer cascade must evaluate the conditional
-// REQUEST_CHANGES back-edge BEFORE the unconditional fallback to
-// close-needs-attention. That ordering is verified TODAY in
-// internal/workflow/scenario_roundtrip_em75_hklphyf_test.go
-// (TestScenarioEM75_CascadeFallback_ReviewerUnconditional) at the cascade-engine
-// layer — but NOT through the daemon, because the daemon does not evaluate edges.
-func TestDotMode_E2E_CascadeTransitions_NOT_WIRED(t *testing.T) {
-	t.Skip("DOT cascade engine is not wired into the daemon work loop (TODO hk-bf85t). " +
-		"beadRunOne's WorkflowModeDot branch loads+validates the .dot graph then falls " +
-		"through to single-mode dispatch — it never evaluates node transitions or edge " +
-		"conditions. Node-transition / reviewer-verdict / back-edge / terminal-node-walk " +
-		"assertions cannot be made against the daemon until the cascade driver lands. " +
-		"The cascade itself (incl. the conditional-before-unconditional ordering fix, " +
-		"commit b7e23bc) is covered at the engine layer by " +
-		"internal/workflow/scenario_roundtrip_em75_hklphyf_test.go.")
+//	start(non-agentic) → implementer(agentic, commits)
+//	  → reviewer(agentic, APPROVE) → close (success terminal)
+//
+// The signal: the bead is CLOSED (success terminal `close` reached) AND the
+// node-transition observability events (node_dispatch_requested /
+// node_dispatch_decided) fired — neither of which the pre-hk-9dnak fall-through
+// path emitted. This is the cascade actually walking the graph through the daemon,
+// not a single-mode one-shot of the first node.
+func TestDotMode_E2E_CascadeTransitions(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	dotPath := dotE2ESeedWorkflow(t, projectDir, "specs/examples/review-loop.dot", ".harmonik/workflow.dot")
+
+	const beadID = core.BeadID("hk-9dnak-dot-cascade-001")
+
+	stateDir := t.TempDir()
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "dot-cascade-queue",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{
+						BeadID:       beadID,
+						Status:       queue.ItemStatusPending,
+						WorkflowMode: string(core.WorkflowModeDot),
+						WorkflowRef:  dotPath,
+					},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	bus := &stubEventCollector{}
+	drainCtx, cancelDrain := context.WithCancel(context.Background())
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+	ledger := &stubBeadLedger{}
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:          ledger,
+		Bus:                bus,
+		ProjectDir:         projectDir,
+		HandlerBinary:      dotE2ECascadeHandlerScript(t, stateDir),
+		HandlerArgs:        nil,
+		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:         qs,
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		CancelOnQueueDrain: cancelDrain,
+		CancelOnQueueExit:  cancelDrain,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	testCtx, testCancel := context.WithTimeout(drainCtx, 60*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+	case <-time.After(58 * time.Second):
+		t.Fatalf("DOT cascade E2E: runWorkLoop did not exit; events=%v closed=%v reopened=%v",
+			bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+	}
+
+	events := bus.eventTypes()
+	closed := ledger.closedIDs()
+	reopened := ledger.reopenedIDs()
+	t.Logf("DOT cascade E2E: events=%v closed=%v reopened=%v", events, closed, reopened)
+
+	// Assertion 1: run_started fired.
+	if !dotE2EContains(events, string(core.EventTypeRunStarted)) {
+		t.Errorf("DOT cascade E2E: run_started not emitted; got %v", events)
+	}
+
+	// Assertion 2: the cascade actually walked the graph — node_dispatch_requested
+	// AND node_dispatch_decided fired. These are emitted ONLY by the cascade driver
+	// (driveDotWorkflow); the old fall-through single-mode path never emitted them.
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchRequested)) {
+		t.Errorf("DOT cascade E2E: node_dispatch_requested not emitted — the cascade "+
+			"driver did not walk the graph; got %v", events)
+	}
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchDecided)) {
+		t.Errorf("DOT cascade E2E: node_dispatch_decided not emitted — the cascade engine "+
+			"was not consulted for node transitions; got %v", events)
+	}
+
+	// Assertion 3: the bead was CLOSED (success terminal `close` reached), not
+	// reopened. A reopen would mean the walk failed before the APPROVE terminal.
+	if len(reopened) > 0 {
+		t.Errorf("DOT cascade E2E: bead was REOPENED (%v) — the cascade did not reach the "+
+			"APPROVE success terminal `close`. events=%v", reopened, events)
+	}
+	if len(closed) == 0 {
+		t.Errorf("DOT cascade E2E: bead was neither closed nor reopened; expected close on "+
+			"the APPROVE success terminal. events=%v", events)
+	} else if closed[0] != beadID {
+		t.Errorf("DOT cascade E2E: closed bead = %q; want %q", closed[0], beadID)
+	}
+
+	// Assertion 4: run_completed fired (terminal of the success path).
+	if !dotE2EContains(events, string(core.EventTypeRunCompleted)) {
+		t.Errorf("DOT cascade E2E: run_completed not emitted; got %v", events)
+	}
+
+	// Assertion 5: queue drained cleanly.
+	if qs.Queue() != nil {
+		t.Error("DOT cascade E2E: QueueStore.Queue() is non-nil after drain; expected ClearQueue")
+	}
 }
 
 // dotE2EContains reports whether haystack contains needle.

@@ -205,27 +205,18 @@ func TestRLFull_BlockOnFirst(t *testing.T) {
 
 // ── Scenario 4: cap-hit fallback ────────────────────────────────────────────
 
-// TestRLFull_CapHitFallback exercises the WG-010 cascade invariant: when the
-// reviewer→implementer back-edge's traversal_cap (3) is exhausted, the
-// conditional edge fails the traversal-cap check and the cascade falls through
-// to the unconditional fallback edge → close-needs-attention.
+// TestRLFull_CapHitFallback exercises the WG-010 cascade invariant through the
+// REAL DOT pipeline: when the reviewer→implementer back-edge's traversal_cap (3)
+// is exhausted, the conditional edge fails the traversal-cap check and the
+// cascade reports a cap-hit failure (completion_reason=cap_hit). In the daemon
+// driver (driveDotWorkflow) this routes the run to the needs-attention terminal.
 //
-// Known gap (2026-05-27): dotEdgeToCoreEdge in dispatcher.go does NOT bridge
-// dot.Edge.UnknownAttrs["traversal_cap"] to core.Edge.TraversalCap. This means
-// the traversal_cap declared in the DOT file is invisible to the cascade
-// engine. Until that bridge is implemented (the test below documents this gap),
-// we test the cap-hit path in two ways:
-//
-//   (a) With the real pipeline: pre-fill the cycle counter to 3 and emit a
-//       REQUEST_CHANGES label. Because the core.Edge has no TraversalCap, the
-//       conditional edge still matches (the counter is ignored). The cascade
-//       routes to "implementer" — this is the CURRENT (buggy) behavior. The
-//       test asserts that behavior and documents it as a known gap.
-//
-//   (b) Direct cascade test: use core.SelectNextEdge with manually constructed
-//       core.Edge objects that carry TraversalCap, proving the cascade engine
-//       itself correctly fires the unconditional fallback when the cap is hit.
-func TestRLFull_CapHitFallback_KnownGap(t *testing.T) {
+// Previously dotEdgeToCoreEdge dropped dot.Edge.UnknownAttrs["traversal_cap"]
+// (the hk-i7yq8 gap), so the cap was invisible to the cascade and the back-edge
+// matched unboundedly. That bridge is now implemented: dotEdgeToCoreEdge parses
+// traversal_cap into core.Edge.TraversalCap, and core.SelectNextEdge enforces it
+// against the CycleCounter. This test asserts the now-correct cap-hit behavior.
+func TestRLFull_CapHitFallback(t *testing.T) {
 	dotPath := rlFullDotPath(t)
 	graph, err := workflow.LoadDotWorkflow(dotPath)
 	if err != nil {
@@ -239,25 +230,25 @@ func TestRLFull_CapHitFallback_KnownGap(t *testing.T) {
 	workflow.DecideNextNode(graph, "start", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 	workflow.DecideNextNode(graph, "implementer", rlFullOutcome(core.OutcomeStatusSuccess, ""), run, cycles)
 
-	// Pre-fill cycle counter: simulate 3 prior traversals of reviewer→implementer.
-	for i := 0; i < 3; i++ {
-		cycles.Increment(run.RunID, "reviewer", "implementer", nil)
+	// Pre-fill cycle counter: simulate 3 prior traversals of reviewer→implementer
+	// (the back-edge's traversal_cap is 3 in review-loop.dot).
+	cap := 3
+	for i := 0; i < cap; i++ {
+		cycles.Increment(run.RunID, "reviewer", "implementer", &cap)
 	}
 
-	// With the real pipeline, the traversal_cap is NOT bridged to core.Edge, so
-	// the cascade does NOT enforce the cap. The conditional REQUEST_CHANGES edge
-	// still matches and routes to "implementer".
+	// With the traversal_cap now bridged into core.Edge, the cascade enforces the
+	// cap: the REQUEST_CHANGES back-edge is suppressed at cap-hit and the cascade
+	// reports a compilation_loop failure with completion_reason=cap_hit.
 	dec := workflow.DecideNextNode(graph, "reviewer", rlFullOutcome(core.OutcomeStatusSuccess, "REQUEST_CHANGES"), run, cycles)
-	if !dec.Advance {
-		t.Fatalf("expected Advance=true (known-gap: cap not enforced via DOT bridge), got: %+v", dec)
+	if !dec.Failed {
+		t.Fatalf("expected Failed=true on cap-hit, got: %+v", dec)
 	}
-	// Known gap: this routes to "implementer" instead of "close-needs-attention"
-	// because dotEdgeToCoreEdge drops traversal_cap.
-	if dec.NextNodeID != "implementer" {
-		// If this assertion fires with "close-needs-attention", it means the
-		// traversal_cap bridge was implemented — update this test to remove the
-		// known-gap framing and merge with the direct-cascade test below.
-		t.Logf("GOOD NEWS: NextNodeID=%q — the traversal_cap bridge appears to be implemented; update this test", dec.NextNodeID)
+	if dec.CompletionReason != "cap_hit" {
+		t.Fatalf("expected CompletionReason=cap_hit, got %q (%+v)", dec.CompletionReason, dec)
+	}
+	if dec.FailureClass != core.FailureClassCompilationLoop {
+		t.Fatalf("expected FailureClass=compilation_loop, got %q", dec.FailureClass)
 	}
 }
 

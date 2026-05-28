@@ -2,19 +2,28 @@ package main
 
 // graph.go — `harmonik graph validate <path>` subcommand.
 //
-// Reads a .dot workflow file, runs the PreRunValidator (EM-038) against it,
-// prints diagnostics to stdout, and exits non-zero on any validation failure.
+// Reads a .dot workflow file, parses + validates it via internal/workflow/dot
+// (the SAME parser+validator the daemon execution path uses through
+// workflow.LoadDotWorkflow), prints diagnostics to stdout, and exits non-zero
+// on any validation failure.
+//
+// Unifying on internal/workflow/dot resolves hk-kxygy: the CLI pre-run check
+// (EM-038) and the daemon execution path now agree on the DOT dialect. The
+// legacy internal/workflowvalidator parser disagreed with the daemon on bare
+// graph-level attributes, leading comments, strict digraph, handler_ref on
+// non-agentic nodes (EM-007), start_node vs start_node_id, the control-point
+// node type, and idempotency_class on gate/sub-workflow nodes — every one of
+// those divergences is eliminated by parsing through the daemon's parser.
 //
 // Spec ref: Operator-NFR §4.3 needs-attention surfacing.
-// Bead ref: hk-voyf4 (T-IMPL-014).
+// Bead ref: hk-voyf4 (T-IMPL-014), hk-kxygy (parser unification).
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 
-	"github.com/gregberns/harmonik/internal/workflowvalidator"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
 // runGraphSubcommand dispatches harmonik graph <verb> [args].
@@ -102,22 +111,21 @@ EXAMPLES
 		return 1
 	}
 
-	v := workflowvalidator.New(nil, nil)
-	validationErr := v.Validate(string(src))
+	// Parse + validate through internal/workflow/dot — the same path the daemon
+	// uses via workflow.LoadDotWorkflow. A parse failure (strict WG-031 error)
+	// becomes a single em038_not_parseable diagnostic so the run cannot start;
+	// validation findings are mapped to their WG-/CP-/EM- codes. Only
+	// SeverityError diagnostics count as invalid (matching LoadDotWorkflow),
+	// SeverityWarning diagnostics are surfaced but do not flip the exit code.
+	diags := validateDot(string(src))
 
-	if validationErr == nil {
+	if len(diags) == 0 {
 		if jsonMode {
 			fmt.Println("[]")
 		} else {
 			fmt.Printf("%s: valid\n", dotPath)
 		}
 		return 0
-	}
-
-	// Collect all ValidationError leaves.
-	var diags []diagnostic
-	for _, e := range collectValidationErrors(validationErr) {
-		diags = append(diags, diagnostic{Code: e.Code, Detail: e.Detail})
 	}
 
 	if jsonMode {
@@ -137,37 +145,57 @@ EXAMPLES
 	return 1
 }
 
-// collectValidationErrors unwraps a joined error tree and returns all
-// *workflowvalidator.ValidationError leaves.
-func collectValidationErrors(err error) []*workflowvalidator.ValidationError {
-	if err == nil {
-		return nil
-	}
-	var ve *workflowvalidator.ValidationError
-	if errors.As(err, &ve) {
-		// Single ValidationError — check whether it is also a join root.
-		// errors.As returns the first match; unwrap all via the join interface.
-	}
-
-	// Use errors.Join-unwrapping: try the Unwrap() []error interface first.
-	type unwrapMulti interface {
-		Unwrap() []error
-	}
-	if u, ok := err.(unwrapMulti); ok {
-		var all []*workflowvalidator.ValidationError
-		for _, child := range u.Unwrap() {
-			all = append(all, collectValidationErrors(child)...)
+// validateDot parses + validates a DOT source string through
+// internal/workflow/dot and returns the failure diagnostics in the CLI's
+// presentation shape ({Code, Detail}). It returns an empty slice when the
+// workflow is valid (no parse error, no SeverityError validation findings).
+//
+// A parse failure short-circuits validation and is reported as the single
+// stable em038_not_parseable diagnostic, carrying the parser's positional
+// message as the detail. This preserves the documented EM-038 contract: a
+// workflow that cannot be parsed cannot start. Multiple strict parse errors
+// (dot.ParseErrors) are each surfaced as their own em038_not_parseable
+// diagnostic.
+//
+// Validation diagnostics map directly: each SeverityError finding becomes one
+// {Code, Detail} entry using the finding's WG-/CP-/EM- code and its message
+// (line-prefixed when known). SeverityWarning findings are dropped here — they
+// do not block a run per LoadDotWorkflow's contract — so the CLI exit code
+// matches what the daemon would do at load time.
+func validateDot(src string) []diagnostic {
+	graph, parseErr := dot.Parse(src, "")
+	if parseErr != nil {
+		var multi dot.ParseErrors
+		switch e := parseErr.(type) {
+		case dot.ParseErrors:
+			multi = e
+		case *dot.ParseError:
+			multi = dot.ParseErrors{e}
+		default:
+			return []diagnostic{{Code: "em038_not_parseable", Detail: parseErr.Error()}}
 		}
-		return all
+		diags := make([]diagnostic, 0, len(multi))
+		for _, pe := range multi {
+			diags = append(diags, diagnostic{Code: "em038_not_parseable", Detail: pe.Error()})
+		}
+		return diags
 	}
 
-	// Single error — try to cast directly.
-	if errors.As(err, &ve) {
-		return []*workflowvalidator.ValidationError{ve}
+	var diags []diagnostic
+	for _, d := range dot.Validate(graph) {
+		if d.Severity != dot.SeverityError {
+			continue
+		}
+		diags = append(diags, diagnostic{Code: d.Code, Detail: diagnosticDetail(d)})
 	}
+	return diags
+}
 
-	// Non-ValidationError leaf (e.g. parse error wrapped directly).
-	return []*workflowvalidator.ValidationError{
-		{Code: "parse_error", Detail: err.Error()},
+// diagnosticDetail renders a dot.Diagnostic's human-facing detail, prefixing the
+// source line when the parser/validator located one.
+func diagnosticDetail(d dot.Diagnostic) string {
+	if d.Line > 0 {
+		return fmt.Sprintf("dot:%d: %s", d.Line, d.Message)
 	}
+	return d.Message
 }

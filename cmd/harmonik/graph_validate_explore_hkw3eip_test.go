@@ -71,74 +71,60 @@ func graphValidateFixtureWriteFile(t *testing.T, name, content string) string {
 	return p
 }
 
-// validDOT is a minimal well-formed DOT workflow that passes the
-// workflowvalidator's parseDOT + Validate pipeline. Uses the graph [ ... ]
-// block syntax expected by the workflowvalidator parser.
+// validDOT is a minimal well-formed DOT workflow in the unified
+// internal/workflow/dot dialect (the same dialect the daemon execution path
+// accepts via workflow.LoadDotWorkflow). Bare graph-level attributes,
+// start_node (not start_node_id), handler_ref required on every node per
+// EM-007/WG-024, and idempotency_class on the non-agentic nodes per WG-008.
 const validDOT = `digraph workflow {
-    graph [
-        workflow_id       = "018f1e2b-0040-7000-8000-000000000099"
-        name              = "graph-validate-explore-fixture"
-        version           = "0.1.0"
-        start_node_id     = "start"
-        terminal_node_ids = "end"
-    ]
+    schema_version="1";
+    version="0.1.0";
+    workflow_id="018f1e2b-0040-7000-8000-000000000099";
+    start_node="start";
+    terminal_node_ids="end";
 
     start [
-        type               = "non-agentic"
-        idempotency_class  = "idempotent"
-        "llm-freedom"      = "none"
-        "io-determinism"   = "deterministic"
-        "replay-safety"    = "safe"
-        idempotency        = "idempotent"
-        mode               = "mechanism"
-    ]
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
 
     end [
-        type               = "non-agentic"
-        idempotency_class  = "idempotent"
-        "llm-freedom"      = "none"
-        "io-determinism"   = "deterministic"
-        "replay-safety"    = "safe"
-        idempotency        = "idempotent"
-        mode               = "mechanism"
-    ]
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="terminal"
+    ];
 
-    start -> end [ordering_key = "a"]
+    start -> end;
 }
 `
 
 // invalidDOT_badNodeType has an unrecognised node type value ("banana"),
-// which should cause a validation diagnostic.
+// which the unified validator rejects (WG-001 node-type enum).
 const invalidDOT_badNodeType = `digraph workflow {
-    graph [
-        workflow_id       = "018f1e2b-0040-7000-8000-000000000100"
-        name              = "bad-type-fixture"
-        version           = "0.1.0"
-        start_node_id     = "start"
-        terminal_node_ids = "end"
-    ]
+    schema_version="1";
+    version="0.1.0";
+    workflow_id="018f1e2b-0040-7000-8000-000000000100";
+    start_node="start";
+    terminal_node_ids="end";
 
     start [
-        type               = "banana"
-        idempotency_class  = "idempotent"
-        "llm-freedom"      = "none"
-        "io-determinism"   = "deterministic"
-        "replay-safety"    = "safe"
-        idempotency        = "idempotent"
-        mode               = "mechanism"
-    ]
+        type="banana",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
 
     end [
-        type               = "non-agentic"
-        idempotency_class  = "idempotent"
-        "llm-freedom"      = "none"
-        "io-determinism"   = "deterministic"
-        "replay-safety"    = "safe"
-        idempotency        = "idempotent"
-        mode               = "mechanism"
-    ]
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="terminal"
+    ];
 
-    start -> end [ordering_key = "a"]
+    start -> end;
 }
 `
 
@@ -249,15 +235,11 @@ func TestGraphValidate_MissingPath_ExitTwo(t *testing.T) {
 func TestGraphValidate_CanonicalFixture_ReviewLoopDot(t *testing.T) {
 	// Validate the canonical review-loop.dot fixture that ships with the repo.
 	//
-	// Known gap: review-loop.dot uses the internal/workflow/dot parser's syntax
-	// (bare key="value"; attrs, leading // comments) which differs from the
-	// workflowvalidator's expected syntax (graph [ ... ] block, no leading
-	// comments before "digraph"). The workflowvalidator parser rejects
-	// review-loop.dot as unparseable. This test documents that gap —
-	// the CLI surface uses workflowvalidator, not the dot parser.
-	//
-	// When the two parsers are unified (or the CLI switches to internal/workflow/dot),
-	// this test should be updated to expect exit 0.
+	// hk-kxygy unified the CLI on internal/workflow/dot — the same parser the
+	// daemon execution path uses — so the canonical fixture (bare key="value";
+	// attrs, leading // comments, start_node, handler_ref on non-agentic nodes)
+	// now validates cleanly. This test guards that unification: review-loop.dot
+	// MUST report 0 diagnostics and exit 0.
 	fixturePath := filepath.Join("testdata", "review-loop.dot")
 	if _, err := os.Stat(fixturePath); os.IsNotExist(err) {
 		// Fall back to the specs/examples path relative to repo root.
@@ -273,14 +255,10 @@ func TestGraphValidate_CanonicalFixture_ReviewLoopDot(t *testing.T) {
 		exitCode = runGraphValidate([]string{fixturePath})
 	})
 
-	// Currently fails due to parser dialect mismatch (see comment above).
-	// When unified, change this to assert exitCode == 0.
-	if exitCode == 0 {
-		t.Log("review-loop.dot now validates cleanly — parser dialect gap may be resolved")
-	} else {
-		// Expect em038_not_parseable due to leading comments / bare attrs.
-		if !strings.Contains(stdout, "em038_not_parseable") {
-			t.Errorf("expected em038_not_parseable diagnostic for review-loop.dot, got stdout=%q", stdout)
-		}
+	if exitCode != 0 {
+		t.Errorf("expected exit 0 (0 diagnostics) for canonical review-loop.dot after parser unification (hk-kxygy), got exit %d; stdout=%q", exitCode, stdout)
+	}
+	if !strings.Contains(strings.ToLower(stdout), "valid") {
+		t.Errorf("expected stdout to report the fixture as valid, got %q", stdout)
 	}
 }

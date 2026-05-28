@@ -68,6 +68,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -196,10 +197,35 @@ func driveDotWorkflow(
 
 		switch node.Type {
 		case core.NodeTypeNonAgentic:
-			// Non-agentic node (e.g. noop start/terminal): no agent is dispatched.
-			// Synthesize a SUCCESS outcome and follow the single outbound edge.
-			// If this node is itself terminal the cascade returns IsTerminal below.
-			outcome = core.Outcome{Status: core.OutcomeStatusSuccess}
+			switch {
+			case node.ToolCommand != "" && node.HandlerRef == "shell":
+				// Path 1: shell tool node — execute tool_command via the built-in
+				// in-process shell handler (WG-039 / HC-063). MAY run in-process;
+				// no subprocess/socket/NDJSON/agent_ready/heartbeat required.
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, wtPath, node, deps.handlerEnv)
+				if toolErr != nil {
+					return dotWorkflowResult{
+						success:        false,
+						needsAttention: true,
+						summary:        fmt.Sprintf("dot: tool node %q dispatch error: %v", currentNodeID, toolErr),
+					}
+				}
+				outcome = toolOutcome
+
+			case node.ToolCommand != "" && node.HandlerRef != "shell":
+				// Path 3: non-agentic node bound to a non-shell handler — v1 stub.
+				// The tool_command warning was already emitted at load/validate time
+				// (WG-031). Non-shell non-agentic handlers are out of scope at v1;
+				// the branch structure exists to avoid silent misrouting.
+				// Fall through to a bare SUCCESS synth so the graph can still run.
+				outcome = core.Outcome{Status: core.OutcomeStatusSuccess}
+
+			default:
+				// Path 2: no tool_command — preserve today's SUCCESS synth (noop
+				// start/terminal pass-through). If the node is itself terminal the
+				// cascade returns IsTerminal below.
+				outcome = core.Outcome{Status: core.OutcomeStatusSuccess}
+			}
 
 		case core.NodeTypeAgentic:
 			// Agentic node: dispatch the handler into the substrate, then derive
@@ -590,6 +616,55 @@ func dispatchDotAgenticNode(
 		return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
 	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
+}
+
+// dispatchDotToolNode executes a non-agentic shell node's tool_command in-process
+// via /bin/sh -c. It is the built-in shell handler per WG-039 / HC-063.
+//
+// Exit-state → Outcome mapping (HC-063 §III.1 / EM-057 item 7 / EM-058):
+//   - exit 0              → SUCCESS (kind=default, no payload)
+//   - exit 1..255         → FAIL + failure_class=deterministic
+//   - timeout kill        → FAIL + failure_class=transient
+//   - signal-kill / ctx   → FAIL + failure_class=canceled
+//
+// Default axis_tags for shell: io-determinism=non-deterministic, replay-safety=unsafe.
+// No RETRY or PARTIAL outcomes are produced; the author routes on FAIL sub-classes
+// via edge conditions if needed.
+func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
+	timeoutSecs := 300
+	if node.Timeout != "" {
+		if n, err := strconv.Atoi(node.Timeout); err == nil && n > 0 {
+			timeoutSecs = n
+		}
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(execCtx, "/bin/sh", "-c", node.ToolCommand)
+	cmd.Dir = wtPath
+	cmd.Env = env
+
+	err := cmd.Run()
+	if err == nil {
+		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
+	}
+
+	// Timeout-killed: parent deadline exceeded first.
+	if execCtx.Err() == context.DeadlineExceeded {
+		fc := core.FailureClassTransient
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
+	}
+
+	// Parent context cancelled (operator stop / SIGKILL / ctx-cancel).
+	if ctx.Err() != nil {
+		fc := core.FailureClassCanceled
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
+	}
+
+	// Non-zero exit code (1..255) → deterministic failure.
+	fc := core.FailureClassDeterministic
+	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

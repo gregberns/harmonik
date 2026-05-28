@@ -30,6 +30,7 @@ package dot
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -641,6 +642,21 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			node.SkillsRef = pair.val
 		case "freedom_profile_ref":
 			node.FreedomProfileRef = pair.val
+		case "tool_command":
+			node.ToolCommand = pair.val
+		case "timeout":
+			// WG-024: timeout must be a positive integer when specified.
+			n, err := strconv.Atoi(pair.val)
+			if err != nil || n <= 0 {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: timeout %q must be a positive integer (WG-024)",
+						rn.id, pair.val),
+				})
+			} else {
+				node.Timeout = pair.val
+			}
 		case "policy_ref":
 			// Reserved-and-rejected per CP-056 / WG-031.
 			errs = append(errs, &ParseError{

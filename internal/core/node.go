@@ -30,6 +30,12 @@ type Node struct {
 	// execution-model.md §6.1 Node.timeout ("positive seconds").
 	Timeout *int
 
+	// ToolCommand is the shell command to execute for non-agentic shell nodes
+	// (WG-039 / HC-063). When non-nil and HandlerRef points to "shell", the
+	// built-in shell handler executes /bin/sh -c <ToolCommand> using Timeout
+	// (default 300s). Forbidden on agentic, gate, and sub-workflow nodes.
+	ToolCommand *string
+
 	// RequiredSkills is the list of skill names this node requires, resolved
 	// per [control-points.md §4.11] and [handler-contract.md §4.11].
 	// An empty slice is valid (no skill requirements).

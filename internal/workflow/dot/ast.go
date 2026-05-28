@@ -147,6 +147,17 @@ type Node struct {
 	// FreedomProfileRef is the optional freedom_profile_ref attribute (typed *_ref per CP-055).
 	FreedomProfileRef string
 
+	// ToolCommand is the optional tool_command attribute on non-agentic shell
+	// nodes (WG-039). When present and handler_ref=="shell", the built-in shell
+	// handler executes this command via /bin/sh -c. On non-shell nodes it is
+	// retained as a v1 warning (WG-031).
+	ToolCommand string
+
+	// Timeout is the raw string value of the optional timeout attribute
+	// (integer seconds, default 300). Validated as a positive integer at
+	// parse time (WG-024). The dispatcher converts to time.Duration.
+	Timeout string
+
 	// UnknownAttrs retains non-reserved node-level attributes per WG-032.
 	// Keys and values are retained verbatim for debugging tools / replay tooling.
 	// The dispatcher MUST NOT read from this map; it is for informational use only.

@@ -207,6 +207,12 @@ func checkNonAgentic(n *Node) []Diagnostic {
 		diags = append(diags, diagError(n.Line, "WG-024",
 			fmt.Sprintf("node %q (non-agentic): \"sub_workflow_ref\" is forbidden on non-agentic nodes (WG-024)", n.ID)))
 	}
+	// WG-039 / WG-031: tool_command on a non-shell handler is a v1 warning
+	// (reserved-strict at next major version). The run MAY start.
+	if strings.TrimSpace(n.ToolCommand) != "" && strings.TrimSpace(n.HandlerRef) != "shell" {
+		diags = append(diags, diagWarning(n.Line, "WG-031",
+			fmt.Sprintf("node %q (non-agentic): \"tool_command\" is only interpreted by handler_ref=\"shell\"; on handler_ref=%q it is ignored at v1 (reserved-strict at next major)", n.ID, n.HandlerRef)))
+	}
 	return diags
 }
 
@@ -526,4 +532,8 @@ func (st *sccState) connect(v string, adj map[string][]string) {
 
 func diagError(line int, code, message string) Diagnostic {
 	return Diagnostic{Severity: SeverityError, Line: line, Code: code, Message: message}
+}
+
+func diagWarning(line int, code, message string) Diagnostic {
+	return Diagnostic{Severity: SeverityWarning, Line: line, Code: code, Message: message}
 }

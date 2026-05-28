@@ -1,0 +1,81 @@
+// tool-node.dot — canonical example for the non-agentic shell tool node (WG-039).
+//
+// Demonstrates the tool_command + handler_ref="shell" pattern: the built-in
+// in-process shell handler executes the command, maps the exit code to an
+// Outcome, and follows the appropriate outbound edge.
+//
+// Exit-state → Outcome mapping (HC-063 §III.1 / EM-057 item 7):
+//   - exit 0     → SUCCESS  → proceeds to "close"
+//   - exit ≠ 0   → FAIL + failure_class=deterministic  → "close-needs-attention"
+//
+// Default axis_tags for shell nodes:
+//   io-determinism=non-deterministic, replay-safety=unsafe
+// Authors MAY tighten these via an explicit axis_tags attribute.
+//
+// Spec refs:
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
+//   - specs/execution-model.md §II.7 EM-057 item 7 — exit-code → outcome
+//   - specs/execution-model.md §II.8 EM-058 — non-agentic row + sub-note
+//   - specs/handler-contract.md §III.1 HC-063 — in-process handler contract
+//   - specs/workflow-graph.md §III.2 HC-005 note — non-agentic handler note
+//   - specs/workflow-graph.md §III.4 HC-058 note — FailureClass on non-agentic
+
+digraph "tool-node-example" {
+    schema_version="1";
+    version="1.0";
+    workflow_id="tool-node-example";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // start: noop entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="workflow entry point"
+    ];
+
+    // run-tool: the shell tool node.
+    // tool_command is executed via /bin/sh -c inside the run worktree.
+    // timeout=60 caps execution at 60 seconds (default is 300s).
+    // axis_tags override the default non-deterministic / unsafe classification.
+    "run-tool" [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="non-idempotent",
+        tool_command="echo hello && exit 0",
+        timeout="60",
+        axis_tags="io-determinism=deterministic replay-safety=safe idempotency=non-idempotent llm-freedom=none",
+        role="execute shell command; exit 0 → close, exit ≠ 0 → close-needs-attention"
+    ];
+
+    // close: SUCCESS terminal — command exited 0.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="command succeeded"
+    ];
+
+    // close-needs-attention: FAIL terminal — non-zero exit or timeout.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="command failed — operator attention required"
+    ];
+
+    // Edges
+    start -> "run-tool";
+
+    "run-tool" -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    "run-tool" -> "close-needs-attention" [
+        condition="outcome.status == 'FAIL'"
+    ];
+
+    // Unconditional fallback (required by D-edge-cascade-invariant).
+    "run-tool" -> "close-needs-attention";
+}

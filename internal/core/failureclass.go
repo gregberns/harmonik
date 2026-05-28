@@ -44,13 +44,6 @@ const (
 	// EM-043 has been reached at cascade evaluation (execution-model.md §4.10).
 	// Cap further retries; fail the run.  DISJOINT from structural at emission.
 	FailureClassCompilationLoop FailureClass = "compilation_loop"
-
-	// FailureClassResourceExhausted corresponds to a handler-emitted resource exhaustion
-	// that is not a budget-ControlPoint exceedance — e.g., an external quota, a token
-	// limit imposed by the model provider, or a system-level resource cap.  Added as an
-	// additive bump per EM-005c to enable failure_class-conditional routing on this
-	// distinct exhaustion category (workflow-graph.md §7 WG-018, §6 WG-014 D1 LHS).
-	FailureClassResourceExhausted FailureClass = "resource_exhausted"
 )
 
 // Valid reports whether f is one of the declared FailureClass constants.
@@ -59,8 +52,7 @@ const (
 func (f FailureClass) Valid() bool {
 	switch f {
 	case FailureClassTransient, FailureClassStructural, FailureClassDeterministic,
-		FailureClassCanceled, FailureClassBudgetExhausted, FailureClassCompilationLoop,
-		FailureClassResourceExhausted:
+		FailureClassCanceled, FailureClassBudgetExhausted, FailureClassCompilationLoop:
 		return true
 	default:
 		return false
@@ -82,7 +74,7 @@ func (f *FailureClass) UnmarshalText(text []byte) error {
 	v := FailureClass(text)
 	if !v.Valid() {
 		return fmt.Errorf(
-			"failureclass: unknown value %q; must be one of transient, structural, deterministic, canceled, budget_exhausted, compilation_loop, resource_exhausted",
+			"failureclass: unknown value %q; must be one of transient, structural, deterministic, canceled, budget_exhausted, compilation_loop",
 			string(text),
 		)
 	}

@@ -16,7 +16,6 @@ func TestFailureClassValid(t *testing.T) {
 		FailureClassCanceled,
 		FailureClassBudgetExhausted,
 		FailureClassCompilationLoop,
-		FailureClassResourceExhausted,
 	}
 	for _, f := range valid {
 		if !f.Valid() {
@@ -84,11 +83,6 @@ func TestFailureClassUnmarshalText(t *testing.T) {
 			want:  FailureClassCompilationLoop,
 		},
 		{
-			name:  "valid resource_exhausted",
-			input: `{"class":"resource_exhausted"}`,
-			want:  FailureClassResourceExhausted,
-		},
-		{
 			name:    "invalid made_up",
 			input:   `{"class":"made_up"}`,
 			wantErr: true,
@@ -152,7 +146,7 @@ func TestFailureClassMarshalText(t *testing.T) {
 func TestFailureClassRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// JSON round-trip for all six values.
+	// JSON round-trip for all declared values.
 	type wrapper struct {
 		Class FailureClass `json:"class"`
 	}
@@ -164,7 +158,6 @@ func TestFailureClassRoundTrip(t *testing.T) {
 		FailureClassCanceled,
 		FailureClassBudgetExhausted,
 		FailureClassCompilationLoop,
-		FailureClassResourceExhausted,
 	}
 
 	for _, f := range values {
@@ -199,7 +192,7 @@ func TestFailureClassUnmarshalTextErrorMessage(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"transient", "structural", "deterministic",
-		"canceled", "budget_exhausted", "compilation_loop", "resource_exhausted",
+		"canceled", "budget_exhausted", "compilation_loop",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message %q does not contain %q", msg, want)

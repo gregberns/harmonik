@@ -10,6 +10,10 @@
 //     failure-class-conditional routing distinct from status-only routing.
 //   - D4: the LHS whitelist (WG-014) admits outcome.failure_class for the cascade.
 //
+// The scenario uses budget_exhausted as the routed-on class — a spec-sanctioned
+// failure class (execution-model.md §8) that EM-005b (line 149) explicitly uses
+// as the failure class for a budget/resource-limited gate deny.
+//
 // The scenario uses the twin substrate: the test constructs real core.Outcome and
 // core.Edge values (production types with no test-aware branches) and drives
 // SelectNextEdge / DispatchEdge directly, exercising the same code paths that
@@ -18,9 +22,9 @@
 // Three assertions per the bead spec (hk-aoz34):
 //
 //  (a) D2 top-level field — Outcome.FailureClass is populated at the top level
-//      and Outcome.Valid() passes for a FAIL outcome carrying resource_exhausted.
+//      and Outcome.Valid() passes for a FAIL outcome carrying budget_exhausted.
 //  (b) Cascade routing — the cascade selects the edge whose condition matches
-//      outcome.failure_class == "resource_exhausted" over a lower-weight generic
+//      outcome.failure_class == "budget_exhausted" over a lower-weight generic
 //      FAIL edge and an unconditional fallback edge.
 //  (c) Terminal node — the selected edge leads to the expected terminal node ID.
 //
@@ -58,11 +62,11 @@ func wg018FixtureRun(t *testing.T) *Run {
 }
 
 // wg018FixtureFailOutcome returns a FAIL Outcome with FailureClass set to
-// resource_exhausted, modelling a handler that emits the class directly
+// budget_exhausted, modelling a handler that emits the class directly
 // (handler-contract.md §4.2a HC-058, EM-005c additive field).
 func wg018FixtureFailOutcome(t *testing.T) Outcome {
 	t.Helper()
-	fc := FailureClassResourceExhausted
+	fc := FailureClassBudgetExhausted
 	return Outcome{
 		Status:       OutcomeStatusFail,
 		FailureClass: &fc,
@@ -73,8 +77,8 @@ func wg018FixtureFailOutcome(t *testing.T) Outcome {
 // wg018FixtureEvaluator is a ConditionEvaluator that understands the two
 // condition forms used in the WG-018 scenario:
 //
-//   - `outcome.failure_class == "resource_exhausted"` — evaluates true when
-//     the outcome's FailureClass is resource_exhausted.
+//   - `outcome.failure_class == "budget_exhausted"` — evaluates true when
+//     the outcome's FailureClass is budget_exhausted.
 //   - `outcome.status == 'FAIL'` — evaluates true for any FAIL outcome.
 //
 // All other expressions return false.  This evaluator simulates what the
@@ -82,8 +86,8 @@ func wg018FixtureFailOutcome(t *testing.T) Outcome {
 // verifying that the cascade correctly routes on outcome.failure_class (D1/D4).
 func wg018FixtureEvaluator(expr PolicyExpression, _ map[string]any, outcome Outcome) bool {
 	switch string(expr) {
-	case `outcome.failure_class == "resource_exhausted"`:
-		return outcome.FailureClass != nil && *outcome.FailureClass == FailureClassResourceExhausted
+	case `outcome.failure_class == "budget_exhausted"`:
+		return outcome.FailureClass != nil && *outcome.FailureClass == FailureClassBudgetExhausted
 	case `outcome.status == 'FAIL'`:
 		return outcome.Status == OutcomeStatusFail
 	case `outcome.status == 'SUCCESS'`:
@@ -95,37 +99,37 @@ func wg018FixtureEvaluator(expr PolicyExpression, _ map[string]any, outcome Outc
 // ── (a) D2: top-level field populated ────────────────────────────────────────
 
 // TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated verifies that an Outcome
-// carrying failure_class=resource_exhausted is structurally valid per EM-005c's
+// carrying failure_class=budget_exhausted is structurally valid per EM-005c's
 // top-level placement (D2 design decision):
 //
 //   - FailureClass is a first-class top-level field on the Outcome struct, not
 //     nested under a sub-object.  This makes it directly addressable by the
 //     §6 WG-014 LHS whitelist as outcome.failure_class.
-//   - Outcome.Valid() passes for Status=FAIL + FailureClass=resource_exhausted.
+//   - Outcome.Valid() passes for Status=FAIL + FailureClass=budget_exhausted.
 //   - Outcome.Valid() rejects FailureClass present on non-FAIL outcomes (HC-058).
 //
 // Cite: workflow-graph.md §7 WG-018, D2; handler-contract.md §4.2a HC-058.
 func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 	t.Parallel()
 
-	fc := FailureClassResourceExhausted
+	fc := FailureClassBudgetExhausted
 
-	// FAIL outcome with resource_exhausted: must be valid.
+	// FAIL outcome with budget_exhausted: must be valid.
 	failOutcome := Outcome{
 		Status:       OutcomeStatusFail,
 		FailureClass: &fc,
 		Kind:         OutcomeKindDefault,
 	}
 	if !failOutcome.Valid() {
-		t.Error("WG-018 D2: FAIL Outcome with FailureClass=resource_exhausted is invalid; want Valid()=true")
+		t.Error("WG-018 D2: FAIL Outcome with FailureClass=budget_exhausted is invalid; want Valid()=true")
 	}
 
 	// Confirm FailureClass is non-nil and carries the expected value (top-level access).
 	if failOutcome.FailureClass == nil {
 		t.Fatal("WG-018 D2: Outcome.FailureClass is nil; D2 requires it as a top-level field on FAIL outcomes")
 	}
-	if *failOutcome.FailureClass != FailureClassResourceExhausted {
-		t.Errorf("WG-018 D2: Outcome.FailureClass = %q, want %q", *failOutcome.FailureClass, FailureClassResourceExhausted)
+	if *failOutcome.FailureClass != FailureClassBudgetExhausted {
+		t.Errorf("WG-018 D2: Outcome.FailureClass = %q, want %q", *failOutcome.FailureClass, FailureClassBudgetExhausted)
 	}
 
 	// HC-058: FailureClass MUST be absent on non-FAIL outcomes.
@@ -156,16 +160,16 @@ func TestFailureClassCascadeWG018_D2_TopLevelFieldPopulated(t *testing.T) {
 //
 // Workflow topology:
 //
-//	node-work → node-resource-exhausted  [condition: failure_class == "resource_exhausted", weight=10]
-//	node-work → node-generic-fail        [condition: status == 'FAIL',                      weight=5]
-//	node-work → node-unconditional       [unconditional,                                     weight=1]
+//	node-work → node-budget-exhausted    [condition: failure_class == "budget_exhausted", weight=10]
+//	node-work → node-generic-fail        [condition: status == 'FAIL',                     weight=5]
+//	node-work → node-unconditional       [unconditional,                                    weight=1]
 //
-// With FAIL + failure_class=resource_exhausted:
+// With FAIL + failure_class=budget_exhausted:
 //   - Both the failure_class edge (weight=10) and the generic FAIL edge (weight=5)
 //     have true conditions.
-//   - The cascade MUST select node-resource-exhausted (higher weight per EM-041(d)).
+//   - The cascade MUST select node-budget-exhausted (higher weight per EM-041(d)).
 //
-// Terminal node assertion: result.Edge.ToNode == "node-resource-exhausted", the
+// Terminal node assertion: result.Edge.ToNode == "node-budget-exhausted", the
 // terminal node the workflow author declares for this failure class.
 //
 // Cite: workflow-graph.md §6 WG-014 (LHS whitelist, D1), §7 WG-018 (D2 top-level,
@@ -177,10 +181,10 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 	outcome := wg018FixtureFailOutcome(t)
 
 	// Edge A: failure_class-specific (highest weight → must win).
-	condA := PolicyExpression(`outcome.failure_class == "resource_exhausted"`)
-	edgeResourceExhausted := Edge{
+	condA := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
+	edgeBudgetExhausted := Edge{
 		FromNode:    "node-work",
-		ToNode:      "node-resource-exhausted",
+		ToNode:      "node-budget-exhausted",
 		Condition:   &condA,
 		Weight:      10,
 		OrderingKey: "a",
@@ -207,7 +211,7 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 	cycles := NewCycleCounter()
 	result := SelectNextEdge(
 		run,
-		[]Edge{edgeGenericFail, edgeUnconditional, edgeResourceExhausted}, // intentionally unordered
+		[]Edge{edgeGenericFail, edgeUnconditional, edgeBudgetExhausted}, // intentionally unordered
 		outcome,
 		wg018FixtureEvaluator,
 		cycles,
@@ -216,20 +220,20 @@ func TestFailureClassCascadeWG018_D1D4_CascadeRoutesOnFailureClass(t *testing.T)
 	// (b) cascade must match (not fail with no_outgoing_edge_matches).
 	if !result.Matched {
 		t.Fatalf("WG-018 D1/D4: cascade did not match; failure=%s reason=%s "+
-			"(outcome.failure_class=%v); expected cascade to select resource_exhausted edge (D1 LHS admission)",
+			"(outcome.failure_class=%v); expected cascade to select budget_exhausted edge (D1 LHS admission)",
 			result.FailureClass, result.FailureReason, outcome.FailureClass)
 	}
 
-	// (c) terminal node: must be node-resource-exhausted (the failure_class-specific edge won).
-	if result.Edge.ToNode != "node-resource-exhausted" {
+	// (c) terminal node: must be node-budget-exhausted (the failure_class-specific edge won).
+	if result.Edge.ToNode != "node-budget-exhausted" {
 		t.Errorf("WG-018 D1/D4: selected edge ToNode=%q, want %q; "+
 			"failure_class-specific edge (weight=10) must beat generic FAIL edge (weight=5) per cascade step 3",
-			result.Edge.ToNode, "node-resource-exhausted")
+			result.Edge.ToNode, "node-budget-exhausted")
 	}
 }
 
 // TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge verifies
-// that an edge conditioned on resource_exhausted is NOT selected when the outcome
+// that an edge conditioned on budget_exhausted is NOT selected when the outcome
 // carries a different failure class — the generic FAIL edge wins instead.
 //
 // This tests that the LHS whitelist evaluation correctly distinguishes
@@ -239,7 +243,7 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 
 	run := wg018FixtureRun(t)
 
-	// Outcome is FAIL but with transient class, not resource_exhausted.
+	// Outcome is FAIL but with transient class, not budget_exhausted.
 	fc := FailureClassTransient
 	outcome := Outcome{
 		Status:       OutcomeStatusFail,
@@ -247,10 +251,10 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 		Kind:         OutcomeKindDefault,
 	}
 
-	condA := PolicyExpression(`outcome.failure_class == "resource_exhausted"`)
-	edgeResourceExhausted := Edge{
+	condA := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
+	edgeBudgetExhausted := Edge{
 		FromNode:    "node-work",
-		ToNode:      "node-resource-exhausted",
+		ToNode:      "node-budget-exhausted",
 		Condition:   &condA,
 		Weight:      10,
 		OrderingKey: "a",
@@ -268,7 +272,7 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 	cycles := NewCycleCounter()
 	result := SelectNextEdge(
 		run,
-		[]Edge{edgeResourceExhausted, edgeGenericFail},
+		[]Edge{edgeBudgetExhausted, edgeGenericFail},
 		outcome,
 		wg018FixtureEvaluator,
 		cycles,
@@ -278,11 +282,11 @@ func TestFailureClassCascadeWG018_D1D4_DifferentFailureClassTakesGenericEdge(t *
 		t.Fatalf("WG-018: cascade did not match; failure=%s reason=%s", result.FailureClass, result.FailureReason)
 	}
 
-	// resource_exhausted condition is false for transient failure class →
+	// budget_exhausted condition is false for transient failure class →
 	// generic FAIL edge (weight=5) must be selected.
 	if result.Edge.ToNode != "node-generic-fail" {
 		t.Errorf("WG-018: selected %q, want %q; "+
-			"resource_exhausted condition must be false for transient failure class",
+			"budget_exhausted condition must be false for transient failure class",
 			result.Edge.ToNode, "node-generic-fail")
 	}
 }
@@ -300,10 +304,10 @@ func TestFailureClassCascadeWG018_D2_FailureClassAbsentOnSuccess(t *testing.T) {
 		// FailureClass intentionally nil (HC-058: absent on non-FAIL).
 	}
 
-	condFC := PolicyExpression(`outcome.failure_class == "resource_exhausted"`)
-	edgeResourceExhausted := Edge{
+	condFC := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
+	edgeBudgetExhausted := Edge{
 		FromNode:    "node-work",
-		ToNode:      "node-resource-exhausted",
+		ToNode:      "node-budget-exhausted",
 		Condition:   &condFC,
 		Weight:      10,
 		OrderingKey: "a",
@@ -321,7 +325,7 @@ func TestFailureClassCascadeWG018_D2_FailureClassAbsentOnSuccess(t *testing.T) {
 	cycles := NewCycleCounter()
 	result := SelectNextEdge(
 		run,
-		[]Edge{edgeResourceExhausted, edgeSuccess},
+		[]Edge{edgeBudgetExhausted, edgeSuccess},
 		outcome,
 		wg018FixtureEvaluator,
 		cycles,
@@ -337,9 +341,9 @@ func TestFailureClassCascadeWG018_D2_FailureClassAbsentOnSuccess(t *testing.T) {
 	}
 }
 
-// TestFailureClassCascadeWG018_FullDispatch_ResourceExhaustedReachesTerminal
+// TestFailureClassCascadeWG018_FullDispatch_BudgetExhaustedReachesTerminal
 // exercises the full DispatchEdge path (guard + cascade + gate) with the
-// resource_exhausted FAIL outcome, asserting Advance=true and the correct
+// budget_exhausted FAIL outcome, asserting Advance=true and the correct
 // terminal node ID.
 //
 // This is the "twin substrate" integration assertion: DispatchEdge (with
@@ -347,15 +351,15 @@ func TestFailureClassCascadeWG018_D2_FailureClassAbsentOnSuccess(t *testing.T) {
 // uses production core types with no test-aware branches (CHB-022 posture).
 //
 // Cite: hk-aoz34 assertion (c); workflow-graph.md §8 WG-021 (distinct terminal IDs).
-func TestFailureClassCascadeWG018_FullDispatch_ResourceExhaustedReachesTerminal(t *testing.T) {
+func TestFailureClassCascadeWG018_FullDispatch_BudgetExhaustedReachesTerminal(t *testing.T) {
 	t.Parallel()
 
 	run := wg018FixtureRun(t)
 	outcome := wg018FixtureFailOutcome(t)
 
-	const terminalNodeID NodeID = "close-resource-exhausted"
+	const terminalNodeID NodeID = "close-budget-exhausted"
 
-	condA := PolicyExpression(`outcome.failure_class == "resource_exhausted"`)
+	condA := PolicyExpression(`outcome.failure_class == "budget_exhausted"`)
 	edgeToTerminal := Edge{
 		FromNode:    "node-work",
 		ToNode:      terminalNodeID,
@@ -395,7 +399,7 @@ func TestFailureClassCascadeWG018_FullDispatch_ResourceExhaustedReachesTerminal(
 	// Terminal node assertion (hk-aoz34 assertion (c)).
 	if result.Edge.ToNode != terminalNodeID {
 		t.Errorf("WG-018 full-dispatch: terminal node reached = %q, want %q "+
-			"(resource_exhausted-specific terminal node per WG-021 distinct terminal IDs)",
+			"(budget_exhausted-specific terminal node per WG-021 distinct terminal IDs)",
 			result.Edge.ToNode, terminalNodeID)
 	}
 }

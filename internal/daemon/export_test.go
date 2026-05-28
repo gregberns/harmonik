@@ -426,6 +426,12 @@ func ExportedDiscardDirtyChurn(ctx context.Context, wtPath string) {
 	discardDirtyChurn(ctx, wtPath)
 }
 
+// ExportedForceTeardownSession exposes forceTeardownSession for the hk-68pvl
+// worktree-teardown-ordering regression test.
+func ExportedForceTeardownSession(sess handler.Session) {
+	forceTeardownSession(sess)
+}
+
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {
 	s.RegisterHookSession(runID, claudeSessionID)

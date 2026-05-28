@@ -318,6 +318,16 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+		// hk-68pvl: backstop — force-tear-down this implementer session before
+		// runReviewLoop returns on ANY path (including the no-commit/error early
+		// returns below), so the caller's deferred wtCleanup (beadRunOne) never
+		// runs `git worktree remove` while a substrate-hosted claude is still
+		// live in the worktree mid-`go test`. Kill is idempotent; on the normal
+		// path the per-phase Kill (waitWithSocketGrace branch) has already torn
+		// the session down and this defer is a no-op. The defer accumulates per
+		// iteration (bounded by reviewLoopIterationCap) and all fire at return.
+		implSessForTeardown := implSess
+		defer forceTeardownSession(implSessForTeardown)
 
 		// Wire the implementer's agent-ready callback into implTap so that
 		// relay-synthesized agent_ready envelopes from the hook-relay subprocess
@@ -704,6 +714,12 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+		// hk-68pvl: backstop — force-tear-down this reviewer session before
+		// runReviewLoop returns on ANY path, mirroring the implementer guard
+		// above so the deferred wtCleanup never removes the worktree while a
+		// substrate-hosted reviewer claude is still live in it. Idempotent.
+		revSessForTeardown := revSess
+		defer forceTeardownSession(revSessForTeardown)
 
 		// Wire the reviewer's agent-ready callback into revTap so that relay-synthesized
 		// agent_ready envelopes from the hook-relay subprocess reach revTapCh, which

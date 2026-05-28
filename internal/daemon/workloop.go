@@ -1429,6 +1429,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitDone(false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
+	// hk-68pvl: force-tear-down the implementer session before beadRunOne
+	// returns — and therefore before the deferred wtCleanup (registered earlier
+	// at the worktree-factory step, so it runs LAST under LIFO defer ordering)
+	// removes the worktree. Without this, a ctx-cancel that makes sess.Wait
+	// return early (substrate path) lets removeWorktree delete the directory out
+	// from under a still-live claude mid-`go test`, producing a false
+	// no_commit_during_implementer exit=0. Kill is idempotent, so this is a
+	// no-op backstop on the normal exit path where the session already exited.
+	defer forceTeardownSession(sess)
 
 	// Step 4a: wire the agent-ready callback so that incoming agent_ready relay
 	// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
@@ -2038,12 +2047,50 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 // Worktree cleanup helpers (hk-fgdgz)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// forceTeardownSession force-terminates sess and blocks until the hosted
+// process has been reaped, using a non-cancellable background context.
+//
+// This is the load-bearing guard for hk-68pvl: the worktree-removal cleanup
+// (removeWorktree, run via the deferred wtCleanup in beadRunOne) must NEVER
+// delete the worktree directory while the implementer/reviewer claude is still
+// live inside it. On the tmux substrate path, tmuxSubstrateSession.Wait returns
+// ctx.Err() the instant the run ctx is cancelled even though the hosted process
+// may still be alive (runWait keeps polling in the background); the subsequent
+// `git worktree remove --force` then races a live `go test`, the agent's
+// `git add`/commit lands in a deleted directory, and the run is recorded as a
+// false `no_commit_during_implementer ... exit=0`.
+//
+// sess.Kill blocks until the process group is terminated on both paths:
+//   - substrate: killProcessWithGrace (SIGTERM → grace poll → SIGKILL) then
+//     KillWindow — synchronous, idempotent via killOnce.
+//   - exec: SIGTERM the process group, then await reap (escalating to SIGKILL
+//     on the background ctx, which never expires, so it waits for exit).
+//
+// Kill is safe to call more than once (idempotent on substrate; harmless ESRCH
+// on exec). Callers register this as a deferred backstop immediately after
+// Launch so EVERY return path (success, failure, early error, ctx-cancel) tears
+// the session down before the function returns — and therefore before the
+// beadRunOne-level deferred wtCleanup runs.
+//
+// Bead: hk-68pvl.
+func forceTeardownSession(sess handler.Session) {
+	if sess == nil {
+		return
+	}
+	_ = sess.Kill(context.Background())
+}
+
 // removeWorktree removes the git worktree at wtPath and prunes stale metadata
 // from the repository at repoRoot. It uses `git worktree remove --force` twice
 // to handle locked worktrees (the second --force overrides the lock).
 //
 // Errors are non-fatal: the work loop continues even if cleanup fails (orphan
 // sweep at next startup will recover stale worktrees per PL-006).
+//
+// hk-68pvl: the caller (beadRunOne via the deferred wtCleanup) MUST ensure the
+// run's implementer/reviewer session has been force-torn-down
+// (forceTeardownSession) before this runs, so the directory is never deleted
+// out from under a live agent mid-`go test`.
 func removeWorktree(ctx context.Context, repoRoot, wtPath string) {
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", wtPath)
 	cmd.Dir = repoRoot

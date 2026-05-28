@@ -1,57 +1,57 @@
-<!-- PP-TRIAL:v2 2026-05-27 main — v67 (commit f47e344). Clean. 22 commits, 28 beads resolved, 7 CHB beads landed via harmonik, workloop tests fixed. -->
+<!-- PP-TRIAL:v2 2026-05-27 main — v68. DOT subsystem made functional end-to-end; daemon liveness bug fixed. Clean, all pushed. -->
 
-Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project working-style rules: `~/.claude/CLAUDE.md`. Plans index: [plans/README.md](plans/README.md).
+Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project rules: `~/.claude/CLAUDE.md`. Orchestrator rules: [docs/orchestrator-rules.md](docs/orchestrator-rules.md). Known workarounds: [docs/known-workarounds.md](docs/known-workarounds.md).
 
-**Orchestrator rules (permanent directives): [docs/orchestrator-rules.md](docs/orchestrator-rules.md). Known workarounds: [docs/known-workarounds.md](docs/known-workarounds.md).**
+ROLE: You are the orchestrator. Delegate substantively. Keep the main thread minimal.
 
-ROLE. You are the orchestrator. Delegate substantively. Keep the main thread minimal.
+# Where we are (v68, 2026-05-27)
 
-LEARNING LOG (READ ON EVERY RESUME). `docs/orchestration-learnings.md` — friction-and-fix log. Read on `/session-resume`. Append new entries when you observe friction. Promote durable rules to `docs/orchestrator-rules.md` or `.claude/implementer-protocol.md`.
+**Main at `05a0a0b`, clean, all pushed.** 22 commits this session. Work is **clean — not blocked**.
 
-# Where we are (v67, 2026-05-27)
+## What this session did (two big things)
 
-**Main at `f47e344`** (origin parity, working tree clean). 22 commits landed this session.
+1. **DOT workflow-mode is now functional end-to-end** for the review-loop topology. Previously `--workflow-mode=dot` loaded+validated the graph then fell through to single-mode (ran only the first node). Now the daemon **walks the graph** (`internal/daemon/dot_cascade.go`, `driveDotWorkflow`): start → implementer → reviewer → APPROVE/close or REQUEST_CHANGES/loop. Proven by `internal/daemon/workloop_dot_mode_e2e_hklphyf_test.go`. agentic + non-agentic nodes work; **gate + sub-workflow node execution are honest deferrals** (see below).
 
-## What v67 landed
+2. **Fixed the daemon `no_commit` false-kill bug (hk-tgqy5)** — this was the root of the dispatch friction. tmux exec's `sh` into `claude`, so during a think-phase the pane PID *is* claude with no children; the old liveness probe (`pgrep -P`, direct children only) saw none and the watchdog killed healthy agents mid-work (they committed 2–6 min *after* being declared failed). Fix: `hasChildProcess` now also matches when the pane PID itself is an agent command. `harmonik run` should be reliable again — prefer it over sub-agent dispatch going forward.
 
-- **7 CHB beads via harmonik dispatch:** CHB-006 (env-var schema), CHB-007 (forbidden flags), CHB-009 (fresh-mint enforcement), CHB-011 (no-op exit), CHB-012 (stdin validation), CHB-013 (hook mapping table), CHB-014 (reviewer verdict read). All reviewer-approved except CHB-007 (impl verified manually).
-- **4 workloop test failures fixed (hk-95xm9):** Root cause was no-commit guard (hk-mmh8f) reopening beads when test handlers used `exit 0` without committing. Fix: `workloopFixturePreCommitWorktreeFactory` creates dummy commits in worktrees; `workloopFixtureGitRepo` adds bare origin remote.
-- **3 orphaned commits salvaged:** hk-6232r (subscribe test improvements), hk-j6npz (tmux window cleanup), hk-a5sil (subscribe since_event_id replay). All cherry-picked from deleted worktree branches.
-- **17 stale/probe beads closed:** 10 with implementations already on main, 3 probe artifacts, 4 test artifacts.
+## Gate decision — RESOLVED (don't relitigate)
 
-## Harmonik dispatch learnings (CRITICAL — extends v66 list)
+Cross-spec contradiction (EM-005b said gate deny→FAIL, CP-058 said deny→SUCCESS) is settled: **CP-058 wins** — an evaluated gate deny/allow/escalate is `status=SUCCESS`, cascade routes on `outcome.preferred_label`; `FAIL` only when the gate *cannot evaluate*. Confirmed by the Attractor spec + kilroy/fabro/agate impls (user said "do whatever those say"). Fixed in EM-005b, HC-058/HC-060, `gate_dispatch.go`, tests. Reviewer APPROVED.
 
-1–5. (Unchanged from v66 — concrete beads succeed, use `--context @file`, etc.)
-6. **`.beads/issues.jsonl` blocks merges.** Every `br close` dirties this file; harmonik's rebase detects unstaged changes and fails. Commit beads changes BEFORE dispatching a batch, and don't run `br close` while a batch is in reviewer/merge phase.
-7. **Non-isolated sub-agents dirty main, blocking merges.** The workloop test investigator wrote to `workloop_test.go` in the main repo while harmonik was merging — caused 4 merge failures. NEVER dispatch non-isolated (`isolation != worktree`) sub-agents while harmonik is running.
-8. **Spec context improves commit rate.** Batch 3 used `--context @specs/claude-hook-bridge.md` — CHB-013 committed (previously failed). Still no silver bullet for beads that need nonexistent integration points.
-9. **4 CHB beads persistently no_commit:** hk-qo08q.8 (session-id), .16 (retry backoff), .17 (exit-code discipline), .18 (pre-exec ordering). Each failed 2× across batches. These reference code integration points that don't exist yet — they need prerequisite scaffolding or richer bead descriptions with exact file:line targets.
+## Next step (what the user wants)
 
-## Next priorities
+**Run the first live DOT test:** `harmonik run --workflow-mode dot --workflow-ref specs/examples/review-loop.dot --beads <bead>` — drives a real bead through the DOT review-loop with a real claude agent (not a stub). User leaning toward a **throwaway/sacrificial bead** for the first run to validate the mechanism cleanly before pointing at real work. Arm a Monitor on `.harmonik/events/events.jsonl` for `node_dispatch_requested|node_dispatch_decided|run_completed|run_failed` to watch the graph walk live. Rebuild first: `go install ./cmd/harmonik`.
 
-1. **Remaining 4 CHB beads** (.8, .16, .17, .18) — enrich descriptions with file paths or create prerequisite scaffold beads. Consider dispatching as a single focused sub-agent with full codebase context (exception (a): fixing harmonik's own hook-relay).
-2. **hk-cw56j** (CHB-023, implementer --resume correctness) — complex, cross-cutting. Needs kerf work or focused investigation.
-3. **Phase-3 DOT beads** — `kerf next` shows DOT exploration/scenario beads ready. These are the near-term endgame per orchestrator rules.
-4. **Continue stale-bead closure** — ~144 open, many likely subsumed.
-5. **Pre-existing test failure:** `TestSession_Outcome_StderrTail` in `internal/handler/session_test.go` — observed during CHB-009 test run. Not blocking.
-6. **38 stale stashes** accumulated from prior sessions — safe to drop (`git stash drop` the worktree-agent-* and leak entries).
+## Open beads filed this session (none blocking the live test)
+
+- **hk-karlz** — build daemon-side gate evaluator (no GateEvalFunc provider / ControlPoint-registry loading exists; gate *nodes* error until this lands). The real remaining gap for full gate support.
+- **hk-9dnak follow-up (hk-1xsyu)** — daemon E2E for REQUEST_CHANGES back-edge + cap-hit (only APPROVE path is E2E-tested).
+- **hk-kxygy** — unify the two DOT parsers (internal/workflow/dot vs internal/workflowvalidator disagree on review-loop.dot dialect); blocks hk-geype.
+- **hk-yn29b** — EV-029 compat test is test-isolation-flaky: `go test ./internal/core/` is RED as a full package (~108 sub-failures), passes with `-run EV029`. Global event-registry pollution. Pre-existing.
+- **hk-o4vjp** — 3 daemon tests in `run_w3cp1_boiwe_hiqrl_test.go` RED (exit-0 handlers + no-commit guard). Pre-existing.
+- **hk-vhped** (P3) — pane-liveness: derive agent names from HandlerBinary vs hardcoded claude/node.
+- **hk-uidls** (P3) — CP-056 loader returns ErrWorkflowLoad, spec says ErrDeterministic.
+- Sub-workflow node cascade dispatch — still out of scope (no dedicated bead yet; file one when picking it up).
 
 ## Files to open first
 
-1. `internal/hookrelay/hookrelay.go` — the hook-relay dispatch hub; CHB-013 mapping table tests at `hookrelay_chb013_qo08q_test.go`
-2. `internal/handler/claudehandler_chb006_024.go` — CHB-006/007/008/009 live here
-3. `internal/daemon/workloop_precommit_factory_test.go` — the new test factory (hk-95xm9 fix)
-4. `specs/claude-hook-bridge.md` — normative spec for remaining CHB beads
+1. `internal/daemon/dot_cascade.go` — the cascade driver (walk + back-edge + cap; gate/sub-workflow deferral comments).
+2. `internal/daemon/workloop_dot_mode_e2e_hklphyf_test.go` — how to drive DOT mode through the daemon in a test.
+3. `internal/handler/gate_dispatch.go` — gate semantics (CP-058 model).
+4. `specs/examples/review-loop.dot` — the canonical fixture the live test uses.
 
-## Plain-English glossary
+## Caveats
 
-- **hk-qo08q** — CHB (claude-hook-bridge) spec implementation epic
-- **hk-qo08q.8/.16/.17/.18** — four CHB beads that persistently fail no_commit (session-id mint, retry backoff, exit-code discipline, pre-exec ordering)
-- **hk-95xm9** — workloop test failure bug (FIXED this session)
-- **hk-j6npz** — tmux window cleanup on daemon exit (LANDED via cherry-pick)
-- **hk-a5sil** — subscribe since_event_id replay (LANDED via cherry-pick)
-- **hk-6232r** — subscribe test improvements (LANDED via cherry-pick)
-- **hk-cw56j** — implementer --resume correctness across daemon restart (CHB-023, still open)
-- **no_commit** — harmonik failure class: implementer exited without advancing HEAD
+- `go test ./internal/core/` and full `./internal/daemon/` are RED on main from PRE-EXISTING bugs (hk-yn29b, hk-o4vjp, a StaleWatcher hang). Use `-run` filters; don't be alarmed by the full-package red.
+- Two DOT parsers exist and disagree (hk-kxygy) — the daemon path uses `internal/workflow/dot` via `workflow.LoadDotWorkflow`; the CLI `graph validate` uses `internal/workflowvalidator`.
 
-## No hard blockers requiring user input.
+## Translations glossary
+
+- **DOT mode** — workflows defined as Graphviz `.dot` graphs; daemon walks node→edge→node via the cascade engine.
+- **cascade driver** — `driveDotWorkflow`; the daemon loop that walks the graph (this session's keystone).
+- **gate node** — a policy/decision node returning allow/deny/escalate; deny=SUCCESS per CP-058.
+- **hk-tgqy5** — daemon false `no_commit` kill bug (FIXED this session); **hk-9dnak** — cascade driver wiring (DONE); **hk-karlz** — daemon gate-evaluator (NOT built); **hk-lt0w7** — gate deny OQ (RESOLVED).
+- **EM-005b / HC-058 / CP-058** — execution-model / handler-contract / control-points spec requirements governing gate-decision outcome status.
+- **no_commit** — daemon failure class: implementer exited without advancing HEAD (was firing falsely; now fixed).
+
+## No hard blockers. Next action: rebuild, then live DOT run on a throwaway bead.

@@ -21,6 +21,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
 // WorkLoopDepsParams carries the parameters for ExportedWorkLoopDeps so callers
@@ -363,6 +364,41 @@ func ExportedRunReviewLoop(
 		CompletionReason: string(r.completionReason),
 		Summary:          r.summary,
 		NeedsAttention:   r.needsAttention,
+	}
+}
+
+// DotWorkflowResultExported is the exported shape of dotWorkflowResult for tests
+// in package daemon_test. Fields mirror dotWorkflowResult verbatim.
+//
+// Bead ref: hk-3qjwl.
+type DotWorkflowResultExported struct {
+	Success        bool
+	TerminalNodeID string
+	NeedsAttention bool
+	Summary        string
+}
+
+// ExportedDriveDotWorkflow exposes driveDotWorkflow for tests in package
+// daemon_test. The result is converted to DotWorkflowResultExported to avoid
+// exporting the internal dotWorkflowResult type.
+//
+// Bead ref: hk-3qjwl (DOT agentic-node dispatch must gate paste-inject on
+// agent_ready, exactly as the single-mode and review-loop paths do).
+func ExportedDriveDotWorkflow(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	wtPath string,
+	parentSHA string,
+	graph *dot.Graph,
+) DotWorkflowResultExported {
+	r := driveDotWorkflow(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, graph, "", "", "", "")
+	return DotWorkflowResultExported{
+		Success:        r.success,
+		TerminalNodeID: r.terminalNodeID,
+		NeedsAttention: r.needsAttention,
+		Summary:        r.summary,
 	}
 }
 

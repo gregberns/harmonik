@@ -70,6 +70,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -449,7 +450,7 @@ func dispatchDotAgenticNode(
 		deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
 	}
 
-	tap, _ := newPerRunEventTap(deps.bus, runID)
+	tap, tapCh := newPerRunEventTap(deps.bus, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
@@ -467,9 +468,75 @@ func dispatchDotAgenticNode(
 		})
 	}
 
+	// HC-056: waitAgentReady — the paste-inject below MUST run AFTER agent_ready
+	// is observed, exactly as the single-mode (workloop.go step 6) and review-loop
+	// (reviewloop.go) dispatch paths do. When paste-inject fires before the pane's
+	// REPL input state is active, Claude Code's welcome splash consumes the
+	// trailing Enter, the kick-off message sits typed-but-unsubmitted in the input
+	// bar, claude never reads agent-task.md, and the run idles until the
+	// stale-watcher fires (no commit). This gate was the missing step that left
+	// DOT-mode dispatches hung at an unsent prompt (hk-3qjwl).
+	//
+	// Mirrors workloop.go:1496-1580 / reviewloop.go:339-399: derive a child context
+	// that cancels when the watcher finishes (so a handler crash does not block for
+	// the full timeout), wait, then handle the HC-056 timeout sentinel by killing +
+	// erroring so the cascade reopens the bead rather than hanging.
+	//
+	// Substrate path: watcher is nil for tmux-hosted sessions; the watcher-done
+	// goroutine is skipped and the wait relies on ctx / the timeout alone.
+	//
+	// Spec ref: specs/handler-contract.md §4.9 HC-056;
+	//           specs/process-lifecycle.md §4.7 PL-021d.
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	if adapterErr != nil {
+		// No adapter for claude-code — non-fatal; skip ready-wait (matches the
+		// other two dispatch paths).
+		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(claude-code) node %q: %v (skipping ready-wait)\n",
+			node.ID, adapterErr)
+	} else {
+		readyCtx, readyCancel := context.WithCancel(ctx)
+		if watcher != nil {
+			go func() {
+				select {
+				case <-watcher.Done():
+					readyCancel()
+				case <-readyCtx.Done():
+				}
+			}()
+		}
+
+		eventSrc := newChanAgentEventSource(tapCh)
+		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+		readyCancel() // always release the watcher-done goroutine above
+
+		if readyErr == ErrAgentReadyTimeout {
+			fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
+				node.ID, runID.String(), readyErr)
+			_ = sess.Kill(ctx)
+			if watcher != nil {
+				select {
+				case <-watcher.Done():
+				case <-time.After(agentReadyKillReapTimeout):
+				}
+			}
+			_ = sess.Wait(ctx)
+			if deps.hookStore != nil {
+				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+			}
+			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
+			return core.Outcome{}, fmt.Errorf("node %q agent_ready_timeout", node.ID)
+		}
+		// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
+		// exited first / ctx cancelled). Fall through to paste-inject.
+	}
+
 	// Paste-inject + quit-on-commit / quit-on-review-file. These are no-ops when
 	// the substrate does not implement the relevant interfaces (exec path / the
 	// deterministic E2E /bin/sh handler), matching single-mode behavior.
+	//
+	// MUST run AFTER waitAgentReady above (hk-3qjwl): pasteInjectOnLaunch sends the
+	// kick-off message and the submitting Enter via SendEnterToLastPane (hk-8cq23);
+	// firing it before the REPL is input-ready leaves the prompt unsubmitted.
 	briefDelivered := pasteInjectOnLaunch(ctx, pasteTarget, artifacts.claudeSessionID,
 		phase, iterationCount, wtPath)
 	if qs, ok := pasteTarget.(quitSender); ok {

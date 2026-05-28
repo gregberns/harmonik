@@ -607,13 +607,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Bead ref: hk-45ude.
 
 		var (
-			beadRecord           core.BeadRecord
-			queueItemIndex       int // item index within the group (-1 = no queue)
-			queueIDField         *string
-			queueGroupIdxFd      *int
-			capturedExtraContext string // hk-boiwe: per-item context from queue.Item.Context
-			capturedItemWFMode   string // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
-			capturedItemWFRef    string // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
+			beadRecord                 core.BeadRecord
+			queueItemIndex             int // item index within the group (-1 = no queue)
+			queueIDField               *string
+			queueGroupIdxFd            *int
+			capturedExtraContext       string            // hk-boiwe: per-item context from queue.Item.Context
+			capturedItemWFMode         string            // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
+			capturedItemWFRef          string            // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
+			capturedItemTemplateParams map[string]string // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -631,13 +632,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// as local copies. Phase 2 (handler-pause gate) runs without the lock.
 			// Phase 3 (dispatch stamp) re-acquires the write lock for a TOCTOU check.
 			var (
-				snapItemIdx     int = -1 // -1 → no item found (q==nil or nothing ready)
-				snapItemBeadID  core.BeadID
-				snapItemContext string
-				snapItemWFMode  string
-				snapItemWFRef   string
-				snapGroupIndex  int
-				snapQueueID     string
+				snapItemIdx            int = -1 // -1 → no item found (q==nil or nothing ready)
+				snapItemBeadID         core.BeadID
+				snapItemContext         string
+				snapItemWFMode         string
+				snapItemWFRef          string
+				snapItemTemplateParams map[string]string
+				snapGroupIndex         int
+				snapQueueID            string
 			)
 			{
 				lq := deps.queueStore.LockForMutation()
@@ -705,6 +707,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					snapItemContext = item.Context
 					snapItemWFMode = item.WorkflowMode
 					snapItemWFRef = item.WorkflowRef
+					snapItemTemplateParams = item.TemplateParams
 					snapGroupIndex = q.Groups[activeGroupIdx].GroupIndex
 					snapQueueID = q.QueueID
 				}
@@ -812,9 +815,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				gIdx := snapGroupIndex
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
-				capturedExtraContext = snapItemContext // hk-boiwe
-				capturedItemWFMode = snapItemWFMode    // hk-hiqrl
-				capturedItemWFRef = snapItemWFRef      // hk-qo9pq
+				capturedExtraContext = snapItemContext          // hk-boiwe
+				capturedItemWFMode = snapItemWFMode              // hk-hiqrl
+				capturedItemWFRef = snapItemWFRef                // hk-qo9pq
+				capturedItemTemplateParams = snapItemTemplateParams // hk-55zv2 / WG-045
 			}
 		}
 
@@ -1074,9 +1078,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		capturedQueueGroupIdx := queueGroupIdxFd
 		capturedItemIndex := queueItemIndex
 		// Per-item overrides captured here; empty for br-ready path.
-		capturedCtx := capturedExtraContext  // hk-boiwe
-		capturedWFMode := capturedItemWFMode // hk-hiqrl
-		capturedWFRef := capturedItemWFRef   // hk-qo9pq
+		capturedCtx := capturedExtraContext                    // hk-boiwe
+		capturedWFMode := capturedItemWFMode                   // hk-hiqrl
+		capturedWFRef := capturedItemWFRef                     // hk-qo9pq
+		capturedTmplParams := capturedItemTemplateParams       // hk-55zv2 / WG-045
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -1086,18 +1091,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)
-		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string) {
 			defer wg.Done()
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode, itemWFRef)
+			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
 			}
-		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef)
+		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
 	}
 }
 
@@ -1120,7 +1125,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
 	beadID := beadRecord.BeadID
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -1274,7 +1279,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
 			}
 		}
-		graph, loadErr := workflow.LoadDotWorkflow(dotPath)
+		// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
+		graph, loadErr := workflow.LoadDotWorkflowWithParams(dotPath, itemTemplateParams)
 		if loadErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
 				beadID, runID.String(), loadErr)
@@ -1285,11 +1291,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 
+		// WG-044: thread the (substituted) graph-level goal into every agentic node's
+		// brief via the ExtraContext channel.  Prepend so it appears before any
+		// operator-supplied --context text.
+		dotExtraContext := extraContext
+		if graph.Goal != "" {
+			goalLine := "Workflow goal: " + graph.Goal
+			if dotExtraContext != "" {
+				dotExtraContext = goalLine + "\n\n" + dotExtraContext
+			} else {
+				dotExtraContext = goalLine
+			}
+		}
+
 		// Drive the cascade: walk start → … → terminal, dispatching each node by
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
 		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description,
-			wtPath, headSHA, graph, resolvedModel, resolvedEffort, extraContext, baseBranch)
+			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if dotResult.success {

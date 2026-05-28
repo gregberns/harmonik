@@ -97,6 +97,11 @@ type Workflow struct {
 	// readability contract of operator-nfr.md §4.5 ON-018. The current version
 	// is 1. Must be > 0.
 	SchemaVersion int
+
+	// Goal is the optional human-readable intent for this workflow run per WG-044.
+	// When non-empty it is threaded into every agentic node's brief via the
+	// ExtraContext channel. May be a template before parameter substitution.
+	Goal string
 }
 
 // Valid reports whether w satisfies all structural invariants declared in

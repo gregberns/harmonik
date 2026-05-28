@@ -516,6 +516,7 @@ var reservedGraphAttrs = map[string]bool{
 	"context_keys":      true,
 	"workflow_id":       true,
 	"workflow_class":    true,
+	"goal":              true, // WG-044: graph-level intent string
 }
 
 // ── graph builder (rawDoc → *Graph) ──────────────────────────────────────────
@@ -553,6 +554,9 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 			g.UnknownAttrs["workflow_id"] = pair.val
 		case "workflow_class":
 			g.WorkflowClass = pair.val
+		case "goal":
+			// WG-044: graph-level goal string; threaded into agentic briefs via ExtraContext.
+			g.Goal = pair.val
 		default:
 			// Non-reserved graph-level attribute: permissive per WG-031/032.
 			g.UnknownAttrs[pair.key] = pair.val
@@ -673,6 +677,14 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 					"node %q: attribute \"schema_version\" is reserved for graph-level use only (WG-033)",
 					rn.id),
 			})
+		case "goal":
+			// WG-044: goal is graph-level only; on a node it is a reserved-out-of-position strict error.
+			errs = append(errs, &ParseError{
+				Line: pair.line,
+				Message: fmt.Sprintf(
+					"node %q: attribute \"goal\" is reserved for graph-level use only (WG-044)",
+					rn.id),
+			})
 		default:
 			// Non-reserved node attribute: permissive per WG-031/032.
 			node.UnknownAttrs[pair.key] = pair.val
@@ -722,6 +734,14 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 				Line: pair.line,
 				Message: fmt.Sprintf(
 					"edge %s->%s: attribute \"schema_version\" is reserved for graph-level use only (WG-033)",
+					re.from, re.to),
+			})
+		case "goal":
+			// WG-044: goal is graph-level only; on an edge it is a reserved-out-of-position strict error.
+			errs = append(errs, &ParseError{
+				Line: pair.line,
+				Message: fmt.Sprintf(
+					"edge %s->%s: attribute \"goal\" is reserved for graph-level use only (WG-044)",
 					re.from, re.to),
 			})
 		default:

@@ -63,6 +63,12 @@ type Graph struct {
 	// WorkflowClass is the optional workflow_class graph-level attribute.
 	WorkflowClass string
 
+	// Goal is the optional graph-level goal attribute per WG-044.
+	// Carries the human-readable intent for this workflow run (e.g. "Fix #172").
+	// After template-param substitution the value is threaded into every agentic
+	// node's brief via the ExtraContext channel.
+	Goal string
+
 	// Nodes is the ordered list of nodes in declaration order.
 	Nodes []*Node
 

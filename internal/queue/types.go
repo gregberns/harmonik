@@ -148,6 +148,12 @@ type Item struct {
 	// convention (workflow.dot in the project root).
 	WorkflowRef string `json:"workflow_ref,omitempty"`
 
+	// TemplateParams is the map of KEY→VALUE template parameters sealed into the
+	// item at claim time (hk-55zv2 / WG-045).  Applied as a pre-parse substitution
+	// pass over the raw .dot source before dot.Parse is called.  nil or empty means
+	// no substitution (token-free .dot passes through byte-identical).
+	TemplateParams map[string]string `json:"template_params,omitempty"`
+
 	// Attempts counts outer-loop dispatch attempts for this item. Incremented
 	// each time the workloop stamps the item as dispatched (Phase 3). Monotonic
 	// within a queue lifetime — never reset on claim-failure revert. Items that

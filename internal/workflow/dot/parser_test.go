@@ -659,6 +659,79 @@ func TestDotFixtureSpecsExamplesReviewLoop(t *testing.T) {
 
 // ── round-trip: ConditionRaw retained ────────────────────────────────────────
 
+// TestDotFixtureWG044GoalGraphLevel verifies that the graph-level "goal" attribute
+// is parsed into Graph.Goal (WG-044).
+func TestDotFixtureWG044GoalGraphLevel(t *testing.T) {
+	src := `digraph W {
+  schema_version="1";
+  version="1.0";
+  start_node="n";
+  terminal_node_ids="n";
+  goal="Fix #172";
+  n [type="non-agentic", handler_ref="h", idempotency_class="idempotent"];
+}`
+	g, err := Parse(src, "goal.dot")
+	if err != nil {
+		t.Fatalf("Parse: unexpected error: %v", err)
+	}
+	if g.Goal != "Fix #172" {
+		t.Errorf("Graph.Goal = %q, want %q", g.Goal, "Fix #172")
+	}
+}
+
+// TestDotFixtureWG044GoalOnNodeError verifies that "goal" on a node is a strict
+// reserved-out-of-position error (WG-044).
+func TestDotFixtureWG044GoalOnNodeError(t *testing.T) {
+	src := `digraph W {
+  schema_version="1";
+  version="1.0";
+  start_node="n";
+  terminal_node_ids="n";
+  n [type="non-agentic", handler_ref="h", idempotency_class="idempotent", goal="bad"];
+}`
+	_, err := Parse(src, "goal_node.dot")
+	if err == nil {
+		t.Fatal("expected strict error for goal on node, got nil")
+	}
+	if !containsString(err.Error(), "goal") {
+		t.Errorf("error %q does not mention 'goal'", err.Error())
+	}
+}
+
+// TestDotFixtureWG044GoalOnEdgeError verifies that "goal" on an edge is a strict
+// reserved-out-of-position error (WG-044).
+func TestDotFixtureWG044GoalOnEdgeError(t *testing.T) {
+	src := `digraph W {
+  schema_version="1";
+  version="1.0";
+  start_node="a";
+  terminal_node_ids="b";
+  a [type="agentic", agent_type="impl", handler_ref="h", idempotency_class="idempotent"];
+  b [type="non-agentic", handler_ref="h", idempotency_class="idempotent"];
+  a -> b [goal="bad"];
+}`
+	_, err := Parse(src, "goal_edge.dot")
+	if err == nil {
+		t.Fatal("expected strict error for goal on edge, got nil")
+	}
+	if !containsString(err.Error(), "goal") {
+		t.Errorf("error %q does not mention 'goal'", err.Error())
+	}
+}
+
+// containsString is a local helper (avoid importing strings in package dot test).
+func containsString(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
 func TestDotFixtureConditionRawRetained(t *testing.T) {
 	rawCond := "outcome.status == 'SUCCESS'"
 	src := `digraph rt {

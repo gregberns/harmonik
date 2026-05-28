@@ -2,8 +2,8 @@ package main
 
 // run.go — `harmonik run <bead-id>` subcommand implementation.
 //
-// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq):
-//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref.
+// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2):
+//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref, --param.
 //  2. Resolve br binary via PATH.
 //  3. Validate every bead exists and is in a claimable state (open/ready).
 //  4. Guard against an existing active queue (QM-027).
@@ -105,6 +105,7 @@ func runBeadSubcommand(subArgs []string) int {
 	workflowModeFlag := "" // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
 	workflowRefFlag := ""  // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
 	noNotifyStream := false // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
+	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
 	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
 
@@ -188,6 +189,29 @@ func runBeadSubcommand(subArgs []string) int {
 		// --wave (hk-7nbey): opt into wave-mode (no appends); resolved via resolveGroupKind
 		case arg == "--wave":
 			// handled by resolveGroupKind(subArgs) at queue-build time
+
+		// --param KEY=VALUE (hk-55zv2 / WG-045): repeatable template substitution param
+		case arg == "--param" && i+1 < len(subArgs):
+			i++
+			kv := subArgs[i]
+			eqIdx := strings.IndexByte(kv, '=')
+			if eqIdx <= 0 {
+				fmt.Fprintf(os.Stderr, "harmonik run: --param must be KEY=VALUE, got %q\n", kv)
+				return 1
+			}
+			key := kv[:eqIdx]
+			val := kv[eqIdx+1:]
+			templateParams[key] = val
+		case strings.HasPrefix(arg, "--param="):
+			kv := strings.TrimPrefix(arg, "--param=")
+			eqIdx := strings.IndexByte(kv, '=')
+			if eqIdx <= 0 {
+				fmt.Fprintf(os.Stderr, "harmonik run: --param must be KEY=VALUE, got %q\n", kv)
+				return 1
+			}
+			key := kv[:eqIdx]
+			val := kv[eqIdx+1:]
+			templateParams[key] = val
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
@@ -379,14 +403,22 @@ func runBeadSubcommand(subArgs []string) int {
 
 	// --- Construct a wave queue (one group, N items) and persist it ---
 
+	// Seal templateParams into queue items (WG-045 / hk-55zv2).
+	// Only attach when at least one --param was provided; nil means no substitution.
+	var sealedParams map[string]string
+	if len(templateParams) > 0 {
+		sealedParams = templateParams
+	}
+
 	items := make([]queue.Item, len(beadIDs))
 	for i, id := range beadIDs {
 		items[i] = queue.Item{
-			BeadID:       id,
-			Status:       queue.ItemStatusPending,
-			Context:      extraContext,     // hk-boiwe
-			WorkflowMode: itemWorkflowMode, // hk-hiqrl
-			WorkflowRef:  itemWorkflowRef,  // hk-qo9pq
+			BeadID:         id,
+			Status:         queue.ItemStatusPending,
+			Context:        extraContext,     // hk-boiwe
+			WorkflowMode:   itemWorkflowMode, // hk-hiqrl
+			WorkflowRef:    itemWorkflowRef,  // hk-qo9pq
+			TemplateParams: sealedParams,     // hk-55zv2 / WG-045
 		}
 	}
 
@@ -652,6 +684,7 @@ FLAGS
   --notify-stream=PATH          Same, but write to a FIFO or file
   --no-notify-stream            Disable per-bead completion lines (opt out of auto-enable on multi-bead runs)
   --wave                        Use wave-mode queue (no mid-flight appends; default: stream)
+  --param KEY=VALUE             Template substitution param for .dot workflows (repeatable); replaces __KEY__ in source
   --project DIR                 Project directory (default: current working directory)
 
 EXIT CODES
@@ -667,6 +700,7 @@ EXAMPLES
   harmonik run hk-abc123 --context @/path/to/context.txt
   harmonik run hk-abc123 --no-review-loop
   harmonik run hk-abc123 --workflow-mode dot --workflow-ref ./review-loop.dot
+  harmonik run hk-abc123 --workflow-mode dot --workflow-ref ./my.dot --param ISSUE_NUMBER=172
   harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
   harmonik run --beads hk-abc123,hk-def456 --notify-stream
   harmonik run --beads hk-abc123,hk-def456 --notify-stream=/tmp/hk-events.fifo

@@ -96,6 +96,67 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 	return graph, nil
 }
 
+// LoadDotWorkflowWithParams reads a .dot file at dotPath, applies template-param
+// substitution via SubstituteTemplateParams (WG-045/WG-046) before parsing, then
+// parses and validates the graph.
+//
+// Ordering invariant (WG-046): read → substitute → parse → validate → dispatch.
+//
+// When params is nil or empty the call is equivalent to LoadDotWorkflow (the
+// substitution pass is a byte-identical no-op when src contains no __TOKEN__ patterns).
+//
+// Returns *ErrWorkflowLoad on file-read, substitution, parse, or validation failure.
+// The residual-token error (unresolved __TOKEN__ in src) maps to failure_class=workflow_load.
+//
+// Bead ref: hk-55zv2 (T5 — WG-045/WG-046).
+func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.Graph, error) {
+	src, err := os.ReadFile(dotPath)
+	if err != nil {
+		return nil, &ErrWorkflowLoad{
+			Path:   dotPath,
+			Reason: fmt.Sprintf("read failed: %v", err),
+		}
+	}
+
+	substituted, subErr := SubstituteTemplateParams(string(src), params)
+	if subErr != nil {
+		return nil, &ErrWorkflowLoad{
+			Path:   dotPath,
+			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
+		}
+	}
+
+	graph, parseErr := dot.Parse(substituted, dotPath)
+	if parseErr != nil {
+		if strings.Contains(parseErr.Error(), "CP-056") {
+			fmt.Fprintf(os.Stderr,
+				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
+					"Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\n",
+				dotPath)
+		}
+		return nil, &ErrWorkflowLoad{
+			Path:   dotPath,
+			Reason: fmt.Sprintf("parse failed: %v", parseErr),
+		}
+	}
+
+	diags := dot.Validate(graph)
+	var errs []string
+	for _, d := range diags {
+		if d.Severity == dot.SeverityError {
+			errs = append(errs, d.String())
+		}
+	}
+	if len(errs) > 0 {
+		return nil, &ErrWorkflowLoad{
+			Path:   dotPath,
+			Reason: fmt.Sprintf("validation failed: %s", strings.Join(errs, "; ")),
+		}
+	}
+
+	return graph, nil
+}
+
 // LoadDotWorkflowWithPolicy extends LoadDotWorkflow with skills_ref resolution
 // per control-points.md §4.13 CP-057.
 //

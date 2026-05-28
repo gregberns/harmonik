@@ -266,9 +266,11 @@ func driveDotWorkflow(
 
 		case decision.Failed:
 			// Cascade structural failure (no matching edge, WG-012) or traversal
-			// cap hit (EM-043). Both terminate the run; cap-hit and BLOCK route to
-			// the needs-attention terminal in a well-formed graph, but a genuine
-			// no-match is a hard structural failure.
+			// cap hit (EM-043). Both terminate the run here by reopening the bead
+			// (needs-attention) — SelectNextEdge returns Failed on cap-hit rather
+			// than dropping the capped edge and re-selecting an unconditional
+			// fallback, so cap-hit does NOT reach a terminal node; it ends as a
+			// reopen, same as a genuine no-match structural failure.
 			needsAttention := true
 			summary := fmt.Sprintf("dot: cascade failed at node %q: class=%s reason=%s",
 				currentNodeID, decision.FailureClass, decision.FailureReason)

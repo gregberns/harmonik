@@ -116,10 +116,11 @@ digraph "review-loop-example" {
     ];
 
     // (6) Unconditional fallback edge — REQUIRED by D-edge-cascade-invariant.
-    // Catches the EM-015e cap-hit path (cap=3, daemon-suppressed retry) and
-    // the no-progress path (bit-identical diff hash). Without this edge the
-    // reviewer node has no valid outbound edge at cap-hit and the workflow
-    // would error out. MUST appear last in the reviewer cascade so the
-    // dispatcher evaluates conditional edges before falling back.
+    // Catches outcomes with no matching conditional edge (e.g. an unrecognized
+    // or absent preferred_label, including the no-progress path). NOTE: the
+    // traversal cap (cap=3) is NOT routed through this edge — SelectNextEdge
+    // returns a Failed decision on cap-hit (the run reopens as needs-attention)
+    // rather than dropping the capped edge and selecting this fallback. MUST
+    // appear last so the dispatcher evaluates conditional edges before falling back.
     reviewer -> "close-needs-attention";
 }

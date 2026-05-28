@@ -523,6 +523,127 @@ func TestDotMode_E2E_CascadeTransitions(t *testing.T) {
 	}
 }
 
+// TestDotMode_E2E_NonAgenticIntermediateNodeSuccess drives the
+// review-loop-finalize.dot fixture through the REAL work loop, asserting that a
+// run classified SUCCESS when the close terminal is reached via a non-agentic
+// intermediate node (reviewer→[APPROVE]→finalize[non-agentic]→close).
+//
+// This is the regression test for hk-z03e8: the old dotTerminalIsSuccess
+// edge-topology heuristic (forbidden by WG-021) misclassified this topology as
+// FAILED because close's only inbound edge is unconditional (from finalize, not
+// directly from reviewer via an APPROVE edge). The WG-021-compliant fix
+// (dotTerminalNodeIsSuccess) classifies by terminal ID alone: close → SUCCESS.
+//
+// Handler script: same odd/even invocation pattern as dotE2ECascadeHandlerScript,
+// but the graph now has an extra non-agentic finalize node that the cascade
+// traverses without calling the handler — so the invocation count and commit
+// semantics remain identical.
+func TestDotMode_E2E_NonAgenticIntermediateNodeSuccess(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	// Seed the finalize-topology fixture (reviewer→[APPROVE]→finalize→close).
+	dotPath := dotE2ESeedWorkflow(t, projectDir,
+		"specs/examples/review-loop-finalize.dot", ".harmonik/workflow.dot")
+
+	const beadID = core.BeadID("hk-z03e8-dot-finalize-001")
+
+	stateDir := t.TempDir()
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "dot-finalize-queue",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{
+						BeadID:       beadID,
+						Status:       queue.ItemStatusPending,
+						WorkflowMode: string(core.WorkflowModeDot),
+						WorkflowRef:  dotPath,
+					},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	bus := &stubEventCollector{}
+	drainCtx, cancelDrain := context.WithCancel(context.Background())
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+	ledger := &stubBeadLedger{}
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:          ledger,
+		Bus:                bus,
+		ProjectDir:         projectDir,
+		HandlerBinary:      dotE2ECascadeHandlerScript(t, stateDir),
+		HandlerArgs:        nil,
+		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:         qs,
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		CancelOnQueueDrain: cancelDrain,
+		CancelOnQueueExit:  cancelDrain,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	testCtx, testCancel := context.WithTimeout(drainCtx, 60*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+	case <-time.After(58 * time.Second):
+		t.Fatalf("DOT finalize E2E: runWorkLoop did not exit; events=%v closed=%v reopened=%v",
+			bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+	}
+
+	events := bus.eventTypes()
+	closed := ledger.closedIDs()
+	reopened := ledger.reopenedIDs()
+	t.Logf("DOT finalize E2E: events=%v closed=%v reopened=%v", events, closed, reopened)
+
+	// The bead MUST be CLOSED (success), not reopened. A reopen here means the
+	// old edge-topology heuristic is still active (hk-z03e8 regression).
+	if len(reopened) > 0 {
+		t.Errorf("DOT finalize E2E: bead was REOPENED (%v) — the cascade "+
+			"misclassified 'close' as needs-attention because its inbound edge "+
+			"is unconditional (from the non-agentic finalize node). This is the "+
+			"hk-z03e8 regression: dotTerminalNodeIsSuccess must classify by "+
+			"terminal ID, not inbound-edge topology. events=%v", reopened, events)
+	}
+	if len(closed) == 0 {
+		t.Errorf("DOT finalize E2E: bead was neither closed nor reopened; "+
+			"expected close on the success terminal. events=%v", events)
+	} else if closed[0] != beadID {
+		t.Errorf("DOT finalize E2E: closed bead = %q; want %q", closed[0], beadID)
+	}
+
+	if !dotE2EContains(events, string(core.EventTypeRunCompleted)) {
+		t.Errorf("DOT finalize E2E: run_completed not emitted; got %v", events)
+	}
+	if qs.Queue() != nil {
+		t.Error("DOT finalize E2E: QueueStore.Queue() is non-nil after drain; expected ClearQueue")
+	}
+}
+
 // dotE2EContains reports whether haystack contains needle.
 func dotE2EContains(haystack []string, needle string) bool {
 	for _, s := range haystack {

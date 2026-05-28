@@ -1,0 +1,81 @@
+// review-loop-finalize.dot — review-loop variant with a non-agentic finalize
+// node between the APPROVE edge and the close terminal.
+//
+// This fixture exercises the WG-021 fix (hk-z03e8): the close terminal is
+// reached via an unconditional edge from a non-agentic intermediate node
+// (finalize), NOT directly via an APPROVE-conditioned edge from the reviewer.
+// The run MUST be classified SUCCESS — dotTerminalNodeIsSuccess checks terminal
+// identity, not inbound-edge topology.
+//
+// Walk path (APPROVE): start → implementer → reviewer → [APPROVE] → finalize → close
+// Walk path (BLOCK):   start → implementer → reviewer → [BLOCK]   → close-needs-attention
+
+digraph "review-loop-finalize" {
+    schema_version="1";
+    version="1.0";
+    workflow_id="review-loop-finalize";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent"
+    ];
+
+    implementer [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent"
+    ];
+
+    reviewer [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent"
+    ];
+
+    // Non-agentic intermediate node between APPROVE edge and the close terminal.
+    // Its single inbound edge is unconditional (from finalize); its single outbound
+    // edge is unconditional to close. This is the topology that the old
+    // edge-topology heuristic (dotTerminalIsSuccess) misclassified as failure.
+    finalize [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent"
+    ];
+
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent"
+    ];
+
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent"
+    ];
+
+    start -> implementer;
+    implementer -> reviewer;
+
+    reviewer -> finalize [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    reviewer -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // Unconditional fallback.
+    reviewer -> "close-needs-attention";
+
+    // Unconditional edge from the non-agentic finalize node to close.
+    // Under the old heuristic this made close look like a "needs-attention"
+    // terminal (unconditional inbound edge). Under the WG-021 fix it is
+    // classified SUCCESS by terminal identity alone.
+    finalize -> close;
+}

@@ -38,14 +38,11 @@ package daemon
 // # Terminal handling
 //
 // The walk ends when DecideNextNode reports the current node is terminal (it is
-// in graph.TerminalNodeIDs). The driver classifies the terminal node by its role
-// in the graph's edge topology: a node reachable only via an APPROVE-class edge is
-// the success terminal (close); a node reachable via BLOCK / cap-hit / no-progress
-// is the needs-attention terminal (close-needs-attention). Rather than parse
-// semantics, the driver records WHICH terminal was reached and the caller maps it:
-// the success terminal → CloseBead; the needs-attention terminal → reopen with the
-// needs-attention reason. The success-terminal id is provided by the caller
-// (resolved from the canonical review-loop topology / convention).
+// in graph.TerminalNodeIDs). The driver classifies the terminal node by its
+// IDENTITY per WG-021/WG-022: reaching "close" (or any terminal that is NOT
+// "close-needs-attention") is the success path; reaching "close-needs-attention"
+// is the needs-attention path. This is the spec-mandated surface — consumers
+// MUST NOT inspect inbound-edge topology to determine terminal disposition.
 //
 // # Cap enforcement
 //
@@ -276,12 +273,11 @@ func driveDotWorkflow(
 
 		switch {
 		case decision.IsTerminal:
-			// Reached a terminal node. The cascade reports terminal when the
-			// node we just dispatched is in terminal_node_ids; classify success
-			// vs needs-attention from the LAST agentic outcome's preferred_label
-			// is not available here, so we classify by the terminal node's role
-			// recorded during the walk (see terminalSuccess below).
-			success := dotTerminalIsSuccess(graph, currentNodeID)
+			// Reached a terminal node. Classify by terminal node IDENTITY per
+			// WG-021/WG-022: "close-needs-attention" → needs-attention; any other
+			// terminal (including "close" and author-defined terminals) → success.
+			// Inspecting inbound-edge topology is forbidden by WG-021.
+			success := dotTerminalNodeIsSuccess(currentNodeID)
 			return dotWorkflowResult{
 				success:        success,
 				terminalNodeID: currentNodeID,
@@ -606,49 +602,15 @@ func nodeIsReviewer(node *dot.Node) bool {
 	return node.HandlerRef == "claude-reviewer"
 }
 
-// dotTerminalIsSuccess classifies a terminal node as the success terminal vs the
-// needs-attention terminal.
+// dotTerminalNodeIsSuccess classifies a terminal node as the success terminal
+// by its ID per WG-021/WG-022.
 //
-// Classification rule (matches the canonical review-loop topology): a terminal
-// node is the SUCCESS terminal iff at least one inbound edge carries an APPROVE
-// preferred-label / condition AND it has no inbound edge from a BLOCK / cap-hit /
-// fallback (unconditional) path. In the canonical graph `close` is reached only
-// by the APPROVE conditional edge; `close-needs-attention` is reached by the
-// BLOCK conditional edge and the unconditional fallback. So: a terminal reachable
-// by an unconditional inbound edge is the needs-attention terminal; one reachable
-// only by an APPROVE-conditioned edge is the success terminal.
-func dotTerminalIsSuccess(graph *dot.Graph, terminalID string) bool {
-	hasApproveEdge := false
-	hasUnconditionalOrNonApprove := false
-	for _, e := range graph.Edges {
-		if e.ToNodeID != terminalID {
-			continue
-		}
-		if e.Condition == nil {
-			hasUnconditionalOrNonApprove = true
-			continue
-		}
-		if edgeConditionMentionsApprove(e) {
-			hasApproveEdge = true
-		} else {
-			hasUnconditionalOrNonApprove = true
-		}
-	}
-	return hasApproveEdge && !hasUnconditionalOrNonApprove
-}
-
-// edgeConditionMentionsApprove reports whether an edge's condition compares the
-// preferred_label (or any RHS) to the APPROVE verdict.
-func edgeConditionMentionsApprove(e *dot.Edge) bool {
-	if e.Condition == nil {
-		return false
-	}
-	for _, c := range e.Condition.Clauses {
-		if c.RHS == workspace.ReviewVerdictApprove || c.RHS == "'"+workspace.ReviewVerdictApprove+"'" {
-			return true
-		}
-	}
-	return false
+// Rule: "close-needs-attention" is the reserved needs-attention terminal.
+// Any other terminal ID — including the reserved "close" and author-defined
+// extensions per WG-022 — is treated as a success terminal. Inspecting
+// inbound-edge topology to infer disposition is forbidden by WG-021.
+func dotTerminalNodeIsSuccess(terminalID string) bool {
+	return terminalID != "close-needs-attention"
 }
 
 // incrementCapIfBounded increments the per-edge cycle counter for the traversed

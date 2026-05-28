@@ -102,6 +102,13 @@ type claudeRunCtx struct {
 	// structurally empty.
 	beadDescription string
 
+	// nodePrompt is the optional inline LLM prompt from the DOT node's prompt=
+	// attribute (WG-040 §I.3, HC-006a §III.3). When non-empty and phase is
+	// implementer-initial or implementer-resume, it REPLACES beadDescription as
+	// the Body channel of the agent-task.md (CHB-028). On reviewer phase, it is
+	// accepted-but-inert (EM-015d-RIA). Empty when the node has no prompt= attr.
+	nodePrompt string
+
 	// agentTaskReAttach signals that this launch is on the re-attach path
 	// (daemon restart mid-session). When true, WriteAgentTask skips collision
 	// check and returns nil if agent-task.md already exists (CHB-028
@@ -244,6 +251,13 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// The file carries the bead description for the phase. When rc.beadDescription is empty
 	// (e.g. bead has no body), use the bead title so the file is never structurally empty.
 	taskBody := rc.beadDescription
+	// When the DOT node carries an inline prompt= and the phase is implementer,
+	// replace the bead-derived body with the prompt verbatim (WG-040 §I.3,
+	// HC-006a §III.3). Bead Title + ID remain in the header for traceability.
+	// Reviewer phase: nodePrompt is accepted-but-inert (EM-015d-RIA).
+	if rc.nodePrompt != "" && rc.phase != handlercontract.ReviewLoopPhaseReviewer {
+		taskBody = rc.nodePrompt
+	}
 	if taskBody == "" {
 		taskBody = rc.beadTitle
 	}

@@ -636,6 +636,10 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			node.IdempotencyClass = pair.val
 		case "role":
 			node.Role = pair.val
+		case "prompt":
+			// Agentic-only per WG-040 §I.3. Retained on all node types;
+			// a v1 WARNING is emitted post-loop for non-agentic/gate nodes.
+			node.Prompt = pair.val
 		case "axis_tags":
 			node.AxisTags = pair.val
 		case "hook_ref":
@@ -695,6 +699,17 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				Message: fmt.Sprintf("node %q: unknown permissive attribute %q=%q (WG-031/032)", rn.id, pair.key, pair.val),
 			})
 		}
+	}
+	// Post-loop: prompt= is agentic-only. Emit a v1 WARNING when it appears
+	// on a non-agentic / gate node (WG-040 §I.3, WG-031 permissive-retain).
+	// Only warn when node.Type is resolved (no type parse error) and is not agentic.
+	if node.Prompt != "" && node.Type != "" && node.Type != core.NodeTypeAgentic {
+		warns = append(warns, ParseWarning{
+			Line: node.Line,
+			Message: fmt.Sprintf(
+				"node %q: attribute \"prompt\" is agentic-only; on type %q it is retained but ignored at v1 (WG-040 §I.3)",
+				rn.id, node.RawType),
+		})
 	}
 	return node, errs, warns
 }

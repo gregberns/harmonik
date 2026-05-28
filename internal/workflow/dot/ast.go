@@ -141,6 +141,14 @@ type Node struct {
 	// node runs with its intended persona. Empty when absent.
 	Role string
 
+	// Prompt is the optional inline LLM prompt attribute on agentic nodes
+	// (WG-040 §I.3, HC-006a §III.3). When present on an implementer-class
+	// agentic node, it REPLACES the bead-derived taskBody in the agent brief
+	// (CHB-028 Body channel). On reviewer-class agentic nodes it is
+	// accepted-but-inert at v1 (EM-015d-RIA). On non-agentic and gate nodes
+	// it produces a v1 WARNING and is retained (WG-031). Empty when absent.
+	Prompt string
+
 	// AxisTags is the optional axis_tags attribute (open set per WG-030).
 	AxisTags string
 

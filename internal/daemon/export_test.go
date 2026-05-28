@@ -441,6 +441,20 @@ func ExportedCaptureExtraContextBuilder(ch chan<- string) func(context.Context, 
 	}
 }
 
+// ExportedCaptureNodePromptBuilder returns a launchSpecBuilder stub that
+// sends the nodePrompt from the FIRST call into ch (non-blocking), then
+// returns an error to short-circuit the dispatch. Tests use this to assert
+// that node prompt= is threaded into claudeRunCtx (hk-sdnzj).
+func ExportedCaptureNodePromptBuilder(ch chan<- string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		select {
+		case ch <- rc.nodePrompt:
+		default:
+		}
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CHB-025 test seams (hk-w5vra.11)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -611,6 +625,15 @@ type ExportedClaudeRunCtx struct {
 	// canonicalizes to a path under this prefix, --dangerously-skip-permissions is
 	// added to argv per HC-055b. Empty → path-check skipped, flag not emitted.
 	WorktreeRootPath string
+
+	// BeadDescription is the bead body verbatim from the Beads ledger.
+	// Used to populate the "## Task Description" section in agent-task.md.
+	BeadDescription string
+
+	// NodePrompt is the optional inline LLM prompt from the DOT node's prompt=
+	// attribute (WG-040 §I.3). When non-empty and phase is implementer, it
+	// REPLACES BeadDescription as the CHB-028 Body channel (hk-sdnzj).
+	NodePrompt string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -646,6 +669,8 @@ func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx)
 		model:             rc.Model,
 		effort:            rc.Effort,
 		worktreeRootPath:  rc.WorktreeRootPath,
+		beadDescription:   rc.BeadDescription,
+		nodePrompt:        rc.NodePrompt,
 	}
 	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
 	if err != nil {

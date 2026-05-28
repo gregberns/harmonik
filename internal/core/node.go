@@ -75,6 +75,13 @@ type Node struct {
 	// per [architecture.md §4.2 AR-005]. One of: "mechanism", "cognition".
 	ModeTag ModeTag
 
+	// Prompt is the optional inline LLM prompt for this node (WG-040 §I.3,
+	// HC-006a §III.3). When non-empty and Type == NodeTypeAgentic with an
+	// implementer phase, it overrides the bead body as the agent's task
+	// description (CHB-028 Body channel). Inert on reviewer nodes;
+	// retained-but-ignored on non-agentic/gate nodes. Empty when absent.
+	Prompt string
+
 	// SubWorkflowRef is the reference to the sub-workflow definition for
 	// sub-workflow nodes. Required when Type == NodeTypeSubWorkflow; forbidden
 	// otherwise.

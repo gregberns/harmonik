@@ -450,6 +450,7 @@ func dispatchDotAgenticNode(
 		baseEnv:           deps.handlerEnv,
 		beadTitle:         beadTitle,
 		beadDescription:   beadDescription,
+		nodePrompt:        node.Prompt,
 		model:             resolvedModel,
 		effort:            resolvedEffort,
 		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),

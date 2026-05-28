@@ -1,0 +1,165 @@
+// triple-review-consolidate.dot — 3-reviewer consolidation workflow (THE MARQUEE) (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §2 (triple-review-consolidate, THE MARQUEE)
+//   - docs/sdlc-workflow-corpus.md §Marquee brief discipline (reviewer-commit channel)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//
+// THE MARQUEE pattern: one implementer, three per-axis reviewers (correctness,
+// design/idioms, tests), and a consolidate reviewer that severity-joins all three
+// findings into a single verdict. Subsumes the review-slice
+// `multi-perspective-code-review` (same shape, correctness/security/style lenses —
+// swap the three reviewer `role` briefs to retarget). Smoke dual-review-consolidate
+// FIRST (cap=2 → cap-hit path reachable fast) before running this marquee.
+//
+// Marquee brief discipline (docs/sdlc-workflow-corpus.md §Marquee brief discipline):
+//   Each per-axis reviewer MUST, in order:
+//     1. Write + git commit its findings to reviews/reviewer-<axis>.md FIRST.
+//        (This is the durable channel the consolidate node reads across session
+//        boundaries — review.json is single-slot, last-writer-wins.)
+//     2. THEN write .harmonik/review.json with its own verdict.
+//        (Its appearance triggers /quit; omitting it errors the node.)
+//   The consolidate node reads all reviews/reviewer-*.md, severity-joins
+//   (BLOCK > REQUEST_CHANGES > APPROVE), and writes ONE merged verdict to
+//   .harmonik/review.json. Being the last reviewer launched, its verdict is
+//   the one in outcome.preferred_label that the branch edges read.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the consolidate→implement back-edge
+//     bounds the loop per WG-028 / EM-043.
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase: APPROVE / REQUEST_CHANGES / BLOCK.
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+//   - The linear spine (start→implement→review_correctness→review_design→review_tests
+//     →consolidate) is fully unconditional: all three reviewer nodes always run on
+//     every pass.
+
+digraph "triple-review-consolidate" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="triple-review-consolidate";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer node. On first visit, produces the change.
+    // On re-entry (after REQUEST_CHANGES from consolidate), addresses the
+    // consolidated feedback from all three prior reviewers.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change; on re-entry, address the consolidated review feedback"
+    ];
+
+    // review_correctness: first per-axis reviewer. Checks correctness and edge cases.
+    // Per marquee brief discipline: write+commit reviews/reviewer-correctness.md
+    // FIRST (durable channel), then write .harmonik/review.json.
+    review_correctness [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="correctness lens — logic, edge cases, contracts; write+commit reviews/reviewer-correctness.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // review_design: second per-axis reviewer. Checks design and idioms.
+    // Per marquee brief discipline: write+commit reviews/reviewer-design.md
+    // FIRST (durable channel), then write .harmonik/review.json.
+    review_design [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="design & idiom lens — abstractions, naming, simplicity; write+commit reviews/reviewer-design.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // review_tests: third per-axis reviewer. Checks test adequacy and coverage.
+    // Per marquee brief discipline: write+commit reviews/reviewer-tests.md
+    // FIRST (durable channel), then write .harmonik/review.json.
+    review_tests [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="test-adequacy lens — coverage, missing cases; write+commit reviews/reviewer-tests.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // consolidate: the severity-joining reviewer. Reads all reviews/reviewer-*.md
+    // committed by the prior reviewers, applies BLOCK>REQUEST_CHANGES>APPROVE
+    // severity-join, and writes the ONE merged verdict that the branch edges read.
+    // Being last in the chain, its review.json is the outcome.preferred_label
+    // that drives the cascade below.
+    consolidate [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="read all reviews/reviewer-*.md; severity-join (BLOCK>REQUEST_CHANGES>APPROVE); write one verdict to .harmonik/review.json"
+    ];
+
+    // close: terminal node for the APPROVE path (no remaining findings).
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — nothing left to fix"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // Linear spine — all unconditional. Every pass always runs all three reviewers
+    // and the consolidate node before branching on the consolidated verdict.
+    start -> implement;
+    implement -> review_correctness;
+    review_correctness -> review_design;
+    review_design -> review_tests;
+    review_tests -> consolidate;
+
+    // Branch on the CONSOLIDATED verdict only (from the consolidate node).
+    // (1) APPROVE → close (fixpoint: no findings remain).
+    consolidate -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (2) REQUEST_CHANGES → loop back to implement (capped at 3 per WG-028).
+    // traversal_cap="3" enforces EM-015e / WG-028 / EM-043: after 3 traversals
+    // the daemon's cap-enforcement suppresses this edge and returns a Failed
+    // decision; the run reopens as needs-attention.
+    consolidate -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (3) BLOCK → close-needs-attention (reviewer signalled cannot proceed).
+    consolidate -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (4) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    consolidate -> "close-needs-attention";
+}

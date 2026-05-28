@@ -135,6 +135,12 @@ type Node struct {
 	// sub-workflow nodes per WG-008.
 	IdempotencyClass string
 
+	// Role is the optional role= attribute on any node type (WG-040 §II.10).
+	// Describes the node's behavioural identity (e.g. "design & idioms" for a
+	// reviewer node). The dispatcher surfaces this into the agent brief so each
+	// node runs with its intended persona. Empty when absent.
+	Role string
+
 	// AxisTags is the optional axis_tags attribute (open set per WG-030).
 	AxisTags string
 

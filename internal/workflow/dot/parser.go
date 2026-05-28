@@ -634,6 +634,8 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			node.InputMapping = pair.val
 		case "idempotency_class":
 			node.IdempotencyClass = pair.val
+		case "role":
+			node.Role = pair.val
 		case "axis_tags":
 			node.AxisTags = pair.val
 		case "hook_ref":

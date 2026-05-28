@@ -401,23 +401,23 @@ func TestScenarioCanonicalReviewLoopRoundTrip(t *testing.T) {
 		t.Errorf("len(Edges) = %d, want 6", len(g.Edges))
 	}
 
-	// "role" is an unknown permissive attribute on every node in the canonical
-	// fixture — verify it is retained (WG-032) and warned about (WG-031).
+	// "role" is now a recognised node attribute (hk-m5lmo) parsed into Node.Role,
+	// not into UnknownAttrs. Verify every node in the canonical fixture has a
+	// non-empty Role, and that no warnings are emitted for it.
 	for _, n := range g.Nodes {
-		if role, ok := n.UnknownAttrs["role"]; !ok || role == "" {
-			t.Errorf("node %q: expected unknown attr \"role\" to be retained (WG-032), got empty/absent", n.ID)
+		if n.Role == "" {
+			t.Errorf("node %q: expected Role to be set (hk-m5lmo), got empty", n.ID)
+		}
+		if _, inUnknown := n.UnknownAttrs["role"]; inUnknown {
+			t.Errorf("node %q: \"role\" must not appear in UnknownAttrs now that it is a recognised field", n.ID)
 		}
 	}
 
-	// Warnings should include mentions of "role" attribute.
-	roleWarnCount := 0
+	// No warnings should mention "role" since it is now a recognised attribute.
 	for _, w := range g.Warnings {
 		if strings.Contains(w.Message, "role") {
-			roleWarnCount++
+			t.Errorf("unexpected warning mentioning \"role\" (should be a recognised attr now): %s", w.Message)
 		}
-	}
-	if roleWarnCount < 5 {
-		t.Errorf("expected >= 5 warnings for \"role\" unknown attr (one per node), got %d", roleWarnCount)
 	}
 
 	// Validate the parsed graph — no errors expected from the canonical fixture.

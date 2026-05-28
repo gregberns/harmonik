@@ -423,6 +423,19 @@ func dispatchDotAgenticNode(
 		}
 	}
 
+	// Surface node role= into the agent brief (hk-m5lmo). Prepend it to
+	// extraContext so it appears in the ## Extra Context section of agent-task.md,
+	// giving each node a distinct behavioural identity (e.g. per-axis reviewer).
+	nodeExtraContext := extraContext
+	if node.Role != "" {
+		roleLine := "Role: " + node.Role
+		if nodeExtraContext != "" {
+			nodeExtraContext = roleLine + "\n\n" + nodeExtraContext
+		} else {
+			nodeExtraContext = roleLine
+		}
+	}
+
 	rc := claudeRunCtx{
 		runID:             runID,
 		beadID:            string(beadID),
@@ -440,7 +453,7 @@ func dispatchDotAgenticNode(
 		model:             resolvedModel,
 		effort:            resolvedEffort,
 		worktreeRootPath:  workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
-		extraContext:      extraContext,
+		extraContext:      nodeExtraContext,
 		baseBranch:        baseBranch,
 	}
 

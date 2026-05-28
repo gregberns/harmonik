@@ -12,6 +12,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -399,6 +400,44 @@ func ExportedDriveDotWorkflow(
 		TerminalNodeID: r.terminalNodeID,
 		NeedsAttention: r.needsAttention,
 		Summary:        r.summary,
+	}
+}
+
+// ExportedDriveDotWorkflowFull is like ExportedDriveDotWorkflow but exposes the
+// beadTitle, beadDescription, and extraContext parameters so tests can assert on
+// context injection (e.g. node role= surfacing, hk-m5lmo).
+func ExportedDriveDotWorkflowFull(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	beadTitle string,
+	beadDescription string,
+	wtPath string,
+	parentSHA string,
+	graph *dot.Graph,
+	extraContext string,
+) DotWorkflowResultExported {
+	r := driveDotWorkflow(ctx, deps, runID, beadID, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "")
+	return DotWorkflowResultExported{
+		Success:        r.success,
+		TerminalNodeID: r.terminalNodeID,
+		NeedsAttention: r.needsAttention,
+		Summary:        r.summary,
+	}
+}
+
+// ExportedCaptureExtraContextBuilder returns a launchSpecBuilder stub that
+// sends the extraContext from the FIRST call into ch (non-blocking), then
+// returns an error to short-circuit the dispatch. Tests use this to assert
+// that node role= is injected into the agent brief (hk-m5lmo).
+func ExportedCaptureExtraContextBuilder(ch chan<- string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		select {
+		case ch <- rc.extraContext:
+		default:
+		}
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
 	}
 }
 

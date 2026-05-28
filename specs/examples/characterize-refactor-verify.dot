@@ -1,0 +1,126 @@
+// characterize-refactor-verify.dot — behavior-preserving refactor with oracle safety net (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §13 (characterize-refactor-verify topology)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// Topology: characterize commits oracle tests pinning current behavior; refactor
+// restructures (oracle stays green); verify_review confirms behavior preserved.
+// The REQUEST_CHANGES back-edge re-enters refactor (NOT characterize) — the
+// oracle tests are never rewritten during the fix loop. Proves a mid-graph
+// back-edge leaving an earlier commit untouched; traversal_cap=3 bounds the loop.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the verify_review→refactor back-edge
+//     enforces the EM-015e/WG-028 iteration limit: after 3 traversals the
+//     cascade reports a cap-hit failure (completion_reason=cap_hit).
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase per the EM-015d enum (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - Terminal IDs use the hyphenated form (close, close-needs-attention)
+//     per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+
+digraph "characterize-refactor-verify" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="characterize-refactor-verify";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // characterize: agentic implementer node. Writes characterization tests that
+    // pin the current behavior as the refactor oracle, then commits them.
+    // Runs exactly once — the back-edge from verify_review re-enters refactor,
+    // so the oracle commit is never revisited or overwritten in the fix loop.
+    characterize [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="write characterization tests pinning current behavior; commit them as the refactor oracle"
+    ];
+
+    // refactor: agentic implementer node. Restructures the code while keeping
+    // the characterization tests green. On re-entry (after REQUEST_CHANGES from
+    // verify_review) addresses reviewer feedback without touching the oracle.
+    refactor [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="restructure code keeping characterization tests green; on re-entry fix verifier feedback"
+    ];
+
+    // verify_review: agentic reviewer node. Confirms behavior is preserved and
+    // the refactor is clean. Emits APPROVE / REQUEST_CHANGES / BLOCK.
+    verify_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="verify behavior preserved + cleanliness; APPROVE / REQUEST_CHANGES / BLOCK"
+    ];
+
+    // close: terminal node for the APPROVE path.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE path — behavior preserved, refactor accepted"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="behavior broke / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> characterize;
+
+    // (2) Characterize commits oracle; hands off to refactor — unconditional.
+    characterize -> refactor;
+
+    // (3) Refactor hands off to reviewer — unconditional.
+    refactor -> verify_review;
+
+    // (4) APPROVE → close.
+    verify_review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (5) REQUEST_CHANGES → loop back to refactor (NOT characterize).
+    // traversal_cap="3" enforces the EM-015e/WG-028 iteration cap: after 3
+    // traversals the cascade reports a cap-hit failure. The back-edge re-enters
+    // refactor so the oracle tests committed by characterize remain untouched.
+    verify_review -> refactor [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (6) BLOCK → close-needs-attention.
+    verify_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (7) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    verify_review -> "close-needs-attention";
+}

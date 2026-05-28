@@ -1,0 +1,117 @@
+// security-review-loop.dot — SDLC security-review-loop workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §14 (security-review-loop, NOW #14)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// A re-role of the canonical implement-review-fix (#1) with a security-axis
+// reviewer brief. Same topology, same dialect, same engine path — the only
+// difference is the reviewer's role: instead of a general correctness verdict,
+// the reviewer renders a verdict on the security posture of the change
+// (injection / authz / secret-handling / unsafe-deserialization / supply-chain).
+// Verdict triad: APPROVE / REQUEST_CHANGES / BLOCK; BLOCK = ship-blocking
+// security defect requiring operator attention.
+//
+// This fixture makes "harmonik can run a security review" a checkable claim
+// rather than a footnote in implement-review-fix's role-variant comment.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the security_review→implement
+//     back-edge enforces the EM-015e/WG-028 iteration limit: after 3 traversals
+//     the cascade reports a cap-hit failure (completion_reason=cap_hit).
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase per the EM-015d enum (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+
+digraph "security-review-loop" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="security-review-loop";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer node. On the first visit, produces the
+    // change. On re-entry (after REQUEST_CHANGES), addresses security reviewer
+    // feedback.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change; on re-entry address the security reviewer feedback"
+    ];
+
+    // security_review: agentic reviewer node with a security-axis brief.
+    // Reviews for injection, authz, secret handling, unsafe deserialization,
+    // and supply-chain issues. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    security_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="security-axis review — injection, authz, secret handling, unsafe deserialization, supply-chain; render APPROVE / REQUEST_CHANGES / BLOCK (BLOCK = ship-blocking security defect)"
+    ];
+
+    // close: terminal node for the APPROVE path.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — no security blocker"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="security BLOCK / cap-hit — operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> implement;
+
+    // (2) Implementer hands off to security reviewer — unconditional.
+    implement -> security_review;
+
+    // (3) APPROVE → close. No security issues found; change is cleared.
+    security_review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to implement (capped at 3 per EM-015e/WG-028).
+    // After 3 traversals the cascade reports a cap-hit failure
+    // (completion_reason=cap_hit, failure_class=compilation_loop).
+    security_review -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5) BLOCK → close-needs-attention. Ship-blocking security defect; operator
+    // must decide disposition before the change proceeds.
+    security_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    security_review -> "close-needs-attention";
+}

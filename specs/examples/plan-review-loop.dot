@@ -1,0 +1,113 @@
+// plan-review-loop.dot — canonical SDLC plan-review-loop workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §5 (plan-review-loop, planning analogue of #1)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// The planning loop: the implementer writes or revises plans/<codename>.md
+// (a committed file satisfies the HEAD-advance gate), the reviewer gates on
+// scope, grounding, decomposition quality, and Done-means criteria.
+// REQUEST_CHANGES loops back (capped), BLOCK or cap-hit routes to
+// plan-needs-attention.
+//
+// Role-variant subsumptions (same topology, different cap value):
+//   plan-single-pass  — cap-0 variant (reviewer fires once, no loop-back)
+//   plan-two-round    — cap-2 variant (up to two REQUEST_CHANGES cycles)
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the plan_review→draft_plan back-edge
+//     enforces the EM-015e/WG-028 iteration limit: after 3 traversals the
+//     cascade reports a cap-hit failure (completion_reason=cap_hit).
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase per the EM-015d enum (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - Terminal IDs use the hyphenated form (plan-approved, plan-needs-attention)
+//     per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+
+digraph "plan-review-loop" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="plan-review-loop";
+    start_node="start";
+    terminal_node_ids="plan-approved,plan-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry — idea bead"
+    ];
+
+    // draft_plan: agentic implementer node. On the first visit, writes
+    // plans/<codename>.md from the bead's idea + framing (commit required).
+    // On re-entry (after REQUEST_CHANGES), revises the plan to address feedback.
+    draft_plan [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="write or revise plans/<codename>.md from the bead's idea + framing (commit required each visit)"
+    ];
+
+    // plan_review: agentic reviewer node. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    // Reviewer gates on scope, grounding, decomposition quality, Done-means criteria.
+    plan_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on scope, grounding, decomposition quality, Done-means criteria"
+    ];
+
+    // plan-approved: terminal node for the APPROVE path.
+    "plan-approved" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — plan accepted"
+    ];
+
+    // plan-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "plan-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> draft_plan;
+
+    // (2) Planner hands off to reviewer — unconditional.
+    draft_plan -> plan_review;
+
+    // (3) APPROVE → plan-approved.
+    plan_review -> "plan-approved" [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to draft_plan (capped at 3 per EM-015e/WG-028).
+    plan_review -> draft_plan [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5) BLOCK → plan-needs-attention.
+    plan_review -> "plan-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    plan_review -> "plan-needs-attention";
+}

@@ -1,0 +1,131 @@
+// plan-review-finalize.dot — plan-review-loop variant with a non-agentic
+// finalize_plan node between the APPROVE edge and the plan-approved terminal.
+//
+// This is SDLC corpus #6 (docs/sdlc-workflow-corpus.md §6). It extends #5
+// (plan-review-loop.dot) by inserting a non-agentic finalize_plan seam between
+// the APPROVE verdict and the plan-approved terminal — the future hook for a
+// bead-emitting tool node (hk-l8rpd) once it lands.
+//
+// This fixture also validates terminal-by-identity classification (hk-z03e8)
+// through an intermediate non-agentic node: plan-approved is reached via an
+// unconditional edge from finalize_plan, which is itself reached via a
+// conditional APPROVE edge from plan_review. Under the old edge-topology
+// heuristic the unconditional inbound edge would have misclassified plan-approved
+// as a "needs-attention" terminal. Under the WG-021 fix it is classified SUCCESS
+// by terminal identity alone.
+//
+// Walk paths:
+//   APPROVE:          start → draft_plan → plan_review(APPROVE) → finalize_plan → plan-approved
+//   REQUEST_CHANGES:  start → draft_plan → plan_review(RC) → draft_plan → ... (capped at 3)
+//   BLOCK:            start → draft_plan → plan_review(BLOCK) → plan-needs-attention
+//   cap-hit:          cap on plan_review→draft_plan → cap-hit failure
+//   fallback:         unrecognized label → unconditional fallback → plan-needs-attention
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §6 (plan-review-finalize)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (no-progress / cap-hit vocabulary)
+//   - specs/execution-model.md §EM-043  (traversal-cap enforcement)
+
+digraph "plan-review-finalize" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="plan-review-finalize";
+    start_node="start";
+    terminal_node_ids="plan-approved,plan-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry — idea bead"
+    ];
+
+    // draft_plan: agentic implementer node. On the first visit, writes
+    // plans/<codename>.md from the bead's idea + framing (commit required).
+    // On re-entry (after REQUEST_CHANGES), revises the plan to address feedback.
+    draft_plan [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="write or revise plans/<codename>.md from the bead's idea + framing (commit required each visit)"
+    ];
+
+    // plan_review: agentic reviewer node. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    // Reviewer gates on scope, grounding, decomposition quality, Done-means criteria.
+    plan_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on scope, grounding, decomposition quality, Done-means criteria"
+    ];
+
+    // finalize_plan: non-agentic intermediate node between the APPROVE edge and
+    // the plan-approved terminal. Serves as the future seam for a bead-emitting
+    // tool node (hk-l8rpd). Its unconditional outbound edge to plan-approved
+    // exercises the WG-021 terminal-by-identity fix (hk-z03e8).
+    finalize_plan [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="lock plan / hand off to decomposition (future tool-node seam, hk-l8rpd)"
+    ];
+
+    // plan-approved: terminal node for the APPROVE path.
+    "plan-approved" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — plan accepted"
+    ];
+
+    // plan-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "plan-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> draft_plan;
+
+    // (2) Planner hands off to reviewer — unconditional.
+    draft_plan -> plan_review;
+
+    // (3) APPROVE → finalize_plan (non-agentic seam before terminal).
+    plan_review -> finalize_plan [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to draft_plan (capped at 3 per EM-015e/WG-028).
+    plan_review -> draft_plan [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5) BLOCK → plan-needs-attention.
+    plan_review -> "plan-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    plan_review -> "plan-needs-attention";
+
+    // (7) finalize_plan → plan-approved — unconditional.
+    // SUCCESS by terminal identity (hk-z03e8 / WG-021): plan-approved is a declared
+    // terminal, so the run is classified SUCCESS regardless of the inbound edge.
+    finalize_plan -> "plan-approved";
+}

@@ -1,0 +1,128 @@
+// docs-sync.dot — harmonik workflow example (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §11 (docs-sync topology)
+//   - specs/workflow-graph.md §8 WG-019 (arbitrary preferred_label strings)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-028 / specs/execution-model.md EM-043 (traversal_cap)
+//
+// Two-implementer spine (change_code → update_docs) followed by a reviewer that
+// routes back to EITHER upstream node via custom preferred_label values:
+//   - REQUEST_CHANGES → update_docs (cap=3): docs are stale; re-sync docs only
+//   - CODE_CHANGE     → change_code (cap=2): code itself needs revision; re-implement
+//   - APPROVE         → close (terminal, success)
+//   - BLOCK           → close-needs-attention (terminal, operator escalation)
+//   - fallback        → close-needs-attention (unrecognized label / no-progress)
+//
+// Demonstrates WG-019: preferred_label is an arbitrary string — authors can mint
+// domain labels (REQUEST_CHANGES, CODE_CHANGE) beyond the standard triad as long
+// as the reviewer agent is briefed to emit them.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality only). NO `<`/`>`.
+//   - traversal_cap on the two back-edges enforces WG-028 / EM-043.
+//   - Terminal IDs use hyphenated form (close-needs-attention) per C1 convention.
+
+digraph "docs-sync" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="docs-sync";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="workflow entry point"
+    ];
+
+    // change_code: first implementer — produces or revises the code change.
+    // Routed to directly from start, and revisited when review_sync emits CODE_CHANGE.
+    change_code [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the code change; commit required"
+    ];
+
+    // update_docs: second implementer — syncs specs/docs/AGENT_INDEX to match the code.
+    // Runs after change_code on the forward spine, and revisited when review_sync
+    // emits REQUEST_CHANGES (docs stale but code is fine).
+    update_docs [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="update specs/docs/AGENT_INDEX to match the code; commit required"
+    ];
+
+    // review_sync: reviewer — verifies code and docs agree; flags drift.
+    // Emits a custom preferred_label (APPROVE / REQUEST_CHANGES / CODE_CHANGE / BLOCK)
+    // to route back to the appropriate upstream node or to a terminal.
+    review_sync [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="verify code and docs agree; flag drift"
+    ];
+
+    // close: terminal node — code and docs are in sync.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="code + docs in sync — change accepted"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> change_code;
+
+    // (2) Forward spine: code change complete, proceed to doc update.
+    change_code -> update_docs;
+
+    // (3) Forward spine: docs updated, proceed to sync review.
+    update_docs -> review_sync;
+
+    // (4) APPROVE → close. Docs and code are in sync.
+    review_sync -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (5) REQUEST_CHANGES → update_docs. Docs are stale; code is fine.
+    // traversal_cap="3": after 3 traversals the back-edge is suppressed and the
+    // cascade reports a cap-hit failure (WG-028 / EM-043).
+    review_sync -> update_docs [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (6) CODE_CHANGE → change_code. Code itself needs revision.
+    // traversal_cap="2": capped at 2 traversals (WG-028 / EM-043).
+    review_sync -> change_code [
+        condition="outcome.preferred_label == 'CODE_CHANGE'",
+        traversal_cap="2"
+    ];
+
+    // (7) BLOCK → close-needs-attention. Reviewer signalled escalation needed.
+    review_sync -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (8) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches unrecognized or absent preferred_label values. MUST appear last.
+    review_sync -> "close-needs-attention";
+}

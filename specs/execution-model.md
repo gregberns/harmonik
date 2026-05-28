@@ -277,9 +277,21 @@ The daemon's claim path MUST resolve a run's `(model, effort)` pair (the `ModelP
 3. **Per-agent-type compiled default.** A static map keyed by `core.AgentType` providing a `(model, effort)` pair. Lives adjacent to the handler adapter wiring; entries are normative for the binding they describe and additive over time.
 4. **Built-in fallback.** Empty for both fields — the handler tool applies its own default.
 
-`model` and `effort` are resolved independently: each walks the tier list separately, and the first non-empty value wins for that field. Resolution MUST run exactly once per run at claim time. The resolved `(model, effort)` pair MUST be sealed into the Run record as a `ModelPreference` descriptor (per §6.1) before any node in the run is dispatched and MUST NOT be re-evaluated for the lifetime of the run. The resolved pair MUST be surfaced on the `run_started` event payload per [event-model.md §8.1] for downstream consumers.
+`model` and `effort` are resolved independently: each walks the tier list separately, and the first non-empty value wins for that field. The tier walk MUST run exactly once per run at claim time. The resolved `(model, effort)` pair MUST be sealed into the Run record as a `ModelPreference` descriptor (per §6.1) before any node in the run is dispatched, and the **tier walk** MUST NOT be re-evaluated for the lifetime of the run. The sealed pair is the **run-level default**: every node in the run uses it unless the node carries its own per-node override (EM-012b-NODE). The resolved pair MUST be surfaced on the `run_started` event payload per [event-model.md §8.1] for downstream consumers.
 
 The `ModelPreference` descriptor is opaque to harmonik below the descriptor layer: harmonik validates the **shape** of `model` (see §6.1 for the normative invariants), not its value. Handler-side launch failure is the authoritative compatibility check for whether the resolved model is accepted by the underlying tool.
+
+**EM-012b-NODE — Per-node override (tier 0).** Under `workflow_mode = dot`, an `agentic` node MAY carry a `model` and/or `effort` attribute per [workflow-graph.md §4 WG-042]. When present, the node's attribute value takes precedence over the run-level `ModelPreference` default (the tiers-1..4 result sealed per EM-012b) **for that node's dispatch only**. The per-node value is **static graph data** read from the already-loaded, already-validated workflow graph at the moment that node is dispatched; it is NOT a second resolution walk and MUST NOT re-evaluate bead labels (tier 1), project config (tier 2), compiled defaults (tier 3), or the fallback (tier 4). The run-level `ModelPreference` sealed into the Run record (§6.1) at claim time is unchanged by per-node overrides; the override is applied when the per-node launch specification is built, by substituting the node's value into that single node's launch `(model, effort)`. `model` and `effort` override independently: a node carrying only `model` inherits the run-level `effort`, and a node carrying only `effort` inherits the run-level `model`. Because the resolution inputs (the claim-time run-level seal plus the static graph attributes fixed at load time) are both immutable for the run's lifetime, replay determinism is preserved: a replay re-derives the same per-node `(model, effort)` for every node. The per-node value is opaque below the descriptor layer on the same terms as the run-level pair (shape-validated `model`, closed-enum `effort`; handler-side launch failure is authoritative).
+
+Informative precedence summary, highest first:
+
+```
+tier 0  per-node attr (model="…" / effort="…" on the agentic node)   [EM-012b-NODE; static graph data, per node]
+tier 1  per-task bead label (model:<alias> / effort:<level>)         (EM-012b, run-level)
+tier 2  per-project .harmonik/config.yaml                            (EM-012b, run-level)
+tier 3  per-agent-type compiled default                              (EM-012b, run-level)
+tier 4  built-in fallback (empty)                                    (EM-012b, run-level)
+```
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -384,6 +396,8 @@ The cycle MUST observe:
 
   Tags (sub-clause EM-015d-RIA): mechanism
   Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+- **Implementer commit obligation is review-loop-scoped.** Under `workflow_mode = review-loop`, the implementer phase MUST advance the worktree HEAD (produce a commit) before the reviewer is launched; a clean implementer exit that does not advance HEAD is a cycle-internal failure routed per [handler-contract.md §4.6]. This commit obligation is specific to `review-loop` mode and does NOT apply to `workflow_mode = dot`. A `dot`-mode `agentic` node MAY relax the HEAD-advance requirement via the per-node `non_committing` attribute per [workflow-graph.md §4 WG-041]; that relaxation is gated on the per-node attribute and never reaches the `review-loop` path.
 
 The `review-loop` cycle is NOT a sub-workflow per §4.8; the `EM-034` sub-workflow-expansion rule does not apply. Sub-workflow nodes MAY appear inside a node-level workflow whose `workflow_mode = single`, but `review-loop` itself is mode-driven, not graph-driven.
 
@@ -978,6 +992,7 @@ RECORD Workflow:
     metadata           : Map<String, String> -- free-form key/value
     workflow_class     : String | None      -- optional class tag; at MVH the only accepted value is "reconciliation" (flags the §4.5.EM-026 exception); absence means ordinary workflow. Validator per §4.9.EM-038 MUST reject any other non-None value.
     schema_version     : Integer            -- N-1 readable per §4.4.EM-022
+    goal               : String | None     -- optional graph-level objective per [workflow-graph.md §4 WG-044]; threaded into agentic-node briefs via the run-level ExtraContext channel (§7.5); MAY contain template-param placeholders substituted at launch (§7.5, [workflow-graph.md §4 WG-045])
 ```
 
 ```
@@ -986,7 +1001,7 @@ RECORD Node:
     type                : NodeType        -- one of {agentic, non-agentic, gate, sub-workflow}; see §4.2.EM-006 (control-point removed per C1 bundle)
     handler_ref         : String | None   -- required when type ∈ {agentic, non-agentic, gate}; forbidden on sub-workflow; see §4.2.EM-007 (EM-060 amendment)
     agent_type          : String | None   -- agent-type identifier per [architecture.md §6.1 AR-025]; required when type = agentic; DOT routing hint per [handler-contract.md §4.2]; e.g., "claude-code", "pi"
-    timeout             : Integer | None  -- positive seconds
+    timeout             : Integer | None  -- positive seconds; when node is a tool node (carries tool_command), also serves as the wall-clock kill bound (default 300); see [workflow-graph.md §4 WG-039]
     required_skills     : List<String>    -- resolved per [control-points.md §4.11]
     policy_ref          : String | None   -- see [control-points.md §6.3]
     gate_ref            : String | None
@@ -996,6 +1011,11 @@ RECORD Node:
     axes                : AxisTags        -- four-axis classification per [architecture.md §4.1]
     mode_tag            : ModeTag         -- one of {mechanism, cognition}
     sub_workflow_ref    : String | None   -- required when type = sub-workflow
+    model               : String | None   -- optional per-node model override; shape-validated per EM-012b-NODE; valid only when type = agentic; overrides the run-level ModelPreference.model for this node's dispatch; see [workflow-graph.md §4 WG-042]
+    effort              : EffortLevel | None -- optional per-node effort override; closed enum (§6.1 EffortLevel); valid only when type = agentic; overrides the run-level ModelPreference.effort for this node's dispatch; see [workflow-graph.md §4 WG-042]
+    tool_command        : String | None   -- optional shell command for a non-agentic tool node; valid only when type = non-agentic; dispatched by the built-in shell handler [handler-contract.md §4.1 HC-063]; reuses Node.timeout as kill bound; see [workflow-graph.md §4 WG-039]
+    prompt              : String | None   -- optional inline brief; replaces bead-derived body for implementer-class agentic nodes; reviewer-class inert at v1; see [workflow-graph.md §4 WG-040]
+    non_committing      : Boolean         -- default false; when true on an implementer-class agentic node, a clean exit yields SUCCESS without requiring HEAD-advance; see [workflow-graph.md §4 WG-041]
 ```
 
 ```
@@ -1042,6 +1062,7 @@ RECORD Run:
     context            : Map<String, Any>     -- shared context; updated per §4.10.EM-041a; reserved keys under workflow_mode=review-loop per §4.3.EM-012: iteration_count, last_verdict, claude_session_id, last_diff_hash
     start_time         : Timestamp            -- RFC 3339 wall clock
     end_time           : Timestamp | None     -- set on terminal transition
+    template_params    : Map<String, String> | None  -- per-run template-param map supplied at launch (--param KEY=VALUE per §7.5); sealed at claim time, applied exactly once to the raw .dot source before parse per [workflow-graph.md §4 WG-045]; None when no params supplied; sealing makes a replay re-substitute identically
 ```
 
 ```
@@ -1185,6 +1206,10 @@ See §8 for per-class detection rule, default response, escalation path, and emi
 All schemas in this spec carry a `schema_version` integer. The compatibility contract is N-1 readable per [operator-nfr.md §4.5]: a reader MUST accept the immediately prior schema version (N-1); breaking changes require a migration release scheduled at an operator pause per [operator-nfr.md §4.3]. Additive changes (new optional field) are non-breaking and bump the version; renaming or removing fields is breaking.
 
 **v0.3.3 → v0.3.4 — `Outcome.failure_class` additive + `gate_decision` kind value.** EM-005c adds the optional `failure_class` field to the `Outcome` record; EM-005b adds `gate_decision` to the `OutcomeKind` enum. Both changes are coordinated at v0.3.4. v0.3.3 readers treat `failure_class` as unknown-and-optional and fall through to sentinel-based classification per [handler-contract.md §4.5 HC-020]; v0.3.4 readers consult the field as a hint and override with the daemon's classification on disagreement. v0.3.3 readers encountering `kind = gate_decision` MUST route to reconciliation Cat 6a per [reconciliation/spec.md §8.11], NOT silently degrade to `default`. The bump is additive — no existing field is renamed or removed — and N-1 readability per §6.4 is preserved on both directions.
+
+**attractor-parity — `Node` new optional fields (additive).** `Node.model`, `Node.effort`, `Node.tool_command`, `Node.prompt`, and `Node.non_committing` are new optional `Node` fields (additive, non-breaking, N-1 readable per §6.4 and [workflow-graph.md §11 WG-034]); `Node.timeout` is a reused slot whose comment is extended to cover tool-node kill-bound semantics. A reader at the prior schema treats the new fields as unknown-and-absent; the `timeout` field is already present.
+
+**attractor-parity — `Workflow.goal` and `Run.template_params` (additive).** `Workflow.goal` and `Run.template_params` are new optional fields (additive, non-breaking, N-1 readable); a `goal=""` graph runs bead-driven and a run with no `template_params` performs a no-op substitution pass.
 
 ### 6.5 Co-owned event payloads
 
@@ -1375,10 +1400,22 @@ The general workflow-graph vocabulary this subsection consumes — DOT artifact 
 For a run whose `workflow_mode = dot` (resolved per §4.3.EM-012a), the daemon's claim path MUST resolve the run's workflow artifact through the following ordered ingestion pipeline, executing entirely before §7.4 `execute_workflow` begins for the run:
 
 1. **Locate the `.dot` artifact.** The artifact path is derived from the workflow-mode resolution chain per §4.3.EM-012a tier 3 (per-daemon configuration) and tier 4 (built-in fallback, where the fallback maps `dot` mode to a canonical default `.dot` artifact registered with the daemon). Per-bead override of the artifact path via a bead-schema extension is deferred to a future BI-NNN requirement in [beads-integration.md]; at v1 the path is sourced from per-daemon configuration only.
-2. **Parse to AST.** The daemon MUST parse the `.dot` artifact to an in-memory graph AST conforming to the DOT subset defined by [workflow-graph.md §10 WG-031, §11 WG-033]. The parser library is an implementation detail; the parsed AST's surface MUST be sufficient to produce a §6.1 `Workflow` record without consulting any other store.
-3. **Convert AST to §6.1 `Workflow` record.** Conversion is mechanical: graph attributes (e.g., `workflow_id`, `version`, `schema_version`, `start_node`, `terminal_nodes`) populate the §6.1 `Workflow` header; node attributes populate §6.1 `Node` fields per [workflow-graph.md §4 WG-001/WG-002]; edge attributes populate §6.1 `Edge` fields per [workflow-graph.md §6 WG-013]. The conversion produces the same §6.1 record shape that §4.10 (cascade), §4.8 (sub-workflow), and §4.9 (validation) already consume for `single` and `review-loop` runs.
-4. **Run pre-run validator.** The daemon MUST then invoke the §4.9.EM-038 pre-run validator on the produced `Workflow` record, augmented with the `dot`-specific obligations of §7.5.3 below.
-5. **Return the `Workflow` record.** Only after steps 1–4 succeed MAY §7.4 `execute_workflow` begin. A failure at any step routes the run via §7.4's `queue.mark_item_failed(item, validation_failed)` path; no `run_started` event per §4.3.EM-015a is emitted.
+1a. **Accept per-run param map.** The `harmonik run` CLI (and the queue-item launch context) accepts repeated `--param KEY=VALUE` flags; the resulting `map[string]string` is the run's `template_params` (§6.1), sealed at claim time alongside `workflow_ref`. A run with no `--param` flags has `template_params = None` and the substitution pass of step 2a is a no-op.
+2. **Read raw source text.** The daemon MUST read the `.dot` artifact as raw text before parsing.
+2a. **Apply WG-045 substitution pass.** The daemon MUST apply the template-param substitution pass of [workflow-graph.md §4 WG-045] to the raw source text, replacing each `__KEY__` placeholder with the corresponding value from the sealed `template_params`. After substitution, any residual `__UPPER_SNAKE__` token is a launch-time error: the daemon MUST refuse to start the run and report the offending token(s) per [workflow-graph.md §4 WG-045]. A run with `template_params = None` skips substitution (no-op). This step MUST precede step 3 (the WG-046 ordering invariant: read source → substitute → parse → validate → dispatch).
+3. **Parse to AST.** The daemon MUST parse the substituted source text to an in-memory graph AST conforming to the DOT subset defined by [workflow-graph.md §10 WG-031, §11 WG-033]. The parser library is an implementation detail; the parsed AST's surface MUST be sufficient to produce a §6.1 `Workflow` record without consulting any other store.
+4. **Convert AST to §6.1 `Workflow` record.** Conversion is mechanical: graph attributes (e.g., `workflow_id`, `version`, `schema_version`, `start_node`, `terminal_nodes`, `goal`) populate the §6.1 `Workflow` header; node attributes populate §6.1 `Node` fields per [workflow-graph.md §4 WG-001/WG-002]; edge attributes populate §6.1 `Edge` fields per [workflow-graph.md §6 WG-013]. The conversion produces the same §6.1 record shape that §4.10 (cascade), §4.8 (sub-workflow), and §4.9 (validation) already consume for `single` and `review-loop` runs.
+5. **Run pre-run validator.** The daemon MUST then invoke the §4.9.EM-038 pre-run validator on the produced `Workflow` record, augmented with the `dot`-specific obligations of §7.5.3 below.
+6. **Surface `goal` into node briefs.** When the `Workflow.goal` field is non-empty, the daemon MUST surface it into every `agentic` node's task brief via the **run-level ExtraContext channel** (`AgentTaskPayload.ExtraContext`, rendered as the `## Extra Context` section of the `agent-task.md` artifact per [claude-hook-bridge.md §4 CHB-028]) as the run's stated objective. `goal` is constant across every node in the run and composes with — does NOT replace — any per-node `prompt` attribute (§4 WG-040) and the bead-derived body (see B↔E composition contract below).
+7. **Return the `Workflow` record.** Only after steps 1–6 succeed MAY §7.4 `execute_workflow` begin. A failure at any step routes the run via §7.4's `queue.mark_item_failed(item, validation_failed)` path; no `run_started` event per §4.3.EM-015a is emitted.
+
+**B↔E brief-composition contract (normative).** Both the graph-level `goal` (component E, run-level) and the node-level `prompt` (component B) write the `agentic`-node brief through the [claude-hook-bridge.md CHB-028] `agent-task.md` path. They MUST **compose, not double-inject**:
+
+- **`goal` (E, run-level)** is threaded via the **run-level ExtraContext channel** (`AgentTaskPayload.ExtraContext`, rendered as the `## Extra Context` section) as the run's stated objective. It is constant across every node in the run.
+- **`prompt` (B, node-level)** replaces the node-level task body (`AgentTaskPayload.Body`, rendered as the `## Task Description` section) for the node that carries it.
+- **bead-derived body** remains the node brief (the `## Task Description` Body) when no per-node `prompt` is present.
+
+`goal` and `prompt` occupy **distinct channels** (ExtraContext vs taskBody) and therefore do not collide; a node carrying both `goal` (run-level) and `prompt` (node-level) receives each exactly once. **Assembly order:** the `agent-task.md` renders `## Task Description` (the node body — `prompt` if present, else bead body) BEFORE `## Extra Context` (the run-level `goal`) — confirmed against `internal/workspace/agenttask_chb028.go` (`buildAgentTaskContent`: `Body` precedes `ExtraContext`).
 
 **Resume semantics.** On daemon restart, runs whose `workflow_mode = dot` MUST re-execute steps 1–4 against the same `.dot` artifact. The daemon MUST NOT trust a serialized prior parse tree; reparse is cheap and removes a serialization surface. The §6.1 `Workflow.workflow_id` and `workflow_version` produced by the post-restart reparse MUST be identical to the pre-restart values sealed on the Run record per §6.1. A mismatch (artifact mutated under-foot between claim time and restart) MUST route to reconciliation per [reconciliation/spec.md §8.4 Cat 3] (artifact-state divergence); the daemon MUST NOT silently proceed with the post-restart parse.
 
@@ -1416,7 +1453,7 @@ The §4.9.EM-038 pre-run validator, when invoked per §7.5.1.EM-055 step 4 again
 6. **Sub-workflow reference acyclicity.** Per §4.8.EM-034b, the sub-workflow reference graph MUST be acyclic. The validator MUST verify acyclicity transitively across the artifact registry resolved per §7.5.1.EM-055 step 1.
 7. **Required attributes by node type.** Each node MUST carry the attributes required for its declared `type` per the per-node-type attribute table in [workflow-graph.md §4 WG-001/WG-002]:
    - `agentic` nodes MUST carry `handler_ref` resolving to a handler registered per [handler-contract.md §4.1].
-   - `non-agentic` nodes MUST carry `handler_ref` resolving to a handler registered per [handler-contract.md §4.1]. (This obligation is the §4.2.EM-007 amendment per EM-060.)
+   - `non-agentic` nodes MUST carry `handler_ref` resolving to a handler registered per [handler-contract.md §4.1]. (This obligation is the §4.2.EM-007 amendment per EM-060.) When the node is a tool node (carries `tool_command` per [workflow-graph.md §4 WG-039]), `handler_ref` MUST be `shell`, resolving to the built-in `shell` handler per [handler-contract.md §4.1 HC-063]; the validator MAY emit a warning rather than fail when `tool_command` is present with a non-`shell` `handler_ref` at v1 (reserved to become a validation failure at the next schema major bump).
    - `gate` nodes MUST carry `gate_ref` resolving to a Gate policy per [control-points.md §6.3] AND `handler_ref` resolving to the Gate-evaluator handler registered per [control-points.md §4.12 CP-053/CP-054]. (This obligation is the §4.2.EM-007 amendment per EM-060.)
    - `sub-workflow` nodes MUST carry `sub_workflow_ref` resolving to another `.dot` artifact registered with the daemon per §7.5.1.EM-055 step 1. `sub-workflow` nodes MUST NOT carry `handler_ref` (the handler discipline is delegated to the expanded sub-workflow's nodes, per §4.8.EM-034).
 
@@ -1433,11 +1470,15 @@ For a `dot` run, §7.4 `execute_workflow`'s `dispatch_node` step MUST dispatch t
 | Node type | Dispatch action | Outcome contract |
 |---|---|---|
 | `agentic` | Launch the handler referenced by the node's `handler_ref` per [handler-contract.md §4.1] (handler subprocess; LaunchSpec per [handler-contract.md §4.2]). | §4.1.EM-005 `Outcome` with `kind = default` per §4.1.EM-005a. Handler MAY emit any `status`; MAY emit `failure_class` as a hint on FAIL per the C3 amendment to [handler-contract.md §4.2a HC-058]. |
-| `non-agentic` | Invoke the handler referenced by the node's `handler_ref` per [handler-contract.md §4.1]. Same dispatch path as `agentic` at the spec layer; handler-internal determinism is the handler's responsibility per the node's four-axis tags (§4.2.EM-011). | §4.1.EM-005 `Outcome` with `kind = default` per §4.1.EM-005a. |
+| `non-agentic` | When the node carries `tool_command` and `handler_ref="shell"`: the built-in `shell` handler of [handler-contract.md §4.1 HC-063] executes the command in the run's worktree and applies the exit-state → Outcome mapping of HC-063 / [workflow-graph.md §4 WG-039]. The `shell` handler MAY run in-process (no subprocess, no socket) per the HC-063 exception. When the node carries no `tool_command` (start / terminal / pass-through node), the engine synthesizes a `SUCCESS` Outcome without dispatching a handler (the `internal/daemon/dot_cascade.go` in-process path). Otherwise (a non-agentic node bound to a non-`shell` handler), invoke the handler referenced by the node's `handler_ref` per [handler-contract.md §4.1]; handler-internal determinism is the handler's responsibility per the node's four-axis tags (§4.2.EM-011). | §4.1.EM-005 `Outcome` with `kind = default` per §4.1.EM-005a. |
 | `gate` | Launch the Gate-evaluator handler referenced by the node's `handler_ref` per [control-points.md §4.12 CP-053/CP-054], passing the node's `gate_ref` as input per [control-points.md §6.3]. | §4.1.EM-005 `Outcome`. Per [control-points.md §4.12 CP-053/CP-054], the Gate-evaluator handler's Outcome MAY use `kind = default` at v1; a future `kind = gate_decision` extension is reserved per §4.1.EM-005a's amendment protocol but is NOT required at v1 conformance. |
 | `sub-workflow` | Expand per §4.8.EM-034: pin the sub-workflow on the entry checkpoint per §4.8.EM-034c, push the node-ID namespace per §4.8.EM-034a, and descend into the expanded sub-graph. The cascade and durability decision continue to apply within the expansion. | The sub-workflow's terminal-node `Outcome` propagates verbatim to the parent's cascade per §4.8.EM-036a. |
 
 The table is **load-bearing for implementer epics** (the dispatcher in `internal/daemon/` consumes this table to wire the per-type dispatch fork); it is NOT a new state machine. The `agentic`-vs-`non-agentic` distinction collapses at the spec-layer dispatch action (both go through the handler registry) but is preserved at the node-type catalog layer because the four-axis tags per §4.2.EM-011 (`llm-freedom`, `io-determinism`, `replay-safety`, `idempotency`) and the idempotency-class default per §4.2.EM-010 differ between the two types.
+
+> **Non-agentic dispatch sub-note (component A).** The `non-agentic` row admits three dispatch paths distinguished by node content: (1) a tool node (`tool_command` + `handler_ref="shell"`) runs the built-in `shell` handler per [handler-contract.md §4.1 HC-063], which MAY execute in-process; (2) a start / terminal / pass-through node (no `tool_command`) is synthesized to `SUCCESS` without a handler dispatch; (3) any other `non-agentic` node invokes its bound `handler_ref` via the handler registry exactly as `agentic` does. The "invoke the handler referenced by `handler_ref`" dispatch action of the prior EM-058 row is preserved for path (3); paths (1) and (2) are the spec-layer reconciliation of the in-process behavior at `internal/daemon/dot_cascade.go`.
+>
+> **Non-committing `agentic` dispatch sub-note (component C).** For a `dot`-mode implementer-class `agentic` node, the engine derives the node Outcome after a clean agent exit as follows: if the node carries `non_committing="true"` per [workflow-graph.md §4 WG-041], a clean exit yields `Outcome{status = SUCCESS}` regardless of whether the worktree HEAD advanced; otherwise a clean exit that did NOT advance HEAD is a node failure. A worktree whose HEAD cannot be resolved at all is a daemon-side error in BOTH modes (a broken worktree is a real failure). This derivation is `dot`-mode-only; `review-loop` mode's implementer commit obligation per §4.3 EM-015d is unchanged.
 
 Tags: mechanism
 

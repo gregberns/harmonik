@@ -107,11 +107,40 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=unsafe; idempotency=idempotent
 
+#### HC-063 — Built-in `shell` handler for tool nodes
+
+The `shell` handler is a built-in deterministic handler bound by the reserved `handler_ref="shell"` per [workflow-graph.md §4 WG-039]. It dispatches a `non-agentic` tool node by executing the node's `tool_command` and mapping the command's exit state to an `Outcome` per [execution-model.md §4.1 EM-005].
+
+**Invocation.** The `shell` handler executes `/bin/sh -c <tool_command>` with the working directory set to the run's `workspace_path` (the worktree per [workspace-model.md §4.1]) and the daemon's handler environment. The command is killed if it exceeds the node's `timeout` (default `300` seconds per [workflow-graph.md §4 WG-039]).
+
+**In-process exception (normative).** The `shell` handler is a built-in deterministic handler and MAY execute IN-PROCESS within the daemon: it has no agent subprocess, no NDJSON progress stream (§4.2 HC-007 / HC-007a), no `agent_ready` signal (§4.9 HC-039), no heartbeat (§4.6 HC-026a), and no silent-hang detection (§4.6 HC-026). The §4.2 wire-protocol obligations (HC-005 through HC-010), the §4.9 ready-state obligations, and the §4.6 silent-hang obligations DO NOT apply to the `shell` handler. The `timeout` kill-bound replaces silent-hang detection as the liveness guard. This is the sole built-in-handler exception at v1; all agent-dispatching handlers remain subprocess-and-socket-bound per §4.2 HC-007.
+
+**Outcome.** The `shell` handler emits an `Outcome` with `kind = default` per [execution-model.md §4.1 EM-005a]; no `payload`. The handler does NOT emit a `failure_class` hint; classification is daemon-side per §4.5 HC-020 and the exit-state mapping below (the daemon back-fills `failure_class` on FAIL per HC-059 / [execution-model.md §4.1 EM-005c]). The exit-state → Outcome mapping is:
+
+| Exit state | `status` | `failure_class` |
+|---|---|---|
+| exit 0 | `SUCCESS` | (absent) |
+| exit non-zero (1..255) | `FAIL` | `deterministic` |
+| timeout-kill (exceeded `timeout`) | `FAIL` | `transient` |
+| signal-kill (context cancel / operator stop / SIGKILL) | `FAIL` | `canceled` |
+
+A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model.md §4.10 EM-041]; it is NOT a daemon-side error that reopens the run. Author-declared per-command transient exit codes are reserved for a future schema version and are NOT supported at v1 (every non-zero exit is `deterministic`). The `shell` handler never emits `structural`, `budget_exhausted`, `compilation_loop`, or `partial_success`.
+
+**Boundary-classification tags.** The `shell` handler's default four-axis tags per [execution-model.md §4.2 EM-011] are `io-determinism = non-deterministic` (shell commands have side effects) and `replay-safety = unsafe` (re-running a side-effecting command may double-apply). A tool node's author MAY declare tighter `axis_tags` per [workflow-graph.md §4 WG-039] when the specific command is known-idempotent.
+
+**Trust boundary.** Per [workflow-graph.md §4 WG-039], `tool_command` is a literal shell string from the trusted `.dot` author; the `shell` handler performs no sandboxing or escaping at v1.
+
+**Observability.** A tool node reuses the existing node-lifecycle observability surface: `node_dispatch_requested` ([event-model.md §8.1.11]) fires before dispatch, and the command's result flows through the standard `Outcome` surface and run-terminal events. No `tool_command_completed` event is introduced at v1 (per the integration-pass observability decision; per-command lifecycle events are deliberately excluded by [event-model.md §8]'s lifecycle-boundary discipline).
+
+Tags: mechanism, normative
+
 ### 4.2 Wire protocol
 
 #### HC-005 — LaunchSpec delivery is JSON-on-stdin by default; file-path when over 1 MiB
 
 The daemon MUST deliver the LaunchSpec to the handler subprocess via ONE of two mechanisms: (a) JSON on stdin (default, for LaunchSpec payloads ≤ 1 MiB), or (b) a file-path argument `--launch-spec <path>` pointing at a JSON file (for LaunchSpec payloads > 1 MiB). The handler MUST accept both forms. Selection MUST be driven by payload size at call time, NOT by handler type.
+
+The wire-protocol obligations of this section (HC-005 through HC-010) apply to handlers that launch an agent subprocess. Built-in deterministic handlers MAY execute in-process and are exempt as declared by their own requirement; the only such handler at v1 is the `shell` handler of §4.1 HC-063, which has no subprocess, no socket, and no progress stream. No other handler is exempt from §4.2 at v1.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -160,6 +189,8 @@ The implementation in `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchS
 **Testability note:** Each row above is independently testable. The idempotency key composition `(run_id, node_id, phase, iteration_count)` per HC-004 provides the natural test oracle: a conforming implementation MUST produce distinct `(phase, iteration_count)` tuples for distinct rows, and identical tuples MUST return the same `Session` rather than spawn a second subprocess.
 
 **Test-hookpoint sensor:** The `internal/operatornfr/` package does not currently contain a LaunchSpec phase-coverage test that exercises all three phases of `buildClaudeLaunchSpec` end-to-end. The `reviewloopstatus_on035a_test.go` file verifies the `phase` field in the operator-visible status event surface (`TestON035a_PhaseSetIsComplete`, line 234) and serves as a partial sensor. A dedicated test asserting that `buildClaudeLaunchSpec` produces the required per-phase `argv` and `claude_session_id` distinctions would close this gap; track as a follow-up bead against `internal/daemon/` (target: `TestHC006a_PerPhaseLaunchSpecInvariants`).
+
+The `agent-task.md` Body for a `dot`-mode implementer-class `agentic` node MAY be sourced from the node's `prompt` attribute per [workflow-graph.md §4 WG-040], overriding the bead-derived body; the bead `Title` and bead ID remain in the header. This override is `dot`-mode-only and does not apply to `review-loop` phases. No LaunchSpec required field (HC-006), no wire-protocol obligation, and no Outcome obligation changes — `prompt` affects the rendered task-artifact Body only. A graph-level `goal` ([workflow-graph.md §4 WG-044]), when present, is rendered into the SAME `agent-task.md` artifact's `## Extra Context` section via the run-level ExtraContext channel; `goal` and `prompt` occupy distinct sections and do not double-inject (see [execution-model.md §7.5]).
 
 Tags: mechanism
 
@@ -233,6 +264,10 @@ The node-type taxonomy is the collapsed 4-type taxonomy from [execution-model.md
 | **sub-workflow** | N/A — sub-workflow boundary nodes MUST NOT emit an Outcome. | N/A | N/A | N/A | N/A. The parent's cascade observes the last-expanded-node's Outcome verbatim per [execution-model.md §4.10 EM-036a], including `kind`, `payload`, `failure_class`, and `context_updates`. Sub-workflow handler authors MUST NOT write a synthetic terminal Outcome at the boundary; the boundary is a graph-level construct, not a handler dispatch site. |
 
 **Testability note** (mirrors §4.2.HC-006a): each row is independently testable against the twin handler harness per §4.8. A conforming handler asserts MUST clauses by Outcome shape (e.g. a gate handler emitting `RETRY` is non-conforming and the twin MUST flag it).
+
+**Shell-handler `failure_class` note (component A).** For a tool node dispatched by the built-in `shell` handler of §4.1 HC-063, `failure_class` is daemon-classified from the command's exit state per HC-063 (`deterministic` on non-zero exit, `transient` on timeout, `canceled` on signal); the `shell` handler emits no hint. The `shell` handler emits only `SUCCESS` or `FAIL` (never `RETRY` or `PARTIAL_SUCCESS`) at v1.
+
+**SUCCESS-without-commit note (component C).** A `dot`-mode `agentic` node MAY emit `status = SUCCESS` without the run having produced a commit when the node is `non_committing` per [workflow-graph.md §4 WG-041]. `SUCCESS`-without-commit is already a legal Outcome per [execution-model.md §4.1 EM-005]; it is not a new Outcome shape and imposes no new handler obligation. The HEAD-advance expectation that gates a non-`non_committing` implementer node is an engine-side derivation per [execution-model.md §7.5], not a handler-contract obligation.
 
 Tags: mechanism
 

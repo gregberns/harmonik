@@ -82,8 +82,8 @@ The following table is normative for the v1.0 schema. Each row declares one node
 
 | `type` (ID) | category | required attrs | optional attrs | legal outcome statuses | Outcome `kind` surface | handler-contract anchor |
 |---|---|---|---|---|---|---|
-| `agentic` | LLM-driven | `agent_type`, `handler_ref` | `idempotency_class`, `axis_tags`, `skills_ref`, `freedom_profile_ref`, `budget_ref`, `hook_ref`, `guard_ref` | SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS | `handler_outcome` | [handler-contract.md §4.5] |
-| `non-agentic` | deterministic | `handler_ref` | `idempotency_class`, `axis_tags`, `budget_ref`, `hook_ref`, `guard_ref` | SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS | `handler_outcome` | [handler-contract.md §4.5] |
+| `agentic` | LLM-driven | `agent_type`, `handler_ref` | `prompt`, `non_committing`, `model`, `effort`, `idempotency_class`, `axis_tags`, `skills_ref`, `freedom_profile_ref`, `budget_ref`, `hook_ref`, `guard_ref` | SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS | `handler_outcome` | [handler-contract.md §4.5] |
+| `non-agentic` | deterministic | `handler_ref` | `tool_command`, `timeout`, `idempotency_class`, `axis_tags`, `budget_ref`, `hook_ref`, `guard_ref` | SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS | `handler_outcome` | [handler-contract.md §4.5] |
 | `gate` | policy-decision | `gate_ref` | `axis_tags`, `hook_ref` | SUCCESS, FAIL | `gate_decision` | [control-points.md §4.5] |
 | `sub-workflow` | composition | `sub_workflow_ref`, `workflow_version` | `input_mapping`, `axis_tags`, `hook_ref`, `guard_ref` | SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS | (inherited from inner run's terminal node) | [execution-model.md §4.10 EM-034] |
 
@@ -91,6 +91,8 @@ Notes:
 - `policy_ref` has been removed from all optional-attribute lists. The name is reserved-and-rejected; see [control-points.md §4.12 CP-056]. A loader MUST NOT accept `policy_ref` as a node attribute; doing so is an ingest error (see §10 WG-031).
 - `skills_ref` and `freedom_profile_ref` are the typed `*_ref` family per [control-points.md §4.13 CP-055].
 - The `*_ref` family is by-name binding per [control-points.md §4.13 CP-036]: the loader resolves each `*_ref` against the policy YAML the workflow loads alongside its DOT artifact; an unresolved reference is an ingest error (§10 WG-026).
+- `prompt` (§4 WG-040), `non_committing` (§4 WG-041), `model`, and `effort` (§4 WG-042) are valid ONLY on `agentic` nodes. `model`/`effort` are the highest-precedence (tier-0) input to the model/effort resolution chain of [execution-model.md §4.3 EM-012b]; when present they override the run-level default for the node that carries them. `class` and `model_stylesheet` are INFORMATIVE-only at v1.0 (see §4 WG-043); a loader MUST accept them permissively per §10 WG-031/WG-032 and MUST NOT dispatch on them.
+- `tool_command` and `timeout` (§4 WG-039) are valid ONLY on `non-agentic` nodes; a `non-agentic` node carrying `tool_command` is a **tool node** dispatched by the built-in `shell` handler ([handler-contract.md §4.1 HC-063]).
 
 Tags: mechanism, normative
 
@@ -137,6 +139,99 @@ Tags: mechanism, normative
 ### WG-008 — Idempotency-class attribute
 
 A node's `idempotency_class` attribute, when present, MUST be one of `{idempotent, non-idempotent, recoverable-non-idempotent}` per [execution-model.md §4.2 EM-009]. The attribute is required on `agentic` and `non-agentic` nodes per [execution-model.md §4.2 EM-010]; it is forbidden on `gate` and `sub-workflow` nodes. Reconciliation behavior driven by this tag is owned by [execution-model.md §4.2 EM-009] and [reconciliation/spec.md §8].
+
+Tags: mechanism, normative
+
+### WG-039 — Tool-command attributes on `non-agentic` nodes
+
+A `non-agentic` node MAY carry a `tool_command` (string) optional attribute. When `tool_command` is present, the node is a **tool node**: at dispatch time the run executes `tool_command` as a shell command in the run's worktree per the built-in `shell` handler of [handler-contract.md §4.1 HC-063], and the command's exit state is mapped to an Outcome per [handler-contract.md §4.1 HC-063] / §7 WG-017.
+
+A `non-agentic` node MAY carry a `timeout` (integer, seconds) optional attribute. `timeout` is the wall-clock kill bound for the command; when absent, the loader applies a default of `300` seconds. `timeout` is only meaningful on a node that also carries `tool_command`; a `timeout` attribute on a `non-agentic` node without `tool_command` is retained in the AST and ignored.
+
+A `non-agentic` node WITHOUT `tool_command` is unchanged from prior behavior: it carries no tool semantics and its handler dispatch is governed by the §4 WG-002 `non-agentic` row and [handler-contract.md §4.1].
+
+A tool node MUST carry `handler_ref="shell"` (the built-in shell handler of [handler-contract.md §4.1 HC-063]). The `handler_ref="shell"` requirement satisfies the §4 WG-002 `non-agentic` row's required-`handler_ref` obligation and [execution-model.md §7.5.3 EM-057] item 7. A `tool_command` present on a node whose `handler_ref` is not `shell` is a validation warning at v1 (the loader emits the §10 WG-031 warning event and retains the node); it is reserved to become a strict error at the next schema major bump.
+
+**Trust boundary (normative).** `tool_command` is a literal shell string supplied by the `.dot` author. The `.dot` author is a trusted operator. At v1 the value is passed verbatim to `/bin/sh -c`; there is NO sandboxing, NO argument escaping, and NO allow-list of permitted commands. A workflow that admits an untrusted `.dot` author admits arbitrary command execution in the run's worktree under the daemon's privileges. Operators MUST treat `.dot` artifacts as trusted code, equivalent to a checked-in shell script.
+
+Tags: mechanism, normative
+
+### WG-040 — Inline prompt attribute on `agentic` nodes
+
+An `agentic` node MAY carry a `prompt` (string) optional attribute. `prompt` is the node's brief: the natural-language instruction the agent receives for this node's dispatch.
+
+When `prompt` is present on an **implementer-class** `agentic` node, it REPLACES the bead-derived task body for that node's dispatch: the agent's task brief is `prompt` verbatim, not the bead's body. The bead `Title` and bead ID remain in the per-dispatch task artifact's header for traceability (per [handler-contract.md §4.2 HC-006a, the `agent-task.md` content row]); only the body is overridden.
+
+When `prompt` is absent, the node's brief is the bead-derived body, exactly as prior behavior.
+
+`prompt` is **input-only**: it affects the task brief delivered to the agent and does NOT alter the Outcome contract ([execution-model.md §4.1 EM-005]), the routing cascade ([execution-model.md §4.10 EM-041]), or any handler-emitted field.
+
+`prompt` composes with a graph-level `goal` (§4 WG-044): `goal` is the run-level objective threaded via the run-level ExtraContext channel, while `prompt` is the node-level task body; they occupy distinct channels and do NOT double-inject (see [execution-model.md §7.5] launch-surface and the B↔E composition note).
+
+**Reviewer-class scope (v1).** A `prompt` on a **reviewer-class** `agentic` node (resolved by the node's reviewer-class binding, e.g. `agent_type="reviewer"` / `handler_ref="claude-reviewer"`) is accepted-but-inert at v1: the reviewer's brief is sourced from the review-target artifact per [execution-model.md §4.3 EM-015d (sub-clause EM-015d-RIA)] and is NOT overridden by `prompt`. The loader retains the `prompt` attribute in the AST and emits no error; the value is ignored for reviewer-class dispatch. Reviewer-class `prompt` override is reserved for a future schema version.
+
+A `prompt` on a `non-agentic` or `gate` node is a validation warning at v1 per §10 WG-031 (those node types dispatch no agent that reads a brief); the value is retained in the AST and ignored.
+
+Tags: mechanism, normative
+
+### WG-041 — Non-committing attribute on `agentic` nodes
+
+An `agentic` node MAY carry a `non_committing` (boolean) optional attribute. When `non_committing="true"` on an **implementer-class** `agentic` node, the node returns `SUCCESS` on a clean agent exit WITHOUT requiring the worktree HEAD to advance past its pre-launch value; the engine does NOT treat a no-commit clean exit as a failure for that node. When `non_committing` is absent or `"false"` (the default), an implementer-class node that exits cleanly without advancing HEAD is a node failure, as in prior behavior.
+
+A `non_committing` clean exit yields `Outcome{status = SUCCESS}` at v1; the engine does NOT inspect a work product, an embedded `{"status":...}` marker, or any other artifact to derive a non-`SUCCESS` outcome from a `non_committing` node. SUCCESS-without-commit is already a legal Outcome per [execution-model.md §4.1 EM-005]; `non_committing` relaxes an engine-side HEAD-advance check, it does not introduce a new Outcome shape.
+
+**Authoring rule (normative).** A `non_committing` node produces no committed work product the engine validates; the engine cannot distinguish a good no-commit exit from a bad one. A workflow author MUST pair every `non_committing` node with a downstream validating `non-agentic` tool node (per §4 WG-039) that inspects the node's work product and exit-codes the routing decision. The engine does not enforce the pairing; it is an authoring obligation documented in the canonical example sidecar.
+
+**`auto_status` is reserved.** A `non_committing` node controls exactly one axis: commit-or-not. It does NOT derive status from a work product or an embedded marker. The attribute name `auto_status` is NOT accepted as a node attribute at v1 (it would mislead authors into expecting status-derivation that does not exist); `auto_status` is reserved for a future status-derivation feature. Pipelines ported from external `auto_status=true` semantics MUST use `non_committing="true"`.
+
+A `non_committing` attribute on a **reviewer-class** `agentic` node, a `non-agentic` node, or a `gate` node is a validation warning at v1 per §10 WG-031 (those dispatch paths do not reach the implementer HEAD-advance check); the value is retained in the AST and ignored.
+
+Tags: mechanism, normative
+
+### WG-042 — Per-node `model` / `effort` attributes on `agentic` nodes
+
+An `agentic` node MAY carry an optional `model` attribute and/or an optional `effort` attribute. When present, the attribute overrides the run-level `(model, effort)` pair sealed at claim time (per [execution-model.md §4.3 EM-012b]) **for that node's dispatch only** (the override mechanism is normative in [execution-model.md §4.3 EM-012b], sub-clause EM-012b-NODE).
+
+- **`model`** (string, optional). An opaque model alias. A loader MUST validate it for **shape only** — non-empty when present, matching `^[A-Za-z0-9._:/-]+$`, at most 128 characters — per the value-opacity invariant of [execution-model.md §4.3 EM-012b] and [execution-model.md §6.1] `ModelPreference`. harmonik MUST NOT verify that the value names a real model; handler-side launch failure is the authoritative compatibility check.
+- **`effort`** (string, optional). A loader MUST require the value to be a member of the closed enum `{low, medium, high, xhigh, max}` per [execution-model.md §6.1] `EffortLevel`. An out-of-enum `effort` value on a node attribute is an **ingest-time strict error**: the graph is static, so the loader MUST reject it at load and the run MUST NOT start. (This is stricter than tier-1's runtime bead-label path in [execution-model.md §4.3 EM-012b], which treats an unrecognised label as absent and emits `bead_label_conflict`; that runtime relaxation applies only to bead labels, not to static node attributes.)
+- `model` and `effort` are independent: a node MAY carry one without the other. A node carrying only `model` inherits the run-level `effort`, and vice versa.
+- Both attributes are valid ONLY on `agentic` nodes. A `model` or `effort` attribute on a `non-agentic`, `gate`, or `sub-workflow` node, on an edge, or at the graph level, is a reserved-attribute-out-of-position strict error per §10 WG-031.
+
+Tags: mechanism, normative
+
+### WG-043 — `class` / `model_stylesheet` (informative)
+
+Some upstream pipelines select per-node models via a graph-level CSS `model_stylesheet` (a `*`-default selector plus a `.hard`-class override) together with a per-node `class` attribute. harmonik does NOT interpret `class` or `model_stylesheet` at v1.0: a loader accepts them permissively per §10 WG-031/WG-032 (warned, retained in `UnknownAttrs`) and the dispatcher MUST NOT route on them. Neither name is added to the §10 WG-031 reserved set.
+
+To port such a pipeline to harmonik, translate each `.hard { llm_model: <model> }` rule plus `class="hard"` into a direct `model="<alias>"` attribute on each classed node (per §4 WG-042 and [execution-model.md §4.3 EM-012b] tier 0), and drop `llm_provider` (handler binding is fixed per [handler-contract.md §4.1 HC-003]). Promoting `model_stylesheet` to a normative selector mechanism (e.g. for more than two model tiers, or selector indirection) is a clean future amendment; the direct `model`/`effort` attributes remain the floor.
+
+Tags: informative
+
+### WG-044 — Graph-level `goal` attribute
+
+A `workflow_mode = dot` graph MAY carry a graph-level `goal` DOT attribute: a free-form string stating the run's objective. A loader MUST parse `goal` into the typed `Graph.Goal` field ([execution-model.md §6.1] Workflow RECORD); it is a reserved graph-level attribute name per §10 WG-031 (a `goal` attribute on a node or edge is a reserved-attribute-out-of-position strict error). When `goal` is present, the daemon MUST surface it to `agentic`-node briefs (per [claude-hook-bridge.md §4 CHB-028]) as the run-level objective, threaded through the run-level ExtraContext channel ([execution-model.md §7.5]); it composes with — and does NOT replace — any per-node `prompt` attribute (§4 WG-040) and the bead-derived body. `goal` MAY contain template-param placeholders (§4 WG-045), which are substituted at launch before parse (§4 WG-045). A graph with no `goal` leaves the brief bead/prompt-driven, unchanged from prior behavior.
+
+`goal` joins `workflow_class` and `context_keys` as a typed, dispatcher-surfaced graph-level attribute.
+
+Tags: mechanism, normative
+
+### WG-045 — Template-param substitution over `.dot` source text
+
+A `.dot` source MAY contain template-param placeholders matching the grammar `__[A-Z][A-Z0-9_]*__` (double-underscore-delimited, an uppercase leading letter, then uppercase letters, digits, and underscores). At run launch, the daemon MUST apply a **single substitution pass over the raw `.dot` source text — before parsing the graph (before the §9 / [execution-model.md §7.5] parse step)** — replacing each placeholder with the corresponding value from the run's launch-time **param map**. The param-map key for a placeholder is the placeholder name with the delimiting double-underscores removed (the map key `ISSUE_NUMBER` substitutes the token `__ISSUE_NUMBER__`).
+
+Substitution scope is the **entire source text**, not the parsed AST: placeholders MAY appear inside any attribute value — `goal` (§4 WG-044), node `tool_command` (§4 WG-039), node `prompt` (§4 WG-040), or any other attribute — and a single source-text pass substitutes all of them uniformly. A loader MUST NOT substitute by walking the parsed AST (an AST walk would miss tokens in attributes the parser retains in `UnknownAttrs`).
+
+Substitution MUST occur exactly once, at launch, before parse and validation, and MUST NOT be re-applied during the run (parallels the resolve-once discipline of [execution-model.md §4.3 EM-012b]). The param map is sealed into the Run record ([execution-model.md §6.1]) so a replay re-substitutes identically.
+
+After the substitution pass, **any residual token matching the grammar `__[A-Z][A-Z0-9_]*__` is a launch-time error**: the daemon MUST refuse to start the run, MUST NOT dispatch a literal `__TOKEN__` into any node attribute or shell command, and MUST report the offending token(s). A `.dot` source containing no placeholders is unaffected (the pass is a no-op).
+
+**Trust boundary (normative).** Param values are operator-supplied and TRUSTED. Substitution occurs over raw source text before parse, so a param value MAY contain DOT syntax, shell metacharacters, or further `__…__` tokens; the daemon does NOT sanitize, escape, or quote param values, and a param value that injects malformed DOT surfaces as a normal parse/validation error against the substituted text. Operators MUST treat `--param` values with the same trust they treat the `.dot` artifact itself. (A param value that itself contains a `__UPPER_SNAKE__` token is substituted only by the single pass — the pass is not recursive — so such a token survives into the substituted text and trips the residual-token launch error of the preceding paragraph.)
+
+Tags: mechanism, normative
+
+### WG-046 — Substitution ordering invariant
+
+The load-to-dispatch ordering for a `workflow_mode = dot` run is: **read source → substitute params (§4 WG-045) → parse → validate (§9) → dispatch.** Because substitution precedes parse, every downstream consumer — node `tool_command` (§4 WG-039), node `prompt` (§4 WG-040), `goal` (§4 WG-044), and any validation rule of §9 — operates on the concrete (substituted) graph. A loader MUST NOT reorder these steps; in particular it MUST NOT validate or dispatch a graph carrying unsubstituted placeholders, and MUST NOT substitute after parse.
 
 Tags: mechanism, normative
 
@@ -327,6 +422,7 @@ A loader MUST check the following at parse time and reject the graph on any viol
 - Forbidden attributes are absent (e.g., `agent_type` on a `non-agentic` node, `idempotency_class` on a `gate` node, `policy_ref` on any node). NOTE: `handler_ref` is REQUIRED on `gate` and `non-agentic` nodes per the EM-007 amendment (see §4 WG-005, [execution-model.md §7.5]).
 - Each `*_ref` attribute resolves to a declaration in the run's policy YAML per [control-points.md §4.13 CP-036]; an unresolved reference is a strict error.
 - `idempotency_class`, where required, is a member of [execution-model.md §4.2 EM-009]'s closed enum.
+- On a `non-agentic` node carrying `tool_command`, `handler_ref` MUST equal `shell`. A `tool_command` on a node whose `handler_ref` resolves to any other handler is a warning at v1 per §10 WG-031 (not a strict error); the constraint is reserved to become strict at the next schema major bump. `timeout`, when present, MUST be a non-negative integer; a non-integer or negative `timeout` is a strict error.
 
 Tags: mechanism, normative
 
@@ -385,7 +481,9 @@ A loader MUST apply a **mixed** policy to attributes encountered during DOT pars
 **Strict positions** — an unknown value at one of the following positions is an ingest error; the run MUST NOT start:
 
 - The `type` attribute value on a node (closed enum per §4 WG-001).
-- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a).
+- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `tool_command`, `timeout`, `prompt`, `non_committing`, `model`, `effort`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a), `goal` (graph-level per §4 WG-044).
+
+  Position rules: `tool_command` / `timeout` are node-level (`non-agentic` only); `prompt` / `non_committing` / `model` / `effort` are node-level (`agentic` only); `goal` is graph-level. A name used outside its declared position is the WG-031 strict error and the run MUST NOT start. `class` and `model_stylesheet` are NOT in the reserved set (permissive/informative per WG-043). The WG-045 template-param surface is a load-time text transform, not an attribute, and adds no reserved name.
 - The RHS of an equality in an edge condition, when the RHS names a closed-enum member (per §7, [execution-model.md §4.1 EM-005], or [execution-model.md §4.1 EM-005a]).
 - The LHS of an edge condition (whitelist per §6 WG-014).
 
@@ -607,6 +705,12 @@ This fragment exercises: §6 WG-013 (`&&` conjunction), §6 WG-014 (`outcome.fai
 | §10 WG-031a `context_keys` graph-level DOT attribute | Promoted from C3 HC-062; OQ-WG-002 narrowed to type-pinning only. |
 | §11 WG-033 graph-level-only `schema_version` | New normative posture per `D10`. |
 | §12 WG-036 `specs/examples/` path | New normative posture per `D11`. |
+| §4 WG-039 tool-command attrs | New normative content per component A (attractor-parity); tool node = non-agentic + tool_command + handler_ref="shell"; built-in shell handler HC-063; trust-boundary normative. |
+| §4 WG-040 inline prompt | New normative content per component B (attractor-parity); per-node prompt REPLACES bead body for implementer-class nodes; reviewer-class inert at v1; input-only. |
+| §4 WG-041 non_committing | New normative content per component C (attractor-parity); implementer-class clean exit ⇒ SUCCESS without HEAD-advance; auto_status reserved/not-accepted; pair-with-validating-tool-node authoring rule. |
+| §4 WG-042 per-node model/effort | New normative content per component D (attractor-parity); OQ-2 resolved (direct attrs normative, model_stylesheet/class informative per WG-043). |
+| §4 WG-044 graph-level goal attr | New normative content per component E (attractor-parity); goal was previously an unknown permissive graph attr, now a typed reserved field threaded via ExtraContext. |
+| §4 WG-045/WG-046 template-param substitution | New normative content per component E (attractor-parity); pre-parse source-text substitution + residual-token launch error + ordering invariant. OQ-1 resolved: substitution point is LAUNCH, over raw source, before parse. |
 
 ### 16.2 Rationale for the control-point node-type removal
 

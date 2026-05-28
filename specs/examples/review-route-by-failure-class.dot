@@ -1,0 +1,170 @@
+// review-route-by-failure-class.dot — canonical SDLC failure-class routing workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §12 (review-route-by-failure-class topology)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//
+// Branches on outcome.failure_class (the third LHS whitelist entry), mapping
+// the closed failure-class taxonomy to disposition:
+//
+//   transient                              → retry the implementer (self-loop, cap=3)
+//   structural / deterministic / canceled  → close-needs-attention (operator required)
+//   budget_exhausted / compilation_loop    → close-needs-attention (operator required)
+//   SUCCESS (no failure_class)             → all failure-class conditions miss;
+//                                            falls through to unconditional reviewer handoff
+//
+// The close-needs-attention terminal IS the review-escalate-to-human surface per corpus §12:
+// BLOCK and cap-hit are both escalation triggers — no separate escalation gate needed.
+//
+// Also folds in the verdict cascade (same as review-loop): reviewer emits
+// APPROVE / REQUEST_CHANGES / BLOCK; REQUEST_CHANGES loops back to implementer
+// (capped at 3); BLOCK and fallback route to close-needs-attention.
+//
+// Live-run honesty: agents cannot be reliably forced to emit a given failure_class
+// on demand. Deterministic exercise of the non-transient branches requires a stub
+// handler (hk-1xsyu). The topology is valid now; scenario tests drive the branches
+// with synthetic outcomes.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The transient self-loop uses traversal_cap="3" per WG-028/EM-043: after 3
+//     retries the cascade reports cap_hit (FailureClass=compilation_loop).
+//   - SUCCESS outcomes carry no failure_class — all failure-class conditional edges
+//     evaluate to false, and the cascade falls through to the unconditional
+//     implementer→reviewer handoff (the last outgoing edge from implementer).
+//   - Terminal IDs use the hyphenated form (close, close-needs-attention) per C1.
+//   - The mandatory unconditional fallback edge appears LAST from each agentic node
+//     per WG-011 (D-edge-cascade-invariant).
+
+digraph "review-route-by-failure-class" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="review-route-by-failure-class";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implementer: agentic node bound to the claude-implementer handler.
+    // Retried on transient failure (self-loop, cap=3). Non-transient failure
+    // classes route directly to close-needs-attention. SUCCESS falls through
+    // unconditionally to the reviewer.
+    implementer [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change"
+    ];
+
+    // reviewer: agentic node bound to the claude-reviewer handler.
+    // Reached only on implementer SUCCESS. Emits preferred_label (APPROVE /
+    // REQUEST_CHANGES / BLOCK) driving the verdict cascade below.
+    reviewer [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="review the change"
+    ];
+
+    // close: terminal node for the APPROVE path. The change was accepted.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — merged"
+    ];
+
+    // close-needs-attention: terminal node for all non-success dispositions:
+    // structural / deterministic / canceled / budget_exhausted / compilation_loop
+    // failure classes from the implementer; transient cap-hit; reviewer BLOCK;
+    // reviewer REQUEST_CHANGES cap-hit; and the reviewer unconditional fallback.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="deterministic / structural / canceled / budget / cap — operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> implementer;
+
+    // (2) Failure-class routing on the implementer's outcome.
+    //     SUCCESS carries no failure_class — all conditions below evaluate to false
+    //     and the cascade falls through to the unconditional reviewer handoff (edge 8).
+    //
+    // (2a) transient → retry (self-loop). Capped at 3 traversals per WG-028/EM-043.
+    //      After cap-hit the cascade returns cap_hit / FailureClass=compilation_loop.
+    implementer -> implementer [
+        condition="outcome.failure_class == 'transient'",
+        traversal_cap="3"
+    ];
+
+    // (2b) structural → close-needs-attention.
+    implementer -> "close-needs-attention" [
+        condition="outcome.failure_class == 'structural'"
+    ];
+
+    // (2c) deterministic → close-needs-attention.
+    implementer -> "close-needs-attention" [
+        condition="outcome.failure_class == 'deterministic'"
+    ];
+
+    // (2d) canceled → close-needs-attention.
+    implementer -> "close-needs-attention" [
+        condition="outcome.failure_class == 'canceled'"
+    ];
+
+    // (2e) budget_exhausted → close-needs-attention.
+    implementer -> "close-needs-attention" [
+        condition="outcome.failure_class == 'budget_exhausted'"
+    ];
+
+    // (2f) compilation_loop → close-needs-attention.
+    //      Handles handler-emitted compilation_loop sentinels; distinct from the
+    //      cap-hit path (which is triggered by traversal_cap on edge 2a).
+    implementer -> "close-needs-attention" [
+        condition="outcome.failure_class == 'compilation_loop'"
+    ];
+
+    // (3) SUCCESS path — unconditional handoff to reviewer.
+    //     MUST appear last among implementer's outgoing edges so the cascade
+    //     evaluates all failure-class conditions first per WG-011.
+    implementer -> reviewer;
+
+    // (4) Verdict cascade on the reviewer's outcome.
+    //
+    // (4a) APPROVE → close.
+    reviewer -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4b) REQUEST_CHANGES → loop back to implementer (capped at 3 per WG-028/EM-043).
+    reviewer -> implementer [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (4c) BLOCK → close-needs-attention.
+    reviewer -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (4d) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    //      Catches unrecognized preferred_label values and absent-label outcomes.
+    //      MUST appear last so the dispatcher evaluates conditional edges first.
+    reviewer -> "close-needs-attention";
+}

@@ -1,31 +1,40 @@
 package daemon_test
 
 // mergetomain_dirtyledger_hk3yz2d_test.go — regression test for the pre-rebase
-// ledger-cleanup step added in hk-3yz2d.
+// churn-cleanup step added in hk-3yz2d and generalized in hk-aiw63.
 //
-// Bug: a live DOT-mode run walked the whole graph correctly but FAILED at the
-// final merge-to-main with:
+// Bug (hk-3yz2d): a live DOT-mode run walked the whole graph correctly but
+// FAILED at the final merge-to-main with:
 //
 //	rebase_conflict: exit status 1
 //	error: cannot rebase: You have unstaged changes.
 //	error: Please commit or stash them.
 //
-// The unstaged change was .beads/issues.jsonl — a TRACKED file that the daemon's
-// own `br` operations dirty (the shared SQLite DB flushes to the per-worktree
-// JSONL during a run). `git rebase main` refuses to start when the worktree has
-// unstaged changes, so the merge failed even though the agent produced a clean,
-// committed run-branch.
+// The first unstaged change was .beads/issues.jsonl — a TRACKED file that the
+// daemon's own `br` operations dirty (the shared SQLite DB flushes to the
+// per-worktree JSONL during a run). `git rebase main` refuses to start when the
+// worktree has unstaged changes, so the merge failed even though the agent
+// produced a clean, committed run-branch.
 //
-// The fix discards the UNCOMMITTED ledger churn in the worktree before the
-// rebase (discardDirtyBeadsLedger), because main is the canonical source of
-// truth for the ledger and the daemon owns all terminal bead transitions.
+// Bug (hk-aiw63): the IDENTICAL error persisted after the hk-3yz2d ledger fix.
+// The remaining culprit was .claude/settings.json — also a TRACKED file (the
+// root .gitignore covers only /.claude/worktrees/). The daemon's per-launch
+// MaterializeClaudeSettings (CHB-001..005) merges the hook-bridge entries +
+// permissions.allow into the worktree copy, and claude itself may further mutate
+// it, leaving it modified-but-unstaged. hk-3yz2d was deliberately narrow (ledger
+// only), so settings.json still aborted the rebase.
+//
+// The fix discards ALL UNCOMMITTED churn matching isHarmonikChurn before the
+// rebase (discardDirtyChurn) — the .beads ledger AND .claude/* — while leaving
+// any NON-churn dirty file untouched so a genuine implementer escape still fails
+// the rebase loudly (hk-i1n7j safety property).
 //
 // This is GENERAL (affects all workflow modes), not DOT-specific: every mode
 // routes its success path through mergeRunBranchToMain → the same in-worktree
 // `git rebase main`.
 //
 // Spec ref: specs/execution-model.md §4.12 EM-052 step 2.
-// Bead: hk-3yz2d.
+// Beads: hk-3yz2d, hk-aiw63.
 
 import (
 	"context"
@@ -68,6 +77,14 @@ func dirtyLedgerSetup(t *testing.T) string {
 	}
 	ledgerPath := filepath.Join(beadsDir, "issues.jsonl")
 	writeFile(t, ledgerPath, `{"id":"a","status":"open"}`+"\n")
+	// Commit a TRACKED .claude/settings.json so tests can dirty it the way a
+	// real run does (this repo tracks the file; the daemon's per-launch
+	// MaterializeClaudeSettings then mutates it). hk-aiw63.
+	claudeDir := filepath.Join(mainRepo, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil { //nolint:gosec // G301 test fixture
+		t.Fatalf("MkdirAll .claude: %v", err)
+	}
+	writeFile(t, filepath.Join(claudeDir, "settings.json"), `{"hooks":{}}`+"\n")
 	writeFile(t, filepath.Join(mainRepo, "code.txt"), "code\n")
 	dirtyLedgerGit(t, mainRepo, "add", "-A")
 	dirtyLedgerGit(t, mainRepo, "commit", "-m", "init")
@@ -99,11 +116,11 @@ func writeFile(t *testing.T, path, contents string) {
 	}
 }
 
-// TestDiscardDirtyBeadsLedger_AllowsRebase verifies the regression: a worktree
+// TestDiscardDirtyChurn_AllowsRebase verifies the regression: a worktree
 // whose .beads/issues.jsonl is dirty (uncommitted) can rebase onto main after
-// discardDirtyBeadsLedger runs. Without the fix, `git rebase main` aborts with
+// discardDirtyChurn runs. Without the fix, `git rebase main` aborts with
 // "cannot rebase: You have unstaged changes".
-func TestDiscardDirtyBeadsLedger_AllowsRebase(t *testing.T) {
+func TestDiscardDirtyChurn_AllowsRebase(t *testing.T) {
 	t.Parallel()
 
 	wtPath := dirtyLedgerSetup(t)
@@ -119,11 +136,11 @@ func TestDiscardDirtyBeadsLedger_AllowsRebase(t *testing.T) {
 	}
 
 	// Apply the fix.
-	daemon.ExportedDiscardDirtyBeadsLedger(context.Background(), wtPath)
+	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
 
 	// The worktree must now be clean.
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
-		t.Fatalf("after discardDirtyBeadsLedger: expected clean worktree; got:\n%s", status)
+		t.Fatalf("after discardDirtyChurn: expected clean worktree; got:\n%s", status)
 	}
 
 	// And the rebase must now succeed.
@@ -134,40 +151,97 @@ func TestDiscardDirtyBeadsLedger_AllowsRebase(t *testing.T) {
 	}
 }
 
-// TestDiscardDirtyBeadsLedger_PreservesOtherDirtyFiles verifies the fix is
-// narrow: it only discards .beads/issues.jsonl and leaves other uncommitted
-// changes intact (those must still surface as a rebase failure rather than be
-// silently reset — an implementer that escaped its worktree must fail loudly).
-func TestDiscardDirtyBeadsLedger_PreservesOtherDirtyFiles(t *testing.T) {
+// TestDiscardDirtyChurn_DiscardsClaudeSettings is the hk-aiw63 regression: a
+// dirty TRACKED .claude/settings.json (mutated by the per-launch
+// MaterializeClaudeSettings / claude itself) is restored so the rebase proceeds.
+// Before hk-aiw63, discardDirtyBeadsLedger handled only the ledger, so this
+// blocked every real merge-to-main where claude touched settings.
+func TestDiscardDirtyChurn_DiscardsClaudeSettings(t *testing.T) {
 	t.Parallel()
 
 	wtPath := dirtyLedgerSetup(t)
 
-	// Dirty both the ledger AND a real code file.
-	writeFile(t, filepath.Join(wtPath, ".beads", "issues.jsonl"),
-		`{"id":"a","status":"open"}`+"\n"+`{"id":"c","status":"closed"}`+"\n")
-	writeFile(t, filepath.Join(wtPath, "code.txt"), "code\nagent work\nUNCOMMITTED EDIT\n")
+	// Dirty ONLY .claude/settings.json (the ledger stays clean here — this
+	// isolates the hk-aiw63 culprit from the hk-3yz2d one).
+	writeFile(t, filepath.Join(wtPath, ".claude", "settings.json"),
+		`{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"harmonik"}]}]},"permissions":{"allow":["Read","Write"]}}`+"\n")
 
-	daemon.ExportedDiscardDirtyBeadsLedger(context.Background(), wtPath)
-
-	status := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
-	if strings.Contains(status, ".beads/issues.jsonl") {
-		t.Errorf("discardDirtyBeadsLedger should have restored the ledger; status:\n%s", status)
+	// Sanity: settings.json is dirty, so a rebase would refuse.
+	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); !strings.Contains(status, ".claude/settings.json") {
+		t.Fatalf("precondition: expected dirty .claude/settings.json; got status:\n%s", status)
 	}
-	if !strings.Contains(status, "code.txt") {
-		t.Errorf("discardDirtyBeadsLedger must NOT touch other dirty files; expected code.txt dirty, got:\n%s", status)
+
+	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+
+	// The worktree must now be clean.
+	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
+		t.Fatalf("after discardDirtyChurn: expected clean worktree; got:\n%s", status)
+	}
+
+	// And the rebase must now succeed.
+	rebaseCmd := exec.CommandContext(t.Context(), "git", "rebase", "main")
+	rebaseCmd.Dir = wtPath
+	if out, err := rebaseCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git rebase main after cleanup: %v\n%s", err, out)
 	}
 }
 
-// TestDiscardDirtyBeadsLedger_NoOpOnCleanWorktree verifies the helper is a no-op
-// when the ledger is already clean (no spurious git writes / errors).
-func TestDiscardDirtyBeadsLedger_NoOpOnCleanWorktree(t *testing.T) {
+// TestDiscardDirtyChurn_PreservesOtherDirtyFiles verifies the fix stays
+// DISCRIMINATING: it discards every churn-allowlisted dirty path (the ledger AND
+// .claude/settings.json) but leaves a NON-churn dirty file (real code) intact —
+// that must still surface as a rebase failure rather than be silently reset, so
+// an implementer that escaped its worktree fails loudly (hk-i1n7j safety
+// property, preserved across the hk-aiw63 generalization).
+func TestDiscardDirtyChurn_PreservesOtherDirtyFiles(t *testing.T) {
+	t.Parallel()
+
+	wtPath := dirtyLedgerSetup(t)
+
+	// Dirty BOTH churn paths AND a real code file.
+	writeFile(t, filepath.Join(wtPath, ".beads", "issues.jsonl"),
+		`{"id":"a","status":"open"}`+"\n"+`{"id":"c","status":"closed"}`+"\n")
+	writeFile(t, filepath.Join(wtPath, ".claude", "settings.json"),
+		`{"hooks":{},"permissions":{"allow":["Read"]}}`+"\n")
+	writeFile(t, filepath.Join(wtPath, "code.txt"), "code\nagent work\nUNCOMMITTED EDIT\n")
+
+	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+
+	status := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
+	if strings.Contains(status, ".beads/issues.jsonl") {
+		t.Errorf("discardDirtyChurn should have restored the ledger; status:\n%s", status)
+	}
+	if strings.Contains(status, ".claude/settings.json") {
+		t.Errorf("discardDirtyChurn should have restored .claude/settings.json; status:\n%s", status)
+	}
+	if !strings.Contains(status, "code.txt") {
+		t.Errorf("discardDirtyChurn must NOT touch non-churn dirty files; expected code.txt dirty, got:\n%s", status)
+	}
+
+	// A genuine implementer escape (code.txt dirty) must STILL block the rebase.
+	rebaseCmd := exec.CommandContext(t.Context(), "git", "rebase", "main")
+	rebaseCmd.Dir = wtPath
+	out, err := rebaseCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("rebase should have FAILED with a non-churn dirty file present; it succeeded:\n%s", out)
+	}
+	if !strings.Contains(string(out), "unstaged changes") {
+		t.Errorf("expected 'unstaged changes' rebase abort; got: %v\n%s", err, out)
+	}
+	// Clean up the aborted rebase state so the worktree is not left mid-rebase.
+	abortCmd := exec.CommandContext(t.Context(), "git", "rebase", "--abort")
+	abortCmd.Dir = wtPath
+	_ = abortCmd.Run()
+}
+
+// TestDiscardDirtyChurn_NoOpOnCleanWorktree verifies the helper is a no-op
+// when no churn paths are dirty (no spurious git writes / errors).
+func TestDiscardDirtyChurn_NoOpOnCleanWorktree(t *testing.T) {
 	t.Parallel()
 
 	wtPath := dirtyLedgerSetup(t)
 
 	before := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
-	daemon.ExportedDiscardDirtyBeadsLedger(context.Background(), wtPath)
+	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
 	after := dirtyLedgerGit(t, wtPath, "status", "--porcelain")
 
 	if before != after {

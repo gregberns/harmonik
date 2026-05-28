@@ -2406,20 +2406,20 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
 	if _, statErr := os.Stat(wtPath); statErr == nil {
-		// Pre-rebase cleanup (hk-3yz2d): discard any UNCOMMITTED churn of the
-		// daemon-owned .beads/issues.jsonl ledger in the worktree before the
-		// rebase. `git` refuses to rebase a worktree with unstaged changes
-		// ("error: cannot rebase: You have unstaged changes"), and the ledger
-		// becomes dirty whenever a `br` operation flushes SQLite→JSONL during
-		// the run (the SQLite DB is shared across worktrees; the JSONL is a
-		// per-worktree tracked file). This is daemon-owned churn — main is the
-		// canonical source of truth for the ledger (the daemon owns all terminal
-		// bead transitions) — so discarding the worktree's uncommitted copy is
-		// safe and mirrors the post-conflict --theirs resolution in
-		// mergeRebaseAutoResolveBeadsLedger (hk-pphof). We only discard the
-		// ledger, never other dirty paths: an implementer that left other files
-		// uncommitted must surface as a rebase failure, not be silently reset.
-		discardDirtyBeadsLedger(ctx, wtPath)
+		// Pre-rebase cleanup (hk-3yz2d, hk-aiw63): discard any UNCOMMITTED
+		// daemon/agent-owned churn in the worktree before the rebase. `git`
+		// refuses to rebase a worktree with unstaged changes ("error: cannot
+		// rebase: You have unstaged changes"). Two tracked files get dirtied
+		// during every run without the implementer touching them as task work:
+		// .beads/issues.jsonl (a `br` SQLite→JSONL flush; canonical source is
+		// main) and .claude/settings.json (per-launch MaterializeClaudeSettings
+		// hook-bridge merge + claude's own mutations; this repo tracks the file
+		// and the root .gitignore does not cover it). discardDirtyChurn restores
+		// exactly the isHarmonikChurn allowlist — the same set the post-merge
+		// escape check uses — so an implementer that left GENUINE uncommitted
+		// work (a non-churn path) still surfaces as a rebase failure rather than
+		// being silently reset (hk-i1n7j safety property preserved).
+		discardDirtyChurn(ctx, wtPath)
 
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
 		rebaseCmd.Dir = wtPath
@@ -2603,44 +2603,91 @@ func mergeRebaseAutoResolveBeadsLedger(ctx context.Context, wtPath string, _ []b
 	return continueOut, true
 }
 
-// discardDirtyBeadsLedger discards UNCOMMITTED changes to the daemon-owned
-// .beads/issues.jsonl ledger in the run worktree, restoring it to the
-// run-branch's committed version.
+// discardDirtyChurn discards UNCOMMITTED changes to daemon/agent-owned churn
+// files in the run worktree, restoring each to the run-branch's committed
+// version, so `git rebase main` can proceed.
 //
 // `git rebase` refuses to start when the worktree has unstaged changes
 // (it aborts with "error: cannot rebase: You have unstaged changes" before any
-// conflict detection). The beads ledger becomes dirty whenever a `br` operation
-// flushes its shared SQLite DB to the per-worktree JSONL during the run. Because
-// the ledger's canonical source of truth is main (the daemon owns all terminal
-// bead transitions), discarding the worktree's uncommitted copy is always safe.
+// conflict detection). Two distinct tracked files get dirtied during every run
+// without the implementer ever touching them as part of its task work:
 //
-// This helper is intentionally narrow: it ONLY restores .beads/issues.jsonl, so
-// any OTHER uncommitted file left in the worktree still blocks the rebase and is
-// surfaced as a failure (rather than being silently discarded). It is a no-op
-// when the ledger is clean or absent.
+//   - .beads/issues.jsonl — the bead ledger. Becomes dirty whenever a `br`
+//     operation flushes its shared SQLite DB to the per-worktree JSONL during the
+//     run. Its canonical source of truth is main (the daemon owns all terminal
+//     bead transitions).
+//   - .claude/settings.json — the Claude hook-bridge settings. The daemon's
+//     MaterializeClaudeSettings (CHB-001..005) merges the bridge hooks +
+//     permissions.allow into the worktree copy on every launch, and the running
+//     claude agent may further mutate it. Because this repo TRACKS the file (the
+//     root .gitignore only covers /.claude/worktrees/, not .claude/settings.json),
+//     the per-launch materialization leaves it modified-but-unstaged. This is the
+//     hk-aiw63 blocker: it persisted after hk-i1n7j (which only discarded the
+//     ledger) and aborted every real merge-to-main where claude mutates settings.
 //
-// Errors are non-fatal and best-effort: if `git status` or `git checkout` fails,
-// the function returns silently and the subsequent rebase reports the real
-// failure.
+// Discarding either is safe: both are reconstructed deterministically (the
+// ledger from main, the settings from the next MaterializeClaudeSettings call)
+// and neither carries implementer task work.
 //
-// Bead: hk-3yz2d.
-func discardDirtyBeadsLedger(ctx context.Context, wtPath string) {
-	const beadsLedgerPath = ".beads/issues.jsonl"
-
-	// Only act if the ledger is actually dirty (tracked + modified). Untracked
-	// files are not git-checkout-restorable and are out of scope here.
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", beadsLedgerPath)
+// The set of discardable paths is exactly isHarmonikChurn — the same allowlist
+// the post-merge escape check (checkMainWorkingTreeDirty) uses to classify
+// expected churn. This preserves the hk-i1n7j safety property: a dirty file that
+// is NOT recognized churn is left untouched, so an implementer that escaped its
+// worktree (left genuine uncommitted work) still fails the rebase loudly rather
+// than being silently reset.
+//
+// Errors are non-fatal and best-effort: if `git status` or a `git checkout`
+// fails, the function continues / returns silently and the subsequent rebase
+// reports the real failure. It is a no-op when no churn paths are dirty.
+//
+// Beads: hk-3yz2d (ledger), hk-aiw63 (generalized to .claude/settings.json and
+// the full isHarmonikChurn allowlist).
+func discardDirtyChurn(ctx context.Context, wtPath string) {
+	// Enumerate ALL dirty paths in the worktree once, then discard only those
+	// the churn allowlist recognizes. Untracked files (status "??") are not
+	// git-checkout-restorable and are excluded by tracked-status filtering below.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusCmd.Dir = wtPath
 	statusOut, statusErr := statusCmd.Output()
 	if statusErr != nil || len(strings.TrimSpace(string(statusOut))) == 0 {
 		return
 	}
 
-	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", beadsLedgerPath)
-	checkoutCmd.Dir = wtPath
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: discardDirtyBeadsLedger: git checkout -- %s: %v\n%s",
-			beadsLedgerPath, err, out)
+	var churnPaths []string
+	for _, line := range strings.Split(strings.TrimRight(string(statusOut), "\n"), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — skip (cannot be
+		// `git checkout`-restored).
+		xy := line[:2]
+		if xy == "??" {
+			continue
+		}
+		path := line[3:]
+		// Handle rename "old -> new": restore the destination path.
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+4:]
+		}
+		path = strings.Trim(path, "\"")
+		if isHarmonikChurn(path) {
+			churnPaths = append(churnPaths, path)
+		}
+	}
+	if len(churnPaths) == 0 {
+		return
+	}
+
+	// Restore each churn path to its committed version. Use one checkout per
+	// path so a failure on one (e.g. a path that is staged-only) does not block
+	// the others; mirrors hk-i1n7j's best-effort/non-fatal style.
+	for _, path := range churnPaths {
+		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", path)
+		checkoutCmd.Dir = wtPath
+		if out, err := checkoutCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: discardDirtyChurn: git checkout -- %s: %v\n%s",
+				path, err, out)
+		}
 	}
 }
 

@@ -2406,6 +2406,21 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
 	if _, statErr := os.Stat(wtPath); statErr == nil {
+		// Pre-rebase cleanup (hk-3yz2d): discard any UNCOMMITTED churn of the
+		// daemon-owned .beads/issues.jsonl ledger in the worktree before the
+		// rebase. `git` refuses to rebase a worktree with unstaged changes
+		// ("error: cannot rebase: You have unstaged changes"), and the ledger
+		// becomes dirty whenever a `br` operation flushes SQLite→JSONL during
+		// the run (the SQLite DB is shared across worktrees; the JSONL is a
+		// per-worktree tracked file). This is daemon-owned churn — main is the
+		// canonical source of truth for the ledger (the daemon owns all terminal
+		// bead transitions) — so discarding the worktree's uncommitted copy is
+		// safe and mirrors the post-conflict --theirs resolution in
+		// mergeRebaseAutoResolveBeadsLedger (hk-pphof). We only discard the
+		// ledger, never other dirty paths: an implementer that left other files
+		// uncommitted must surface as a rebase failure, not be silently reset.
+		discardDirtyBeadsLedger(ctx, wtPath)
+
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
@@ -2586,6 +2601,47 @@ func mergeRebaseAutoResolveBeadsLedger(ctx context.Context, wtPath string, _ []b
 	}
 
 	return continueOut, true
+}
+
+// discardDirtyBeadsLedger discards UNCOMMITTED changes to the daemon-owned
+// .beads/issues.jsonl ledger in the run worktree, restoring it to the
+// run-branch's committed version.
+//
+// `git rebase` refuses to start when the worktree has unstaged changes
+// (it aborts with "error: cannot rebase: You have unstaged changes" before any
+// conflict detection). The beads ledger becomes dirty whenever a `br` operation
+// flushes its shared SQLite DB to the per-worktree JSONL during the run. Because
+// the ledger's canonical source of truth is main (the daemon owns all terminal
+// bead transitions), discarding the worktree's uncommitted copy is always safe.
+//
+// This helper is intentionally narrow: it ONLY restores .beads/issues.jsonl, so
+// any OTHER uncommitted file left in the worktree still blocks the rebase and is
+// surfaced as a failure (rather than being silently discarded). It is a no-op
+// when the ledger is clean or absent.
+//
+// Errors are non-fatal and best-effort: if `git status` or `git checkout` fails,
+// the function returns silently and the subsequent rebase reports the real
+// failure.
+//
+// Bead: hk-3yz2d.
+func discardDirtyBeadsLedger(ctx context.Context, wtPath string) {
+	const beadsLedgerPath = ".beads/issues.jsonl"
+
+	// Only act if the ledger is actually dirty (tracked + modified). Untracked
+	// files are not git-checkout-restorable and are out of scope here.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", beadsLedgerPath)
+	statusCmd.Dir = wtPath
+	statusOut, statusErr := statusCmd.Output()
+	if statusErr != nil || len(strings.TrimSpace(string(statusOut))) == 0 {
+		return
+	}
+
+	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", "--", beadsLedgerPath)
+	checkoutCmd.Dir = wtPath
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: discardDirtyBeadsLedger: git checkout -- %s: %v\n%s",
+			beadsLedgerPath, err, out)
+	}
 }
 
 // emitOutcomeEmitted emits an outcome_emitted event with the given kind and

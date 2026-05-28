@@ -420,6 +420,12 @@ func ExportedNewHookSessionStore() *hookSessionStore {
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
 
+// ExportedDiscardDirtyBeadsLedger exposes discardDirtyBeadsLedger for the
+// pre-rebase ledger-cleanup regression test (hk-3yz2d).
+func ExportedDiscardDirtyBeadsLedger(ctx context.Context, wtPath string) {
+	discardDirtyBeadsLedger(ctx, wtPath)
+}
+
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {
 	s.RegisterHookSession(runID, claudeSessionID)

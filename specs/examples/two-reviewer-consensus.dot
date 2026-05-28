@@ -1,0 +1,150 @@
+// two-reviewer-consensus.dot — unanimous-APPROVE consensus workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §4 (two-reviewer-consensus topology)
+//   - docs/sdlc-workflow-corpus.md §Marquee brief discipline (reviewer-commit channel)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//
+// Canonical answer to "n-of-m consensus" given equality-only conditions.
+// reviewer_a and reviewer_b each commit their independent verdicts to
+// reviews/reviewer-*.md (durable channel across session boundaries), then
+// the consolidate node applies boolean AND:
+//   APPROVE iff BOTH approved; BLOCK if either blocked; else REQUEST_CHANGES.
+// Cross-node verdict combination MUST live inside the consolidate agent because
+// an edge can only see the CURRENT node's outcome.* (one outcome per cascade).
+//
+// Marquee brief discipline (docs/sdlc-workflow-corpus.md §Marquee brief discipline):
+//   Each per-seat reviewer MUST, in order:
+//     1. Write + git commit its findings to reviews/reviewer-a.md / reviews/reviewer-b.md
+//        FIRST (durable channel — review.json is single-slot, last-writer-wins).
+//     2. THEN write .harmonik/review.json with its own verdict.
+//        (Its appearance triggers /quit; omitting it errors the node.)
+//   The consolidate node reads both reviews/reviewer-*.md, applies boolean AND
+//   (APPROVE iff BOTH APPROVE; BLOCK if either BLOCK; else REQUEST_CHANGES),
+//   and writes ONE merged verdict to .harmonik/review.json.
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the consolidate→implement back-edge
+//     bounds the loop per WG-028 / EM-043.
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase: APPROVE / REQUEST_CHANGES / BLOCK.
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+//   - The linear spine (start→implement→reviewer_a→reviewer_b→consolidate) is
+//     fully unconditional: both reviewer nodes always run on every pass.
+//   - Sequential reviewer ordering (reviewer_a before reviewer_b) — no parallel
+//     fan-out, avoiding concurrent review.json write collisions.
+
+digraph "two-reviewer-consensus" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="two-reviewer-consensus";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer node. On first visit, produces the change.
+    // On re-entry (after a REQUEST_CHANGES from consolidate), addresses the
+    // combined feedback from both prior reviewers.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change"
+    ];
+
+    // reviewer_a: first independent reviewer.
+    // Per marquee brief discipline: write+commit reviews/reviewer-a.md FIRST
+    // (durable channel), then write .harmonik/review.json.
+    reviewer_a [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="first independent reviewer; write+commit reviews/reviewer-a.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // reviewer_b: second independent reviewer. Runs after reviewer_a (sequential,
+    // no parallel fan-out) to avoid concurrent review.json collisions.
+    // Per marquee brief discipline: write+commit reviews/reviewer-b.md FIRST
+    // (durable channel), then write .harmonik/review.json.
+    reviewer_b [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="second independent reviewer; write+commit reviews/reviewer-b.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // consolidate: the boolean-AND reviewer. Reads both reviews/reviewer-a.md
+    // and reviews/reviewer-b.md committed above, applies:
+    //   APPROVE iff BOTH approved; BLOCK if either blocked; else REQUEST_CHANGES.
+    // Being last in the chain, its review.json is the outcome.preferred_label
+    // that drives the cascade below.
+    consolidate [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="read both verdicts; APPROVE only if BOTH approved; BLOCK if either blocked; else REQUEST_CHANGES; write .harmonik/review.json"
+    ];
+
+    // close: terminal node for the APPROVE path (unanimous consensus reached).
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="unanimous APPROVE — merged"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, dissent, and
+    // fallback paths. Operator attention required.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="dissent / BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // Linear spine — all unconditional. Both reviewers always run on every pass.
+    start -> implement;
+    implement -> reviewer_a;
+    reviewer_a -> reviewer_b;    // sequential — no parallel fan-out
+    reviewer_b -> consolidate;
+
+    // Branch on the BOOLEAN-AND verdict only (from the consolidate node).
+    // (1) APPROVE → close (both reviewers approved).
+    consolidate -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (2) REQUEST_CHANGES → loop back to implement (capped at 3 per WG-028).
+    consolidate -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (3) BLOCK → close-needs-attention (at least one reviewer blocked).
+    consolidate -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (4) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    consolidate -> "close-needs-attention";
+}

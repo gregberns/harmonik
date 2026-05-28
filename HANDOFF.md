@@ -1,62 +1,58 @@
-<!-- PP-TRIAL:v2 2026-05-28 main — v69. DOT proven end-to-end LIVE (simple+complex) via heavy QA; 5 blockers fixed, 1 dogfooded. Clean, all pushed. -->
+<!-- PP-TRIAL:v2 2026-05-28 main — v70. Two tracks fully PLANNED + ready: SDLC workflow corpus (kerf sdlc-workflows) + Attractor/kilroy parity (kerf attractor-parity). Marquee multi-review proven LIVE. Implementation is the remaining bulk. Clean, pushed. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project rules: `~/.claude/CLAUDE.md`. Orchestrator rules: [docs/orchestrator-rules.md](docs/orchestrator-rules.md). Known workarounds: [docs/known-workarounds.md](docs/known-workarounds.md).
 
 ROLE: You are the orchestrator. Delegate substantively. Keep the main thread minimal.
 
-# Where we are (v69, 2026-05-28)
+# Where we are (v70, 2026-05-28)
 
-**Main clean, all pushed, in sync with origin.** This was a **heavy-QA session of the DOT live execution path** (per user directive: "HEAVILY test DOT simple→complex; log+resolve issues immediately; fix harmonik issues in subagents and continue testing"). The loop converged: **DOT now runs end-to-end live for both simple and complex topologies.**
+**Main clean, all pushed.** Building on v69 (DOT execution proven live; 5 blockers fixed), this session ran **two big parallel tracks to completion of PLANNING**, and the remaining work is **implementation** (attended `harmonik run` batches). Everything is teed up: corpus persisted, ~38 beads filed+prioritized+dep-sequenced, two kerf works at `ready`, and every loop proven live.
 
-## Headline: live DOT testing surfaced a cascade of bugs the stub tests missed
+## Proven live this session
+- **DOT simple + complex execution** (v69): review-loop + non-agentic-intermediate topologies complete end-to-end.
+- **Marquee multi-reviewer-consolidate** (`hk-3wbff`): `implement → review_correctness → review_design → consolidate → close` walked end-to-end with real agents. The 5-node multi-review cascade **works today**.
+- **Fixture-landing loop** (`hk-o52fm.2` / commit `cd3e8f8`): `harmonik run` landed `specs/examples/implement-review-fix.dot` + a scenario test + README pin, agent-reviewer approved, merged + pushed. The remaining fixtures land the same way.
 
-The v68 claim "DOT functional end-to-end" was true **only at the stub-handler test level**. The daemon DOT e2e tests use a `/bin/sh` stub handler that bypasses the real tmux paste/submit path and synthesizes outcomes — so **no real-agent end-to-end coverage existed.** The first live `harmonik run --workflow-mode dot` hung immediately, and each successive live run peeled back the next layer. Five distinct blockers, all now fixed + proven live:
+## Key finding (sharp): the marquee's VALUE needs per-node briefing
+The multi-review STRUCTURE runs today, but node `role` is parsed into `UnknownAttrs["role"]` and **never read** into the agent brief (`dot_cascade.go` assembles from bead title/body/extraContext only). So in the smoke all reviewers ran identical generic reviews — no per-axis differentiation, no `reviews/reviewer-*.md` committed. Differentiated multi-axis review (the headline value) needs `hk-m5lmo` (cheap: surface `role`) and/or `hk-sdnzj` (full per-node `prompt`).
 
-| Bug (bead) | Commit | What it was |
-|---|---|---|
-| `hk-3qjwl` P0 | `704ddc0` | DOT dispatch pasted the agent prompt but never submitted it — missing the `waitAgentReady` gate the builtin paths have, so the paste hit Claude's welcome splash and the prompt sat unsent → `run_stale`. |
-| `hk-kxygy` P0 | `a90980e` | CLI `harmonik graph validate` used a broken parser (`internal/workflowvalidator`) — passed **0/20** real `.dot` files incl. the canonical one. Re-pointed at the daemon's `internal/workflow/dot` parser. Now 20/20. |
-| `hk-i1n7j` | `ceeae33` | merge-to-main `git rebase` aborts because the daemon's own `br` flush dirties tracked `.beads/issues.jsonl`. Added pre-rebase ledger discard. |
-| `hk-aiw63` P0 | `5c8a8c3` | same class — Claude + `MaterializeClaudeSettings` dirty tracked `.claude/settings.json` every run. Generalized the pre-rebase cleanup to the existing `isHarmonikChurn` allowlist (`discardDirtyChurn`). |
-| `hk-z03e8` P1 | `c0447af` | DOT classified terminal success by **inbound-edge topology** (forbidden by WG-021) → any topology richer than the exact review-loop shape was misclassified `run_failed`. Replaced with terminal-node-**identity** classification per WG-021/WG-022. **Fixed by dogfooding `harmonik run`** (North Star phase 2). |
+---
 
-Each was independently reviewed (agent reviewer or fresh-read + verification) before landing. Cascade engine routing (all 5 verdict routes) was separately proven; stale cap-bug `hk-i7yq8` closed via mutation proof.
+# Track 1 — SDLC workflow corpus (kerf `sdlc-workflows`, status `ready`/SQUARE)
 
-## Proof artifacts (live runs, real claude agents, merged+pushed+bead-closed)
-- **Simple** review-loop: `hk-3yz2d` → walked start→implementer→reviewer(APPROVE)→close→merge→push→CLOSED.
-- **Complex** (review-loop + non-agentic `finalize` node): `hk-ha6z1` via `/tmp/dot-qa-complex1.dot` → same, through the extra node. This is the exact repro that failed pre-`hk-z03e8`-fix.
-- **Dogfood**: `hk-z03e8` itself fixed via `harmonik run` (builtin review-loop, implementer→agent-reviewer APPROVE→auto-merge). harmonik run is now **proven reliable** (3 clean completions).
+**Corpus persisted:** [docs/sdlc-workflow-corpus.md](docs/sdlc-workflow-corpus.md) — **21 workflows (14 NOW / 5 SOON / 2 DEMO)**, all with drop-in DOT, covering the whole SDLC (planning, spec authoring, decomposition, implementation + multi-review-consolidate, debugging/triage incl. the kilroy sentry pipelines, code/security review + gates, testing, release/ops, refactoring, docs-sync) + 2 whole-SDLC demo arcs.
 
-# Next work — DOT hardening beads (all filed this session, none block core function)
+**Beads:** epic **`hk-o52fm`** + 21 workflow beads `hk-o52fm.1`–`.21` (NOW/DEMO=P1, SOON=P2; deps set). `hk-o52fm.2` (W-IRF) is DONE.
 
-DOT works; these are reliability/observability/correctness gaps found by the gap-analysis comparing DOT dispatch vs the builtin paths. **All are in `internal/daemon/dot_cascade.go` except `hk-zhxqx`.** Dogfood them via `harmonik run` (now reliable) — but run dot_cascade.go ones **serially** (same file → conflicts under concurrency).
+**Next (implement the NOW fixtures via `harmonik run`, one bead each):** each lands `specs/examples/<name>.dot` + a scenario test under `internal/workflow/scenario/` + a README pin. **Serialize** — every fixture edits `specs/examples/README.md` (concurrent runs conflict). Enrich each bead's description first (point at `docs/sdlc-workflow-corpus.md §<name>` + the W-IRF commit `cd3e8f8` as the template). Remaining NOW: `hk-o52fm.1` (dual-review-consolidate — fixture; note its VALUE needs hk-m5lmo/sdnzj), `.3` plan-review-loop, `.4` security-review-loop, `.5` triple-review-consolidate, `.6` two-reviewer-consensus, `.7` plan-review-finalize, `.8` spec-R1-R2, `.9` spec-citation-cleanup, `.10` decompose-review-load, `.11` dependency-cycle-fix, `.12` docs-sync, `.13` review-route-by-failure-class, `.14` characterize-refactor-verify. DEMO: `.15` plan-to-shipped-now (dep `.1`), `.16` plan-to-shipped-faithful (SOON). SOON (blocked on capability beads): `.17`–`.21`.
 
-- **`hk-upcjj` (P1)** — DOT dispatch passes `eventCh=nil` to `pasteInjectQuitOnCommit`, disabling heartbeat-staleness + launch-verification kills (a hung pane recovers only via the long wall-clock backstop — the class that bit us repeatedly). **SUBTLETY:** the per-run tap channel (`tapCh`, captured by the `hk-3qjwl` agent_ready gate) is already consumed by `waitAgentReady` (`newChanAgentEventSource(tapCh)`); a channel can't be drained twice. Check how the builtin path (`workloop.go:~1638`) shares one tap between `waitAgentReady` and the quit-on-commit heartbeat monitor — may need a tee/fan-out or a second tap. Don't naively reuse the drained channel.
-- **`hk-5e9yj` (P1)** — no-progress detector (EM-015e) missing in the DOT cascade (builtin has the diff-hash compare at `reviewloop.go:~557`). Medium effort.
-- **`hk-d0aqq` (P1)** — DOT reviewer node never emits the `reviewer_verdict` event (builtin emits it at `reviewloop.go:~852`). Mechanical/observability — **safe dogfood candidate.**
-- **`hk-9v5yo` (P2)** — DOT path hard-errors on noChange instead of subsumed-close (builtin: `workloop.go:~1806`).
-- **`hk-mvjs4` (P3)** — DOT omits `implementer_phase_complete` event. Mechanical/observability — **safe dogfood candidate.**
-- **`hk-zhxqx` (P1)** — `TestMergeToMain_NoWorkAgentMainAdvanced` is RED on main: the `hk-cwxow` fix (noChange+main-advanced → subsumed-close) has **regressed** on the **builtin** path — bead REOPENED instead of closed, false-positive `non_ff_merge`. Verified failing on pristine HEAD (not caused by this session's merge fixes). This is the only RED in the DOT/merge test surface.
+# Track 2 — Attractor/kilroy parity (kerf `attractor-parity`, status `ready`)
 
-Pre-existing (carried from v68): `hk-1xsyu` (P2, daemon e2e for non-APPROVE routes — note: real reviewers can't be forced to REQUEST_CHANGES/BLOCK, so this MUST stay a stub-handler test), `hk-karlz` (P2, daemon gate evaluator — gate nodes error until it lands, so gate topologies can't run live yet).
+The capability cluster that lets harmonik run faithful kilroy/Attractor pipelines (the `/Users/gb/github-qwick/qwick-ai/pipelines/{sentry-triage,sentry-bugfix}` DOTs). Full kerf spec work done (problem-space→…→integration **APPROVED** by independent review; unified `SPEC.md` on the bench at `~/.kerf/projects/gregberns-harmonik/attractor-parity/`). Architecture verdict: **clean-add** — all additive (minor schema bump, Outcome envelope + cascade + v69 review-loop untouched). Parallel/join is OUT (deferred EM-059).
+
+**Implementation DAG (all P1; via `harmonik run`):**
+1. **T0 `hk-jyqxe` (FIRST, solo, gates all)** — land `SPEC.md` into the real specs: `workflow-graph.md` (new WG-039…WG-046 + merged WG-002 agentic/non-agentic rows + WG-031 reserved-set), `execution-model.md` (EM-058 split-row [keystone; verified strict superset of current code], EM-015d dot-carve-out, EM-012b tier-0 rewording, §6.1 RECORDs), `handler-contract.md` (HC-063 shell handler + in-process §4.2 note). *Normative spec change — consider a spec-text check-in with the user.*
+2. **Wave 1 (concurrent after T0):** `hk-l8rpd` (tool/shell node — KEYSTONE: `dispatchDotToolNode` splits the non-agentic branch on `tool_command`, `/bin/sh -c` cwd=wtPath, `handler_ref="shell"`, exit→Outcome map, reuse `Node.Timeout`) ‖ `hk-55zv2` (graph `goal` + `__PARAM__` substitution).
+3. **Wave 2 (SERIAL — all edit `dispatchDotAgenticNode`, will conflict if concurrent):** `hk-m5lmo` (surface `role`) → `hk-sdnzj` (inline `prompt`) → `hk-q8nqr` (per-node model/effort) → `hk-69asi` (non-committing, dot-mode only).
+4. Tests (`hk-cucz6`/`qpbpc`/`156il` + `hk-mca0b`/`xp9j7`/`4bn9o`/`9ohjf`) gated on their impl beads; T7 sidecar `hk-9t892`; v2 follow-ups `hk-9j49t`/`gv5n5`/`1xzg3`/`tksed` (P3).
+
+Once Wave-1/2 land, the 5 Track-1 SOON workflows + the faithful kilroy sentry pipelines become runnable.
 
 # Files to open first
-1. `internal/daemon/dot_cascade.go` — DOT cascade driver. `dispatchDotAgenticNode` (agent_ready gate + the `eventCh=nil` of `hk-upcjj`), `dotTerminalNodeIsSuccess` (the `hk-z03e8` fix), the terminal branch.
-2. `internal/daemon/workloop.go` — `mergeRunBranchToMain` + `discardDirtyChurn` + `isHarmonikChurn` (the merge fixes); `TestMergeToMain_NoWorkAgentMainAdvanced` regression (`hk-zhxqx`).
-3. `internal/daemon/reviewloop.go` / `workloop.go` builtin dispatch — the parity reference for the remaining DOT gaps.
-4. `specs/examples/review-loop-finalize.dot` (added by the `hk-z03e8` fix) + `/tmp/dot-qa-complex1.dot`, `/tmp/dot-qa-complex2.dot` (QA complex fixtures; validate clean via `harmonik graph validate`).
+1. `docs/sdlc-workflow-corpus.md` (the 21-workflow corpus) + `specs/examples/implement-review-fix.dot` + `internal/workflow/scenario/implement_review_fix_test.go` (the landed-fixture template).
+2. `~/.kerf/projects/gregberns-harmonik/attractor-parity/SPEC.md` + `07-tasks.md` (the parity spec + task DAG).
+3. `internal/daemon/dot_cascade.go` (dispatch — where T1/T2/T3/T4 land) + `internal/handler/claudelaunchspec.go` (brief assembly — prompt/role/goal).
 
-# Caveats
-- Full `go test ./internal/daemon/` is RED from pre-existing failures (`hk-zhxqx` + v68's `hk-o4vjp`, `hk-yn29b`, a StaleWatcher hang). Use `-run` filters. The DOT/merge/cascade subset is GREEN (22 pass) except `hk-zhxqx`.
-- **Worktree-churn fact (now handled):** every run dirties tracked `.claude/settings.json` (Claude + `MaterializeClaudeSettings`) and `.beads/issues.jsonl` (`br` flush). The merge tolerates `isHarmonikChurn` before the rebase. Don't be alarmed by a dirty `.beads`/`.claude` mid-run.
-- **Cruft to clean up someday (low priority):** ~43 git stashes accumulated (mostly agent stash-compare artifacts; a few may be real prior-session WIP — inspect before `stash clear`). Several stale `.harmonik/worktrees/run-*` + orphaned `run/*` branches.
-- Live DOT testing of **non-APPROVE routes** (REQUEST_CHANGES/BLOCK/cap-hit) is NOT feasible with real agents (can't force a real reviewer's verdict) — those belong in stub-handler daemon-e2e tests (`hk-1xsyu`).
+# Caveats / hygiene
+- Pre-existing RED test `TestMergeToMain_NoWorkAgentMainAdvanced` (`hk-zhxqx`, the `hk-cwxow` noChange regression) — still open, unrelated to this work.
+- Pre-existing dep cycle `hk-11xkn ↔ hk-iuaed` in unrelated beads (not introduced here).
+- `/tmp/sdlc-corpus/` + `/tmp/smoke/` hold the working corpus + extracted fixtures (ephemeral; the durable copy is `docs/sdlc-workflow-corpus.md`).
+- Accumulated git stashes + stale `.harmonik/worktrees/` from prior sessions — low-priority cleanup.
 
 # Translations glossary
-- **DOT mode** — workflows as Graphviz `.dot` graphs; daemon walks node→edge→node via `driveDotWorkflow` (`internal/daemon/dot_cascade.go`).
-- **agent_ready gate** — `waitAgentReady`; the daemon must wait for the agent's REPL to be input-ready before pasting+submitting the launch prompt (else the Enter is eaten by the splash). Was missing in DOT (`hk-3qjwl`).
-- **isHarmonikChurn / discardDirtyChurn** — allowlist of tracked files the daemon/agent dirty every run (`.beads/issues.jsonl`, `.claude/*`, `.harmonik/`); discarded before the merge rebase.
-- **dogfood** — using `harmonik run` to land harmonik's own dev work (canonical loop, North Star phase 2). `hk-z03e8` was fixed this way.
-- **terminal disposition** — success vs needs-attention; per WG-021/WG-022 keyed to terminal node **identity** (`close`=success, `close-needs-attention`=attention), NOT edge topology (the `hk-z03e8` bug).
+- **marquee** — the multi-reviewer-consolidate pattern (N reviewers → consolidate → loop to implementer until clean). Structure proven live (`hk-3wbff`); differentiated value needs `hk-m5lmo`/`hk-sdnzj`.
+- **tool/shell node (`hk-l8rpd`)** — the keystone parity capability: a `non-agentic` node with `tool_command` that runs `/bin/sh -c` and maps exit code → Outcome. ~half of kilroy pipeline nodes need it.
+- **Attractor model** — the adopted upstream graph-workflow engine (strongdm/attractor, kilroy's sibling); single-threaded cascade on the Outcome envelope; baked into EM-005/EM-041/WG-020.
+- **T0 (`hk-jyqxe`)** — lands the reviewed parity SPEC into the real specs; gates the whole Track-2 build.
 
-# No hard blockers. Standing directive: on /session-resume, CONTINUE — don't ask "shall I". Next action: dogfood the safe DOT parity beads (`hk-d0aqq`, `hk-mvjs4`) via `harmonik run`, then tackle `hk-upcjj` (mind the channel-sharing subtlety) and `hk-zhxqx`.
+# No hard blockers. Standing directive: on /session-resume, CONTINUE. Next action: drive Track-2 **T0 (`hk-jyqxe`)** via `harmonik run` (consider a spec-text check-in since it edits normative specs), then Wave-1 (`hk-l8rpd` ‖ `hk-55zv2`); in parallel, land the Track-1 NOW fixtures serially via `harmonik run` (template: commit `cd3e8f8`).

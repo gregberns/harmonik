@@ -1,0 +1,113 @@
+// implement-review-fix.dot — canonical SDLC implement-review-fix workflow (v1)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §1 (implement-review-fix, the reference topology)
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// The bread-and-butter SDLC loop: implementer produces or revises a change,
+// reviewer renders a verdict, REQUEST_CHANGES loops back (capped), BLOCK or
+// cap-hit routes to needs-attention. This is the reference topology that every
+// other NOW workflow in the corpus extends; it is isomorphic to the hardcoded
+// review-loop in internal/daemon/workloop.go, expressed in the DOT dialect.
+//
+// Role-variant subsumptions (same topology, different reviewer role brief):
+//   plan-single-pass         — reviewer gates on plan quality
+//   spec-draft-review-approve — reviewer gates on spec quality
+//   test-authoring-loop      — reviewer gates on test coverage
+//   bugfix-loop-now          — reviewer gates on bug fix correctness
+//   (security axis is its own fixture: security-review-loop.dot)
+//
+// Design notes:
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (traversal_cap=3) on the review→implement back-edge
+//     enforces the EM-015e/WG-028 iteration limit: after 3 traversals the
+//     cascade reports a cap-hit failure (completion_reason=cap_hit).
+//   - Verdict routing uses outcome.preferred_label per D-verdict-surfacing.
+//     Values are uppercase per the EM-015d enum (APPROVE / REQUEST_CHANGES / BLOCK).
+//   - Terminal IDs use the hyphenated form (close-needs-attention) per C1 convention.
+//   - The mandatory unconditional fallback edge appears LAST per WG-011
+//     (D-edge-cascade-invariant).
+
+digraph "implement-review-fix" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="implement-review-fix";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer node. On the first visit, produces the
+    // change. On re-entry (after REQUEST_CHANGES), addresses reviewer feedback.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change; on re-entry address the reviewer feedback"
+    ];
+
+    // review: agentic reviewer node. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
+    ];
+
+    // close: terminal node for the APPROVE path.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — accepted"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and fallback paths.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> implement;
+
+    // (2) Implementer hands off to reviewer — unconditional.
+    implement -> review;
+
+    // (3) APPROVE → close.
+    review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to implement (capped at 3 per EM-015e/WG-028).
+    review -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (5) BLOCK → close-needs-attention.
+    review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    review -> "close-needs-attention";
+}

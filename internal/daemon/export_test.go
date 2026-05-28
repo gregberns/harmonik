@@ -1054,6 +1054,14 @@ func ExportedHasChildProcess(pid int) bool {
 	return hasChildProcess(pid)
 }
 
+// ExportedLivePaneCommandSubstrings exposes the agent-command match list for
+// the hk-tgqy5 self-command liveness path so tests can temporarily extend it to
+// match the test binary's own comm name and exercise the branch with a real
+// running PID.
+//
+// Bead: hk-tgqy5.
+var ExportedLivePaneCommandSubstrings = &livePaneCommandSubstrings
+
 // ─────────────────────────────────────────────────────────────────────────────
 // QueueOperatorEventConsumer test seams (hk-7urls)
 // ─────────────────────────────────────────────────────────────────────────────

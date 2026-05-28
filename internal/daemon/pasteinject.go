@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -114,26 +115,88 @@ type paneLivenessChecker interface {
 	PaneHasActiveProcess(ctx context.Context) bool
 }
 
-// hasChildProcess reports whether the process with the given PID has any child
-// processes in the OS process table.
+// livePaneCommandSubstrings are command-name fragments that identify a hosted
+// agent process running directly as the tmux pane's foreground process.
 //
-// Implementation: runs `pgrep -P <pid>` and treats an exit-0 result (at least
-// one match) as "has children".  A non-zero exit or any error returns false
-// (conservative — treat unknown as "no children", which causes the kill to
-// proceed rather than loop forever).
+// hk-tgqy5: tmux often runs a pane command via `sh -c "<command>"`, and when
+// the command is a single program the shell may exec into it, so the pane PID
+// becomes the agent process itself (no child shell, no descendants while it is
+// in a thinking phase with no tool subprocess spawned).  In that arrangement a
+// children-only probe (`pgrep -P <panePID>`) returns nothing for a perfectly
+// healthy agent.  We therefore also accept the pane PID *itself* as evidence of
+// liveness when its command matches one of these fragments.
+var livePaneCommandSubstrings = []string{"claude", "node"}
+
+// hasChildProcess reports whether the process identified by pid represents a
+// live hosted agent — either because pid has at least one descendant process,
+// or because pid itself is a recognised agent command.  NOT a direct-children-
+// only check.
 //
-// pgrep is present on macOS and all mainstream Linux distributions; it is the
-// canonical cross-platform tool for this query and avoids parsing /proc on
-// Linux or using sysctl on macOS.
+// hk-tgqy5 root cause: the watchdog drives the pane-liveness probe through this
+// function with the tmux pane PID.  A "true" result suppresses the no-commit
+// kill.  The original implementation only checked direct children
+// (`pgrep -P <pid>` exit-0).  Two failure modes produced false negatives for a
+// healthy claude implementer mid-work, causing the daemon to falsely declare
+// `no_commit_during_implementer` while the commit was still minutes away:
 //
-// Bead: hk-fbydv.
+//  1. Pane runs `sh -c "claude …"` and the shell exec'd into claude → pane PID
+//     IS claude, with no children during a thinking phase → direct-children
+//     check returns false.
+//  2. Pane runs a wrapper shell that hosts claude as a descendant; during a
+//     thinking phase claude has spawned no tool subprocess, so the only live
+//     descendant is claude itself at some depth.
+//
+// The fix: (a) walk the full descendant subtree (any live descendant → active),
+// and (b) recognise the pane PID itself as a live agent when its command name
+// matches livePaneCommandSubstrings.  A pane where claude has genuinely exited
+// has no agent descendant and the residual shell command does not match, so it
+// still returns false — preserving legitimate dead-pane detection.
+//
+// A non-positive PID returns false.  Any probe error is treated conservatively
+// as "not alive at this level".
+//
+// Bead: hk-fbydv (original), hk-tgqy5 (descendant-tree + self-command fix).
 func hasChildProcess(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	cmd := exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid))
-	err := cmd.Run()
-	return err == nil // exit 0 → at least one child process found
+	// (a) Any descendant process at all → the pane hosts a live process tree.
+	//     If pid has even a single direct child, a descendant exists; a deeper
+	//     descendant cannot exist without its ancestor chain, so a single
+	//     direct-child probe is sufficient for existence.
+	if hasAnyDirectChild(pid) {
+		return true
+	}
+	// (b) No children — but the pane PID may itself be the agent (exec'd shell).
+	//     Treat a recognised agent command as live.
+	return commandMatchesLiveAgent(pid)
+}
+
+// hasAnyDirectChild reports whether pid has at least one direct child process,
+// via `pgrep -P <pid>` (exit-0 ⇒ at least one match).
+func hasAnyDirectChild(pid int) bool {
+	return exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid)).Run() == nil
+}
+
+// commandMatchesLiveAgent reports whether the command name of pid contains one
+// of livePaneCommandSubstrings (e.g. "claude" or its "node" runtime).  Uses
+// `ps -o comm= -p <pid>`, which is available on macOS and mainstream Linux.
+// Returns false on any error or empty output (conservative).
+func commandMatchesLiveAgent(pid int) bool {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if err != nil {
+		return false
+	}
+	comm := strings.ToLower(strings.TrimSpace(string(out)))
+	if comm == "" {
+		return false
+	}
+	for _, frag := range livePaneCommandSubstrings {
+		if strings.Contains(comm, frag) {
+			return true
+		}
+	}
+	return false
 }
 
 // briefDeliveredTimeout is the maximum time pasteInjectQuitOnCommit will wait

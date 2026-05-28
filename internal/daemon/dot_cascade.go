@@ -19,11 +19,21 @@ package daemon
 //         outcome.preferred_label = the verdict (APPROVE / REQUEST_CHANGES / BLOCK).
 //       * other agentic nodes (implementer): outcome = SUCCESS, no preferred_label
 //         (the implementer→reviewer edge is unconditional). HEAD MUST have advanced.
-//   - gate / sub-workflow: OUT OF SCOPE for this bead (hk-9dnak). Gate semantics
-//     are under an unresolved spec contradiction (EM-005b deny-routing vs CP-058
-//     gate_decision payload); sub-workflow dispatch is a separate bead. The driver
-//     returns a deterministic failure that reopens the bead rather than attempting
-//     dispatch.
+//   - gate: the gate-decision SEMANTICS are now resolved (CP-058 wins; a gate
+//     deny/allow/escalate is status=SUCCESS, the cascade routes on the decision
+//     surfaced via outcome.preferred_label; see handler.DispatchGateNode). What is
+//     still missing is the daemon-side EVALUATOR seam: there is no GateEvalFunc
+//     provider, no ControlPoint-registry loading from the daemon, and no
+//     mechanism/cognition policy resolution. Wiring a real evaluator (resolve
+//     gate_ref → ControlPoint, run the policy expression for mechanism gates or
+//     dispatch+read-verdict for cognition gates) is substantial infrastructure
+//     that does not exist yet, tracked as bead hk-karlz. Rather than fabricate a
+//     fake evaluator (which would make tests green without real semantics), the
+//     driver returns a deterministic needs-attention failure for gate nodes,
+//     citing hk-karlz. The handler-layer dispatch + cascade routing IS exercised
+//     by handler.DispatchGateNode's tests and the DecideNextNode routing tests.
+//   - sub-workflow: OUT OF SCOPE (separate bead). Same deterministic-failure
+//     treatment.
 //
 // # Terminal handling
 //
@@ -213,20 +223,34 @@ func driveDotWorkflow(
 			}
 			outcome = nodeOutcome
 
-		case core.NodeTypeGate, core.NodeTypeSubWorkflow:
-			// OUT OF SCOPE for hk-9dnak (deterministic failure, reopen the bead).
-			//
-			// Gate dispatch is blocked on an unresolved spec contradiction between
-			// EM-005b (gate deny-routing semantics) and CP-058 (gate_decision
-			// payload contract); sub-workflow dispatch is tracked as a separate
-			// bead. Attempting either here would bake in a contract that may be
-			// reversed, so the driver refuses rather than guesses.
+		case core.NodeTypeGate:
+			// Gate-decision SEMANTICS are resolved (CP-058: allow/deny/escalate are
+			// all status=SUCCESS, routed on the decision via preferred_label; the
+			// handler.DispatchGateNode + DecideNextNode path is implemented and
+			// tested). The remaining gap is the daemon-side EVALUATOR seam: there is
+			// no GateEvalFunc provider, no ControlPoint-registry loading here, and no
+			// mechanism/cognition policy resolution. Wiring a real evaluator is
+			// substantial infrastructure tracked as hk-karlz. We refuse rather than
+			// fabricate a fake evaluator that would green tests without real gate
+			// semantics. TODO(hk-karlz): construct a GateEvalFunc from the resolved
+			// ControlPoint and call handler.DispatchGateNode, feeding the outcome
+			// into DecideNextNode like any other node.
 			return dotWorkflowResult{
 				success:        false,
 				needsAttention: true,
-				summary: fmt.Sprintf("dot: node %q has unsupported type %q "+
-					"(gate/sub-workflow dispatch is out of scope for hk-9dnak; "+
-					"gate semantics blocked on EM-005b vs CP-058)", currentNodeID, node.Type),
+				summary: fmt.Sprintf("dot: gate node %q cannot be dispatched yet — "+
+					"the gate-decision semantics are resolved (CP-058) but the "+
+					"daemon-side gate evaluator (GateEvalFunc provider) is not wired "+
+					"(hk-karlz)", currentNodeID),
+			}
+
+		case core.NodeTypeSubWorkflow:
+			// OUT OF SCOPE (separate bead): deterministic needs-attention failure.
+			return dotWorkflowResult{
+				success:        false,
+				needsAttention: true,
+				summary: fmt.Sprintf("dot: sub-workflow node %q dispatch is out of "+
+					"scope (separate bead)", currentNodeID),
 			}
 
 		default:

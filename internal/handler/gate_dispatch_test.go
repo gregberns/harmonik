@@ -4,13 +4,16 @@ package handler_test
 // (gate node dispatch + GateDecisionPayload routing).
 //
 // Acceptance criteria coverage (hk-jtxnr):
-//  1. Permit routing: allow decision → Outcome status=SUCCESS, kind=gate_decision.
-//  2. Deny routing: deny decision → Outcome status=FAIL, kind=gate_decision.
-//  3. Invalid payload rejection: evaluator returning invalid GateDecisionPayload
-//     produces an error, not an Outcome.
+//  1. Allow routing: allow decision → Outcome status=SUCCESS, kind=gate_decision,
+//     preferred_label="allow".
+//  2. Deny routing: deny decision → Outcome status=SUCCESS, kind=gate_decision,
+//     preferred_label="deny" (CP-058: a deny is a successful evaluation, hk-lt0w7).
+//  3. Eval failure: evaluator returning an error / nil / invalid payload yields a
+//     FAIL Outcome with NO gate_decision payload (and a failure_class), not a
+//     gate_decision Outcome — distinct from the empty-gate_ref structural Go error.
 //  4. Event emission: gate_decision_recorded event is emitted with correct fields.
-//  5. Escalate routing: escalate-to-human → Outcome status=FAIL with
-//     ResolutionSignalID in payload.
+//  5. Escalate routing: escalate-to-human → Outcome status=SUCCESS with
+//     ResolutionSignalID in payload and preferred_label="escalate-to-human".
 //
 // Spec refs:
 //   - specs/control-points.md §4.12-4.13 (CP-053, CP-054, CP-058)
@@ -57,10 +60,10 @@ func (b *gateTestRecordingBus) Emit(_ context.Context, eventType core.EventType,
 func (b *gateTestRecordingBus) Subscribe(_ core.Subscription) (core.Subscription, error) {
 	return core.Subscription{}, nil
 }
-func (b *gateTestRecordingBus) Seal() error                                            { return nil }
-func (b *gateTestRecordingBus) ReplayFrom(_ string, _ core.EventID) error              { return nil }
-func (b *gateTestRecordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error  { return nil }
-func (b *gateTestRecordingBus) Drain(_ context.Context) error                          { return nil }
+func (b *gateTestRecordingBus) Seal() error                                           { return nil }
+func (b *gateTestRecordingBus) ReplayFrom(_ string, _ core.EventID) error             { return nil }
+func (b *gateTestRecordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
+func (b *gateTestRecordingBus) Drain(_ context.Context) error                         { return nil }
 
 // gateTestFixtureRun returns a minimal valid Run for gate dispatch tests.
 func gateTestFixtureRun(t *testing.T) *core.Run {
@@ -147,6 +150,11 @@ func TestDispatchGateNode_AllowRouting(t *testing.T) {
 		t.Errorf("GateDecisionPayload.Decision = %q, want %q", gdp.Decision, core.GateActionAllow)
 	}
 
+	// PreferredLabel must carry the decision string so the cascade can route.
+	if result.Outcome.PreferredLabel == nil || *result.Outcome.PreferredLabel != string(core.GateActionAllow) {
+		t.Errorf("Outcome.PreferredLabel = %v, want %q", result.Outcome.PreferredLabel, core.GateActionAllow)
+	}
+
 	// Outcome must pass Valid().
 	if !result.Outcome.Valid() {
 		t.Error("Outcome.Valid() = false; want true")
@@ -156,8 +164,9 @@ func TestDispatchGateNode_AllowRouting(t *testing.T) {
 // ── (2) Deny routing ────────────────────────────────────────────────────────
 
 // TestDispatchGateNode_DenyRouting verifies that a gate evaluator returning
-// GateActionDeny produces an Outcome with status=FAIL and kind=gate_decision.
-// The cascade will route this to the FAIL path.
+// GateActionDeny produces an Outcome with status=SUCCESS and kind=gate_decision
+// (CP-058: a deny is a successfully-evaluated Gate, hk-lt0w7). The cascade routes
+// on preferred_label=="deny", NOT on status.
 func TestDispatchGateNode_DenyRouting(t *testing.T) {
 	t.Parallel()
 
@@ -175,9 +184,10 @@ func TestDispatchGateNode_DenyRouting(t *testing.T) {
 		t.Fatalf("DispatchGateNode: unexpected error: %v", err)
 	}
 
-	// Outcome status must be FAIL for deny.
-	if result.Outcome.Status != core.OutcomeStatusFail {
-		t.Errorf("Outcome.Status = %q, want %q", result.Outcome.Status, core.OutcomeStatusFail)
+	// Outcome status must be SUCCESS for deny (CP-058: deny is a successful eval).
+	if result.Outcome.Status != core.OutcomeStatusSuccess {
+		t.Errorf("Outcome.Status = %q, want %q (deny → SUCCESS per CP-058)",
+			result.Outcome.Status, core.OutcomeStatusSuccess)
 	}
 
 	// Outcome kind must be gate_decision.
@@ -194,18 +204,60 @@ func TestDispatchGateNode_DenyRouting(t *testing.T) {
 		t.Errorf("GateDecisionPayload.Decision = %q, want %q", gdp.Decision, core.GateActionDeny)
 	}
 
+	// PreferredLabel must carry "deny" — this is how the cascade distinguishes a
+	// deny from an allow (both are status=SUCCESS).
+	if result.Outcome.PreferredLabel == nil || *result.Outcome.PreferredLabel != string(core.GateActionDeny) {
+		t.Errorf("Outcome.PreferredLabel = %v, want %q", result.Outcome.PreferredLabel, core.GateActionDeny)
+	}
+
 	// Outcome must pass Valid().
 	if !result.Outcome.Valid() {
 		t.Error("Outcome.Valid() = false; want true")
 	}
 }
 
-// ── (3) Invalid payload rejection ───────────────────────────────────────────
+// ── (3) Eval-failure path ───────────────────────────────────────────────────
 
-// TestDispatchGateNode_InvalidPayloadRejected verifies that an evaluator
-// returning an invalid GateDecisionPayload (e.g., empty PolicyID) produces
-// an error, not an Outcome.
-func TestDispatchGateNode_InvalidPayloadRejected(t *testing.T) {
+// gateAssertEvalFailureOutcome asserts that a GateDispatchResult is the
+// eval-failure shape required by CP-058: status=FAIL, NO gate_decision payload,
+// a populated failure_class, and no gate_decision_recorded event.
+func gateAssertEvalFailureOutcome(t *testing.T, result *handler.GateDispatchResult, bus *gateTestRecordingBus) {
+	t.Helper()
+	if result == nil {
+		t.Fatal("DispatchGateNode: expected a FAIL GateDispatchResult, got nil")
+	}
+	if result.Outcome.Status != core.OutcomeStatusFail {
+		t.Errorf("Outcome.Status = %q, want %q (eval failure)", result.Outcome.Status, core.OutcomeStatusFail)
+	}
+	// CP-058: a FAIL gate Outcome MUST NOT carry a gate_decision payload.
+	if result.Outcome.Kind == core.OutcomeKindGateDecision {
+		t.Errorf("Outcome.Kind = %q on eval failure; want NOT gate_decision (CP-058: no payload)", result.Outcome.Kind)
+	}
+	if result.Outcome.Payload != nil {
+		t.Errorf("Outcome.Payload = %v on eval failure; want nil (CP-058: no payload)", result.Outcome.Payload)
+	}
+	if result.Decision != nil {
+		t.Errorf("result.Decision = %v on eval failure; want nil", result.Decision)
+	}
+	// A FAIL outcome MUST carry a failure_class so the cascade can route.
+	if result.Outcome.FailureClass == nil {
+		t.Error("Outcome.FailureClass = nil on eval failure; want a populated class")
+	}
+	// The Outcome must still be structurally valid (FAIL + no payload is legal).
+	if !result.Outcome.Valid() {
+		t.Error("Outcome.Valid() = false on eval failure; want true")
+	}
+	// No gate_decision_recorded event — there was no decision to record.
+	if len(bus.events) != 0 {
+		t.Errorf("expected 0 events on eval failure, got %d", len(bus.events))
+	}
+}
+
+// TestDispatchGateNode_InvalidPayloadIsEvalFailure verifies that an evaluator
+// returning an invalid GateDecisionPayload (e.g., empty PolicyID) is treated as
+// a Gate that could not be evaluated: a FAIL Outcome with no payload, not a
+// gate_decision Outcome.
+func TestDispatchGateNode_InvalidPayloadIsEvalFailure(t *testing.T) {
 	t.Parallel()
 
 	run := gateTestFixtureRun(t)
@@ -222,20 +274,16 @@ func TestDispatchGateNode_InvalidPayloadRejected(t *testing.T) {
 		}, nil
 	}
 
-	_, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
-	if err == nil {
-		t.Fatal("DispatchGateNode: expected error for invalid payload, got nil")
+	result, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
+	if err != nil {
+		t.Fatalf("DispatchGateNode: unexpected Go error: %v", err)
 	}
-
-	// No events should have been emitted.
-	if len(bus.events) != 0 {
-		t.Errorf("expected 0 events on invalid payload, got %d", len(bus.events))
-	}
+	gateAssertEvalFailureOutcome(t, result, bus)
 }
 
-// TestDispatchGateNode_NilDecisionRejected verifies that a nil return from
-// the evaluator produces an error.
-func TestDispatchGateNode_NilDecisionRejected(t *testing.T) {
+// TestDispatchGateNode_NilDecisionIsEvalFailure verifies that a nil return from
+// the evaluator yields a FAIL Outcome (Gate could not be evaluated).
+func TestDispatchGateNode_NilDecisionIsEvalFailure(t *testing.T) {
 	t.Parallel()
 
 	run := gateTestFixtureRun(t)
@@ -244,18 +292,20 @@ func TestDispatchGateNode_NilDecisionRejected(t *testing.T) {
 	gateRef := core.GateRef("review-gate")
 
 	evalFn := func(_ context.Context, _ *core.Run, _ core.NodeID, _ core.GateRef) (*core.GateDecisionPayload, error) {
-		return nil, nil // nil decision is a programming error
+		return nil, nil // nil decision: evaluator produced no verdict
 	}
 
-	_, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
-	if err == nil {
-		t.Fatal("DispatchGateNode: expected error for nil decision, got nil")
+	result, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
+	if err != nil {
+		t.Fatalf("DispatchGateNode: unexpected Go error: %v", err)
 	}
+	gateAssertEvalFailureOutcome(t, result, bus)
 }
 
-// TestDispatchGateNode_EvaluatorErrorPropagated verifies that an evaluator
-// returning an error propagates that error to the caller.
-func TestDispatchGateNode_EvaluatorErrorPropagated(t *testing.T) {
+// TestDispatchGateNode_EvaluatorErrorIsEvalFailure verifies that an evaluator
+// returning an error yields a FAIL Outcome (Gate could not be evaluated) rather
+// than propagating a Go error — so the cascade routes it like any FAIL outcome.
+func TestDispatchGateNode_EvaluatorErrorIsEvalFailure(t *testing.T) {
 	t.Parallel()
 
 	run := gateTestFixtureRun(t)
@@ -268,13 +318,11 @@ func TestDispatchGateNode_EvaluatorErrorPropagated(t *testing.T) {
 		return nil, evalErr
 	}
 
-	_, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
-	if err == nil {
-		t.Fatal("DispatchGateNode: expected error, got nil")
+	result, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
+	if err != nil {
+		t.Fatalf("DispatchGateNode: unexpected Go error: %v", err)
 	}
-	if !errors.Is(err, evalErr) {
-		t.Errorf("expected wrapped evalErr, got: %v", err)
-	}
+	gateAssertEvalFailureOutcome(t, result, bus)
 }
 
 // TestDispatchGateNode_EmptyGateRefRejected verifies that an empty gate_ref
@@ -357,8 +405,9 @@ func TestDispatchGateNode_EmitsGateDecisionRecordedEvent(t *testing.T) {
 // ── (5) Escalate routing ────────────────────────────────────────────────────
 
 // TestDispatchGateNode_EscalateRouting verifies that a gate evaluator returning
-// GateActionEscalateToHuman produces an Outcome with status=FAIL and the
-// ResolutionSignalID preserved in the payload.
+// GateActionEscalateToHuman produces an Outcome with status=SUCCESS (CP-058: a
+// successful escalation verdict), preferred_label="escalate-to-human", and the
+// ResolutionSignalID preserved in the payload per CP-058 field 5.
 func TestDispatchGateNode_EscalateRouting(t *testing.T) {
 	t.Parallel()
 
@@ -376,9 +425,17 @@ func TestDispatchGateNode_EscalateRouting(t *testing.T) {
 		t.Fatalf("DispatchGateNode: unexpected error: %v", err)
 	}
 
-	// Status must be FAIL for escalate-to-human.
-	if result.Outcome.Status != core.OutcomeStatusFail {
-		t.Errorf("Outcome.Status = %q, want %q", result.Outcome.Status, core.OutcomeStatusFail)
+	// Status must be SUCCESS for escalate-to-human (CP-058: a successful eval).
+	if result.Outcome.Status != core.OutcomeStatusSuccess {
+		t.Errorf("Outcome.Status = %q, want %q (escalate → SUCCESS per CP-058)",
+			result.Outcome.Status, core.OutcomeStatusSuccess)
+	}
+
+	// PreferredLabel must carry "escalate-to-human" for cascade routing.
+	if result.Outcome.PreferredLabel == nil ||
+		*result.Outcome.PreferredLabel != string(core.GateActionEscalateToHuman) {
+		t.Errorf("Outcome.PreferredLabel = %v, want %q",
+			result.Outcome.PreferredLabel, core.GateActionEscalateToHuman)
 	}
 
 	// Payload must preserve the ResolutionSignalID.

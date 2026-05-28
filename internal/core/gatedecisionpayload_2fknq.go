@@ -7,13 +7,15 @@ package core
 // The five fields capture both the evaluator's verdict and the audit trail
 // required to interpret the decision under replay per CP-058.
 //
-// # Status coupling (OPEN QUESTION — EM-005b vs CP-058)
+// # Status coupling (RESOLVED — CP-058 wins, hk-lt0w7)
 //
-// CP-058 treats a deny as a successfully-evaluated Gate (status=SUCCESS).
-// EM-005b says decision=deny MUST correlate status=FAIL. The two specs
-// disagree; this code follows CP-058 (gate-semantics owner). See OQ bead
-// hk-lt0w7 for the tracking item. A handler that cannot evaluate
-// the Gate MUST return status=FAIL with no payload instead.
+// A successfully-evaluated Gate is ALWAYS status=SUCCESS, regardless of whether
+// the decision is allow, deny, or escalate-to-human. The EM-005b example that
+// said decision=deny correlates status=FAIL was the bug; it was aligned to
+// CP-058 (gate-semantics owner) in execution-model.md v0.7.1 per hk-lt0w7. The
+// cascade routes on the decision (surfaced on Outcome.PreferredLabel), not on
+// status. A handler that cannot evaluate the Gate MUST return status=FAIL with
+// no payload instead (the eval-failure path; see handler.DispatchGateNode).
 //
 // # ResolutionSignalID coupling
 //

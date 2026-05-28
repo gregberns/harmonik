@@ -5,9 +5,10 @@ package handler_test
 //
 // This scenario test exercises the full flow:
 //   1. DispatchGateNode produces Outcome with kind=gate_decision and GateDecisionPayload.
-//   2. Status maps correctly: SUCCESS for allow, FAIL for deny.
-//   3. The cascade (SelectNextEdge / DispatchEdge) routes the Outcome's status
-//      to the correct downstream edge.
+//   2. Status is SUCCESS for allow, deny, AND escalate-to-human (CP-058, hk-lt0w7);
+//      only an eval-failure is status=FAIL with no payload.
+//   3. The cascade (SelectNextEdge / DispatchEdge) routes on the decision, surfaced
+//      on outcome.preferred_label, to the correct downstream edge.
 //   4. The gate_decision_recorded event is emitted with correct fields.
 //
 // Unlike the unit tests in gate_dispatch_test.go (which test DispatchGateNode
@@ -26,6 +27,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -59,10 +61,10 @@ func (b *scenarioRecordingBus) Emit(_ context.Context, eventType core.EventType,
 func (b *scenarioRecordingBus) Subscribe(_ core.Subscription) (core.Subscription, error) {
 	return core.Subscription{}, nil
 }
-func (b *scenarioRecordingBus) Seal() error                                            { return nil }
-func (b *scenarioRecordingBus) ReplayFrom(_ string, _ core.EventID) error              { return nil }
-func (b *scenarioRecordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error  { return nil }
-func (b *scenarioRecordingBus) Drain(_ context.Context) error                          { return nil }
+func (b *scenarioRecordingBus) Seal() error                                           { return nil }
+func (b *scenarioRecordingBus) ReplayFrom(_ string, _ core.EventID) error             { return nil }
+func (b *scenarioRecordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
+func (b *scenarioRecordingBus) Drain(_ context.Context) error                         { return nil }
 
 // scenarioFixtureRun returns a minimal valid Run for scenario tests.
 func scenarioFixtureRun(t *testing.T) *core.Run {
@@ -79,14 +81,26 @@ func scenarioFixtureRun(t *testing.T) *core.Run {
 	}
 }
 
-// scenarioConditionEvaluator understands the status-based conditions used in
-// the scenario edges, simulating what the expr-lang evaluator produces.
+// scenarioConditionEvaluator understands the status- and decision-based
+// conditions used in the scenario edges, simulating what the expr-lang
+// evaluator produces. Because every evaluated Gate is status=SUCCESS per CP-058,
+// the deny/escalate scenarios route on outcome.preferred_label (the decision).
 func scenarioConditionEvaluator(expr core.PolicyExpression, _ map[string]any, outcome core.Outcome) bool {
+	label := ""
+	if outcome.PreferredLabel != nil {
+		label = *outcome.PreferredLabel
+	}
 	switch string(expr) {
 	case `outcome.status == 'SUCCESS'`:
 		return outcome.Status == core.OutcomeStatusSuccess
 	case `outcome.status == 'FAIL'`:
 		return outcome.Status == core.OutcomeStatusFail
+	case `outcome.preferred_label == 'allow'`:
+		return label == string(core.GateActionAllow)
+	case `outcome.preferred_label == 'deny'`:
+		return label == string(core.GateActionDeny)
+	case `outcome.preferred_label == 'escalate-to-human'`:
+		return label == string(core.GateActionEscalateToHuman)
 	}
 	return false
 }
@@ -231,15 +245,18 @@ func TestGateScenario_CP053_PermitRoutesToSuccessPath(t *testing.T) {
 
 // ── (2) Deny: DispatchGateNode → Outcome → cascade routes to FAIL path ──────
 
-// TestGateScenario_CP058_DenyRoutesToFailPath exercises the deny flow:
-// gate evaluator returns deny → DispatchGateNode produces Outcome(status=FAIL,
-// kind=gate_decision) → cascade selects the FAIL-conditioned edge.
+// TestGateScenario_CP058_DenyRoutesToDenyEdge exercises the deny flow:
+// gate evaluator returns deny → DispatchGateNode produces Outcome(status=SUCCESS,
+// kind=gate_decision, preferred_label="deny") → cascade selects the deny-labelled
+// edge (routing on the decision, NOT on status — both allow and deny are SUCCESS).
 //
 // Assertions:
-//   - Outcome.Status == FAIL (deny → FAIL per CP-058).
-//   - Cascade routes to the FAIL edge (not the SUCCESS edge).
-//   - gate_decision_recorded event has OutcomeStatus=FAIL.
-func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
+//   - Outcome.Status == SUCCESS (deny is a successfully-evaluated Gate per CP-058).
+//   - Outcome.PreferredLabel == "deny".
+//   - Cascade routes to the deny edge (not the allow edge), proving status-blind,
+//     decision-driven routing.
+//   - gate_decision_recorded event has OutcomeStatus=SUCCESS.
+func TestGateScenario_CP058_DenyRoutesToDenyEdge(t *testing.T) {
 	t.Parallel()
 
 	run := scenarioFixtureRun(t)
@@ -265,8 +282,11 @@ func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
 	if result.Outcome.Kind != core.OutcomeKindGateDecision {
 		t.Errorf("Outcome.Kind = %q, want %q", result.Outcome.Kind, core.OutcomeKindGateDecision)
 	}
-	if result.Outcome.Status != core.OutcomeStatusFail {
-		t.Errorf("Outcome.Status = %q, want %q (deny → FAIL per CP-058)", result.Outcome.Status, core.OutcomeStatusFail)
+	if result.Outcome.Status != core.OutcomeStatusSuccess {
+		t.Errorf("Outcome.Status = %q, want %q (deny → SUCCESS per CP-058)", result.Outcome.Status, core.OutcomeStatusSuccess)
+	}
+	if result.Outcome.PreferredLabel == nil || *result.Outcome.PreferredLabel != string(core.GateActionDeny) {
+		t.Errorf("Outcome.PreferredLabel = %v, want %q", result.Outcome.PreferredLabel, core.GateActionDeny)
 	}
 
 	// Assert GateDecisionPayload.
@@ -281,21 +301,23 @@ func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
 		t.Errorf("DecisionActor = %q, want %q", gdp.DecisionActor, "reviewer")
 	}
 
-	// Step 2 — feed the Outcome into the cascade and verify routing.
-	condSuccess := core.PolicyExpression(`outcome.status == 'SUCCESS'`)
-	condFail := core.PolicyExpression(`outcome.status == 'FAIL'`)
+	// Step 2 — feed the Outcome into the cascade and verify routing. Both edges
+	// would match `outcome.status == 'SUCCESS'`, so the scenario routes on the
+	// DECISION via preferred_label — exactly the CP-058 routing channel.
+	condAllow := core.PolicyExpression(`outcome.preferred_label == 'allow'`)
+	condDeny := core.PolicyExpression(`outcome.preferred_label == 'deny'`)
 
-	edgeSuccess := core.Edge{
+	edgeAllow := core.Edge{
 		FromNode:    "gate-approval",
 		ToNode:      "node-proceed",
-		Condition:   &condSuccess,
+		Condition:   &condAllow,
 		Weight:      10,
 		OrderingKey: "a",
 	}
-	edgeFail := core.Edge{
+	edgeDeny := core.Edge{
 		FromNode:    "gate-approval",
 		ToNode:      "node-blocked",
-		Condition:   &condFail,
+		Condition:   &condDeny,
 		Weight:      10,
 		OrderingKey: "b",
 	}
@@ -303,7 +325,7 @@ func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
 	cycles := core.NewCycleCounter()
 	dispatchResult := core.DispatchEdge(
 		run,
-		[]core.Edge{edgeSuccess, edgeFail}, // intentionally unordered
+		[]core.Edge{edgeAllow, edgeDeny}, // intentionally unordered
 		result.Outcome,
 		scenarioConditionEvaluator,
 		cycles,
@@ -317,11 +339,11 @@ func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
 			dispatchResult.FailureClass, dispatchResult.FailureReason)
 	}
 	if dispatchResult.Edge.ToNode != "node-blocked" {
-		t.Errorf("cascade routed to %q, want %q (FAIL path for deny decision)",
+		t.Errorf("cascade routed to %q, want %q (deny edge for deny decision)",
 			dispatchResult.Edge.ToNode, "node-blocked")
 	}
 
-	// Step 3 — verify event has FAIL status.
+	// Step 3 — verify event has SUCCESS status (deny is a successful evaluation).
 	if len(bus.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(bus.events))
 	}
@@ -332,20 +354,102 @@ func TestGateScenario_CP058_DenyRoutesToFailPath(t *testing.T) {
 	if payload.Decision != core.GateActionDeny {
 		t.Errorf("event.Decision = %q, want %q", payload.Decision, core.GateActionDeny)
 	}
-	if payload.OutcomeStatus != core.OutcomeStatusFail {
-		t.Errorf("event.OutcomeStatus = %q, want %q", payload.OutcomeStatus, core.OutcomeStatusFail)
+	if payload.OutcomeStatus != core.OutcomeStatusSuccess {
+		t.Errorf("event.OutcomeStatus = %q, want %q", payload.OutcomeStatus, core.OutcomeStatusSuccess)
+	}
+}
+
+// TestGateScenario_EvalFailureRoutesToFailEdge exercises the eval-failure flow:
+// the evaluator cannot produce a verdict (returns an error) → DispatchGateNode
+// produces Outcome(status=FAIL, kind=default, NO payload, failure_class set) →
+// cascade routes on `outcome.status == 'FAIL'`. This is the ONLY path that yields
+// a FAIL gate outcome per CP-058.
+func TestGateScenario_EvalFailureRoutesToFailEdge(t *testing.T) {
+	t.Parallel()
+
+	run := scenarioFixtureRun(t)
+	bus := &scenarioRecordingBus{}
+	nodeID := core.NodeID("gate-eval-fail")
+	gateRef := core.GateRef("eval-fail-gate")
+
+	evalFn := func(_ context.Context, _ *core.Run, _ core.NodeID, _ core.GateRef) (*core.GateDecisionPayload, error) {
+		return nil, errors.New("policy engine unreachable")
+	}
+
+	result, err := handler.DispatchGateNode(context.Background(), run, nodeID, gateRef, evalFn, bus)
+	if err != nil {
+		t.Fatalf("DispatchGateNode: unexpected Go error: %v", err)
+	}
+
+	// Eval failure: FAIL, NO gate_decision payload, failure_class populated.
+	if result.Outcome.Status != core.OutcomeStatusFail {
+		t.Errorf("Outcome.Status = %q, want %q (eval failure)", result.Outcome.Status, core.OutcomeStatusFail)
+	}
+	if result.Outcome.Kind == core.OutcomeKindGateDecision {
+		t.Errorf("eval-failure Outcome carries kind=gate_decision; CP-058 forbids a payload on FAIL")
+	}
+	if result.Outcome.Payload != nil {
+		t.Errorf("eval-failure Outcome carries a payload; CP-058 forbids it")
+	}
+	if result.Outcome.FailureClass == nil {
+		t.Error("eval-failure Outcome has nil FailureClass; want a populated class")
+	}
+	if result.Decision != nil {
+		t.Errorf("result.Decision = %v on eval failure; want nil", result.Decision)
+	}
+	// No gate_decision_recorded event on eval failure.
+	if len(bus.events) != 0 {
+		t.Errorf("expected 0 events on eval failure, got %d", len(bus.events))
+	}
+
+	// Cascade routes the FAIL on outcome.status == 'FAIL'.
+	condSuccess := core.PolicyExpression(`outcome.status == 'SUCCESS'`)
+	condFail := core.PolicyExpression(`outcome.status == 'FAIL'`)
+	edgeSuccess := core.Edge{
+		FromNode:    "gate-eval-fail",
+		ToNode:      "node-proceed",
+		Condition:   &condSuccess,
+		Weight:      10,
+		OrderingKey: "a",
+	}
+	edgeFail := core.Edge{
+		FromNode:    "gate-eval-fail",
+		ToNode:      "node-quarantine",
+		Condition:   &condFail,
+		Weight:      10,
+		OrderingKey: "b",
+	}
+	cycles := core.NewCycleCounter()
+	dispatchResult := core.DispatchEdge(
+		run,
+		[]core.Edge{edgeSuccess, edgeFail},
+		result.Outcome,
+		scenarioConditionEvaluator,
+		cycles,
+		core.IdentityGuard,
+		core.PermitGate,
+	)
+	if !dispatchResult.Advance {
+		t.Fatalf("cascade: Advance=false; Failed=%v FailureReason=%s",
+			dispatchResult.Failed, dispatchResult.FailureReason)
+	}
+	if dispatchResult.Edge.ToNode != "node-quarantine" {
+		t.Errorf("cascade routed to %q, want %q (FAIL path for eval failure)",
+			dispatchResult.Edge.ToNode, "node-quarantine")
 	}
 }
 
 // ── (3) Escalate: deny-like routing + ResolutionSignalID preserved ──────────
 
-// TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID exercises escalation:
-// gate evaluator returns escalate-to-human → Outcome(status=FAIL) with
-// ResolutionSignalID preserved → cascade routes to FAIL path.
+// TestGateScenario_CP058_EscalateRoutesToEscalateEdgeWithSignalID exercises
+// escalation: gate evaluator returns escalate-to-human → Outcome(status=SUCCESS,
+// preferred_label="escalate-to-human") with ResolutionSignalID preserved →
+// cascade routes on the decision to the escalate edge.
 //
-// This verifies that the ResolutionSignalID survives the full flow from
-// evaluator through DispatchGateNode through cascade routing.
-func TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID(t *testing.T) {
+// This verifies that escalate is a SUCCESS verdict (CP-058) and that the
+// ResolutionSignalID survives the full flow from evaluator through
+// DispatchGateNode through cascade routing.
+func TestGateScenario_CP058_EscalateRoutesToEscalateEdgeWithSignalID(t *testing.T) {
 	t.Parallel()
 
 	run := scenarioFixtureRun(t)
@@ -369,10 +473,15 @@ func TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID(t *testing.T) {
 		t.Fatalf("DispatchGateNode: %v", err)
 	}
 
-	// Status must be FAIL for escalate-to-human.
-	if result.Outcome.Status != core.OutcomeStatusFail {
-		t.Errorf("Outcome.Status = %q, want %q (escalate → FAIL per CP-058)",
-			result.Outcome.Status, core.OutcomeStatusFail)
+	// Status must be SUCCESS for escalate-to-human (CP-058: a successful eval).
+	if result.Outcome.Status != core.OutcomeStatusSuccess {
+		t.Errorf("Outcome.Status = %q, want %q (escalate → SUCCESS per CP-058)",
+			result.Outcome.Status, core.OutcomeStatusSuccess)
+	}
+	if result.Outcome.PreferredLabel == nil ||
+		*result.Outcome.PreferredLabel != string(core.GateActionEscalateToHuman) {
+		t.Errorf("Outcome.PreferredLabel = %v, want %q",
+			result.Outcome.PreferredLabel, core.GateActionEscalateToHuman)
 	}
 
 	// ResolutionSignalID must survive in the payload.
@@ -384,21 +493,23 @@ func TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID(t *testing.T) {
 		t.Errorf("ResolutionSignalID = %v, want %q", gdp.ResolutionSignalID, sigID)
 	}
 
-	// Step 2 — cascade routes to FAIL path.
-	condSuccess := core.PolicyExpression(`outcome.status == 'SUCCESS'`)
-	condFail := core.PolicyExpression(`outcome.status == 'FAIL'`)
+	// Step 2 — cascade routes on the decision (preferred_label) to the escalate
+	// edge. The allow edge also matches status=SUCCESS, so decision-routing is
+	// what distinguishes them.
+	condAllow := core.PolicyExpression(`outcome.preferred_label == 'allow'`)
+	condEscalate := core.PolicyExpression(`outcome.preferred_label == 'escalate-to-human'`)
 
-	edgeSuccess := core.Edge{
+	edgeAllow := core.Edge{
 		FromNode:    "gate-manual",
 		ToNode:      "node-approved",
-		Condition:   &condSuccess,
+		Condition:   &condAllow,
 		Weight:      10,
 		OrderingKey: "a",
 	}
-	edgeFail := core.Edge{
+	edgeEscalate := core.Edge{
 		FromNode:    "gate-manual",
 		ToNode:      "node-quarantine",
-		Condition:   &condFail,
+		Condition:   &condEscalate,
 		Weight:      10,
 		OrderingKey: "b",
 	}
@@ -406,7 +517,7 @@ func TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID(t *testing.T) {
 	cycles := core.NewCycleCounter()
 	dispatchResult := core.DispatchEdge(
 		run,
-		[]core.Edge{edgeSuccess, edgeFail},
+		[]core.Edge{edgeAllow, edgeEscalate},
 		result.Outcome,
 		scenarioConditionEvaluator,
 		cycles,
@@ -419,7 +530,7 @@ func TestGateScenario_CP058_EscalateRoutesToFailPathWithSignalID(t *testing.T) {
 			dispatchResult.Failed, dispatchResult.FailureReason)
 	}
 	if dispatchResult.Edge.ToNode != "node-quarantine" {
-		t.Errorf("cascade routed to %q, want %q (FAIL path for escalate decision)",
+		t.Errorf("cascade routed to %q, want %q (escalate edge for escalate decision)",
 			dispatchResult.Edge.ToNode, "node-quarantine")
 	}
 }
@@ -433,10 +544,10 @@ func TestGateScenario_CP053_EventPayloadFieldCompleteness(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name           string
-		decision       core.GateAction
-		actor          string
-		wantStatus     core.OutcomeStatus
+		name       string
+		decision   core.GateAction
+		actor      string
+		wantStatus core.OutcomeStatus
 	}{
 		{
 			name:       "allow_event",
@@ -448,7 +559,7 @@ func TestGateScenario_CP053_EventPayloadFieldCompleteness(t *testing.T) {
 			name:       "deny_event",
 			decision:   core.GateActionDeny,
 			actor:      "reviewer",
-			wantStatus: core.OutcomeStatusFail,
+			wantStatus: core.OutcomeStatusSuccess, // deny is a successful eval per CP-058
 		},
 	}
 

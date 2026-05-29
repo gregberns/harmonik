@@ -500,6 +500,9 @@ func runBeadSubcommand(subArgs []string) int {
 	// Silently overwriting an in-flight queue would corrupt its state.
 	// Exception (hk-ly4w5): paused-by-failure and cancelled queues are
 	// auto-archived so that re-dispatch is one command.
+	// Exception (hk-i6hhn): active queues left by a dead daemon (stale or
+	// absent pidfile) are auto-archived so that a kill of a wedged daemon
+	// does not permanently block re-dispatch.
 	existingQueue, loadErr := queue.Load(persistCtx, projectDir)
 	if loadErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot check existing queue: %v\n", loadErr)
@@ -516,10 +519,26 @@ func runBeadSubcommand(subArgs []string) int {
 			}
 			fmt.Fprintf(os.Stderr, "harmonik run: archived stale queue to %s\n", archivePath)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
-			fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
-			fmt.Fprintln(os.Stderr, "  use 'harmonik queue status' to inspect, or remove .harmonik/queue.json to reset")
-			return 1
+			// For active (or other non-terminal) queues, probe the pidfile to
+			// detect whether the daemon that owns the queue is still alive
+			// (hk-i6hhn). If the pidfile is absent or stale, the daemon died
+			// before it could finalise queue.json — auto-archive and proceed.
+			pidStatus, _, pidErr := lifecycle.ProbePidfileLock(projectDir)
+			daemonDead := errors.Is(pidErr, os.ErrNotExist) || pidStatus == lifecycle.PidfileLockStatusStale
+			if daemonDead {
+				archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, time.Now())
+				if archiveErr != nil {
+					fmt.Fprintf(os.Stderr, "harmonik run: cannot archive orphaned queue: %v\n", archiveErr)
+					return 1
+				}
+				fmt.Fprintf(os.Stderr, "harmonik run: daemon appears dead; archived orphaned queue to %s\n", archivePath)
+			} else {
+				fmt.Fprintf(os.Stderr, "harmonik run: a queue is already active for this project\n")
+				fmt.Fprintf(os.Stderr, "  queue_id=%s status=%s\n", existingQueue.QueueID, existingQueue.Status)
+				fmt.Fprintln(os.Stderr, "  use 'harmonik queue cancel' to cancel a queue whose daemon is no longer running,")
+				fmt.Fprintln(os.Stderr, "  or 'harmonik queue status' to inspect the live queue")
+				return 1
+			}
 		}
 	}
 

@@ -1,0 +1,100 @@
+// per-node-model-effort.dot — canonical harmonik example: per-node model=/effort= override
+//
+// Pinned by:
+//   - specs/workflow-graph.md §4 WG-042 — per-node model/effort attributes
+//   - specs/workflow-graph.md §4 WG-043 — class/model_stylesheet informative-only
+//   - specs/workflow-graph.md §10 WG-031 — mixed strict/permissive attribute policy
+//   - specs/execution-model.md §4.3 EM-012b-NODE — per-node override chain
+//
+// This workflow demonstrates the per-node model/effort override surface.
+// An implementer node with heavy workload carries model="claude-opus-4-8"
+// and effort="high", overriding the run-level defaults for that node only.
+// The reviewer node carries only model="claude-haiku-4-5" (effort inherits from
+// run-level), showing that the two attributes are independent per WG-042.
+//
+// Loader validation (WG-042 §I.5):
+//   - Ingest accepts model/effort ONLY on agentic nodes.
+//   - effort MUST be in {low,medium,high,xhigh,max}; out-of-enum is a strict error.
+//   - model MUST match ^[A-Za-z0-9._:/-]+$, <=128 chars.
+//   - model/effort on non-agentic/gate/sub-workflow nodes or edges → strict error.
+//   - class= and model_stylesheet= are permissive (warned, retained, not dispatched).
+
+digraph "per-node-model-effort" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="per-node-model-effort";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: entry point — non-agentic noop.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="workflow entry point"
+    ];
+
+    // implementer: agentic node with per-node model AND effort override (WG-042).
+    // Both attributes are present; they are independent of each other.
+    // model="claude-opus-4-8" overrides the run-level model for this node only.
+    // effort="high" overrides the run-level effort for this node only.
+    implementer [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        model="claude-opus-4-8",
+        effort="high",
+        role="implement the change with a high-effort capable model"
+    ];
+
+    // reviewer: agentic node with per-node model only (effort inherits run-level).
+    // A node MAY carry one attribute without the other per WG-042 ("independent").
+    reviewer [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        model="claude-haiku-4-5",
+        role="lightweight review with a cheaper model"
+    ];
+
+    // close: APPROVE terminal.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE path — change accepted"
+    ];
+
+    // close-needs-attention: BLOCK / cap-hit terminal.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / fallback — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    start -> implementer;
+    implementer -> reviewer;
+
+    reviewer -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    reviewer -> implementer [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    reviewer -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // Unconditional fallback (D-edge-cascade-invariant).
+    reviewer -> "close-needs-attention";
+}

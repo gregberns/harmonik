@@ -592,7 +592,7 @@ func dispatchDotAgenticNode(
 		if isReviewer {
 			go pasteInjectQuitOnReviewFile(ctx, qs, sess, wtPath, briefDelivered)
 		} else {
-			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, nil)
+			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, tapCh)
 		}
 	}
 

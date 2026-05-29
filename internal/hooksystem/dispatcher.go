@@ -5,8 +5,13 @@
 // evaluator, applying the resulting side-effect, and emitting hook lifecycle
 // events (hook_fired, hook_failed).
 //
-// Spec ref: specs/control-points.md §4.3 CP-012 through CP-017, CP-016.
-// Bead ref: hk-a8bg.11
+// Mechanism-tagged Hook evaluators are dispatched inline. Cognition-tagged
+// Hook evaluators are dispatched via [CognitionHookEvaluator] when wired via
+// [Dispatcher.WithCognition]; without cognition components, cognition hooks
+// fail with ErrorCategoryDeterministic per CP-017 / §4.8.
+//
+// Spec ref: specs/control-points.md §4.3 CP-012 through CP-017, §4.8 CP-039–CP-042.
+// Bead ref: hk-a8bg.11, hk-a8bg.16
 package hooksystem
 
 import (
@@ -36,19 +41,22 @@ const hookTriggerPrefix = "on_"
 //  2. Calls Registry.LookupByTrigger to find matching Hooks.
 //  3. Sorts by SubsystemPriority ascending then DeclarationIndex ascending (CP-014).
 //  4. For each Hook: evaluates SubscriptionFilter (if present); evaluates the
-//     main mechanism Evaluator; emits hook_fired or hook_failed; respects
-//     halt_on_failure (CP-015).
+//     main mechanism Evaluator or delegates to the cognition evaluator per
+//     CP-017; emits hook_fired or hook_failed; respects halt_on_failure (CP-015).
 //
-// Cognition-tagged evaluators are not yet dispatched by this implementation
-// (post-MVH per CP-017). A cognition hook is skipped with a hook_failed event
-// carrying ErrorCategoryDeterministic.
+// Cognition-tagged evaluators require [WithCognition] to be called before
+// [Subscribe]. Without cognition components, cognition hooks emit hook_failed
+// with ErrorCategoryDeterministic.
 //
 // Tags: mechanism
-// Spec ref: specs/control-points.md §4.3 CP-012 through CP-016.
+// Spec ref: specs/control-points.md §4.3 CP-012 through CP-017, §4.8 CP-039–CP-042.
 type Dispatcher struct {
-	registry Registry
-	bus      eventbus.EventBus
-	eval     *core.PolicyExprEvaluator
+	registry      Registry
+	bus           eventbus.EventBus
+	eval          *core.PolicyExprEvaluator
+	cognitionEval CognitionHookEvaluator // nil when cognition support is not wired
+	verdictWriter VerdictFileWriter       // nil when cognition support is not wired
+	verdictReader VerdictReader           // nil when cognition support is not wired
 }
 
 // Registry is the read-only view of the ControlPoint registry consumed by S05.
@@ -71,6 +79,22 @@ func NewDispatcher(registry Registry, bus eventbus.EventBus) *Dispatcher {
 		bus:      bus,
 		eval:     core.NewPolicyExprEvaluator(core.DefaultPolicyExprEvaluatorConfig()),
 	}
+}
+
+// WithCognition wires the cognition components required to dispatch
+// cognition-tagged Hook evaluators per CP-017 / §4.8.
+//
+// Must be called before [Subscribe]. Returns the receiver for chaining.
+// eval, writer, and reader must all be non-nil; passing a nil for any
+// argument panics to surface misconfiguration at construction time.
+func (d *Dispatcher) WithCognition(eval CognitionHookEvaluator, writer VerdictFileWriter, reader VerdictReader) *Dispatcher {
+	if eval == nil || writer == nil || reader == nil {
+		panic("hooksystem.Dispatcher.WithCognition: eval, writer, and reader must be non-nil")
+	}
+	d.cognitionEval = eval
+	d.verdictWriter = writer
+	d.verdictReader = reader
+	return d
 }
 
 // Subscribe registers the Dispatcher as an observer consumer on the EventBus.
@@ -166,11 +190,7 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 	case core.ModeTagMechanism:
 		return d.fireMechanismHook(ctx, ev, cp, hookName, triggeringID, hookPL, haltOnFailure)
 	case core.ModeTagCognition:
-		// Cognition-tagged hooks are post-MVH (CP-017). Emit hook_failed and
-		// continue (cognition hooks default to halt_on_failure=false).
-		msg := "cognition-tagged hook evaluator not yet supported (post-MVH CP-017)"
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)
-		return haltOnFailure, fmt.Errorf("hooksystem: %s: %s", cp.Name, msg)
+		return d.fireCognitionHook(ctx, ev, cp, hookName, triggeringID, hookPL, haltOnFailure)
 	default:
 		msg := fmt.Sprintf("unknown evaluator mode %q", cp.Evaluator.Mode)
 		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, msg)

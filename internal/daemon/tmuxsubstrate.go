@@ -193,14 +193,8 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	s.spawnedHandles = append(s.spawnedHandles, outcome.Handle)
 	s.spawnedMu.Unlock()
 
-	// Retrieve the pane PID immediately so SubstrateSession.PID() is available.
-	pid, pidErr := s.adapter.WindowPanePID(ctx, outcome.Handle)
-	if pidErr != nil {
-		// PID retrieval failure is non-fatal: the window is alive. Log and
-		// continue with pid=0; callers should not depend on PID for correctness.
-		pid = 0
-	}
-
+	// Resolve the slash-free pane ID BEFORE capturing the pane PID (hk-kuxxl).
+	//
 	// Prefer the pane ID captured atomically by NewWindowIn (hk-aievp fix):
 	// outcome.PaneID is set by OSAdapter.NewWindowIn via `-P -F "#{pane_id}"`,
 	// which captures the ID in the same tmux invocation that creates the window.
@@ -222,6 +216,33 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		}
 	}
 
+	// pidTarget is the handle used for all #{pane_pid} resolution (here and in
+	// runWait's secondary pane-presence check). When a slash-free pane ID was
+	// resolved, target the pane directly via "%NNNN"; otherwise fall back to the
+	// slash-bearing "session:window-name" handle.
+	//
+	// hk-kuxxl: the slash-bearing handle (window name = "<bead_id>/i<n>",
+	// windowname.go WM-002a) makes `tmux display-message -t session:bead/i1` MISPARSE
+	// the target and SILENTLY FALL BACK to the session's currently-active pane.
+	// Under MaxConcurrent>1, concurrent SpawnWindow calls then capture a SIBLING
+	// run's pane PID into s.pid. When the fast sibling's pane shell exits, the slow
+	// siblings' runWait sees the aliased s.pid as dead via processDead(s.pid),
+	// returns exitCodeClean=0, ends the implementer phase prematurely, and the
+	// no-commit guard fails the run (no_commit_during_implementer ... exit=0).
+	// Using the slash-free pane ID pins PID resolution to THIS run's pane.
+	pidTarget := outcome.Handle
+	if paneID != "" {
+		pidTarget = tmux.WindowHandle(paneID)
+	}
+
+	// Retrieve the pane PID immediately so SubstrateSession.PID() is available.
+	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
+	if pidErr != nil {
+		// PID retrieval failure is non-fatal: the window is alive. Log and
+		// continue with pid=0; callers should not depend on PID for correctness.
+		pid = 0
+	}
+
 	// waitDone is initialized here at construction so that callers of Outcome()
 	// that arrive before Wait() is called can block on the channel rather than
 	// observe a nil-channel receive (which would block forever) or a zero struct
@@ -229,11 +250,12 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// not the channel allocation — the channel is always valid after SpawnWindow
 	// returns.  See architectural review R2 (hk-9to6j).
 	sess := &tmuxSubstrateSession{
-		adapter:  s.adapter,
-		handle:   outcome.Handle,
-		paneID:   paneID,
-		pid:      pid,
-		waitDone: make(chan struct{}),
+		adapter:   s.adapter,
+		handle:    outcome.Handle,
+		paneID:    paneID,
+		pidTarget: pidTarget,
+		pid:       pid,
+		waitDone:  make(chan struct{}),
 	}
 	return sess, nil
 }
@@ -490,7 +512,15 @@ type tmuxSubstrateSession struct {
 	// SpawnWindow time. Read by perRunSubstrate.SpawnWindow to initialise its
 	// own isolated pane target (hk-012af).
 	paneID string
-	pid    int
+	// pidTarget is the slash-free handle used by runWait's secondary
+	// pane-presence check to resolve #{pane_pid} for THIS run's pane. It is the
+	// slash-free pane ID ("%NNNN") when available, else the slash-bearing
+	// "session:window-name" handle. Using a slash-free target prevents tmux from
+	// misparsing the window-name handle and falling back to the session's
+	// active pane, which under MaxConcurrent>1 aliases a sibling run's PID and
+	// prematurely ends the implementer phase (hk-kuxxl).
+	pidTarget tmux.WindowHandle
+	pid       int
 
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once
@@ -570,7 +600,8 @@ func killProcessWithGrace(pid int, grace time.Duration) {
 // loop when Kill has already destroyed the window (hk-smuku).
 //
 // Secondary pane-presence check (hk-ry3be): when s.pid > 0 but processDead
-// returns false, Wait also calls WindowPanePID on the stored handle.  If the
+// returns false, Wait also calls WindowPanePID on the slash-free pidTarget
+// (hk-kuxxl — NOT the slash-bearing window-name handle).  If the
 // window can no longer be found by tmux (ErrNoSession or ErrTmuxFailure), the
 // daemon treats the pane as gone and unblocks even if the OS-level process is
 // still reachable (e.g. a zombie, orphan, or launchd re-parented child).  This
@@ -666,7 +697,12 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// window is gone from tmux's perspective, unblock immediately so
 				// the daemon does not hang indefinitely emitting heartbeats for a
 				// pane that no longer exists (hk-ry3be dogfood-blocker).
-				if _, paneErr := s.adapter.WindowPanePID(ctx, s.handle); paneErr != nil {
+				//
+				// hk-kuxxl: resolve via the slash-free pidTarget, not s.handle —
+				// the slash-bearing window-name handle makes tmux fall back to the
+				// session's active pane, which under MaxConcurrent>1 reports a
+				// sibling's pane and produces a false "pane gone" classification.
+				if _, paneErr := s.adapter.WindowPanePID(ctx, s.panePIDTarget()); paneErr != nil {
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeUnknown, // pane gone, process state uncertain
 						Duration: time.Since(startedAt),
@@ -676,7 +712,8 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// Process and pane both appear alive — continue polling.
 			} else {
 				// Slow path: PID unknown; fall back to WindowPanePID.
-				_, err := s.adapter.WindowPanePID(ctx, s.handle)
+				// hk-kuxxl: use the slash-free pidTarget for the same reason.
+				_, err := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
 				if err != nil {
 					// Window or session gone — treat as process exited.
 					s.outcome = handler.Outcome{
@@ -710,6 +747,22 @@ func (s *tmuxSubstrateSession) Outcome() handler.Outcome {
 // PID returns the pane PID retrieved at spawn time. Returns 0 if unknown.
 func (s *tmuxSubstrateSession) PID() int {
 	return s.pid
+}
+
+// panePIDTarget returns the handle used to resolve this session's #{pane_pid}.
+//
+// It prefers the slash-free pidTarget captured at SpawnWindow time (the
+// "%NNNN" pane ID) and falls back to the slash-bearing window-name handle only
+// when pidTarget was never populated (e.g. legacy test doubles that construct a
+// session directly without going through SpawnWindow). Using the slash-free
+// target prevents tmux from misparsing the window-name handle and falling back
+// to the session's active pane — the root cause of the concurrent-wave
+// implementer-phase-barrier failure (hk-kuxxl).
+func (s *tmuxSubstrateSession) panePIDTarget() tmux.WindowHandle {
+	if s.pidTarget != "" {
+		return s.pidTarget
+	}
+	return s.handle
 }
 
 // PaneTarget returns the tmux pane target string for this session: the stable

@@ -2,6 +2,7 @@ package brcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -113,22 +114,45 @@ func (a *Adapter) terminalTransitionWrite(
 	// DBLockedRetryMax (3): dogfood run hk-75rij showed that 3 retries are
 	// insufficient under concurrent kerf/agent SQLite contention (hk-ekz5v).
 	// The BI-030 intent-log backing provides idempotency across all retries.
+	// cfg.terminalWriteRetryParams() applies operator defaults but allows tests
+	// to inject small values to keep retry-exhaustion scenarios fast.
 	// Spec ref: beads-integration.md §4.10 BI-031 step (4c-transient).
+	retryMax, retryBase, retryCap := cfg.terminalWriteRetryParams()
 	result, err := a.RunWithDBLockedRetry(
 		ctx,
 		cfg,
 		CommandKindWrite,
-		UnavailableRetryMax,
-		UnavailableRetryBase,
-		UnavailableRetryCap,
+		retryMax,
+		retryBase,
+		retryCap,
 		brArgs...,
 	)
 	if err != nil {
-		// Subprocess not launched; intent file retained for BI-031 recovery.
+		// Retry budget exhausted (BrUnavailable) or exec failure.
+		// Idempotency check (hk-cw4sx): under concurrent --wave, N workers may
+		// call br close simultaneously; one succeeds while others exhaust retries.
+		// If ShowBead confirms the bead is already in the intended post-state,
+		// the failure is a false-negative — treat as success and delete intent file.
+		// Only check on BrUnavailable (retry exhaustion); propagate context
+		// cancellation and exec errors without the extra ShowBead round-trip.
+		if errors.Is(err, BrUnavailable) {
+			if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost {
+				_ = DeleteIntentLogAndSyncParent(intentLogDir, ikey) //nolint:errcheck // best-effort; stale file resolved by BI-031 on next startup
+				return nil
+			}
+		}
+		// Intent file retained for BI-031 recovery.
 		return fmt.Errorf("brcli.terminalTransitionWrite: br exec: %w", err)
 	}
 	if result.BrErr != BrOK {
-		// br returned a non-zero exit code; intent file retained for BI-031 recovery.
+		// Non-retriable non-zero exit (e.g. BrConflict, BrNotFound).
+		// Same idempotency check: a concurrent write may have already landed
+		// (hk-cw4sx). If ShowBead confirms the intended post-state, treat as success.
+		if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost {
+			_ = DeleteIntentLogAndSyncParent(intentLogDir, ikey) //nolint:errcheck // best-effort; stale file resolved by BI-031 on next startup
+			return nil
+		}
+		// Intent file retained for BI-031 recovery.
 		return fmt.Errorf("brcli.terminalTransitionWrite: br %s failed: %s (exit %d): stderr=%q",
 			op, result.BrErr, result.ExitCode, result.Stderr)
 	}

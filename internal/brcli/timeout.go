@@ -53,6 +53,39 @@ type TimeoutConfig struct {
 	// WriteTimeout is the wall-clock budget for write commands (br create,
 	// br update, br label, etc.). Default: 10s per BI-025c.
 	WriteTimeout time.Duration
+
+	// TerminalWriteMaxRetries overrides UnavailableRetryMax for terminal-transition
+	// writes (CloseBead, ClaimBead, ReopenBead, ResetBead). Zero means use
+	// UnavailableRetryMax (10). Tests set this to a small value (e.g. 2) to keep
+	// retry-exhaustion scenarios fast without affecting production defaults.
+	TerminalWriteMaxRetries int
+
+	// TerminalWriteRetryBase overrides UnavailableRetryBase for terminal-transition
+	// writes. Zero means use UnavailableRetryBase (50ms).
+	TerminalWriteRetryBase time.Duration
+
+	// TerminalWriteRetryCap overrides UnavailableRetryCap for terminal-transition
+	// writes. Zero means use UnavailableRetryCap (15s).
+	TerminalWriteRetryCap time.Duration
+}
+
+// terminalWriteRetryParams returns the effective retry parameters for
+// terminal-transition writes, applying the BI-025c defaults when the
+// TimeoutConfig override fields are zero.
+func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, cap_ time.Duration) {
+	maxRetries = c.TerminalWriteMaxRetries
+	if maxRetries == 0 {
+		maxRetries = UnavailableRetryMax
+	}
+	base = c.TerminalWriteRetryBase
+	if base == 0 {
+		base = UnavailableRetryBase
+	}
+	cap_ = c.TerminalWriteRetryCap
+	if cap_ == 0 {
+		cap_ = UnavailableRetryCap
+	}
+	return
 }
 
 // effectiveTimeout returns the resolved timeout for the given CommandKind,

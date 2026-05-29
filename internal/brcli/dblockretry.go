@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 )
 
@@ -179,6 +180,8 @@ func (a *Adapter) RunWithDBLockedRetry(
 		}
 
 		// Sleep for the current backoff, then double (capped at cap_).
+		// Add up to 25% jitter before capping to reduce thundering herd under
+		// concurrent terminal writes (hk-cw4sx: N workers retry simultaneously).
 		// Respect context cancellation during the sleep.
 		select {
 		case <-ctx.Done():
@@ -187,6 +190,9 @@ func (a *Adapter) RunWithDBLockedRetry(
 		}
 
 		backoff *= 2
+		if jitterRange := int64(backoff / 4); jitterRange > 0 {
+			backoff += time.Duration(rand.Int63n(jitterRange)) //nolint:gosec // G404: non-crypto jitter for backoff scheduling
+		}
 		if backoff > cap_ {
 			backoff = cap_
 		}

@@ -1783,10 +1783,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Bead: hk-mmh8f.
 	if curHeadSHA, curHeadErr := resolveWorktreeHEAD(ctx, wtPath); curHeadErr == nil && curHeadSHA == headSHA {
-		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-		emitDone(false, failReason)
-		return
+		// hk-cwxow: if main has advanced past headSHA the agent made no commits
+		// but there is nothing to merge — skip the guard and let
+		// mergeRunBranchToMain return noChange (runTip == headSHA path).
+		// When main is still at headSHA, no progress was made → ReopenBead.
+		mainAdvanced := false
+		mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
+		mainTipCmd.Dir = deps.projectDir
+		if mainTipOut, mainTipErr := mainTipCmd.Output(); mainTipErr == nil {
+			mainAdvanced = strings.TrimRight(string(mainTipOut), "\n") != headSHA
+		}
+		if !mainAdvanced {
+			failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+			emitDone(false, failReason)
+			return
+		}
+		// main has advanced — fall through; mergeRunBranchToMain handles noChange.
 	}
 
 	switch {

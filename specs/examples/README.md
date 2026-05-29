@@ -366,6 +366,22 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.
 
+## Authoring and porting notes (non-normative)
+
+See [`authoring-notes.md`](authoring-notes.md) for guidance on:
+
+- **`auto_status` is rejected** — use `non_committing="true"` instead (the ingest
+  error is actionable and names the replacement).
+- **Pairing `non_committing` nodes** with a downstream validating tool node
+  (WG-041 authoring obligation).
+- **Reviewer-node `prompt`** — accepted by the parser but inert at v1; use `role`
+  to specialize the reviewer brief today.
+- **`class` / `model_stylesheet`** — not dispatched by harmonik; translate to
+  direct `model=` attributes per WG-042/WG-043.
+
+`authoring-notes.md` is the "canonical example sidecar" referenced by
+`specs/workflow-graph.md §4 WG-041`.
+
 ## How to add a new example
 
 Examples are spec artifacts. Adding one requires both a spec change and reviewer approval; this is not a place to drop one-off `.dot` files for experimentation.

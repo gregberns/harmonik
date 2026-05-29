@@ -679,8 +679,31 @@ func runReviewLoop(
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+
+		// ── Create isolated reviewer worktree (hk-dut6b) ─────────────────
+		//
+		// The reviewer runs in its own short-lived worktree checked out in
+		// detached-HEAD mode at reviewHeadSHA.  A detached-HEAD worktree means
+		// any `git checkout` the reviewer issues only affects the reviewer's
+		// own worktree — it cannot switch the implementer's task branch to a
+		// different commit and corrupt subsequent iterations.
+		//
+		// The worktree is NOT leased and NOT tracked by the workspace state
+		// machine (analogous to the scratch merge-worktrees of WM-019a).
+		// cleanup is deferred so the reviewer worktree is always removed even
+		// on early-return paths (error, context cancellation).
+		revWtCfg := workspace.NoWorktreeRootOverride()
+		revWtPath, revWtCleanup, revWtErr := workspace.CreateReviewerWorktree(
+			ctx, deps.projectDir, runID.String(), state.iterationCount, reviewHeadSHA, revWtCfg)
+		if revWtErr != nil {
+			result := rlErrorResult(fmt.Sprintf("create reviewer worktree at iteration %d: %v", state.iterationCount, revWtErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		defer revWtCleanup()
+
 		reviewTargetPayload := workspace.ReviewTargetPayload{
-			WorkspacePath: wtPath,
+			WorkspacePath: revWtPath,
 			BeadID:        string(beadID),
 			Iteration:     state.iterationCount,
 			BeadTitle:     beadTitle,
@@ -703,7 +726,7 @@ func runReviewLoop(
 		revRC := claudeRunCtx{
 			runID:             runID,
 			beadID:            string(beadID),
-			workspacePath:     wtPath,
+			workspacePath:     revWtPath,
 			daemonSocket:      daemonSocket,
 			workflowMode:      core.WorkflowModeReviewLoop,
 			phase:             handlercontract.ReviewLoopPhaseReviewer,
@@ -882,9 +905,9 @@ func runReviewLoop(
 		// reviewer claude hangs indefinitely at a prompt.
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
 		revBriefDelivered := pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, wtPath)
+			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath)
 		if qs, ok := revPasteTarget.(quitSender); ok {
-			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, wtPath, revBriefDelivered)
+			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revWtPath, revBriefDelivered)
 		}
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
@@ -914,7 +937,11 @@ func runReviewLoop(
 		}
 
 		// ── Read and validate verdict file ────────────────────────────────
-		verdict, verdictErr := workspace.ReadReviewVerdict(wtPath)
+		//
+		// The reviewer wrote review.json to its isolated worktree (revWtPath).
+		// Read from there, then copy to wtPath so the archive and implementer
+		// worktree keep the verdict for post-run inspection (hk-dut6b).
+		verdict, verdictErr := workspace.ReadReviewVerdict(revWtPath)
 		if verdictErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ReadReviewVerdict iter %d: %v\n", state.iterationCount, verdictErr)
 			result := rlErrorResult(fmt.Sprintf("verdict malformed at iteration %d: %v", state.iterationCount, verdictErr))
@@ -926,6 +953,14 @@ func runReviewLoop(
 			result := rlErrorResult(fmt.Sprintf("verdict absent at iteration %d", state.iterationCount))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
+		}
+
+		// Copy review.json from the reviewer's isolated worktree to the
+		// implementer's worktree so ArchiveVerdict (below) and post-run
+		// inspection tools find it at the canonical wtPath location.
+		if cpErr := rlCopyReviewVerdict(revWtPath, wtPath); cpErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: reviewloop: copy review verdict iter %d: %v (non-fatal)\n",
+				state.iterationCount, cpErr)
 		}
 
 		// Emit reviewer_verdict (verbatim agent-reviewer schema v1 fields per EM-015d).
@@ -1082,6 +1117,32 @@ func rlTruncateUTF8(s string, maxBytes int) string {
 		b = b[:len(b)-1]
 	}
 	return string(b)
+}
+
+// rlCopyReviewVerdict copies ${srcWtPath}/.harmonik/review.json to
+// ${dstWtPath}/.harmonik/review.json so the implementer's worktree retains the
+// reviewer's verdict for ArchiveVerdict and post-run inspection after the
+// reviewer's isolated worktree is removed (hk-dut6b).
+//
+// The destination directory is created if absent.  Errors are non-fatal to the
+// caller; a failed copy is logged but does not reopen the bead.
+func rlCopyReviewVerdict(srcWtPath, dstWtPath string) error {
+	src := workspace.ReviewVerdictPath(srcWtPath)
+	dst := workspace.ReviewVerdictPath(dstWtPath)
+
+	//nolint:gosec // G304: path constructed from workspace paths + known relative segments
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("rlCopyReviewVerdict: read %q: %w", src, err)
+	}
+	if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+		return fmt.Errorf("rlCopyReviewVerdict: MkdirAll %q: %w", filepath.Dir(dst), mkErr)
+	}
+	//nolint:gosec // G306: 0644 is intentional for a review artifact
+	if wErr := os.WriteFile(dst, data, 0o644); wErr != nil {
+		return fmt.Errorf("rlCopyReviewVerdict: write %q: %w", dst, wErr)
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

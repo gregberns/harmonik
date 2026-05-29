@@ -270,17 +270,19 @@ func pqw5s7tgHandlerScript(t *testing.T, wtPath string) string {
 	script := `#!/bin/sh
 set -e
 WTP='` + wtPath + `'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/pqw5s7tg_count"
 if [ ! -f "$CNT_FILE" ]; then printf '0' > "$CNT_FILE"; fi
 CNT=$(cat "$CNT_FILE")
 CNT=$((CNT + 1))
 printf '%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT % 2)) -eq 0 ]; then
-  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"post-quit watchdog scenario"}' > "$WTP/.harmonik/review.json"
+  mkdir -p "$WS/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"post-quit watchdog scenario"}' > "$WS/.harmonik/review.json"
 else
-  printf '%d' "$CNT" > "$WTP/pqw5s7tg_impl_$CNT.txt"
-  git -C "$WTP" add "pqw5s7tg_impl_$CNT.txt" >/dev/null 2>&1
-  git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" \
+  printf '%d' "$CNT" > "$WS/pqw5s7tg_impl_$CNT.txt"
+  git -C "$WS" add "pqw5s7tg_impl_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
       commit -m "pqw5s7tg impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
 fi
 exit 0

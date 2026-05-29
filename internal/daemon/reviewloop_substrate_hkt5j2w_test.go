@@ -237,6 +237,7 @@ func rlSubWiredHandlerScript(t *testing.T, wtPath string) string {
 	script := `#!/bin/sh
 set -e
 WTP='` + wtpEsc + `'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rlsubwired_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -245,13 +246,14 @@ CNT=$(cat "$CNT_FILE")
 CNT=$((CNT + 1))
 printf '%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT % 2)) -eq 0 ]; then
-  # Reviewer: write APPROVE verdict.
-  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"substrate wired scenario"}' > "$WTP/.harmonik/review.json"
+  # Reviewer: write APPROVE verdict to reviewer's isolated workspace (hk-dut6b).
+  mkdir -p "$WS/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"substrate wired scenario"}' > "$WS/.harmonik/review.json"
 else
   # Implementer: commit a unique file so diff hash advances.
-  printf '%d' "$CNT" > "$WTP/subwired_impl_$CNT.txt"
-  git -C "$WTP" add "subwired_impl_$CNT.txt" >/dev/null 2>&1
-  git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" \
+  printf '%d' "$CNT" > "$WS/subwired_impl_$CNT.txt"
+  git -C "$WS" add "subwired_impl_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
       commit -m "subwired impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
 fi
 exit 0

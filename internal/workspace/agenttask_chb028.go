@@ -534,6 +534,10 @@ func WriteReviewTarget(payload ReviewTargetPayload) error {
 	target := ReviewTargetPath(payload.WorkspacePath)
 	content := buildReviewTargetContent(payload)
 
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("workspace: WriteReviewTarget: MkdirAll %q: %w", filepath.Dir(target), err)
+	}
 	if err := atomicWriteWithParentFsync(target, []byte(content)); err != nil {
 		return fmt.Errorf("workspace: WriteReviewTarget: atomic write %q: %w", target, err)
 	}

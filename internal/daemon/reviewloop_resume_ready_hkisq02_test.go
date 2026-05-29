@@ -275,6 +275,7 @@ func rlResumeReadyHandlerScript(t *testing.T, wtPath string) string {
 	script := `#!/bin/sh
 set -e
 WTP='` + wtPath + `'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rlresumeready_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -285,23 +286,25 @@ printf '%d' "$CNT" > "$CNT_FILE"
 case "$CNT" in
   1)
     # iter1 implementer: commit.
-    printf '1' > "$WTP/rlrr_impl_1.txt"
-    git -C "$WTP" add rlrr_impl_1.txt >/dev/null 2>&1
-    git -C "$WTP" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter1 impl" --no-gpg-sign >/dev/null 2>&1
+    printf '1' > "$WS/rlrr_impl_1.txt"
+    git -C "$WS" add rlrr_impl_1.txt >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter1 impl" --no-gpg-sign >/dev/null 2>&1
     ;;
   2)
     # iter1 reviewer: REQUEST_CHANGES (forces iter2 implementer-resume).
-    printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":[],"notes":"please address X"}' > "$WTP/.harmonik/review.json"
+    mkdir -p "$WS/.harmonik"
+    printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":[],"notes":"please address X"}' > "$WS/.harmonik/review.json"
     ;;
   3)
     # iter2 implementer-resume: commit again (diff hash advances).
-    printf '2' > "$WTP/rlrr_impl_2.txt"
-    git -C "$WTP" add rlrr_impl_2.txt >/dev/null 2>&1
-    git -C "$WTP" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter2 impl" --no-gpg-sign >/dev/null 2>&1
+    printf '2' > "$WS/rlrr_impl_2.txt"
+    git -C "$WS" add rlrr_impl_2.txt >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter2 impl" --no-gpg-sign >/dev/null 2>&1
     ;;
   *)
     # iter2 reviewer: APPROVE.
-    printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"looks good"}' > "$WTP/.harmonik/review.json"
+    mkdir -p "$WS/.harmonik"
+    printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"looks good"}' > "$WS/.harmonik/review.json"
     ;;
 esac
 exit 0

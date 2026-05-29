@@ -156,6 +156,11 @@ func rlFixtureVerdictJSON(verdict string) string {
 // (reviewer) write review.json using the verdict table indexed by iteration
 // number (invocation/2).
 //
+// The counter file always lives in the implementer's wtPath (shared across all
+// invocations).  The verdict file is written to $HARMONIK_WORKSPACE_PATH so
+// it reaches the reviewer's isolated worktree (hk-dut6b) rather than the
+// hardcoded wtPath.
+//
 // verdictsByIteration[i] is the verdict for iteration i+1 (1-based).
 func rlFixtureHandlerScript(t *testing.T, wtPath string, verdictsByIteration []string) string {
 	t.Helper()
@@ -165,7 +170,7 @@ func rlFixtureHandlerScript(t *testing.T, wtPath string, verdictsByIteration []s
 		iterNum := i + 1
 		vj := strings.ReplaceAll(rlFixtureVerdictJSON(v), "'", "'\\''")
 		fmt.Fprintf(&caseLines,
-			"    %d) printf '%%s' '%s' > \"$WTP/.harmonik/review.json\" ;;\n",
+			"    %d) printf '%%s' '%s' > \"$WS/.harmonik/review.json\" ;;\n",
 			iterNum, vj,
 		)
 	}
@@ -175,6 +180,9 @@ func rlFixtureHandlerScript(t *testing.T, wtPath string, verdictsByIteration []s
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
+# WS is the per-invocation workspace path: reviewer gets an isolated worktree
+# (hk-dut6b); implementer gets the shared wtPath.
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rl_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -185,8 +193,9 @@ printf '%%d' "$CNT" > "$CNT_FILE"
 # Even invocations = reviewer (implementer is odd).
 if [ $((CNT %% 2)) -eq 0 ]; then
   ITER=$((CNT / 2))
+  mkdir -p "$WS/.harmonik"
   case "$ITER" in
-%s    *) printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"fallback"}' > "$WTP/.harmonik/review.json" ;;
+%s    *) printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"fallback"}' > "$WS/.harmonik/review.json" ;;
   esac
 else
   # Implementer: create a unique file and commit to advance HEAD.
@@ -195,9 +204,9 @@ else
   # Redirect git output to stderr so the watcher does not see it as NDJSON
   # (malformed JSON causes the watcher to exit the goroutine early, which
   # closes the stdout pipe and triggers SIGPIPE in the subprocess).
-  printf '%%d' "$CNT" > "$WTP/impl_iter_$CNT.txt"
-  git -C "$WTP" add "impl_iter_$CNT.txt" >/dev/null 2>&1
-  git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+  printf '%%d' "$CNT" > "$WS/impl_iter_$CNT.txt"
+  git -C "$WS" add "impl_iter_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
 fi
 exit 0
 `, wtpEsc, caseLines.String())
@@ -420,6 +429,7 @@ func rlFixtureNoProgressHandlerScript(t *testing.T, wtPath, firstVerdict string)
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rl_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -429,15 +439,16 @@ CNT=$((CNT + 1))
 printf '%%d' "$CNT" > "$CNT_FILE"
 # Even invocations = reviewer; odd = implementer.
 if [ $((CNT %% 2)) -eq 0 ]; then
-  # Reviewer: write the verdict (only iteration 1 reviewer is expected).
-  printf '%%s' '%s' > "$WTP/.harmonik/review.json"
+  # Reviewer: write the verdict to reviewer's isolated workspace (hk-dut6b).
+  mkdir -p "$WS/.harmonik"
+  printf '%%s' '%s' > "$WS/.harmonik/review.json"
 else
   IMPL_NUM=$(((CNT + 1) / 2))
   if [ "$IMPL_NUM" -eq 1 ]; then
     # First implementer: commit a file so diff hash advances.
-    printf '%%d' "$CNT" > "$WTP/impl_iter_$CNT.txt"
-    git -C "$WTP" add "impl_iter_$CNT.txt" >/dev/null 2>&1
-    git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+    printf '%%d' "$CNT" > "$WS/impl_iter_$CNT.txt"
+    git -C "$WS" add "impl_iter_$CNT.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
   fi
   # Subsequent implementers: do nothing — diff hash stays identical.
 fi

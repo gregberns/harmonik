@@ -163,7 +163,7 @@ func rlBridgeFixtureHandlerScript(t *testing.T, wtPath string, verdictsByIterati
 		iterNum := i + 1
 		vj := strings.ReplaceAll(rlBridgeFixtureVerdictJSON(v), "'", "'\\''")
 		fmt.Fprintf(&caseLines,
-			"    %d) printf '%%s' '%s' > \"$WTP/.harmonik/review.json\" ;;\n",
+			"    %d) printf '%%s' '%s' > \"$WS/.harmonik/review.json\" ;;\n",
 			iterNum, vj,
 		)
 	}
@@ -173,6 +173,7 @@ func rlBridgeFixtureHandlerScript(t *testing.T, wtPath string, verdictsByIterati
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rl_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -182,13 +183,14 @@ CNT=$((CNT + 1))
 printf '%%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT %% 2)) -eq 0 ]; then
   ITER=$((CNT / 2))
+  mkdir -p "$WS/.harmonik"
   case "$ITER" in
-%s    *) printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"fallback"}' > "$WTP/.harmonik/review.json" ;;
+%s    *) printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"fallback"}' > "$WS/.harmonik/review.json" ;;
   esac
 else
-  printf '%%d' "$CNT" > "$WTP/impl_iter_$CNT.txt"
-  git -C "$WTP" add "impl_iter_$CNT.txt" >/dev/null 2>&1
-  git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+  printf '%%d' "$CNT" > "$WS/impl_iter_$CNT.txt"
+  git -C "$WS" add "impl_iter_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
 fi
 exit 0
 `, wtpEsc, caseLines.String())

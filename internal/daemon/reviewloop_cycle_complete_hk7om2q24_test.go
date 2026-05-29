@@ -56,6 +56,7 @@ func rlcFixtureMalformedVerdictScript(t *testing.T, wtPath string) string {
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rl_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -64,13 +65,14 @@ CNT=$(cat "$CNT_FILE")
 CNT=$((CNT + 1))
 printf '%%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT %% 2)) -eq 0 ]; then
-  # Reviewer invocation: write malformed JSON.
-  printf 'NOT-VALID-JSON' > "$WTP/.harmonik/review.json"
+  # Reviewer invocation: write malformed JSON to reviewer's workspace (hk-dut6b).
+  mkdir -p "$WS/.harmonik"
+  printf 'NOT-VALID-JSON' > "$WS/.harmonik/review.json"
 else
   # Implementer invocation: commit a file to advance HEAD.
-  printf '%%d' "$CNT" > "$WTP/impl_err_$CNT.txt"
-  git -C "$WTP" add "impl_err_$CNT.txt" >/dev/null 2>&1
-  git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl err $CNT" --no-gpg-sign >/dev/null 2>&1
+  printf '%%d' "$CNT" > "$WS/impl_err_$CNT.txt"
+  git -C "$WS" add "impl_err_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl err $CNT" --no-gpg-sign >/dev/null 2>&1
 fi
 exit 0
 `, wtpEsc)
@@ -100,6 +102,7 @@ func rlcFixtureNoProgressScript(t *testing.T, wtPath string) string {
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
 CNT_FILE="$WTP/.harmonik/rl_count"
 if [ ! -f "$CNT_FILE" ]; then
   printf '0' > "$CNT_FILE"
@@ -110,13 +113,14 @@ printf '%%d' "$CNT" > "$CNT_FILE"
 case "$CNT" in
   1)
     # Implementer iter 1: commit a file so HEAD advances (non-empty diff).
-    printf '1' > "$WTP/impl_np_1.txt"
-    git -C "$WTP" add "impl_np_1.txt" >/dev/null 2>&1
-    git -C "$WTP" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter 1" --no-gpg-sign >/dev/null 2>&1
+    printf '1' > "$WS/impl_np_1.txt"
+    git -C "$WS" add "impl_np_1.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter 1" --no-gpg-sign >/dev/null 2>&1
     ;;
   2)
-    # Reviewer iter 1: REQUEST_CHANGES so we loop.
-    printf '%%s' '%s' > "$WTP/.harmonik/review.json"
+    # Reviewer iter 1: REQUEST_CHANGES so we loop. Write to reviewer's workspace (hk-dut6b).
+    mkdir -p "$WS/.harmonik"
+    printf '%%s' '%s' > "$WS/.harmonik/review.json"
     ;;
   3)
     # Implementer iter 2: exit without committing — HEAD stays the same.

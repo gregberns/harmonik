@@ -53,8 +53,11 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// workloopPollInterval is the sleep duration between bead-ledger polls when the
-// ready queue is empty.
+// workloopPollInterval is the sleep duration used for retry backoff and the
+// br-ready fallback poll path (no queue loaded). It is NOT used for
+// queue-loaded idle states, which block indefinitely via workloopIdleWait
+// per PL-013 (retired-with-stub): idle daemon MUST wait without a periodic
+// re-query timer until a queue-submit wake signal or shutdown arrives.
 const workloopPollInterval = 2 * time.Second
 
 // windowCleaner is the optional interface implemented by substrates that track
@@ -648,9 +651,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					// Queue is loaded: check its status per §7.4 pseudocode.
 					switch q.Status {
 					case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
-						// Queue is paused or completed — no dispatch; idle-wait.
+						// Queue is paused or completed — no dispatch; block indefinitely
+						// until a queue-submit wake signal or shutdown (PL-013 socket-block idle).
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -665,9 +669,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 					}
 					if activeGroupIdx < 0 {
-						// No active group yet (all pending or all terminal) — idle-wait.
+						// No active group yet (all pending or all terminal) — block indefinitely
+						// until a queue-submit wake signal or shutdown (PL-013 socket-block idle).
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -675,9 +680,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 					items := queue.EligibleItems(&q.Groups[activeGroupIdx])
 					if len(items) == 0 {
-						// All items dispatched or deferred — wait for group progress.
+						// All items dispatched or deferred — block indefinitely until a
+						// queue-submit wake signal or shutdown (PL-013 socket-block idle).
 						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -2043,6 +2049,28 @@ func workloopSleep(ctx context.Context, d time.Duration, wakeC <-chan struct{}) 
 		return ctx.Err()
 	case <-time.After(d):
 		return nil
+	case <-wakeC:
+		return nil
+	}
+}
+
+// workloopIdleWait blocks indefinitely until a queue-submit wake signal
+// arrives on wakeC or ctx is cancelled. Unlike workloopSleep there is no
+// periodic re-query timer — the daemon waits without spinning until the
+// socket layer delivers a signal. Used for queue-loaded idle states per
+// PL-013 (retired-with-stub): idle (queue absent/completed/paused or no
+// eligible items) MUST NOT busy-poll; it MUST block until queue-submit or
+// shutdown.
+//
+// wakeC may be nil (e.g. in tests that do not wire QueueStore.WakeCh):
+// receive from a nil channel blocks forever, so the function degrades to
+// waiting only for ctx cancellation.
+//
+// Bead ref: hk-dji5z (T71).
+func workloopIdleWait(ctx context.Context, wakeC <-chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-wakeC:
 		return nil
 	}

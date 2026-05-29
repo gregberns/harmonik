@@ -2,7 +2,11 @@
 // No imports from any internal subsystem are permitted (see internal/core depguard rule).
 package core
 
-import "path"
+import (
+	"path"
+
+	"github.com/google/uuid"
+)
 
 // TransitionRecordPath returns the canonical relative path for a transition record
 // within a git repository tree.
@@ -48,4 +52,26 @@ func TransitionRecordPath(runID RunID, transitionID TransitionID) string {
 // path and must use forward slashes on all platforms.
 func EvidenceExternalDir(runID RunID, transitionID TransitionID) string {
 	return path.Join(".harmonik", "transitions", runID.String(), transitionID.String(), "evidence")
+}
+
+// HookVerdictFilePath returns the canonical relative path for a persisted
+// HookVerdictRecord within a git repository tree.
+//
+// The path has the form:
+//
+//	.harmonik/hooks/<run_id>/<invocation_id>.json
+//
+// This satisfies specs/control-points.md §4.8.CP-040: a cognition-tagged Hook
+// evaluator's verdict MUST be persisted to this path on the run's task branch
+// per specs/workspace-model.md §4.2. Consumers locate the file via:
+//
+//	git show <commit_hash>:.harmonik/hooks/<run_id>/<invocation_id>.json
+//
+// The commit_hash is carried in the hook_verdict_persisted event per
+// specs/event-model.md §8.2.3.
+//
+// path.Join (not filepath.Join) is used intentionally: this is a git-tree
+// path and must use forward slashes on all platforms.
+func HookVerdictFilePath(runID RunID, invocationID uuid.UUID) string {
+	return path.Join(".harmonik", "hooks", runID.String(), invocationID.String()+".json")
 }

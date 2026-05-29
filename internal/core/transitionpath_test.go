@@ -89,6 +89,41 @@ func TestEvidenceExternalDir_EM021Shape(t *testing.T) {
 	}
 }
 
+// TestHookVerdictFilePath_CP040Shape verifies that HookVerdictFilePath produces
+// the canonical path shape required by specs/control-points.md §4.8.CP-040:
+//
+//	.harmonik/hooks/<run_id>/<invocation_id>.json
+func TestHookVerdictFilePath_CP040Shape(t *testing.T) {
+	runID := RunID(uuid.Must(uuid.NewV7()))
+	invocationID := uuid.Must(uuid.NewV7())
+
+	got := HookVerdictFilePath(runID, invocationID)
+
+	runStr := runID.String()
+	invStr := invocationID.String()
+
+	if !strings.HasPrefix(got, ".harmonik/hooks/") {
+		t.Errorf("HookVerdictFilePath result %q does not start with .harmonik/hooks/", got)
+	}
+
+	if !strings.HasSuffix(got, ".json") {
+		t.Errorf("HookVerdictFilePath result %q does not end with .json", got)
+	}
+
+	if !strings.Contains(got, runStr) {
+		t.Errorf("HookVerdictFilePath result %q does not contain run_id %q", got, runStr)
+	}
+
+	if !strings.Contains(got, invStr) {
+		t.Errorf("HookVerdictFilePath result %q does not contain invocation_id %q", got, invStr)
+	}
+
+	want := ".harmonik/hooks/" + runStr + "/" + invStr + ".json"
+	if got != want {
+		t.Errorf("HookVerdictFilePath = %q, want %q", got, want)
+	}
+}
+
 // TestEvidenceExternalDir_EM021SiblingRelationship verifies that the evidence
 // external directory is nested under the transition record's sibling directory,
 // not a flat sibling of <transition_id>.json. The two paths must share the same

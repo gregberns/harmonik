@@ -79,3 +79,22 @@ const (
 func (e Evidence) Valid() bool {
 	return true
 }
+
+// SetGateVerdict inserts verdict into the Evidence map keyed by
+// verdict.GateName, satisfying specs/control-points.md §4.8.CP-040.
+//
+// The Transition record's Evidence MUST carry the GateVerdictRecord under
+// the gate_name key BEFORE the transition advances. Callers MUST call this
+// method and write the resulting Evidence into the Transition record before
+// issuing the checkpoint commit.
+//
+// If e is nil, a new map is allocated. The updated map is returned; the
+// caller MUST use the return value (maps are reference types but nil
+// initialisation requires allocation).
+func (e Evidence) SetGateVerdict(verdict GateVerdictRecord) Evidence {
+	if e == nil {
+		e = make(Evidence)
+	}
+	e[verdict.GateName] = verdict
+	return e
+}

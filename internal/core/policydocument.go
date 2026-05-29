@@ -196,6 +196,14 @@ var ErrNonEmptyDeferredRoleShell = errors.New("declared-but-deferred role must c
 // (specs/control-points.md §4.6.CP-031, §4.11.CP-052).
 var ErrMissingBeadsCLISkill = errors.New("mvh-required role missing \"beads-cli\" in default_skills")
 
+// ErrFreedomProfileEmptyName is returned by ValidateFreedomProfiles when a
+// freedom profile has an empty name field (§6.2.CP-032).
+var ErrFreedomProfileEmptyName = errors.New("freedom_profile missing required name")
+
+// ErrFreedomProfileInvalidMaxIterations is returned by ValidateFreedomProfiles
+// when a freedom profile's max_iterations is not positive (§6.2.CP-032).
+var ErrFreedomProfileInvalidMaxIterations = errors.New("freedom_profile max_iterations must be positive (≥ 1)")
+
 // requiredSections lists the seven required top-level keys per CP-035.
 var requiredSections = []string{
 	"metadata",
@@ -338,6 +346,24 @@ func (d *PolicyDocument) ValidateMVHRoleDefaultSkills() error {
 		}
 		if !found {
 			return fmt.Errorf("%w: role %q", ErrMissingBeadsCLISkill, name)
+		}
+	}
+	return nil
+}
+
+// ValidateFreedomProfiles reports the first CP-032 violation found in
+// d.FreedomProfiles, or nil when every freedom profile is structurally valid.
+//
+// CP-032 requires every FreedomProfile to carry a non-empty name and a positive
+// max_iterations value (specs/control-points.md §4.6.CP-032).
+func (d *PolicyDocument) ValidateFreedomProfiles() error {
+	for i, fp := range d.FreedomProfiles {
+		label := fp.Name
+		if label == "" {
+			return fmt.Errorf("%w: freedom_profiles[%d]", ErrFreedomProfileEmptyName, i)
+		}
+		if fp.MaxIterations < 1 {
+			return fmt.Errorf("%w: freedom_profile %q has max_iterations=%d", ErrFreedomProfileInvalidMaxIterations, label, fp.MaxIterations)
 		}
 	}
 	return nil

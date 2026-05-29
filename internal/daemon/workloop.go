@@ -2337,6 +2337,8 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 			fmt.Fprintf(os.Stderr, "daemon: workloop: Persist queueID=%s after item completion: %v\n",
 				queueID, err)
 			// Non-fatal: in-memory state is still updated; file will resync on next persist.
+			// Suppress group-advance events — they describe state not yet durable on disk.
+			events = nil
 		}
 		pausedByFailure := q.Status == queue.QueueStatusPausedByFailure
 		lq.SetQueue(q)

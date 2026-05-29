@@ -74,9 +74,13 @@ type DispatchOutcome struct {
 
 // DispatchEdge runs the full EM-042 dispatch pipeline:
 //
-//  1. Apply guards to reorder candidates (EM-042, control-points.md §6.4).
-//  2. Run the EM-041 deterministic cascade via [SelectNextEdge].
-//  3. Apply the gate to the chosen edge (EM-042, control-points.md §6.2).
+//  1. Apply outcome.ContextUpdates to run.Context (EM-041a) so that the guard
+//     observes post-update run state, as required by CP-018 and the pseudocode
+//     of execution-model.md §7.3 (apply_context_updates precedes apply_guards).
+//  2. Apply guards to reorder candidates (EM-042, control-points.md §6.4).
+//  3. Run the EM-041 deterministic cascade via [SelectNextEdge], which
+//     re-applies context updates idempotently (same values, safe).
+//  4. Apply the gate to the chosen edge (EM-042, control-points.md §6.2).
 //
 // Guards reorder the candidate edge list before the cascade; gates evaluate
 // the cascade's chosen edge after it. Neither guards nor gates may add, remove,
@@ -109,6 +113,12 @@ func DispatchEdge(
 	guard GuardEvaluator,
 	gate GateEvaluator,
 ) DispatchOutcome {
+	// §4.10.EM-041a / CP-018 — apply context updates BEFORE guard fires so the
+	// guard observes post-update run state per the execution-model.md §7.3
+	// pseudocode ordering (apply_context_updates precedes apply_guards).
+	// SelectNextEdge re-applies idempotently; same values, safe.
+	ApplyContextUpdates(run, outcome.ContextUpdates)
+
 	// §4.10.EM-042 — apply guard reordering before the cascade.
 	reordered := guard(run, candidates, outcome)
 	if len(reordered) != len(candidates) {

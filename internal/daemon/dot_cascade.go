@@ -192,6 +192,12 @@ func driveDotWorkflow(
 	iterationCount := 0
 	var claudeSessionID string
 
+	// lastDiffHash is the SHA-256 hex digest of `git diff <parent>..<head>`
+	// captured before each reviewer launch.  When iterationCount ≥ 2 and the
+	// current hash equals the prior, the implementer made zero meaningful changes;
+	// we emit no_progress_detected and terminate (EM-015e for DOT mode).
+	lastDiffHash := ""
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -246,6 +252,35 @@ func driveDotWorkflow(
 			isReviewer := nodeIsReviewer(node)
 			if !isReviewer {
 				iterationCount++
+			} else {
+				// ── No-progress check before reviewer dispatch (EM-015e / DOT) ──
+				//
+				// Before launching a reviewer, compute the diff hash from parentSHA
+				// to the current worktree HEAD.  On iteration ≥ 2, if the hash is
+				// unchanged from the prior iteration the implementer made zero
+				// meaningful code changes; emit no_progress_detected and terminate
+				// (mirrors reviewloop.go:628-653 for the review-loop path).
+				//
+				// Unlike the review-loop, DOT mode does NOT emit
+				// review_loop_cycle_complete after no_progress_detected — the DOT
+				// walk terminates directly per the §8.1a ordering-rule DOT exemption.
+				currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
+				if hashErr != nil {
+					return dotWorkflowResult{
+						success:        false,
+						needsAttention: false,
+						summary:        fmt.Sprintf("dot: diff-hash error before reviewer node %q at iteration %d: %v", currentNodeID, iterationCount, hashErr),
+					}
+				}
+				if iterationCount >= 2 && currentHash == lastDiffHash {
+					emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
+					return dotWorkflowResult{
+						success:        false,
+						needsAttention: true,
+						summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: diff hash unchanged", iterationCount),
+					}
+				}
+				lastDiffHash = currentHash
 			}
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
@@ -672,8 +707,16 @@ func dispatchDotAgenticNode(
 	// state (per EM-015d). Gate on node.NonCommitting per WG-041 §I.4 /
 	// EM-058 non-committing sub-note (§II.8): when non_committing="true", a
 	// clean exit yields SUCCESS without requiring HEAD advance; when false
-	// (default), no HEAD advance is a node failure. In both modes an
-	// unresolvable HEAD is a daemon-side error (broken worktree).
+	// (default), no HEAD advance is a node failure on iteration 1. In all modes
+	// an unresolvable HEAD is a daemon-side error (broken worktree).
+	//
+	// Iteration ≥ 2 exception (EM-015e DOT-mode parity): when the implementer
+	// exits without advancing HEAD on iteration ≥ 2, we return SUCCESS and allow
+	// the diff-hash no-progress check in driveDotWorkflow to fire before the next
+	// reviewer dispatch — exactly mirroring the review-loop path, which defers
+	// the analogous "no new commit" case to the diff-hash check (reviewloop.go
+	// defers to state.iterationCount >= 2 in its diff-hash block rather than the
+	// no-commit guard which fires only on iteration 1).
 	postHeadSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
 	if headErr != nil {
 		return core.Outcome{}, fmt.Errorf("resolve HEAD after node %q: %w", node.ID, headErr)
@@ -685,7 +728,13 @@ func dispatchDotAgenticNode(
 		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
-		return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
+		if iterationCount < 2 {
+			// First iteration: HEAD MUST advance. Hard-fail.
+			return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
+		}
+		// Iteration ≥ 2: return SUCCESS; driveDotWorkflow's diff-hash check at
+		// the next reviewer dispatch will detect no-progress and terminate.
+		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 }
@@ -789,6 +838,33 @@ func dotEdgeTraversalCap(e *dot.Edge) *int {
 		return nil
 	}
 	return &n
+}
+
+// emitDotNoProgressDetected emits no_progress_detected for the DOT cascade
+// path (event-model.md §8.1a.5).  WorkflowMode is WorkflowModeDot so consumers
+// can distinguish DOT-path no-progress events from review-loop-path ones.
+// Unlike the review-loop path, DOT mode does NOT follow this with
+// review_loop_cycle_complete — the cascade terminates directly.
+func emitDotNoProgressDetected(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	iterationCount int,
+	diffHashCurrent string,
+	diffHashPrior string,
+) {
+	pl := core.NoProgressDetectedPayload{
+		RunID:           runID,
+		WorkflowMode:    core.WorkflowModeDot,
+		IterationCount:  iterationCount,
+		DiffHashCurrent: diffHashCurrent,
+		DiffHashPrior:   diffHashPrior,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeNoProgressDetected, b)
 }
 
 // graphVersionOr returns the graph's version field or a placeholder when empty

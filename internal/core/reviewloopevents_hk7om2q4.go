@@ -443,17 +443,21 @@ func (p IterationCapHitPayload) Valid() bool {
 // Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 // Durability class: O (ordinary — improvement-loop signal; emitted before
 // review_loop_cycle_complete{completion_reason=no_progress} per §8.1a ordering
-// rule; no-progress early-exit skips reviewer_launched per §8.1a(c)).
+// rule for review-loop mode; no-progress early-exit skips reviewer_launched per
+// §8.1a(c). In DOT mode review_loop_cycle_complete is NOT emitted — the cascade
+// terminates directly per the §8.1a ordering-rule DOT exemption).
 //
 // Emitted by orchestrator-core when the diff hash of the current iteration's
 // worktree state matches the prior iteration's diff hash (indicating the
-// implementer made no meaningful code changes). Emitted BEFORE
-// review_loop_cycle_complete per §8.1a ordering rule (c).
+// implementer made no meaningful code changes). For workflow_mode=review-loop,
+// emitted BEFORE review_loop_cycle_complete per §8.1a ordering rule (c). For
+// workflow_mode=dot, emitted at cascade termination with no subsequent
+// review_loop_cycle_complete.
 //
 // # Payload fields (event-model.md §8.1a.5)
 //
-//   - run_id             — the umbrella run_id for this review-loop cycle
-//   - workflow_mode      — always "review-loop" for this event
+//   - run_id             — the umbrella run_id for this review-loop or DOT cycle
+//   - workflow_mode      — "review-loop" or "dot" (see §8.1a.5 normative note)
 //   - iteration_count    — the iteration at which no-progress was detected (≥ 2)
 //   - diff_hash_current  — SHA-256 hex of `git diff <parent>..<head>` at current iteration
 //   - diff_hash_prior    — SHA-256 hex of the prior iteration's diff; equal to diff_hash_current
@@ -462,7 +466,9 @@ type NoProgressDetectedPayload struct {
 	// Required (must not be uuid.Nil).
 	RunID RunID `json:"run_id"`
 
-	// WorkflowMode is always WorkflowModeReviewLoop for this event.
+	// WorkflowMode is WorkflowModeReviewLoop or WorkflowModeDot for this event
+	// (event-model.md §8.1a.5 normative: no_progress_detected is permitted from
+	// both review-loop and DOT workflow modes).
 	// Required; must be a valid WorkflowMode constant.
 	WorkflowMode WorkflowMode `json:"workflow_mode"`
 

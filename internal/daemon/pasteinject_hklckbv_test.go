@@ -18,8 +18,9 @@ package daemon_test
 //  2. bufferName(syntheticID, "task") and bufferName(syntheticID, "feedback")
 //     match the expected harmonik-<id>-<purpose> pattern.
 //  3. pasteInjectOnLaunch with ReviewLoopPhaseImplementerResume and a synthetic
-//     session ID produces two WriteToPane calls (task + feedback) without
-//     skipping due to buffer-name validation failure.
+//     session ID produces exactly ONE WriteToPane call (combined task+feedback
+//     per hk-poy7k) containing both messages, without skipping due to buffer-name
+//     validation failure.
 
 import (
 	"fmt"
@@ -65,8 +66,9 @@ func TestRlSynthesiseClaudeSessionID_RegexSafe(t *testing.T) {
 
 // TestPasteInjectOnLaunch_ImplementerResume_SyntheticSessionID verifies that
 // pasteInjectOnLaunch with ReviewLoopPhaseImplementerResume and a synthetic
-// session ID (hk-lckbv format) produces two WriteToPane calls (task + feedback)
-// and does not skip due to buffer-name validation failure.
+// session ID (hk-lckbv format) produces exactly ONE WriteToPane call (task +
+// feedback combined per hk-poy7k) and does not skip due to buffer-name
+// validation failure.
 func TestPasteInjectOnLaunch_ImplementerResume_SyntheticSessionID(t *testing.T) {
 	wtPath := t.TempDir()
 	pasteInjectFixtureTaskFile(t, wtPath, "agent-task.md", "# Task\nDo something.\n")
@@ -87,9 +89,13 @@ func TestPasteInjectOnLaunch_ImplementerResume_SyntheticSessionID(t *testing.T) 
 	<-briefDelivered
 
 	calls := adapter.calls()
-	if len(calls) != 2 {
-		t.Fatalf("implementer-resume synthetic ID: expected 2 WriteToPane calls, got %d "+
-			"(0 calls = feedback inject was skipped, likely ErrStructural on buffer name; hk-lckbv)",
+	// hk-poy7k: task + feedback are combined into ONE paste to eliminate the
+	// inter-message race. 0 calls would indicate the inject was skipped (e.g.
+	// ErrStructural on buffer name from uppercase chars — hk-lckbv); 2+ calls
+	// would indicate the race was re-introduced.
+	if len(calls) != 1 {
+		t.Fatalf("implementer-resume synthetic ID: expected 1 WriteToPane call (combined task+feedback), got %d "+
+			"(0 calls = inject skipped, likely ErrStructural on buffer name; hk-lckbv)",
 			len(calls))
 	}
 
@@ -97,15 +103,11 @@ func TestPasteInjectOnLaunch_ImplementerResume_SyntheticSessionID(t *testing.T) 
 	if calls[0].bufferName != wantTaskBuf {
 		t.Errorf("call[0] bufferName = %q, want %q", calls[0].bufferName, wantTaskBuf)
 	}
+	// Both task and feedback content must be present in the single payload.
 	if !strings.Contains(calls[0].payload, "agent-task.md") {
 		t.Errorf("call[0] payload = %q, want mention of agent-task.md", calls[0].payload)
 	}
-
-	wantFeedbackBuf := fmt.Sprintf("harmonik-%s-feedback", syntheticID)
-	if calls[1].bufferName != wantFeedbackBuf {
-		t.Errorf("call[1] bufferName = %q, want %q", calls[1].bufferName, wantFeedbackBuf)
-	}
-	if !strings.Contains(calls[1].payload, "reviewer-feedback.iter-1.md") {
-		t.Errorf("call[1] payload = %q, want mention of reviewer-feedback.iter-1.md", calls[1].payload)
+	if !strings.Contains(calls[0].payload, "reviewer-feedback.iter-1.md") {
+		t.Errorf("call[0] payload = %q, want mention of reviewer-feedback.iter-1.md", calls[0].payload)
 	}
 }

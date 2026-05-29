@@ -9,7 +9,7 @@ package daemon_test
 //  1. Call order: file-stat check → WriteLastPane.
 //  2. Buffer-name format: "harmonik-<session-id>-<purpose>".
 //  3. Phase mapping: implementer-initial → "task"; reviewer → "review";
-//     implementer-resume → "task" then "feedback".
+//     implementer-resume → "task" (combined task+feedback, hk-poy7k).
 //  4. Stat-check failure → inject skipped (non-fatal); WriteLastPane NOT called.
 //  5. Nil substrate → no-op (no calls).
 //  6. WriteToPane error → logged, not fatal to workloop.
@@ -239,9 +239,10 @@ func TestPasteInjectOnLaunch_Reviewer(t *testing.T) {
 }
 
 // TestPasteInjectOnLaunch_ImplementerResume verifies that:
-//   - Two WriteToPane calls fire: first "task", then "feedback".
-//   - The feedback buffer name uses purpose "feedback".
-//   - The feedback payload mentions the prior iteration file.
+//   - Exactly ONE WriteToPane call fires (task + feedback combined, hk-poy7k).
+//   - The buffer name uses purpose "task".
+//   - The single payload contains both "agent-task.md" and "reviewer-feedback.iter-1.md"
+//     as distinct readable content.
 func TestPasteInjectOnLaunch_ImplementerResume(t *testing.T) {
 	wtPath := t.TempDir()
 	pasteInjectFixtureTaskFile(t, wtPath, "agent-task.md", "# Task\nDo something.\n")
@@ -260,26 +261,23 @@ func TestPasteInjectOnLaunch_ImplementerResume(t *testing.T) {
 	<-briefDelivered
 
 	calls := adapter.calls()
-	if len(calls) != 2 {
-		t.Fatalf("implementer-resume: expected 2 WriteToPane calls, got %d", len(calls))
+	// hk-poy7k: task + feedback are combined into ONE paste to eliminate the
+	// inter-message race where a second Enter was sent before Claude returned
+	// to the REPL prompt, causing the feedback to be dropped.
+	if len(calls) != 1 {
+		t.Fatalf("implementer-resume: expected 1 WriteToPane call (combined task+feedback), got %d", len(calls))
 	}
 
-	// Call 0: task.
-	wantTaskBuf := fmt.Sprintf("harmonik-%s-task", sessionID)
-	if calls[0].bufferName != wantTaskBuf {
-		t.Errorf("implementer-resume call[0]: bufferName = %q, want %q", calls[0].bufferName, wantTaskBuf)
+	wantBuf := fmt.Sprintf("harmonik-%s-task", sessionID)
+	if calls[0].bufferName != wantBuf {
+		t.Errorf("implementer-resume: bufferName = %q, want %q", calls[0].bufferName, wantBuf)
 	}
+	// Both messages must be readable as distinct content within the single payload.
 	if !strings.Contains(calls[0].payload, "agent-task.md") {
-		t.Errorf("implementer-resume call[0]: payload = %q, want mention of agent-task.md", calls[0].payload)
+		t.Errorf("implementer-resume: payload = %q, want mention of agent-task.md", calls[0].payload)
 	}
-
-	// Call 1: feedback.
-	wantFeedbackBuf := fmt.Sprintf("harmonik-%s-feedback", sessionID)
-	if calls[1].bufferName != wantFeedbackBuf {
-		t.Errorf("implementer-resume call[1]: bufferName = %q, want %q", calls[1].bufferName, wantFeedbackBuf)
-	}
-	if !strings.Contains(calls[1].payload, "reviewer-feedback.iter-1.md") {
-		t.Errorf("implementer-resume call[1]: payload = %q, want mention of reviewer-feedback.iter-1.md", calls[1].payload)
+	if !strings.Contains(calls[0].payload, "reviewer-feedback.iter-1.md") {
+		t.Errorf("implementer-resume: payload = %q, want mention of reviewer-feedback.iter-1.md", calls[0].payload)
 	}
 }
 

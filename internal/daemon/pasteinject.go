@@ -18,7 +18,7 @@ package daemon
 // Phase mapping:
 //
 //   - implementer-initial (single-mode)  → "-task"    → "Please read .harmonik/agent-task.md and begin."
-//   - implementer-resume                 → "-task" (task instruction) then "-feedback" (reviewer notes)
+//   - implementer-resume                 → "-task" (combined task + feedback in a single paste, hk-poy7k)
 //   - reviewer                           → "-review"  → "Please read .harmonik/review-target.md ..."
 //
 // Spec refs:
@@ -676,15 +676,22 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	}
 }
 
-// pasteInjectImplementerResume delivers two paste-inject messages for the
-// implementer-resume phase:
-//  1. Task instruction (agent-task.md) — same as initial.
-//  2. Reviewer-feedback instruction (reviewer-feedback.iter-<N-1>.md).
+// pasteInjectImplementerResume delivers a single combined paste-inject message
+// for the implementer-resume phase containing both the task instruction and the
+// reviewer feedback for the prior iteration.
 //
-// Both files must exist; if either is missing the inject for that file is
-// skipped with a stderr log (non-fatal).
+// Root cause of hk-poy7k: the previous two-message approach sent task+feedback
+// back-to-back with no synchronization between the first Enter (task submit) and
+// the second WriteLastPane (feedback). Claude was still processing the first
+// message when the second Enter fired, so the feedback message was dropped and
+// the resumed implementer reproduced the identical diff → no-progress failure.
+//
+// Fix (option b): combine task+feedback into a SINGLE paste buffer separated by
+// a blank line, submitted with one Enter. One paste → zero inter-message race.
+//
+// If the feedback file is absent (first iteration or write failure), the message
+// degrades gracefully to the task-only form used by implementer-initial.
 func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string) {
-	// Inject 1: task file.
 	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
@@ -695,42 +702,39 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFile(taskFile); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume task: %v (skipping task inject)\n", err)
-	} else {
-		bufName := bufferName(claudeSessID, "task")
-		msg := "Please read .harmonik/agent-task.md and begin.\n"
-		if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane(task): %v\n", err)
-		}
-		// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
-		if es, ok := inj.(enterSender); ok {
-			if err := es.SendEnterToLastPane(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane(task): %v\n", err)
-			}
-		}
-	}
-
-	// Inject 2: reviewer feedback for prior iteration (N-1).
-	priorIter := iterCount - 1
-	feedbackFile := filepath.Join(wtPath, ".harmonik", fmt.Sprintf("reviewer-feedback.iter-%d.md", priorIter))
-	if err := statTaskFile(feedbackFile); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume feedback iter %d: %v (skipping feedback inject)\n", priorIter, err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume task: %v (skipping inject)\n", err)
 		return
 	}
-	bufName := bufferName(claudeSessID, "feedback")
-	msg := fmt.Sprintf(
-		"Before continuing, read .harmonik/reviewer-feedback.iter-%d.md in your worktree."+
-			" It contains the prior reviewer's verdict, flags, and notes for iteration %d."+
-			" Address every flag marked REQUEST_CHANGES before proceeding.\n",
-		priorIter, priorIter,
-	)
+
+	// Build the combined message. Append the feedback section when the prior
+	// iteration's feedback file exists. Both sections are delivered in a single
+	// WriteLastPane call (one paste, one Enter) to eliminate the race (hk-poy7k).
+	priorIter := iterCount - 1
+	feedbackFile := filepath.Join(wtPath, ".harmonik", fmt.Sprintf("reviewer-feedback.iter-%d.md", priorIter))
+	feedbackExists := statTaskFile(feedbackFile) == nil
+
+	var msg string
+	if feedbackExists {
+		msg = fmt.Sprintf(
+			"Please read .harmonik/agent-task.md and begin.\n\n"+
+				"Before continuing, also read .harmonik/reviewer-feedback.iter-%d.md in your worktree."+
+				" It contains the prior reviewer's verdict, flags, and notes for iteration %d."+
+				" Address every flag marked REQUEST_CHANGES before proceeding.\n",
+			priorIter, priorIter,
+		)
+	} else {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume feedback iter %d: not found (delivering task-only message)\n", priorIter)
+		msg = "Please read .harmonik/agent-task.md and begin.\n"
+	}
+
+	bufName := bufferName(claudeSessID, "task")
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane(feedback): %v\n", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane: %v\n", err)
 	}
 	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane(feedback): %v\n", err)
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane: %v\n", err)
 		}
 	}
 }

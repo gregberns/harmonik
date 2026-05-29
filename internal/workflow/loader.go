@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -42,6 +43,24 @@ type ErrWorkflowLoad struct {
 func (e *ErrWorkflowLoad) Error() string {
 	return fmt.Sprintf("workflow_load: %s: %s", e.Path, e.Reason)
 }
+
+// ErrPolicyRefRejected is the typed error returned when a DOT workflow uses the
+// deprecated "policy_ref" attribute (CP-056). It wraps handlercontract.ErrDeterministic
+// so that errors.Is(err, handlercontract.ErrDeterministic) returns true — the spec
+// mandates ErrDeterministic (not ErrWorkflowLoad) for this specific rejection.
+type ErrPolicyRefRejected struct {
+	// Path is the filesystem path of the workflow file.
+	Path string
+	// Reason contains the rejection message, naming the typed replacement attributes.
+	Reason string
+}
+
+func (e *ErrPolicyRefRejected) Error() string {
+	return fmt.Sprintf("workflow_load: %s: %s", e.Path, e.Reason)
+}
+
+// Unwrap returns handlercontract.ErrDeterministic so that errors.Is checks propagate.
+func (e *ErrPolicyRefRejected) Unwrap() error { return handlercontract.ErrDeterministic }
 
 // LoadDotWorkflow reads a .dot file at dotPath, parses it via dot.Parse,
 // validates via dot.Validate, and returns the validated graph.
@@ -64,14 +83,18 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 
 	graph, parseErr := dot.Parse(string(src), dotPath)
 	if parseErr != nil {
-		// CP-056: if the parse error mentions policy_ref, emit a deprecation
-		// warning to stderr before returning the load error so operators see
-		// the migration guidance alongside the ingest failure.
+		// CP-056: policy_ref is a deterministic rejection — return ErrPolicyRefRejected
+		// (which wraps handlercontract.ErrDeterministic) and print a deprecation warning
+		// to stderr naming the typed replacement attributes per the spec mandate.
 		if strings.Contains(parseErr.Error(), "CP-056") {
 			fmt.Fprintf(os.Stderr,
 				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
 					"Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\n",
 				dotPath)
+			return nil, &ErrPolicyRefRejected{
+				Path:   dotPath,
+				Reason: fmt.Sprintf("policy_ref rejected (CP-056): use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055); parse error: %v", parseErr),
+			}
 		}
 		return nil, &ErrWorkflowLoad{
 			Path:   dotPath,
@@ -133,6 +156,10 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
 					"Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\n",
 				dotPath)
+			return nil, &ErrPolicyRefRejected{
+				Path:   dotPath,
+				Reason: fmt.Sprintf("policy_ref rejected (CP-056): use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055); parse error: %v", parseErr),
+			}
 		}
 		return nil, &ErrWorkflowLoad{
 			Path:   dotPath,

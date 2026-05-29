@@ -2,12 +2,14 @@ package workflow_test
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/workflow"
 )
 
@@ -161,6 +163,55 @@ func TestLoadDotWorkflow_PolicyRefDeprecationWarning(t *testing.T) {
 		}
 	}
 	t.Errorf("expected stderr warning to name a typed replacement attribute, got: %q", stderrOutput)
+}
+
+// TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic verifies the CP-056 error-class
+// mandate: the error returned for a policy_ref workflow MUST wrap
+// handlercontract.ErrDeterministic (not ErrWorkflowLoad). The spec text:
+// "Workflow-ingest MUST reject any DOT attribute named `policy_ref` with ErrDeterministic".
+func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
+	src := `digraph test {
+		schema_version="1";
+		version="1.0";
+		start_node="impl";
+		terminal_node_ids="done";
+
+		impl [type="agentic"; agent_type="claude-code"; handler_ref="builtin:claude-code";
+		      idempotency_class="non-idempotent"; policy_ref="some-policy-set"];
+		done [type="non-agentic"; handler_ref="builtin:noop"; idempotency_class="idempotent"];
+
+		impl -> done;
+	}`
+	dir := t.TempDir()
+	dotPath := filepath.Join(dir, "workflow.dot")
+	if err := os.WriteFile(dotPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write temp dot file: %v", err)
+	}
+
+	// Suppress stderr deprecation output for this test.
+	origStderr := os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+
+	_, loadErr := workflow.LoadDotWorkflow(dotPath)
+
+	w.Close()
+	os.Stderr = origStderr
+
+	if loadErr == nil {
+		t.Fatal("expected error for policy_ref workflow, got nil")
+	}
+
+	// CP-056 mandate: must wrap ErrDeterministic.
+	if !errors.Is(loadErr, handlercontract.ErrDeterministic) {
+		t.Errorf("expected errors.Is(err, ErrDeterministic)=true for policy_ref rejection (CP-056), got %T: %v", loadErr, loadErr)
+	}
+
+	// Must NOT be ErrWorkflowLoad (wrong error class per spec).
+	var wlErr *workflow.ErrWorkflowLoad
+	if isWorkflowLoadErr(loadErr, &wlErr) {
+		t.Errorf("expected *ErrPolicyRefRejected (not *ErrWorkflowLoad) for policy_ref rejection, got *ErrWorkflowLoad")
+	}
 }
 
 // ── CP-057: skills_ref resolution ────────────────────────────────────────────

@@ -653,3 +653,372 @@ func dotE2EContains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REQUEST_CHANGES back-edge + cap-hit E2E (hk-1xsyu)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// dotE2ERequestChangesHandlerScript returns a /bin/sh handler script that is
+// phase-aware and emits REQUEST_CHANGES on the first reviewer visit, then
+// APPROVE on the second. This drives the reviewer→implementer back-edge exactly
+// once before the run terminates at the success terminal.
+//
+// Invocation sequence for review-loop.dot (back-edge path):
+//
+//	invoc 1 → implementer (commit; HEAD advances)
+//	invoc 2 → reviewer    (REQUEST_CHANGES; routes back via back-edge)
+//	invoc 3 → implementer (commit again)
+//	invoc 4 → reviewer    (APPROVE; routes to close terminal)
+//
+// Two counter files are used: the total invocation counter (odd=implementer,
+// even=reviewer) and a reviewer-only counter to distinguish the first reviewer
+// visit (REQUEST_CHANGES) from subsequent ones (APPROVE).
+func dotE2ERequestChangesHandlerScript(t *testing.T, stateDir string) string {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "rc-handler.sh")
+	counterPath := filepath.Join(stateDir, "rc-invocations")
+	reviewerCounterPath := filepath.Join(stateDir, "rc-reviewer-count")
+	script := "#!/bin/sh\n" +
+		"set -e\n" +
+		"CTR=\"" + counterPath + "\"\n" +
+		"RCTR=\"" + reviewerCounterPath + "\"\n" +
+		"N=0\n" +
+		"if [ -f \"$CTR\" ]; then N=$(cat \"$CTR\"); fi\n" +
+		"N=$((N+1))\n" +
+		"echo \"$N\" > \"$CTR\"\n" +
+		"REM=$((N % 2))\n" +
+		"if [ \"$REM\" -eq 1 ]; then\n" +
+		"  echo \"dot-cascade rc-impl $N $$\" > dot-cascade-rc-impl-$N.txt\n" +
+		"  git add dot-cascade-rc-impl-$N.txt\n" +
+		"  git commit -m \"dot-cascade: rc-impl commit $N\" >/dev/null 2>&1\n" +
+		"else\n" +
+		"  RN=0\n" +
+		"  if [ -f \"$RCTR\" ]; then RN=$(cat \"$RCTR\"); fi\n" +
+		"  RN=$((RN+1))\n" +
+		"  echo \"$RN\" > \"$RCTR\"\n" +
+		"  mkdir -p .harmonik\n" +
+		"  if [ \"$RN\" -eq 1 ]; then\n" +
+		"    printf '%s' '{\"schema_version\":1,\"verdict\":\"REQUEST_CHANGES\",\"flags\":[],\"notes\":\"rc back-edge e2e\"}' > .harmonik/review.json\n" +
+		"  else\n" +
+		"    printf '%s' '{\"schema_version\":1,\"verdict\":\"APPROVE\",\"flags\":[],\"notes\":\"approve after rc e2e\"}' > .harmonik/review.json\n" +
+		"  fi\n" +
+		"fi\n" +
+		"exit 0\n"
+	//nolint:gosec // G306: 0755 required to exec the handler script in a test tree.
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("dotE2ERequestChangesHandlerScript: write %s: %v", scriptPath, err)
+	}
+	return scriptPath
+}
+
+// dotE2EAlwaysRequestChangesHandlerScript returns a /bin/sh handler script that
+// always emits REQUEST_CHANGES from the reviewer. This drives the
+// reviewer→implementer back-edge until the traversal_cap=3 fires.
+//
+// Invocation sequence for review-loop.dot (cap=3, fires on the 4th back-edge
+// attempt; total handler invocations: 4 implementer + 4 reviewer = 8):
+//
+//	invoc 1,3,5,7 → implementer (commit; HEAD advances)
+//	invoc 2,4,6,8 → reviewer    (REQUEST_CHANGES every time)
+//
+// After invoc 8 the cascade tries to traverse the back-edge a 4th time; the
+// cycle counter has already reached cap=3, so SelectNextEdge returns
+// FailureClassCompilationLoop and driveDotWorkflow returns needsAttention=true.
+// The bead is REOPENED (needs-attention), not closed.
+func dotE2EAlwaysRequestChangesHandlerScript(t *testing.T, stateDir string) string {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "cap-handler.sh")
+	counterPath := filepath.Join(stateDir, "cap-invocations")
+	script := "#!/bin/sh\n" +
+		"set -e\n" +
+		"CTR=\"" + counterPath + "\"\n" +
+		"N=0\n" +
+		"if [ -f \"$CTR\" ]; then N=$(cat \"$CTR\"); fi\n" +
+		"N=$((N+1))\n" +
+		"echo \"$N\" > \"$CTR\"\n" +
+		"REM=$((N % 2))\n" +
+		"if [ \"$REM\" -eq 1 ]; then\n" +
+		"  echo \"dot-cascade cap-impl $N $$\" > dot-cascade-cap-impl-$N.txt\n" +
+		"  git add dot-cascade-cap-impl-$N.txt\n" +
+		"  git commit -m \"dot-cascade: cap-impl commit $N\" >/dev/null 2>&1\n" +
+		"else\n" +
+		"  mkdir -p .harmonik\n" +
+		"  printf '%s' '{\"schema_version\":1,\"verdict\":\"REQUEST_CHANGES\",\"flags\":[],\"notes\":\"always rc for cap test\"}' > .harmonik/review.json\n" +
+		"fi\n" +
+		"exit 0\n"
+	//nolint:gosec // G306: 0755 required to exec the handler script in a test tree.
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("dotE2EAlwaysRequestChangesHandlerScript: write %s: %v", scriptPath, err)
+	}
+	return scriptPath
+}
+
+// TestDotMode_E2E_RequestChangesBackEdge drives review-loop.dot through the REAL
+// work loop with a handler that emits REQUEST_CHANGES on the first reviewer visit
+// and APPROVE on the second. It asserts the reviewer→implementer back-edge is
+// traversed exactly once before the run reaches the success terminal.
+//
+// Walk: start → implementer → reviewer(RC) → implementer → reviewer(APPROVE) → close
+//
+// Bead ref: hk-1xsyu (REQUEST_CHANGES back-edge E2E).
+func TestDotMode_E2E_RequestChangesBackEdge(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	dotPath := dotE2ESeedWorkflow(t, projectDir, "specs/examples/review-loop.dot", ".harmonik/workflow.dot")
+
+	const beadID = core.BeadID("hk-1xsyu-rc-back-edge-001")
+
+	stateDir := t.TempDir()
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "dot-rc-back-edge-queue",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{
+						BeadID:       beadID,
+						Status:       queue.ItemStatusPending,
+						WorkflowMode: string(core.WorkflowModeDot),
+						WorkflowRef:  dotPath,
+					},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	bus := &stubEventCollector{}
+	drainCtx, cancelDrain := context.WithCancel(context.Background())
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+	ledger := &stubBeadLedger{}
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:          ledger,
+		Bus:                bus,
+		ProjectDir:         projectDir,
+		HandlerBinary:      dotE2ERequestChangesHandlerScript(t, stateDir),
+		HandlerArgs:        nil,
+		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:         qs,
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		CancelOnQueueDrain: cancelDrain,
+		CancelOnQueueExit:  cancelDrain,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	testCtx, testCancel := context.WithTimeout(drainCtx, 90*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+	case <-time.After(88 * time.Second):
+		t.Fatalf("DOT RC back-edge E2E: runWorkLoop did not exit; events=%v closed=%v reopened=%v",
+			bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+	}
+
+	events := bus.eventTypes()
+	closed := ledger.closedIDs()
+	reopened := ledger.reopenedIDs()
+	t.Logf("DOT RC back-edge E2E: events=%v closed=%v reopened=%v", events, closed, reopened)
+
+	// Assertion 1: run_started fired.
+	if !dotE2EContains(events, string(core.EventTypeRunStarted)) {
+		t.Errorf("DOT RC back-edge E2E: run_started not emitted; got %v", events)
+	}
+
+	// Assertion 2: the cascade walked the graph — node_dispatch_requested and
+	// node_dispatch_decided fired. These are only emitted by driveDotWorkflow.
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchRequested)) {
+		t.Errorf("DOT RC back-edge E2E: node_dispatch_requested not emitted; got %v", events)
+	}
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchDecided)) {
+		t.Errorf("DOT RC back-edge E2E: node_dispatch_decided not emitted; got %v", events)
+	}
+
+	// Assertion 3: the bead was CLOSED (success terminal `close` reached after the
+	// back-edge traversal and second-visit APPROVE). A reopen means the back-edge
+	// or second-pass reviewer failed to reach the success terminal.
+	if len(reopened) > 0 {
+		t.Errorf("DOT RC back-edge E2E: bead was REOPENED (%v) — the cascade did not "+
+			"reach the APPROVE success terminal after the REQUEST_CHANGES back-edge. "+
+			"events=%v", reopened, events)
+	}
+	if len(closed) == 0 {
+		t.Errorf("DOT RC back-edge E2E: bead was neither closed nor reopened; "+
+			"expected close on the APPROVE terminal. events=%v", events)
+	} else if closed[0] != beadID {
+		t.Errorf("DOT RC back-edge E2E: closed bead = %q; want %q", closed[0], beadID)
+	}
+
+	// Assertion 4: run_completed fired (success terminal path).
+	if !dotE2EContains(events, string(core.EventTypeRunCompleted)) {
+		t.Errorf("DOT RC back-edge E2E: run_completed not emitted; got %v", events)
+	}
+
+	// Assertion 5: queue drained cleanly.
+	if qs.Queue() != nil {
+		t.Error("DOT RC back-edge E2E: QueueStore.Queue() is non-nil after drain; expected ClearQueue")
+	}
+}
+
+// TestDotMode_E2E_CapHit drives review-loop.dot through the REAL work loop with
+// a handler that always emits REQUEST_CHANGES from the reviewer. The
+// traversal_cap=3 on the reviewer→implementer back-edge fires after 3 successful
+// traversals; the 4th attempt returns FailureClassCompilationLoop and the daemon
+// reopens the bead as needs-attention.
+//
+// Walk: start → impl → rev(RC) → impl → rev(RC) → impl → rev(RC) → impl → rev(RC) → [cap_hit] → reopen
+//
+// Total handler invocations: 8 (4 implementer + 4 reviewer). The cap fires when
+// driveDotWorkflow's cascade engine checks the counter at back-edge attempt 4
+// (count=3 >= cap=3).
+//
+// Bead ref: hk-1xsyu (cap-hit path E2E).
+func TestDotMode_E2E_CapHit(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	dotPath := dotE2ESeedWorkflow(t, projectDir, "specs/examples/review-loop.dot", ".harmonik/workflow.dot")
+
+	const beadID = core.BeadID("hk-1xsyu-cap-hit-001")
+
+	stateDir := t.TempDir()
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "dot-cap-hit-queue",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{
+						BeadID:       beadID,
+						Status:       queue.ItemStatusPending,
+						WorkflowMode: string(core.WorkflowModeDot),
+						WorkflowRef:  dotPath,
+					},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	bus := &stubEventCollector{}
+	exitCtx, cancelExit := context.WithCancel(context.Background())
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+	ledger := &stubBeadLedger{}
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:          ledger,
+		Bus:                bus,
+		ProjectDir:         projectDir,
+		HandlerBinary:      dotE2EAlwaysRequestChangesHandlerScript(t, stateDir),
+		HandlerArgs:        nil,
+		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:         qs,
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		CancelOnQueueDrain: cancelExit,
+		CancelOnQueueExit:  cancelExit,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	// Use a longer timeout: 8 handler invocations each involve a git commit.
+	testCtx, testCancel := context.WithTimeout(exitCtx, 120*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	// Poll for the reopen (cap-hit terminates the run with a reopen, which may
+	// fire before the loop fully exits if the queue pauses on failure).
+	deadline := time.After(118 * time.Second)
+	for {
+		if len(ledger.reopenedIDs()) > 0 {
+			break
+		}
+		select {
+		case <-loopDone:
+			goto assertCapHit
+		case <-deadline:
+			t.Fatalf("DOT cap-hit E2E: timed out waiting for reopen; events=%v closed=%v reopened=%v",
+				bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+assertCapHit:
+	testCancel()
+
+	events := bus.eventTypes()
+	closed := ledger.closedIDs()
+	reopened := ledger.reopenedIDs()
+	t.Logf("DOT cap-hit E2E: events=%v closed=%v reopened=%v", events, closed, reopened)
+
+	// Assertion 1: run_started fired.
+	if !dotE2EContains(events, string(core.EventTypeRunStarted)) {
+		t.Errorf("DOT cap-hit E2E: run_started not emitted; got %v", events)
+	}
+
+	// Assertion 2: the cascade walked the graph (multiple node_dispatch_requested
+	// events fire across the 4 implementer + 4 reviewer invocations).
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchRequested)) {
+		t.Errorf("DOT cap-hit E2E: node_dispatch_requested not emitted; got %v", events)
+	}
+	if !dotE2EContains(events, string(core.EventTypeNodeDispatchDecided)) {
+		t.Errorf("DOT cap-hit E2E: node_dispatch_decided not emitted; got %v", events)
+	}
+
+	// Assertion 3: the bead was REOPENED (needs-attention), not closed. The cap
+	// fires when SelectNextEdge sees count=3 >= cap=3 and returns
+	// FailureClassCompilationLoop; driveDotWorkflow returns needsAttention=true and
+	// the daemon calls ReopenBead. A close here would mean the cap was not enforced.
+	if len(closed) > 0 {
+		t.Errorf("DOT cap-hit E2E: bead was CLOSED (%v) — the traversal_cap=3 was not "+
+			"enforced; the run should have been reopened as needs-attention when the "+
+			"4th back-edge traversal was attempted. events=%v", closed, events)
+	}
+	if len(reopened) == 0 {
+		t.Errorf("DOT cap-hit E2E: bead was NOT reopened after cap hit; expected "+
+			"ReopenBead on FailureClassCompilationLoop. events=%v", events)
+	} else if reopened[0] != beadID {
+		t.Errorf("DOT cap-hit E2E: reopened bead = %q; want %q", reopened[0], beadID)
+	}
+
+	// Assertion 4: run_failed fired (non-success terminal path).
+	if !dotE2EContains(events, string(core.EventTypeRunFailed)) {
+		t.Errorf("DOT cap-hit E2E: run_failed not emitted; got %v", events)
+	}
+}

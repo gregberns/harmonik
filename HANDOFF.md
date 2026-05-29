@@ -1,83 +1,40 @@
-<!-- PP-TRIAL:v2 2026-05-28 main — v71. Parallelization restructure DONE. 5 of 13 Track-1 fixtures landed early (premature daemon); 8 fixtures + README-consolidation + all of Track-2 remain. Spec-text check-in constraint LIFTED. Clean, pushed. START HERE = dispatch the remaining batches via harmonik run, attended. -->
+<!-- PP-TRIAL:v2 2026-05-28 main — v72. BOTH feature areas DONE: all 13 SDLC fixtures + README, and ALL Track-2 attractor-parity (6 code + 7 test + sidecar). THREE daemon concurrency/loop bugs found, fixed, reviewed, merged: hk-68pvl (worktree race), hk-kuxxl (wave PID-aliasing — EMPIRICALLY VALIDATED), hk-isq02 (review-loop iter-2 resume-ready). Concurrent --wave runs are now SAFE. Main clean @ d0fe0bc, 0/0 origin, build green. START HERE = pull new work; --wave is usable again. -->
 
 Roadmap: [ROADMAP.md](ROADMAP.md). Cross-project rules: `~/.claude/CLAUDE.md`. Orchestrator rules: [docs/orchestrator-rules.md](docs/orchestrator-rules.md). Known workarounds: [docs/known-workarounds.md](docs/known-workarounds.md). Dispatch loop: skill `harmonik-dispatch` + AGENTS/CLAUDE.md §"Daily loop".
 
-ROLE: You are the orchestrator. Delegate substantively. Keep the main thread minimal. **This session is PURE DISPATCH** — all design+planning is done. Do not investigate inline; if a bead fails twice, dispatch an investigator sub-agent.
+ROLE: You are the orchestrator. Delegate substantively. Keep the main thread minimal. If a bead fails twice, dispatch an investigator sub-agent (don't re-dispatch).
 
-# Where we are (v71, 2026-05-28)
+# Where we are (v72, 2026-05-28)
 
-**Main clean, HEAD == origin/main == `fe6fe96`, all pushed, build green, `go test ./internal/workflow/...` passes.** Two tracks are fully PLANNED (v70) and now the parallelization restructure is DONE. The job this session is **mechanical: drive the remaining `harmonik run` batches, attended.** The hard design/validation is finished.
+**Main clean @ `d0fe0bc`, `0/0` with origin, build green, `go test ./internal/workflow/...` + daemon review-loop suites pass.** Both major work areas the session targeted are COMPLETE, and three daemon bugs that were silently corrupting concurrent/iterated runs are fixed + reviewed + merged.
 
-## NEW since v70 — read this first
-1. **Spec-text check-in constraint LIFTED (2026-05-28).** User: "you can change that — I don't need to see the changes." → The orchestrator may now land normative `specs/` edits (Track-2 **T0** especially) and push **without** showing the diff first. There are **no remaining per-action push gates** (force-push / shared-ref deletion still warrant a check-in per cross-project rules). Memory updated: `feedback_push_autonomy`.
-2. **Track-1 parallelization restructure DONE.** All 13 NOW-fixture beads were re-enriched so they run CONCURRENTLY: each lands ONLY its unique `specs/examples/<name>.dot` + `internal/workflow/scenario/<name>_test.go` and **must NOT edit `specs/examples/README.md`**. A new consolidation bead **`hk-9w9y5`** ("Consolidate specs/examples/README.md: add subsections for all 13 NOW fixtures") owns ALL README pins in one commit and is dep-blocked by all 13 fixtures. Beads now cite the durable `docs/sdlc-workflow-corpus.md §<n>` (ephemeral `/tmp/sdlc-corpus/` references removed).
-3. **5 of 13 fixtures already LANDED early** (see next section) — a premature daemon ran a partial wave during the v70→v71 handoff exchange. They are sound (pushed, tests green). 8 fixtures + the consolidation bead remain.
+## What landed this session (v71 → v72)
+- **Area 1 — SDLC fixtures: 100%.** All 13 NOW fixtures (`hk-o52fm.1–.14` minus the SOON/DEMO `.15–.21`) + the README consolidation (`hk-9w9y5`). Recovered the marquee `hk-o52fm.5` (triple-review-consolidate) from a dangling commit and de-collided clashing `TestTRC_`/`trc*` test names vs `.6`.
+- **Area 2 — Track-2 attractor-parity: complete.** T0 spec (`hk-jyqxe`) + 6 code beads (`hk-l8rpd` tool/shell node, `hk-55zv2` goal/param, `hk-m5lmo` role, `hk-sdnzj` inline prompt, `hk-q8nqr` model/effort, `hk-69asi` non-committing node) + 7 test beads (`hk-cucz6/qpbpc/156il/mca0b/xp9j7/4bn9o/9ohjf`) + sidecar (`hk-9t892`).
+- **Three daemon bugs — all fixed, independently reviewed (APPROVE), merged:**
+  - `hk-68pvl` (`4abfafd`) — worktree removed out from under a live implementer → false `no_commit`. Fix: deferred `forceTeardownSession` gates removal on session teardown (LIFO).
+  - `hk-kuxxl` (`81e661b`) — `--wave` PID-aliasing: slash-bearing tmux window handle (`session:bead/i1`) misresolves to the active pane, so when a fast sibling's pane exits, slow siblings see an aliased-dead PID → false `no_commit`. Fix: resolve PID via slash-free `%NNNN` pane ID. **EMPIRICALLY VALIDATED** (7-bead 3-wide wave, 6/6 clean, zero no_commit).
+  - `hk-isq02` (`1109502`) — review-loop iteration-2 implementer never readies (`agent_ready_timeout`) because `claude --resume` doesn't re-fire `SessionStart` (the only `agent_ready` source on the tmux substrate). Fix: synthetic-`agent_ready` fallback grace for iter≥2 when `implWatcher==nil`.
 
-## What landed early (verify-then-continue, do NOT redo)
-A background `harmonik run` I launched returned exit-1 ("queue locked by pid 30909") but the daemon it spawned kept running and landed a partial wave before dying. Verified: pushed, build OK, scenario tests pass. **5 fixtures CLOSED:**
+## Key operational lessons (see memory + below)
+1. **`harmonik run` needs `$TMUX`.** If the orchestrator session isn't inside tmux, `harmonik run` exit-1's on `$TMUX is not set` and spawns NO daemon. Workaround: wrap in `tmux new-session -d -s harmonik-run -c <repo> "harmonik run ... --notify-stream 2>&1 | tee /tmp/harmonik-<batch>.log; echo HARMONIK_RUN_EXITED_\${PIPESTATUS[0]} >> ..."`, then Monitor the tee'd log + events.jsonl. (Distinct from the v71 stale-`queue.lock` exit-1, which DID spawn a daemon.)
+2. **`--wave` concurrency is SAFE again** (post hk-kuxxl/hk-68pvl). Residual caution: sibling beads cloned from the same test template can pick identical test-fn names → collide at MERGE under `--wave` (serial surfaces it in-loop). For template-family fixtures, serial is still cleaner.
+3. **Review/verify sub-agents that run `git checkout` must use `isolation: worktree`** — a non-isolated reviewer left main on a stray branch this session; the orchestrator's commits then landed off-`main` and `git push origin main` said "up-to-date" while HEAD was ahead. Tell-tale: push up-to-date but `git rev-list --left-right --count origin/main...HEAD` shows you ahead → check `git branch --show-current`.
+4. **Daemon may leave local `main` behind origin** after a run (per-bead it merges + pushes to origin but the local checkout can lag, sometimes with staged churn). Reconcile with `git fetch && git reset --hard origin/main` once the daemon has EXITED (never mid-run).
 
-| bead | fixture | commit |
-|---|---|---|
-| hk-o52fm.1 | dual-review-consolidate | `5efe2f2` |
-| hk-o52fm.3 | plan-review-loop | `77e7064` |
-| hk-o52fm.10 | decompose-review-load | `fe6fe96` |
-| hk-o52fm.11 | dependency-cycle-fix-loop | `1ccefa3` |
-| hk-o52fm.12 | docs-sync | `e7a7134` |
+# Remaining / next work (nothing blocking)
+- **P3 attractor-parity v2 backlog:** `hk-9j49t` (per-tool-node `transient_exit_codes`), `hk-gv5n5` (real `auto_status` work-product status-derivation), `hk-1xzg3` (normative `model_stylesheet` selector >2 tiers), `hk-tksed` (`tool_command_completed` observability event).
+- **P3 hardening follow-up:** `hk-82jwm` — strengthen the `hk-68pvl` regression test to assert the PRODUCTION defer ordering (reviewer's non-blocking note).
+- **Pre-existing, unrelated (not introduced this session):** RED test `TestMergeToMain_NoWorkAgentMainAdvanced` (`hk-zhxqx`); dep cycle `hk-11xkn ↔ hk-iuaed`; `TestReviewLoopBridge_CHB009` drift; real-claude-spawn env-gated tests.
+- **Hygiene:** several stale agent worktrees under `.claude/worktrees/` and `.harmonik/worktrees/` + run/ branches accumulated; safe to prune when convenient. `kerf next` showed a large untriaged/external-drift backlog — a `kerf triage --ack` pass is overdue but low-priority.
 
-**Two things to check on these 5 before trusting the pattern blindly (cheap, git-only):**
-- **No `Reviewed-By:`/`Review-Verdict:` trailers** were found on the 5 commits — the review-loop verdict didn't land as trailers (may not have run, or trailer-write skipped). Confirm whether agent-reviewer actually ran; if not, the remaining-fixture batch should ensure review-loop is on (it's default-on per hk-g0ckv, but verify).
-- Each fixture also produced a **sidecar `specs/examples/<name>.md`** (e.g. `dual-review-consolidate.md`) and one produced `<name>.scenario.md` — NOT in the proven `cd3e8f8` template (which used README subsections, not per-fixture .md). This is a benign deviation (implementers documented in a sidecar since they were told not to touch README). **Decide:** does `hk-9w9y5` still add README subsections, or does it index the sidecar .md files instead? Recommend: README consolidation still adds the 6-step subsections (Purpose/Schema/Anchors/Test surface) and links each sidecar.
-
-# Next actions (this is the whole job — all via `harmonik run`, attended)
-
-## Batch 1 — remaining 8 Track-1 fixtures (concurrent) ‖ Track-2 T0 (concurrent)
-Track-1 and Track-2 touch DISJOINT files → run both at once.
-
-**Track-1 remaining fixtures (8, OPEN):** `hk-o52fm.4` security-review-loop, `.5` triple-review-consolidate, `.6` two-reviewer-consensus, `.7` plan-review-finalize, `.8` spec-R1-R2-cycle, `.9` spec-citation-cleanup, `.13` review-route-by-failure-class, `.14` characterize-refactor-verify. (`.5`/`.6` were gated on `.1`, now CLOSED → all 8 dispatchable.) They share NO files with each other anymore (README is off-limits) → safe to run wide.
-```
-harmonik run --beads hk-o52fm.4,hk-o52fm.5,hk-o52fm.6,hk-o52fm.7,hk-o52fm.8,hk-o52fm.9,hk-o52fm.13,hk-o52fm.14 --wave --max-concurrent 4 --notify-stream
-```
-
-**Track-2 T0 (`hk-jyqxe`, OPEN, spec-text landing, NO code):** lands attractor-parity `SPEC.md` into the 3 live specs (workflow-graph.md WG-039…046 + merged rows; execution-model.md EM-058 keystone etc.; handler-contract.md HC-063). Acceptance is grep-able (see `br show hk-jyqxe`). **Per the lifted constraint, just land + push — no diff review needed.** Run it solo or alongside Batch 1 (disjoint files). Source: `~/.kerf/projects/gregberns-harmonik/attractor-parity/SPEC.md`.
-```
-harmonik run --beads hk-jyqxe --notify-stream
-```
-
-## Batch 2 — after T0 lands: Track-2 Wave 1 (2-wide, concurrent)
-`hk-l8rpd` (tool/shell node — KEYSTONE: `dispatchDotToolNode` splits non-agentic branch on `tool_command`, `/bin/sh -c`, exit→Outcome) ‖ `hk-55zv2` (graph `goal` + `__PARAM__` substitution). Both gated on T0.
-```
-harmonik run --beads hk-l8rpd,hk-55zv2 --wave --max-concurrent 2 --notify-stream
-```
-
-## Batch 3 — Track-2 Wave 2 (STRICTLY SERIAL — all edit `dispatchDotAgenticNode`)
-Run ONE at a time, in order: `hk-m5lmo` (surface node `role` into brief) → `hk-sdnzj` (inline per-node `prompt`) → `hk-q8nqr` (per-node model/effort) → `hk-69asi` (non-committing dot-mode + reject `auto_status` with a helpful error). Do NOT `--max-concurrent >1` here — they will conflict.
-
-## Batch 4 — README consolidation + tests
-- `hk-9w9y5` — README consolidation — run ONLY after all 13 fixtures are CLOSED (it's dep-blocked, so the daemon won't start it early).
-- Track-2 test beads (`hk-cucz6`/`qpbpc`/`156il`/`mca0b`/`xp9j7`/`4bn9o`/`9ohjf`), T7 sidecar `hk-9t892`, v2 follow-ups (`hk-9j49t`/`gv5n5`/`1xzg3`/`tksed`, P3) — gated on their impl beads.
-
-# Dispatch discipline (per AGENTS.md — don't skip)
-1. **Rebuild first:** `go install ./cmd/harmonik` (already fresh as of v71, but re-do at session start). 2. **Dispatch in background** with `--notify-stream`. 3. **Arm a Monitor** tailing the bash stdout file AND `.harmonik/events/events.jsonl` (pattern in AGENTS.md §"Canonical pattern") — without it you're blind from dispatch to batch-exit. 4. **CWD stays `/Users/gb/github/harmonik`** — never `cd` into a worktree (daemon removes them). 5. **On failure:** failed-once → re-dispatch next batch; failed-twice → STOP, dispatch an investigator sub-agent (do not re-dispatch). 6. Use `--wave` whenever `--max-concurrent > 1` (stream-mode HOL-blocks concurrent dispatch).
-
-# Lesson from this session (avoid the repeat)
-A `harmonik run` background launch returned exit-1 on a stale `queue.lock` but its spawned daemon kept running and landed work anyway. **Always check `.harmonik/events/events.jsonl` + `git log` after a "failed" harmonik launch — the daemon may have done work despite a CLI non-zero exit.** Before any launch: confirm no `queue.lock` + no live `pgrep -fl "harmonik run"`.
-
-# Files to open first
-1. `docs/sdlc-workflow-corpus.md` (the 21-workflow spec source) + a landed fixture as the live template: `specs/examples/dual-review-consolidate.dot` + `internal/workflow/scenario/dual_review_consolidate_test.go`.
-2. `~/.kerf/projects/gregberns-harmonik/attractor-parity/SPEC.md` (parity spec) + `br show hk-jyqxe` (T0 acceptance).
-3. `internal/daemon/dot_cascade.go` (where Track-2 Wave-1/2 land).
-
-# Caveats / hygiene
-- Pre-existing RED test `TestMergeToMain_NoWorkAgentMainAdvanced` (`hk-zhxqx`) — unrelated, still open.
-- Pre-existing dep cycle `hk-11xkn ↔ hk-iuaed` — unrelated, not introduced here.
-- `.beads/issues.jsonl` is committed clean; `kerf next` shows 166 untriaged / 104 external-drift — a `kerf triage --ack` pass is overdue but NOT blocking (low priority cleanup).
-- `.claude/scheduled_tasks.lock` is untracked (harness artifact) — ignore.
+# Dispatch discipline (unchanged — see AGENTS.md)
+Rebuild (`go install ./cmd/harmonik`) → pre-screen beads → launch in background (inside tmux per lesson #1) with `--notify-stream` → arm a Monitor on the tee'd log + `.harmonik/events/events.jsonl` → on failure: failed-once = re-dispatch next batch, failed-twice = STOP + investigator sub-agent. `--wave` is now safe for `--max-concurrent > 1`.
 
 # Translations glossary
-- **fixture** — a `specs/examples/<name>.dot` workflow example + its scenario test; "landing" one = committing both.
-- **consolidation bead (`hk-9w9y5`)** — the single bead that adds all 13 README subsections at the end, so concurrent fixture runs never collide on the shared `specs/examples/README.md`.
-- **T0 (`hk-jyqxe`)** — Track-2 first task: writes the reviewed attractor-parity SPEC into the real `specs/`. Spec-text only, no code; gates all Track-2 code beads.
-- **marquee** — the multi-reviewer-consolidate pattern (N reviewers → consolidate → loop). Structure proven live; differentiated per-axis value needs `hk-m5lmo`/`hk-sdnzj`.
-- **tool/shell node (`hk-l8rpd`)** — KEYSTONE parity capability: a non-agentic node with `tool_command` that runs `/bin/sh -c` and maps exit code → Outcome.
+- **fixture** — a `specs/examples/<name>.dot` workflow example + its `internal/workflow/scenario/<name>_test.go`.
+- **Track-2 / attractor-parity** — the DOT-graph capability set bringing harmonik's `.dot` dialect to spec parity (tool/shell nodes, goal/param substitution, per-node role/prompt/model/effort, non-committing nodes).
+- **no_commit (false)** — `no_commit_during_implementer ... iteration 1 exit=0`: the daemon recorded no commit though the implementer did/should have worked. Root causes this session were hk-68pvl + hk-kuxxl, both now fixed.
+- **review-loop iteration-2** — when iter-1 implementer commits and the reviewer returns REQUEST_CHANGES, the daemon launches an iter-2 implementer to address it (was broken by hk-isq02, now fixed).
 
-# No hard blockers. Standing directive: on /session-resume, CONTINUE. Next action: rebuild harmonik, then dispatch **Batch 1** — the 8 remaining Track-1 fixtures (`--wave --max-concurrent 4`) AND Track-2 **T0 `hk-jyqxe`** (land + push the spec text directly, no diff review per lifted constraint) concurrently, each with a Monitor armed. Then Batch 2 (Wave-1) → Batch 3 (Wave-2 serial) → Batch 4 (consolidation + tests).
+# No hard blockers. Both stated areas DONE; parallel runs proven safe. Next action: pick new work from `kerf next` / the P3 backlog, or take on the deferred items above. `--wave` is usable again.

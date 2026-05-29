@@ -154,6 +154,8 @@ A tool node MUST carry `handler_ref="shell"` (the built-in shell handler of [han
 
 **Trust boundary (normative).** `tool_command` is a literal shell string supplied by the `.dot` author. The `.dot` author is a trusted operator. At v1 the value is passed verbatim to `/bin/sh -c`; there is NO sandboxing, NO argument escaping, and NO allow-list of permitted commands. A workflow that admits an untrusted `.dot` author admits arbitrary command execution in the run's worktree under the daemon's privileges. Operators MUST treat `.dot` artifacts as trusted code, equivalent to a checked-in shell script.
 
+**`transient_exit_codes` is reserved.** A tool node controls exactly which exit codes are classified `deterministic` at v1: every non-zero exit is `deterministic` per [handler-contract.md §4.1 HC-063]. The attribute name `transient_exit_codes` (example: `transient_exit_codes="75,111"`) is NOT accepted as a node attribute at v1; it is reserved for a future schema version that may let a tool-node author declare specific exit codes as `transient` so the cascade routes them as retryable infra failures rather than deterministic ones. A tool node carrying `transient_exit_codes` at v1 is a validation warning per §10 WG-031 (the value is retained in the AST and ignored). The constraint is reserved to become strict at the next schema major bump. Deferred until operator demand surfaces. Refs: hk-9j49t.
+
 Tags: mechanism, normative
 
 ### WG-040 — Inline prompt attribute on `agentic` nodes
@@ -481,9 +483,9 @@ A loader MUST apply a **mixed** policy to attributes encountered during DOT pars
 **Strict positions** — an unknown value at one of the following positions is an ingest error; the run MUST NOT start:
 
 - The `type` attribute value on a node (closed enum per §4 WG-001).
-- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `tool_command`, `timeout`, `prompt`, `non_committing`, `model`, `effort`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a), `goal` (graph-level per §4 WG-044).
+- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `tool_command`, `timeout`, `transient_exit_codes` (node-level, `non-agentic` tool nodes only; reserved-and-warning at v1 per §4 WG-039; see [handler-contract.md §4.1 HC-063]), `prompt`, `non_committing`, `model`, `effort`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a), `goal` (graph-level per §4 WG-044).
 
-  Position rules: `tool_command` / `timeout` are node-level (`non-agentic` only); `prompt` / `non_committing` / `model` / `effort` are node-level (`agentic` only); `goal` is graph-level. A name used outside its declared position is the WG-031 strict error and the run MUST NOT start. `class` and `model_stylesheet` are NOT in the reserved set (permissive/informative per WG-043). The WG-045 template-param surface is a load-time text transform, not an attribute, and adds no reserved name.
+  Position rules: `tool_command` / `timeout` / `transient_exit_codes` are node-level (`non-agentic` only); `prompt` / `non_committing` / `model` / `effort` are node-level (`agentic` only); `goal` is graph-level. A name used outside its declared position is the WG-031 strict error and the run MUST NOT start. `class` and `model_stylesheet` are NOT in the reserved set (permissive/informative per WG-043). The WG-045 template-param surface is a load-time text transform, not an attribute, and adds no reserved name.
 - The RHS of an equality in an edge condition, when the RHS names a closed-enum member (per §7, [execution-model.md §4.1 EM-005], or [execution-model.md §4.1 EM-005a]).
 - The LHS of an edge condition (whitelist per §6 WG-014).
 
@@ -711,6 +713,7 @@ This fragment exercises: §6 WG-013 (`&&` conjunction), §6 WG-014 (`outcome.fai
 | §4 WG-042 per-node model/effort | New normative content per component D (attractor-parity); OQ-2 resolved (direct attrs normative, model_stylesheet/class informative per WG-043). |
 | §4 WG-044 graph-level goal attr | New normative content per component E (attractor-parity); goal was previously an unknown permissive graph attr, now a typed reserved field threaded via ExtraContext. |
 | §4 WG-045/WG-046 template-param substitution | New normative content per component E (attractor-parity); pre-parse source-text substitution + residual-token launch error + ordering invariant. OQ-1 resolved: substitution point is LAUNCH, over raw source, before parse. |
+| §4 WG-039 `transient_exit_codes` reservation | attractor-parity v2 (hk-9j49t): `transient_exit_codes` reserved-and-warning at v1; added to §10 reserved attribute set (node-level, non-agentic only); see [handler-contract.md §4.1 HC-063] companion. |
 
 ### 16.2 Rationale for the control-point node-type removal
 

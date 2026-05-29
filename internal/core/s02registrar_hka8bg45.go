@@ -62,15 +62,35 @@ var ErrConstructControlPoint = errors.New("s02: ControlPoint construction failed
 // Tags: mechanism
 type S02Registrar struct {
 	reg *MapRegistry
+	ts  *HookTriggerSet
 }
 
-// NewS02Registrar returns a new S02Registrar with an empty MapRegistry.
+// NewS02Registrar returns a new S02Registrar with an empty MapRegistry and
+// the MVH-baseline Hook trigger set pre-populated per CP-013.
+//
+// Subsystems that declare additional Hook trigger types MUST call AddHookTrigger
+// before invoking RegisterFromDocument, so that their triggers pass the
+// CP-013 validation gate in constructHook.
 //
 // The S02Registrar is ready for calls to RegisterFromDocument. After all
 // documents are registered, call Registry() to obtain the read-only Registry
 // interface that S01 and S05 consult.
 func NewS02Registrar() *S02Registrar {
-	return &S02Registrar{reg: NewMapRegistry()}
+	return &S02Registrar{
+		reg: NewMapRegistry(),
+		ts:  NewBaselineHookTriggerSet(),
+	}
+}
+
+// AddHookTrigger registers an additional Hook trigger name in the registrar's
+// trigger set. It must be called during daemon init, before any PolicyDocument
+// is registered, so that subsystem-specific Hook triggers pass the CP-013
+// validation gate in constructHook.
+//
+// Idempotent: registering an already-declared trigger is a no-op.
+// Returns an error when trigger is empty.
+func (s *S02Registrar) AddHookTrigger(trigger string) error {
+	return s.ts.AddTrigger(trigger)
 }
 
 // Registry returns the Registry interface backed by S02Registrar's MapRegistry.
@@ -111,7 +131,7 @@ func (s *S02Registrar) RegisterFromDocument(doc PolicyDocument) error {
 	}
 
 	for _, ph := range doc.Hooks {
-		cp, err := constructHook(ph, sv)
+		cp, err := constructHook(ph, sv, s.ts)
 		if err != nil {
 			return err
 		}
@@ -206,8 +226,17 @@ func constructGate(pg PolicyGate, schemaVersion int) (ControlPoint, error) {
 //   - OutcomeAction = OutcomeActionSideEffect (§4.3: Hooks always produce a side-effect)
 //   - Payload.Hook  = {TriggerEvent, SubscriptionFilter, SideEffectKind, HaltOnFailure, SubsystemPriority}
 //
+// The ts argument is the daemon's declared Hook trigger set. ph.TriggerEvent
+// MUST be present in ts per CP-013; an unrecognized trigger returns an error
+// wrapping ErrConstructControlPoint.
+//
 // construction is PURE: no I/O, no side effects.
-func constructHook(ph PolicyHook, schemaVersion int) (ControlPoint, error) {
+func constructHook(ph PolicyHook, schemaVersion int, ts *HookTriggerSet) (ControlPoint, error) {
+	if !ts.Contains(ph.TriggerEvent) {
+		return ControlPoint{}, fmt.Errorf("%w: hook %q: trigger %q not in declared lifecycle set (CP-013)",
+			ErrConstructControlPoint, ph.Name, ph.TriggerEvent)
+	}
+
 	eval, err := constructEvaluator(ph.Evaluator, fmt.Sprintf("hook %q", ph.Name))
 	if err != nil {
 		return ControlPoint{}, err

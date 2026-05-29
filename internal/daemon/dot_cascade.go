@@ -656,6 +656,11 @@ func dispatchDotAgenticNode(
 		if verdict == nil {
 			return core.Outcome{}, fmt.Errorf("reviewer node %q produced no verdict", node.ID)
 		}
+		// Emit reviewer_verdict matching the builtin review-loop path (reviewloop.go:932).
+		// WorkflowMode is DOT; session_id is a fresh handler-minted ID for this
+		// reviewer invocation; claude_session_id is the reviewer node's Claude session.
+		revSessionID := handlercontract.NewSessionID()
+		emitDotReviewerVerdict(ctx, deps.bus, runID, revSessionID, artifacts.claudeSessionID, iterationCount, verdict)
 		label := verdict.Verdict
 		return core.Outcome{
 			Status:         core.OutcomeStatusSuccess,
@@ -823,4 +828,38 @@ func emitNodeDispatchDecided(ctx context.Context, bus handlercontract.EventEmitt
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, payload.RunID, core.EventTypeNodeDispatchDecided, b)
+}
+
+// emitDotReviewerVerdict emits reviewer_verdict for a DOT reviewer node,
+// matching the builtin review-loop path (reviewloop.go emitReviewerVerdict).
+// WorkflowMode is set to WorkflowModeDot to distinguish DOT-path verdicts.
+func emitDotReviewerVerdict(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	sessionID core.SessionID,
+	claudeSessionID string,
+	iterationCount int,
+	verdict *workspace.ReviewVerdict,
+) {
+	flags := verdict.Flags
+	if flags == nil {
+		flags = []string{}
+	}
+	pl := core.ReviewerVerdictPayload{
+		RunID:           runID,
+		WorkflowMode:    core.WorkflowModeDot,
+		SessionID:       sessionID,
+		ClaudeSessionID: claudeSessionID,
+		IterationCount:  iterationCount,
+		SchemaVersion:   verdict.SchemaVersion,
+		Verdict:         core.ReviewerVerdict(verdict.Verdict),
+		Flags:           flags,
+		Notes:           verdict.Notes,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerVerdict, b)
 }

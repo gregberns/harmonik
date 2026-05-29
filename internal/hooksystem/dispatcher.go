@@ -181,10 +181,11 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 // fireMechanismHook evaluates a mechanism-tagged Hook and, when the evaluator
 // fires, emits hook_fired with the produced SideEffect.
 //
-// MVH contract: the mechanism evaluator expression is a boolean expression
-// evaluated against the event payload. true → hook fires; false → no-op.
-// The SideEffect is constructed from the hook's declared SideEffectKind with
-// Target = hook name (stable, non-empty) and IdempotencyClass = idempotent.
+// The mechanism evaluator expression is a boolean expression evaluated against
+// the event payload. true → hook fires; false → no-op. The SideEffect is
+// constructed from the hook's declared SideEffectKind, Target (hook name), and
+// IdempotencyClass per CP-016. When IdempotencyClass is not set on the hook
+// declaration the spec default (non-idempotent per §6.3) applies.
 //
 // TODO(post-MVH): extend to support evaluator expressions that return a full
 // SideEffect map {target, payload, idempotency} for richer side-effect control.
@@ -213,12 +214,19 @@ func (d *Dispatcher) fireMechanismHook(
 		return false, nil
 	}
 
-	// Build the SideEffect descriptor per CP-012.
-	// MVH: Target is the hook name; IdempotencyClass is idempotent (fire-and-forget).
+	// Resolve the effective idempotency class per CP-016. When the hook
+	// declaration omits IdempotencyClass (zero value), apply the spec default:
+	// non-idempotent (specs/control-points.md §6.3 YAML, §4.3.CP-016).
+	ic := hookPL.IdempotencyClass
+	if !ic.Valid() {
+		ic = core.IdempotencyClassNonIdempotent
+	}
+
+	// Build the SideEffect descriptor per CP-012 / CP-016.
 	se := core.SideEffect{
 		Kind:             hookPL.SideEffectKind,
 		Target:           cp.Name,
-		IdempotencyClass: core.IdempotencyClassIdempotent,
+		IdempotencyClass: ic,
 	}
 
 	if err := d.emitHookFired(ctx, ev, hookName, triggeringID, se); err != nil {

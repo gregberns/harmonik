@@ -65,18 +65,28 @@ type HookPayload struct {
 	//
 	// Wire field name: subsystem_priority.
 	SubsystemPriority int `json:"subsystem_priority"`
+
+	// IdempotencyClass is the CP-016 delivery contract declared for this hook's
+	// side effect (specs/control-points.md §4.3.CP-016, §6.3 YAML).
+	// When omitted, the S05 dispatcher applies the spec default: non-idempotent.
+	//
+	// Allowed values: IdempotencyClassIdempotent, IdempotencyClassNonIdempotent.
+	// (IdempotencyClassRecoverableNonIdempotent is treated as non-idempotent by S05.)
+	//
+	// Wire field name: idempotency_class.
+	IdempotencyClass IdempotencyClass `json:"idempotency_class,omitempty"`
 }
 
-// NewHookPayload returns a HookPayload with the spec-mandated default applied:
-// HaltOnFailure is false per CP-015 (specs/control-points.md §4.3.CP-015).
+// NewHookPayload returns a HookPayload with spec-mandated defaults applied:
+//   - HaltOnFailure is false per CP-015 (specs/control-points.md §4.3.CP-015).
+//   - IdempotencyClass is non-idempotent per CP-016 (specs/control-points.md §6.3 YAML default).
 //
-// The Go zero value for bool is already false, so NewHookPayload is provided
-// for documentation clarity and parity with sibling constructors. Callers MUST
-// still set TriggerEvent and SideEffectKind explicitly before the payload is
-// valid.
+// Callers MUST still set TriggerEvent and SideEffectKind explicitly before the
+// payload is valid.
 func NewHookPayload() HookPayload {
 	return HookPayload{
-		HaltOnFailure: false,
+		HaltOnFailure:    false,
+		IdempotencyClass: IdempotencyClassNonIdempotent,
 	}
 }
 

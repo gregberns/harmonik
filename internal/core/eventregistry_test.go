@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"sync"
 	"testing"
@@ -11,13 +12,33 @@ import (
 	"github.com/google/uuid"
 )
 
-// eventRegistryReset replaces the global registry with an empty one.
-// MUST be called only from test cleanup (t.Cleanup) to restore state.
+// initialRegistrySnapshot holds the entries captured at TestMain time (after
+// all init() functions have run). eventRegistryReset restores from this
+// snapshot instead of clearing to empty, so parallel tests in package core_test
+// that depend on the global registry (e.g. EV-029 compat tests) see consistent
+// production entries regardless of execution order.
+var initialRegistrySnapshot map[string]typeEntry
+
+func TestMain(m *testing.M) {
+	globalEventRegistry.mu.Lock()
+	initialRegistrySnapshot = make(map[string]typeEntry, len(globalEventRegistry.entries))
+	for k, v := range globalEventRegistry.entries {
+		initialRegistrySnapshot[k] = v
+	}
+	globalEventRegistry.mu.Unlock()
+	os.Exit(m.Run())
+}
+
+// eventRegistryReset restores the global registry to the production state
+// captured at TestMain time. MUST be called only from test cleanup (t.Cleanup).
 // Not exported — visible only to tests in the same package (package core).
 func eventRegistryReset() {
 	globalEventRegistry.mu.Lock()
 	defer globalEventRegistry.mu.Unlock()
-	globalEventRegistry.entries = make(map[string]typeEntry)
+	globalEventRegistry.entries = make(map[string]typeEntry, len(initialRegistrySnapshot))
+	for k, v := range initialRegistrySnapshot {
+		globalEventRegistry.entries[k] = v
+	}
 }
 
 // Test-only payload types — defined here so they never leak to production code.

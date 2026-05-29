@@ -33,7 +33,7 @@ const hookTriggerPrefix = "on_"
 // On each event, Dispatcher:
 //  1. Translates the event type to the hook trigger name ("on_" + eventType).
 //  2. Calls Registry.LookupByTrigger to find matching Hooks.
-//  3. Sorts by SubsystemPriority ascending then Name ascending (CP-014).
+//  3. Sorts by SubsystemPriority ascending then DeclarationIndex ascending (CP-014).
 //  4. For each Hook: evaluates SubscriptionFilter (if present); evaluates the
 //     main mechanism Evaluator; emits hook_fired or hook_failed; respects
 //     halt_on_failure (CP-015).
@@ -113,16 +113,17 @@ func (d *Dispatcher) handleEvent(ctx context.Context, ev core.Event) error {
 		return nil
 	}
 
-	// CP-014: sort by SubsystemPriority ascending; within a subsystem, by
-	// Name ascending (LookupByTrigger already returns Name-sorted, but we
-	// re-sort here to enforce the priority-first ordering).
+	// CP-014: sort by SubsystemPriority ascending; within the same priority,
+	// by DeclarationIndex ascending (registration/declaration order per spec).
+	// LookupByTrigger returns Name-sorted for CP-046; we re-sort here to enforce
+	// the priority-first, then declaration-order secondary key.
 	sort.SliceStable(hooks, func(i, j int) bool {
 		pi := hooks[i].Payload.Hook.SubsystemPriority
 		pj := hooks[j].Payload.Hook.SubsystemPriority
 		if pi != pj {
 			return pi < pj
 		}
-		return hooks[i].Name < hooks[j].Name
+		return hooks[i].DeclarationIndex < hooks[j].DeclarationIndex
 	})
 
 	for _, cp := range hooks {

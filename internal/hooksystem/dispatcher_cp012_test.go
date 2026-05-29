@@ -105,7 +105,14 @@ type cp012FixtureMapRegistry struct {
 }
 
 func cp012FixtureNewRegistry(cps ...core.ControlPoint) *cp012FixtureMapRegistry {
-	return &cp012FixtureMapRegistry{cps: cps}
+	// Stamp DeclarationIndex in registration order so the dispatcher can apply
+	// CP-014's within-priority declaration-order tie-breaker.
+	stamped := make([]core.ControlPoint, len(cps))
+	for i, cp := range cps {
+		cp.DeclarationIndex = i
+		stamped[i] = cp
+	}
+	return &cp012FixtureMapRegistry{cps: stamped}
 }
 
 func (r *cp012FixtureMapRegistry) LookupByTrigger(trigger string) []core.ControlPoint {
@@ -490,11 +497,17 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 	}
 }
 
-// TestCP014_HookOrderingByNameWithinSamePriority verifies that hooks at the
-// same SubsystemPriority are ordered by Name ascending per CP-014.
-func TestCP014_HookOrderingByNameWithinSamePriority(t *testing.T) {
+// TestCP014_HookOrderingByDeclarationOrderWithinSamePriority verifies that
+// hooks at the same SubsystemPriority fire in declaration order (registration
+// insertion order) per CP-014: "within a subsystem, declaration order."
+//
+// The hooks are registered in a deliberate non-alphabetical order (C, A, B)
+// and the test asserts that they fire in exactly that registration order,
+// not alphabetically.
+func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 	t.Parallel()
 
+	// Register in order: C, A, B.  Expected fire order: hook-c, hook-a, hook-b.
 	cpC := cp012FixtureMakeHookCP("hook-c", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
 	cpA := cp012FixtureMakeHookCP("hook-a", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
 	cpB := cp012FixtureMakeHookCP("hook-b", "on_agent_started", "true", core.SideEffectKindEmitEvent, false, 0)
@@ -513,7 +526,7 @@ func TestCP014_HookOrderingByNameWithinSamePriority(t *testing.T) {
 
 	// Synchronous consumer for hook_fired: records names in emission order.
 	if _, err := bus.Subscribe(core.Subscription{
-		ConsumerID:    "test.name-order-collector",
+		ConsumerID:    "test.decl-order-collector",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
 			Types: map[string]struct{}{"hook_fired": {}},
@@ -528,7 +541,7 @@ func TestCP014_HookOrderingByNameWithinSamePriority(t *testing.T) {
 			return nil
 		},
 	}); err != nil {
-		t.Fatalf("Subscribe name-order-collector: %v", err)
+		t.Fatalf("Subscribe decl-order-collector: %v", err)
 	}
 	if err := bus.Seal(); err != nil {
 		t.Fatalf("Seal: %v", err)
@@ -541,10 +554,11 @@ func TestCP014_HookOrderingByNameWithinSamePriority(t *testing.T) {
 		t.Fatalf("CP-014: expected 3 hook_fired events, got %d: %v", len(firedNames), firedNames)
 	}
 
-	want := []string{"hook-a", "hook-b", "hook-c"}
+	// Declaration order: hook-c (first), hook-a (second), hook-b (third).
+	want := []string{"hook-c", "hook-a", "hook-b"}
 	for i, w := range want {
 		if firedNames[i] != w {
-			t.Errorf("CP-014: hook name order[%d]: got %q, want %q (full order: %v)",
+			t.Errorf("CP-014: declaration order[%d]: got %q, want %q (full order: %v)",
 				i, firedNames[i], w, firedNames)
 		}
 	}

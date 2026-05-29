@@ -147,7 +147,8 @@ func (r *MapRegistry) Register(cp ControlPoint) error {
 		return fmt.Errorf("%w: name=%q", ErrDivergentBody, cp.Name)
 	}
 
-	// New name: register with declaration order.
+	// New name: stamp declaration order and register.
+	cp.DeclarationIndex = r.nextOrder
 	r.entries[cp.Name] = cpRegistryEntry{cp: cp, order: r.nextOrder}
 	r.nextOrder++
 	return nil

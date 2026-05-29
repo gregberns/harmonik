@@ -19,24 +19,25 @@ package core
 //     per CP-044.
 //
 // Body equality (§4.9.CP-044): the "body" for equality purposes is the tuple
-// (Kind, Trigger, Evaluator, Payload). Name, Axes, and SchemaVersion are NOT
-// part of the body — a schema-version bump on an otherwise-identical
-// ControlPoint MUST NOT be rejected as divergent.
+// (Kind, Trigger, Evaluator, Payload). Name, Axes, SchemaVersion, and
+// DeclarationIndex are NOT part of the body — a schema-version bump or
+// re-registration under the same name MUST NOT be rejected as divergent.
 //
 // Determinism (§4.9.CP-046): list-returning registry lookups sort by Name
 // ascending; no nondeterministic input (wall-clock, PID, map iteration order)
 // is incorporated in registry state.
 //
 //	RECORD ControlPoint:
-//	    name           : String
-//	    kind           : Kind
-//	    trigger        : Trigger
-//	    evaluator      : Evaluator
-//	    outcome_action : OutcomeAction
-//	    payload        : KindPayload
-//	    axes           : AxisTags
-//	    mode_tag       : ModeTag
-//	    schema_version : Integer
+//	    name              : String
+//	    kind              : Kind
+//	    trigger           : Trigger
+//	    evaluator         : Evaluator
+//	    outcome_action    : OutcomeAction
+//	    payload           : KindPayload
+//	    axes              : AxisTags
+//	    mode_tag          : ModeTag
+//	    schema_version    : Integer
+//	    declaration_index : Integer  -- registry-assigned; 0 before registration
 type ControlPoint struct {
 	// Name uniquely identifies this ControlPoint within the daemon registry
 	// (specs/control-points.md §6.1). Must be non-empty.
@@ -74,6 +75,17 @@ type ControlPoint struct {
 	// ControlPoint was declared (§4.7.CP-038). Required; must be positive.
 	// N-1 readability is enforced by the reader per CP-038, not by this type.
 	SchemaVersion int `json:"schema_version"`
+
+	// DeclarationIndex is a registry-assigned monotonically increasing integer
+	// that records the registration insertion order of this ControlPoint within
+	// the daemon's MapRegistry (§4.9.CP-043). Zero before registration.
+	//
+	// Not part of the body-equality tuple (CP-044) — it is a registry
+	// attribution, not a declared property of the ControlPoint.
+	//
+	// Used by S05 (Hook dispatcher) to order Hooks within the same
+	// SubsystemPriority tier per CP-014: "within a subsystem, declaration order."
+	DeclarationIndex int `json:"declaration_index,omitempty"`
 }
 
 // Valid reports whether cp is a structurally well-formed ControlPoint.

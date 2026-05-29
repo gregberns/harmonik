@@ -90,6 +90,13 @@ func resolveGroupKind(subArgs []string) queue.GroupKind {
 // Spec ref: hk-qd3f4.
 const signalGracePeriod = 5 * time.Second
 
+// runBeadSelfWrapExec is the exec function used when $TMUX is unset and
+// runBeadSubcommand self-wraps into a new tmux session. Replaced in tests so
+// the test process is not replaced by a real execve call.
+var runBeadSelfWrapExec = func(argv0 string, argv []string, envv []string) error {
+	return syscall.Exec(argv0, argv, envv)
+}
+
 // runBeadSubcommand implements `harmonik run <bead-id> [flags]`.
 // subArgs is os.Args[2:] (everything after "run").
 func runBeadSubcommand(subArgs []string) int {
@@ -364,6 +371,43 @@ func runBeadSubcommand(subArgs []string) int {
 		return 1
 	}
 
+	// --- Resolve self binary path (used for self-wrap below and DaemonBinaryPath) ---
+
+	daemonBinaryPath, binaryErr := os.Executable()
+	if binaryErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: os.Executable() failed: %v\n", binaryErr)
+		return 1
+	}
+
+	// --- Guard: $TMUX must be set — self-wrap in a new tmux session if possible ---
+	//
+	// harmonik run requires an active tmux session: agent windows are created as
+	// tmux windows inside the caller's session. When $TMUX is not set, attempt to
+	// self-wrap by exec-replacing this process with:
+	//
+	//   tmux new-session -- <binary> run <subArgs...>
+	//
+	// This creates a new tmux session that runs harmonik run and attaches the
+	// calling terminal to it. The inner process will see $TMUX set and proceed.
+	// If tmux is not in PATH, a clear actionable error is printed instead.
+	if os.Getenv("TMUX") == "" {
+		tmuxBin, lookErr := exec.LookPath("tmux")
+		if lookErr != nil {
+			fmt.Fprintln(os.Stderr, "harmonik run: $TMUX is not set and tmux is not in PATH.\n"+
+				"  Start a tmux session:  tmux new-session -s harmonik\n"+
+				"  Then re-run inside tmux. Or use: harmonik tmux-start")
+			return 1
+		}
+		// Self-wrap: exec-replace this process with tmux new-session.
+		// On success syscall.Exec never returns; it replaces the process image.
+		selfWrapArgv := append([]string{"tmux", "new-session", "--", daemonBinaryPath, "run"}, subArgs...)
+		if wrapErr := runBeadSelfWrapExec(tmuxBin, selfWrapArgv, os.Environ()); wrapErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik run: tmux self-wrap failed: %v\n", wrapErr)
+			return 1
+		}
+		return 0 // unreachable; process replaced on success
+	}
+
 	// --- Resolve br binary ---
 
 	brPath, brErr := exec.LookPath("br")
@@ -488,7 +532,7 @@ func runBeadSubcommand(subArgs []string) int {
 	// daemon.Start returns (Fix 2: exit code reflects bead outcome, hk-8jh26).
 	qs := daemon.NewQueueStore()
 
-	// --- Resolve daemon binary path and tmux session ---
+	// --- Create .harmonik subdirectories and resolve tmux session ---
 
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); mkErr != nil {
@@ -498,17 +542,6 @@ func runBeadSubcommand(subArgs []string) int {
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/beads-intents/: %v\n", mkErr)
-		return 1
-	}
-
-	daemonBinaryPath, execErr := os.Executable()
-	if execErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik run: os.Executable() failed: %v\n", execErr)
-		return 1
-	}
-
-	if os.Getenv("TMUX") == "" {
-		fmt.Fprintln(os.Stderr, "harmonik run: $TMUX is not set — run hk inside a tmux session or via hk tmux-start")
 		return 1
 	}
 

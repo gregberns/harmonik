@@ -24,6 +24,7 @@ package main
 import (
 	"flag"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -195,6 +196,82 @@ func TestRunBeadSubcommand_NoBrOnPath(t *testing.T) {
 	got := runBeadSubcommand([]string{"hk-test-bead"})
 	if got == 0 {
 		t.Errorf("runBeadSubcommand with no br on PATH returned 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcmd_TmuxUnset_NoTmuxBinary verifies that when $TMUX is not set
+// and tmux is not in PATH, runBeadSubcommand returns exit code 1 with a
+// non-zero exit (actionable error path).
+//
+// Not parallel: modifies $TMUX and $PATH env vars (global state).
+//
+// Acceptance: hk-w92me — graceful degradation when tmux binary is absent.
+func TestRunBeadSubcmd_TmuxUnset_NoTmuxBinary(t *testing.T) {
+	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
+	// Point PATH at an empty temp dir so neither tmux nor br can be found.
+	mainFixtureSaveRestoreEnv(t, "PATH", t.TempDir(), false /* set */)
+
+	got := runBeadSubcommand([]string{"hk-test-bead"})
+	if got == 0 {
+		t.Errorf("runBeadSubcommand TMUX-unset no-tmux: got exit 0; want non-zero")
+	}
+}
+
+// TestRunBeadSubcmd_TmuxUnset_SelfWraps verifies that when $TMUX is not set
+// but tmux is in PATH, runBeadSubcommand exec-replaces itself with
+// `tmux new-session -- <binary> run <subArgs...>`.
+//
+// Not parallel: modifies the global runBeadSelfWrapExec var and env vars.
+//
+// Acceptance: hk-w92me — self-wrap in tmux when $TMUX is unset and tmux is
+// available.
+func TestRunBeadSubcmd_TmuxUnset_SelfWraps(t *testing.T) {
+	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
+
+	// Write a minimal fake tmux script and prepend its dir to PATH.
+	binDir := t.TempDir()
+	fakeTmux := filepath.Join(binDir, "tmux")
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	mainFixtureSaveRestoreEnv(t, "PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"), false)
+
+	// Replace exec with a recorder so the test process is not replaced.
+	var gotArgv []string
+	origExec := runBeadSelfWrapExec
+	runBeadSelfWrapExec = func(_ string, argv []string, _ []string) error {
+		gotArgv = argv
+		return nil // nil = "success"; process would be replaced in production
+	}
+	t.Cleanup(func() { runBeadSelfWrapExec = origExec })
+
+	got := runBeadSubcommand([]string{"hk-test-bead"})
+	if got != 0 {
+		t.Errorf("runBeadSubcommand TMUX-unset self-wrap: got exit %d; want 0", got)
+	}
+	if len(gotArgv) < 4 {
+		t.Fatalf("exec argv too short: %v", gotArgv)
+	}
+	if gotArgv[0] != "tmux" {
+		t.Errorf("exec argv[0] = %q; want \"tmux\"", gotArgv[0])
+	}
+	if gotArgv[1] != "new-session" {
+		t.Errorf("exec argv[1] = %q; want \"new-session\"", gotArgv[1])
+	}
+	var hasRun, hasBeadID bool
+	for _, a := range gotArgv {
+		if a == "run" {
+			hasRun = true
+		}
+		if a == "hk-test-bead" {
+			hasBeadID = true
+		}
+	}
+	if !hasRun {
+		t.Errorf("exec argv missing \"run\" subcommand: %v", gotArgv)
+	}
+	if !hasBeadID {
+		t.Errorf("exec argv missing bead ID \"hk-test-bead\": %v", gotArgv)
 	}
 }
 

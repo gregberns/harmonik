@@ -65,6 +65,33 @@ const reviewLoopIterationCap = 3
 // event-model.md §8.1a.1 (front-truncation to 256 UTF-8 bytes).
 const priorVerdictSummaryMaxBytes = 256
 
+// resumeReadyFallbackGrace is the fixed grace period after which the
+// implementer-resume phase (iteration ≥ 2) under the tmux substrate synthesizes
+// its own agent_ready when no relay-driven agent_ready has arrived.
+//
+// Root cause (hk-isq02): iteration 1 launches `claude --session-id <uuid>`, a
+// FRESH session that fires a SessionStart hook; the hook-relay synthesizes
+// agent_ready on first SessionStart receipt (hookrelay.go buildSessionStartMessage),
+// which is the daemon's sole ready signal under the tmux substrate (implWatcher
+// is nil there, so there is no progress-stream watcher to cancel the wait).
+// Iteration ≥ 2 launches `claude --resume <uuid>`, which REATTACHES to an
+// already-persisted session and does NOT re-fire a SessionStart hook the way a
+// fresh `--session-id` launch does. The relay therefore never sends agent_ready,
+// waitAgentReady never observes it, and the configured timeout fires →
+// `implementer agent_ready_timeout at iteration 2`. The twin-claude handler
+// masks this because it self-emits agent_ready directly on every phase.
+//
+// A `--resume` reattach still renders the welcome splash before the REPL is
+// input-ready, so the fallback retains a splash-dismiss-class grace rather than
+// synthesizing ready immediately; this preserves the hk-kunm4 "do not paste
+// before the REPL accepts input" invariant. If a real relay agent_ready DOES
+// arrive first (a newer claude that fires SessionStart on resume), waitAgentReady
+// completes on that signal and the fallback emit is a harmless no-op (the tap
+// channel is buffered and the wait has already returned).
+//
+// Bead: hk-isq02.
+const resumeReadyFallbackGrace = 2 * time.Second
+
 // reviewLoopResult is the terminal outcome produced by runReviewLoop.
 // The caller (workloop.go) uses this to drive the bead close call and
 // run_completed / run_failed event emission.
@@ -346,6 +373,39 @@ func runReviewLoop(
 			})
 		}
 
+		// hk-isq02: resume-phase agent_ready fallback.
+		//
+		// On iteration ≥ 2 the implementer is launched with `claude --resume <uuid>`
+		// (see buildClaudeLaunchSpec / MintClaudeSessionID ResumeMode). Under the
+		// tmux substrate (implWatcher == nil) the daemon's ONLY ready signal is the
+		// relay-synthesized agent_ready, which the relay produces solely on a
+		// SessionStart hook receipt. A `--resume` reattach does not reliably re-fire
+		// SessionStart, so the relay never sends agent_ready and waitAgentReady below
+		// would block until ErrAgentReadyTimeout — the hk-isq02 fix-up-cycle failure.
+		//
+		// Arm a fallback: after resumeReadyFallbackGrace (splash-dismiss-class), emit
+		// agent_ready into implTap ourselves so waitAgentReady completes. The grace
+		// preserves the hk-kunm4 invariant (do not paste before the REPL is input-
+		// ready). The goroutine is bounded by resumeReadyFallbackCtx, cancelled right
+		// after waitAgentReady returns, so a genuine relay agent_ready (newer claude)
+		// still wins and the fallback emit never fires. Gating on implWatcher == nil
+		// keeps the exec.CommandContext / single-mode path (watcher non-nil) untouched.
+		resumeReadyFallbackCtx, resumeReadyFallbackCancel := context.WithCancel(ctx)
+		// Defer guarantees the cancel runs on every return path (go vet lostcancel);
+		// the eager cancel after waitAgentReady (below) stops the goroutine promptly.
+		// The defer accumulates per iteration, bounded by reviewLoopIterationCap.
+		defer resumeReadyFallbackCancel()
+		if state.iterationCount >= 2 && implWatcher == nil {
+			capturedImplTap := implTap
+			go func() {
+				select {
+				case <-time.After(resumeReadyFallbackGrace):
+					_ = capturedImplTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+				case <-resumeReadyFallbackCtx.Done():
+				}
+			}()
+		}
+
 		// HC-056: waitAgentReady — implementer phase must observe agent_ready
 		// within the configured timeout before paste-injecting the task.
 		// Without this gate, ~60% of concurrent dispatches land the paste before
@@ -381,6 +441,10 @@ func runReviewLoop(
 			implEventSrc := newChanAgentEventSource(implTapCh)
 			implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, deps.agentReadyTimeout)
 			implReadyCancel() // always release the watcher-done goroutine above
+			// hk-isq02: the ready-wait has returned — stop the resume-phase fallback
+			// goroutine promptly so it does not emit a stale agent_ready after we have
+			// moved on to paste-inject.
+			resumeReadyFallbackCancel()
 
 			if implReadyErr == ErrAgentReadyTimeout {
 				// HC-056: implementer agent_ready_timeout — kill, reap, error result.

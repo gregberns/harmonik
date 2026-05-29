@@ -633,13 +633,16 @@ func dispatchDotAgenticNode(
 	}
 
 	// Implementer-class node: require HEAD to have advanced past its pre-launch
-	// state (per EM-015d: the implementer MUST produce a commit). The outbound
-	// edge is unconditional, so a bare SUCCESS outcome is returned.
+	// state (per EM-015d). Gate on node.NonCommitting per WG-041 §I.4 /
+	// EM-058 non-committing sub-note (§II.8): when non_committing="true", a
+	// clean exit yields SUCCESS without requiring HEAD advance; when false
+	// (default), no HEAD advance is a node failure. In both modes an
+	// unresolvable HEAD is a daemon-side error (broken worktree).
 	postHeadSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
 	if headErr != nil {
 		return core.Outcome{}, fmt.Errorf("resolve HEAD after node %q: %w", node.ID, headErr)
 	}
-	if postHeadSHA == preHeadSHA {
+	if postHeadSHA == preHeadSHA && !node.NonCommitting {
 		return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
 	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil

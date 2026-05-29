@@ -163,6 +163,15 @@ type Node struct {
 	// is a reserved-out-of-position STRICT error (WG-031). Empty when absent.
 	Effort string
 
+	// NonCommitting is the optional non_committing boolean attribute for
+	// agentic nodes (WG-041 §I.4). When true on an implementer-class agentic
+	// node, a clean agent exit yields SUCCESS without requiring the worktree
+	// HEAD to advance. When false (the default), a clean exit without HEAD
+	// advance is a node failure. On reviewer-class, non-agentic, and gate
+	// nodes this attribute is retained but ignored with a v1 WARNING per
+	// WG-031.
+	NonCommitting bool
+
 	// AxisTags is the optional axis_tags attribute (open set per WG-030).
 	AxisTags string
 

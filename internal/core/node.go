@@ -94,6 +94,12 @@ type Node struct {
 	// Empty when absent (node inherits run-level effort).
 	Effort string
 
+	// NonCommitting is the optional non_committing boolean field (WG-041 §I.4,
+	// EM-015d carve-out). When true on an implementer-class agentic node, a
+	// clean agent exit yields Outcome{SUCCESS} without requiring HEAD advance.
+	// False by default. Meaningful only for dot-mode agentic implementer nodes.
+	NonCommitting bool
+
 	// SubWorkflowRef is the reference to the sub-workflow definition for
 	// sub-workflow nodes. Required when Type == NodeTypeSubWorkflow; forbidden
 	// otherwise.

@@ -12,6 +12,8 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +22,31 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
 )
+
+// emptyCommitWorktreeFactory wraps productionWorktreeFactory and creates an
+// allow-empty commit so HEAD advances past headSHA (satisfying the no-commit
+// guard, hk-mmh8f) without adding any files to the working tree.
+//
+// Using --allow-empty avoids the race in concurrent-bead tests: a file-based
+// commit causes `D <filename>` to appear in `git status` between `update-ref`
+// and `reset --hard` in mergeRunBranchToMain, which triggers a false positive
+// in checkMainWorkingTreeDirty for any other concurrently-running bead.
+func emptyCommitWorktreeFactory(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
+	wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
+	if err != nil {
+		return "", nil, err
+	}
+	//nolint:gosec // G204: git args are test-internal literals
+	cmd := exec.CommandContext(ctx, "git", "commit", "--allow-empty", "-m", "test: advance HEAD for "+runID)
+	cmd.Dir = wtPath
+	if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return "", nil, fmt.Errorf("emptyCommitWorktreeFactory: git commit: %v\n%s", cmdErr, out)
+	}
+	return wtPath, cleanup, nil
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // hk-w3cp1 — multi-bead one-shot
@@ -78,7 +105,8 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      2, // hk-w3cp1: allow both items to dispatch concurrently
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -163,7 +191,8 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      1, // hk-w3cp1: serialised dispatch
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -281,7 +310,8 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 		HandlerArgs:        []string{"-c", "exit 0"},
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -501,7 +531,8 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		MaxConcurrent:      2, // --max-concurrent 2
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

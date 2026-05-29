@@ -521,6 +521,7 @@ func dispatchDotAgenticNode(
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+	nodeLaunchedAt := time.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		if deps.hookStore != nil {
@@ -615,12 +616,23 @@ func dispatchDotAgenticNode(
 		}
 	}
 
-	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
+	_, nodeEI := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.claudeSessionID)
 
 	if watcher == nil {
 		_ = sess.Kill(context.Background())
 	}
+
+	// Emit implementer_phase_complete (hk-cd8yu / hk-mvjs4) immediately after the
+	// implementer session ends, mirroring workloop.go:1697 and reviewloop.go:526.
+	// Skipped for reviewer-class nodes (they produce reviewer_verdict instead).
+	if !isReviewer {
+		curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+		commitLanded := curHead != "" && curHead != preHeadSHA
+		emitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
+			nodeEI.stderrTail, commitLanded, time.Since(nodeLaunchedAt))
+	}
+
 	if deps.hookStore != nil {
 		deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
 	}

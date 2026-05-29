@@ -12,6 +12,7 @@ package hooksystem
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -152,7 +153,7 @@ func (d *Dispatcher) fireHook(ctx context.Context, ev core.Event, cp core.Contro
 	if hookPL.SubscriptionFilter != nil {
 		match, err := d.evalBoolFilter(ctx, string(*hookPL.SubscriptionFilter), ev)
 		if err != nil {
-			_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic,
+			_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err),
 				fmt.Sprintf("subscription_filter evaluation failed: %v", err))
 			return haltOnFailure, err
 		}
@@ -205,7 +206,7 @@ func (d *Dispatcher) fireMechanismHook(
 	fires, err := d.evalBoolFilter(ctx, string(*cp.Evaluator.Expression), ev)
 	if err != nil {
 		errMsg := fmt.Sprintf("evaluator expression failed: %v", err)
-		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, core.ErrorCategoryDeterministic, errMsg)
+		_ = d.emitHookFailed(ctx, ev, hookName, triggeringID, classifyEvalError(ctx, err), errMsg)
 		return haltOnFailure, err
 	}
 	if !fires {
@@ -231,6 +232,25 @@ func (d *Dispatcher) fireMechanismHook(
 	// is deferred pending the per-kind effector registry per CP-016.
 
 	return false, nil
+}
+
+// classifyEvalError maps an error from the hook evaluator pipeline to the
+// appropriate ErrorCategory per CP-015 / handler-contract.md §4.5:
+//
+//   - timeout / resource-exhaustion (context cancellation) → ErrorCategoryTransient
+//   - schema-violation / type-check / compile / cost-ceiling → ErrorCategoryDeterministic
+//
+// The incoming ctx is checked separately: when the caller's context was already
+// canceled the wall-clock abort in the evaluator masks the root cause, so
+// ctx.Err() is the authoritative source for transient classification.
+func classifyEvalError(ctx context.Context, err error) core.ErrorCategory {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return core.ErrorCategoryTransient
+	}
+	if ctx.Err() != nil {
+		return core.ErrorCategoryTransient
+	}
+	return core.ErrorCategoryDeterministic
 }
 
 // evalBoolFilter compiles and evaluates expression as a boolean against the

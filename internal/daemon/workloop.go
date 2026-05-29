@@ -1331,6 +1331,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitBeadClosed(ctx, deps.bus, runID, beadID)
 				emitDone(true, dotResult.summary)
 			}
+		} else if dotResult.subsumed {
+			// noChange-subsumed: implementer exited without advancing HEAD because
+			// the work already landed in main via a prior run. Close the bead
+			// (mirrors the builtin noChange-subsumed path in the default switch,
+			// workloop.go:1831-1843). No merge needed — no new commits. Bead: hk-9v5yo.
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot noChange-subsumed) %s: %v\n", beadID, closeErr)
+				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+			} else {
+				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitDone(true, "noChange-subsumed: bead found in main")
+			}
 		} else {
 			// Non-success terminal (BLOCK / cap-hit / no-progress / structural
 			// failure / gate-out-of-scope) → reopen the bead so it can be retried

@@ -66,6 +66,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,6 +83,13 @@ import (
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
+
+// errDotNoChangeSubsumed is returned by dispatchDotAgenticNode when the
+// implementer exited without advancing HEAD and the bead is already subsumed
+// in main (work landed via a prior run). driveDotWorkflow maps this to
+// dotWorkflowResult{subsumed:true} so workloop.go can close-subsumed instead
+// of reopening. Bead: hk-9v5yo.
+var errDotNoChangeSubsumed = errors.New("dot: noChange-subsumed: work already in main")
 
 // dotMaxNodeVisits is the absolute upper bound on the number of node visits in a
 // single DOT-mode run. It is a safety net independent of per-edge traversal_cap
@@ -109,6 +117,11 @@ type dotWorkflowResult struct {
 
 	// summary is a short human-readable explanation for run_completed/run_failed.
 	summary string
+
+	// subsumed is true when the implementer exited without advancing HEAD and the
+	// bead was already found in main (noChange-subsumed). The caller closes the
+	// bead rather than reopening it.
+	subsumed bool
 }
 
 // driveDotWorkflow walks the validated DOT graph from its start node to a
@@ -239,6 +252,12 @@ func driveDotWorkflow(
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch)
 			if nodeErr != nil {
+				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
+					return dotWorkflowResult{
+						subsumed: true,
+						summary:  "noChange-subsumed: bead found in main",
+					}
+				}
 				return dotWorkflowResult{
 					success:        false,
 					needsAttention: true,
@@ -643,6 +662,12 @@ func dispatchDotAgenticNode(
 		return core.Outcome{}, fmt.Errorf("resolve HEAD after node %q: %w", node.ID, headErr)
 	}
 	if postHeadSHA == preHeadSHA && !node.NonCommitting {
+		// Mirror the builtin noChange-subsumed check (workloop.go:1831-1848,
+		// hk-trjef): if the bead's work already landed in main, close-subsumed
+		// rather than hard-fail. Bead: hk-9v5yo.
+		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
+			return core.Outcome{}, errDotNoChangeSubsumed
+		}
 		return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
 	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil

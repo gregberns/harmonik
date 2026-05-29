@@ -992,6 +992,26 @@ func runReviewLoop(
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 				return result
 			}
+			// EM-015d-RFD: write reviewer-feedback.iter-N.md so that the iter-(N+1)
+			// implementer-resume paste-inject can deliver the reviewer's notes.
+			// Without this file, pasteInjectImplementerResume logs "task file absent"
+			// and skips the feedback inject → implementer resumes blind → same diff →
+			// no_progress_detected (hk-7x7ea root cause).
+			rfPayload := workspace.ReviewerFeedbackPayload{
+				WorkspacePath:  wtPath,
+				PriorIteration: state.iterationCount,
+				Verdict:        verdict.Verdict,
+				Flags:          verdict.Flags,
+				Notes:          verdict.Notes,
+				DiffHash:       state.lastDiffHash,
+			}
+			if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: WriteReviewerFeedback iter %d: %v (non-fatal)\n",
+					state.iterationCount, rfErr)
+				// Non-fatal: continue to next iteration. The implementer-resume will
+				// skip the feedback paste-inject (same as the pre-fix behaviour for
+				// this bead), but will not block the iteration from proceeding.
+			}
 			// Iterations remaining: increment and continue to next iteration.
 			state.iterationCount++
 

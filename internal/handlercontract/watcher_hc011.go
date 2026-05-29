@@ -412,6 +412,12 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		// timestamps at enqueue time per EV-002b; the watcher supplies only the
 		// type and the raw NDJSON line as payload.
 		w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
+
+		// CP-024: every agent_output_chunk MUST co-emit a budget_accrual event
+		// within the same handler tick (specs/control-points.md §4.5.CP-024).
+		if typeOnly.Type == ProgressMsgTypeAgentOutputChunk {
+			w.emitBudgetAccrualForChunk(ctx, line, cfg.Publisher, cfg.DeadLetter)
+		}
 	}
 }
 
@@ -446,6 +452,50 @@ func (w *Watcher) setTermErr(err error) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal event-building helpers (unexported; tested via SpawnWatcher)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// emitBudgetAccrualForChunk synthesizes and emits a budget_accrual event for an
+// agent_output_chunk progress-stream message per CP-024.
+//
+// The payload is derived from the chunk fields: run_id and session_id are
+// decoded from chunkLine; chunk_index and bytes_emitted provide correlation and
+// cost_units respectively. cost_basis is always core.CostBasisOutputBytes at MVH
+// (no token-count is available at the chunk boundary).
+//
+// Decoding is best-effort: if chunkLine is missing required fields the
+// budget_accrual is emitted with whatever fields could be decoded (zero RunID,
+// empty SessionID, zero CostUnits). The MUST-emit requirement of CP-024 takes
+// precedence over payload completeness.
+//
+// Spec: specs/control-points.md §4.5.CP-024; specs/event-model.md §8.4.2.
+func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byte, pub EventEmitter, dl WatcherDeadLetterSink) {
+	// Decode only the fields needed to construct the budget_accrual payload.
+	// Use core types directly so RunID.UnmarshalText handles UUID parsing.
+	var msg struct {
+		RunID        core.RunID      `json:"run_id"`
+		SessionID    core.SessionID  `json:"session_id"`
+		ChunkIndex   int             `json:"chunk_index"`
+		BytesEmitted int             `json:"bytes_emitted"`
+	}
+	_ = json.Unmarshal(chunkLine, &msg) // best-effort; partial results used below
+
+	chunkIdx := msg.ChunkIndex
+	p := core.BudgetAccrualPayload{
+		RunID:      msg.RunID,
+		SessionID:  msg.SessionID,
+		ChunkIndex: &chunkIdx,
+		CostUnits:  float64(msg.BytesEmitted),
+		CostBasis:  core.CostBasisOutputBytes,
+	}
+
+	payload, err := json.Marshal(p)
+	if err != nil {
+		// Static struct; marshal failure is a defect. Route to dead-letter.
+		_ = dl.Append(core.EventTypeBudgetAccrual, nil, fmt.Sprintf("budget_accrual marshal: %v", err))
+		return
+	}
+
+	w.publishOrDeadLetter(ctx, core.EventTypeBudgetAccrual, payload, pub, dl)
+}
 
 // buildWatcherFailedPayload constructs the (eventType, payload) pair for a
 // watcher-synthesized agent_failed event (panic, line-too-long, malformed,

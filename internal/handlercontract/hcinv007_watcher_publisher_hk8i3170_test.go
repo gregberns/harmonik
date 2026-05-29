@@ -178,16 +178,28 @@ func TestHCINV007_WatcherIsSolePublisher_Completeness(t *testing.T) {
 		}
 	}
 
-	// No extra event types beyond those in the fixture set should appear
-	// (guards against the watcher inventing new event types).
+	// No extra event types beyond the handler-lifecycle set plus allowed
+	// watcher-synthesized events should appear.
+	//
+	// budget_accrual is a watcher-synthesized event emitted alongside every
+	// agent_output_chunk per CP-024 (specs/control-points.md §4.5.CP-024).
+	// It is NOT a progress-stream pass-through type, but it IS an expected
+	// output of the watcher when agent_output_chunk appears in the stream.
+	allowedExtraTypes := map[string]struct{}{
+		string(core.EventTypeBudgetAccrual): {},
+	}
 	wantSet := make(map[string]struct{}, len(hcInv007FixtureHandlerLifecycleTypes))
 	for _, et := range hcInv007FixtureHandlerLifecycleTypes {
 		wantSet[et] = struct{}{}
 	}
 	for _, got := range bus.received {
-		if _, ok := wantSet[got]; !ok {
-			t.Errorf("HC-INV-007 completeness: unexpected event type %q reached the bus; not in §6.4 handler-lifecycle set", got)
+		if _, ok := wantSet[got]; ok {
+			continue
 		}
+		if _, ok := allowedExtraTypes[got]; ok {
+			continue
+		}
+		t.Errorf("HC-INV-007 completeness: unexpected event type %q reached the bus; not in §6.4 handler-lifecycle set or allowed watcher-synthesized types", got)
 	}
 }
 

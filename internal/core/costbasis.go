@@ -14,3 +14,10 @@ package core
 //
 // Bead: hk-hqwn.73.
 type CostBasis string
+
+// CostBasisOutputBytes is the cost basis for output byte volume.
+//
+// Used by the watcher to emit budget_accrual events per agent_output_chunk when
+// token-count information is not carried in the progress-stream message
+// (specs/control-points.md §4.5.CP-024). One unit = one output byte.
+const CostBasisOutputBytes CostBasis = "output_bytes"

@@ -706,6 +706,29 @@ func TestOSAdapter_LoadBuffer_InvalidBufferName(t *testing.T) {
 	}
 }
 
+// TestOSAdapter_LoadBuffer_SyntheticSessionIDNotRejected verifies that a buffer
+// name constructed from the synthetic session ID format (used by
+// rlSynthesiseClaudeSessionID on iter-2 implementer resume, hk-lckbv) is NOT
+// rejected by the bufferNameRe validation.  The old format
+// ("synthetic-claude-session-20060102T150405Z") contained uppercase 'T' and 'Z'
+// which do not match [a-z0-9-] and caused ErrStructural on every iter-2 run.
+// The new format uses only ASCII digits ("syntheticclaudesession20060102150405").
+//
+// The test calls LoadBuffer with a representative synthetic-format name; it
+// expects the error to NOT be ErrStructural (the regex must pass).  The actual
+// tmux invocation may fail with a different error when tmux is absent — that is
+// acceptable; only ErrStructural is the failure mode under test.
+func TestOSAdapter_LoadBuffer_SyntheticSessionIDNotRejected(t *testing.T) {
+	t.Parallel()
+	a := OSAdapter{}
+	// Representative synthetic session ID after the hk-lckbv fix.
+	bufName := "harmonik-syntheticclaudesession20260528150405-task"
+	err := a.LoadBuffer(context.Background(), bufName, []byte("payload"))
+	if errors.Is(err, ErrStructural) {
+		t.Errorf("LoadBuffer synthetic session ID %q: got ErrStructural; buffer name must not be rejected by regex validation (hk-lckbv)", bufName)
+	}
+}
+
 // TestOSAdapter_LoadBuffer_TmuxFailure verifies that LoadBuffer returns
 // *ErrTmuxFailure when the fake tmux exits non-zero.
 // NOTE: uses t.Setenv — cannot be parallel.

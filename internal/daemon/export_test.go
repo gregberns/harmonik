@@ -973,6 +973,13 @@ func ExportedBufferName(sessionID, purpose string) string {
 	return bufferName(sessionID, purpose)
 }
 
+// ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for
+// tests in package daemon_test.  Tests use this to verify the produced ID
+// satisfies the tmux buffer-name regex (hk-lckbv).
+func ExportedSynthesiseClaudeSessionID() string {
+	return rlSynthesiseClaudeSessionID()
+}
+
 // ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package
 // daemon_test that need per-run pane isolation without importing the unexported
 // type directly.

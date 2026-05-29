@@ -1037,10 +1037,18 @@ func rlComputeDiffHash(ctx context.Context, wtPath, parentSHA string) (string, e
 // rlSynthesiseClaudeSessionID produces a synthetic session ID for the MVH twin-
 // binary case where the subprocess does not emit `--output-format json` stdout.
 //
+// The result must satisfy bufferNameRe ([a-z0-9-]+ after the "harmonik-" prefix
+// and before the trailing "-<purpose>" slug).  The old format used
+// "20060102T150405Z" whose uppercase 'T' and 'Z' violated the regex, causing
+// WriteLastPane to return ErrStructural and the run to go run_stale on iter-2
+// resume (hk-lckbv).  The new format uses only ASCII digits — no dashes in the
+// ID body and no uppercase characters — so the buffer name always passes
+// validation.
+//
 // Post-MVH: replace with handlercontract.ParseClaudeSessionID on the session's
 // captured stdout buffer once the handler exposes it.
 func rlSynthesiseClaudeSessionID() string {
-	return "synthetic-claude-session-" + time.Now().UTC().Format("20060102T150405Z")
+	return "syntheticclaudesession" + time.Now().UTC().Format("20060102150405")
 }
 
 // rlTruncateUTF8 returns the prefix of s that is at most maxBytes UTF-8 bytes,

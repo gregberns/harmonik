@@ -379,6 +379,7 @@ func TestCHB021_AllScenariosRecognised(t *testing.T) {
 		{name: "rate-limit"},
 		{name: "dial-failed"},
 		{name: "daemon-not-ready-retry"},
+		{name: "partial-pre-exec"},
 		{
 			name:     "commit-on-cue-startup-delay",
 			needsEnv: true, // commit_on_cue spawns git; needs PATH

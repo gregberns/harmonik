@@ -8,16 +8,16 @@
 //   - multi-LLM stratification via prepareNextTurn (router.ts) — CL-070..CL-073
 //   - per-day USD budget tracking with 80/90/100% graceful-downgrade + hard halt (budget.ts) — CL-090
 //   - reaction-rate circuit breaker (circuit-breaker.ts) — CL-091
+//   - starts the harmonik subscribe event bridge on activate (CL-060..CL-064)
 //
 // What this version does NOT yet do (intentionally — wired in as harmonik grows):
 //   - call `harmonik digest` to build the status sheet (Go subcommand to be built)
-//   - subscribe to `harmonik subscribe` for event ingestion
 //   - manage the loop-singleton lock
 //   - render the custom TUI status panel
-//   - per-event-class wake filtering
 //
 // Design source of truth:
 //   /Users/gb/.kerf/projects/gregberns-harmonik/flywheel/04-design/self-managing-architecture.md
+// Spec: specs/cognition-loop.md
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { prepareNextTurn, type Digest, type WakeEvent } from "./router.js";
 import { BudgetTracker } from "./budget.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
+import { createEventBridge, type Harness } from "./bridge.js";
 
 const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
@@ -81,6 +82,16 @@ export default function activate(pi: ExtensionAPI) {
     if (routingConfig.cacheNamespace) result["cacheNamespace"] = routingConfig.cacheNamespace;
     return result;
   });
+
+  // ── event bridge ─────────────────────────────────────────────────────
+  const harness: Harness = {
+    abort: () => (pi as unknown as { abort?: () => void }).abort?.(),
+    prompt: (msg) => pi.sendUserMessage?.(msg, { deliverAs: "followUp" }),
+    followUp: (msg) => pi.sendUserMessage?.(msg, { deliverAs: "followUp" }),
+  };
+  const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT });
+  bridge.start();
+
 
   // ── note ─────────────────────────────────────────────────────────────
   pi.registerTool({

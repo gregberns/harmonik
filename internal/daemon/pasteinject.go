@@ -53,6 +53,37 @@ import (
 // Bead: hk-rf4ux.
 const splashDismissDelay = 750 * time.Millisecond
 
+// resumeSubmitRetries and resumeSubmitRetryDelay govern the bounded submit-retry
+// on the implementer-resume (iteration ≥ 2) paste path (hk-ip33d).
+//
+// Root cause: on a `claude --resume <session-id>` reattach the REPL's input
+// handler is intermittently not yet ready to accept the Enter keypress at the
+// instant the post-paste SendEnterToLastPane fires — the freshly-resumed TUI is
+// still settling after the welcome splash.  The single Enter is dropped, the
+// combined task+feedback prompt sits in the input bar unsubmitted, claude stays
+// idle, and the run goes run_stale with no iteration-2 progress.  Confirmed in
+// production: a manual `tmux send-keys -t <pane> Enter` submitted the prompt and
+// iteration 2 began immediately.  This is a residual timing race left over from
+// the hk-poy7k combined-paste fix.
+//
+// There is no pane-capture primitive on tmux.Adapter to detect "input cleared",
+// so we cannot positively confirm submission.  Instead we send the submit Enter,
+// wait a short settle, and re-send it up to resumeSubmitRetries additional times.
+// A redundant Enter at a REPL that has ALREADY submitted is a harmless no-op
+// (an empty line at the now-clear prompt), so the retries only ever help: at
+// least one of them lands after the input handler is ready.  This reuses the
+// same send-keys-Enter key-event idiom as the splash-dismiss path (hk-rf4ux) and
+// the time-grace patterns already in this file.
+//
+// Declared as vars (not consts) so tests can override them without waiting real
+// wall time.
+//
+// Bead: hk-ip33d.
+var (
+	resumeSubmitRetries    = 2
+	resumeSubmitRetryDelay = 400 * time.Millisecond
+)
+
 // enterSender is an optional interface for tmux-backed Substrates that can
 // send a bare Enter keypress to the last spawned pane via
 // `tmux send-keys -t <pane> Enter` (NOT the -l literal form).
@@ -103,9 +134,9 @@ type quitSender interface {
 //
 // This distinguishes two cases the heartbeat watchdog cannot separate on its
 // own:
-//   1. Empty pane — paste delivered but claude never started → kill fast (~60s).
-//   2. Active thinking — claude is running and downloading tokens but has not
-//      yet made a tool call → do NOT kill.
+//  1. Empty pane — paste delivered but claude never started → kill fast (~60s).
+//  2. Active thinking — claude is running and downloading tokens but has not
+//     yet made a tool call → do NOT kill.
 //
 // Bead: hk-fbydv.
 type paneLivenessChecker interface {
@@ -731,10 +762,42 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane: %v\n", err)
 	}
-	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	// Send Enter after paste to submit the message regardless of terminal
+	// bracketed-paste mode (hk-8cq23).  On the resume path the freshly-resumed
+	// REPL is intermittently not yet input-ready when this fires, so the single
+	// Enter is dropped and the prompt sits unsubmitted → run_stale (hk-ip33d).
+	// Send the submit Enter with a bounded retry so at least one keypress lands
+	// after the input handler is ready; a redundant Enter at an already-submitted
+	// REPL is a harmless no-op.
 	if es, ok := inj.(enterSender); ok {
+		sendResumeSubmitEnter(ctx, es)
+	}
+}
+
+// sendResumeSubmitEnter delivers the submit Enter for the implementer-resume
+// paste with a bounded retry (hk-ip33d).
+//
+// It sends Enter once, then re-sends it up to resumeSubmitRetries additional
+// times with resumeSubmitRetryDelay between attempts.  The retries defend
+// against the fresh-`--resume` timing race where the REPL input handler is not
+// yet ready to accept the first keypress: a dropped first Enter leaves the
+// prompt unsubmitted (the hk-ip33d run_stale), while a redundant Enter at an
+// already-submitted REPL is a harmless empty line.  The loop returns early if
+// ctx is cancelled.
+//
+// Bead: hk-ip33d.
+func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
+	if err := es.SendEnterToLastPane(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane: %v\n", err)
+	}
+	for i := 0; i < resumeSubmitRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(resumeSubmitRetryDelay):
+		}
 		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane: %v\n", err)
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume submit-retry %d SendEnterToLastPane: %v\n", i+1, err)
 		}
 	}
 }

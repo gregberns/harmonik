@@ -1143,6 +1143,17 @@ var ExportedNoChangeKillDelay = &noChangeKillDelay
 // Bead: hk-5s7tg.
 var ExportedPostQuitKillGrace = &postQuitKillGrace
 
+// ExportedResumeSubmitRetries and ExportedResumeSubmitRetryDelay are pointers to
+// the package-level implementer-resume submit-retry tunables.  Tests set the
+// delay to a short duration so the bounded submit retry on the resume paste path
+// (the hk-ip33d fix) runs without burning real wall time.
+//
+// Bead: hk-ip33d.
+var (
+	ExportedResumeSubmitRetries    = &resumeSubmitRetries
+	ExportedResumeSubmitRetryDelay = &resumeSubmitRetryDelay
+)
+
 // ExportedCommitPollInterval is a pointer to the package-level commitPollInterval
 // var.  Tests set *ExportedCommitPollInterval to a short duration to keep
 // polling tight during timeout tests.

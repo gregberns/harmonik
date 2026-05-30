@@ -274,7 +274,7 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
 
   function onWatchdogFire(fires: WatchdogFire[]): void {
     for (const fire of fires) {
-      emitCognitionEvent(repoRoot, { type: "watchdog_fired", kind: fire.kind, ...fire });
+      emitCognitionEvent(repoRoot, { type: "watchdog_fired", ...fire });
 
       if (fire.kind === "daemon_down") {
         daemonDown = true;

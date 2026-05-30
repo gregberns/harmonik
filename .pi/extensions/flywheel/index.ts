@@ -22,7 +22,7 @@
 // Spec: specs/cognition-loop.md
 
 import { Type } from "typebox";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -71,7 +71,9 @@ export default function activate(pi: ExtensionAPI) {
   digestPanel = createDigestPanel(REPO_ROOT);
 
   // ── prepareNextTurn: model stratification + budget + circuit-breaker ──
-  pi.on("prepareNextTurn", async (event, _ctx) => {
+  // prepareNextTurn is a Pi lifecycle hook not yet typed in the published ExtensionAPI overloads.
+  (pi as { on(event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>): void }).on(
+  "prepareNextTurn", async (event, _ctx) => {
     // Circuit breaker check.
     if (circuitBreaker.recordReaction()) {
       return { skip: true };
@@ -169,7 +171,7 @@ export default function activate(pi: ExtensionAPI) {
       };
       mkdirSync(COGNITION_DIR, { recursive: true });
       appendFileSync(NOTE_FILE, JSON.stringify(row) + "\n");
-      ctx.appendEntry?.("harmonik.note", row); // mirror into live session journal
+      pi.appendEntry("harmonik.note", row); // mirror into live session journal
       return {
         content: [{ type: "text", text: `noted (${params.kind})` }],
         details: row,
@@ -232,7 +234,7 @@ export default function activate(pi: ExtensionAPI) {
         ]
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params): Promise<AgentToolResult<{ name: SkillName; error?: string; sha?: string; path?: string }>> {
       const skillName = params.name as SkillName;
       const skillPath = join(SKILLS_DIR, `${skillName}.md`);
       let content: string;
@@ -242,13 +244,13 @@ export default function activate(pi: ExtensionAPI) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
           content: [{ type: "text" as const, text: `error: skill not found at ${skillPath}: ${msg}` }],
-          details: { name: skillName, error: msg },
+          details: { name: skillName, error: msg, sha: undefined, path: undefined },
         };
       }
       const sha = createHash("sha256").update(content).digest("hex").slice(0, 12);
       return {
         content: [{ type: "text" as const, text: content }],
-        details: { name: skillName, sha, path: skillPath },
+        details: { name: skillName, sha, path: skillPath, error: undefined },
       };
     },
   });

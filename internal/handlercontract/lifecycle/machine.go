@@ -48,7 +48,7 @@ func (m *Machine) Transition(to LifecycleState, reason TransitionReason, errCode
 
 	from := m.current
 	if !isValidTransition(from, to) {
-		return &InvalidStateTransitionError{From: from, To: to}
+		return &InvalidStateTransitionError{From: from, To: to, SessID: m.sessID}
 	}
 
 	now := time.Now()

@@ -92,6 +92,8 @@ func TestTransition_IllegalEdges(t *testing.T) {
 		var iste *lifecycle.InvalidStateTransitionError
 		if !errors.As(err, &iste) {
 			t.Errorf("illegal transition %s→%s: error type %T, want *InvalidStateTransitionError", e.from, e.to, err)
+		} else if iste.SessID == "" {
+			t.Errorf("illegal transition %s→%s: InvalidStateTransitionError.SessID is empty (HC-066)", e.from, e.to)
 		}
 		if !errors.Is(err, lifecycle.ErrInvalidStateTransition) {
 			t.Errorf("illegal transition %s→%s: errors.Is(ErrInvalidStateTransition) false", e.from, e.to)

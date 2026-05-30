@@ -3,6 +3,7 @@
 // What this version does:
 //   - registers a `note` tool (durable notes → .harmonik/cognition/notes.jsonl)
 //   - registers a `reset_context` tool (deferred reset at turn boundary)
+//   - registers a `read_skill` tool (lazy-fetch fat-skills from .flywheel/skills/)
 //   - injects context-fullness % into every model call (MemGPT 70/90/100 pattern)
 //   - on turn_end at >=100% fullness, forces the deferred reset
 //   - multi-LLM stratification via prepareNextTurn (router.ts) — CL-070..CL-073
@@ -22,7 +23,8 @@
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { prepareNextTurn, type Digest, type WakeEvent } from "./router.js";
 import { BudgetTracker } from "./budget.js";
@@ -34,6 +36,16 @@ const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
 const COGNITION_DIR = join(REPO_ROOT, ".harmonik/cognition");
 const EVENTS_FILE = join(REPO_ROOT, ".harmonik/events/events.jsonl");
+const SKILLS_DIR = join(REPO_ROOT, ".flywheel/skills");
+
+const SKILL_NAMES = [
+  "triage-failure",
+  "investigate-run",
+  "compose-batch",
+  "escalate",
+  "reconcile-state",
+] as const;
+type SkillName = typeof SKILL_NAMES[number];
 
 let pendingReset: { reason: string; instructions?: string } | null = null;
 let lastWarnedThreshold = 0; // so we nudge once per crossing, not every turn
@@ -187,6 +199,56 @@ export default function activate(pi: ExtensionAPI) {
           { type: "text", text: "reset queued; will fire at the next turn boundary" },
         ],
         details: params,
+      };
+    },
+  });
+
+  // ── read_skill (lazy fat-skill fetch) ───────────────────────────────
+  // Reads a skill markdown file from .flywheel/skills/<name>.md and returns
+  // its content + a SHA-256 content hash so the caller can verify identity
+  // across fetches. Skills live-reload: each read_skill() call re-reads disk,
+  // so an operator edit takes effect on the next invocation (no process restart).
+  // The sha pins the skill body in the conversation — same sha across turns in
+  // the same cycle means the cached tool_result can be reused.
+  pi.registerTool({
+    name: "read_skill",
+    label: "Read Skill",
+    description:
+      "Fetch a fat-skill procedure from .flywheel/skills/<name>.md. " +
+      "Call this before making a judgment-class decision of the named class. " +
+      "Returns {content, sha} where sha is a SHA-256 of the file content (first 12 hex chars).",
+    promptSnippet:
+      "read_skill(name) — fetch procedure before deciding; do not improvise the named class",
+    promptGuidelines: [
+      "Call read_skill BEFORE making any judgment-class decision covered by the skill index.",
+      "Skill names: triage-failure, investigate-run, compose-batch, escalate, reconcile-state.",
+      "The returned sha identifies the skill version; include it in any decision note that cites the skill.",
+    ],
+    parameters: Type.Object({
+      name: Type.Union(
+        SKILL_NAMES.map((n) => Type.Literal(n)) as [
+          ReturnType<typeof Type.Literal>,
+          ...ReturnType<typeof Type.Literal>[],
+        ]
+      ),
+    }),
+    async execute(_id, params) {
+      const skillName = params.name as SkillName;
+      const skillPath = join(SKILLS_DIR, `${skillName}.md`);
+      let content: string;
+      try {
+        content = readFileSync(skillPath, "utf8");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `error: skill not found at ${skillPath}: ${msg}` }],
+          details: { name: skillName, error: msg },
+        };
+      }
+      const sha = createHash("sha256").update(content).digest("hex").slice(0, 12);
+      return {
+        content: [{ type: "text" as const, text: content }],
+        details: { name: skillName, sha, path: skillPath },
       };
     },
   });

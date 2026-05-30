@@ -1,18 +1,20 @@
-// flywheel — v0 scaffold of the harmonik self-managing orchestrator extension.
+// flywheel — harmonik self-managing orchestrator extension.
 //
 // What this version does:
 //   - registers a `note` tool (durable notes → .harmonik/cognition/notes.jsonl)
 //   - registers a `reset_context` tool (deferred reset at turn boundary)
 //   - injects context-fullness % into every model call (MemGPT 70/90/100 pattern)
 //   - on turn_end at >=100% fullness, forces the deferred reset
+//   - multi-LLM stratification via prepareNextTurn (router.ts) — CL-070..CL-073
+//   - per-day USD budget tracking with 80/90/100% graceful-downgrade + hard halt (budget.ts) — CL-090
+//   - reaction-rate circuit breaker (circuit-breaker.ts) — CL-091
 //
 // What this version does NOT yet do (intentionally — wired in as harmonik grows):
 //   - call `harmonik digest` to build the status sheet (Go subcommand to be built)
 //   - subscribe to `harmonik subscribe` for event ingestion
-//   - implement multi-LLM stratification via prepareNextTurn
 //   - manage the loop-singleton lock
 //   - render the custom TUI status panel
-//   - per-event-class wake filtering / budget kill-switch
+//   - per-event-class wake filtering
 //
 // Design source of truth:
 //   /Users/gb/.kerf/projects/gregberns-harmonik/flywheel/04-design/self-managing-architecture.md
@@ -21,15 +23,65 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { prepareNextTurn, type Digest, type WakeEvent } from "./router.js";
+import { BudgetTracker } from "./budget.js";
+import { CircuitBreaker } from "./circuit-breaker.js";
 
 const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
 const COGNITION_DIR = join(REPO_ROOT, ".harmonik/cognition");
+const EVENTS_FILE = join(REPO_ROOT, ".harmonik/events/events.jsonl");
 
 let pendingReset: { reason: string; instructions?: string } | null = null;
 let lastWarnedThreshold = 0; // so we nudge once per crossing, not every turn
 
+// Shared digest state: exception_flag set by harness to trigger a one-shot Opus turn.
+const digest: Digest = { exception_flag: false };
+
+// Initialized in activate() so env vars / config are available.
+let budgetTracker: BudgetTracker;
+let circuitBreaker: CircuitBreaker;
+
 export default function activate(pi: ExtensionAPI) {
+  const budgetUsdPerDay = process.env["FLYWHEEL_BUDGET_USD_PER_DAY"]
+    ? parseFloat(process.env["FLYWHEEL_BUDGET_USD_PER_DAY"])
+    : Infinity;
+  const circuitThreshold = process.env["FLYWHEEL_CIRCUIT_THRESHOLD_PER_MIN"]
+    ? parseFloat(process.env["FLYWHEEL_CIRCUIT_THRESHOLD_PER_MIN"])
+    : 10;
+
+  budgetTracker = new BudgetTracker({ limitUsd: budgetUsdPerDay, eventsFile: EVENTS_FILE });
+  circuitBreaker = new CircuitBreaker({ thresholdPerMin: circuitThreshold, eventsFile: EVENTS_FILE });
+
+  // ── prepareNextTurn: model stratification + budget + circuit-breaker ──
+  pi.on("prepareNextTurn", async (event, _ctx) => {
+    // Circuit breaker check.
+    if (circuitBreaker.recordReaction()) {
+      return { skip: true };
+    }
+
+    // Route based on wake cause from event metadata (fall back to "queue_empty").
+    const wakeEvent: WakeEvent = {
+      cause: (event as { cause?: string }).cause ?? "queue_empty",
+    };
+    let routingConfig = prepareNextTurn(digest, wakeEvent);
+
+    if (routingConfig.skip) return { skip: true };
+
+    // Apply budget pressure (may downgrade model or halt).
+    const pressured = budgetTracker.applyPressure(routingConfig);
+    if (pressured.halt) {
+      return { skip: true };
+    }
+    routingConfig = pressured;
+
+    const result: Record<string, unknown> = {};
+    if (routingConfig.model) result["model"] = routingConfig.model;
+    if (routingConfig.thinkingLevel != null) result["thinkingLevel"] = routingConfig.thinkingLevel;
+    if (routingConfig.cacheNamespace) result["cacheNamespace"] = routingConfig.cacheNamespace;
+    return result;
+  });
+
   // ── note ─────────────────────────────────────────────────────────────
   pi.registerTool({
     name: "note",
@@ -121,8 +173,18 @@ export default function activate(pi: ExtensionAPI) {
     };
   });
 
-  // ── turn_end: thresholds + deferred reset trigger ───────────────────
-  pi.on("turn_end", async (_event, ctx) => {
+  // ── turn_end: budget tracking + thresholds + deferred reset trigger ──
+  pi.on("turn_end", async (event, ctx) => {
+    // Record approximate spend for budget tracking.
+    const usage = (event as { usage?: { input_tokens?: number; output_tokens?: number; model?: string } }).usage;
+    if (usage && budgetTracker) {
+      const inputTok = usage.input_tokens ?? 0;
+      const outputTok = usage.output_tokens ?? 0;
+      const model = usage.model ?? "claude-sonnet-4-6-20251022";
+      const turnUsd = estimateTurnCost(model, inputTok, outputTok);
+      budgetTracker.recordSpend({ turnUsd, model });
+    }
+
     const u = ctx.getContextUsage?.();
     const pct = u?.percent ?? 0;
 
@@ -158,11 +220,11 @@ export default function activate(pi: ExtensionAPI) {
     description: "Hard reset: open notes survive; reseed a new session from the digest.",
     handler: async (_args, ctx) => {
       // v0: minimal digest — the production version will call `harmonik digest`.
-      const digest = buildMinimalDigest();
+      const digestText = buildMinimalDigest();
       await ctx.newSession?.({
         parentSession: ctx.sessionManager?.getSessionFile() ?? undefined,
         withSession: async (rep) => {
-          rep.sendUserMessage?.(digest, { deliverAs: "followUp" });
+          rep.sendUserMessage?.(digestText, { deliverAs: "followUp" });
         },
       });
     },
@@ -177,4 +239,23 @@ function buildMinimalDigest(): string {
     "",
     "Continue from: review open notes, then resume the active priority work.",
   ].join("\n");
+}
+
+// Approximate USD cost per turn using Anthropic list prices (2026-05-30).
+// Input: $/MTok, Output: $/MTok. Uses uncached rates for conservative upper bound.
+function estimateTurnCost(model: string, inputTokens: number, outputTokens: number): number {
+  let inputRate: number;
+  let outputRate: number;
+  if (model.startsWith("claude-opus")) {
+    inputRate = 5.0 / 1_000_000;
+    outputRate = 25.0 / 1_000_000;
+  } else if (model.startsWith("claude-haiku")) {
+    inputRate = 1.0 / 1_000_000;
+    outputRate = 5.0 / 1_000_000;
+  } else {
+    // Sonnet and unknown models
+    inputRate = 3.0 / 1_000_000;
+    outputRate = 15.0 / 1_000_000;
+  }
+  return inputTokens * inputRate + outputTokens * outputRate;
 }

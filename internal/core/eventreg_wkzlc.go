@@ -79,6 +79,18 @@ type RunStaleSnapshot struct {
 	// GoroutineCount is the runtime.NumGoroutine() value at emission time.
 	// Useful for detecting goroutine leaks when correlated across events.
 	GoroutineCount int `json:"goroutine_count"`
+
+	// LifecycleState is the LifecycleState.String() label of the session's FSM
+	// at emission time (e.g. "Ready", "Executing", "Failed"). Empty when the
+	// lifecycle Machine is not yet available (handler has not launched).
+	// Populated by the stale watcher from handle.GetMachine() per hk-xrygh.
+	LifecycleState string `json:"lifecycle_state,omitempty"`
+
+	// LifecycleEnteredAt is the RFC 3339 wall-clock timestamp at which the
+	// session entered its current LifecycleState. Empty when LifecycleState is
+	// empty. Provides a wall-clock reference for "how long has the session been
+	// stuck in this state?" at run_stale emission time.
+	LifecycleEnteredAt string `json:"lifecycle_entered_at,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunStalePayload.

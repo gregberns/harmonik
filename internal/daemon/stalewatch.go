@@ -31,9 +31,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 const (
@@ -271,6 +274,32 @@ func (w *StaleWatcher) checkRun(
 	st.nextEmitAfter *= 2
 	w.mu.Unlock()
 
+	// HC-064..HC-067 / hk-xrygh: before emitting run_stale, drive the session
+	// lifecycle FSM to StateFailed(silent_hang) if the machine is in a live
+	// (non-terminal) state. This ensures the Ready→Failed(silent_hang)
+	// transition event fires BEFORE run_stale, satisfying the acceptance
+	// criterion that "run_stale carries the lifecycle snapshot" and that the
+	// silent-hang is visible as a deterministic FSM event first.
+	var lifecycleStateStr, lifecycleEnteredAtStr string
+	if m := handle.GetMachine(); m != nil {
+		cur := m.Current()
+		if !cur.IsTerminal() {
+			// Drive to StateFailed(silent_hang). The transition call is
+			// idempotent: if the machine is already in a terminal state (due
+			// to a concurrent path) the error is silently ignored.
+			from := cur
+			if tErr := m.Transition(hclifecycle.StateFailed, hclifecycle.ReasonSilentHang,
+				"run_stale", fmt.Sprintf("session silent for %ds", ageSeconds)); tErr == nil {
+				// Successfully transitioned — emit lifecycle_transition event.
+				w.emitSilentHangTransition(ctx, runID, m, from)
+			}
+		}
+		// Re-read current state (may now be Failed).
+		cur2 := m.Current()
+		lifecycleStateStr = cur2.String()
+		lifecycleEnteredAtStr = m.EnteredAt().UTC().Format(time.RFC3339)
+	}
+
 	pl := core.RunStalePayload{
 		RunID:         runID.String(),
 		BeadID:        string(beadID),
@@ -279,8 +308,10 @@ func (w *StaleWatcher) checkRun(
 		LastEventAt:   lastEventAtStr,
 		EmitCount:     emitCount,
 		Snapshot: &core.RunStaleSnapshot{
-			ActiveRunCount: activeRunCount,
-			GoroutineCount: goroutineCount,
+			ActiveRunCount:     activeRunCount,
+			GoroutineCount:     goroutineCount,
+			LifecycleState:     lifecycleStateStr,
+			LifecycleEnteredAt: lifecycleEnteredAtStr,
 		},
 	}
 	b, err := json.Marshal(pl)
@@ -289,4 +320,29 @@ func (w *StaleWatcher) checkRun(
 		return
 	}
 	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeRunStale, b)
+}
+
+// emitSilentHangTransition emits a lifecycle_transition event for the
+// Ready→Failed(silent_hang) transition driven by the stale watcher.
+// Uses EmitWithRunID so the envelope carries the run_id for JSONL correlation.
+func (w *StaleWatcher) emitSilentHangTransition(ctx context.Context, runID core.RunID, m *hclifecycle.Machine, from hclifecycle.LifecycleState) {
+	p := core.LifecycleTransitionPayload{
+		SessionID:      core.SessionID(m.SessionID()),
+		FromState:      from.String(),
+		ToState:        hclifecycle.StateFailed.String(),
+		Reason:         string(hclifecycle.ReasonSilentHang),
+		TransitionedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		ErrCode:        "run_stale",
+		ErrMsg:         "session unresponsive — stale watcher threshold exceeded",
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+	// Parse run_id from machine (it was set at Machine.New time).
+	if parsedUUID, parseErr := uuid.Parse(m.RunID()); parseErr == nil {
+		_ = w.cfg.Emitter.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload)
+	} else {
+		_ = w.cfg.Emitter.Emit(ctx, core.EventTypeLifecycleTransition, payload)
+	}
 }

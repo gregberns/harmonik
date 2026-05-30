@@ -1469,6 +1469,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitDone(false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
+	// Store the session's lifecycle Machine in the RunHandle so the stale watcher
+	// can read the current state and drive Ready→Failed(silent_hang) before
+	// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
+	if handle, ok := deps.runRegistry.Get(runID); ok {
+		handle.SetMachine(sess.Machine())
+	}
+
 	// hk-68pvl: force-tear-down the implementer session before beadRunOne
 	// returns — and therefore before the deferred wtCleanup (registered earlier
 	// at the worktree-factory step, so it runs LAST under LIFO defer ordering)

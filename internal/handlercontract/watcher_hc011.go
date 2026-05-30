@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
@@ -589,8 +591,17 @@ func emitMachineTransition(
 		_ = dl.Append(core.EventTypeLifecycleTransition, nil, fmt.Sprintf("lifecycle_transition marshal: %v", err))
 		return
 	}
-	if err := pub.Emit(ctx, core.EventTypeLifecycleTransition, payload); err != nil {
-		_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", err))
+	// Use EmitWithRunID so the envelope carries run_id for JSONL correlation
+	// (EM-013). The Machine holds the run_id as a string; parse it to core.RunID.
+	// Fall back to plain Emit when the run_id is not a valid UUID (e.g. stubs).
+	if parsedUUID, parseErr := uuid.Parse(m.RunID()); parseErr == nil {
+		if emitErr := pub.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload); emitErr != nil {
+			_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
+		}
+	} else {
+		if emitErr := pub.Emit(ctx, core.EventTypeLifecycleTransition, payload); emitErr != nil {
+			_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", emitErr))
+		}
 	}
 }
 

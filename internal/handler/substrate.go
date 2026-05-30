@@ -147,13 +147,26 @@ func (a *substrateSessionAdapter) CloseStdin() error {
 	return nil
 }
 
-// Machine returns a lifecycle Machine for this substrate session. Substrate
-// sessions start in StateSpawning and immediately transition to StateInitializing
-// since cmd.Start semantics don't apply; the Machine is used for observability.
+// Machine returns the per-session lifecycle Machine. The machine is eagerly
+// initialised at adapter construction time (newSubstrateAdapter) so this
+// method is always safe to call concurrently without a data race.
 func (a *substrateSessionAdapter) Machine() *hclifecycle.Machine {
-	if a.machine == nil {
-		a.machine = hclifecycle.New("substrate-unknown", "unknown")
-		_ = a.machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
-	}
 	return a.machine
+}
+
+// newSubstrateAdapter wraps subSess in a substrateSessionAdapter and eagerly
+// initialises its lifecycle Machine (Spawning→Initializing). The sessID and
+// runID are used to identify the machine in lifecycle_transition events.
+func newSubstrateAdapter(subSess SubstrateSession, sessID, runID string) *substrateSessionAdapter {
+	if sessID == "" {
+		sessID = "substrate-unknown"
+	}
+	if runID == "" {
+		runID = "unknown"
+	}
+	m := hclifecycle.New(sessID, runID)
+	// Substrate sessions skip the exec.Cmd path, so we go directly to
+	// Initializing (the substrate has already spawned the process).
+	_ = m.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
+	return &substrateSessionAdapter{inner: subSess, machine: m}
 }

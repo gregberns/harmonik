@@ -301,7 +301,12 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		return nil, nil, fmt.Errorf("handler: Launch: Substrate.SpawnWindow: %w", err)
 	}
 
-	adapted := &substrateSessionAdapter{inner: subSess}
+	// Resolve runID for the lifecycle Machine (same logic as the exec path).
+	subRunIDStr := "unknown"
+	if spec.HandlerSpec != nil {
+		subRunIDStr = spec.HandlerSpec.RunID.String()
+	}
+	adapted := newSubstrateAdapter(subSess, string(sessionID), subRunIDStr)
 
 	// Wire SpawnWatcher only when the substrate exposes a stdout pipe.
 	// For tmux-hosted sessions Stdout() returns nil; in that case return a
@@ -321,6 +326,7 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		ProgressStream: progressStream,
 		Publisher:      h.publisher,
 		DeadLetter:     h.deadLetter,
+		Machine:        adapted.Machine(),
 	})
 
 	return adapted, watcher, nil

@@ -18,10 +18,12 @@ package daemon
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 // RunHandle holds the live metadata for a single in-flight bead run. It is
@@ -51,6 +53,23 @@ type RunHandle struct {
 	// it signals the handler to stop. May be nil if the run was registered
 	// before a cancel function was available.
 	Cancel context.CancelFunc //nolint:containedctx // CancelFunc is not a Context; stored for operator signal routing
+
+	// machine is the per-session lifecycle FSM (HC-064..HC-067). Set atomically
+	// by beadRunOne after a successful handler.Launch; nil before the handler
+	// is launched. Use SetMachine / GetMachine for race-free access.
+	machine atomic.Pointer[hclifecycle.Machine]
+}
+
+// SetMachine stores m as the lifecycle Machine for this run. Thread-safe.
+// Called by beadRunOne immediately after a successful handler.Launch.
+func (h *RunHandle) SetMachine(m *hclifecycle.Machine) {
+	h.machine.Store(m)
+}
+
+// GetMachine returns the lifecycle Machine for this run, or nil if the
+// handler has not yet launched. Thread-safe.
+func (h *RunHandle) GetMachine() *hclifecycle.Machine {
+	return h.machine.Load()
 }
 
 // RunRegistry is a concurrency-safe map of run_id → *RunHandle.

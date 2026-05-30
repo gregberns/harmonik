@@ -6,7 +6,7 @@ title: harmonik digest
 spec-id: digest-command
 requirement-prefix: DC
 status: draft
-spec-category: operator-surface
+spec-category: runtime-subsystem
 spec-shape: requirements-first
 version: 0.1.0
 spec-template-version: 1.1

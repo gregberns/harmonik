@@ -196,6 +196,7 @@ export default function activate(pi: ExtensionAPI) {
     const u = ctx.getContextUsage?.();
     if (!u || u.percent == null) return;
     const pct = Math.round(u.percent);
+    digestPanel.setContextFullness(pct);
     const line =
       pct >= 100
         ? `[context ${pct}% — CRITICAL: harness will force-save next turn]`

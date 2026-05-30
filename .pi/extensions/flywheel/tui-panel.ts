@@ -3,6 +3,7 @@
 // Renders a live status widget above the Pi editor using ctx.ui.setWidget.
 // Polls `harmonik digest --json` at ~1s cadence; refresh() triggers an
 // immediate update so bridge-delivered daemon events land within 1s.
+// Context fullness % is fed in from index.ts via setContextFullness().
 //
 // Spec: specs/cognition-loop.md §CL-081 (tmux inspectability),
 //       §CL-082 (digest --watch parity).
@@ -27,12 +28,15 @@ interface DigestJSON {
     pending_count: number;
     active_runs?: Array<{ bead_id: string; run_id?: string; status: string }>;
   };
+  recent_commits?: Array<{ hash: string; subject: string }>;
   recent_events?: Array<{ event_id: string; type: string; run_id?: string }>;
   ready_beads?: Array<{ bead_id: string; title: string }>;
   in_progress_beads?: Array<{ bead_id: string; title: string }>;
   open_notes?: Array<{ kind: string; text: string; ts: string }>;
+  kerf_next?: unknown;
   truncated?: {
     active_runs_omitted?: number;
+    recent_events_omitted?: number;
     open_notes_omitted?: number;
   };
   errors?: string[];
@@ -45,6 +49,12 @@ export interface DigestPanel {
   stop(): void;
   /** Trigger an immediate refresh (called by bridge on daemon events). */
   refresh(): void;
+  /**
+   * Update the context window fullness % shown in the panel header.
+   * Called from the Pi `context` event handler (index.ts) on each turn.
+   * Pass null when the value is unavailable.
+   */
+  setContextFullness(pct: number | null): void;
 }
 
 export function createDigestPanel(
@@ -55,10 +65,13 @@ export function createDigestPanel(
   let timer: ReturnType<typeof setInterval> | null = null;
   let inFlight = false;
   let lastContent = "";
+  let contextFullnessPct: number | null = null;
 
   async function fetchAndRender(): Promise<void> {
     if (!ui || inFlight) return;
     inFlight = true;
+    // Capture ui before any await so stop() nulling it mid-flight is safe.
+    const capturedUi = ui;
     const now = new Date();
     try {
       const { stdout } = await execFileAsync(
@@ -67,18 +80,18 @@ export function createDigestPanel(
         { timeout: 5000 }
       );
       const d = JSON.parse(stdout.trim()) as DigestJSON;
-      const lines = renderLines(d, now);
+      const lines = renderLines(d, contextFullnessPct, now);
       const content = lines.join("\n");
-      if (content !== lastContent) {
+      if (content !== lastContent && capturedUi) {
         lastContent = content;
-        ui.setWidget(WIDGET_KEY, lines, { placement: "aboveEditor" });
+        capturedUi.setWidget(WIDGET_KEY, lines, { placement: "aboveEditor" });
       }
     } catch {
-      const lines = renderError(now);
+      const lines = renderError(contextFullnessPct, now);
       const content = lines.join("\n");
-      if (content !== lastContent) {
+      if (content !== lastContent && capturedUi) {
         lastContent = content;
-        ui.setWidget(WIDGET_KEY, lines, { placement: "aboveEditor" });
+        capturedUi.setWidget(WIDGET_KEY, lines, { placement: "aboveEditor" });
       }
     } finally {
       inFlight = false;
@@ -89,7 +102,6 @@ export function createDigestPanel(
     start(uiCtx: ExtensionUIContext): void {
       if (ui) return; // already started
       ui = uiCtx;
-      // Immediate first render, then poll.
       fetchAndRender().catch(() => undefined);
       timer = setInterval(() => {
         fetchAndRender().catch(() => undefined);
@@ -101,37 +113,44 @@ export function createDigestPanel(
         clearInterval(timer);
         timer = null;
       }
-      if (ui) {
-        ui.setWidget(WIDGET_KEY, undefined);
-        ui = null;
-      }
+      // Null ui early so in-flight fetchAndRender skips the final setWidget.
+      const capturedUi = ui;
+      ui = null;
       lastContent = "";
+      capturedUi?.setWidget(WIDGET_KEY, undefined);
     },
 
     refresh(): void {
       fetchAndRender().catch(() => undefined);
+    },
+
+    setContextFullness(pct: number | null): void {
+      contextFullnessPct = pct;
     },
   };
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-function renderError(now: Date): string[] {
+function renderError(fullnessPct: number | null, now: Date): string[] {
+  const fullness = fullnessPct != null ? `  ctx=${fullnessPct}%` : "";
   return [
-    `harmonik digest  ${fmtTs(now)}  [digest unavailable]`,
+    `harmonik digest  ${fmtTs(now)}${fullness}  [digest unavailable]`,
   ];
 }
 
-function renderLines(d: DigestJSON, now: Date): string[] {
+function renderLines(
+  d: DigestJSON,
+  fullnessPct: number | null,
+  now: Date
+): string[] {
   const lines: string[] = [];
 
-  // Header
-  const lagMs = Math.max(
-    0,
-    now.getTime() - new Date(d.generated_at).getTime()
-  );
+  // Header — includes context fullness % (acceptance criterion)
+  const lagMs = Math.max(0, now.getTime() - new Date(d.generated_at).getTime());
+  const fullness = fullnessPct != null ? `  ctx=${fullnessPct}%` : "";
   lines.push(
-    `harmonik digest  ${fmtTs(now)}  lag=${lagMs}ms  v${d.schema_version}`
+    `harmonik digest  ${fmtTs(now)}  lag=${lagMs}ms  v${d.schema_version}${fullness}`
   );
   lines.push("─".repeat(68));
 
@@ -173,6 +192,9 @@ function renderLines(d: DigestJSON, now: Date): string[] {
     const ref = ev.run_id ? `  run=${ev.run_id.slice(0, 8)}` : "";
     lines.push(`  ${pad(ev.type, 16)}${ref}  ${age} ago`);
   }
+  if ((d.truncated?.recent_events_omitted ?? 0) > 0) {
+    lines.push(`  [+${d.truncated!.recent_events_omitted!} events omitted]`);
+  }
 
   // Open notes
   const notes = d.open_notes ?? [];
@@ -183,15 +205,27 @@ function renderLines(d: DigestJSON, now: Date): string[] {
   }
   for (const n of notes.slice(0, 5)) {
     const age = durationAgo(new Date(n.ts), now);
-    const text =
-      n.text.length > 55 ? n.text.slice(0, 52) + "..." : n.text;
+    const text = n.text.length > 55 ? n.text.slice(0, 52) + "..." : n.text;
     lines.push(`  [${pad(n.kind, 10)}]  ${text}  (${age} ago)`);
   }
   if ((d.truncated?.open_notes_omitted ?? 0) > 0) {
     lines.push(`  [+${d.truncated!.open_notes_omitted!} more]`);
   }
 
-  // In-progress + ready beads (compact)
+  // Ready beads (decisions needed / unblocked work)
+  const ready = d.ready_beads ?? [];
+  if (ready.length > 0) {
+    lines.push("");
+    lines.push(`=== Ready beads (${ready.length}) ===`);
+    for (const b of ready.slice(0, 5)) {
+      lines.push(`  ${b.bead_id}  ${b.title}`);
+    }
+    if (ready.length > 5) {
+      lines.push(`  [+${ready.length - 5} more]`);
+    }
+  }
+
+  // In-progress beads
   const inProg = d.in_progress_beads ?? [];
   if (inProg.length > 0) {
     lines.push("");
@@ -225,7 +259,7 @@ function pad(s: string, width: number): string {
 // Extract the Unix-millisecond timestamp from a UUIDv7 string.
 // UUIDv7 layout: first 48 bits = Unix epoch milliseconds.
 // String form: xxxxxxxx-xxxx-7xxx-xxxx-xxxxxxxxxxxx
-// First 12 hex nibbles (positions 0–11, skipping the hyphen at index 8).
+// First 12 hex nibbles after stripping hyphens encode the ms timestamp.
 function uuidv7Age(eventId: string, now: Date): string {
   if (!eventId || eventId.length < 10) return "?";
   const hex = eventId.replace(/-/g, "").slice(0, 12);

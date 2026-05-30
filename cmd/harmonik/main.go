@@ -306,6 +306,14 @@ EXAMPLES
 		return runGraphSubcommand(os.Args[2:])
 	}
 
+	// harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
+	// Pure-Go status sheet builder; snapshot mode requires no daemon.
+	// Missing .harmonik/ → exit 7. Spec: specs/digest-command.md; CL-030..033.
+	// Bead ref: hk-1qrty.
+	if len(os.Args) >= 2 && os.Args[1] == "digest" {
+		return runDigestSubcommand(os.Args[2:])
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

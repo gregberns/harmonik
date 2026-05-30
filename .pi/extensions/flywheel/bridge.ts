@@ -8,7 +8,7 @@
 //   - Watchdog timers: quiet / run-stall / daemon-down (CL-064)
 //   - Persist watermark + reacted-ledger per CL-052/053/054
 //   - Emit cognition events to .harmonik/cognition/cognition-events.jsonl (OQ-CL-004)
-//   - subscription_gap forces ScanAfter re-sync (EV-037c)
+//   - subscription_gap forces ScanAfter(watermark) re-sync on events.jsonl (EV-038)
 //   - Reconnect with exponential backoff on failure / exit-17
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -173,13 +173,19 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     }
   }
 
-  // subscription_gap handling per EV-037c: ScanAfter + re-sense queue.json + git
+  // subscription_gap handling per EV-038: ScanAfter(watermark) on events.jsonl
+  // + re-sense queue.json + git completion log.
   async function handleSubscriptionGap(dropped: number): Promise<void> {
     emitCognitionEvent(repoRoot, { type: "subscription_gap_detected", dropped });
     const s = ensureState();
     const watermark = s.last_processed_event_id;
 
-    // Read events.jsonl from watermark (cold-start path is permitted per CL-060)
+    // Read events.jsonl from the watermark. This direct read is mandated by
+    // EV-038 (subscription_gap forced re-sync): the consumer MUST ScanAfter
+    // (watermark) on events.jsonl to replay dropped events. This is the
+    // gap-recovery path, NOT the cold-start path — CL-060's "MUST NOT tail
+    // events.jsonl directly except in cold-start" restriction does not apply
+    // here; EV-038 is the governing requirement for subscription_gap.
     const evPath = eventsJsonlPath(repoRoot);
     try {
       const lines = readFileSync(evPath, "utf8").split("\n").filter(Boolean);

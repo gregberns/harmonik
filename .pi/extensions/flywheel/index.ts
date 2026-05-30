@@ -8,7 +8,8 @@
 //   - multi-LLM stratification via prepareNextTurn (router.ts) — CL-070..CL-073
 //   - per-day USD budget tracking with 80/90/100% graceful-downgrade + hard halt (budget.ts) — CL-090
 //   - reaction-rate circuit breaker (circuit-breaker.ts) — CL-091
-//   - starts the harmonik subscribe event bridge on activate (CL-060..CL-064)
+//   - starts the harmonik subscribe event bridge on activate (CL-060..CL-064);
+//     torn down on session_shutdown so the subscribe child + watchdog interval do not leak
 //
 // What this version does NOT yet do (intentionally — wired in as harmonik grows):
 //   - call `harmonik digest` to build the status sheet (Go subcommand to be built)
@@ -84,14 +85,32 @@ export default function activate(pi: ExtensionAPI) {
   });
 
   // ── event bridge ─────────────────────────────────────────────────────
+  // CL-062 idle-vs-in-flight delivery: the bridge calls `prompt` when the
+  // substrate is idle (a fresh user turn must be started) and `followUp` when
+  // a turn is in flight (the message is queued onto the running turn). Pi's
+  // sendUserMessage exposes `deliverAs: "steer" | "followUp"`; there is no
+  // dedicated "start a fresh idle turn" mode, so idle delivery is a plain
+  // sendUserMessage with no deliverAs (queues as the next user prompt), while
+  // in-flight delivery uses deliverAs:"followUp". Keeping these two paths
+  // distinct preserves the CL-062 idle-vs-in-flight semantic the bridge was
+  // designed to honor instead of collapsing both.
+  // TODO(pi-api): if Pi later exposes an explicit idle-dispatch mode, route
+  // `prompt` to it; revisit if sendUserMessage's idle behaviour changes.
   const harness: Harness = {
     abort: () => (pi as unknown as { abort?: () => void }).abort?.(),
-    prompt: (msg) => pi.sendUserMessage?.(msg, { deliverAs: "followUp" }),
+    prompt: (msg) => pi.sendUserMessage?.(msg),
     followUp: (msg) => pi.sendUserMessage?.(msg, { deliverAs: "followUp" }),
   };
   const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT });
   bridge.start();
 
+  // Resource-leak fix: tear the bridge down on session shutdown so the
+  // `harmonik subscribe` child process, the watchdog setInterval, and any
+  // pending reconnect timer are released. Without this, an extension
+  // reload/shutdown leaks the subprocess + interval (reviewer flag: resource-leak).
+  pi.on("session_shutdown", async () => {
+    bridge.stop();
+  });
 
   // ── note ─────────────────────────────────────────────────────────────
   pi.registerTool({

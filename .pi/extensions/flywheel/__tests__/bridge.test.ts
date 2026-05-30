@@ -279,9 +279,9 @@ describe("merge_conflict urgent handling — CL-063", () => {
   });
 });
 
-// ── subscription_gap forces ScanAfter re-sync — EV-037c ─────────────────────
+// ── subscription_gap forces ScanAfter(watermark) re-sync — EV-038 ───────────
 
-describe("subscription_gap handling — EV-037c", () => {
+describe("subscription_gap handling — EV-038", () => {
   let dir: string;
   beforeEach(() => { dir = tmpDir(); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
@@ -317,6 +317,48 @@ describe("subscription_gap handling — EV-037c", () => {
     expect(followUps.length).toBeGreaterThan(0);
     const gapMsg = followUps.find((f) => f.arg?.includes("subscription_gap") || f.arg?.includes("gap"));
     expect(gapMsg).toBeDefined();
+  });
+});
+
+// ── stop() releases resources (no leak) — CL-064 teardown ───────────────────
+
+describe("stop() teardown releases resources", () => {
+  let dir: string;
+  beforeEach(() => { dir = tmpDir(); vi.useFakeTimers(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.useRealTimers(); });
+
+  it("clears the watchdog interval on stop() — no dangling timer", () => {
+    const { harness } = makeHarness();
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    const bridge = createEventBridge(harness, bridgeOpts(dir));
+
+    // start() arms the watchdog (setInterval) and spawns subscribe.
+    bridge.start();
+    // stop() must clear the watchdog interval (cancelWatchdog) so it does not leak.
+    bridge.stop();
+
+    expect(clearSpy).toHaveBeenCalled();
+
+    // After stop(), advancing fake time must NOT fire any further watchdog ticks.
+    const before = harness.followUp as ReturnType<typeof vi.fn>;
+    const callsBefore = before.mock.calls.length;
+    vi.advanceTimersByTime(120_000);
+    expect((harness.followUp as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
+
+    clearSpy.mockRestore();
+  });
+
+  it("stop() is idempotent and flushes pending debounced events once", () => {
+    const { harness, calls } = makeHarness();
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { debounceMs: 100_000 }));
+    bridge.start();
+
+    // Two consecutive stop() calls must not throw and must not double-fire.
+    bridge.stop();
+    const followUpsAfterFirstStop = calls.filter((c) => c.method === "followUp").length;
+    expect(() => bridge.stop()).not.toThrow();
+    const followUpsAfterSecondStop = calls.filter((c) => c.method === "followUp").length;
+    expect(followUpsAfterSecondStop).toBe(followUpsAfterFirstStop);
   });
 });
 

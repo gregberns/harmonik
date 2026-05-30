@@ -980,6 +980,13 @@ func ExportedSynthesiseClaudeSessionID() string {
 	return rlSynthesiseClaudeSessionID()
 }
 
+// ExportedResolveIter1ClaudeSessionID exposes rlResolveIter1ClaudeSessionID for
+// tests in package daemon_test (hk-za5mz). Verifies the iteration-1 session-id
+// resolution order: interceptor id → real minted id → synthesis.
+func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
+	return rlResolveIter1ClaudeSessionID(interceptorID, realMintedID)
+}
+
 // ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package
 // daemon_test that need per-run pane isolation without importing the unexported
 // type directly.

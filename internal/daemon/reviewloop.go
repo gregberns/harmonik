@@ -602,21 +602,51 @@ func runReviewLoop(
 		}
 
 		// Capture claude_session_id for iteration 1.
-		// Prefer the value persisted to git via the interceptor (CHB-023).
-		// Fall back to synthesis when the handler did not emit claude_session_id in
-		// handler_capabilities (pre-bridge twin binary; existing test paths).
+		//
+		// Resolution order (rlResolveIter1ClaudeSessionID):
+		//   1. The value captured by the CHB-023 stdout interceptor (ideal; already
+		//      persisted to git by the interceptor's persist goroutine).
+		//   2. The real minted `--session-id <uuid>` value (implArtifacts.
+		//      claudeSessionID). Under the tmux substrate the interceptor never fires
+		//      (handler.launchViaSubstrate returns early when Stdout()==nil, so
+		//      StdoutWrapper is never called — hk-za5mz), but the minted id is the
+		//      one Claude is instructed to use as its session id via `claude
+		//      --session-id <uuid>` (adoption is Claude Code's own --session-id CLI
+		//      contract). The hook-relay's CHB-012 guard does not cause adoption — it
+		//      only detects deviation and makes it a hard error — so the minted id is
+		//      the correct --resume target for iteration 2; synthesising here was the
+		//      root cause of no_progress_detected (hk-za5mz).
+		//   3. Synthesis (twin-binary test paths launched without --session-id).
 		if state.iterationCount == 1 {
+			var interceptorID string
 			select {
 			case id := <-sessionIDFromCapabilities:
-				if id != "" {
-					state.claudeSessionID = id
-				} else {
-					state.claudeSessionID = rlSynthesiseClaudeSessionID()
-				}
+				interceptorID = id
 			default:
-				// Interceptor never fired (handler exited without emitting
-				// handler_capabilities with claude_session_id). Synthesise.
-				state.claudeSessionID = rlSynthesiseClaudeSessionID()
+				// Interceptor never fired (tmux substrate, or handler exited
+				// without emitting handler_capabilities with claude_session_id).
+			}
+			state.claudeSessionID = rlResolveIter1ClaudeSessionID(interceptorID, implArtifacts.claudeSessionID)
+
+			// hk-za5mz: when the interceptor never persisted the id (interceptorID
+			// empty) but we fell back to the real minted id, the CHB-023 git
+			// checkpoint was never written and claude_session_id_persisted never
+			// fired. Persist it now so (a) a daemon restart can recover the id for
+			// --resume via EM-031 state-reconstruction, and (b) the
+			// claude_session_id_persisted event is observable for the resumable
+			// session. Best-effort: a persist failure leaves the in-memory
+			// state.claudeSessionID intact, so iteration 2 still resumes the real
+			// session within this daemon process — only cross-restart recovery and
+			// event observability are lost (matching the interceptor goroutine's
+			// own non-fatal-on-error posture).
+			if interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" {
+				res, persistErr := persistClaudeSessionID(ctx, wtPath, runID, state.claudeSessionID)
+				if persistErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: reviewloop: hk-za5mz persist minted claude_session_id: %v (continuing; iter-2 resume still targets the live session in-process)\n", persistErr)
+				} else if !res.Skipped {
+					emitClaudeSessionIDPersisted(ctx, deps.bus, runID, res.CommitSHA, state.claudeSessionID)
+				}
 			}
 		}
 
@@ -1104,6 +1134,42 @@ func rlComputeDiffHash(ctx context.Context, wtPath, parentSHA string) (string, e
 // captured stdout buffer once the handler exposes it.
 func rlSynthesiseClaudeSessionID() string {
 	return "syntheticclaudesession" + time.Now().UTC().Format("20060102150405")
+}
+
+// rlResolveIter1ClaudeSessionID picks the claude_session_id to carry forward from
+// iteration 1 to the iteration-2 implementer-resume launch, in priority order:
+//
+//  1. interceptorID — captured by the CHB-023 SessionIDInterceptor on the
+//     handler's stdout. This is the ideal path: the value was already persisted
+//     to git by the interceptor's persist goroutine.
+//  2. realMintedID — the UUIDv7 the daemon minted and passed to the handler as
+//     `claude --session-id <uuid>`. This is the id Claude is instructed to use as
+//     its session id (adoption is Claude Code's own --session-id CLI contract).
+//     The hook-relay's CHB-012 guard (bridge_session_id_mismatch) does not cause
+//     adoption — it only detects deviation: any hook payload whose session_id
+//     differs from realMintedID is a hard error (exit 1). So a session that ran
+//     without erroring carries realMintedID, making it a valid `claude --resume`
+//     target — unlike a synthetic id, which provably never existed.
+//  3. synthesis — only when both ids are empty (a twin-binary test path launched
+//     without `--session-id`, where no real Claude session exists to resume).
+//
+// # Why this fixes hk-za5mz
+//
+// Under the tmux substrate, handler.launchViaSubstrate returns early when
+// subSess.Stdout() is nil (handler.go:303) and never calls StdoutWrapper, so the
+// interceptor never fires and interceptorID is empty. The prior behavior fell
+// straight through to synthesis, so iteration-2 launched
+// `claude --resume <synthetic>` against a session that never existed → no commit
+// → diff unchanged → no_progress_detected. Falling back to realMintedID (the live
+// `--session-id` value) makes iteration-2's --resume target the real session.
+func rlResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
+	if interceptorID != "" {
+		return interceptorID
+	}
+	if realMintedID != "" {
+		return realMintedID
+	}
+	return rlSynthesiseClaudeSessionID()
 }
 
 // rlTruncateUTF8 returns the prefix of s that is at most maxBytes UTF-8 bytes,

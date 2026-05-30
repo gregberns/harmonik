@@ -1,0 +1,194 @@
+package supervisecmd
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/supervise"
+)
+
+// RunShim implements the internal `harmonik supervise _shim <projectDir>` command.
+//
+// This runs inside the flywheel tmux pane. It:
+//  1. Acquires the supervisor.lock flock (fd-lifetime, released on exit).
+//  2. Writes its own PID to supervisor.pid.
+//  3. Reads config.json for supervisor parameters.
+//  4. If --watch-restart: runs internal/supervise.Supervisor with the configured command.
+//  5. Otherwise: exec-replaces itself with the configured command directly.
+//  6. On exit: removes sentinel and pidfile.
+//
+// This is an internal subcommand not meant for direct operator use.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-019c-f, §4.10 PL-028d.
+func RunShim(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "harmonik supervise _shim: missing project directory argument")
+		return 1
+	}
+
+	projectDir := args[0]
+	watchRestart := false
+	for _, a := range args[1:] {
+		if a == "--watch-restart" {
+			watchRestart = true
+		}
+	}
+
+	// Acquire supervisor.lock (fd-lifetime; kernel releases on shim exit).
+	//nolint:gosec // G304
+	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: open lock: %v\n", err)
+		return 1
+	}
+	// Blocking flock: wait until any prior holder releases (brief race window
+	// after start exits).
+	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX); err != nil {
+		_ = lockFd.Close()
+		fmt.Fprintf(stderr, "harmonik supervise _shim: flock: %v\n", err)
+		return 1
+	}
+	// lockFd is intentionally kept open for the shim's lifetime.
+	// nolint:gocritic — intentional leak; lockFd must outlive this func stack.
+	defer func() {
+		_ = lockFd.Close()
+		_ = cleanup(projectDir)
+	}()
+
+	// Write own PID (PL-019d).
+	if err := WritePidfile(projectDir, os.Getpid()); err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: write pidfile: %v\n", err)
+		return 1
+	}
+
+	// Read config.json (PL-019e): supervisor re-reads config at startup, must
+	// NOT hot-reload.
+	cfg, err := ReadConfig(projectDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: read config: %v\n", err)
+		return 1
+	}
+
+	if len(cfg.Command) == 0 {
+		fmt.Fprintf(stderr,
+			"harmonik supervise _shim: config.json missing 'command' field — nothing to run\n"+
+				"  Set config.command to the supervisee argv (e.g. [\"claude\", \"--pi\"])\n")
+		return 1
+	}
+
+	if !watchRestart {
+		// Non-restart mode: exec-replace with the supervisee directly.
+		return runDirect(cfg.Command, stderr)
+	}
+
+	// Watch-restart mode: use internal/supervise.Supervisor.
+	return runWithSupervisor(cfg, stdout, stderr)
+}
+
+// runDirect exec-replaces the shim with the supervisee command.
+func runDirect(command []string, stderr io.Writer) int {
+	bin := command[0]
+	// Resolve binary path.
+	resolved, err := lookPath(bin)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err)
+		return 1
+	}
+	if execErr := syscall.Exec(resolved, command, os.Environ()); execErr != nil {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: exec %q: %v\n", resolved, execErr)
+		return 1
+	}
+	return 0 // never reached
+}
+
+// runWithSupervisor runs the supervisee under internal/supervise.Supervisor
+// with restart policy from config.json.
+func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	policy := supervise.PolicyOnFailure
+	if cfg.RestartPolicy == string(supervise.PolicyNever) {
+		policy = supervise.PolicyNever
+	}
+
+	restartMax := cfg.RestartMax
+	if restartMax == 0 {
+		restartMax = 5
+	}
+	baseMS := cfg.RestartBaseMS
+	if baseMS == 0 {
+		baseMS = 1000
+	}
+	capMS := cfg.RestartCapMS
+	if capMS == 0 {
+		capMS = 60000
+	}
+
+	spec := supervise.Spec{
+		Command:         cfg.Command,
+		Policy:          policy,
+		StartTimeout:    30 * time.Second,
+		CrashLoopWindow: 60 * time.Second,
+		StopTimeout:     10 * time.Second,
+		Backoff: supervise.BackoffConfig{
+			Base:        time.Duration(baseMS) * time.Millisecond,
+			Cap:         time.Duration(capMS) * time.Millisecond,
+			Jitter:      0.2,
+			MaxRestarts: restartMax,
+		},
+	}
+
+	sv := supervise.New(spec, log)
+
+	ctx, stop := setupSignals()
+	defer stop()
+
+	if err := sv.Run(ctx); err != nil {
+		state := sv.Snapshot()
+		if state.Status == supervise.StatusCrashLoop {
+			fmt.Fprintf(stderr, "harmonik supervise: crash-loop detected after %d restarts\n",
+				state.RestartCount)
+		} else {
+			fmt.Fprintf(stderr, "harmonik supervise: supervisor exited: %v\n", err)
+		}
+		return 1
+	}
+	return 0
+}
+
+// lookPath resolves a binary name via PATH.
+func lookPath(name string) (string, error) {
+	if strings.ContainsRune(name, '/') {
+		return name, nil
+	}
+	pathEnv := os.Getenv("PATH")
+	for _, dir := range strings.Split(pathEnv, ":") {
+		candidate := dir + "/" + name
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("not found in PATH")
+}
+
+// setupSignals returns a context cancelled on SIGINT/SIGTERM and a stop func.
+// Imported via os/signal to avoid pulling in signal package at package level.
+func setupSignals() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		ch := make(chan os.Signal, 1)
+		signalNotify(ch, syscall.SIGINT, syscall.SIGTERM)
+		select {
+		case <-ctx.Done():
+		case <-ch:
+			cancel()
+		}
+	}()
+	return ctx, cancel
+}

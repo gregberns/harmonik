@@ -292,6 +292,23 @@ EXAMPLES
 		return runBeadSubcommand(os.Args[2:])
 	}
 
+	// harmonik supervise {start,stop,status,attach,restart,logs} — manage the
+	// supervisor/cognition process per §PL-019. Dispatched before flag.Parse so
+	// that the global flag set does not reject subcommand-specific flags.
+	//
+	// Exit-code contract: 0 success, 1 op-error, 2 unknown-verb,
+	// 17 daemon-not-running, 25 supervisor-already-running.
+	//
+	// Spec ref: specs/process-lifecycle.md §4.10 PL-028d.
+	// Bead ref: hk-qx702.
+	if len(os.Args) >= 2 && os.Args[1] == "supervise" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runSuperviseSubcommand(subArgs)
+	}
+
 	// harmonik subscribe — stream daemon events on the Unix socket (hk-6ynv4).
 	// Long-running observation-only command; routed through ON-055 (subscribe
 	// is read-only observation, no control-plane authority).

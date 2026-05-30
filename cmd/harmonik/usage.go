@@ -21,6 +21,7 @@ SUBCOMMANDS
   queue        Submit or inspect the bead queue (daemon must be running)
   reconcile    Close in_progress beads whose implementation has merged
   graph        Workflow graph utilities (validate, etc.)
+  supervise    Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
   beads-merge  Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   tmux-start   Bootstrap a tmux session and start the daemon inside it
   hook-relay   Forward a Claude hook event to the daemon (internal use)

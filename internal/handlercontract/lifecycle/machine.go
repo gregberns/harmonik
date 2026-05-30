@@ -48,7 +48,7 @@ func (m *Machine) Transition(to LifecycleState, reason TransitionReason, errCode
 
 	from := m.current
 	if !isValidTransition(from, to) {
-		return &InvalidStateTransitionError{From: from, To: to, SessID: m.sessID}
+		return &InvalidStateTransitionError{From: from, To: to, SessionID: m.sessID}
 	}
 
 	now := time.Now()
@@ -98,8 +98,8 @@ func (m *Machine) History() []Transition {
 	return out
 }
 
-// SessID returns the session identifier supplied at construction.
-func (m *Machine) SessID() string {
+// SessionID returns the session identifier supplied at construction.
+func (m *Machine) SessionID() string {
 	return m.sessID
 }
 

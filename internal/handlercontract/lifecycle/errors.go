@@ -18,13 +18,13 @@ var ErrInvalidStateTransition = errors.New("lifecycle: invalid state transition"
 // session ID for correlation (HC-066).
 // It wraps ErrInvalidStateTransition so errors.Is checks work on the sentinel.
 type InvalidStateTransitionError struct {
-	From    LifecycleState
-	To      LifecycleState
-	SessID  string
+	From      LifecycleState
+	To        LifecycleState
+	SessionID string
 }
 
 func (e *InvalidStateTransitionError) Error() string {
-	return fmt.Sprintf("lifecycle: invalid state transition %s → %s (sess=%s)", e.From, e.To, e.SessID)
+	return fmt.Sprintf("lifecycle: invalid state transition %s → %s (sess=%s)", e.From, e.To, e.SessionID)
 }
 
 func (e *InvalidStateTransitionError) Unwrap() error {

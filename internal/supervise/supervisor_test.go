@@ -141,13 +141,33 @@ func TestMaxRestartsCap_CrashLoop(t *testing.T) {
 	}
 }
 
+// waitForStatus polls the supervisor snapshot until it reaches want or the
+// deadline elapses. It returns the last snapshot observed and whether want was
+// reached. The poll interval is short so timing-sensitive transitions are
+// caught promptly.
+func waitForStatus(sv *supervise.Supervisor, want supervise.Status, within time.Duration) (supervise.State, bool) {
+	deadline := time.Now().Add(within)
+	var last supervise.State
+	for time.Now().Before(deadline) {
+		last = sv.Snapshot()
+		if last.Status == want {
+			return last, true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return last, false
+}
+
 // TestHeartbeatStaleness verifies that a stale heartbeat file transitions
-// state.Status to unhealthy without triggering a restart.
+// state.Status to unhealthy WITHOUT triggering a restart. The probe interval is
+// driven to ≤25ms via HealthProbeInterval so the transition is actually
+// observed within the test window (the prior version conceded it could not
+// assert this because the interval was hardcoded at 15s).
 func TestHeartbeatStaleness(t *testing.T) {
 	dir := t.TempDir()
 	hbPath := filepath.Join(dir, "heartbeat.json")
 
-	// Write a heartbeat file with a very old mtime (2 minutes ago).
+	// Write a heartbeat file with a very old mtime (2 minutes ago) → stale.
 	f, err := os.Create(hbPath)
 	if err != nil {
 		t.Fatalf("create heartbeat: %v", err)
@@ -158,14 +178,16 @@ func TestHeartbeatStaleness(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	// Use a long-running child (sleep) so it doesn't exit before the health probe fires.
+	// Long-running child (sleep) so it doesn't exit before the probe fires.
 	spec := supervise.Spec{
-		Command:         []string{"sh", "-c", "sleep 30"},
-		Policy:          supervise.PolicyOnFailure,
-		HeartbeatPath:   hbPath,
-		HeartbeatTTL:    30 * time.Second, // file is 2 min old → stale
-		StartTimeout:    20 * time.Millisecond,
-		CrashLoopWindow: 10 * time.Second,
+		Command:             []string{"sh", "-c", "sleep 30"},
+		Policy:              supervise.PolicyOnFailure,
+		HeartbeatPath:       hbPath,
+		HeartbeatTTL:        30 * time.Second, // file is 2 min old → stale
+		HealthProbeInterval: 25 * time.Millisecond,
+		StartTimeout:        10 * time.Millisecond, // → running before first probe tick
+		CrashLoopWindow:     10 * time.Second,
+		StopTimeout:         500 * time.Millisecond,
 		Backoff: supervise.BackoffConfig{
 			Base:        10 * time.Millisecond,
 			Cap:         1 * time.Second,
@@ -175,45 +197,165 @@ func TestHeartbeatStaleness(t *testing.T) {
 	}
 
 	sv := supervise.New(spec, silentLogger())
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
-	// Run in background; we check state after assume-running gate fires and
-	// the health probe has had a chance to run.
 	done := make(chan error, 1)
 	go func() { done <- sv.Run(ctx) }()
 
-	// Wait for status to transition to running (assume-running gate), then
-	// wait a bit more for the health probe tick (15s probe interval — we
-	// artificially trigger by polling).
-	deadline := time.Now().Add(2 * time.Second)
-	var lastSnap supervise.State
-	for time.Now().Before(deadline) {
-		snap := sv.Snapshot()
-		lastSnap = snap
-		if snap.Status == supervise.StatusUnhealthy {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	// With a 25ms probe interval and a 2-min-stale file, the supervisor must
+	// transition to unhealthy well within 2s.
+	snap, ok := waitForStatus(sv, supervise.StatusUnhealthy, 2*time.Second)
+	if !ok {
+		_ = sv.Stop(0)
+		<-done
+		t.Fatalf("expected status unhealthy from stale heartbeat, last seen %s", snap.Status)
+	}
+	// Health failure must NOT restart.
+	if snap.RestartCount != 0 {
+		t.Errorf("heartbeat failure should not restart; got %d restarts", snap.RestartCount)
+	}
+	if snap.Status == supervise.StatusCrashLoop {
+		t.Errorf("heartbeat staleness must not trigger crashloop; got %s", snap.Status)
 	}
 
-	// The health probe fires every 15s which is longer than our test timeout.
-	// We verify that the probe logic itself correctly identifies staleness by
-	// calling Snapshot. If the probe hasn't fired, the test is still valid —
-	// it demonstrates the health check is configured. We skip the status
-	// assertion in CI where real timing is not guaranteed but note the design.
-	//
-	// To avoid a flaky test we only assert that status is NOT crashloop
-	// (no restart should have occurred).
-	cancel() // stop the sleep child
+	if err := sv.Stop(0); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 	<-done
+}
 
-	if lastSnap.Status == supervise.StatusCrashLoop {
-		t.Errorf("heartbeat staleness should not trigger crashloop; got %s", lastSnap.Status)
+// TestHeartbeatFreshRemainsRunning verifies the control case: a fresh heartbeat
+// file (mtime continuously bumped) keeps the supervisor in the running state —
+// the probe must NOT spuriously mark a healthy process unhealthy.
+func TestHeartbeatFreshRemainsRunning(t *testing.T) {
+	dir := t.TempDir()
+	hbPath := filepath.Join(dir, "heartbeat.json")
+	if f, err := os.Create(hbPath); err != nil {
+		t.Fatalf("create heartbeat: %v", err)
+	} else {
+		f.Close()
 	}
-	// RestartCount must be zero: heartbeat failure does not restart.
-	if lastSnap.RestartCount != 0 {
-		t.Errorf("heartbeat failure should not restart; got %d restarts", lastSnap.RestartCount)
+
+	spec := supervise.Spec{
+		Command:             []string{"sh", "-c", "sleep 30"},
+		Policy:              supervise.PolicyOnFailure,
+		HeartbeatPath:       hbPath,
+		HeartbeatTTL:        500 * time.Millisecond,
+		HealthProbeInterval: 25 * time.Millisecond,
+		StartTimeout:        10 * time.Millisecond,
+		CrashLoopWindow:     10 * time.Second,
+		StopTimeout:         500 * time.Millisecond,
+		Backoff: supervise.BackoffConfig{
+			Base:        10 * time.Millisecond,
+			Cap:         1 * time.Second,
+			Jitter:      0,
+			MaxRestarts: 0,
+		},
+	}
+
+	sv := supervise.New(spec, silentLogger())
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- sv.Run(ctx) }()
+
+	// Keep the heartbeat fresh for ~400ms (many probe ticks), bumping mtime.
+	bumpStop := make(chan struct{})
+	go func() {
+		t := time.NewTicker(20 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-bumpStop:
+				return
+			case <-t.C:
+				now := time.Now()
+				_ = os.Chtimes(hbPath, now, now)
+			}
+		}
+	}()
+
+	// Confirm it reaches running and stays healthy across several probe ticks.
+	if _, ok := waitForStatus(sv, supervise.StatusRunning, 1*time.Second); !ok {
+		close(bumpStop)
+		_ = sv.Stop(0)
+		<-done
+		t.Fatal("expected status running with a fresh heartbeat")
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if s := sv.Snapshot(); s.Status == supervise.StatusUnhealthy {
+			close(bumpStop)
+			_ = sv.Stop(0)
+			<-done
+			t.Fatalf("fresh heartbeat must not be marked unhealthy; got %s", s.Status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	close(bumpStop)
+	if err := sv.Stop(0); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	<-done
+}
+
+// TestStopTimeoutHonored verifies that Stop(timeout) threads its timeout into
+// the SIGTERM→SIGKILL window. The child traps SIGTERM and refuses to die, so
+// only SIGKILL (fired after the timeout) can terminate it. With a short stop
+// timeout, Run must return quickly — proving the configured timeout, not the
+// old hardcoded 10s window, governs escalation.
+func TestStopTimeoutHonored(t *testing.T) {
+	spec := supervise.Spec{
+		// trap+ignore SIGTERM, then sleep — only SIGKILL ends it.
+		Command:         []string{"sh", "-c", "trap '' TERM; sleep 30"},
+		Policy:          supervise.PolicyOnFailure,
+		StartTimeout:    20 * time.Millisecond,
+		CrashLoopWindow: 10 * time.Second,
+		Backoff: supervise.BackoffConfig{
+			Base:        10 * time.Millisecond,
+			Cap:         1 * time.Second,
+			Jitter:      0,
+			MaxRestarts: 3,
+		},
+	}
+
+	sv := supervise.New(spec, silentLogger())
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- sv.Run(ctx) }()
+
+	time.Sleep(100 * time.Millisecond) // let it start
+
+	const stopTimeout = 200 * time.Millisecond
+	start := time.Now()
+	if err := sv.Stop(stopTimeout); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error after Stop: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after Stop — SIGKILL escalation may not have fired")
+	}
+
+	elapsed := time.Since(start)
+	// Must escalate near stopTimeout, not the old hardcoded 10s. Allow slack
+	// for scheduling/reap latency but require it to be well under 10s.
+	if elapsed < stopTimeout {
+		t.Errorf("Stop returned before the SIGTERM window elapsed (%s < %s)", elapsed, stopTimeout)
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("Stop took %s — timeout not honored (expected ~%s)", elapsed, stopTimeout)
+	}
+
+	snap := sv.Snapshot()
+	if snap.Status != supervise.StatusStopped {
+		t.Errorf("expected stopped status, got %s", snap.Status)
 	}
 }
 

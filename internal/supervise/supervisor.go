@@ -58,6 +58,13 @@ type Spec struct {
 	// HeartbeatTTL is how stale the heartbeat file may be before the supervisor
 	// marks the process unhealthy. Default: 90s.
 	HeartbeatTTL time.Duration
+	// HealthProbeInterval is how often the health probe runs (liveness +
+	// heartbeat-freshness check). Default: 15s.
+	HealthProbeInterval time.Duration
+	// StopTimeout is the bounded SIGTERM→SIGKILL window used by Stop() when the
+	// caller passes a zero timeout. It also caps the run-loop's stop path.
+	// Default: 10s.
+	StopTimeout time.Duration
 	// Policy controls restart behaviour. Default: PolicyOnFailure.
 	Policy RestartPolicy
 	// Backoff is the restart-delay envelope.
@@ -86,6 +93,12 @@ func (s *Spec) applyDefaults() {
 	}
 	if s.CrashLoopWindow == 0 {
 		s.CrashLoopWindow = 60 * time.Second
+	}
+	if s.HealthProbeInterval == 0 {
+		s.HealthProbeInterval = 15 * time.Second
+	}
+	if s.StopTimeout == 0 {
+		s.StopTimeout = 10 * time.Second
 	}
 }
 
@@ -117,6 +130,10 @@ type Supervisor struct {
 	state  atomic.Pointer[State]
 	log    *slog.Logger
 	stopCh chan struct{} // closed by Stop() to signal the run loop
+	// stopTimeoutNanos holds the SIGTERM→SIGKILL deadline (in ns) requested by
+	// the most recent Stop() call. Read by terminateChild via atomics so the
+	// run-loop goroutine honours the caller's timeout, not a hardcoded one.
+	stopTimeoutNanos atomic.Int64
 }
 
 // New creates a new Supervisor. The caller is responsible for acquiring the
@@ -139,10 +156,17 @@ func (s *Supervisor) Snapshot() State {
 }
 
 // Stop signals the supervisor to terminate. It sends SIGTERM to the child,
-// waits up to timeout, then sends SIGKILL, per PL-011.
+// waits up to timeout, then sends SIGKILL, per PL-011. A zero (or negative)
+// timeout falls back to Spec.StopTimeout (default 10s).
 //
-// Stop may be called from any goroutine concurrently with Run.
+// Stop may be called from any goroutine concurrently with Run. The timeout is
+// recorded before the stop signal is delivered so the run-loop's terminateChild
+// observes it.
 func (s *Supervisor) Stop(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = s.spec.StopTimeout
+	}
+	s.stopTimeoutNanos.Store(int64(timeout))
 	select {
 	case <-s.stopCh:
 		// already stopped
@@ -319,14 +343,21 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 	return cmd
 }
 
-// terminateChild implements PL-011: SIGTERM → bounded wait → SIGKILL.
+// terminateChild implements PL-011: SIGTERM → bounded wait → SIGKILL. The
+// bounded wait honours the timeout passed to Stop() (recorded in
+// stopTimeoutNanos); a zero value falls back to Spec.StopTimeout.
 func (s *Supervisor) terminateChild(cmd *exec.Cmd, waitCh <-chan error) {
-	const killTimeout = 10 * time.Second
+	killTimeout := time.Duration(s.stopTimeoutNanos.Load())
+	if killTimeout <= 0 {
+		killTimeout = s.spec.StopTimeout
+	}
 	s.forwardSignal(cmd, syscall.SIGTERM)
+	timer := time.NewTimer(killTimeout)
+	defer timer.Stop()
 	select {
 	case <-waitCh:
-	case <-time.After(killTimeout):
-		s.log.Warn("supervise: SIGTERM timeout — sending SIGKILL")
+	case <-timer.C:
+		s.log.Warn("supervise: SIGTERM timeout — sending SIGKILL", "timeout", killTimeout)
 		s.forwardSignal(cmd, syscall.SIGKILL)
 		<-waitCh
 	}
@@ -343,7 +374,7 @@ func (s *Supervisor) forwardSignal(cmd *exec.Cmd, sig syscall.Signal) {
 // heartbeat-file freshness. Health failures update state.Status but do NOT
 // trigger a restart — only process exit does (matches TS behaviour).
 func (s *Supervisor) runHealthProbe(pid int, done <-chan struct{}) {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(s.spec.HealthProbeInterval)
 	defer ticker.Stop()
 	for {
 		select {

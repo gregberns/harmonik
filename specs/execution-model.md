@@ -813,6 +813,10 @@ The daemon MUST accept `max_concurrent` as a startup-time integer ≥ 1 (default
 
 Tags: configuration
 
+> **EM-NOTE-WAKE (informative, 2026-05-30).** hk-24xn1 (daemon wake on submit/append) is **closed**. `QueueStore.SetQueue` (called on every accepted `queue-submit` and `queue-append`) signals `wakeC` via a buffered-1 channel; the workloop's `workloopSleep`/`workloopIdleWait` helpers select on `wakeC` alongside the poll timer (`internal/daemon/queuestore_hkj808w.go:97-104`). A newly submitted or appended item wakes the workloop at sub-poll-interval latency; no poll-interval wait. Earlier CLAUDE.md guidance ("append while idle sits `pending` until the next workloop tick") was accurate before hk-24xn1; it is now stale. §4.13 eager-refill relies on this sub-poll-interval guarantee.
+>
+> **EM-NOTE-STREAM-CONCURRENCY (informative, 2026-05-30; V2 correction).** A stream group at `max_concurrent > 1` DOES run multiple items concurrently. `streamEligible()` (`internal/queue/state.go:283`) SKIPS `dispatched` items — does not treat them as HOL blockers. The HOL rule (QM-035) applies only when the head is `deferred-for-ledger-dep`; a `dispatched` head is skipped and the next `pending` item is returned eligible. Earlier "use `--wave` when `--max-concurrent > 1`" guidance was INCORRECT and is SUPERSEDED. `--wave` is for immutable-at-submit group semantics (no mid-flight appends), NOT for enabling concurrency. Stream groups support both concurrency AND mid-flight append; wave groups support concurrency but are append-closed.
+
 ## 4.12 Run-branch merge-to-main
 
 The two success branches in Step 9 of the daemon's single-run dispatch path (the
@@ -933,6 +937,77 @@ refresh failure. Instead it MUST:
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 Refs: hk-4goy3
+
+## 4.13 Eager refill obligation
+
+This section formalizes the daemon's duty to keep the active stream group's in-flight count as close to `max_concurrent` as possible from the existing ready queue, without crossing the ceiling and without auto-dispatching beads the orchestrator just created. The refill path is **pure code** (mechanism-tagged, no LLM). LLM intervention is outside this section's scope (it belongs to the orchestrator-level replenishment surface; see `docs/orchestration-protocol-v2.md`). The daemon's role here: when a slot opens, fill it from the ready queue; nothing more.
+
+#### EM-062 — Eager-refill trigger and compute
+
+On every `run_terminal` event (after `finalize_run` per §7.4 completes) AND on every dispatch-loop poll tick, the daemon MUST evaluate:
+
+```
+FUNCTION eager_refill_eval():
+    IF active_queue() IS None: RETURN
+    IF active_queue().status NOT IN {active}: RETURN
+    group = active_queue().active_group()
+    IF group IS None OR group.kind != "stream": RETURN
+    available = max_concurrent - in_flight_count()       # §4.11 EM-049
+    IF available <= 0: RETURN                            # WIP cap full; hard stop
+    pending_in_group = COUNT(item FOR item IN group.items WHERE item.status == "pending")
+    deficit = available - pending_in_group
+    IF deficit <= 0: RETURN                              # existing pending will fill; no action
+    candidates = pre_screen(kerf_next(limit = deficit * OVERFETCH_FACTOR))   # EM-063
+    eligible = candidates[: min(deficit, len(candidates))]
+    IF eligible IS NOT EMPTY:
+        queue_append(active_stream_group=group, bead_ids=eligible)   # [queue-model.md §7 QM-040]
+```
+
+`OVERFETCH_FACTOR` SHOULD be 2 at v1 (pre-screen rejections don't leave an avoidable gap). Compile-time constant; not operator-tunable at v1.
+Refill MUST fire AFTER all terminal-event processing for the tick (merge, reviewer-launch, `CloseBead`, group-advance evaluation per §4.3 EM-015f) completes for the current run. **Finishing in-flight work takes priority over pulling new work.**
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+
+#### EM-063 — Pre-screen and provenance guard
+
+`pre_screen` MUST apply a two-phase filter:
+
+**Phase 1 — already-in-queue (queue.json authority, fastest).** For each candidate `bead_id`, inspect the active `queue.json` envelope in-memory. If present with `status ∈ {pending, dispatched, completed, failed}` → SKIP.
+
+**Phase 2 — already-landed (git authority).** For candidates not eliminated by Phase 1, execute `git log --all --grep "Refs: <bead_id>" --oneline` against **`origin/main` (NOT local `main`)**. If ≥1 commit found → SKIP and log a `stale_open_bead_detected` informative event.
+
+> INFORMATIVE: `origin/main` not local `main` avoids false positives during the two-phase terminal sequence (EM-052/EM-053): a bead whose push succeeded but whose local `main` has not yet been fast-forwarded would appear "not landed" on a local-only check, triggering a spurious re-dispatch.
+
+**Provenance guard.** Refill MUST NOT dispatch a bead created by the daemon or orchestrator in the same workloop tick. Newly-created beads land `open` (not yet `ready`); `kerf next` returns only `ready` beads. So the readiness gate of `kerf next` is the normative enforcement; spec does not require a per-tick creation log.
+
+**Result.** Ordered list of survivors in `kerf next` priority order. Ordering preserved into `queue_append`.
+
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+
+## 4.14 Check-observed-before-submit guard
+
+The orchestrator's idempotency obligation BEFORE `harmonik run --beads X` (i.e. before submitting a queue per [process-lifecycle.md §4.4 PL-003a]). Orchestrator-facing contract; the pre-screen of §4.13.EM-063 is the daemon-side refill contract. Both enforce the same invariant (never dispatch an already-claimed or already-landed bead) at their respective entry points.
+
+#### EM-064 — Read-order and authority chain
+
+Before submitting or appending any bead X to the execution queue, the orchestrator MUST walk this chain in order; skip X if any tier signals "already observed":
+
+| Tier | Source | Check | Skip if |
+|---|---|---|---|
+| 1 | `queue.json` in-memory (or `queue-status`) | X present, `status ∈ {pending, dispatched, completed, failed}` | yes |
+| 2 | `origin/main` git log | `git log origin/main --grep "Refs: X" --oneline` ≥1 commit | yes; optionally `br close X` if still open |
+| 3 | Beads ledger | `br show X` `status ∈ {in_progress, closed}` | yes; daemon atomic claim enforces final barrier |
+| 4 | `events.jsonl` | `run_started` for X with no subsequent terminal event | yes (in-flight) |
+
+Tier 1 is fastest (in-memory queue scan); MUST be first. Tier 2 uses `origin/main` NOT local `main` (rationale per EM-063). Tiers 3+4 are supplementary; a conforming impl covering 1+2 satisfies the guard at v1 correctness. Tiers 3+4 SHOULD be checked in long-running orchestrator sessions to catch cross-session drift. The read order is normative; MUST NOT reverse (queue.json is the fastest and most current in-memory mirror).
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+
+#### EM-065 — Submit/append targets the active stream group; no double-queue
+
+Orchestrator MUST submit beads to the single active queue per [queue-model.md §3 QM-002]. If a queue is already active, the orchestrator MUST use `queue-append` against the active stream group (per [queue-model.md §7 QM-040]) rather than `queue-submit` (which would replace). A new submit while a queue is active is a QM-003 violation; the daemon will reject. EM-064 tier 1 catches the common case where the orchestrator's stale view would re-submit an in-flight bead.
+
+> INFORMATIVE: The daemon's Beads atomic claim (`ClaimBead` per [beads-integration.md §4.3 BI-009]) is the final barrier at the execution layer. EM-064 is an orchestrator-layer pre-flight, complementary not replacement.
+
+Tags: mechanism.
 
 ## 5. Invariants
 
@@ -1663,6 +1738,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-30 | 0.8.0 | agent (flywheel spec-bundle hk-j7o3i) | **Flywheel additions: EM-NOTE-WAKE, EM-NOTE-STREAM-CONCURRENCY, §4.13 eager-refill (EM-062/063), §4.14 check-observed-before-submit guard (EM-064/065).** EM-NOTE-WAKE (informative): hk-24xn1 closed; sub-poll wake via `SetQueue→wakeC`; stale CLAUDE.md "append while idle sits pending" guidance superseded. EM-NOTE-STREAM-CONCURRENCY (informative, V2 correction): `streamEligible` skips `dispatched` items (no HOL block); `--wave` is append-closed not concurrency-required; earlier guidance "use `--wave` when `--max-concurrent > 1`" SUPERSEDED. §4.13 eager-refill: EM-062 trigger on `run_terminal` + every poll tick; `available = max_concurrent − in_flight_count`, deficit-based pull from `kerf next` ×2 OVERFETCH_FACTOR, `queue_append` survivors; refill fires AFTER terminal-event processing. EM-063 two-phase pre-screen: queue.json in-memory (Phase 1) then `git log origin/main` (Phase 2); `stale_open_bead_detected` informative event on Phase-2 hit; readiness gate of `kerf next` enforces no-self-dispatch. §4.14 check-observed-before-submit: EM-064 4-tier authority chain (queue.json → git origin/main → Beads → events.jsonl); tiers 1+2 mandatory for v1; `origin/main` not local `main`. EM-065: orchestrator uses `queue-append` against active stream group; daemon's Beads atomic claim is final barrier. New IDs: EM-062, EM-063, EM-064, EM-065. No prior IDs renumbered or retired. |
 | 2026-05-27 | 0.7.1 | agent (hk-lt0w7) | **EM-005b gate-deny example aligned to CP-058 (deny→SUCCESS, not FAIL).** Resolved the OQ contradiction between EM-005b and [control-points.md §6.1.8 CP-058]: CP-058 wins (gate-semantics owner). A `gate_decision` Outcome's `status` is now `SUCCESS` regardless of `decision ∈ {allow, deny, escalate-to-human}` — all three are *successfully-evaluated* Gate verdicts; the cascade routes on the decision (`outcome.preferred_label` carrying the decision string, or `outcome.kind = gate_decision`), NOT on `status`. `status = FAIL` is reserved STRICTLY for a Gate that could not be evaluated, which carries a `failure_class` and NO `gate_decision` payload. Rewrote the EM-005b five-field paragraph (corrected the `decision` enum to `{allow, deny, escalate-to-human}`, dropped the wrong `decision=permit→SUCCESS / decision=deny→FAIL` correlation, added the eval-failure→FAIL-no-payload paragraph), rewrote the orthogonality paragraph (the two carriers `kind=gate_decision` and `failure_class` are now correctly MUTUALLY EXCLUSIVE on a Gate outcome, replacing the wrong co-emitted budget-exhaustion example), and amended the cascade-routing paragraph to require decision surfacing via `outcome.preferred_label`. No requirement IDs added, renumbered, or retired; EM-005b reworded in place. Refs: hk-lt0w7. |
 | 2026-05-26 | 0.7.0 | agent (hk-wclep) | **C3 amendments: EM-005 v0.3.3→v0.3.4 schema bump, EM-005a `gate_decision` extension, new EM-005b + EM-005c.** EM-005 (§4.1) amended to add optional `failure_class` field description: handler-emitted HINT, daemon-back-fills from §8 sentinel when omitted, engine-side MUST be populated on FAIL, daemon authoritative on disagreement per HC-059 (CI-5 remediation: two-sided contract, handler-side optional, daemon-side mandatory post-classifier). EM-005a (§4.1) amended: `kind` enum extended from `{default, reconciliation_verdict}` to `{default, reconciliation_verdict, gate_decision}`; new bullet for `gate_decision` semantics; N-1 routing parenthetical clarification added. New **EM-005b** (§4.1) — gate-decision Outcome variant; `GateDecisionPayload` per [control-points.md §6.1.8 CP-058]; five-field record; `decision=permit` correlates `status=SUCCESS`, `decision=deny` correlates `status=FAIL`; cascade routes on `kind` discriminator only; `failure_class` and `kind=gate_decision` are orthogonal. New **EM-005c** (§4.1) — Outcome schema v2 bump rationale; v0.3.3→v0.3.4 additive; N-1 preserved. §6.1 RECORD Outcome: added `failure_class : FailureClass | None` row (before `kind`); `payload` row type-annotation widened to note `GateDecisionPayload` for `kind=gate_decision` (CI-6 remediation). §6.1 ENUM OutcomeKind: added `gate_decision` value. §6.1 new ENUM FailureClass: surfaced from §8 as Outcome carrier citation. §6.1 INFORMATIVE note (VerdictPayload): amended to clarify alias resolves to union of `VerdictEvent` (for `kind=reconciliation_verdict`) AND `GateDecisionPayload` (for `kind=gate_decision`) — CI-6 remediation preserving umbrella-alias design. §6.4 schema evolution: added v0.3.3→v0.3.4 rationale paragraph. CITATION CLEANUP: `[workflow-graph.md §C1 design — context-key registry]` → `[workflow-graph.md §10 WG-031]` (applied in HC-062, references EM not directly affected here). No existing EM IDs renumbered or retired. Refs: hk-wclep. |
 | 2026-05-26 | 0.6.0 | agent (hk-f2bfv) | **C2 DOT amendments: new §7.5 (`dot` mode binding), EM-007 amendment, §10.1 conformance lift, NodeType enum update.** New §7.5 (five sub-sections) introduces the `dot` workflow input contract (EM-055), dispatch equivalence statement (EM-056), `dot`-specific validator obligations (EM-057), per-node-type dispatch table (EM-058), and conformance lift + parallel-fan-out reservation (EM-059). EM-007 (§4.2) amended in place to admit `handler_ref` on `non-agentic` and `gate` nodes; pre-C4 prohibition superseded (EM-060 bookkeeping handle). §10.1 Core MVH and Post-MVH paragraphs updated to include EM-055..EM-059 as mandatory conformance targets and add gating clause (EM-061 bookkeeping handle). §6.1 ENUM NodeType updated to drop `control-point` (CI-8; breaking change — §6.4 bump recorded here). §4.2.EM-006 updated to reflect four-type catalog. §3 Glossary `workflow_mode` entry extended with §7.5 cross-ref. §4.3.EM-015d cross-ref placeholder resolved to §7.5. §4.3.EM-012 `dot` context-key clause rewritten per §7.5.5.EM-059. §10.2 test obligations added for EM-055..EM-059. CI-1 remediation: all C1 named-anchor references in §7.5 rewritten to use WG-NNN IDs. Contradiction 4 remediation: BI-005 `workflow_ref` reference dropped from EM-055 step 1; artifact path sourced from per-daemon config only at v1. NIT citation fixes: `[handler-contract.md §Outcome]` → `[handler-contract.md §4.2a HC-058]`; `[control-points.md §Node-Type Binding]` → `[control-points.md §4.12 CP-053/CP-054]`. Cross-spec sequencing: C1 + C3 + C4 + C5 + C6 required for full conformance lift (gating clause). Refs: hk-f2bfv. |

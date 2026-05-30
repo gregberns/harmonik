@@ -11,7 +11,7 @@ package main
 //
 //	--types t1,t2,...      Comma-separated event-type filter (default: all)
 //	--heartbeat <dur>      Idle heartbeat cadence (default 60s; clamped 10s..600s)
-//	--since-event-id <id>  Resume cursor (NOT YET IMPLEMENTED — daemon rejects; hk-a5sil)
+//	--since-event-id <id>  Resume cursor: replay events strictly after this event_id before delivering live stream
 //	--socket <path>        Override socket path (default: <project>/.harmonik/daemon.sock)
 //	--project <dir>        Project directory (default: cwd)
 //
@@ -197,7 +197,7 @@ USAGE
 FLAGS
   --types t1,t2,...      Comma-separated event-type filter (default: all)
   --heartbeat DUR        Idle heartbeat cadence (default 60s; clamped 10s..600s)
-  --since-event-id ID    Replay cursor (NOT YET IMPLEMENTED — daemon rejects; hk-a5sil)
+  --since-event-id ID    Replay cursor: replay events strictly after this event_id before delivering live stream
   --socket PATH          Override socket path (default: <project>/.harmonik/daemon.sock)
   --project DIR          Project directory (default: cwd)
   --json                 No-op alias; output is already NDJSON

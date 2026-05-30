@@ -28,3 +28,4 @@ prefixes:
   CHB: {spec-id: claude-hook-bridge, reserved: 2026-05-18, status: draft}
   HP: {spec-id: handler-pause,      reserved: 2026-05-18, status: draft}
   CLS: {spec-id: claude-launchspec, reserved: 2026-05-19, status: draft}
+  CL: {spec-id: cognition-loop,    reserved: 2026-05-30, status: draft}

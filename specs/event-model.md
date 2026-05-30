@@ -165,8 +165,11 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 | 8.3.11 | `agent_resumed_after_warning` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `resumed_at`, `warning_duration_seconds` |
 | 8.3.12 | `agent_soft_terminating` | O | handler (via daemon watcher) | orchestrator-core, audit | `run_id`, `session_id`, `threshold_seconds`, `started_at` |
 | 8.3.13 | `agent_hard_terminating` | O | handler (via daemon watcher) | orchestrator-core, audit | `run_id`, `session_id`, `threshold_seconds`, `started_at` |
+| 8.3.14 | `lifecycle_transition` | O | handler (via daemon watcher) | orchestrator-core, audit, cognition-loop | `run_id`, `session_id`, `from_state`, `to_state`, `reason`, `transitioned_at` |
 
-> Section Axes (§8.3 Agent / handler lifecycle): All §8.3 event emissions are mechanism-tagged. All entries are class O or L (best-effort). §8.3.3 (`agent_output_chunk`) is class L (lossy; observed only). Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+> §8.3.14 (`lifecycle_transition`). Emitted by the watcher goroutine on every `LifecycleState` machine transition per [handler-contract.md §4.13 HC-067]. Payload fields: `from_state` and `to_state` are values from the `LifecycleState` enum (HC-064); `reason` is a `TransitionReason` string from the transition-history ring; `transitioned_at` is wall-clock at transition. Class O (reconstructible from the per-session transition-history ring in the daemon's in-memory state; the ring is the authoritative in-process surface per HC-067). Additive extension to §8.3; schema-version bump per §6.4 row 1 (add optional field); N-1 readers tolerate unknown fields. Cross-spec: [handler-contract.md §4.13 HC-065] owns the valid-transition table; this spec owns the WHEN and SHAPE. Cognition-loop consumers use `lifecycle_transition` to detect `Ready→Failed(silent_hang)` transitions as Tier-2 judgment wakes, correlating with [event-model.md §8.3.10 `agent_warning_silent_hang`].
+
+> Section Axes (§8.3 Agent / handler lifecycle): All §8.3 event emissions are mechanism-tagged. All entries are class O or L (best-effort). §8.3.3 (`agent_output_chunk`) is class L (lossy; observed only). §8.3.14 (`lifecycle_transition`) is class O (best-effort; in-process ring is authoritative per HC-067). Default per-entry: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
@@ -319,6 +322,25 @@ Three new event types introduced by the handler-pause Phase-1 implementation (no
 > Section Axes (§8.11 Handler-pause lifecycle): All §8.11 event emissions are mechanism-tagged. §8.11.1 (`handler_paused`) and §8.11.2 (`handler_resumed`) are class F (fsync-backed, deterministic) because their loss would leave the pause-state landmark unrecoverable across restart — reconciliation depends on the JSONL to detect that a handler was paused when the daemon last exited. §8.11.3 (`queue_item_held_for_handler_pause`) is class O (ordinary, reconstructible from `handler-state.json` plus queue.json). Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.12 Decision-required lifecycle
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.12.1 | `decision_required` | F | daemon-core | operator-observability, cognition-loop, audit | `subject`{`kind`,`id`}, `reason`, `suggested_action`, `ack_required`, `ack_token`, `triggering_event_id` |
+| 8.12.2 | `decision_acknowledged` | F | daemon-core | operator-observability, cognition-loop, audit | `ack_token`, `subject`{`kind`,`id`}, `ack_method`{`operator`\|`note`}, `acked_at` |
+
+> **Emission conditions (§8.12.1).** Daemon MUST emit `decision_required` on: (a) bead fails twice in a daemon session without an intervening success (`run_failed`×2 on same `bead_id`); (b) `iteration_cap_hit` fires with `final_verdict ∈ {REQUEST_CHANGES, BLOCK}`; (c) `merge_conflict_escalation` is emitted (§8.5.6); (d) `queue_paused{reason: group_failure}` is emitted (§8.10.4). At-most-one per triggering event (idempotency-keyed on `triggering_event_id`). Re-processing the same trigger after restart MUST NOT re-emit for an already-emitted pending `ack_token`. Enforced via `.harmonik/decision_acks/<ack_token>` file presence + `status=pending` check.
+
+> **Acknowledgement surface.** Either (a) `harmonik decision ack <ack_token>` CLI (operator), OR (b) `note(kind=warning|defer, refs=[subject.id], ...)` from the cognition loop (Tier-2 judgment implicitly ACKs). Daemon updates the `ack_token` record → `{status:acknowledged, acked_at, ack_method:operator|note}` and emits `decision_acknowledged` (§8.12.2).
+
+> **TTL.** `ack_token` valid 24h (configurable, default 86400s). After TTL without ACK, daemon MUST re-emit `decision_required` with a fresh `ack_token` (same subject/reason; new token) AND `daemon_degraded{reason: decision_ack_timeout}` (requires EV-027 amendment for new `daemon_degraded` variant).
+
+> **Dispatch-blocking rule (EV-043).** While any `decision_required` for `subject kind=bead,id=X` is unacknowledged, daemon MUST NOT dispatch a new run for bead X. While any `decision_required` for `subject kind=queue,id=Q` is unacknowledged, daemon MUST NOT advance queue Q past the paused group. Applies across daemon restarts (per §4.12 EV-043a).
+
+> §8.12 is NOT a paired-phase per §8.9(h) — payloads differ in shape; `decision_required` carries the problem; `decision_acknowledged` carries the resolution reference. §8.9(h) status-merge does not apply. §8.9 compliance evidence: (a) cross-subsystem consumers: operator-observability, cognition-loop, audit; (b) lifecycle-boundary signal: dispatch-eligibility transition; (c) single summary event per condition (no per-heartbeat re-emit); (d) schema in §6.3; (e) class F (loss silently unblocks dispatch); (f) idempotent on `ack_token`; (g) cited by cognition-loop spec as Tier-2 wake.
+
+> Section Axes (§8.12 Decision-required lifecycle): Both entries are mechanism-tagged, class F (fsync-backed): `decision_required` loss silently leaves a double-failed bead eligible for re-dispatch; `decision_acknowledged` loss leaves the ack-state file authoritative but JSONL observability broken. Axes: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent`.
 
 ## 4. Normative requirements
 
@@ -647,6 +669,62 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 At daemon startup the payload-type registry MUST be scanned; any registered payload type whose struct field names match the secret-prefix rule MUST cause startup to fail with a typed configuration error.
 
 Tags: mechanism
+
+### 4.11 `harmonik subscribe` consumer contract
+
+`harmonik subscribe` is the primary push transport for external consumers (e.g. the flywheel cognition loop). These obligations are ADDITIONAL to the in-process consumer rules (§4.3 EV-009–EV-014d); they apply specifically to the out-of-process, NDJSON-over-stdout subscribe interface.
+
+#### EV-037 — External consumers MUST persist a watermark of `last_processed_event_id`
+
+The consumer MUST persist the UUIDv7 of the last fully-processed event to a stable location (e.g. `.harmonik/cognition/watermark.json`). On reconnect or cold-start it MUST supply this as `--since-event-id` to `harmonik subscribe`, triggering server-side replay before live-stream resumes. The consumer MUST NOT advance its watermark BEFORE recording any reaction to the processed event; required ordering: effect → ledger-entry → watermark-advance. Crash between effect and ledger-entry is recovered via effect idempotency (keyed on `event_id`); crash between ledger-entry and watermark-advance causes a re-read that finds the ledger entry and skips. Watermark keys MUST be UUIDv7 `event_id`, NEVER a byte offset (byte offsets are rotation-unsafe and undefined after log compaction).
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+
+#### EV-037a — Watermark MUST NOT regress
+
+Safe advance rule: `watermark = max(persisted_watermark, incoming_event_id)`. On heartbeat whose `last_event_id > current watermark`, advance even when no actionable event was processed — this is how quiet periods advance the watermark without LLM work. No-regression invariant prevents a context-reset crash from re-processing already-reacted events.
+Tags: mechanism · Axes: same.
+
+#### EV-038 — Consumers MUST treat `subscription_gap` as a forced re-sync trigger
+
+On `subscription_gap{dropped:N}` (drop-oldest overflow per `internal/daemon/subscribe.go`), the consumer MUST NOT continue as if no events were lost. It MUST: (a) `ScanAfter(watermark)` on `events.jsonl` to replay the gap; (b) re-sense `queue.json` and the git completion log (for any run_id whose terminal event may have been dropped). Only after re-sync may live-stream processing resume. Required because a dropped event might be a Tier-2 judgment event (e.g. `run_failed`, `merge_conflict_escalation`, `iteration_cap_hit`) whose loss would silently leave the consumer in an incorrect state.
+Tags: mechanism · Axes: same.
+
+#### EV-039 — Heartbeat carries `last_event_id` + `active_runs`; consumers MUST use both
+
+Heartbeat (default 60s) payload: `last_event_id` (UUIDv7 string), `active_runs[]` array of `{bead_id: String, age_seconds: Integer}`. Consumers MUST advance their watermark to `last_event_id` on every heartbeat (per EV-037a). Consumers SHOULD inspect `active_runs[].age_seconds`; if any run exceeds a configured stall threshold, treat as a synthetic Tier-2 wake to investigate. **The `active_runs` array carries `bead_id` + `age_seconds` ONLY; it does NOT carry `run_id`.** Consumers MUST NOT assume `run_id` is present; run-level correlation requires reading `queue.json`.
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent.
+
+#### EV-040 — Missing heartbeats = daemon liveness failure; reconnect with backoff
+
+No heartbeat for `K × heartbeat_interval` (recommended K=2 → 120s at 60s) → treat as daemon liveness failure. Reconnect with exponential backoff (suggested 5s/10s/30s). If `harmonik subscribe` exits 17 (daemon-not-running sentinel), emit a synthetic `daemon_down` signal to the consumer's reaction layer. Reconnection MUST supply `--since-event-id=<watermark>` (per EV-037); MUST NOT start from live-stream head on reconnect — terminal events emitted during the outage would be missed.
+Tags: mechanism · Axes: same as EV-039.
+
+#### EV-041 — Git-done-but-no-terminal-event after K heartbeats SHOULD trigger a wake
+
+If after K consecutive heartbeats (suggested K=2) a `bead_id` has disappeared from `active_runs` yet no terminal event has been processed for that run since the watermark, the consumer SHOULD git-check the missing `run_id` (`git log --all --grep "Harmonik-Run-ID: <run_id>"`). A merged commit without a terminal event = daemon crashed mid-terminal-emission; treat the git completion as authoritative (per EV-INV-001) and synthesize a Tier-1 reaction (advance kerf baseline, close stale bead) without waiting for an event that will never arrive. This SHOULD does not override EV-022 (state reconstruction MUST walk git+Beads); it's an observational heuristic.
+Tags: mechanism · Axes: same.
+
+### 4.12 `decision_required` dispatch-blocking rule
+
+#### EV-042 — `decision_required` MUST be emitted on the four canonical conditions
+
+Daemon MUST emit on each condition enumerated in §8.12.1. Emission MUST be fsync-backed (class F) and MUST precede any state mutation the condition would otherwise trigger (e.g. workloop MUST NOT attempt a third dispatch for a double-failed bead before `decision_required` is durable). Emission idempotency-keyed on `triggering_event_id`; re-processing after restart MUST NOT produce a second event for an already-pending `ack_token`.
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+
+#### EV-043 — Unacknowledged `decision_required` blocks dispatch for its subject
+
+While a `decision_required` for a given `subject` is unacknowledged (no matching `decision_acknowledged` in `events.jsonl` AND `.harmonik/decision_acks/<ack_token>` absent or `status=pending`), daemon MUST NOT dispatch a new run for that subject. Blocking check MUST run at daemon startup (EV-043a) AND at every workloop dispatch attempt for the subject. ACK via `harmonik decision ack <token>` or cognition-loop `note()` unblocks atomically; `decision_acknowledged` MUST be emitted+fsynced BEFORE the workloop is permitted to dispatch.
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent.
+
+#### EV-043a — Startup MUST restore `decision_required` blocking state
+
+On startup, daemon MUST scan `.harmonik/decision_acks/` for records `status=pending` and restore the corresponding dispatch-blocking state BEFORE the workloop begins dispatching. Loss of a `decision_required` event from JSONL (ordinary tail-truncation) is survived via `.harmonik/decision_acks/`, which is fsynced independently as the authoritative ack-state store. The ack-state file is the durability anchor; the JSONL event is the observational record.
+Tags: mechanism · Axes: same.
+
+#### EV-044 — Unacknowledged `decision_required` is a digest exception
+
+Any cognition-loop or external monitoring consumer producing a periodic digest MUST surface every unacknowledged `decision_required` in that digest, regardless of whether a Tier-2 action has been taken. MUST NOT silently suppress on the grounds that the consumer has already "seen" the event; suppression is only valid after `decision_acknowledged` for the matching `ack_token` is observed.
+Tags: mechanism · Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent.
 
 ## 5. Invariants
 
@@ -1136,6 +1214,34 @@ reconciled_at: <Timestamp>
 
 Startup reconciliation correction per [queue-model.md §3.2a QM-002a]: emitted when an item recorded as `dispatched` in queue.json is found to be `open` in the Beads ledger at daemon startup, indicating a prior claim-write succeeded for the queue but the corresponding Beads write was lost. The item is reverted to `pending` before this event is emitted. Class F: loss could silently re-dispatch an already-reverted item, so the correction MUST be durable before proceeding.
 
+#### `decision_required`
+
+```yaml
+subject:
+  kind: <enum: bead | queue>
+  id: <String>
+reason: <enum: bead_double_failure | iteration_cap_hit | merge_conflict_escalation | queue_group_failure>
+suggested_action: <String>     # free text; SHOULD be ≤ 256 bytes
+ack_required: <Boolean>        # always true at v1; reserved for future advisory-only signals
+ack_token: <String>            # opaque UUIDv4; unique per emission; key for .harmonik/decision_acks/
+triggering_event_id: <UUID>    # event_id of the condition event that caused this emission (dedup key)
+```
+
+`reason` is exhaustive at v1; new variants require an EV-027 amendment. `triggering_event_id` MUST reference a specific event in `events.jsonl`. `ack_token` is the durability anchor; `.harmonik/decision_acks/<ack_token>` is fsynced independently per EV-043a. Class F: loss silently leaves a double-failed bead eligible for re-dispatch.
+
+#### `decision_acknowledged`
+
+```yaml
+ack_token: <String>            # MUST match the ack_token of the matching decision_required
+subject:
+  kind: <enum: bead | queue>
+  id: <String>
+ack_method: <enum: operator | note>
+acked_at: <Timestamp>
+```
+
+Class F: loss breaks JSONL observability for the acknowledgement (ack-state file remains authoritative per EV-043a). `ack_method=operator` indicates `harmonik decision ack <token>` CLI; `ack_method=note` indicates cognition-loop `note()` implicit ACK.
+
 #### `gate_definition_drift`
 
 ```yaml
@@ -1331,6 +1437,10 @@ Migration to `[testing.md §<layer>]` cross-references tracked at OQ-EV-003.
 
 This spec does NOT grant conformance over: structured-log format (owned by `quality-checks.md`), JSONL rotation (OQ-EV-001), per-subsystem event-authorship rules, reconciliation category classifier, checkpoint trailer format, handler wire protocol. Bus latency / throughput bounds are operator-observable in [operator-nfr.md §4.8].
 
+#### CLI help text is canonical alongside this spec; stale text MUST be corrected on spec adoption
+
+`harmonik subscribe --since-event-id` is IMPLEMENTED as of 2026-05-27 (hk-a5sil, sha 994c6d2); the CLI help at `cmd/harmonik/subscribe.go:200` previously read "NOT YET IMPLEMENTED — daemon rejects; hk-a5sil", which was STALE. This spec is normative for the behavior contract; the CLI help is the operator-facing surface for the same contract. The two MUST agree. As part of adopting this revision, `cmd/harmonik/subscribe.go:14` and `:200` MUST be updated to remove the "NOT YET IMPLEMENTED" annotation and describe the replay semantics (e.g. "Resume cursor: replay events strictly after this event_id before delivering live stream"). This note closes the obligation; the corrections were applied in the same commit as this spec revision.
+
 ## 11. Open questions
 
 #### OQ-EV-001 — JSONL rotation policy
@@ -1384,6 +1494,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 | 2026-04-24 | 0.3.0 | foundation-author | Round-2 reviewer integration. Blocking fixes: taxonomy count reconciled (54 → 70, not 69); added EV-002b (handler subprocesses route event_id generation through daemon); added EV-002c (UUIDv7 high-water-mark file for restart monotonicity); added `Subscription` RECORD to §6.1 with `consumer_id`, `consumer_class`, `event_pattern`, `since`, `on_panic`, `offset_checkpoint_event_id`; added `replay_from(since)` and `on_tail_truncation` consumer-recovery hooks to bus interface (closes EV-INV-002 consumer side); clarified FANOUT_OBSERVERS concurrency (per-observer goroutine + bounded queue); added `shed_policy` field to `bus_overflow` payload. Crash findings: added EV-023a (evidence-inconclusive clause for non-corroborable events); new `divergence_inconclusive` event (§8.6.10); extended §6.2 read-recovery with torn-tail / mid-file / empty-log / concurrent-tail rules; added `bus_overflow` reserved-slot requirement to EV-011a; added EV-016a multi-event atomicity disclaimer. Should-apply: §8.9(h) amended with emit-on-transition-only clause; EV-027 amended with add/remove symmetry. Deferred: OQ-EV-006 operator-state consolidation; OQ-EV-007 consumer panic policy. Status: draft → reviewed. |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE: §1.1→§4.1 (×2 in §9 cross-refs and §3.2), §1.4→§4.4 (×1 in §3.8), §1.4a→§4.5 (×2 in §3.2 envelope and §9 cross-refs), §1.5→§4.6 (×2 in §6.5 amendment clause and §9 cross-refs). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §8.3.2 (`agent_started` payload) and §8.3.7 (`session_log_location` payload). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 12 citations fixed. WM: `§5.3→§4.7` (session-log pipeline) at §3 scope, §4.1 EV-005, §9.3 cross-refs; `§5.2→§4.4`, `§5.4→§4.5` at §9.3 emission-rule references. Reconciliation path fix: `[reconciliation.md §9.N]` → `[reconciliation/spec.md §N]` (multi-file spec) at §2.2 scope, §8.5.5 `workspace_interrupted` emitter reference, §8.6.3 verdict payload reference, §4.5 EV-023a cross-ref, §6.2 mid-file corruption Cat 6, §9.3 reconciliation emission rules. ON: `§7.3→§4.3` (operator pause), `§7.5→§4.5` (N-1 compat window), `§7.8→§4.8` (bus latency) at §4.7, §6.4, §10.3. BI: `§10.6→§4.6` (bead_id propagation) at §9.3, §A.3. No requirement IDs, invariants, or schemas touched. |
+| 2026-05-30 | 0.6.0 | agent (flywheel spec-bundle hk-j7o3i) | **Flywheel additions: §8.3.14 `lifecycle_transition`; §8.12 `decision_required`/`decision_acknowledged` (EV-042..044); §4.11 `harmonik subscribe` consumer contract (EV-037..EV-041); §6.3 payload schemas; §10.3 CLI-help correction.** §8.3.14: `lifecycle_transition` (class O; watcher-emitted per HC-064..067 FSM; payload: `from_state`, `to_state`, `reason`, `transitioned_at`; §8.3 Section Axes note updated). §8.12: two new decision-lifecycle event types — `decision_required` (class F; 4 canonical emission conditions; idempotency-keyed on `triggering_event_id`; dispatch-blocking per EV-043; ACK surface operator-CLI or cognition-loop note) and `decision_acknowledged` (class F; carries `ack_method ∈ {operator, note}`); NOT a paired-phase per §8.9(h); §8.12 Section Axes note added. §4.11 (EV-037..EV-041): out-of-process subscribe consumer contract — watermark persistence (EV-037/EV-037a), `subscription_gap` forced-resync (EV-038), heartbeat `last_event_id`+`active_runs` usage (EV-039), missing-heartbeat reconnect-with-backoff (EV-040), git-done-but-no-event heuristic (EV-041). §4.12 (EV-042..EV-044): `decision_required` dispatch-blocking requirements — emission obligations (EV-042), dispatch-blocking check at startup+workloop (EV-043/EV-043a), digest exception (EV-044). §6.3: `decision_required` and `decision_acknowledged` payload schemas added after `queue_item_reconciled`. §10.3: CLI-help-is-canonical note — `harmonik subscribe --since-event-id` stale annotation removed from `cmd/harmonik/subscribe.go:14` and `:200`. `daemon_degraded` reason enum: `decision_ack_timeout` variant flagged as requiring separate EV-027 amendment. New IDs: EV-037, EV-037a, EV-038, EV-039, EV-040, EV-041, EV-042, EV-043, EV-043a, EV-044. New event types: `decision_required` (§8.12.1, class F), `decision_acknowledged` (§8.12.2, class F), `lifecycle_transition` (§8.3.14, class O). No prior IDs renumbered or retired. |
 | 2026-05-06 | 0.3.4 | foundation-author | Coordination patch landing 3 CP-emitted events that CP §6.5 / §7.1 / §4.7.CP-034b / §4.8.CP-041 declare but EV §8 was missing. **Taxonomy additions (3 new §8.2 control-point-lifecycle rows, no renumbering of pre-existing entries):** §8.2.10 `control_points_registration_started` (companion to existing §8.2.9 `control_points_registered`; the pair brackets the CP §7.1 registration batch — absence of the trailing event paired with a prior registration_started of the same `batch_id` signals a crashed-mid-registration batch); §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041 envelope-hash mismatch on persisted-verdict replay; reconciliation Cat 6 input); §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b cost-ceiling abort; durability class `F` because the abort and the event are a durability pair — the event MUST reach JSONL durability before the evaluator wrapper returns control). **§6.3 payload schema added** for `policy_expression_exceeded_cost` declaring `bound_fired ∈ {ast_steps, wall_clock}` discriminator and per-abort `io_determinism ∈ {deterministic, best-effort}` tag (load-bearing per CP-034b; re-adding post-MVH would be breaking). **§6.5 co-ownership map** updated to enumerate the 3 new CP-emission-owned entries. Mirrors the CP v0.2.0 changelog's "added to §6.5" note that never landed in EV. No EV requirement IDs added/renamed/retired; no pre-existing §8 entries renumbered; status remains `reviewed`. |
 | 2026-04-25 | 0.3.3 | foundation-author | Coordination patch wave landing R2 cross-spec items filed against EV by ON, RC, BI overnight 2026-04-24. **Taxonomy additions (7 new event-type IDs in gaps; no renumbering of pre-existing entries):** §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a `flock(LOCK_EX|LOCK_NB)` second-dispatch dedup); §8.6.12 `reconciliation_detector_panic` (RC-020b per-detector `recover()` barrier); §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a Cat 3b retry cap N=5); §8.6.14 `bead_terminal_transition_recovered` **(post-MVH)** reserved per OQ-BI-008 with explicit "no MVH emitter; structured-log via ON-035 at MVH" annotation block; §8.7.16 `operator_command_failed` (ON-013a panic-barrier emission carrying `command` + `failure_class` + optional `run_id`); §8.7.17 `operator_escalation_cleared` (ON companion to RC-emitted `operator_escalation_required`, carrying `clearance_reason` enum); §8.8.5 `redaction_failed` (ON-022 fail-closed redactor, bus-internal). **Daemon-shutdown durability confirmed F (resolves OQ-PL-012 — recorded here; OQ lives in PL).** §8.7.3 `daemon_shutdown` row already carried `F`; the durability-class statement is now load-bearing as the prior-cycle SIGTERM-receipt landmark for ON-033 RTO reconstruction. **Monotonic companion fields on §8.7.2/§8.7.3:** added `ready_at_ns_since_boot` (uint64) and `shutdown_at_ns_since_boot` (uint64) per ON-033, with concrete §6.3 payload schemas declaring both fields REQUIRED and explicitly noting boot-transition / SIGKILL `rto_undefined` carve-outs. **`daemon_degraded` reason enum promoted from informative (`/ other`) to exhaustive** with 6 values: `rto_breach`, `reconstruction_notify`, `clock_regression` (EV-002c), `cat0_post_ready` (RC-012a carve-out), `infrastructure_unavailable`, `silent_hang_aggregate` (ON-040 aggregator); concrete §6.3 payload added; §8.7.5 row updated; future variants require an EV-027 amendment. **`divergence_kind` post-MVH extension note** added under the §6.3 `store_divergence_detected` block: the MVH enum stays closed; adapter-specific values are reserved for a future revision per OQ-BI-008; no concrete adapter-specific values added in this revision. **§6.5 co-ownership map** updated to enumerate the 6 new MVH-active emitters (RC: §8.6.11–13; ON: §8.7.16–17 + bus-internal §8.8.5) and to mark §8.6.14 explicitly post-MVH. **§9.3 cross-references** added: ON-022 (`redaction_failed`), ON-013a (`operator_command_failed`), ON-033 (RTO consumer of monotonic fields), RC-002a / RC-020b / RC-026a / RC-012a, BI §4.10 + OQ-BI-008. No EV requirement IDs added/renamed/retired; no §8 entries renumbered; status remains `reviewed`. |
 

@@ -875,6 +875,58 @@ The cross-subsystem surface defined by this spec — the `Handler` interface (§
 
 Tags: mechanism
 
+### 4.13 Per-session lifecycle state
+
+This section specifies the per-session lifecycle finite-state machine (FSM) for handler sessions. The FSM disambiguates the session's operational state from handler-pause.md's `HandlerStatus` (which is a per-handler-type operator-pause flag, orthogonal to session lifecycle). Every session tracked by the daemon holds exactly one `LifecycleState` at any instant; state transitions are serialized under the session's mutex.
+
+#### HC-064 — LifecycleState enum and terminal states
+
+The daemon MUST define a `LifecycleState` enum with exactly the following values, in order: `Spawning`, `Initializing`, `Ready`, `Executing`, `Suspended`, `Terminating`, `Terminated`, `Failed`. `TERMINAL_STATES` MUST be the set `{Terminated, Failed}`. A session in a terminal state MUST NOT accept further `Transition` calls; attempting a transition from a terminal state MUST return `InvalidStateTransitionError` (HC-066).
+
+> INFORMATIVE: `Suspended` is a per-session paused state (e.g. the agent is blocked on an operator decision); it is orthogonal to [handler-pause.md] `HandlerStatus.paused`, which is a per-handler-type operator-level pause flag that gates dispatch. Both may be simultaneously true; they have independent resolution paths.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-065 — Valid transition table
+
+The daemon MUST enforce the following `VALID_TRANSITIONS[from][to]` table. A transition NOT in this table MUST return `InvalidStateTransitionError` (HC-066):
+
+| From | To | Trigger |
+|---|---|---|
+| `Spawning` | `Initializing` | handler subprocess started (`cmd.Start` returned nil) |
+| `Spawning` | `Failed` | `cmd.Start` returned error |
+| `Initializing` | `Ready` | `agent_ready` progress-stream message observed |
+| `Initializing` | `Failed` | watcher observes `agent_failed` or socket EOF before `agent_ready` |
+| `Ready` | `Executing` | first work-dispatch message sent to session |
+| `Ready` | `Terminating` | SIGTERM sent (operator stop or daemon shutdown) |
+| `Ready` | `Failed` | silent-hang timeout (per §7.1 HC-026) fires in Ready state |
+| `Executing` | `Suspended` | `decision_required` unacknowledged pause trigger (per [event-model.md §4.12 EV-043]) |
+| `Executing` | `Terminating` | `outcome_emitted` observed OR SIGTERM sent |
+| `Executing` | `Failed` | silent-hang timeout (per §7.1 HC-026) fires; sub-reason `silent_hang` |
+| `Suspended` | `Executing` | `decision_acknowledged` resumes dispatch |
+| `Suspended` | `Terminating` | SIGTERM sent |
+| `Suspended` | `Failed` | silent-hang timeout fires in Suspended state |
+| `Terminating` | `Terminated` | subprocess exit observed (zero or non-zero) |
+| `Terminating` | `Failed` | post-outcome shutdown timeout per HC-010 |
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-066 — InvalidStateTransitionError sentinel
+
+An attempted transition not in the HC-065 table MUST produce an `InvalidStateTransitionError` sentinel that (a) implements Go's `error` interface, (b) carries `From LifecycleState`, `To LifecycleState`, and `SessionID string` fields, and (c) wraps `ErrDeterministic` per §4.5 (the call-site knows the valid table; an invalid attempt is a daemon-logic defect, not a transient failure). The daemon MUST NOT silently ignore invalid transitions; the `ErrDeterministic` wrap causes the call site to route to the structural failure path per §8.3.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-067 — Transition-history ring (size 50, drop-oldest)
+
+Each session MUST maintain an in-memory transition-history ring of the last 50 `Transition` records (drop-oldest on overflow). A `Transition` record carries `{from LifecycleState, to LifecycleState, reason TransitionReason, at time.Time}`. `Session.History()` MUST return a point-in-time copy of the ring (not a live reference). The ring persists for the lifetime of the session object; it is not written to disk and is not required to survive daemon restart. The ring is the primary debugging surface for `run_stale` and silent-hang root-cause analysis per [event-model.md §8.3.10]; the structured event `lifecycle_transition` (§8.3.14) is the durable cross-bus surface (see §9.3 cross-ref to [event-model.md §8.3.14]).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ## 5. Invariants
 
 #### HC-INV-001 — Exactly one watcher goroutine per active session
@@ -1352,6 +1404,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 | 2026-04-25 | 0.3.3 | foundation-author | Two cross-spec coordination patches landing as gap-filler IDs (no renumbering; HC ID FREEZE preserved). **Edit 1 (§4.3 concurrency model):** new HC-016a — orphan-reconnect-window retry rule, the handler-side companion to [process-lifecycle.md §4.2 PL-003b]. Clients receiving the typed `daemon_not_ready{reason="unknown_run_id"}` rejection (issued by the daemon between socket bind at PL-005 step 3a and in-memory model build at PL-005 step 7) MUST retry per the [process-lifecycle.md §4.2 PL-009b] exponential backoff schedule (initial 100 ms, doubling, max 2 s per attempt, capped at `T_ready_wait = 60 s` per OQ-PL-002); the watcher MUST NOT classify the typed-error response as a session failure during the retry window (no `agent_failed`, no silent-hang escalation per §4.6.HC-026); after cap exhaustion the request fails with `ErrTransient` and the watcher emits `agent_failed` carrying sub-reason `daemon_startup_window_exceeded`. Closes the orphan-agent-reconnect-during-startup-window race named in PL-003b's R2 amendment. **Edit 2 (§4.6 error propagation):** new HC-026b — acceptance clause for [operator-nfr.md §4.9 ON-040]'s drain-forced silent-hang synthesis. When operator-initiated drain step 4 SIGKILLs a still-running agent subprocess per [operator-nfr.md §4.7 ON-029], ON-040 synthesizes `agent_warning_silent_hang{reason=drain_forced}` even when no §4.6.HC-026 / §7.1 silent-hang detection had fired; HC accepts ON-040's classification and obligates the watcher NOT to also emit an HC-classified silent-hang event for the same run/node, preserving HC-INV-004 (single terminal event per session) by routing the synthesis as ON-side-only. Acceptance clause; enforcement remains in operator-nfr. **New IDs (net):** HC-016a, HC-026b (2 new). No invariants, no schema changes, no §6 / §8 / §10 touches. Status remains `reviewed`. |
 | 2026-05-09 | 0.3.4 | foundation-author | Normative spec section for twin script-file format (hk-ahvq.48.11). **New §4.8.HC-036a — Twin script-file format:** promotes de-facto schema from `cmd/harmonik-twin-claude/scriptdriver.go` package godoc (hk-ahvq.48.3) to normative HC text. Defines: file path rule (`<fixture-root>/<scenario>/twin-scripts/<role>.yaml`); top-level YAML fields (`heartbeat_mode` enum `wall_clock`|`scripted`, default `wall_clock`; `messages` list); ScriptMessage record fields (`type` required string, `payload` optional map, `relative_timestamp_ms` optional int); heartbeat-mode semantics; load-time validation requirements. No existing requirement IDs renumbered; no invariants, no §6/§8/§10 touches. Status: reviewed → reviewed (spec-edit only). |
 | 2026-05-12 | 0.3.5 | foundation-author | Add HC-045a / HC-045b / HC-045c in §4.10 (gap-filler placement after HC-045, matching the HC-016a / HC-026b pattern) covering claude-code agent type's launch mechanism (pointer to claude-hook-bridge.md), hook-bridge one-shot NDJSON connection regime, and handler-side claude_session_id minting/resume discipline including orphan-reconnect git-derived lookup. Clarifying sentence added to HC-006 pointing forward to HC-045c and to CHB-023's durability boundary. No requirement IDs renumbered or retired; HC-053 in §6.2 is unchanged. Status remains `reviewed`. |
+| 2026-05-30 | 0.6.0 | agent (flywheel spec-bundle hk-j7o3i) | **New §4.13 — per-session lifecycle FSM (HC-064..HC-067); disambiguates from handler-pause.md HandlerStatus.** HC-064: `LifecycleState` enum `{Spawning, Initializing, Ready, Executing, Suspended, Terminating, Terminated, Failed}`; `TERMINAL_STATES = {Terminated, Failed}`; `Suspended` is per-session (orthogonal to handler-pause.md's per-type operator-pause flag). HC-065: `VALID_TRANSITIONS[from][to]` table (16 legal edges; `Suspended` added as per [event-model.md §4.12 EV-043] decision-blocking path; `Ready→Failed` for silent-hang in Ready). HC-066: `InvalidStateTransitionError` sentinel wrapping `ErrDeterministic`; carries `From`, `To`, `SessionID`. HC-067: in-memory transition-history ring (size 50, drop-oldest); `Session.History()` returns point-in-time copy; cross-refs `lifecycle_transition` (§8.3.14) as durable cross-bus surface. Glossary §3 gains `LifecycleState`, `Suspended` disambiguation note. Cross-ref to [event-model.md §8.3.14] for `lifecycle_transition` event; cross-ref to [process-lifecycle.md §4.6 PL-019] for supervisor process layer. Refs: hk-j7o3i; hk-za5mz (silent-hang-as-deterministic-FSM-transition). |
 | 2026-05-13 | 0.3.6 | bridge-integration | **HC-054/055/056/057 added (hk-gql20.3).** Additive amendments for the bridge-integration initiative. **HC-054** (§6.1) — `Session.Attach()` for `agent_type=claude-code` under the PL-021b tmux substrate returns a live pty `io.Reader` (not a log tail); single-line buffering for real-time observation; close-reader does not terminate the session; multiple concurrent attaches permitted. **HC-055** (§4.10) — claude CLI flag allow-list at MVH: only `--session-id` / `--resume` constructed by the daemon; explicit deny on `--print`, `--add-dir`, `--allowed-tools`/`--disallowed-tools`, `--mcp-server`/`--mcp-config`, `--permission-mode` (policy lives in worktree-materialized `.claude/settings.json`); operator `Config.HandlerArgs` validated against CHB-007 deny-list. **HC-056** (§4.9) — `agent_ready` timeout default 30s via `Config.AgentReadyTimeout`; on timeout: kill, reap, emit `agent_failed{sub_reason=agent_ready_timeout}`, reopen bead. Closes `hk-do7te`. **HC-057** (§4.9) — heartbeat-emission ownership carve-out: for `agent_type=claude-code` at MVH, the daemon MAY emit `agent_heartbeat` on the handler-process's behalf (CHB-019 cadence); retired when post-MVH shim binary lands. No existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-05-13 | 0.3.7 | agent (hk-p63bz) | **agent_ready semantics reframed for the interactive substrate (audit §6 B3).** HC-039 amended: `agent_ready` emitter identity is now substrate-dependent; under the tmux substrate the relay synthesizes it on `SessionStart` receipt (not the handler pre-exec). HC-041 amended: `DetectReady` must accept relay-synthesized `agent_ready` with `provenance: "claude_session_start"` and MUST NOT accept `launch_initiated`. HC-056 amended: timeout window now starts at `SubstrateSpawn` return (not `cmd.Start()`) under the tmux substrate, explicitly excluding `launch_initiated` as a satisfying signal, and cross-refs updated to point at CHB-013 (SessionStart mapping) and CHB-018 (launch_initiated precursor). No existing HC IDs renumbered. Coexists with HC-054/055/056/057 (hk-gql20.3). Refs: hk-p63bz. |
 | 2026-05-18 | 0.4.0 | agent (hk-zudz0) | **Phase-LaunchSpec contract: HC-006a normative table added (§4.2).** **HC-006a added** — per-phase LaunchSpec field requirements table for `review-loop`, covering: `argv` (`--session-id` vs `--resume` per phase), `--model`/`--effort`/`--dangerously-skip-permissions` flags, `HARMONIK_PHASE` / `HARMONIK_ITERATION_COUNT` / `HARMONIK_CLAUDE_SESSION_ID` env vars, `HARMONIK_WORKFLOW_MODE` (shared across phases), `working_dir` (worktree path shared across all three phases at MVH), `LaunchSpec.claude_session_id` wire field (ABSENT for initial and reviewer, PRESENT for resume), harmonik-side `handlerSessionID` source (fresh UUIDv7 every call), `agent-task.md` content variants by phase, and wire-protocol `phase` / `iteration_count` fields. Cites `internal/daemon/claudelaunchspec.go` (`buildClaudeLaunchSpec`) as implementation evidence; spec remains authoritative. Includes test-hookpoint sensor note pointing at `internal/operatornfr/reviewloopstatus_on035a_test.go` (partial coverage) and naming `TestHC006a_PerPhaseLaunchSpecInvariants` as a follow-up gap. No existing HC IDs renumbered. Version bump to 0.4.0 (new normative section). |

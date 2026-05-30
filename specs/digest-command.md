@@ -55,6 +55,53 @@ operators monitoring the system state.
 
 ## 4. Normative requirements
 
+### 4.a Subsystem envelope
+
+#### DC-ENV-001 — Envelope declaration
+
+Envelope for the digest-command subsystem per [architecture.md §4.0 AR-053]. `harmonik digest` is a pure-Go, read-only subcommand that computes a schema-versioned status sheet from durable file surfaces only (§1). In snapshot mode it requires no daemon and opens no daemon socket (DC-001); it never invokes an LLM (DC-INV-001). It reads — but does not emit — bus events, and owns no persistent state.
+
+(a) Events produced:
+  - none. The command emits no bus events; its only output is the JSON/text status sheet on stdout (DC-003, §6). It is a passive reader of the event log, not a producer.
+
+(b) Events consumed:
+  - Typed events from `.harmonik/events/events.jsonl`, read via `ScanAfter(watermark)` (DC-004, DC-006); the `--since <event_id>` watermark uses ScanAfter semantics per [event-model.md §4.1 EV-002]. The command reads events from the durable log surface; it is not a bus subscriber and does not consume events over a socket (DC-INV-001).
+
+(c) Types introduced (cross-subsystem; the command introduces no new bus-event payload records — it reads existing surfaces; the entries below are the cross-subsystem input/output contracts it touches):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `CL-DIGEST` status-sheet record (JSON/text, carries `schema_version` per DC-003 / CL-033) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe` |
+  | `.harmonik/queue.json` queue envelope (consumed; owned by [queue-model.md]) | mechanism | baseline |
+  | `.harmonik/events/events.jsonl` typed-event log (consumed; owned by [event-model.md]) | mechanism | baseline |
+  | `.harmonik/cognition/notes.jsonl` open-note entries (consumed; owned by [cognition-loop.md]) | mechanism | baseline |
+  | `.harmonik/cognition/state.json` `last_processed_event_id` watermark (consumed via `--since`; owned by [cognition-loop.md]) | mechanism | baseline |
+  | `br ready` / `br list` JSON and `kerf next --format=json` feed (consumed, advisory; external tool surfaces) | mechanism | `io-determinism=best-effort; replay-safety=safe` |
+
+(d) Handlers implemented: none. `harmonik digest` is a CLI subcommand, not a handler-contract handler ([handler-contract.md]).
+
+(e) State owned: none. The command is read-only over file surfaces (DC-004); it writes no persistent state and mutates none of the surfaces it reads. The watermark in `.harmonik/cognition/state.json` is consumed, not owned (owned by [cognition-loop.md]).
+
+(f) Control points provided: none. The command is a mechanism-tagged read path; its operations are not gate/hook/guard/budget points per [control-points.md §4.1].
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-018` N-1 schema compatibility — readers MUST accept N-1 of the `schema_version` field (DC-003).
+  - Inherited: deterministic-input discipline — the command consults only deterministic file surfaces and external CLIs, never an LLM or network (DC-004, DC-INV-001).
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `read_queue_json` (DC-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `scan_events_after_watermark` (DC-004, DC-006) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `read_open_notes` (DC-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `read_git_log` (DC-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `invoke_br_ready_and_list` (DC-004, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `invoke_kerf_next` (DC-004, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `apply_size_caps` (DC-005) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `emit_status_sheet` (DC-003, §6) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+
+Tags: mechanism
+
 ### DC-001 — Snapshot mode requires no daemon
 
 `harmonik digest` snapshot mode (without `--watch`) MUST operate without a

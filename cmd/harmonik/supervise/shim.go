@@ -6,7 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
+	"os/exec"
 	"syscall"
 	"time"
 
@@ -94,8 +94,8 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 // runDirect exec-replaces the shim with the supervisee command.
 func runDirect(command []string, stderr io.Writer) int {
 	bin := command[0]
-	// Resolve binary path.
-	resolved, err := lookPath(bin)
+	// Use exec.LookPath for correct PATH resolution including exec-bit check.
+	resolved, err := exec.LookPath(bin)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err)
 		return 1
@@ -160,21 +160,6 @@ func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-// lookPath resolves a binary name via PATH.
-func lookPath(name string) (string, error) {
-	if strings.ContainsRune(name, '/') {
-		return name, nil
-	}
-	pathEnv := os.Getenv("PATH")
-	for _, dir := range strings.Split(pathEnv, ":") {
-		candidate := dir + "/" + name
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("not found in PATH")
 }
 
 // setupSignals returns a context cancelled on SIGINT/SIGTERM and a stop func.

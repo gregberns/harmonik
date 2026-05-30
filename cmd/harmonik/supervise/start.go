@@ -35,6 +35,7 @@ const ExitCodeSupervisorRunning = 25
 func RunStart(args []string, stdout, stderr io.Writer) int {
 	var projectDir string
 	var watchRestart bool
+	var command []string // supervisee argv; populated from --command or -- args
 
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -48,6 +49,18 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 			projectDir = args[i]
 		case strings.HasPrefix(args[i], "--project="):
 			projectDir = strings.TrimPrefix(args[i], "--project=")
+		case args[i] == "--command" && i+1 < len(args):
+			// --command CMD [ARGS...]: rest of args is the supervisee argv.
+			i++
+			command = args[i:]
+			i = len(args) // consume remaining
+		case strings.HasPrefix(args[i], "--command="):
+			// --command=CMD (single token, no sub-args).
+			command = []string{strings.TrimPrefix(args[i], "--command=")}
+		case args[i] == "--":
+			// -- CMD [ARGS...]: supervisee argv follows the separator.
+			command = args[i+1:]
+			i = len(args) // consume remaining
 		}
 	}
 
@@ -75,32 +88,42 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		instanceID = "unknown"
 	}
 
-	// (c) Try to acquire supervisor.lock (flock LOCK_EX|LOCK_NB).
+	// Ensure cognition dir exists before opening the lock file.
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(CognitionDir(projectDir), 0o755); err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", err)
+		return 1
+	}
+
+	// (c) Acquire supervisor.lock (flock LOCK_EX|LOCK_NB).
+	//
+	// Hold the fd open until AFTER tmux new-session completes. This closes the
+	// race window where a concurrent `start` sees a free lock between probe and
+	// session-creation: any second `start` invocation will hit EWOULDBLOCK
+	// (exit 25) while the first start holds the fd. The shim acquires the lock
+	// (blocking) once start exits and releases it.
 	//nolint:gosec // G304: lockPath derived from operator-controlled projectDir
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
-		// Ensure cognition dir exists then retry.
-		if mkErr := os.MkdirAll(CognitionDir(projectDir), 0o755); mkErr != nil {
-			fmt.Fprintf(stderr, "harmonik supervise start: mkdir cognition: %v\n", mkErr)
-			return 1
-		}
-		//nolint:gosec // G304
-		lockFd, err = os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
-		if err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err)
-			return 1
-		}
+		fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err)
+		return 1
 	}
+	// lockFd is released at the bottom after session creation (or on any error
+	// path via the deferred close below).
+	lockReleased := false
+	defer func() {
+		if !lockReleased {
+			_ = lockFd.Close()
+		}
+	}()
 
-	flockErr := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	_ = lockFd.Close() // release immediately; shim re-acquires inside tmux pane
-	if flockErr != nil {
-		if isWouldBlock(flockErr) {
+	if err := syscall.Flock(int(lockFd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if isWouldBlock(err) {
 			fmt.Fprintf(stderr, "harmonik supervise start: supervisor already running (lock held: %s)\n",
 				PidfilePath(projectDir))
 			return ExitCodeSupervisorRunning
 		}
-		fmt.Fprintf(stderr, "harmonik supervise start: flock error: %v\n", flockErr)
+		fmt.Fprintf(stderr, "harmonik supervise start: flock error: %v\n", err)
 		return 1
 	}
 
@@ -120,6 +143,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		RestartCapMS:     60000,
 		StartedAt:        now,
 		DaemonInstanceID: instanceID,
+		Command:          command, // may be nil; shim will error if Command is empty
 	}
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err)
@@ -127,7 +151,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// (f) Create tmux session harmonik-<project_hash>-flywheel.
+	// (f) Create tmux session harmonik-<project_hash>-flywheel with remain-on-exit on.
 	sessionName := FlywheelSessionName(projectDir)
 	shimArgs := []string{"supervise", "_shim", projectDir}
 	if watchRestart {
@@ -152,16 +176,22 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Set remain-on-exit on the flywheel pane (PL-019f).
+	// Set remain-on-exit on the flywheel session (PL-019f).
 	//nolint:gosec // G204
 	_ = exec.Command("tmux", "set-option", "-t", sessionName, "remain-on-exit", "on").Run()
+
+	// Release the lock now that the tmux session (and shim) is running.
+	// The shim will immediately acquire it (blocking flock). Releasing here
+	// rather than via the defer lets the defer no-op cleanly.
+	lockReleased = true
+	_ = lockFd.Close()
 
 	fmt.Fprintf(stdout, "harmonik supervise start: supervisor launched (session: %s)\n", sessionName)
 	return 0
 }
 
-// probeDaemonSocket attempts a TCP connection to sockPath. Returns 17 if the
-// socket is absent or connection refused, 0 if the daemon is reachable.
+// probeDaemonSocket attempts a connection to the Unix socket at sockPath.
+// Returns 17 (ExitCodeDaemonDown) if the socket is absent or ECONNREFUSED, 0 if reachable.
 func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) int {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if err != nil {
@@ -170,7 +200,6 @@ func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) i
 				"harmonik supervise start: daemon not running; start with: harmonik daemon\n")
 			return ExitCodeDaemonDown
 		}
-		// Any other error also means we can't proceed.
 		fmt.Fprintf(stderr, "harmonik supervise start: dial daemon socket: %v\n", err)
 		return ExitCodeDaemonDown
 	}
@@ -200,11 +229,14 @@ func isWouldBlock(err error) bool {
 const startUsage = `harmonik supervise start — launch the supervisor (cognition/flywheel) process
 
 USAGE
-  harmonik supervise start [--project DIR] [--watch-restart]
+  harmonik supervise start [--project DIR] [--watch-restart] [--command CMD [ARGS...]]
+  harmonik supervise start [--project DIR] [--watch-restart] -- CMD [ARGS...]
 
 FLAGS
-  --project DIR    Project directory (default: current working directory)
-  --watch-restart  Interpose a restart-shim: supervisor restarts on crash
+  --project DIR          Project directory (default: current working directory)
+  --watch-restart        Interpose a restart-shim: supervisor restarts on crash
+  --command CMD [ARGS]   Supervisee argv; all tokens after CMD are sub-args
+  -- CMD [ARGS...]       Alternative: supervisee argv after the separator
 
 EXIT CODES
    0  Success — tmux session created
@@ -215,4 +247,10 @@ EXIT CODES
 NOTES
   Creates tmux session harmonik-<project_hash>-flywheel with remain-on-exit on.
   Reads daemon_instance_id from .harmonik/daemon.pid for config.json.
+  The supervisor.lock is held until the tmux session is created, preventing
+  concurrent 'start' invocations from writing conflicting config/sentinel files.
+
+EXAMPLES
+  harmonik supervise start --watch-restart --command claude --pi
+  harmonik supervise start --watch-restart -- claude --pi --project /path/to/project
 `

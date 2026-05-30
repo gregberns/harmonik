@@ -39,12 +39,15 @@ operators monitoring the system state.
 - `--full` flag: disable CL-032 size caps.
 - `--project DIR`: project directory selection.
 - Exit code 7 on missing `.harmonik/` per PL-028d.
+- `--watch` live TUI polling mode: polls at ~1s cadence, renders
+  structured human-readable view per CL-082 (DC-008).
 
 ### 2.2 Out of scope
 
-- `--watch` continuous polling mode (post-v0.1).
 - `harmonik supervise` integration (post-v0.1).
 - Pi TUI panel rendering (post-v0.1).
+- `harmonik subscribe`-driven push mode for `--watch` (tracked as future
+  upgrade; file-poll is the current implementation per DC-008).
 
 ## 3. Glossary
 
@@ -169,6 +172,31 @@ and report the error in the `errors[]` field of the output. Only a missing
 
 Tags: mechanism
 
+### DC-008 — `--watch` live TUI polling mode (CL-082)
+
+`harmonik digest --watch` MUST:
+
+1. Poll `digest.Build` at approximately 1-second cadence.
+2. Render a structured human-readable view on each tick showing:
+   in-flight runs (active + pending counts), recent completions
+   (`run_completed` / `run_failed` events with UUIDv7-derived ages),
+   open notes with ages, and watermark age (age of the most recent
+   event's UUIDv7 timestamp).
+3. Operate in **file-poll mode** — read durable file surfaces only
+   (DC-001 / DC-INV-001). No daemon socket connection is required.
+   When the daemon is offline, polling continues uninterrupted
+   (graceful degrade per §2.1).
+4. Propagate the caller's `context.Context` to every `digest.Build`
+   call so that br/kerf subprocesses are cancelled on SIGINT/SIGTERM.
+5. Exit cleanly on SIGINT or SIGTERM (exit code 0).
+6. NOT consult any LLM or mutate any state (DC-INV-001).
+
+Future upgrade path: replace file-poll with a `harmonik subscribe`
+push subscription for lower latency and reduced I/O; tracked as future
+work (OQ-DC-001 resolved below).
+
+Tags: mechanism
+
 ## 5. Invariants
 
 ### DC-INV-001 — No LLM in the digest path
@@ -184,13 +212,14 @@ serialization bug.
 ## 6. CLI reference
 
 ```
-harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
+harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full] [--watch]
 
 FLAGS
   --project DIR     Project directory (default: current working directory)
   --json            Emit one schema-versioned NDJSON object to stdout
   --since EVENT_ID  Restrict events to those after this UUIDv7
   --full            Disable size caps
+  --watch           Live TUI polling loop at 1s cadence; Ctrl-C to exit (CL-082)
 
 EXIT CODES
   0  — success
@@ -200,8 +229,11 @@ EXIT CODES
 
 ## 7. Open questions
 
-- **OQ-DC-001.** Should `--watch` use `harmonik subscribe` or file-poll?
-  Working answer: subscribe (parity with operator-nfr.md); post-v0.1.
+- **OQ-DC-001.** ~~Should `--watch` use `harmonik subscribe` or file-poll?~~
+  **Resolved (hk-e3bnw):** Current implementation uses file-poll (DC-008).
+  A `harmonik subscribe`-driven push mode is tracked as a future upgrade
+  in §2.2 ("Out of scope") — it delivers lower latency and reduced I/O
+  at the cost of requiring a live daemon socket.
 
 ## 8. Revision history
 

@@ -38,7 +38,7 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 	}
 
 	// Render immediately before the first tick so the screen is never blank.
-	renderWatchFrame(w, in.Build)
+	renderWatchFrame(ctx, w, in.Build)
 
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
@@ -51,15 +51,17 @@ func RunWatch(ctx context.Context, in WatchInput, w io.Writer) error {
 			fmt.Fprintln(w, "harmonik digest --watch: stopped.")
 			return nil
 		case <-tick.C:
-			renderWatchFrame(w, in.Build)
+			renderWatchFrame(ctx, w, in.Build)
 		}
 	}
 }
 
 // renderWatchFrame clears the terminal and emits one full digest snapshot.
-func renderWatchFrame(w io.Writer, in digest.BuildInput) {
+// ctx is propagated to digest.Build so that br/kerf subprocesses are
+// cancelled when the user hits Ctrl-C (CTX_PROPAGATION fix).
+func renderWatchFrame(ctx context.Context, w io.Writer, in digest.BuildInput) {
 	now := time.Now()
-	d, buildErr := digest.Build(context.Background(), in)
+	d, buildErr := digest.Build(ctx, in)
 
 	// Move cursor to top-left, then clear to end of screen.
 	fmt.Fprint(w, "\033[H\033[2J")

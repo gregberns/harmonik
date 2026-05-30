@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
-	"github.com/google/uuid"
+	digestcmd "github.com/gregberns/harmonik/cmd/harmonik/digest"
 )
 
 // runDigestSubcommand implements `harmonik digest` per CL-030..CL-033 and
@@ -27,6 +30,7 @@ func runDigestSubcommand(args []string) int {
 	var sinceFlag string
 	var jsonFlag bool
 	var fullFlag bool
+	var watchFlag bool
 
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -34,17 +38,19 @@ func runDigestSubcommand(args []string) int {
 			fmt.Print(`harmonik digest — compute the cognition-loop status sheet (no daemon required)
 
 USAGE
-  harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
+  harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full] [--watch]
 
 FLAGS
   --project DIR     Project directory (default: current working directory)
   --json            Emit one schema-versioned NDJSON object to stdout
   --since EVENT_ID  Restrict events to those after this UUIDv7 (ScanAfter watermark)
   --full            Disable size caps (include all active runs, events, and notes)
+  --watch           Live TUI loop: poll at 1s cadence; Ctrl-C to exit (CL-082)
 
 OUTPUT
   Without --json, emits a human-readable status sheet to stdout.
   With --json, emits a single NDJSON line carrying schema_version + all fields.
+  With --watch, renders a live updating view polling at 1s cadence.
 
 EXIT CODES
   0  — success
@@ -56,12 +62,15 @@ EXAMPLES
   harmonik digest --json
   harmonik digest --since 01900000-0000-7000-0000-000000000000
   harmonik digest --full
+  harmonik digest --watch
 `)
 			return 0
 		case args[i] == "--json":
 			jsonFlag = true
 		case args[i] == "--full":
 			fullFlag = true
+		case args[i] == "--watch":
+			watchFlag = true
 		case args[i] == "--project" && i+1 < len(args):
 			i++
 			projectFlag = args[i]
@@ -113,6 +122,14 @@ EXAMPLES
 		Limits:       lim,
 		BrPath:       brPath,
 		KerfPath:     kerfPath,
+	}
+
+	// --watch: live TUI polling loop per CL-082.
+	if watchFlag {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		_ = digestcmd.RunWatch(ctx, digestcmd.WatchInput{Build: in}, os.Stdout)
+		return 0
 	}
 
 	d, err := digest.Build(context.Background(), in)

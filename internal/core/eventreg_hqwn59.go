@@ -156,6 +156,10 @@ func registerAgentEvents() {
 	// agent_ready_timeout (hk-5cox8): emitted by the daemon workloop when HC-056
 	// fires — no agent_ready arrived within the timeout window. Durability class: O.
 	mustRegister("agent_ready_timeout", func() EventPayload { return &AgentReadyTimeoutPayload{} })
+	// lifecycle_transition (§8.3.14, hk-xrygh): emitted by the watcher and
+	// workloop on every LifecycleState machine transition per HC-064..HC-067.
+	// Durability class: O.
+	mustRegister("lifecycle_transition", func() EventPayload { return &LifecycleTransitionPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

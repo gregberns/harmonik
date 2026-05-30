@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -77,6 +78,15 @@ type Session interface {
 	// end-of-input. Calling CloseStdin more than once is safe (subsequent calls
 	// return nil because the underlying pipe is already closed).
 	CloseStdin() error
+
+	// Machine returns the per-session lifecycle FSM (handler-contract.md §4.13
+	// HC-064..HC-067). The machine starts in StateSpawning (set by NewSession on
+	// successful cmd.Start) and transitions as the session progresses. Callers
+	// MAY call Machine.Transition and Machine.RecordActivity; the watcher and
+	// workloop own the canonical transition calls.
+	//
+	// Returns non-nil for all valid sessions.
+	Machine() *hclifecycle.Machine
 }
 
 // Outcome carries exit metadata for a completed session.  Populated exactly
@@ -119,6 +129,12 @@ type session struct {
 
 	// stderrBuf accumulates stderr bytes for the ring buffer.
 	stderrBuf *ringBuffer
+
+	// machine is the per-session lifecycle FSM (HC-064..HC-067).
+	// Constructed in NewSession and transitions to StateSpawning→StateInitializing
+	// on successful cmd.Start. The Machine() accessor exposes it to the watcher
+	// and workloop for subsequent transitions.
+	machine *hclifecycle.Machine
 }
 
 // NewSession opens stdin/stdout/stderr pipes on cmd, starts the subprocess, and
@@ -132,8 +148,21 @@ type session struct {
 // buffer and another to call WaitOwner.WaitAndReap once stdin/stdout EOF — the
 // caller drives termination via Kill and observes completion via Wait.
 //
+// The per-session lifecycle Machine (HC-064) starts in StateSpawning (the
+// Machine.New default). After cmd.Start succeeds, NewSession transitions the
+// machine to StateInitializing (HC-065: "Spawning→Initializing on subprocess
+// started"). The caller obtains the machine via Session.Machine().
+//
 // Returns ErrStructural-wrapping error on pipe-setup or start failure.
 func NewSession(ctx context.Context, cmd *exec.Cmd) (Session, error) {
+	return newSessionWithIDs(ctx, cmd, "", "")
+}
+
+// newSessionWithIDs is the internal constructor that accepts explicit sessID and
+// runID for the lifecycle Machine. When sessID is empty a placeholder is used;
+// callers that know the IDs at Session creation time (e.g. handler.Launch) SHOULD
+// use newSessionWithIDs directly.
+func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string) (Session, error) {
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("handler: NewSession: StdinPipe: %w: %w", err, ErrStructural)
@@ -149,9 +178,26 @@ func NewSession(ctx context.Context, cmd *exec.Cmd) (Session, error) {
 		return nil, fmt.Errorf("handler: NewSession: StderrPipe: %w: %w", err, ErrStructural)
 	}
 
+	// Construct the lifecycle Machine in StateSpawning (HC-065 initial state).
+	// sessID and runID default to placeholder values when not provided; they are
+	// enriched by the caller after Launch returns.
+	if sessID == "" {
+		sessID = "unknown"
+	}
+	if runID == "" {
+		runID = "unknown"
+	}
+	machine := hclifecycle.New(sessID, runID)
+
 	if err := cmd.Start(); err != nil {
+		// HC-065: Spawning→Failed when cmd.Start returns an error. The machine is
+		// discarded along with the error path — no caller can observe this session.
+		_ = machine.Transition(hclifecycle.StateFailed, hclifecycle.ReasonError, "cmd_start_error", err.Error())
 		return nil, fmt.Errorf("handler: NewSession: cmd.Start: %w: %w", err, ErrStructural)
 	}
+
+	// HC-065: Spawning→Initializing — subprocess started successfully.
+	_ = machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
 
 	ring := newRingBuffer(stderrRingCapBytes)
 
@@ -163,6 +209,7 @@ func NewSession(ctx context.Context, cmd *exec.Cmd) (Session, error) {
 		stderr:    stderrPipe,
 		startedAt: time.Now(),
 		stderrBuf: ring,
+		machine:   machine,
 	}
 
 	// Drain stderr into the ring buffer concurrently so it never blocks the
@@ -297,6 +344,11 @@ func (s *session) Stderr() io.Reader {
 // subprocess sees EOF after LaunchSpec delivery per HC-005.
 func (s *session) CloseStdin() error {
 	return s.stdin.Close()
+}
+
+// Machine returns the per-session lifecycle FSM (HC-064..HC-067).
+func (s *session) Machine() *hclifecycle.Machine {
+	return s.machine
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

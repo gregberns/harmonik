@@ -14,6 +14,8 @@ package handler
 import (
 	"context"
 	"io"
+
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 // Substrate is the interface through which the daemon composition root
@@ -98,7 +100,8 @@ type SubstrateSession interface {
 //
 // Fields that have no substrate equivalent (stdin write, stderr) are stubbed.
 type substrateSessionAdapter struct {
-	inner SubstrateSession
+	inner   SubstrateSession
+	machine *hclifecycle.Machine
 }
 
 // Compile-time assertion: substrateSessionAdapter implements Session.
@@ -142,4 +145,15 @@ func (a *substrateSessionAdapter) Stderr() io.Reader {
 // managed by the substrate.
 func (a *substrateSessionAdapter) CloseStdin() error {
 	return nil
+}
+
+// Machine returns a lifecycle Machine for this substrate session. Substrate
+// sessions start in StateSpawning and immediately transition to StateInitializing
+// since cmd.Start semantics don't apply; the Machine is used for observability.
+func (a *substrateSessionAdapter) Machine() *hclifecycle.Machine {
+	if a.machine == nil {
+		a.machine = hclifecycle.New("substrate-unknown", "unknown")
+		_ = a.machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
+	}
+	return a.machine
 }

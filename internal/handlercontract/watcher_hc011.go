@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 // watcher — per-bead helper prefix for test helpers in watcher_hc011_test.go
@@ -156,6 +157,16 @@ type SpawnWatcherConfig struct {
 	// When zero, WatcherPublishBufSize (8) is used per HC-011a.
 	// Optional (≥ 0).
 	PublishBufSize int
+
+	// Machine is the per-session lifecycle FSM (handler-contract.md §4.13
+	// HC-064..HC-067). When non-nil, the watcher calls Machine.Transition on
+	// agent lifecycle events (agent_ready→Ready, agent_started→Executing,
+	// agent_completed→Ready, agent_failed→Failed, agent_warning_silent_hang→Failed)
+	// and Machine.RecordActivity on heartbeat events.
+	//
+	// Optional: when nil the watcher emits events to the bus but does NOT drive
+	// FSM transitions (backward-compatible with callers that predate HC-064).
+	Machine *hclifecycle.Machine
 }
 
 // Watcher is the daemon-side goroutine that owns (a) the NDJSON read-loop on
@@ -418,6 +429,13 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		if typeOnly.Type == ProgressMsgTypeAgentOutputChunk {
 			w.emitBudgetAccrualForChunk(ctx, line, cfg.Publisher, cfg.DeadLetter)
 		}
+
+		// HC-064..HC-067: drive the per-session lifecycle FSM based on the
+		// observed progress-stream event type. The Machine is optional; when nil
+		// (backward-compatible callers that predate HC-064) this block is a no-op.
+		if cfg.Machine != nil {
+			w.driveLifecycleFSM(ctx, cfg.Machine, typeOnly.Type, cfg.Publisher, cfg.DeadLetter)
+		}
 	}
 }
 
@@ -495,6 +513,85 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 	}
 
 	w.publishOrDeadLetter(ctx, core.EventTypeBudgetAccrual, payload, pub, dl)
+}
+
+// driveLifecycleFSM maps a progress-stream message type to a LifecycleState
+// transition and emits a lifecycle_transition event (HC-064..HC-067, §8.3.14).
+//
+// Mapping (HC-065 table):
+//   - agent_ready       → StateReady     (ReasonInitComplete)
+//   - agent_started     → StateExecuting  (ReasonCommandStarted)
+//   - agent_completed   → StateReady     (ReasonCommandComplete)
+//   - agent_failed      → StateFailed    (ReasonError)
+//   - agent_heartbeat   → RecordActivity only (no state change per HC-026a)
+//   - all other types   → no-op
+//
+// Note: agent_warning_silent_hang is NOT a progress-stream message; it is
+// synthesized by the daemon's watchdog layer. The Ready→Failed(silent_hang)
+// transition is driven by the workloop/watchdog, not by this function.
+//
+// Invalid transitions (e.g. duplicate agent_ready) are silently ignored:
+// the watcher MUST NOT panic on invalid-transition errors because the Machine
+// may already be in a terminal state.
+func (w *Watcher) driveLifecycleFSM(
+	ctx context.Context,
+	m *hclifecycle.Machine,
+	msgType ProgressMsgType,
+	pub EventEmitter,
+	dl WatcherDeadLetterSink,
+) {
+	switch msgType {
+	case ProgressMsgTypeAgentHeartbeat:
+		m.RecordActivity()
+	case ProgressMsgTypeAgentReady:
+		emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonInitComplete, "", "", pub, dl)
+	case ProgressMsgTypeAgentStarted:
+		emitMachineTransition(ctx, m, hclifecycle.StateExecuting, hclifecycle.ReasonCommandStarted, "", "", pub, dl)
+	case ProgressMsgTypeAgentCompleted:
+		emitMachineTransition(ctx, m, hclifecycle.StateReady, hclifecycle.ReasonCommandComplete, "", "", pub, dl)
+	case ProgressMsgTypeAgentFailed:
+		emitMachineTransition(ctx, m, hclifecycle.StateFailed, hclifecycle.ReasonError, "agent_failed", "agent process failed", pub, dl)
+	default:
+		// Rate-limit, output-chunk, and other non-lifecycle types: no FSM effect.
+	}
+}
+
+// emitMachineTransition performs a lifecycle Machine transition and emits a
+// lifecycle_transition event to the bus. Invalid transitions are silently
+// ignored (the machine may already be in a terminal state; see HC-067).
+func emitMachineTransition(
+	ctx context.Context,
+	m *hclifecycle.Machine,
+	to hclifecycle.LifecycleState,
+	reason hclifecycle.TransitionReason,
+	errCode, errMsg string,
+	pub EventEmitter,
+	dl WatcherDeadLetterSink,
+) {
+	from := m.Current()
+	if err := m.Transition(to, reason, errCode, errMsg); err != nil {
+		// Invalid transition (e.g. already terminal, duplicate event): silent no-op.
+		// The machine enforces the HC-065 table; the caller should not panic here.
+		return
+	}
+	// Build and emit lifecycle_transition event payload (§8.3.14).
+	p := core.LifecycleTransitionPayload{
+		SessionID:      core.SessionID(m.SessionID()),
+		FromState:      from.String(),
+		ToState:        to.String(),
+		Reason:         string(reason),
+		TransitionedAt: time.Now().Format(time.RFC3339Nano),
+		ErrCode:        errCode,
+		ErrMsg:         errMsg,
+	}
+	payload, err := json.Marshal(p)
+	if err != nil {
+		_ = dl.Append(core.EventTypeLifecycleTransition, nil, fmt.Sprintf("lifecycle_transition marshal: %v", err))
+		return
+	}
+	if err := pub.Emit(ctx, core.EventTypeLifecycleTransition, payload); err != nil {
+		_ = dl.Append(core.EventTypeLifecycleTransition, payload, fmt.Sprintf("lifecycle_transition emit: %v", err))
+	}
 }
 
 // buildWatcherFailedPayload constructs the (eventType, payload) pair for a

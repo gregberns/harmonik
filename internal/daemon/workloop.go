@@ -47,6 +47,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workflow"
@@ -1691,6 +1692,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.claudeSessionID)
 
+	// HC-065: Drive StateTerminating → StateTerminated/StateFailed transitions.
+	// The session has exited (waitWithSocketGrace returned). Attempt to advance
+	// the Machine through Terminating to a terminal state. Transitions that are
+	// invalid for the current state (e.g. machine already in StateFailed from
+	// agent_failed) are silently ignored.
+	transitionToTerminated(context.Background(), sess.Machine(), runID, deps.bus,
+		ei.exitCode, ei.waitErr)
+
 	// hk-e6mtt: destroy the tmux window after the session completes so dead panes
 	// do not persist after run-fail/cancel. On the natural-exit path (claude /quit),
 	// only the process exited; the tmux pane window remains until explicitly killed.
@@ -2983,6 +2992,72 @@ func emitAgentReadyTimeout(ctx context.Context, bus handlercontract.EventEmitter
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyTimeout, b)
+}
+
+// transitionToTerminated advances the per-session lifecycle Machine from its
+// current state to StateTerminated (clean exit) or StateFailed (error exit),
+// driving through StateTerminating if needed (HC-065).
+//
+// Called by beadRunOne after waitWithSocketGrace returns so that EVERY exit
+// path (normal, cancel, crash) reaches a terminal state. Transitions that
+// are invalid for the current Machine state (e.g. machine already in
+// StateFailed from an agent_failed progress-stream event) are silently
+// ignored.
+//
+// A lifecycle_transition event is emitted to the bus for each successful
+// Machine transition. ctx SHOULD be a live (non-cancelled) context so that
+// the emission reaches the bus; callers MUST pass context.Background() if
+// the run context may already be cancelled.
+//
+// Spec ref: handler-contract.md §4.13 HC-065; event-model.md §8.3.14.
+// Bead ref: hk-xrygh.
+func transitionToTerminated(ctx context.Context, m *hclifecycle.Machine, runID core.RunID, bus handlercontract.EventEmitter, exitCode int, waitErr error) {
+	if m == nil {
+		return
+	}
+	// Step 1: Terminating (current → Terminating). The machine may already be
+	// there (e.g. Kill was called earlier) — the Machine silently rejects
+	// invalid transitions.
+	emitWorkloopLifecycleTransition(ctx, m, runID, bus,
+		hclifecycle.StateTerminating, hclifecycle.ReasonTerminateRequested, "", "")
+
+	// Step 2: Terminal state based on exit outcome.
+	if exitCode == 0 && waitErr == nil {
+		emitWorkloopLifecycleTransition(ctx, m, runID, bus,
+			hclifecycle.StateTerminated, hclifecycle.ReasonTerminateComplete, "", "")
+	} else {
+		errCode := "exit_error"
+		errMsg := fmt.Sprintf("exit=%d", exitCode)
+		if waitErr != nil {
+			errMsg = waitErr.Error()
+		}
+		emitWorkloopLifecycleTransition(ctx, m, runID, bus,
+			hclifecycle.StateFailed, hclifecycle.ReasonError, errCode, errMsg)
+	}
+}
+
+// emitWorkloopLifecycleTransition performs a lifecycle Machine transition and
+// emits a lifecycle_transition event to the bus (HC-065, §8.3.14).
+// Invalid transitions are silently ignored; emission failures are best-effort.
+func emitWorkloopLifecycleTransition(ctx context.Context, m *hclifecycle.Machine, runID core.RunID, bus handlercontract.EventEmitter, to hclifecycle.LifecycleState, reason hclifecycle.TransitionReason, errCode, errMsg string) {
+	from := m.Current()
+	if err := m.Transition(to, reason, errCode, errMsg); err != nil {
+		return // invalid transition (e.g. already terminal): silent no-op
+	}
+	p := core.LifecycleTransitionPayload{
+		SessionID:      core.SessionID(m.SessionID()),
+		FromState:      from.String(),
+		ToState:        to.String(),
+		Reason:         string(reason),
+		TransitionedAt: time.Now().Format(time.RFC3339Nano),
+		ErrCode:        errCode,
+		ErrMsg:         errMsg,
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeLifecycleTransition, b)
 }
 
 // emitImplementerEscapedWorktree emits an implementer_escaped_worktree event

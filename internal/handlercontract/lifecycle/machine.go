@@ -108,6 +108,18 @@ func (m *Machine) RunID() string {
 	return m.runID
 }
 
+// RecordActivity updates the machine's enteredAt timestamp to now without
+// performing a state transition. Call this for heartbeat events and other
+// activity signals that should reset the silent-hang watchdog timer without
+// advancing lifecycle state (HC-026a).
+//
+// Thread-safe.
+func (m *Machine) RecordActivity() {
+	m.mu.Lock()
+	m.enteredAt = time.Now()
+	m.mu.Unlock()
+}
+
 // appendHistory appends t to the ring buffer. When the buffer is full the
 // oldest entry is silently evicted (tail-keep, drop-oldest per HC-067).
 func (m *Machine) appendHistory(t Transition) {

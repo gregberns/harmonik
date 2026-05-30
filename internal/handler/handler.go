@@ -212,7 +212,14 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	cmd.Env = spec.Env
 	cmd.SysProcAttr = lifecycle.SpawnChildSysProcAttr(lifecycle.RecordedPGID())
 
-	sess, err := NewSession(ctx, cmd)
+	// Resolve runID for the lifecycle Machine: use HandlerSpec.RunID when
+	// available; fall back to "unknown" for the legacy/test path.
+	runIDStr := "unknown"
+	if spec.HandlerSpec != nil {
+		runIDStr = spec.HandlerSpec.RunID.String()
+	}
+
+	sess, err := newSessionWithIDs(ctx, cmd, string(sessionID), runIDStr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("handler: Launch: NewSession: %w", err)
 	}
@@ -259,6 +266,7 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		ProgressStream: progressStream,
 		Publisher:      h.publisher,
 		DeadLetter:     h.deadLetter,
+		Machine:        sess.Machine(),
 	})
 
 	return sess, watcher, nil

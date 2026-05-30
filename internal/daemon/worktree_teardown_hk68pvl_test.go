@@ -37,6 +37,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handler"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 // hk68pvlRacySession models the production substrate session for this race:
@@ -97,6 +98,9 @@ func (s *hk68pvlRacySession) Outcome() handler.Outcome { return handler.Outcome{
 func (s *hk68pvlRacySession) Stdout() io.Reader        { return nil }
 func (s *hk68pvlRacySession) Stderr() io.Reader        { return nil }
 func (s *hk68pvlRacySession) CloseStdin() error        { return nil }
+func (s *hk68pvlRacySession) Machine() *hclifecycle.Machine {
+	return hclifecycle.New("stub", "stub")
+}
 
 var _ handler.Session = (*hk68pvlRacySession)(nil)
 

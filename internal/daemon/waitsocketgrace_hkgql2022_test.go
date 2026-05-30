@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,11 +99,14 @@ func (s *waitGraceFixtureSession) Outcome() handler.Outcome {
 	return handler.Outcome{ExitCode: s.exitCode, StderrTail: s.stderrTail}
 }
 
-func (s *waitGraceFixtureSession) Stdout() io.Reader   { return nil }
-func (s *waitGraceFixtureSession) Stderr() io.Reader   { return nil }
-func (s *waitGraceFixtureSession) CloseStdin() error   { return nil }
-func (s *waitGraceFixtureSession) ID() core.SessionID  { return "" }
-func (s *waitGraceFixtureSession) LogLocation() string { return "" }
+func (s *waitGraceFixtureSession) Stdout() io.Reader      { return nil }
+func (s *waitGraceFixtureSession) Stderr() io.Reader      { return nil }
+func (s *waitGraceFixtureSession) CloseStdin() error      { return nil }
+func (s *waitGraceFixtureSession) ID() core.SessionID     { return "" }
+func (s *waitGraceFixtureSession) LogLocation() string    { return "" }
+func (s *waitGraceFixtureSession) Machine() *hclifecycle.Machine {
+	return hclifecycle.New("stub", "stub")
+}
 
 // wasKilled returns true if Kill was called.
 func (s *waitGraceFixtureSession) wasKilled() bool {

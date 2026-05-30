@@ -246,6 +246,15 @@ const (
 	// Durability class: O.
 	// Refs: hk-5cox8.
 	EventTypeAgentReadyTimeout EventType = "agent_ready_timeout"
+
+	// EventTypeLifecycleTransition is the lifecycle_transition event type (§8.3.14).
+	// Emitted by the watcher goroutine on every LifecycleState machine transition
+	// per handler-contract.md §4.13 HC-064..HC-067.
+	// Payload: from_state, to_state, reason, transitioned_at.
+	// Durability class: O (reconstructible from the in-memory transition-history ring).
+	// Spec ref: event-model.md §8.3.14.
+	// Bead ref: hk-xrygh.
+	EventTypeLifecycleTransition EventType = "lifecycle_transition"
 )
 
 // ---------------------------------------------------------------------------

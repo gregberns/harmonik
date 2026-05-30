@@ -143,6 +143,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "agent_hard_terminating", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "launch_initiated", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_ready_timeout", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "lifecycle_transition", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.4 Budget lifecycle ───────────────────────────────────────────────
 	{TypeName: "budget_accrual", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

@@ -70,6 +70,11 @@ type QueueSummary struct {
 
 	// ActiveRuns lists currently dispatched items (limited to 10 by default).
 	ActiveRuns []QueueItemSummary `json:"active_runs,omitempty"`
+
+	// ActiveRunsOmitted carries the count of active runs hidden by the cap so
+	// the builder can flow it into the top-level TruncationReport (DC-005).
+	// Not serialized here — the canonical surface is Truncated.ActiveRunsOmitted.
+	ActiveRunsOmitted int `json:"-"`
 }
 
 // QueueItemSummary is a single dispatched queue item.
@@ -102,12 +107,12 @@ type BeadSummary struct {
 
 // NoteSummary is a single unresolved entry from notes.jsonl.
 type NoteSummary struct {
-	Kind        string    `json:"kind"`
-	Text        string    `json:"text"`
-	Ts          time.Time `json:"ts"`
-	ToolCallID  string    `json:"tool_call_id,omitempty"`
-	SessionID   string    `json:"session_id,omitempty"`
-	Refs        []string  `json:"refs,omitempty"`
+	Kind       string    `json:"kind"`
+	Text       string    `json:"text"`
+	Ts         time.Time `json:"ts"`
+	ToolCallID string    `json:"tool_call_id,omitempty"`
+	SessionID  string    `json:"session_id,omitempty"`
+	Refs       []string  `json:"refs,omitempty"`
 }
 
 // TruncationReport describes what was omitted per CL-032.

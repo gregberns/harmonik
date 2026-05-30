@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,108 @@ func TestBuildDefaultLimitsActiveRuns(t *testing.T) {
 	}
 	if d.Queue.ActiveRunCount != 12 {
 		t.Errorf("ActiveRunCount: got %d, want 12", d.Queue.ActiveRunCount)
+	}
+	// DC-005: the omission count MUST flow into the top-level TruncationReport
+	// so the operator can tell how many runs were hidden.
+	if d.Truncated == nil {
+		t.Fatal("expected Truncated to be set when active runs are capped")
+	}
+	if d.Truncated.ActiveRunsOmitted != 2 {
+		t.Errorf("ActiveRunsOmitted: got %d, want 2", d.Truncated.ActiveRunsOmitted)
+	}
+}
+
+// TestBuildActiveRunsTruncationInJSON verifies the active_runs_omitted count is
+// serialized into the JSON output's `truncated` object (DC-005 end-to-end).
+func TestBuildActiveRunsTruncationInJSON(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	writeQueueJSON(t, dir, 15)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var raw struct {
+		Truncated *struct {
+			ActiveRunsOmitted int `json:"active_runs_omitted"`
+		} `json:"truncated"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if raw.Truncated == nil {
+		t.Fatal("truncated object missing from JSON output")
+	}
+	if raw.Truncated.ActiveRunsOmitted != 5 {
+		t.Errorf("active_runs_omitted in JSON: got %d, want 5", raw.Truncated.ActiveRunsOmitted)
+	}
+}
+
+// TestBuildActiveRunsFullNoTruncation verifies --full disables the active-run cap
+// and reports no omission count.
+func TestBuildActiveRunsFullNoTruncation(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	writeQueueJSON(t, dir, 15)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     FullLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if d.Truncated != nil && d.Truncated.ActiveRunsOmitted != 0 {
+		t.Errorf("--full: expected no active-run truncation; got %d", d.Truncated.ActiveRunsOmitted)
+	}
+}
+
+// TestBuildSurfacesCollectionErrors verifies DC-007: a non-fatal source failure
+// (here, an unresolvable br binary) is reported in Errors[] rather than silently
+// discarded, while Build still succeeds.
+func TestBuildSurfacesCollectionErrors(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+		// Point br at a path that does not exist so runCmd fails; DC-007 says the
+		// error must surface in Errors[], not be swallowed.
+		BrPath:   filepath.Join(dir, "no-such-br"),
+		KerfPath: filepath.Join(dir, "no-such-kerf"),
+	})
+	if err != nil {
+		t.Fatalf("Build should not hard-fail on br/kerf errors: %v", err)
+	}
+	if len(d.Errors) == 0 {
+		t.Fatal("expected non-fatal collection errors to be surfaced in Errors[]")
+	}
+	var sawBr, sawKerf bool
+	for _, e := range d.Errors {
+		if strings.HasPrefix(e, "br_ready:") || strings.HasPrefix(e, "br_list:") {
+			sawBr = true
+		}
+		if strings.HasPrefix(e, "kerf_next:") {
+			sawKerf = true
+		}
+	}
+	if !sawBr {
+		t.Errorf("expected a br error in Errors[]; got %v", d.Errors)
+	}
+	if !sawKerf {
+		t.Errorf("expected a kerf error in Errors[]; got %v", d.Errors)
 	}
 }
 

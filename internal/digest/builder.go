@@ -66,40 +66,84 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		GeneratedAt:   now,
 	}
 
+	// addErr records a non-fatal collection error per DC-007. Every individual
+	// source failure is surfaced in out.Errors; only a missing .harmonik/ (above)
+	// is a hard failure (DC-002).
+	addErr := func(source string, err error) {
+		if err != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", source, err))
+		}
+	}
+
 	// --- Queue summary ---
-	out.Queue = buildQueueSummary(ctx, in.ProjectDir, lim)
+	var queueErr error
+	out.Queue, queueErr = buildQueueSummary(ctx, in.ProjectDir, lim)
+	addErr("queue", queueErr)
+	// DC-005: surface the count of active runs hidden by the cap so the
+	// operator can tell how many runs were omitted (breaks DC-005 otherwise).
+	if out.Queue.ActiveRunsOmitted > 0 {
+		out.Truncated = ensureTruncation(out.Truncated)
+		out.Truncated.ActiveRunsOmitted = out.Queue.ActiveRunsOmitted
+	}
 
 	// --- Recent commits on origin/main ---
-	out.RecentCommits, _ = recentCommits(ctx, in.ProjectDir, in.GitPath, 10)
+	var commitsErr error
+	out.RecentCommits, commitsErr = recentCommits(ctx, in.ProjectDir, in.GitPath, 10)
+	addErr("recent_commits", commitsErr)
 
 	// --- Events via ScanAfter ---
 	eventsPath := filepath.Join(harmonikDir, "events", "events.jsonl")
-	out.RecentEvents, out.Truncated = buildRecentEvents(eventsPath, in.SinceEventID, lim)
+	var eventsTrunc *TruncationReport
+	out.RecentEvents, eventsTrunc = buildRecentEvents(eventsPath, in.SinceEventID, lim)
+	if eventsTrunc != nil && eventsTrunc.RecentEventsOmitted > 0 {
+		out.Truncated = ensureTruncation(out.Truncated)
+		out.Truncated.RecentEventsOmitted = eventsTrunc.RecentEventsOmitted
+	}
 
 	// --- br ready + br list --status in_progress ---
 	if in.BrPath != "" {
-		out.ReadyBeads, _ = brReady(ctx, in.BrPath, in.ProjectDir)
-		out.InProgressBeads, _ = brListByStatus(ctx, in.BrPath, in.ProjectDir, "in_progress")
+		var readyErr, inProgErr error
+		out.ReadyBeads, readyErr = brReady(ctx, in.BrPath, in.ProjectDir)
+		addErr("br_ready", readyErr)
+		out.InProgressBeads, inProgErr = brListByStatus(ctx, in.BrPath, in.ProjectDir, "in_progress")
+		addErr("br_list", inProgErr)
 	}
 
 	// --- notes.jsonl ---
 	notesPath := filepath.Join(harmonikDir, "cognition", "notes.jsonl")
-	notes, _ := readOpenNotes(notesPath)
+	notes, notesErr := readOpenNotes(notesPath)
+	addErr("notes", notesErr)
 	out.OpenNotes, out.Truncated = applyNoteTruncation(notes, lim, out.Truncated)
 
 	// --- kerf next --format=json ---
 	if in.KerfPath != "" {
-		out.KerfNext, _ = kerfNext(ctx, in.KerfPath, in.ProjectDir)
+		var kerfErr error
+		out.KerfNext, kerfErr = kerfNext(ctx, in.KerfPath, in.ProjectDir)
+		addErr("kerf_next", kerfErr)
 	}
 
 	return out, nil
 }
 
-// buildQueueSummary reads queue.json and returns a QueueSummary.
-func buildQueueSummary(_ context.Context, projectDir string, lim Limits) QueueSummary {
-	q, err := queue.Load(context.Background(), projectDir)
-	if err != nil || q == nil {
-		return QueueSummary{Present: false}
+// ensureTruncation returns tr, allocating a fresh TruncationReport when tr is nil.
+func ensureTruncation(tr *TruncationReport) *TruncationReport {
+	if tr == nil {
+		return &TruncationReport{}
+	}
+	return tr
+}
+
+// buildQueueSummary reads queue.json and returns a QueueSummary. The caller's
+// ctx is threaded through to queue.Load. A nil error with Present=false means
+// queue.json is absent (no active queue, not an error); a non-nil error is a
+// genuine load failure to be surfaced per DC-007.
+func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (QueueSummary, error) {
+	q, err := queue.Load(ctx, projectDir)
+	if err != nil {
+		return QueueSummary{Present: false}, err
+	}
+	if q == nil {
+		return QueueSummary{Present: false}, nil
 	}
 	sum := QueueSummary{
 		Present: true,
@@ -127,11 +171,13 @@ func buildQueueSummary(_ context.Context, projectDir string, lim Limits) QueueSu
 
 	cap := lim.maxActiveRuns()
 	if cap > 0 && len(dispatched) > cap {
+		// DC-005: record the omission count so it can flow into out.Truncated.
+		sum.ActiveRunsOmitted = len(dispatched) - cap
 		sum.ActiveRuns = dispatched[:cap]
 	} else {
 		sum.ActiveRuns = dispatched
 	}
-	return sum
+	return sum, nil
 }
 
 // buildRecentEvents collects events via ScanAfter and applies truncation.

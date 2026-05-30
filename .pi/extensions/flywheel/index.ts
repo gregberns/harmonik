@@ -13,8 +13,8 @@
 //
 // What this version does NOT yet do (intentionally — wired in as harmonik grows):
 //   - call `harmonik digest` to build the status sheet (Go subcommand to be built)
+//     NOTE: tui-panel.ts already calls harmonik digest --json for widget rendering (CL-082)
 //   - manage the loop-singleton lock
-//   - render the custom TUI status panel
 //
 // Design source of truth:
 //   /Users/gb/.kerf/projects/gregberns-harmonik/flywheel/04-design/self-managing-architecture.md
@@ -28,6 +28,7 @@ import { prepareNextTurn, type Digest, type WakeEvent } from "./router.js";
 import { BudgetTracker } from "./budget.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
 import { createEventBridge, type Harness } from "./bridge.js";
+import { createDigestPanel, type DigestPanel } from "./tui-panel.js";
 
 const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
@@ -43,6 +44,7 @@ const digest: Digest = { exception_flag: false };
 // Initialized in activate() so env vars / config are available.
 let budgetTracker: BudgetTracker;
 let circuitBreaker: CircuitBreaker;
+let digestPanel: DigestPanel;
 
 export default function activate(pi: ExtensionAPI) {
   const budgetUsdPerDay = process.env["FLYWHEEL_BUDGET_USD_PER_DAY"]
@@ -54,6 +56,7 @@ export default function activate(pi: ExtensionAPI) {
 
   budgetTracker = new BudgetTracker({ limitUsd: budgetUsdPerDay, eventsFile: EVENTS_FILE });
   circuitBreaker = new CircuitBreaker({ thresholdPerMin: circuitThreshold, eventsFile: EVENTS_FILE });
+  digestPanel = createDigestPanel(REPO_ROOT);
 
   // ── prepareNextTurn: model stratification + budget + circuit-breaker ──
   pi.on("prepareNextTurn", async (event, _ctx) => {
@@ -99,17 +102,28 @@ export default function activate(pi: ExtensionAPI) {
   const harness: Harness = {
     abort: () => (pi as unknown as { abort?: () => void }).abort?.(),
     prompt: (msg) => pi.sendUserMessage?.(msg),
-    followUp: (msg) => pi.sendUserMessage?.(msg, { deliverAs: "followUp" }),
+    followUp: (msg) => {
+      pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
+      // Refresh the TUI panel so the new event lands within 1s.
+      digestPanel.refresh();
+    },
   };
   const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT });
   bridge.start();
 
-  // Resource-leak fix: tear the bridge down on session shutdown so the
-  // `harmonik subscribe` child process, the watchdog setInterval, and any
-  // pending reconnect timer are released. Without this, an extension
-  // reload/shutdown leaks the subprocess + interval (reviewer flag: resource-leak).
+  // ── TUI digest panel (CL-082) ─────────────────────────────────────────
+  // Start on first session_start; ctx.ui may be absent in non-interactive
+  // (RPC/print) modes — guard with hasUI.
+  pi.on("session_start", async (_event, ctx) => {
+    if (ctx.hasUI) {
+      digestPanel.start(ctx.ui);
+    }
+  });
+
+  // Resource-leak fix: tear the bridge and panel down on session shutdown.
   pi.on("session_shutdown", async () => {
     bridge.stop();
+    digestPanel.stop();
   });
 
   // ── note ─────────────────────────────────────────────────────────────

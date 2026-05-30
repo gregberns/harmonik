@@ -31,6 +31,11 @@ type RunHandle struct {
 	// BeadID is the bead being executed during this run.
 	BeadID core.BeadID
 
+	// Labels holds the raw bead label strings copied from BeadRecord.Labels at
+	// registration time. Used by StaleWatcher to apply per-bead overrides (e.g.
+	// "stale_after=<seconds>").
+	Labels []string
+
 	// WorktreePath is the absolute path of the git worktree created for this
 	// run (workspace-model.md §4.1 WM-003).
 	WorktreePath string

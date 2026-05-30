@@ -636,6 +636,12 @@ func ExportedStalewatchScan(w *StaleWatcher, ctx context.Context) {
 	w.scan(ctx)
 }
 
+// ExportedBeadStaleAfter exposes the package-private beadStaleAfter helper for
+// unit testing.
+func ExportedBeadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
+	return beadStaleAfter(labels, defaultAfter)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────

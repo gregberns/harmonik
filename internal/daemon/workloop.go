@@ -1094,6 +1094,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// claim the next bead immediately (up to effectiveMax).
 		deps.runRegistry.Register(runID, &RunHandle{
 			BeadID:    beadID,
+			Labels:    beadRecord.Labels,
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)

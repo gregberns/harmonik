@@ -26,6 +26,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,6 +96,24 @@ type StaleWatcher struct {
 
 	mu     sync.Mutex
 	states map[core.RunID]*runStaleState
+}
+
+// beadStaleAfter parses a "stale_after=<seconds>" label from labels and
+// returns the corresponding duration. Returns defaultAfter when no such label
+// is present or the value is ≤0.
+func beadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
+	for _, l := range labels {
+		if !strings.HasPrefix(l, "stale_after=") {
+			continue
+		}
+		val := strings.TrimPrefix(l, "stale_after=")
+		secs, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || secs <= 0 {
+			return defaultAfter
+		}
+		return time.Duration(secs) * time.Second
+	}
+	return defaultAfter
 }
 
 // NewStaleWatcher creates a StaleWatcher from cfg. Call Subscribe before
@@ -211,8 +231,10 @@ func (w *StaleWatcher) checkRun(
 		// No events seen for this run yet. Initialise with empty lastEventAt so
 		// the payload carries consistent (both-empty) last_event fields. The age
 		// is computed from handle.StartedAt as the reference point.
+		//
+		// Apply per-bead stale_after=<seconds> label override if present.
 		st = &runStaleState{
-			nextEmitAfter: w.cfg.StaleAfter,
+			nextEmitAfter: beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
 		}
 		w.states[runID] = st
 	}

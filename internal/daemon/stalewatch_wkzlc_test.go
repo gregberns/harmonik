@@ -437,6 +437,93 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 	}
 }
 
+// TestBeadStaleAfter_LabelParsing verifies the beadStaleAfter helper parses the
+// "stale_after=<seconds>" label correctly across valid, invalid, and absent
+// cases.
+func TestBeadStaleAfter_LabelParsing(t *testing.T) {
+	def := 10 * time.Minute
+
+	cases := []struct {
+		name   string
+		labels []string
+		want   time.Duration
+	}{
+		{"no labels", nil, def},
+		{"empty labels", []string{}, def},
+		{"unrelated label", []string{"workflow:default", "priority:high"}, def},
+		{"valid override 1200s", []string{"stale_after=1200"}, 1200 * time.Second},
+		{"valid override 600s", []string{"stale_after=600"}, 600 * time.Second},
+		{"override with other labels", []string{"workflow:default", "stale_after=1800", "foo"}, 1800 * time.Second},
+		{"zero value falls back", []string{"stale_after=0"}, def},
+		{"negative falls back", []string{"stale_after=-1"}, def},
+		{"non-numeric falls back", []string{"stale_after=abc"}, def},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := daemon.ExportedBeadStaleAfter(tc.labels, def)
+			if got != tc.want {
+				t.Errorf("beadStaleAfter(%v, %v) = %v, want %v", tc.labels, def, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStaleWatch_PerBeadLabelOverride verifies that a run registered with a
+// "stale_after=<seconds>" label uses the label value as its stale threshold
+// instead of the watcher's default.
+func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
+	reg := daemon.NewRunRegistry()
+	runID := staleFixtureNewRunID(t)
+	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Register the run with a 20-minute per-bead override; watcher default is 10 min.
+	reg.Register(runID, &daemon.RunHandle{
+		BeadID:    "hk-testlabel",
+		Labels:    []string{"stale_after=1200"}, // 1200s = 20 min
+		StartedAt: startedAt,
+	})
+
+	// Advance clock to 10 min (past default, but not yet past per-bead override).
+	now := startedAt.Add(10 * time.Minute)
+
+	sfb := staleFixtureNewBus(t)
+	unsealed := eventbus.NewBusImpl()
+	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
+		SubscribeBus: unsealed,
+		Emitter:      sfb.bus,
+		Registry:     reg,
+		StaleAfter:   10 * time.Minute,
+		ScanInterval: time.Hour,
+		Now:          func() time.Time { return now },
+	})
+	if err := w.Subscribe(); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := unsealed.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// At 10 min the per-bead threshold (20 min) is not crossed → no emit.
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 0 {
+		t.Fatalf("at default threshold (10min): expected 0 events, got %d (per-bead override not applied)", n)
+	}
+
+	// Advance to 20 min — crosses the per-bead override → emit 1.
+	now = startedAt.Add(20 * time.Minute)
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	evts := sfb.collected()
+	if len(evts) != 1 {
+		t.Fatalf("at per-bead threshold (20min): expected 1 event, got %d", len(evts))
+	}
+	if evts[0].BeadID != "hk-testlabel" {
+		t.Errorf("bead_id: got %s want hk-testlabel", evts[0].BeadID)
+	}
+}
+
 // TestStaleWatch_PayloadValid verifies that the emitted RunStalePayload passes
 // its own Valid() check.
 func TestStaleWatch_PayloadValid(t *testing.T) {

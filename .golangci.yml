@@ -183,6 +183,14 @@ linters:
             - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/google/uuid"
 
+        # handler-contract/lifecycle: leaf package — stdlib only (HC-064..HC-067).
+        # No internal/ deps. Event emission wired in B4 (hk-q0uba follow-up).
+        handler-contract-lifecycle:
+          files: ["**/internal/handlercontract/lifecycle/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+
         # Adapters: core only.
         adapter-br:
           files: ["**/internal/adapter/br/**"]

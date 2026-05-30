@@ -2,14 +2,24 @@
   "name": "flywheel-orchestrator",
   "version": "0.0.1",
   "private": true,
-  "description": "Long-running self-managing harmonik orchestrator. v0 scaffold — see ../../README.md and /Users/gb/.kerf/projects/gregberns-harmonik/flywheel/04-design/self-managing-architecture.md for design.",
+  "description": "Long-running self-managing harmonik orchestrator. See specs/cognition-loop.md.",
   "type": "module",
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "vitest": "^2.1.9"
   }
 }

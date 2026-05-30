@@ -30,16 +30,21 @@ If any bead exists with that label → this reaction already fired. **Stop here.
 
 ### Step 3 — Count session failures for this bead
 
-```bash
-# Count how many run_failed events this bead has produced THIS session.
-# Use the watermark to bound the scan to the current session only.
-grep '"type":"run_failed"' .harmonik/events/events.jsonl \
-  | grep '"bead_id":"<bead_id>"' \
-  | wc -l
+The session-fail-count is maintained in the loop's **in-memory reaction ledger** — specifically
+the `reacted_ledger` entries with a `reaction:<event_id>` key for `run_failed` events on this
+bead accumulated since the loop started (or since the last recycle). Do NOT count from a raw
+JSONL grep: the JSONL contains all-time history and would count prior-session failures, causing
+spurious second-failure triggers on a bead that genuinely failed only once this session.
+
+Check the ledger for prior reactions on `<bead_id>`:
+```
+prior_failures = count of reacted_ledger entries where
+  reaction_key starts with "reaction:" AND the referenced event was
+  a run_failed for <bead_id> AND the event occurred after session_start_event_id
 ```
 
-- **Count = 1 (first failure this session):** proceed to Step 4.
-- **Count ≥ 2 (second+ failure this session):** proceed to Step 6 (investigate).
+- **prior_failures = 0 (first failure this session):** proceed to Step 4.
+- **prior_failures ≥ 1 (second+ failure this session):** proceed to Step 6 (investigate).
 
 ### Step 4 — Diagnose by failure class
 
@@ -58,13 +63,17 @@ grep '"type":"run_failed"' .harmonik/events/events.jsonl \
 git log origin/main --grep "Refs: <bead_id>" --oneline --max-count=1
 ```
 
-- **Non-empty:** the bead is already implemented. File a `close-stale` intent:
+- **Non-empty:** the bead is already implemented. Record a `defer` note so the daemon
+  (not the loop) closes it via the normal terminal-transition path:
 
   ```bash
-  br close <bead_id> --reason "Subsumed: landed as $(git log origin/main --grep 'Refs: <bead_id>' --format='%h' -1)"
+  sha=$(git log origin/main --grep "Refs: <bead_id>" --format="%h" -1)
+  note(kind="defer",
+       refs=["<bead_id>"],
+       text="close-stale: <bead_id> subsumed — landed as $sha on origin/main. Daemon should close.")
   ```
 
-  Record a `decision` note and stop.
+  Record a `decision` note and stop. Do NOT call `br close` directly.
 
 - **Empty:** the bead is genuinely unfinished. Mark it eligible for re-dispatch in the next batch (no action needed now — `compose-batch` will pick it up via `kerf next`).
 
@@ -112,7 +121,7 @@ Do NOT re-dispatch the bead. Instead:
 
 After completing this skill:
 - A reaction note exists in `.harmonik/cognition/notes.jsonl`.
-- The bead is either: marked for re-dispatch (first failure), closed as stale (landed), or blocked pending investigation (second failure).
+- The bead is either: marked for re-dispatch (first failure), a defer note filed for stale-close (landed), or blocked pending investigation (second failure).
 - The `reaction:<event_id>` label exists on the relevant bead (idempotency guard for replay).
 
 ## Do NOT

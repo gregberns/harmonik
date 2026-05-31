@@ -2,13 +2,15 @@ package main
 
 // run.go — `harmonik run <bead-id>` subcommand implementation.
 //
-// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2 + hk-cebjc):
+// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2 + hk-cebjc + hk-b3wqd):
 //  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref, --param, --dry-run/--plan-only.
 //  2. Resolve br binary via PATH.
 //  3. Validate every bead exists and is in a claimable state (open/ready).
 //  3a. [--dry-run] Print intended spawns and exit 0 — no state changes, no daemon.
+//  3b. [daemon up] Submit beads to the running daemon via queue-submit socket RPC
+//      and block until group completion (hk-b3wqd — submit-to-existing-daemon path).
 //  4. Guard against an existing active queue (QM-027).
-//  5. Construct a wave queue (one group, N items) and persist it to .harmonik/queue.json.
+//  5. Construct a stream/wave queue (one group, N items) and persist it to .harmonik/queue.json.
 //  6. Start the daemon with a context cancelled when the queue exits (drain or failure).
 //  7. Return 0 on success, 1 on failure, 2 on unexpected state, 5 on pidfile lock.
 //
@@ -39,11 +41,11 @@ package main
 //
 //	0  — all beads reached SUCCESS terminal
 //	1  — at least one bead failed, or argument/validation/daemon error
-//	2  — unexpected queue state after daemon exit (diagnostic)
-//	5  — pidfile locked (another harmonik instance is running)
+//	2  — unexpected queue state after daemon exit (diagnostic; inline-daemon path only)
+//	5  — pidfile locked (inline-daemon path only; submit-to-daemon path avoids this)
 //
 // Spec ref: specs/queue-model.md §2.3, §3.1 QM-001, §QM-027.
-// Bead ref: hk-icecw, hk-8jh26, hk-w3cp1, hk-boiwe, hk-hiqrl, hk-qo9pq.
+// Bead ref: hk-icecw, hk-8jh26, hk-w3cp1, hk-boiwe, hk-hiqrl, hk-qo9pq, hk-b3wqd.
 
 import (
 	"context"
@@ -464,6 +466,27 @@ func runBeadSubcommand(subArgs []string) int {
 		return 0
 	}
 
+	// hk-b3wqd: if a daemon is already running, submit beads to it via the
+	// queue-submit socket RPC instead of starting a competing daemon instance
+	// (which would collide on the pidfile lock and exit 5). This lets N
+	// concurrent `harmonik run` invocations share one persistent daemon.
+	if isDaemonUp(projectDir) {
+		var sealedParams map[string]string
+		if len(templateParams) > 0 {
+			sealedParams = templateParams
+		}
+		return runBeadSubcommandViaDaemon(
+			projectDir,
+			beadIDs,
+			itemWorkflowMode,
+			itemWorkflowRef,
+			extraContext,
+			sealedParams,
+			resolveGroupKind(subArgs),
+			notifyWriter,
+		)
+	}
+
 	// --- Construct a wave queue (one group, N items) and persist it ---
 
 	// Seal templateParams into queue items (WG-045 / hk-55zv2).
@@ -835,8 +858,10 @@ FLAGS
 EXIT CODES
   0   All beads succeeded (or --dry-run plan printed)
   1   At least one bead failed, or argument/validation error
-  2   Unexpected queue state (diagnostic)
-  5   Another harmonik instance is already running (pidfile locked)
+  2   Unexpected queue state (diagnostic; inline-daemon path only)
+  5   Another harmonik instance is already running (inline-daemon path only;
+      when a daemon is detected via daemon.sock, beads are submitted to it
+      instead, avoiding the collision — exit 5 is not returned in that case)
 
 EXAMPLES
   harmonik run hk-abc123

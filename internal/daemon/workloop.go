@@ -349,6 +349,13 @@ type workLoopDeps struct {
 	// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
 	// Bead ref: hk-ry8q1.
 	operatorPauseCtrl *OperatorPauseController
+
+	// noAutoPull, when true, disables the br-ready fallback poll path so the
+	// work loop only dispatches items that arrive via the queue surface.
+	// Sourced from Config.NoAutoPull; see that field's godoc for rationale.
+	//
+	// Bead ref: hk-exd7m.
+	noAutoPull bool
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -473,8 +480,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil,     // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		staleBlockerCloser:  adapter, // hk-rnsjs: auto-close stale blockers on claim failure
+		queueStore:          nil,            // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		staleBlockerCloser:  adapter,        // hk-rnsjs: auto-close stale blockers on claim failure
+		noAutoPull:          cfg.NoAutoPull, // hk-exd7m: queue-only mode for flywheel topology
 	}, nil
 }
 
@@ -845,6 +853,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		var beadID core.BeadID
 		if queueItemIndex < 0 {
+			// No-auto-pull gate (hk-exd7m): when --no-auto-pull is set, suppress the
+			// br-ready fallback path entirely so the daemon only dispatches work that
+			// arrives via the queue surface (harmonik queue submit / append).  This is
+			// the queue-only mode required by the flywheel topology (CL-013/070/071)
+			// where a Pi cognition loop curates dispatch timing.
+			if deps.noAutoPull {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
+			}
+
 			// Operator-pause gate for the br-ready path (hk-ry8q1): when the daemon
 			// is operator-paused, hold dispatch without claiming any bead. The queue
 			// path is already gated via QueueStatusPausedByDrain.

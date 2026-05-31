@@ -377,6 +377,16 @@ EXAMPLES
 	var maxConcurrentFlag int
 	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")
 
+	// --no-auto-pull: disable the br-ready fallback poll so the daemon only
+	// dispatches work submitted via 'harmonik queue submit / append'.
+	// Required by the flywheel topology (CL-013/070/071) where a Pi cognition
+	// loop curates dispatch via 'harmonik queue append'. Without this flag the
+	// daemon self-seeds from br ready, conflicting with Pi-controlled dispatch.
+	// Default false preserves the existing backward-compatible behaviour.
+	// Bead ref: hk-exd7m.
+	var noAutoPullFlag bool
+	flag.BoolVar(&noAutoPullFlag, "no-auto-pull", false, "disable br-ready fallback; only dispatch work arriving via the queue surface")
+
 	flag.Usage = harmonikUsage
 	flag.Parse()
 
@@ -484,6 +494,7 @@ EXAMPLES
 		BrPath:           brPath,
 		JSONLLogPath:     jsonlLogPath,
 		MaxConcurrent:    maxConcurrentFlag,
+		NoAutoPull:       noAutoPullFlag,   // hk-exd7m: queue-only mode for flywheel topology
 		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
 		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash: commitHash,       // stamped via -ldflags at build time (hk-mz0x4)

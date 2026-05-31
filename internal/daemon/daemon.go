@@ -277,6 +277,24 @@ type Config struct {
 	// Bead ref: hk-5dewt.
 	SkipBrHistoryRotation bool
 
+	// NoAutoPull, when true, disables the br-ready fallback poll path in the
+	// work loop so the daemon only dispatches work that arrives via the queue
+	// surface (harmonik queue submit / append).  When false (the default), the
+	// work loop falls back to polling `br ready` whenever no queue is loaded,
+	// preserving backward-compatible single-bead dispatch.
+	//
+	// Use this when the flywheel topology (CL-013/070/071) is active and a Pi
+	// cognition loop drives dispatch via `harmonik queue append` — in that mode
+	// the daemon must NOT self-seed from br ready because Pi controls dispatch
+	// timing.  Without this flag the only workaround is to keep `br ready`
+	// empty or pre-seed a paused queue, both of which are fragile.
+	//
+	// The composition root (cmd/harmonik/main.go) exposes this as --no-auto-pull.
+	// The zero value (false) preserves the existing backward-compatible behaviour.
+	//
+	// Bead ref: hk-exd7m.
+	NoAutoPull bool
+
 	// QueueStore, when non-nil, is used directly instead of creating a fresh
 	// QueueStore inside daemon.Start.  The caller retains the pointer and can
 	// inspect queue status after Start returns (Fix 2 of hk-8jh26).

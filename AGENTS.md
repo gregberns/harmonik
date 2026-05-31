@@ -25,7 +25,7 @@ The main-thread context window is precious — protect it. Inline investigation 
 
 ## On batch failure
 
-When a `harmonik run` batch returns failures:
+When a submitted batch returns failures (a group reaches complete-with-failures, or `harmonik subscribe` reports `run_failed`):
 1. Read the failure class from `.harmonik/events/events.jsonl` (`no_commit`, `context_cancelled`, etc.).
 2. If the **same bead failed twice** this session → dispatch an investigator sub-agent; do NOT re-dispatch the bead.
 3. If a **new failure class** → file a bead, dispatch an investigator.
@@ -34,49 +34,100 @@ When a `harmonik run` batch returns failures:
 
 ## Daily loop (canonical)
 
-**`harmonik run` is the default dispatcher for this project's own development.** The intended loop:
+**One persistent daemon per project is the dispatcher; agents dispatch by submitting beads to its queue.** harmonik now enforces a single daemon per project via the pidfile lock (hk-li14r — single-flywheel-per-project supervise lock, landed 2026-05-31). Multiple agents/orchestrators can run concurrently, but they MUST share that one daemon: it dispatches up to N beads concurrently in isolated worktrees, merges to main **one-at-a-time** (so there are no merge races), and **auto-skips** any bead whose merge conflicts. That shared-queue handoff IS the multi-agent coordination mechanism — there is no manual agent-wrangling to do.
+
+### Start the daemon once
+
+Start a single background daemon in a detached tmux session, queue-only:
+
+```bash
+tmux new-session -d -s harmonik-daemon \
+  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent N'
+```
+
+- `--no-auto-pull` = **queue-only**: the daemon dispatches only work that arrives via the queue surface; it will NOT auto-drain `br ready`. This is the safe default after the 2026-05-30 credit-burn incident (auto-pull billed the API pool, not the subscription). Today it must be passed explicitly; **hk-8vy18** will flip `--no-auto-pull` to the default (with `--auto-pull` as the opt-in).
+- `--max-concurrent N` sets the concurrent-dispatch ceiling for the whole daemon. Use the disk/CPU knee (~4–5 wide on a 10-core box) — wider oversubscribes cores and can exhaust disk.
+- If a daemon is already up, `harmonik queue status` returns the live queue; do NOT start a second one (it will collide on the pidfile lock and exit code 5).
+
+### The loop
 
 1. `kerf next` — surface the prioritized work (ranked feed of beads with work-context).
-2. Pick a batch of 3–5 beads from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats" until the probes land).
-3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead. Review-loop is **on by default** (hk-g0ckv); pass `--no-review-loop` to opt out.
-4. While harmonik runs: queue the next batch, drain `kerf triage` untriaged items, file follow-ups from prior runs, review recently-merged commits.
-5. On exit: review outcomes, dispatch next batch.
+2. Pick a batch of beads from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats" until the probes land).
+3. **Submit them to the running daemon's queue** (see "Submitting work" below). The daemon spawns claude per bead, watches for completion, commits, merges to main one-at-a-time, pushes, and closes each bead. Review-loop is **on by default** (hk-g0ckv).
+4. While the daemon works: queue the next batch (append to the same queue), drain `kerf triage` untriaged items, file follow-ups from prior runs, review recently-merged commits.
+5. As groups complete: review outcomes, submit/append the next batch.
 
 **Sub-agent dispatch (via the Agent tool) is the EXCEPTION**, justified only when (a) you're fixing harmonik itself in a code path that breaks dispatch, (b) the change is ≤2 lines of typo/cross-reference cleanup, or (c) the work touches an untested workload class (see `docs/kerf-feedback/2026-05-19-phase2-readiness-audit.md`).
 
-Target: ≥75% of substantive commits per session land via `harmonik run`. If sub-agent dispatch is creeping above 25%, stop and audit why — that's a signal harmonik has new friction or you've drifted into batch-mind.
+Target: ≥75% of substantive commits per session land through the daemon queue. If sub-agent dispatch is creeping above 25%, stop and audit why — that's a signal harmonik has new friction or you've drifted into batch-mind.
 
-Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remains the planning surface for non-trivial NEW work (spec drafts, plan epics); kerf hands off beads, harmonik executes them.
+Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remains the planning surface for non-trivial NEW work (spec drafts, plan epics); kerf hands off beads, the daemon executes them.
 
-## Orchestrator wrappers for `harmonik run`
+### `harmonik run` is the legacy / solo-bootstrap path
 
-The orchestrator is a Claude Code session. When it dispatches `harmonik run` as a bash background task, the Bash tool only delivers ONE completion notification when the whole batch exits. For multi-bead runs (or any run >a few minutes) the orchestrator must run a **Claude Code Monitor** alongside to surface per-bead progress, hangs, and daemon failures. Without a Monitor, the orchestrator is blind from dispatch to batch-exit.
+`harmonik run --beads ...` does **not** submit to an existing daemon — it *becomes* the daemon for the duration of its beads, then exits when they finish. If a daemon is already up it collides on the pidfile lock and **exits code 5** (`pidfile locked`). So:
+
+- Use `harmonik run --beads ...` ONLY to bootstrap a one-shot solo batch when no daemon is running and you don't want a persistent one.
+- For all ongoing multi-agent work, run the persistent daemon above and submit to its queue.
+- In-flight gap: **hk-b3wqd** will make `harmonik run` submit-to-an-existing-daemon (instead of exit-5) so the two paths interoperate. Until it lands, treat `harmonik run` and "persistent daemon + submit" as mutually exclusive within a project.
+
+### Submitting work
+
+`harmonik queue submit <queue-file>` takes a JSON file shaped as a `QueueSubmitRequest` (struct: `internal/queue/types.go` — `QueueSubmitRequest` / `Group` / `Item`):
+
+```json
+{
+  "schema_version": 1,
+  "groups": [
+    {
+      "group_index": 0,
+      "kind": "stream",
+      "status": "pending",
+      "created_at": "2026-05-31T00:00:00Z",
+      "items": [
+        { "bead_id": "hk-aaa", "status": "pending" },
+        { "bead_id": "hk-bbb", "status": "pending" }
+      ]
+    }
+  ]
+}
+```
+
+```bash
+harmonik queue dry-run /tmp/batch.json     # validate without persisting (reports ledger-dep deferrals)
+harmonik queue submit  /tmp/batch.json     # accept; prints the daemon-minted queue_id
+harmonik queue status                      # inspect the live queue (returns the queue envelope)
+```
+
+- `kind: "stream"` groups accept mid-flight appends; `kind: "wave"` groups are immutable after submit. Use `stream` for the daily loop.
+- **Mid-flight adds:** `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` — e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`. Streams accept appends while pending or active.
+- Exit code 17 from any `queue` verb means the daemon is not running — start it first.
+- In-flight gaps: **hk-m9a7g** will let `submit` / `dry-run` accept `--beads hk-a,hk-b` directly so you no longer hand-author the JSON file; **hk-24xn1** — the daemon doesn't wake on submit/append when idle, so newly-submitted beads sit `pending` until the next workloop tick (it advances on its own; just don't expect instant pickup).
+
+## Monitoring the daemon
+
+Each agent is a Claude Code session that submits to the daemon and then needs per-bead progress, hangs, and daemon failures surfaced back to it. Submitting a batch returns only the `queue_id` — it does NOT block until the work finishes. So after submitting, run a **Claude Code Monitor** alongside; without one you are blind from submit to group-completion.
 
 ### Canonical pattern
 
-Use `harmonik subscribe` (hk-6ynv4, landed) — one process, NDJSON to stdout, server-side heartbeat so the orchestrator wakes periodically even if the daemon goes quiet:
+Use `harmonik subscribe` (hk-6ynv4, landed) — one process, NDJSON to stdout, server-side heartbeat so the agent wakes periodically even if the daemon goes quiet:
 
 ```bash
 # In a Monitor tool call:
 harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
 ```
 
-**Legacy tail-pair fallback** (use only if `harmonik subscribe` is unavailable):
+`subscribe` attaches to the running daemon, so one Monitor sees every bead the daemon dispatches regardless of which agent submitted it. Re-arm if it hits the Monitor timeout.
 
-1. **Dispatch in background:** `Bash(run_in_background=true)` with `harmonik run --beads id1,id2,... --notify-stream` (review-loop is on by default per hk-g0ckv; pass `--no-review-loop` only to opt out).
-2. **Monitor the bash task's stdout** (the file printed by the Bash-tool result) — that's where `--notify-stream` writes per-bead `[hk-XXX] success|failed` lines.
-3. **Monitor `.harmonik/events/events.jsonl`** — that's where the daemon writes typed events (`run_started`, `run_completed`, `run_failed`, `reviewer_verdict`, etc.). NOTE: there is no `daemon.log` file; ignore older guidance that says to grep one.
+**Events-tail fallback** (use only if `harmonik subscribe` is unavailable): tail the daemon's typed event log directly. There is no `daemon.log` file and no per-run output file to tail — `--notify-stream` belonged to the foreground `harmonik run` path, which the persistent daemon does not use.
 
 ```bash
 # In a Monitor tool call (timeout_ms = 3600000, persistent = false):
-( tail -F /private/tmp/claude-XXX/.../tasks/<bash-task-id>.output 2>/dev/null \
-    | grep --line-buffered -E "\[hk-[a-z0-9]+\] (success|failed)|ERROR|panic|fatal|FATAL" ) &
-( tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
-    | grep --line-buffered -E "run_completed|run_failed|merge_conflict|reviewer_verdict" ) &
-wait
+tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
+  | grep --line-buffered -E "run_completed|run_failed|run_stale|merge_conflict|reviewer_verdict"
 ```
 
-Each matched line becomes a notification to the orchestrator. The Monitor exits when both tail processes do (e.g., daemon dies). Re-arm if it hits the 1-hour timeout.
+`.harmonik/events/events.jsonl` is where the daemon writes typed events (`run_started`, `run_completed`, `run_failed`, `reviewer_verdict`, etc.). Each matched line becomes a notification. The Monitor exits when the tail does (e.g., daemon dies). Re-arm if it hits the 1-hour timeout.
 
 ### CWD discipline — never `cd` into a worktree
 
@@ -98,23 +149,23 @@ done
 
 ### Queue semantics — `wave` vs `stream`
 
-`harmonik run --beads` creates a `kind=stream` queue by default (hk-7nbey landed, v59). Stream queues accept appends mid-flight via `harmonik queue append --queue-id <uuid> <group> <bead-ids...>`. Pass `--wave` to opt into wave-mode, which does NOT accept appends. Daemon doesn't wake on submit if idle — remaining gap: hk-24xn1 (daemon wake-on-submit). Note: stream-mode enforces head-of-line blocking via `streamEligible()` — use `--wave` when you need true concurrent dispatch with `--max-concurrent > 1`.
+Each group in a submitted queue has a `kind`. **Use `kind: "stream"` for the daily loop** — stream groups accept mid-flight appends via `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>`. `kind: "wave"` groups are immutable after submit (no appends), but dispatch their whole set concurrently up to the daemon's `--max-concurrent`. Stream-mode enforces head-of-line blocking via `streamEligible()`, so a stream group dispatches its items in order; reach for a `wave` group when you need true concurrent dispatch of a fixed set with `--max-concurrent > 1`. Remaining gap: hk-24xn1 — the daemon doesn't wake on submit/append when idle, so newly-added beads sit `pending` until the next workloop tick.
 
 ### Appending to a running queue
 
-**Status (2026-05-26):** `harmonik run --beads` now creates `kind=stream` queues by default (hk-7nbey landed, v59). Mid-flight appends work via `harmonik queue append --queue-id <uuid> <group-index> <bead-ids...>`. Remaining gap: hk-24xn1 — daemon doesn't wake on `queue-submit` when idle, so appended beads sit `pending` until the next workloop tick.
+Mid-flight appends to a **stream** group: `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` (e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`). Streams accept appends while pending or active. Get the `queue_id` from the `submit` response or `harmonik queue status`. Remaining gap: hk-24xn1 — appended beads sit `pending` until the next workloop tick.
 
-**When using wave-mode (`--wave`):** Wave queues do NOT accept appends. Wait for the wave to drain, then dispatch a new `harmonik run --beads` batch.
+**Wave groups do NOT accept appends.** Wait for the wave to drain, then `harmonik queue submit` a new group (or submit a fresh stream group up front).
 
 The `extqueue` kerf work (status=ready) covers the full spec for this surface. See `specs/queue-model.md` for the normative wave/stream/append contract.
 
 ### Pre-flight checklist
 
-1. Rebuild harmonik first (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
-2. Pre-screen the batch (see above); drop already-landed beads.
-3. Choose `--max-concurrent` — use `--wave` when `--max-concurrent > 1` (stream-mode HOL blocks concurrent dispatch; hk-wx8z8 tracks parallel-run stability validation).
-4. Dispatch in background with `--notify-stream` (review-loop is default on per hk-g0ckv).
-5. Arm a Monitor running `harmonik subscribe` (or the tail-pair fallback if unavailable).
+1. Rebuild harmonik first (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that". Restart the daemon after rebuilding (kill the tmux session, re-launch) so it runs the new binary.
+2. Confirm the daemon is up: `harmonik queue status` (exit 17 = not running → start it per "Start the daemon once"). Never start a second daemon — it collides on the pidfile lock (exit 5).
+3. Pre-screen the batch (see above); drop already-landed beads.
+4. Build the `QueueSubmitRequest` JSON (stream group); `harmonik queue dry-run <file>` to validate, then `harmonik queue submit <file>`.
+5. Arm a Monitor running `harmonik subscribe` (or the events-tail fallback if unavailable).
 
 ### Post-flight: failure triage
 
@@ -135,7 +186,7 @@ For other hangs:
 1. Identify the stuck `run_id` from `.harmonik/queue.json` or the worktree listing.
 2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; daemon is stuck on the next step (merge, reviewer, push).
 3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired? Which expected ones did not?
-4. If implementer claude has already exited but daemon is hung: kill the harmonik PID (`pkill -f "harmonik run"`), ff-merge the worktree branch by hand, push, close bead. File a friction bead with the missing-event signature.
+4. If implementer claude has already exited but the daemon is hung: kill the harmonik daemon PID (`pkill -f "harmonik --project"`, or `harmonik run` if you bootstrapped via the legacy path), ff-merge the worktree branch by hand, push, close bead. File a friction bead with the missing-event signature. After killing, re-start the daemon per "Start the daemon once".
 
 ## Planning with kerf
 

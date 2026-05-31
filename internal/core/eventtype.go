@@ -602,3 +602,23 @@ const (
 	// Refs: hk-jtxnr (T-IMPL-010).
 	EventTypeGateDecisionRecorded EventType = "gate_decision_recorded"
 )
+
+// ---------------------------------------------------------------------------
+// §8.9 Cognition loop event types (cognition-loop.md)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeLoopObservedPhantomDone is the loop_observed_phantom_done event
+	// type.  Emitted by the cognition loop harness when a bead's Refs: trailer
+	// is present on origin/main (Condition 2 of CL-051 two-phase done) but no
+	// run_completed{success} terminal event has been observed for that bead
+	// (Condition 1 absent).  The harness MUST NOT act directly; it routes to
+	// Tier-2 reconciliation.
+	//
+	// Payload: {"bead_id": "<bead-id>"}
+	// Durability class: O (warning; reconstructible via CL-051 re-check).
+	//
+	// Spec ref: specs/cognition-loop.md §4.7 CL-051.
+	// Refs: hk-iht2w.
+	EventTypeLoopObservedPhantomDone EventType = "loop_observed_phantom_done"
+)

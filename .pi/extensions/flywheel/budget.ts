@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { RoutingConfig } from "./router.js";
 
 export interface BudgetConfig {
-  /** Daily cap in USD. Default: no limit (Infinity). */
+  /** Daily cap in USD. Infinity disables the budget ladder; callers should pass a finite value. */
   limitUsd: number;
   /** Path to events.jsonl for operator observability. */
   eventsFile: string;

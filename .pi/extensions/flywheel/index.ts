@@ -59,9 +59,13 @@ let circuitBreaker: CircuitBreaker;
 let digestPanel: DigestPanel;
 
 export default function activate(pi: ExtensionAPI) {
-  const budgetUsdPerDay = process.env["FLYWHEEL_BUDGET_USD_PER_DAY"]
-    ? parseFloat(process.env["FLYWHEEL_BUDGET_USD_PER_DAY"])
-    : Infinity;
+  const _budgetEnv = process.env["FLYWHEEL_BUDGET_USD_PER_DAY"];
+  // Default 20 USD/day to keep the downgrade+halt ladder active out of the box.
+  // Set FLYWHEEL_BUDGET_USD_PER_DAY=unlimited to opt out of the cap explicitly.
+  const budgetUsdPerDay =
+    _budgetEnv === "unlimited" ? Infinity
+    : _budgetEnv ? parseFloat(_budgetEnv)
+    : 20;
   const circuitThreshold = process.env["FLYWHEEL_CIRCUIT_THRESHOLD_PER_MIN"]
     ? parseFloat(process.env["FLYWHEEL_CIRCUIT_THRESHOLD_PER_MIN"])
     : 10;

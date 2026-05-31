@@ -93,9 +93,9 @@ func (s *S02PolicyEngine) Registry() Registry {
 // sequence using a pre-parsed set of ControlPoints.
 //
 // This method is the integration point between policy YAML loading (§4.7) and
-// the registry (CP-043/CP-044). At the current implementation stage the YAML
-// parsing pipeline (§4.7.CP-035) is not yet wired; callers may pass the
-// ControlPoints they have already constructed and validated.
+// the registry (CP-043/CP-044). CP-035 section validation is enforced by
+// S02Registrar.RegisterFromDocument; callers here pass already-constructed
+// ControlPoints.
 //
 // Registration rules enforced (delegated to MapRegistry.Register):
 //   - CP-001: structurally invalid ControlPoints fail registration.

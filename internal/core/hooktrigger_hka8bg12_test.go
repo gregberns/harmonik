@@ -172,7 +172,7 @@ func TestS02Registrar_AddHookTrigger_ExtendsTriggerSet(t *testing.T) {
 		t.Fatalf("AddHookTrigger: %v", err)
 	}
 
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Hooks: []PolicyHook{
 			{
@@ -182,7 +182,7 @@ func TestS02Registrar_AddHookTrigger_ExtendsTriggerSet(t *testing.T) {
 				Evaluator:      PolicyEvaluatorBlock{Mode: "mechanism", Expression: `true`},
 			},
 		},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Errorf("RegisterFromDocument with subsystem-added trigger: unexpected error: %v", err)
@@ -211,7 +211,7 @@ func TestCP013_UnrecognizedTriggerFailsRegistration(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Hooks: []PolicyHook{
 			{
@@ -221,7 +221,7 @@ func TestCP013_UnrecognizedTriggerFailsRegistration(t *testing.T) {
 				Evaluator:      PolicyEvaluatorBlock{Mode: "mechanism", Expression: `true`},
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(doc)
 	if err == nil {
@@ -255,7 +255,7 @@ func TestCP013_BaselineTriggerAccepted(t *testing.T) {
 			t.Parallel()
 
 			s := NewS02Registrar()
-			doc := PolicyDocument{
+			doc := s02MarkAllSectionsPresent(PolicyDocument{
 				Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 				Hooks: []PolicyHook{
 					{
@@ -266,7 +266,7 @@ func TestCP013_BaselineTriggerAccepted(t *testing.T) {
 						Evaluator:      PolicyEvaluatorBlock{Mode: "mechanism", Expression: `true`},
 					},
 				},
-			}
+			})
 
 			if err := s.RegisterFromDocument(doc); err != nil {
 				t.Errorf("RegisterFromDocument(trigger=%q): unexpected error: %v", trigger, err)
@@ -282,7 +282,7 @@ func TestCP013_EmptyTriggerFailsRegistration(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Hooks: []PolicyHook{
 			{
@@ -292,7 +292,7 @@ func TestCP013_EmptyTriggerFailsRegistration(t *testing.T) {
 				Evaluator:      PolicyEvaluatorBlock{Mode: "mechanism", Expression: `true`},
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(doc)
 	if err == nil {

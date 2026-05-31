@@ -24,10 +24,30 @@ import (
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
+// s02MarkAllSectionsPresent marks all seven CP-035 section presence flags on
+// a PolicyDocument that was constructed directly (not via ParsePolicyDocument).
+//
+// Production code always parses from YAML, so sectionPresence is populated by
+// ParsePolicyDocument. Tests that build PolicyDocument via struct literals must
+// call this helper to satisfy the CP-035 check in RegisterFromDocument.
+func s02MarkAllSectionsPresent(doc PolicyDocument) PolicyDocument {
+	doc.sectionPresence = policyDocumentSections{
+		metadata:        true,
+		roles:           true,
+		freedomProfiles: true,
+		gates:           true,
+		hooks:           true,
+		guards:          true,
+		budgets:         true,
+	}
+	return doc
+}
+
 // s02FixtureDocument returns a minimal, fully-valid PolicyDocument containing
-// one Gate, one Hook, one Guard, and one Budget.
+// one Gate, one Hook, one Guard, and one Budget, with all CP-035 section
+// presence flags set.
 func s02FixtureDocument() PolicyDocument {
-	return PolicyDocument{
+	return s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{
 			Name:          "test-policy",
 			Version:       "1.0.0",
@@ -76,7 +96,7 @@ func s02FixtureDocument() PolicyDocument {
 				ScopeTarget:      "*",
 			},
 		},
-	}
+	})
 }
 
 // s02FixtureApprovalGate returns a PolicyGate with subtype "approval-gate"
@@ -372,10 +392,10 @@ func TestS02Registrar_RegisterFromDocument_ApprovalGate(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Gates:    []PolicyGate{s02FixtureApprovalGate()},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -405,10 +425,10 @@ func TestS02Registrar_RegisterFromDocument_QualityGate(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Gates:    []PolicyGate{s02FixtureQualityGate()},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -438,10 +458,10 @@ func TestS02Registrar_RegisterFromDocument_CognitionGate(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Gates:    []PolicyGate{s02FixtureCognitionGate()},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -482,10 +502,10 @@ func TestS02Registrar_RegisterFromDocument_HookWithSubscriptionFilter(t *testing
 	}
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Hooks:    []PolicyHook{hook},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -522,10 +542,10 @@ func TestS02Registrar_RegisterFromDocument_GuardWithAppliesToNode(t *testing.T) 
 	}
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Guards:   []PolicyGuard{guard},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -634,7 +654,7 @@ func TestS02Registrar_RegisterFromDocument_DivergentBodyFails(t *testing.T) {
 
 	// Second document: same name "deploy-gate" but different attach_point
 	// → divergent body per CP-044.
-	divergentDoc := PolicyDocument{
+	divergentDoc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: doc.Metadata,
 		Gates: []PolicyGate{
 			{
@@ -647,7 +667,7 @@ func TestS02Registrar_RegisterFromDocument_DivergentBodyFails(t *testing.T) {
 				},
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(divergentDoc)
 	if err == nil {
@@ -668,7 +688,7 @@ func TestS02Registrar_RegisterFromDocument_UnknownEvaluatorModeGate(t *testing.T
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Gates: []PolicyGate{
 			{
@@ -678,7 +698,7 @@ func TestS02Registrar_RegisterFromDocument_UnknownEvaluatorModeGate(t *testing.T
 				Evaluator:   PolicyEvaluatorBlock{Mode: "invalid-mode"},
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(doc)
 	if err == nil {
@@ -695,7 +715,7 @@ func TestS02Registrar_RegisterFromDocument_InvalidAttachPoint(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Gates: []PolicyGate{
 			{
@@ -708,7 +728,7 @@ func TestS02Registrar_RegisterFromDocument_InvalidAttachPoint(t *testing.T) {
 				},
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(doc)
 	if err == nil {
@@ -725,7 +745,7 @@ func TestS02Registrar_RegisterFromDocument_InvalidBudgetResource(t *testing.T) {
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Budgets: []PolicyBudget{
 			{
@@ -735,7 +755,7 @@ func TestS02Registrar_RegisterFromDocument_InvalidBudgetResource(t *testing.T) {
 				Limit:    1000,
 			},
 		},
-	}
+	})
 
 	err := s.RegisterFromDocument(doc)
 	if err == nil {
@@ -752,7 +772,7 @@ func TestS02Registrar_RegisterFromDocument_BudgetWarningThresholdDefault(t *test
 	t.Parallel()
 
 	s := NewS02Registrar()
-	doc := PolicyDocument{
+	doc := s02MarkAllSectionsPresent(PolicyDocument{
 		Metadata: PolicyDocumentMeta{Name: "p", Version: "1", Author: "a", SchemaVersion: 1},
 		Budgets: []PolicyBudget{
 			{
@@ -764,7 +784,7 @@ func TestS02Registrar_RegisterFromDocument_BudgetWarningThresholdDefault(t *test
 				ScopeTarget:      "*",
 			},
 		},
-	}
+	})
 
 	if err := s.RegisterFromDocument(doc); err != nil {
 		t.Fatalf("RegisterFromDocument: %v", err)
@@ -856,5 +876,64 @@ func TestS02Registrar_ConstructedControlPointsAreValid(t *testing.T) {
 		if !cp.Valid() {
 			t.Errorf("ControlPoint{Name=%q, Kind=%q}.Valid() = false (CP-001)", cp.Name, cp.Kind)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CP-035: Required-section validation enforced at registration time
+// ---------------------------------------------------------------------------
+
+// TestS02Registrar_RegisterFromDocument_CP035_MissingSection verifies that
+// RegisterFromDocument rejects a PolicyDocument whose YAML source is missing
+// any one of the seven required top-level sections (CP-035). The error must
+// wrap ErrMissingPolicySection and the registry must remain empty.
+func TestS02Registrar_RegisterFromDocument_CP035_MissingSection(t *testing.T) {
+	t.Parallel()
+
+	for _, section := range requiredSections {
+		section := section
+		t.Run("missing_"+section, func(t *testing.T) {
+			t.Parallel()
+
+			// Parse a document with the target section absent (sectionPresence not set).
+			data := policyDocFixtureMissingSectionYAML(t, section)
+			doc, err := ParsePolicyDocument(data)
+			if err != nil {
+				t.Fatalf("ParsePolicyDocument: %v", err)
+			}
+
+			s := NewS02Registrar()
+			err = s.RegisterFromDocument(doc)
+			if err == nil {
+				t.Errorf("RegisterFromDocument: expected ErrMissingPolicySection for missing %q section, got nil", section)
+				return
+			}
+			if !errors.Is(err, ErrMissingPolicySection) {
+				t.Errorf("RegisterFromDocument: got %v, want error wrapping ErrMissingPolicySection", err)
+			}
+
+			// Registry must remain empty — rejected document must not partially register.
+			if all := s.Registry().All(); len(all) != 0 {
+				t.Errorf("registry has %d entries after CP-035 rejection, want 0", len(all))
+			}
+		})
+	}
+}
+
+// TestS02Registrar_RegisterFromDocument_CP035_AllSectionsPresent verifies
+// that a document parsed from YAML with all seven required sections present
+// passes RegisterFromDocument without error (CP-035 positive path).
+func TestS02Registrar_RegisterFromDocument_CP035_AllSectionsPresent(t *testing.T) {
+	t.Parallel()
+
+	data := policyDocFixtureValidYAML(t)
+	doc, err := ParsePolicyDocument(data)
+	if err != nil {
+		t.Fatalf("ParsePolicyDocument: %v", err)
+	}
+
+	s := NewS02Registrar()
+	if err := s.RegisterFromDocument(doc); err != nil {
+		t.Errorf("RegisterFromDocument: unexpected error for fully-valid document: %v", err)
 	}
 }

@@ -109,6 +109,9 @@ func (s *S02Registrar) Registry() Registry {
 // every constructed ControlPoint per §4.7.CP-038.
 //
 // Returns nil when all entries are registered successfully. Returns an error
+// wrapping [ErrMissingPolicySection] when any of the seven required top-level
+// YAML sections (metadata, roles, freedom_profiles, gates, hooks, guards,
+// budgets) was absent from the document source (CP-035). Returns an error
 // wrapping [ErrDivergentBody] when any entry conflicts with an already-
 // registered ControlPoint under the same name (CP-044). Returns an error
 // wrapping [ErrConstructControlPoint] when any entry cannot be constructed
@@ -118,6 +121,11 @@ func (s *S02Registrar) Registry() Registry {
 // Structural invalidity (cp.Valid() == false) returns [ErrInvalidControlPoint]
 // from the underlying MapRegistry.Register call.
 func (s *S02Registrar) RegisterFromDocument(doc PolicyDocument) error {
+	// CP-035: all seven required sections must be present in the YAML source.
+	if err := doc.ValidateSections(); err != nil {
+		return err
+	}
+
 	sv := doc.Metadata.SchemaVersion
 
 	for _, pg := range doc.Gates {

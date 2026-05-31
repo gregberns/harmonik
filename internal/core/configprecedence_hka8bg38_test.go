@@ -144,36 +144,62 @@ func TestResolvePolicyConfig_Deterministic(t *testing.T) {
 	}
 }
 
-// TestResolvePolicyConfig_MutatingLayerAfterResolveDoes NotAffectResult
-// verifies that post-resolve mutation of a layer's ExtraFields map does NOT
-// affect the resolved snapshot — the snapshot is independent of the layer maps
-// used to construct it.
+// TestResolvePolicyConfig_MutatingLayerAfterResolveDoesNotAffectResult
+// verifies that post-resolve mutation of any layer's ExtraFields map does NOT
+// affect the resolved snapshot, for both higher-precedence layers (OperatorPolicy)
+// and the lowest-precedence DefaultConfig layer.
 //
-// This is a structural sensor for the no-mid-run-reload invariant of CP-037:
-// if a higher-precedence layer is updated between operator pauses, the running
-// snapshot is unaffected because it was built from the layer state at the
-// moment ResolvePolicyConfig was called.
+// MergeConfigs deep-copies DefaultConfig.ExtraFields before applying
+// higher-precedence layers, and copies values (not map references) from every
+// higher-precedence layer. Both paths are exercised here so the docstring
+// accurately reflects what is proved.
+//
+// This is the structural sensor for the no-mid-run-reload invariant of CP-037:
+// a layer file update between operator pauses must not bleed into the frozen
+// snapshot that was handed to in-flight runs.
 func TestResolvePolicyConfig_MutatingLayerAfterResolveDoesNotAffectResult(t *testing.T) {
 	t.Parallel()
 
-	operatorFields := map[string]string{"knob": "original"}
-	layers := PolicyConfigLayers{
-		DefaultConfig:  PolicyConfig{SchemaVersion: 1},
-		OperatorPolicy: PolicyConfig{ExtraFields: operatorFields},
-	}
+	t.Run("operator_policy_mutation_isolated", func(t *testing.T) {
+		t.Parallel()
 
-	got := ResolvePolicyConfig(layers)
-	if got.ExtraFields["knob"] != "original" {
-		t.Fatalf("pre-mutation: knob = %q, want %q", got.ExtraFields["knob"], "original")
-	}
+		operatorFields := map[string]string{"knob": "original"}
+		layers := PolicyConfigLayers{
+			DefaultConfig:  PolicyConfig{SchemaVersion: 1},
+			OperatorPolicy: PolicyConfig{ExtraFields: operatorFields},
+		}
 
-	// Simulate an operator-policy file update between runs (only allowed at a
-	// pause boundary per CP-037). The resolved snapshot must not change.
-	operatorFields["knob"] = "mutated"
+		got := ResolvePolicyConfig(layers)
+		if got.ExtraFields["knob"] != "original" {
+			t.Fatalf("pre-mutation: knob = %q, want %q", got.ExtraFields["knob"], "original")
+		}
 
-	// The resolved snapshot was built by copying values; mutation of the source
-	// map must not reach the snapshot.
-	if got.ExtraFields["knob"] == "mutated" {
-		t.Errorf("post-mutation: knob = %q, want %q (snapshot must be independent of source maps)", got.ExtraFields["knob"], "original")
-	}
+		operatorFields["knob"] = "mutated"
+
+		if got.ExtraFields["knob"] == "mutated" {
+			t.Errorf("post-mutation: knob = %q, want %q (operator-policy mutation must not reach snapshot)", got.ExtraFields["knob"], "original")
+		}
+	})
+
+	t.Run("default_config_mutation_isolated", func(t *testing.T) {
+		t.Parallel()
+
+		// DefaultConfig.ExtraFields is non-nil. MergeConfigs deep-copies it so
+		// that later mutation of the source map does not reach the snapshot.
+		defaultFields := map[string]string{"base-knob": "base-original"}
+		layers := PolicyConfigLayers{
+			DefaultConfig: PolicyConfig{SchemaVersion: 1, ExtraFields: defaultFields},
+		}
+
+		got := ResolvePolicyConfig(layers)
+		if got.ExtraFields["base-knob"] != "base-original" {
+			t.Fatalf("pre-mutation: base-knob = %q, want %q", got.ExtraFields["base-knob"], "base-original")
+		}
+
+		defaultFields["base-knob"] = "base-mutated"
+
+		if got.ExtraFields["base-knob"] == "base-mutated" {
+			t.Errorf("post-mutation: base-knob = %q, want %q (default-config mutation must not reach snapshot — deep-copy required)", got.ExtraFields["base-knob"], "base-original")
+		}
+	})
 }

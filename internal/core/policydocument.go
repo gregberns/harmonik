@@ -422,7 +422,16 @@ type PolicyConfig struct {
 // Missing keys in a higher-precedence layer are filled from lower layers.
 func MergeConfigs(runtime, operatorPolicy, workflowDef, defaultConfig PolicyConfig) PolicyConfig {
 	// Build result bottom-up: start with lowest precedence, apply upward.
+	// Deep-copy ExtraFields from defaultConfig so the result map is independent
+	// of the source map; post-resolve mutation of defaultConfig.ExtraFields must
+	// not bleed into the returned snapshot (no-mid-run-reload invariant, CP-037).
 	result := defaultConfig
+	if len(defaultConfig.ExtraFields) > 0 {
+		result.ExtraFields = make(map[string]string, len(defaultConfig.ExtraFields))
+		for k, v := range defaultConfig.ExtraFields {
+			result.ExtraFields[k] = v
+		}
+	}
 
 	applyLayer := func(higher PolicyConfig) {
 		if higher.SchemaVersion != 0 {

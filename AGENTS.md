@@ -50,9 +50,16 @@ Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remain
 
 The orchestrator is a Claude Code session. When it dispatches `harmonik run` as a bash background task, the Bash tool only delivers ONE completion notification when the whole batch exits. For multi-bead runs (or any run >a few minutes) the orchestrator must run a **Claude Code Monitor** alongside to surface per-bead progress, hangs, and daemon failures. Without a Monitor, the orchestrator is blind from dispatch to batch-exit.
 
-### Canonical pattern (until `harmonik subscribe` lands — hk-6ynv4)
+### Canonical pattern
 
-Three pieces, always together:
+Use `harmonik subscribe` (hk-6ynv4, landed) — one process, NDJSON to stdout, server-side heartbeat so the orchestrator wakes periodically even if the daemon goes quiet:
+
+```bash
+# In a Monitor tool call:
+harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
+```
+
+**Legacy tail-pair fallback** (use only if `harmonik subscribe` is unavailable):
 
 1. **Dispatch in background:** `Bash(run_in_background=true)` with `harmonik run --beads id1,id2,... --notify-stream` (review-loop is on by default per hk-g0ckv; pass `--no-review-loop` only to opt out).
 2. **Monitor the bash task's stdout** (the file printed by the Bash-tool result) — that's where `--notify-stream` writes per-bead `[hk-XXX] success|failed` lines.
@@ -105,7 +112,7 @@ The `extqueue` kerf work (status=ready) covers the full spec for this surface. S
 2. Pre-screen the batch (see above); drop already-landed beads.
 3. Choose `--max-concurrent` — use `--wave` when `--max-concurrent > 1` (stream-mode HOL blocks concurrent dispatch; hk-wx8z8 tracks parallel-run stability validation).
 4. Dispatch in background with `--notify-stream` (review-loop is default on per hk-g0ckv).
-5. Arm a Monitor tailing the bash stdout file AND `.harmonik/events/events.jsonl`.
+5. Arm a Monitor running `harmonik subscribe` (or the tail-pair fallback if unavailable).
 
 ### Post-flight: failure triage
 
@@ -127,17 +134,6 @@ For other hangs:
 2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; daemon is stuck on the next step (merge, reviewer, push).
 3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired? Which expected ones did not?
 4. If implementer claude has already exited but daemon is hung: kill the harmonik PID (`pkill -f "harmonik run"`), ff-merge the worktree branch by hand, push, close bead. File a friction bead with the missing-event signature.
-
-### Future: `harmonik subscribe` (hk-6ynv4)
-
-The current "tail two files" pattern is a stop-gap. Once `harmonik subscribe` lands, the canonical pattern becomes:
-
-```bash
-# In a Monitor tool call:
-harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
-```
-
-— one process, NDJSON to stdout, server-side heartbeat (default 60s) so the orchestrator wakes periodically even if the daemon goes quiet. Until that ships, use the tail-pair pattern above.
 
 ## Planning with kerf
 

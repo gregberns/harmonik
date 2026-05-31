@@ -1105,7 +1105,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
+			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
@@ -1133,7 +1133,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
 	beadID := beadRecord.BeadID
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -1260,13 +1260,70 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitDone(true, rlResult.summary)
 			}
 		} else {
-			// Review-loop failed (no_commit, error, etc.) — reopen the bead so
-			// it can be retried, rather than closing it with a failed status.
-			reopenTID, _ := deps.tidGen.Next()
-			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, rlResult.summary); reopenErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, reopenErr)
+			// Review-loop failed. For queue-dispatched runs with needsAttention=true,
+			// increment the per-item ReviewLoopFailures counter and check whether the
+			// global retry-spend budget is exhausted (hk-c1ah6).
+			//
+			// Budget exhaustion (ReviewLoopFailures >= MaxReviewLoopFailures) closes
+			// the bead permanently with needsAttention=true so that it does NOT
+			// re-enter the ready queue. Without this cap, a structurally-stuck bead
+			// burns a full Claude session on every re-dispatch indefinitely.
+			budgetExhausted := false
+			if rlResult.needsAttention && queueID != nil && queueGroupIndex != nil &&
+				queueItemIndex >= 0 && deps.queueStore != nil {
+				lq := deps.queueStore.LockForMutation()
+				liveQ := lq.Queue()
+				if liveQ != nil {
+				outerBudgetLoop:
+					for gi := range liveQ.Groups {
+						if liveQ.Groups[gi].GroupIndex != *queueGroupIndex {
+							continue
+						}
+						if queueItemIndex < len(liveQ.Groups[gi].Items) &&
+							liveQ.Groups[gi].Items[queueItemIndex].BeadID == beadID {
+							liveQ.Groups[gi].Items[queueItemIndex].ReviewLoopFailures++
+							if liveQ.Groups[gi].Items[queueItemIndex].ReviewLoopFailures >= queue.MaxReviewLoopFailures {
+								budgetExhausted = true
+								liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = "review_loop_budget_exhausted"
+							}
+							break outerBudgetLoop
+						}
+					}
+					lq.SetQueue(liveQ)
+					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist rl-failures queueID=%s: %v\n",
+							liveQ.QueueID, persistErr)
+					}
+				}
+				lq.Done()
 			}
-			emitDone(false, rlResult.summary)
+
+			if budgetExhausted {
+				// Budget exhausted: permanently close the bead with needs-attention
+				// rather than reopening it (hk-c1ah6).
+				exhaustedSummary := fmt.Sprintf("review_loop_budget_exhausted (max=%d failures): %s",
+					queue.MaxReviewLoopFailures, rlResult.summary)
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
+					beadID, runID.String())
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", exhaustedSummary)
+				budgetTID, _ := deps.tidGen.Next()
+				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, budgetTID, beadID, true); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop budget-exhausted) %s: %v (falling back to reopen)\n",
+						beadID, closeErr)
+					reopenTID, _ := deps.tidGen.Next()
+					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, exhaustedSummary)
+				} else {
+					emitBeadClosed(ctx, deps.bus, runID, beadID)
+				}
+				emitDone(false, exhaustedSummary)
+			} else {
+				// Budget not exhausted (or no queue): reopen the bead for retry.
+				reopenTID, _ := deps.tidGen.Next()
+				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, rlResult.summary); reopenErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, reopenErr)
+				}
+				emitDone(false, rlResult.summary)
+			}
 		}
 		return
 

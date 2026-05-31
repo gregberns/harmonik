@@ -20,6 +20,18 @@ const schemaVersion = 1
 // Bead ref: hk-6pspu; design: docs/design/workloop-bounded-retry.md.
 const MaxItemAttempts = 3
 
+// MaxReviewLoopFailures is the maximum number of review-loop runs that may
+// fail with needs-attention (no_progress, cap_hit, blocked, or error) for a
+// single queue item before the item is permanently closed instead of reopened.
+// Caps the total Claude-session spend for a bead that is structurally stuck.
+//
+// Each failure corresponds to a full review-loop run (up to reviewLoopIterationCap
+// implementer+reviewer cycles), so MaxReviewLoopFailures=2 allows at most
+// 2 × reviewLoopIterationCap paid sessions before the bead is triage-flagged.
+//
+// Bead ref: hk-c1ah6.
+const MaxReviewLoopFailures = 2
+
 // QueueStatus is the queue-level lifecycle state (specs/queue-model.md §2.2).
 type QueueStatus string
 
@@ -169,6 +181,16 @@ type Item struct {
 	//
 	// Bead ref: hk-6pspu.
 	LastFailureReason string `json:"last_failure_reason,omitempty"`
+
+	// ReviewLoopFailures counts how many review-loop runs for this item have
+	// terminated with needs-attention (no_progress, cap_hit, blocked, or error).
+	// Monotonic within a queue lifetime. When this reaches MaxReviewLoopFailures,
+	// beadRunOne permanently closes the bead (CloseBead needsAttention=true)
+	// instead of reopening it for another retry, capping total session spend.
+	// Zero-value is backward-compatible with existing queue.json files.
+	//
+	// Bead ref: hk-c1ah6.
+	ReviewLoopFailures int `json:"review_loop_failures,omitempty"`
 }
 
 // Group is one execution group within the Queue envelope

@@ -335,6 +335,20 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-rnsjs.
 	staleBlockerCloser lifecycle.BeadCat3cCloser
+
+	// operatorPauseCtrl, when non-nil, is checked at every br-ready dispatch
+	// to gate dispatch when the daemon is in an operator-pause state. When nil
+	// the gate is disabled (backward-compat for tests that do not exercise
+	// operator-pause behaviour). Production wires the daemon-singleton
+	// OperatorPauseController.
+	//
+	// The queue path is already gated via QueueStatusPausedByDrain (set by
+	// QueueOperatorEventConsumer on operator_pause_status). This field gates
+	// the br-ready fallback path which has no queue-status check.
+	//
+	// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
+	// Bead ref: hk-ry8q1.
+	operatorPauseCtrl *OperatorPauseController
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -831,6 +845,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		var beadID core.BeadID
 		if queueItemIndex < 0 {
+			// Operator-pause gate for the br-ready path (hk-ry8q1): when the daemon
+			// is operator-paused, hold dispatch without claiming any bead. The queue
+			// path is already gated via QueueStatusPausedByDrain.
+			//
+			// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
+			if deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused() {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
+			}
+
 			// No queue active — fall back to br-ready poll.
 			readyRecords, err := deps.brAdapter.Ready(ctx)
 			if err != nil {

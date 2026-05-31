@@ -173,9 +173,14 @@ var compositionRootWirings = []wiringEntry{
 		wires:    "queue.NewHandlerAdapter(brAdapter, projectDir, qs, bus) → socket listener",
 	},
 	{
-		symbol:   "RunSocketListener",
-		callSite: "daemon.go:830",
-		wires:    "daemon.sock → hookStore + queueHandler (goroutine)",
+		symbol:   "NewOperatorPauseController",
+		callSite: "daemon.go (inside ProjectDir block)",
+		wires:    "bus → opPauseCtrl (operator-pause/resume socket ops + br-ready gate; hk-ry8q1)",
+	},
+	{
+		symbol:   "RunSocketListenerFull",
+		callSite: "daemon.go (inside ProjectDir block)",
+		wires:    "daemon.sock → hookStore + queueHandler + opPauseCtrl (goroutine)",
 	},
 	{
 		symbol:   "deps",

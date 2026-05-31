@@ -33,6 +33,11 @@ const (
 	// Spec ref: operator-nfr.md §4.3 ON-007 – ON-010.
 	CommandPause CommandName = "pause"
 
+	// CommandResume — `harmonik resume` clears the paused state and resumes
+	// bead dispatch.
+	// Spec ref: operator-nfr.md §4.3 ON-007 – ON-010.
+	CommandResume CommandName = "resume"
+
 	// CommandStop — `harmonik stop` initiates graceful or immediate daemon
 	// shutdown.
 	// Spec ref: operator-nfr.md §4.7 ON-027.
@@ -157,6 +162,15 @@ var CommandExitCodeSets = []CommandExitCodeSet{
 		Codes: []int{
 			1,  // generic-failure
 			16, // operator-control-invalid-state
+			17, // multi-daemon-target-missing
+		},
+	},
+	{
+		Command: CommandResume,
+		// resume clears the paused state; it fails when the target is
+		// unresolvable.
+		Codes: []int{
+			1,  // generic-failure
 			17, // multi-daemon-target-missing
 		},
 	},

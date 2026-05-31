@@ -888,6 +888,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 	}
 
+	// opPauseCtrl is the daemon-singleton OperatorPauseController. Constructed
+	// inside the ProjectDir block (where the bus is available and Sealed) and
+	// consumed by both the socket listener (handles operator-pause/resume ops)
+	// and the workloop (br-ready dispatch gate). Declared here so both blocks
+	// share the same variable scope.
+	//
+	// Bead ref: hk-ry8q1.
+	var opPauseCtrl *OperatorPauseController
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -930,17 +939,21 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			}
 		}
 
+		// Construct the OperatorPauseController so the socket listener can handle
+		// operator-pause / operator-resume ops (hk-ry8q1). The controller emits
+		// lifecycle events on the bus; must be constructed after Seal so the bus
+		// is ready to deliver events.
+		//
+		// Bead ref: hk-ry8q1.
+		opPauseCtrl = NewOperatorPauseController(bus)
+
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
 		// channel to avoid goroutine leaks; error is discarded per the same
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			if queueHandler != nil {
-				socketDone <- RunSocketListenerWithSubscribe(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, queueHandler)
-			} else {
-				socketDone <- RunSocketListenerWithSubscribe(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub)
-			}
+			socketDone <- RunSocketListenerFull(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}
@@ -984,6 +997,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Inject the HandlerPauseController so the work loop can gate dispatch
 		// on handler pause state (hk-m0k0a).
 		deps.handlerPauseController = handlerPauseCtrl
+
+		// Inject the OperatorPauseController so the workloop can gate br-ready
+		// dispatch when an operator pause is active (hk-ry8q1). nil when
+		// ProjectDir was not set (unit-test mode without a socket).
+		deps.operatorPauseCtrl = opPauseCtrl
 
 		// Inject the shared RunRegistry so the work loop and the
 		// HandlerPausePolicyGoroutine operate on the same in-flight snapshot.

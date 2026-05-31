@@ -236,6 +236,15 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 // RunSocketListenerWithSubscribe is RunSocketListener with an optional
 // SubscribeHandler. When sub is nil, "subscribe" ops return an error response.
 func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, qh ...QueueHandler) error {
+	return RunSocketListenerFull(ctx, sockPath, h, hr, sub, nil, qh...)
+}
+
+// RunSocketListenerFull is RunSocketListenerWithSubscribe with an additional
+// OperatorControlHandler for operator-pause and operator-resume ops. When oh
+// is nil, those ops return an error response.
+//
+// Bead ref: hk-ry8q1.
+func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, qh ...QueueHandler) error {
 	if err := removeStaleSocket(sockPath); err != nil {
 		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
 	}
@@ -272,7 +281,7 @@ func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h Requ
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh)
 	}
 }
 
@@ -290,7 +299,7 @@ func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h Requ
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -416,6 +425,32 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		}
 		sub.HandleSubscribe(ctx, conn, subReq)
 		return // suppress SocketResponse write; conn is closed by defer
+
+	// -----------------------------------------------------------------------
+	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
+	// -----------------------------------------------------------------------
+
+	case "operator-pause":
+		if oh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
+			break
+		}
+		if err := oh.HandleOperatorPause(ctx); err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-pause: %v", err)}
+		} else {
+			resp = SocketResponse{Ok: true}
+		}
+
+	case "operator-resume":
+		if oh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
+			break
+		}
+		if err := oh.HandleOperatorResume(ctx); err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-resume: %v", err)}
+		} else {
+			resp = SocketResponse{Ok: true}
+		}
 
 	default:
 		resp = SocketResponse{

@@ -51,12 +51,16 @@ func runSuperviseSubcommand(args []string) int {
 		return supervisecmd.RunRestart(subArgs, os.Stdout, os.Stderr)
 	case "logs":
 		return supervisecmd.RunLogs(subArgs, os.Stdout, os.Stderr)
+	case "pause":
+		return supervisecmd.RunPause(subArgs, os.Stdout, os.Stderr)
+	case "resume":
+		return supervisecmd.RunResume(subArgs, os.Stdout, os.Stderr)
 	case "_shim":
 		// Internal subcommand: runs inside the flywheel tmux pane.
 		return supervisecmd.RunShim(subArgs, os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr,
-			"harmonik supervise: unrecognised verb %q; verbs are: start, stop, status, attach, restart, logs\n",
+			"harmonik supervise: unrecognised verb %q; verbs are: start, stop, status, attach, restart, logs, pause, resume\n",
 			verb)
 		return 2
 	}
@@ -74,12 +78,14 @@ VERBS
   attach   Attach terminal to the flywheel tmux session
   restart  Stop and restart the supervisor (re-reads config.json)
   logs     Capture recent flywheel pane output
+  pause    Pause daemon dispatch (no new beads dispatched; in-flight complete)
+  resume   Resume daemon dispatch after a pause
 
 EXIT CODES
    0  Success
    1  Argument or operational error
    2  Unrecognised verb
-  17  Daemon not running (start/restart)
+  17  Daemon not running (start/restart/pause/resume)
   25  Supervisor already running (start)
 
 EXAMPLES
@@ -88,4 +94,6 @@ EXAMPLES
   harmonik supervise logs --lines 500
   harmonik supervise attach
   harmonik supervise stop
+  harmonik supervise pause
+  harmonik supervise resume
 `

@@ -301,19 +301,24 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
       processedEvent(event.event_id, `deterministic:${event.type}`);
       emitCognitionEvent(repoRoot, { type: "deterministic_reaction", event_type: event.type, event_id: event.event_id });
       // CL-071: slot freed → eager refill (fire-and-forget).
-      if (event.type === "run_completed" || event.type === "run_canceled") {
+      // run_canceled is wake_llm per wake-filter.ts and is handled below.
+      if (event.type === "run_completed") {
         triggerEagerRefill(event);
       }
       return;
     }
 
-    // CL-071/072 guard #3: record bead failure for failed events before waking model.
-    if (event.type === "run_failed" || event.type === "run_canceled") {
+    // CL-071: slot freed on run_failed/run_canceled → eager refill (fire-and-forget).
+    // CL-072 guard #3: record failure only for run_failed; cancellations are
+    // operator actions, not bead failures, so they must not count toward the
+    // failed-twice threshold.
+    if (event.type === "run_failed") {
       const failedBeadId = (event.payload as { bead_id?: string } | undefined)?.bead_id;
       if (failedBeadId && dispatcher) {
         dispatcher.recordBeadFailure(failedBeadId);
       }
-      // CL-071: slot freed → eager refill (fire-and-forget).
+    }
+    if (event.type === "run_failed" || event.type === "run_canceled") {
       triggerEagerRefill(event);
     }
 
@@ -341,10 +346,16 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
       triggerType: event.type as import("./dispatcher.js").SlotReleaseTrigger,
       triggeringEventId: event.event_id,
       beadId,
-      onWakeModel: (reason: string) => {
-        // CL-073: model woken because kerf next empty or failed-twice halt.
+      onWakeModel: (reason: string, context: import("./dispatcher.js").WakeModelContext) => {
+        // CL-073: model woken — build turn with kerf next output so the model
+        // has context to decide between wait / escalate / br create / reprioritize.
         emitCognitionEvent(repoRoot, { type: "eager_refill_wake_model", reason, event_id: event.event_id });
-        harness.followUp(`[harmonik-bridge] CL-073: queue empty or refill halted (${reason}). Compose next batch.`);
+        const kerfSection = context.kerfNextRaw?.trim()
+          ? `\n\nkerf next output:\n${context.kerfNextRaw.trim()}`
+          : "";
+        harness.followUp(
+          `[harmonik-bridge] CL-073: queue empty or refill halted (${reason}). Compose next batch.${kerfSection}`
+        );
       },
       onCognitionEvent: (record) => emitCognitionEvent(repoRoot, record),
     }).catch((err) => {

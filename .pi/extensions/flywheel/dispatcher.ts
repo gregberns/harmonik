@@ -40,7 +40,13 @@ export interface ActiveQueueInfo {
  * Override in tests to avoid spawning real processes.
  */
 export interface DispatcherDeps {
-  kerfNextBeads: (repoRoot: string) => Promise<string[]>;
+  /**
+   * Runs kerf next and returns {beads, raw}.
+   * beads: ordered list of bead IDs from `kerf next --format=json --only=bead`.
+   * raw: raw JSON output string; passed to onWakeModel so the caller can build a
+   * CL-073 turn with context (spec §4.9 CL-073: turn MUST include kerf next output).
+   */
+  kerfNextBeads: (repoRoot: string) => Promise<{ beads: string[]; raw: string }>;
   readActiveQueue: (repoRoot: string) => ActiveQueueInfo | null;
   gitCheck: (repoRoot: string, beadId: string) => Promise<boolean>;
   /** First-fill: submit a new stream queue. Returns {queueId, ok}. */
@@ -57,14 +63,24 @@ export interface DispatcherOptions {
   kerfBin?: string;
 }
 
+/** Context passed to onWakeModel so the caller can build a CL-073 turn with kerf output. */
+export interface WakeModelContext {
+  /** Raw kerf next output (JSON string), if kerf ran successfully. */
+  kerfNextRaw?: string;
+}
+
 export interface SlotReleasedOpts {
   triggerType: SlotReleaseTrigger;
   /** UUIDv7 event_id from the triggering event (idempotency key). */
   triggeringEventId: string;
   /** bead_id from event payload, when present. */
   beadId?: string;
-  /** Called when harness decides the model should be woken (CL-073). */
-  onWakeModel: (reason: string) => void;
+  /**
+   * Called when harness decides the model should be woken (CL-073).
+   * context.kerfNextRaw carries the raw kerf next output for inclusion in
+   * the turn so the model has context to decide what to do next.
+   */
+  onWakeModel: (reason: string, context: WakeModelContext) => void;
   /** Pipe cognition events back to the caller (bridge emits them to cognition-events.jsonl). */
   onCognitionEvent: (record: Record<string, unknown>) => void;
 }
@@ -82,9 +98,13 @@ export interface Dispatcher {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function spawnCapture(cmd: string, args: string[]): Promise<{ stdout: string; code: number }> {
+function spawnCapture(
+  cmd: string,
+  args: string[],
+  spawnOpts?: { cwd?: string },
+): Promise<{ stdout: string; code: number }> {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...spawnOpts });
     let stdout = "";
     proc.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.on("exit", (code) => resolve({ stdout, code: code ?? 1 }));
@@ -95,21 +115,24 @@ function spawnCapture(cmd: string, args: string[]): Promise<{ stdout: string; co
 // ── Production dep factory functions ─────────────────────────────────────────
 
 function makeKerfNextBeads(kerfBin: string): DispatcherDeps["kerfNextBeads"] {
-  return async (repoRoot: string): Promise<string[]> => {
-    const { stdout, code } = await spawnCapture(kerfBin, [
-      "next", "--format=json", "--only=bead",
-    ]);
-    if (code !== 0 || !stdout.trim()) return [];
+  return async (repoRoot: string): Promise<{ beads: string[]; raw: string }> => {
+    const { stdout, code } = await spawnCapture(
+      kerfBin,
+      ["next", "--format=json", "--only=bead"],
+      { cwd: repoRoot },
+    );
+    if (code !== 0 || !stdout.trim()) return { beads: [], raw: stdout };
     try {
       type KerfItem = { kind?: string; bead_id?: string; id?: string };
       const parsed = JSON.parse(stdout) as { items?: KerfItem[] } | KerfItem[];
       const items: KerfItem[] = Array.isArray(parsed) ? parsed : ((parsed as { items?: KerfItem[] }).items ?? []);
-      return items
+      const beads = items
         .filter((it) => !it.kind || it.kind === "bead")
         .map((it) => it.bead_id ?? it.id ?? "")
         .filter(Boolean);
+      return { beads, raw: stdout };
     } catch {
-      return [];
+      return { beads: [], raw: stdout };
     }
   };
 }
@@ -258,19 +281,22 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
 
       // 1. kerf next --format=json --only=bead (CL-071 §1)
       let candidates: string[];
+      let kerfNextRaw = "";
       try {
-        candidates = await kerfNextBeads(repoRoot);
+        const result = await kerfNextBeads(repoRoot);
+        candidates = result.beads;
+        kerfNextRaw = result.raw;
       } catch (err) {
         onCognitionEvent({ type: "eager_refill_kerf_error", error: String(err), triggering_event_id: triggeringEventId });
-        onWakeModel("kerf_error");
+        onWakeModel("kerf_error", {});
         return;
       }
 
       if (candidates.length === 0) {
-        // CL-073: empty queue → wake model.
+        // CL-073: empty queue → wake model with kerf output as context.
         appendDispatchLog({ triggering_event_id: triggeringEventId, result: "empty_queue" });
         onCognitionEvent({ type: "eager_refill_kerf_empty", triggering_event_id: triggeringEventId });
-        onWakeModel("empty_queue");
+        onWakeModel("empty_queue", { kerfNextRaw });
         return;
       }
 
@@ -305,6 +331,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
             picked_instead: null,
           });
           onCognitionEvent({ type: "eager_refill_skipped", candidate_bead: cand, skipped_reason: "already_landed", triggering_event_id: triggeringEventId });
+          // CL-072 guard #2: emit deferred close-stale-bead intent so the model
+          // can close the orphaned open bead at the next judgment turn.
+          onCognitionEvent({ type: "deferred_close_stale_bead_intent", bead_id: cand, triggering_event_id: triggeringEventId });
           continue;
         }
 
@@ -317,7 +346,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
             picked_instead: null,
           });
           onCognitionEvent({ type: "eager_refill_halt_failed_twice", bead_id: cand, triggering_event_id: triggeringEventId });
-          onWakeModel("failed_twice_halt");
+          onWakeModel("failed_twice_halt", { kerfNextRaw });
           return;
         }
 
@@ -331,7 +360,7 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         // All candidates screened out.
         appendDispatchLog({ triggering_event_id: triggeringEventId, result: "all_candidates_screened" });
         onCognitionEvent({ type: "eager_refill_all_screened", triggering_event_id: triggeringEventId });
-        onWakeModel("empty_queue");
+        onWakeModel("empty_queue", { kerfNextRaw });
         return;
       }
 

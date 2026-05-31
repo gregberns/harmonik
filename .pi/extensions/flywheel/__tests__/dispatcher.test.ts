@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { createDispatcher, type DispatcherDeps, type ActiveQueueInfo } from "../dispatcher.js";
+import { createDispatcher, type DispatcherDeps, type WakeModelContext } from "../dispatcher.js";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -23,32 +23,36 @@ function uuidv7(seq: number): string {
   return `${ts.slice(0, 8)}-${ts.slice(8, 12)}-7000-8000-000000000000`;
 }
 
+// Helper: kerf dep that returns the given beads with an empty raw string.
+function kerfBeads(beads: string[]): DispatcherDeps["kerfNextBeads"] {
+  return async () => ({ beads, raw: JSON.stringify({ items: beads.map((b) => ({ kind: "bead", bead_id: b })) }) });
+}
+
 // Build a dispatcher with all injectable deps mocked to safe defaults.
-function makeDispatcher(
-  repoRoot: string,
-  deps: Partial<DispatcherDeps>,
-) {
+function makeDispatcher(repoRoot: string, deps: Partial<DispatcherDeps>) {
   return createDispatcher({ repoRoot, deps });
 }
 
 // Build opts for onSlotReleased with captured calls.
-function makeSlotOpts(overrides: {
-  triggeringEventId?: string;
-  beadId?: string;
-} = {}) {
+function makeSlotOpts(overrides: { triggeringEventId?: string; beadId?: string } = {}) {
   const wakeReasons: string[] = [];
+  const wakeContexts: WakeModelContext[] = [];
   const cognitionTypes: string[] = [];
   return {
     opts: {
       triggerType: "run_completed" as const,
       triggeringEventId: overrides.triggeringEventId ?? uuidv7(1),
       beadId: overrides.beadId,
-      onWakeModel: (reason: string) => { wakeReasons.push(reason); },
+      onWakeModel: (reason: string, ctx: WakeModelContext) => {
+        wakeReasons.push(reason);
+        wakeContexts.push(ctx);
+      },
       onCognitionEvent: (record: Record<string, unknown>) => {
         if (typeof record.type === "string") cognitionTypes.push(record.type);
       },
     },
     wakeReasons,
+    wakeContexts,
     cognitionTypes,
   };
 }
@@ -63,12 +67,8 @@ describe("CL-071: eager refill dispatches via queue append when queue active", (
   it("appends bead to active stream queue when kerf next returns a candidate", async () => {
     const appendedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-aaa"],
-      readActiveQueue: () => ({
-        queueId: "queue-uuid-1",
-        beadsInQueue: new Set<string>(),
-        hasStreamGroup: true,
-      }),
+      kerfNextBeads: kerfBeads(["hk-aaa"]),
+      readActiveQueue: () => ({ queueId: "queue-uuid-1", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async (_r, _qid, beadId) => { appendedBeads.push(beadId); return true; },
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -82,7 +82,7 @@ describe("CL-071: eager refill dispatches via queue append when queue active", (
 
   it("writes dispatch-log entry with method=queue_append on success", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-bbb"],
+      kerfNextBeads: kerfBeads(["hk-bbb"]),
       readActiveQueue: () => ({ queueId: "q2", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async () => true,
@@ -92,8 +92,7 @@ describe("CL-071: eager refill dispatches via queue append when queue active", (
     const { opts } = makeSlotOpts({ triggeringEventId: uuidv7(10) });
     await dispatcher.onSlotReleased(opts);
 
-    const logPath = join(dir, ".harmonik", "cognition", "dispatch-log.jsonl");
-    const content = readFileSync(logPath, "utf8");
+    const content = readFileSync(join(dir, ".harmonik", "cognition", "dispatch-log.jsonl"), "utf8");
     expect(content).toContain('"method":"queue_append"');
     expect(content).toContain('"dispatched_bead":"hk-bbb"');
     expect(content).toContain(`"triggering_event_id":"${uuidv7(10)}"`);
@@ -101,7 +100,7 @@ describe("CL-071: eager refill dispatches via queue append when queue active", (
 
   it("emits eager_refill_dispatched cognition event on success", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-ccc"],
+      kerfNextBeads: kerfBeads(["hk-ccc"]),
       readActiveQueue: () => ({ queueId: "q3", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async () => true,
@@ -123,7 +122,7 @@ describe("CL-071: first-fill dispatches via queue submit when no active queue", 
   it("submits a new queue when no active queue exists", async () => {
     const submittedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-first"],
+      kerfNextBeads: kerfBeads(["hk-first"]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async (_r, beadId) => { submittedBeads.push(beadId); return { queueId: "new-q", ok: true }; },
@@ -138,7 +137,7 @@ describe("CL-071: first-fill dispatches via queue submit when no active queue", 
 
   it("writes dispatch-log entry with method=queue_submit", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-submit-bead"],
+      kerfNextBeads: kerfBeads(["hk-submit-bead"]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async () => ({ queueId: "q-new", ok: true }),
@@ -161,7 +160,7 @@ describe("CL-073: wake model when kerf next empty", () => {
 
   it("wakes model with empty_queue reason when kerf next returns []", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => [],
+      kerfNextBeads: kerfBeads([]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -176,7 +175,7 @@ describe("CL-073: wake model when kerf next empty", () => {
 
   it("emits eager_refill_kerf_empty cognition event", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => [],
+      kerfNextBeads: kerfBeads([]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -191,7 +190,7 @@ describe("CL-073: wake model when kerf next empty", () => {
 
   it("wakes model when all candidates are pre-screened out", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-in-q"],
+      kerfNextBeads: kerfBeads(["hk-in-q"]),
       readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set(["hk-in-q"]), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -203,6 +202,22 @@ describe("CL-073: wake model when kerf next empty", () => {
 
     expect(wakeReasons).toContain("empty_queue");
   });
+
+  it("passes kerfNextRaw in wake context so caller can build CL-073 turn", async () => {
+    const dispatcher = makeDispatcher(dir, {
+      kerfNextBeads: async () => ({ beads: [], raw: '{"items":[]}' }),
+      readActiveQueue: () => null,
+      gitCheck: async () => false,
+      queueSubmit: async () => ({ queueId: null, ok: false }),
+      queueAppend: async () => false,
+    });
+
+    const { opts, wakeContexts } = makeSlotOpts();
+    await dispatcher.onSlotReleased(opts);
+
+    expect(wakeContexts[0]).toBeDefined();
+    expect(wakeContexts[0].kerfNextRaw).toBe('{"items":[]}');
+  });
 });
 
 describe("CL-072 guard #1: already-in-queue skip", () => {
@@ -213,12 +228,8 @@ describe("CL-072 guard #1: already-in-queue skip", () => {
   it("skips candidate already in queue and falls through to next", async () => {
     const appendedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-inq", "hk-fresh"],
-      readActiveQueue: () => ({
-        queueId: "q1",
-        beadsInQueue: new Set(["hk-inq"]),
-        hasStreamGroup: true,
-      }),
+      kerfNextBeads: kerfBeads(["hk-inq", "hk-fresh"]),
+      readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set(["hk-inq"]), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async (_r, _qid, beadId) => { appendedBeads.push(beadId); return true; },
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -232,7 +243,7 @@ describe("CL-072 guard #1: already-in-queue skip", () => {
 
   it("writes already_in_queue skip to dispatch-log", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-inq"],
+      kerfNextBeads: kerfBeads(["hk-inq"]),
       readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set(["hk-inq"]), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async () => true,
@@ -247,7 +258,7 @@ describe("CL-072 guard #1: already-in-queue skip", () => {
   });
 });
 
-describe("CL-072 guard #2: already-landed skip", () => {
+describe("CL-072 guard #2: already-landed skip + deferred close intent", () => {
   let dir: string;
   beforeEach(() => { dir = tmpDir(); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
@@ -255,7 +266,7 @@ describe("CL-072 guard #2: already-landed skip", () => {
   it("skips candidate that is already landed on origin/main", async () => {
     const appendedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-landed", "hk-fresh"],
+      kerfNextBeads: kerfBeads(["hk-landed", "hk-fresh"]),
       readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async (_r, beadId) => beadId === "hk-landed",
       queueAppend: async (_r, _qid, beadId) => { appendedBeads.push(beadId); return true; },
@@ -268,9 +279,24 @@ describe("CL-072 guard #2: already-landed skip", () => {
     expect(appendedBeads).toEqual(["hk-fresh"]);
   });
 
+  it("emits deferred_close_stale_bead_intent cognition event for already-landed bead (CL-072 §2)", async () => {
+    const dispatcher = makeDispatcher(dir, {
+      kerfNextBeads: kerfBeads(["hk-landed"]),
+      readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
+      gitCheck: async () => true,
+      queueAppend: async () => true,
+      queueSubmit: async () => ({ queueId: null, ok: false }),
+    });
+
+    const { opts, cognitionTypes } = makeSlotOpts();
+    await dispatcher.onSlotReleased(opts);
+
+    expect(cognitionTypes).toContain("deferred_close_stale_bead_intent");
+  });
+
   it("writes already_landed skip to dispatch-log", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-landed"],
+      kerfNextBeads: kerfBeads(["hk-landed"]),
       readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async () => true,
       queueAppend: async () => true,
@@ -292,7 +318,7 @@ describe("CL-072 guard #3: failed-twice halt", () => {
 
   it("halts refill and wakes model when candidate failed twice this session", async () => {
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-flaky"],
+      kerfNextBeads: kerfBeads(["hk-flaky"]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async () => ({ queueId: null, ok: false }),
@@ -312,7 +338,7 @@ describe("CL-072 guard #3: failed-twice halt", () => {
   it("does NOT halt when bead has failed only once", async () => {
     const submittedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-once"],
+      kerfNextBeads: kerfBeads(["hk-once"]),
       readActiveQueue: () => null,
       gitCheck: async () => false,
       queueSubmit: async (_r, beadId) => { submittedBeads.push(beadId); return { queueId: "q", ok: true }; },
@@ -337,7 +363,7 @@ describe("CL-055/056: idempotency guard", () => {
   it("skips dispatch when same event_id already processed", async () => {
     const appendedBeads: string[] = [];
     const dispatcher = makeDispatcher(dir, {
-      kerfNextBeads: async () => ["hk-idem"],
+      kerfNextBeads: kerfBeads(["hk-idem"]),
       readActiveQueue: () => ({ queueId: "q1", beadsInQueue: new Set<string>(), hasStreamGroup: true }),
       gitCheck: async () => false,
       queueAppend: async (_r, _qid, beadId) => { appendedBeads.push(beadId); return true; },
@@ -358,7 +384,6 @@ describe("CL-055/056: idempotency guard", () => {
 });
 
 describe("bridge integration: dispatcher called from run_completed (deterministic)", () => {
-  // These tests verify the bridge→dispatcher wiring via replayFile + injected dispatcher.
   let dir: string;
   beforeEach(() => { dir = tmpDir(); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
@@ -438,5 +463,44 @@ describe("bridge integration: dispatcher called from run_completed (deterministi
     expect(recordedFailures).toContain("hk-fail-bead");
     expect(slotReleasedCalls).toContain(eid);
   });
-});
 
+  it("bridge does NOT call recordBeadFailure for run_canceled (operator action, not bead failure)", async () => {
+    const { createEventBridge } = await import("../bridge.js");
+
+    const recordedFailures: string[] = [];
+    const slotReleasedCalls: string[] = [];
+    const mockDispatcher = {
+      recordBeadFailure: (beadId: string) => { recordedFailures.push(beadId); },
+      onSlotReleased: async (opts: { triggeringEventId: string }) => {
+        slotReleasedCalls.push(opts.triggeringEventId);
+      },
+    };
+
+    const harness = {
+      abort: async () => {},
+      prompt: (_m: string) => {},
+      followUp: (_m: string) => {},
+    };
+
+    const eid = uuidv7(70);
+    const replayPath = join(tmpdir(), `replay-cancel-${randomUUID()}.jsonl`);
+    writeFileSync(replayPath, JSON.stringify({
+      event_id: eid,
+      type: "run_canceled",
+      schema_version: 1,
+      payload: { bead_id: "hk-canceled-bead" },
+    }) + "\n");
+
+    const bridge = createEventBridge(harness, {
+      repoRoot: dir,
+      gitCheck: async () => false,
+      dispatcher: mockDispatcher,
+      debounceMs: 0,
+    });
+    await bridge.replayFile(replayPath);
+
+    // Slot released → onSlotReleased called, but failure NOT recorded.
+    expect(slotReleasedCalls).toContain(eid);
+    expect(recordedFailures).toHaveLength(0);
+  });
+});

@@ -114,12 +114,16 @@ type eagerRefillFixtureWakeTier struct {
 // CL-071/CL-073. Only the three event types that affect queue pressure are
 // listed; the full wake-filter table lives in CL-061.
 //
-// run_completed{success} → deterministic tier → triggers CL-071 eager-refill.
-// run_failed → deterministic tier (run_completed is deterministic; run_failed
+// run_completed{success} → deterministic tier → harness runs eager-refill in
+// pure code without waking the model (CL-071, CL-013).
 //
-//	triggers CL-071 refill too per "run_completed/run_failed/run_canceled").
-//
-// Both are mechanism-tagged per CL-013; they MUST NOT round-trip the model.
+// run_failed / run_canceled → wake-LLM tier (CL-061 §4.8: "run_failed" is
+// listed under Wake-LLM). The CL-071 eager-refill sub-path executes as part
+// of the Wake-LLM handler — the refill itself is mechanism-tagged (CL-013),
+// but the enclosing tier stays Wake-LLM because the harness also presents
+// failure context to the model for investigation. TriggersCL71 = true
+// captures that the slot is freed and the refill sub-path fires; Tier =
+// "wake-llm" captures the CL-061 classification of the enclosing event.
 //
 // Spec ref: cognition-loop.md §4.8 CL-061, §4.9 CL-071.
 var eagerRefillFixtureWakeFilter = []eagerRefillFixtureWakeTier{
@@ -131,13 +135,13 @@ var eagerRefillFixtureWakeFilter = []eagerRefillFixtureWakeTier{
 	},
 	{
 		EventType:    "run_failed",
-		Tier:         "deterministic",
+		Tier:         "wake-llm",
 		TriggersCL71: true,
-		SpecPhrase:   "run_completed",
+		SpecPhrase:   "run_failed",
 	},
 	{
 		EventType:    "run_canceled",
-		Tier:         "deterministic",
+		Tier:         "wake-llm",
 		TriggersCL71: true,
 		SpecPhrase:   "run_completed",
 	},
@@ -443,23 +447,55 @@ func TestCL061_WakeFilterClassifiesRunCompletedDeterministic(t *testing.T) {
 	t.Fatal("CL-061: run_completed not found in eagerRefillFixtureWakeFilter table")
 }
 
-// TestCL061_WakeFilterRunFailedTriggersCL71 verifies the fixture classifies
-// run_failed as a slot-release event that triggers CL-071 eager-refill.
+// TestCL061_WakeFilterRunFailedIsWakeLLM verifies the fixture classifies
+// run_failed as wake-LLM tier (CL-061) and as a slot-release trigger for
+// CL-071 eager-refill.
 //
-// Spec ref: cognition-loop.md §4.9 CL-071 — "On run_completed/run_failed/
-// run_canceled, harness MUST refill eagerly."
-func TestCL061_WakeFilterRunFailedTriggersCL71(t *testing.T) {
+// The tier is wake-LLM because failures require model investigation; the
+// refill sub-path within the handler is mechanism-tagged (CL-013/CL-071).
+//
+// Spec ref: cognition-loop.md §4.8 CL-061 — run_failed listed under Wake-LLM;
+// §4.9 CL-071 — "On run_completed/run_failed/run_canceled, harness MUST refill
+// eagerly."
+func TestCL061_WakeFilterRunFailedIsWakeLLM(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range eagerRefillFixtureWakeFilter {
 		if row.EventType == "run_failed" {
+			if row.Tier != "wake-llm" {
+				t.Errorf("CL-061: run_failed Tier = %q, want 'wake-llm' (CL-061 §4.8)", row.Tier)
+			}
 			if !row.TriggersCL71 {
-				t.Error("CL-061: run_failed.TriggersCL71 = false, want true (slot-release triggers eager-refill)")
+				t.Error("CL-061: run_failed.TriggersCL71 = false, want true (slot-release triggers eager-refill sub-path)")
 			}
 			return
 		}
 	}
 	t.Fatal("CL-061: run_failed not found in eagerRefillFixtureWakeFilter table")
+}
+
+// TestCL061_WakeFilterRunCanceledIsWakeLLM verifies the fixture classifies
+// run_canceled as wake-LLM tier (CL-061) and as a slot-release trigger for
+// CL-071 eager-refill.
+//
+// Spec ref: cognition-loop.md §4.8 CL-061 — new types default to Wake-LLM;
+// §4.9 CL-071 — "On run_completed/run_failed/run_canceled, harness MUST refill
+// eagerly."
+func TestCL061_WakeFilterRunCanceledIsWakeLLM(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range eagerRefillFixtureWakeFilter {
+		if row.EventType == "run_canceled" {
+			if row.Tier != "wake-llm" {
+				t.Errorf("CL-061: run_canceled Tier = %q, want 'wake-llm' (CL-061 §4.8 new-types-default-wake-llm)", row.Tier)
+			}
+			if !row.TriggersCL71 {
+				t.Error("CL-061: run_canceled.TriggersCL71 = false, want true (slot-release triggers eager-refill sub-path)")
+			}
+			return
+		}
+	}
+	t.Fatal("CL-061: run_canceled not found in eagerRefillFixtureWakeFilter table")
 }
 
 // ---------------------------------------------------------------------------

@@ -65,16 +65,6 @@ func clScenarioMakeRunID(t *testing.T) core.RunID {
 	return core.RunID(u)
 }
 
-// clScenarioMakeEventID returns a UUIDv7 for use as an EventID.
-func clScenarioMakeEventID(t *testing.T) core.EventID {
-	t.Helper()
-	u, err := uuid.NewV7()
-	if err != nil {
-		t.Fatalf("clScenarioMakeEventID: uuid.NewV7: %v", err)
-	}
-	return core.EventID(u)
-}
-
 // clScenarioMakeAccrualEvent builds a synthetic budget_accrual event with the
 // given CostBasis and CostUnits for the bytes-proxy ceiling arm (CL-090).
 func clScenarioMakeAccrualEvent(t *testing.T, basis core.CostBasis, units float64) []byte {

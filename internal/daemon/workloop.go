@@ -660,7 +660,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			var (
 				snapItemIdx            int = -1 // -1 → no item found (q==nil or nothing ready)
 				snapItemBeadID         core.BeadID
-				snapItemContext         string
+				snapItemContext        string
 				snapItemWFMode         string
 				snapItemWFRef          string
 				snapItemTemplateParams map[string]string
@@ -692,9 +692,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 					}
 					if activeGroupIdx < 0 {
-						// No active group yet (all pending or all terminal) — block indefinitely
-						// until a queue-submit wake signal or shutdown (PL-013 socket-block idle).
+						// No active group yet (all pending or all terminal). Before idle-
+						// waiting, bootstrap the first pending group: a freshly-submitted or
+						// freshly-loaded queue persists its group 0 as pending, and nothing
+						// else advances it (evaluateGroupAdvanceWithOutcome fires only on a
+						// PRIOR run's completion). Activate it here so the loop re-evaluates
+						// and dispatches its eligible items (hk-veoht). Release the read lock
+						// first — activateFirstPendingGroup takes its own write lock.
 						lq.Done()
+						if activateFirstPendingGroup(ctx, deps) {
+							// A pending group is now active — re-evaluate immediately so the
+							// next pass finds the active group and dispatches its items.
+							continue
+						}
+						// Nothing to activate (no pending group, or AdvanceGroup no-op) —
+						// block indefinitely until a queue-submit wake signal or shutdown
+						// (PL-013 socket-block idle).
 						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
@@ -844,9 +857,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				gIdx := snapGroupIndex
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
-				capturedExtraContext = snapItemContext          // hk-boiwe
-				capturedItemWFMode = snapItemWFMode              // hk-hiqrl
-				capturedItemWFRef = snapItemWFRef                // hk-qo9pq
+				capturedExtraContext = snapItemContext              // hk-boiwe
+				capturedItemWFMode = snapItemWFMode                 // hk-hiqrl
+				capturedItemWFRef = snapItemWFRef                   // hk-qo9pq
 				capturedItemTemplateParams = snapItemTemplateParams // hk-55zv2 / WG-045
 			}
 		}
@@ -1131,10 +1144,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		capturedQueueGroupIdx := queueGroupIdxFd
 		capturedItemIndex := queueItemIndex
 		// Per-item overrides captured here; empty for br-ready path.
-		capturedCtx := capturedExtraContext                    // hk-boiwe
-		capturedWFMode := capturedItemWFMode                   // hk-hiqrl
-		capturedWFRef := capturedItemWFRef                     // hk-qo9pq
-		capturedTmplParams := capturedItemTemplateParams       // hk-55zv2 / WG-045
+		capturedCtx := capturedExtraContext              // hk-boiwe
+		capturedWFMode := capturedItemWFMode             // hk-hiqrl
+		capturedWFRef := capturedItemWFRef               // hk-qo9pq
+		capturedTmplParams := capturedItemTemplateParams // hk-55zv2 / WG-045
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -2387,6 +2400,116 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// activateFirstPendingGroup — bootstrap the first group of a freshly-submitted
+// or freshly-loaded queue (hk-veoht).
+//
+// When a queue is submitted via `harmonik queue submit` (or loaded on boot),
+// its first group is persisted GroupStatusPending. The only other caller of
+// AdvanceGroup is evaluateGroupAdvanceWithOutcome, which fires on a PRIOR run's
+// completion — so absent any prior run, group 0 never transitions
+// pending → active and the work loop idle-waits forever (the "no active group"
+// branch). This helper closes that gap: when no group is active, it finds the
+// lowest-index non-terminal pending group and advances it pending → active
+// under the queue write lock, persists, and emits the resulting
+// queue_group_started event — matching evaluateGroupAdvanceWithOutcome's
+// persist-before-emit (QM-063) idiom exactly.
+//
+// Returns true when a group was activated (the caller should re-evaluate the
+// loop so it now finds an active group and dispatches its eligible items),
+// false otherwise (no pending group, or AdvanceGroup did not transition — e.g.
+// the queue is not active, so advancePending is a no-op per QM-031).
+//
+// Idempotency / safety:
+//   - Only the FIRST pending group is advanced; subsequent pending groups
+//     advance on completion as before (evaluateGroupAdvanceWithOutcome).
+//   - Already-active and terminal groups are skipped (the early return when an
+//     active group exists, plus AdvanceGroup's QM-032 terminal-absorb guard).
+//   - If AdvanceGroup leaves the group pending (no-op), no event is emitted and
+//     the queue is not persisted, so calling this repeatedly is harmless.
+//
+// Spec ref: specs/queue-model.md §5 QM-031 (pending → active); §8 QM-063
+// (persist-before-emit).
+// Bead ref: hk-veoht.
+func activateFirstPendingGroup(ctx context.Context, deps workLoopDeps) bool {
+	if deps.queueStore == nil {
+		return false
+	}
+
+	lq := deps.queueStore.LockForMutation()
+
+	q := lq.Queue()
+	if q == nil {
+		lq.Done()
+		return false
+	}
+
+	// Never bootstrap when a group is already active — that case is owned by the
+	// normal dispatch path. This guards against racing a concurrent advance.
+	for i := range q.Groups {
+		if q.Groups[i].Status == queue.GroupStatusActive {
+			lq.Done()
+			return false
+		}
+	}
+
+	// Locate the lowest-index non-terminal pending group.
+	groupPos := -1
+	for i := range q.Groups {
+		if q.Groups[i].Status == queue.GroupStatusPending {
+			groupPos = i
+			break
+		}
+	}
+	if groupPos < 0 {
+		// No pending group to activate (all terminal, or no groups).
+		lq.Done()
+		return false
+	}
+
+	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, q.QueueID, time.Now())
+	if advErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroup AdvanceGroup queueID=%s groupIndex=%d: %v\n",
+			q.QueueID, q.Groups[groupPos].GroupIndex, advErr)
+		lq.Done()
+		return false
+	}
+
+	// AdvanceGroup is a no-op for pending groups when the queue is not active
+	// (QM-031 guard in advancePending): newStatus stays pending and events is
+	// empty. Detect that and avoid a spurious persist/emit.
+	if newStatus != queue.GroupStatusActive {
+		lq.Done()
+		return false
+	}
+
+	q.Groups[groupPos].Status = newStatus
+
+	// Persist-before-emit (QM-063): on-disk state must reflect the pending →
+	// active transition before the queue_group_started event reaches the bus.
+	if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroup Persist queueID=%s: %v\n",
+			q.QueueID, err)
+		// Non-fatal: the in-memory transition stands so the loop can dispatch;
+		// the file resyncs on the next persist. Suppress events — they describe
+		// state not yet durable on disk (mirrors evaluateGroupAdvanceWithOutcome).
+		events = nil
+	}
+	lq.SetQueue(q)
+	lq.Done()
+
+	// Emit the queued events after lock release (mirrors
+	// evaluateGroupAdvanceWithOutcome; Bus.Emit is non-blocking per EV-002a).
+	for _, evt := range events {
+		raw, err := json.Marshal(evt.Payload)
+		if err != nil {
+			raw = evt.Payload
+		}
+		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
+	}
+
+	return true
+}
+
 // evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)
 // ─────────────────────────────────────────────────────────────────────────────
 

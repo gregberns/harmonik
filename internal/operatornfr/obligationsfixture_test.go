@@ -152,6 +152,33 @@ var obligationsFixtureConfigInventory = []obligationsFixtureConfigKnob{
 		ChangeEffective: "next-daemon-start",
 		SpecRef:         "operator-nfr.md §4.1 ON-004a",
 	},
+	// budget_usd_per_day and max_runs_per_day added per ON-004c/ON-004d
+	// (hk-0p9so — finite default + unlimited opt-out).
+	{
+		// budget_usd_per_day caps the unified meter summing Pi turns AND
+		// daemon-spawned claude session cost. The default MUST be finite
+		// (recommended 20 USD); unlimited is an explicit opt-out via the
+		// "unlimited" string value or empty env. Highest precedence layer is
+		// the runtime flag --budget-usd-per-day (tier 1 of 3).
+		//
+		// Spec ref: operator-nfr.md §4.1 ON-004c.
+		Name:            "budget_usd_per_day",
+		PrecedenceLayer: "runtime-override",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.1 ON-004c",
+	},
+	{
+		// max_runs_per_day is the per-day max-runs ceiling (count of
+		// run_started events since the last day-boundary rollover). It is the
+		// loss-proof backstop alongside the USD cap; its default MUST be
+		// finite. Precedence mirrors ON-004c: runtime flag > env > built-in.
+		//
+		// Spec ref: operator-nfr.md §4.1 ON-004d.
+		Name:            "max_runs_per_day",
+		PrecedenceLayer: "runtime-override",
+		ChangeEffective: "next-daemon-start",
+		SpecRef:         "operator-nfr.md §4.1 ON-004d",
+	},
 }
 
 // TestON003_StartupCatalogCoverageAgainstTaxonomy verifies that every entry in

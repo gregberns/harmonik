@@ -8,7 +8,7 @@ package daemon
 //   - compiled tier-3 defaults per agent type (defaultModelEntries).
 //   - ResolveModelPreference: the EM-012b 4-tier precedence walk.
 //
-// Judgment calls (hk-bfvk7):
+// Judgment calls (hk-bfvk7, hk-c5oxy):
 //   - Tier-3 defaults live here, adjacent to the validator functions and the
 //     resolution function; this avoids a separate file for a small static map.
 //   - Tier-1 conflict detection emits bead_label_conflict per EM-012a precedent
@@ -17,6 +17,11 @@ package daemon
 //   - mtime invalidation for .harmonik/config.yaml is NOT implemented; operators
 //     restart the daemon to reload (matches WorkflowModeDefault and other startup-
 //     time fields; documented in projectconfig.go as well).
+//   - Tier-2.5 env vars (HARMONIK_CLAUDE_MODEL / HARMONIK_CLAUDE_EFFORT) are read
+//     at ResolveModelPreference call time, not daemon startup.  This gives hot-
+//     reload for foreground sessions (export before the next dispatch) without a
+//     daemon restart.  Invalid values are silently skipped so a mis-set env var
+//     never breaks dispatch (walk continues to tier 3).
 //
 // Spec refs:
 //   - specs/handler-contract.md §4.10 HC-055a — ModelPreference descriptor invariants.
@@ -27,6 +32,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -112,6 +118,22 @@ func validateEffort(effort string) error {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tier-2.5: operator env-var defaults (hk-c5oxy)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// EnvModelKey is the env var name for the operator-level model default.
+// Checked at each ResolveModelPreference call (after tier-2 project config,
+// before tier-3 compiled defaults), so it takes effect on the next dispatch
+// without a daemon restart.  An invalid value is silently skipped and the walk
+// continues to tier 3.
+const EnvModelKey = "HARMONIK_CLAUDE_MODEL"
+
+// EnvEffortKey is the env var name for the operator-level effort default.
+// Same semantics as EnvModelKey.  Invalid effort values (not in the closed
+// enum) are silently skipped.
+const EnvEffortKey = "HARMONIK_CLAUDE_EFFORT"
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tier-3: compiled per-agent-type defaults (EM-012b §3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -147,13 +169,16 @@ const labelPrefixModel = "model:"
 const labelPrefixEffort = "effort:"
 
 // ResolveModelPreference resolves the (model, effort) pair for a run by walking
-// the EM-012b four-tier precedence list.  model and effort are resolved
-// independently: each walks all four tiers and uses the first non-empty result.
+// the EM-012b four-tier precedence list (plus tier-2.5 env vars per hk-c5oxy).
+// model and effort are resolved independently: each walks all tiers and uses
+// the first non-empty result.
 //
-//   - Tier 1: per-bead model:<alias> and effort:<level> labels.
-//   - Tier 2: per-project .harmonik/config.yaml (projectCfg.LookupAgent).
-//   - Tier 3: compiled default map (defaultModelEntries).
-//   - Tier 4: empty strings — handler applies its own tool default.
+//   - Tier 1:   per-bead model:<alias> and effort:<level> labels.
+//   - Tier 2:   per-project .harmonik/config.yaml (projectCfg.LookupAgent).
+//   - Tier 2.5: operator env vars HARMONIK_CLAUDE_MODEL / HARMONIK_CLAUDE_EFFORT
+//               (read at call time; invalid values silently skipped).
+//   - Tier 3:   compiled default map (defaultModelEntries).
+//   - Tier 4:   empty strings — handler applies its own tool default.
 //
 // Tier-1 conflict handling (EM-012b): multiple model:<alias> labels → treat as
 // absent + emit bead_label_conflict. Same for multiple effort:<level> labels.
@@ -213,6 +238,14 @@ func resolveModelField(
 		return cfgModel
 	}
 
+	// Tier 2.5: operator env var — read at call time for hot-reload (hk-c5oxy).
+	if envModel := os.Getenv(EnvModelKey); envModel != "" {
+		if validateModel(envModel) == nil {
+			return envModel
+		}
+		// Invalid shape: skip silently, fall through to tier 3.
+	}
+
 	// Tier 3: compiled default.
 	if e, ok := defaultModelEntries[agentType]; ok && e.model != "" {
 		return e.model
@@ -265,6 +298,14 @@ func resolveEffortField(
 	_, cfgEffort := projectCfg.LookupAgent(agentType)
 	if cfgEffort != "" {
 		return cfgEffort
+	}
+
+	// Tier 2.5: operator env var — read at call time for hot-reload (hk-c5oxy).
+	if envEffort := os.Getenv(EnvEffortKey); envEffort != "" {
+		if validateEffort(envEffort) == nil {
+			return envEffort
+		}
+		// Invalid value: skip silently, fall through to tier 3.
 	}
 
 	// Tier 3: compiled default.

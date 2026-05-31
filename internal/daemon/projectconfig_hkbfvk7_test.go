@@ -478,3 +478,112 @@ agents:
 		t.Error("expected bead_label_conflict event for unrecognised effort value; none emitted")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tier-2.5: env var default tests (hk-c5oxy)
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestResolveModelPreference_EnvVarModelDefault(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvModelKey, "haiku")
+
+	bus := &projCfgFixtureBus{}
+	cfg := daemon.ExportedProjectConfig{} // no project config
+
+	model, effort := daemon.ExportedResolveModelPreference(
+		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-model",
+	)
+
+	// Env var supplies model; compiled default still supplies effort.
+	if model != "haiku" {
+		t.Errorf("env model = %q; want %q", model, "haiku")
+	}
+	if effort != "medium" {
+		t.Errorf("env model test effort = %q; want %q (tier-3 default)", effort, "medium")
+	}
+}
+
+func TestResolveModelPreference_EnvVarEffortDefault(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvEffortKey, "high")
+
+	bus := &projCfgFixtureBus{}
+	cfg := daemon.ExportedProjectConfig{} // no project config
+
+	model, effort := daemon.ExportedResolveModelPreference(
+		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-effort",
+	)
+
+	// Env var supplies effort; compiled default still supplies model.
+	if model != "sonnet" {
+		t.Errorf("env effort test model = %q; want %q (tier-3 default)", model, "sonnet")
+	}
+	if effort != "high" {
+		t.Errorf("env effort = %q; want %q", effort, "high")
+	}
+}
+
+func TestResolveModelPreference_EnvVarLosesToProjectConfig(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvModelKey, "opus")
+	t.Setenv(daemon.EnvEffortKey, "max")
+
+	bus := &projCfgFixtureBus{}
+	root := projCfgFixtureDir(t, `
+schema_version: 1
+agents:
+  claude-code:
+    model: haiku
+    effort: low
+`)
+	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+
+	model, effort := daemon.ExportedResolveModelPreference(
+		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-loses",
+	)
+
+	// Tier-2 project config wins over tier-2.5 env vars.
+	if model != "haiku" {
+		t.Errorf("project config model = %q; want %q", model, "haiku")
+	}
+	if effort != "low" {
+		t.Errorf("project config effort = %q; want %q", effort, "low")
+	}
+}
+
+func TestResolveModelPreference_EnvVarInvalidModelSkipped(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvModelKey, "bad;model") // semicolon fails regex
+
+	bus := &projCfgFixtureBus{}
+	cfg := daemon.ExportedProjectConfig{}
+
+	model, _ := daemon.ExportedResolveModelPreference(
+		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-invalid",
+	)
+
+	// Invalid env var skipped; tier-3 compiled default used.
+	if model != "sonnet" {
+		t.Errorf("invalid env model skipped: got %q; want tier-3 default %q", model, "sonnet")
+	}
+}
+
+func TestResolveModelPreference_EnvVarInvalidEffortSkipped(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvEffortKey, "turbo") // not in closed enum
+
+	bus := &projCfgFixtureBus{}
+	cfg := daemon.ExportedProjectConfig{}
+
+	_, effort := daemon.ExportedResolveModelPreference(
+		context.Background(), []string{}, core.AgentTypeClaudeCode, cfg, bus, "bead-env-invalid-effort",
+	)
+
+	// Invalid env var skipped; tier-3 compiled default used.
+	if effort != "medium" {
+		t.Errorf("invalid env effort skipped: got %q; want tier-3 default %q", effort, "medium")
+	}
+}

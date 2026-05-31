@@ -2617,6 +2617,15 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		// being silently reset (hk-i1n7j safety property preserved).
 		discardDirtyChurn(ctx, wtPath)
 
+		// hk-rljho class: a review-loop iteration can leave a TRACKED but
+		// UNCOMMITTED change in the worktree (e.g. a staged deletion of a test
+		// file). discardDirtyChurn deliberately preserves it (hk-i1n7j: don't
+		// silently reset real work), so it would survive to `git rebase main`
+		// and abort with "cannot rebase: You have unstaged changes". Commit the
+		// residual tracked delta onto the run-branch — it IS the bead's own work
+		// — so the rebase proceeds with the work intact instead of failing.
+		commitResidualDelta(ctx, wtPath, runID)
+
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
@@ -2884,6 +2893,96 @@ func discardDirtyChurn(ctx context.Context, wtPath string) {
 			fmt.Fprintf(os.Stderr, "daemon: discardDirtyChurn: git checkout -- %s: %v\n%s",
 				path, err, out)
 		}
+	}
+}
+
+// commitResidualDelta commits any UNCOMMITTED tracked change that survives
+// discardDirtyChurn onto the run-branch, immediately before the pre-merge
+// `git rebase main`.
+//
+// Bug (hk-rljho class): a review-loop iteration can leave a TRACKED but
+// UNCOMMITTED change in the run worktree (e.g. a staged deletion of a test file
+// an iteration removed, whose deletion never got its own commit because the
+// daemon's commit-detection had already fired). discardDirtyChurn deliberately
+// restores only the isHarmonikChurn allowlist and leaves genuine work untouched
+// (hk-i1n7j safety property), so this real iteration delta survives to
+// `git rebase main`, which aborts with "cannot rebase: You have unstaged
+// changes" — failing the merge even though the bead's work is complete.
+//
+// The fix PRESERVES hk-i1n7j: it does NOT discard the residual work. It COMMITS
+// the delta onto the run-branch (it IS the bead's own work — a review-loop edit
+// that never got committed) so the rebase proceeds with the work intact.
+//
+// Staging uses `git add -u`, NOT `git add -A`: -u stages only tracked changes
+// (modifications + deletions) and deliberately EXCLUDES untracked files. A stray
+// untracked file is not committed-lineage work; with -A it would be swept into
+// the residual commit, FF-merge to main, and push junk to origin. Untracked
+// files also do not block a rebase, so leaving them alone is correct.
+//
+// It is a no-op when no non-churn tracked change remains after churn cleanup
+// (so it never manufactures an empty commit). Errors are best-effort/non-fatal
+// in the same style as discardDirtyChurn: a failure leaves the residual delta
+// in place and the subsequent rebase surfaces the real "unstaged changes"
+// failure rather than masking it.
+//
+// Bead: review-loop residual-delta merge fix (hk-rljho class).
+func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
+	// Enumerate dirty paths once. We commit only if a non-churn TRACKED change
+	// survives churn cleanup. Untracked files ("??") are excluded: they are not
+	// committed-lineage work and `git add -u` will not stage them either.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusCmd.Dir = wtPath
+	statusOut, statusErr := statusCmd.Output()
+	if statusErr != nil {
+		return
+	}
+
+	var residual bool
+	for _, line := range strings.Split(strings.TrimRight(string(statusOut), "\n"), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — not the bead's
+		// committed-lineage work; skip.
+		if line[:2] == "??" {
+			continue
+		}
+		path := line[3:]
+		// Handle rename "old -> new": classify on the destination path.
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+4:]
+		}
+		path = strings.Trim(path, "\"")
+		if isHarmonikChurn(path) {
+			continue // should already be restored by discardDirtyChurn; skip defensively
+		}
+		residual = true
+		break
+	}
+	if !residual {
+		return // no genuine residual tracked delta — do not create an empty commit
+	}
+
+	// Stage ONLY tracked changes (modifications + deletions). `git add -u`
+	// deliberately excludes untracked files so a stray untracked file is not
+	// swept into the run-branch (which would FF-merge it to main and push to
+	// origin). The churn allowlist was already restored by discardDirtyChurn,
+	// so -u captures only the genuine residual iteration delta.
+	addCmd := exec.CommandContext(ctx, "git", "add", "-u")
+	addCmd.Dir = wtPath
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git add -u: %v\n%s", err, out)
+		return
+	}
+
+	commitMsg := fmt.Sprintf(
+		"chore(reviewloop): commit residual iteration delta before rebase [%s]",
+		runID.String(),
+	)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
+	commitCmd.Dir = wtPath
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git commit: %v\n%s", err, out)
 	}
 }
 

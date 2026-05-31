@@ -527,6 +527,12 @@ func ExportedDiscardDirtyChurn(ctx context.Context, wtPath string) {
 	discardDirtyChurn(ctx, wtPath)
 }
 
+// ExportedCommitResidualDelta exposes commitResidualDelta for the review-loop
+// residual-delta merge regression test (hk-rljho class).
+func ExportedCommitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
+	commitResidualDelta(ctx, wtPath, runID)
+}
+
 // ExportedForceTeardownSession exposes forceTeardownSession for the hk-68pvl
 // worktree-teardown-ordering regression test.
 func ExportedForceTeardownSession(sess handler.Session) {

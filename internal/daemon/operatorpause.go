@@ -23,7 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -49,9 +49,12 @@ type OperatorControlHandler interface {
 //
 // Concurrent-safe: IsPaused, HandleOperatorPause, and HandleOperatorResume
 // may be called from different goroutines (socket handler goroutines vs the
-// workloop poll goroutine).
+// workloop poll goroutine). mu serialises the Load→emit→Store sequence in
+// HandleOperatorPause and HandleOperatorResume so that concurrent calls cannot
+// double-emit events.
 type OperatorPauseController struct {
-	paused atomic.Bool
+	mu     sync.Mutex
+	paused bool
 	bus    handlercontract.EventEmitter
 }
 
@@ -65,7 +68,9 @@ func NewOperatorPauseController(bus handlercontract.EventEmitter) *OperatorPause
 // IsPaused reports whether the daemon is currently in an operator-pause state.
 // Safe for concurrent access.
 func (c *OperatorPauseController) IsPaused() bool {
-	return c.paused.Load()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.paused
 }
 
 // HandleOperatorPause implements OperatorControlHandler.
@@ -74,23 +79,27 @@ func (c *OperatorPauseController) IsPaused() bool {
 // (which triggers QueueOperatorEventConsumer to transition the active queue
 // active → paused-by-drain per QM-054), sets the internal paused flag, then
 // emits operator_pause_status{status:"paused"} to complete the paired-phase
-// lifecycle per §8.9(h). Idempotent: no-op when already paused.
+// lifecycle per §8.9(h). Idempotent: no-op when already paused. Concurrent
+// calls are serialised by mu so only one wins; others are silent no-ops.
 //
 // Spec ref: specs/event-model.md §8.7.6; specs/operator-nfr.md §4.3 ON-007–ON-010.
 func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context) error {
-	if c.paused.Load() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.paused {
 		return nil // already paused — idempotent
 	}
 
 	ts := msTimestamp()
-	if err := c.emitPauseStatus(ctx, core.OperatorPauseStatusValuePausing, ts); err != nil {
+	if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePausing, ts); err != nil {
 		return fmt.Errorf("operator-pause: emit pausing: %w", err)
 	}
 
-	c.paused.Store(true)
+	c.paused = true
 
 	ts = msTimestamp()
-	if err := c.emitPauseStatus(ctx, core.OperatorPauseStatusValuePaused, ts); err != nil {
+	if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePaused, ts); err != nil {
 		return fmt.Errorf("operator-pause: emit paused: %w", err)
 	}
 
@@ -101,15 +110,19 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context) error
 //
 // Clears the paused flag and emits operator_resuming, which triggers the
 // QueueOperatorEventConsumer to transition the active queue
-// paused-by-drain → active. Idempotent: no-op when not paused.
+// paused-by-drain → active. Idempotent: no-op when not paused. Concurrent
+// calls are serialised by mu so only one wins; others are silent no-ops.
 //
 // Spec ref: specs/event-model.md §8.7.7; specs/operator-nfr.md §4.3.
 func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context) error {
-	if !c.paused.Load() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.paused {
 		return nil // not paused — idempotent
 	}
 
-	c.paused.Store(false)
+	c.paused = false
 
 	payload := core.OperatorResumingPayload{
 		ResumedAt: msTimestamp(),
@@ -125,9 +138,9 @@ func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context) erro
 	return nil
 }
 
-// emitPauseStatus emits an operator_pause_status event with the given status
-// and changedAt timestamp.
-func (c *OperatorPauseController) emitPauseStatus(ctx context.Context, status core.OperatorPauseStatusValue, changedAt string) error {
+// emitPauseStatusLocked emits an operator_pause_status event with the given
+// status and changedAt timestamp. Caller must hold mu.
+func (c *OperatorPauseController) emitPauseStatusLocked(ctx context.Context, status core.OperatorPauseStatusValue, changedAt string) error {
 	payload := core.OperatorPauseStatusPayload{
 		Status:    status,
 		ChangedAt: changedAt,

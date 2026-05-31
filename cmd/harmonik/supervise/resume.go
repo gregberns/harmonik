@@ -21,6 +21,9 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 // RunResume implements `harmonik supervise resume`.
@@ -52,8 +55,11 @@ func RunResume(args []string, stdout, stderr io.Writer) int {
 		projectDir = wd
 	}
 
-	sockPath := daemonSockPath(projectDir)
-	code := sendOperatorOp(context.Background(), sockPath, "operator-resume", stdout, stderr)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sockPath := lifecycle.SocketPath(projectDir)
+	code := sendOperatorOp(ctx, sockPath, "operator-resume", stdout, stderr)
 	if code == 0 {
 		fmt.Fprintln(stdout, "harmonik supervise resume: daemon resumed")
 	}

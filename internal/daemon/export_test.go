@@ -186,6 +186,12 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-rnsjs.
 	StaleBlockerCloser lifecycle.BeadCat3cCloser
+
+	// OperatorPauseCtrl, when non-nil, gates br-ready dispatch on operator
+	// pause state (hk-ry8q1). When nil the gate is disabled.
+	//
+	// Bead ref: hk-ry8q1.
+	OperatorPauseCtrl *OperatorPauseController
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -280,6 +286,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		stopDispatchCtx:        p.StopDispatchCtx,
 		handlerPauseController: p.HandlerPauseController,
 		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
+		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
 	}
 }
 
@@ -1400,3 +1407,13 @@ func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) 
 
 // Compile-time assertion: noopTmuxAdapter implements tmux.Adapter.
 var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OperatorPauseController test seams (hk-ry8q1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedNewOperatorPauseController exposes NewOperatorPauseController for
+// tests in package daemon_test.
+//
+// Bead ref: hk-ry8q1.
+var ExportedNewOperatorPauseController = NewOperatorPauseController

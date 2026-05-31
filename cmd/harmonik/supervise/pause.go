@@ -24,6 +24,9 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 // RunPause implements `harmonik supervise pause`.
@@ -55,8 +58,11 @@ func RunPause(args []string, stdout, stderr io.Writer) int {
 		projectDir = wd
 	}
 
-	sockPath := daemonSockPath(projectDir)
-	code := sendOperatorOp(context.Background(), sockPath, "operator-pause", stdout, stderr)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sockPath := lifecycle.SocketPath(projectDir)
+	code := sendOperatorOp(ctx, sockPath, "operator-pause", stdout, stderr)
 	if code == 0 {
 		fmt.Fprintln(stdout, "harmonik supervise pause: daemon paused")
 	}
@@ -131,11 +137,6 @@ func sendOperatorOp(ctx context.Context, sockPath, op string, stdout, stderr io.
 	}
 
 	return 0
-}
-
-// daemonSockPath returns the Unix-domain socket path for the daemon.
-func daemonSockPath(projectDir string) string {
-	return projectDir + "/.harmonik/daemon.sock"
 }
 
 // opVerb returns the human-readable verb for an op string ("operator-pause" → "pause").

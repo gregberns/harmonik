@@ -117,3 +117,61 @@ func buildEnvelope(op string, fields map[string]json.RawMessage) map[string]json
 func marshalJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
+
+// beadsToQueueDoc builds a minimal QueueSubmitRequest JSON map from a list of
+// bead IDs. Produces a single stream group (kind=stream, status=pending,
+// group_index=0) containing one item per bead ID.
+//
+// The returned map is in the same shape expected by buildEnvelope — a
+// map[string]json.RawMessage keyed by field name — so the caller can pass it
+// directly to buildEnvelope("queue-submit", ...) or buildEnvelope("queue-dry-run", ...).
+func beadsToQueueDoc(beadIDs []string) (map[string]json.RawMessage, error) {
+	type itemDoc struct {
+		BeadID string `json:"bead_id"`
+		Status string `json:"status"`
+	}
+	type groupDoc struct {
+		GroupIndex int       `json:"group_index"`
+		Kind       string    `json:"kind"`
+		Status     string    `json:"status"`
+		Items      []itemDoc `json:"items"`
+	}
+	type queueDoc struct {
+		SchemaVersion int        `json:"schema_version"`
+		Groups        []groupDoc `json:"groups"`
+	}
+
+	items := make([]itemDoc, len(beadIDs))
+	for i, id := range beadIDs {
+		items[i] = itemDoc{BeadID: id, Status: "pending"}
+	}
+	doc := queueDoc{
+		SchemaVersion: 1,
+		Groups: []groupDoc{
+			{GroupIndex: 0, Kind: "stream", Status: "pending", Items: items},
+		},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// parseBeadsFlag splits a --beads value (comma- or space-separated bead IDs)
+// into individual IDs. Also accepts repeated --beads flags via the accumulator
+// pattern (pass a pointer to []string and append to it).
+func parseBeadsFlag(raw string) []string {
+	var ids []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			ids = append(ids, part)
+		}
+	}
+	return ids
+}

@@ -232,9 +232,13 @@ EXIT CODES
   17  Daemon not running
 
 EXAMPLES
-  harmonik queue submit hk-abc123
+  harmonik queue submit --beads hk-abc123
+  harmonik queue submit --beads hk-abc,hk-def,hk-ghi
+  harmonik queue submit /tmp/batch.json
+  harmonik queue dry-run --beads hk-abc123
+  harmonik queue dry-run /tmp/batch.json
+  harmonik queue append --queue-id <uuid> 0 hk-abc123
   harmonik queue status
-  harmonik queue dry-run hk-abc123
   harmonik queue cancel
   harmonik queue cancel --force
 `)

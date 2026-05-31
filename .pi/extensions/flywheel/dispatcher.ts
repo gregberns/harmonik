@@ -185,7 +185,7 @@ function defaultGitCheck(repoRoot: string, beadId: string): Promise<boolean> {
 
 function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
   return async (
-    _repoRoot: string,
+    repoRoot: string,
     beadId: string,
   ): Promise<{ queueId: string | null; ok: boolean }> => {
     const queueDoc = JSON.stringify({
@@ -195,9 +195,11 @@ function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
     const tmpFile = join(tmpdir(), `dispatch-${randomUUID()}.json`);
     try {
       writeFileSync(tmpFile, queueDoc, "utf8");
-      const { stdout, code } = await spawnCapture(harmonikBin, [
-        "queue", "submit", "--json", tmpFile,
-      ]);
+      const { stdout, code } = await spawnCapture(
+        harmonikBin,
+        ["queue", "submit", "--json", tmpFile],
+        { cwd: repoRoot },
+      );
       if (code !== 0) return { queueId: null, ok: false };
       try {
         const parsed = JSON.parse(stdout.trim()) as { queue_id?: string };
@@ -216,13 +218,15 @@ function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
 
 function makeQueueAppend(harmonikBin: string): DispatcherDeps["queueAppend"] {
   return async (
-    _repoRoot: string,
+    repoRoot: string,
     queueId: string,
     beadId: string,
   ): Promise<boolean> => {
-    const { code } = await spawnCapture(harmonikBin, [
-      "queue", "append", "--queue-id", queueId, "0", beadId,
-    ]);
+    const { code } = await spawnCapture(
+      harmonikBin,
+      ["queue", "append", "--queue-id", queueId, "0", beadId],
+      { cwd: repoRoot },
+    );
     return code === 0;
   };
 }

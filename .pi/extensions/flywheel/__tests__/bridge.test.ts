@@ -106,7 +106,7 @@ describe("replayFile — correct reactions without real push (acceptance)", () =
 
   it("advances watermark for deterministic + ignore events", async () => {
     const { harness } = makeHarness();
-    const bridge = createEventBridge(harness, bridgeOpts(dir));
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => true }));
 
     const replayPath = writeTmpReplay([
       makeEvent("run_completed", 5, { bead_id: "hk-ccc" }),
@@ -229,7 +229,7 @@ describe("effect→ledger→watermark ordering (CL-053)", () => {
 
   it("after deterministic event: ledger recorded AND watermark advanced", async () => {
     const { harness } = makeHarness();
-    const bridge = createEventBridge(harness, bridgeOpts(dir));
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => true }));
 
     const replayPath = writeTmpReplay([makeEvent("run_completed", 10, { bead_id: "hk-ev" })]);
     await bridge.replayFile(replayPath);

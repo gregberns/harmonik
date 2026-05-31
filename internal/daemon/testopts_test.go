@@ -55,6 +55,20 @@ func WithBrAdapterFactory(factory func(brPath, projectDir string) (*brcli.Adapte
 	}
 }
 
+// WithSpendMeterObserver returns a TestOption that installs fn as the spend-meter
+// observer hook.  fn is called with the DaemonSpendMeter immediately after it has
+// been subscribed to the bus and before bus.Seal() is called.  Scenario tests use
+// this to override the meter's caps (via ExportedSpendMeterSetMaxRunsPerDay /
+// ExportedSpendMeterSetDailyCapBytes) so they can trip the meter with a small
+// number of synthetic events.
+//
+// Bead ref: hk-c7lxc.
+func WithSpendMeterObserver(fn func(*DaemonSpendMeter)) TestOption {
+	return func(h *daemonTestHooks) {
+		h.spendMeterObserver = fn
+	}
+}
+
 // StartForTesting calls startWithHooks with the supplied Config and test hooks
 // built from opts.  Use this instead of daemon.Start in tests that need to
 // inject a bus observer or a stub br-adapter factory.

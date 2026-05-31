@@ -369,6 +369,15 @@ type daemonTestHooks struct {
 	// Spec ref: specs/beads-integration.md §4.10 BI-031b.
 	// Bead ref: hk-th378.
 	brAdapterFactory func(brPath, projectDir string) (*brcli.Adapter, error)
+
+	// spendMeterObserver, when non-nil, is called with the newly constructed
+	// DaemonSpendMeter immediately after it has been subscribed to the bus (but
+	// before bus.Seal).  Tests use this to override the meter's caps (via
+	// ExportedSpendMeterSetMaxRunsPerDay / ExportedSpendMeterSetDailyCapBytes) so
+	// they can trip the meter with a small number of synthetic events.
+	//
+	// Bead ref: hk-c7lxc.
+	spendMeterObserver func(*DaemonSpendMeter)
 }
 
 // newBrAdapter constructs a *brcli.Adapter using hooks.brAdapterFactory when set
@@ -610,6 +619,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	spendMeter := NewDaemonSpendMeter(bus)
 	if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+	}
+	if hooks.spendMeterObserver != nil {
+		hooks.spendMeterObserver(spendMeter)
 	}
 
 	// Construct and subscribe the QueueOperatorEventConsumer BEFORE Seal so

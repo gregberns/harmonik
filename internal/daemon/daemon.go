@@ -18,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -776,6 +777,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			}
 		}
 
+		// Extract the TmuxAdapter from cfg.Substrate (if present) so that the
+		// orphan sweep can kill windows left by the previous daemon instance that
+		// was killed (SIGKILL / OOM / crash) before exitClean ran (hk-xb5yi
+		// reap-on-exit: boot-time cleanup path via PL-021c window sweep).
+		//
+		// The extraction uses the package-private substrateWithAdapter interface so
+		// no new field is needed on daemon.Config — the adapter is already embedded
+		// in the substrate constructed by the composition root (main.go / run.go).
+		var sweepTmuxAdapter ltmux.Adapter
+		if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
+			sweepTmuxAdapter = sa.tmuxAdapter()
+		}
+
 		sweepResult, sweepErr := RunOrphanSweep(
 			ctx,
 			cfg.ProjectDir,
@@ -793,6 +807,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				DaemonStartNS:   daemonStartTime.UnixNano(),
 				QueueDispatched: queueDispatched,
 				QueueOwned:      queueOwned,
+				TmuxAdapter:     sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
 			},
 		)
 

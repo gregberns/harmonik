@@ -630,12 +630,15 @@ func runBeadSubcommand(subArgs []string) int {
 	fmt.Fprintf(os.Stderr, "harmonik run: starting run for [%s] (max-concurrent=%d) in %s\n",
 		strings.Join(beadIDStrs, ", "), maxConcurrent, projectDir)
 
+	// hk-xb5yi: resolve spawn cap (same logic as harmonik daemon).
+	maxSessions := spawnCapFromEnv(maxConcurrent)
+
 	cfg := daemon.Config{
 		ProjectDir:         projectDir,
 		BrPath:             brPath,
 		JSONLLogPath:       jsonlLogPath,
 		MaxConcurrent:      maxConcurrent, // hk-w3cp1: user-controlled concurrency
-		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
+		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
 		DaemonBinaryPath:   daemonBinaryPath,
 		BinaryCommitHash:   commitHash,
 		CancelOnQueueDrain: cancelStopDispatch, // stop dispatch on success (hk-icecw, hk-2o2i9)

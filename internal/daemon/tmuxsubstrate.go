@@ -107,6 +107,39 @@ type tmuxSubstrate struct {
 	// Handles are appended-only; no removal on individual Kill calls (KillWindow
 	// is idempotent on a non-existent window so re-killing is harmless).
 	spawnedHandles []tmux.WindowHandle
+
+	// spawnSem, when non-nil, is a buffered-channel semaphore that bounds the
+	// number of concurrently active sessions. Each SpawnWindow acquires a slot;
+	// the slot is released when the session's Kill() is called (once per session
+	// via killOnce). Nil when no cap is configured (WithSpawnCap was not passed).
+	//
+	// Bead ref: hk-xb5yi (concurrent-spawn cap).
+	spawnSem chan struct{}
+}
+
+// TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
+//
+// Bead ref: hk-xb5yi.
+type TmuxSubstrateOption func(*tmuxSubstrate)
+
+// WithSpawnCap sets a hard ceiling on the number of concurrently active tmux
+// windows spawned by this substrate. When n > 0 each SpawnWindow call acquires
+// a slot; the slot is released when the session's Kill is called. If all n
+// slots are occupied, SpawnWindow blocks until a slot is freed or the context
+// is cancelled.
+//
+// A value of 0 (or negative) disables the cap (no-op option).
+//
+// Typical production default: maxConcurrent*2 (one implementer + one reviewer
+// per in-flight bead). Override via HARMONIK_MAX_CONCURRENT_SESSIONS env var.
+//
+// Bead ref: hk-xb5yi.
+func WithSpawnCap(n int) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		if n > 0 {
+			s.spawnSem = make(chan struct{}, n)
+		}
+	}
 }
 
 // Compile-time assertion: tmuxSubstrate implements handler.Substrate.
@@ -122,18 +155,40 @@ var _ windowCleaner = (*tmuxSubstrate)(nil)
 //
 // adapter MUST be non-nil. sessionName MUST be non-empty.
 //
+// Optional TmuxSubstrateOption values may be passed to configure additional
+// behaviour (e.g. WithSpawnCap for a concurrent-session ceiling).
+//
 // The daemon composition root calls NewTmuxSubstrate after ProbeTmux and
 // ResolveSession have succeeded per the PL-005 startup sequence.
-func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string) handler.Substrate {
+func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string, opts ...TmuxSubstrateOption) handler.Substrate {
 	if adapter == nil {
 		panic("daemon: NewTmuxSubstrate: adapter is nil — daemon defect")
 	}
 	if sessionName == "" {
 		panic("daemon: NewTmuxSubstrate: sessionName is empty — daemon defect")
 	}
-	return &tmuxSubstrate{
+	sub := &tmuxSubstrate{
 		adapter:     adapter,
 		sessionName: sessionName,
+	}
+	for _, opt := range opts {
+		opt(sub)
+	}
+	return sub
+}
+
+// releaseSpawnSlot returns a slot to the spawn semaphore. Called exactly once
+// per session via the callback stored in tmuxSubstrateSession.releaseSlot.
+// No-op when spawnSem is nil.
+func (s *tmuxSubstrate) releaseSpawnSlot() {
+	if s.spawnSem == nil {
+		return
+	}
+	select {
+	case <-s.spawnSem:
+	default:
+		// Already released (should not happen under normal operation since
+		// releaseSpawnSlot is called inside killOnce.Do, but guard defensively).
 	}
 }
 
@@ -145,11 +200,28 @@ func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string) handler.Substrat
 // MUST set it to the pre-computed deterministic window name from tmux.WindowName
 // (hk-gql20.8).
 //
+// When a spawn cap was configured via WithSpawnCap, SpawnWindow blocks until a
+// slot is available or ctx is cancelled. A context cancellation returns a
+// handler.ErrStructural-wrapped error.
+//
 // Returns a non-nil error (wrapping handler.ErrStructural) when the tmux
-// adapter reports a failure.
+// adapter reports a failure or the spawn cap blocks and ctx is cancelled.
 //
 // Spec ref: process-lifecycle.md §4.7 PL-021b obligation 1.
+// Bead ref: hk-xb5yi (spawn cap).
 func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// Acquire a spawn semaphore slot before creating the window. This enforces
+	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
+	// (spawnSem is nil) this block is a no-op.
+	if s.spawnSem != nil {
+		select {
+		case s.spawnSem <- struct{}{}:
+			// Slot acquired; proceed.
+		case <-ctx.Done():
+			return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+				ctx.Err(), handler.ErrStructural)
+		}
+	}
 	windowName := in.WindowName
 	if windowName == "" {
 		// Fallback: derive a deterministic name from the first argv component
@@ -183,6 +255,9 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 
 	outcome := s.adapter.NewWindowIn(ctx, params)
 	if outcome.Err != nil {
+		// Release the semaphore slot before returning the error — the window was
+		// never created so the slot is immediately available for reuse.
+		s.releaseSpawnSlot()
 		return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
 	}
 
@@ -249,13 +324,18 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// (which is silently wrong).  waitOnce then guards only the goroutine launch,
 	// not the channel allocation — the channel is always valid after SpawnWindow
 	// returns.  See architectural review R2 (hk-9to6j).
+	//
+	// releaseSlot is the spawn-cap slot release callback (hk-xb5yi). It is called
+	// exactly once inside killOnce.Do so the semaphore slot is returned when the
+	// session ends. When no cap was configured, releaseSpawnSlot is a no-op.
 	sess := &tmuxSubstrateSession{
-		adapter:   s.adapter,
-		handle:    outcome.Handle,
-		paneID:    paneID,
-		pidTarget: pidTarget,
-		pid:       pid,
-		waitDone:  make(chan struct{}),
+		adapter:     s.adapter,
+		handle:      outcome.Handle,
+		paneID:      paneID,
+		pidTarget:   pidTarget,
+		pid:         pid,
+		waitDone:    make(chan struct{}),
+		releaseSlot: s.releaseSpawnSlot,
 	}
 	return sess, nil
 }
@@ -536,6 +616,13 @@ type tmuxSubstrateSession struct {
 	// Tests inject a deterministic stub via the function-valued field to exercise
 	// the ctx.Done() and tick paths without real OS processes (hk-88nno).
 	isProcessDead func(pid int) bool
+
+	// releaseSlot, when non-nil, returns this session's slot to the parent
+	// substrate's spawn semaphore. Called exactly once inside killOnce.Do.
+	// Nil when no spawn cap was configured (WithSpawnCap was not passed).
+	//
+	// Bead ref: hk-xb5yi (concurrent-spawn cap).
+	releaseSlot func()
 }
 
 // Kill terminates the hosted process and then destroys the tmux window.
@@ -564,6 +651,11 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 		}
 		// Step 2: destroy the tmux window (cleans up pane/window state).
 		killErr = s.adapter.KillWindow(ctx, s.handle)
+		// Step 3: release the spawn semaphore slot (hk-xb5yi). No-op when
+		// no cap was configured (releaseSlot is nil).
+		if s.releaseSlot != nil {
+			s.releaseSlot()
+		}
 	})
 	return killErr
 }

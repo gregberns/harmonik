@@ -489,13 +489,18 @@ EXAMPLES
 		return 1
 	}
 
+	// hk-xb5yi: resolve spawn cap. HARMONIK_MAX_CONCURRENT_SESSIONS env var
+	// overrides; default is maxConcurrentFlag*2 to cover both implementer and
+	// reviewer sessions per in-flight bead.
+	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
+
 	cfg := daemon.Config{
 		ProjectDir:       projectDir,
 		BrPath:           brPath,
 		JSONLLogPath:     jsonlLogPath,
 		MaxConcurrent:    maxConcurrentFlag,
 		NoAutoPull:       noAutoPullFlag,   // hk-exd7m: queue-only mode for flywheel topology
-		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName),
+		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
 		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash: commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
 	}
@@ -511,4 +516,24 @@ EXAMPLES
 	}
 
 	return 0
+}
+
+// spawnCapFromEnv resolves the concurrent-session spawn ceiling (hk-xb5yi).
+//
+// Precedence:
+//  1. HARMONIK_MAX_CONCURRENT_SESSIONS env var (operator override).
+//  2. maxConcurrent*2 — default covering both implementer and reviewer per bead.
+//
+// Returns 0 when HARMONIK_MAX_CONCURRENT_SESSIONS is set to "0" (disables cap).
+func spawnCapFromEnv(maxConcurrent int) int {
+	if v := os.Getenv("HARMONIK_MAX_CONCURRENT_SESSIONS"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+			return n
+		}
+	}
+	if maxConcurrent <= 0 {
+		return 0
+	}
+	return maxConcurrent * 2
 }

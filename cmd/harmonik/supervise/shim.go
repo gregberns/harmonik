@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
@@ -84,7 +86,7 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 
 	if !watchRestart {
 		// Non-restart mode: exec-replace with the supervisee directly.
-		return runDirect(cfg.Command, stderr)
+		return runDirect(cfg, stderr)
 	}
 
 	// Watch-restart mode: use internal/supervise.Supervisor.
@@ -92,19 +94,45 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 }
 
 // runDirect exec-replaces the shim with the supervisee command.
-func runDirect(command []string, stderr io.Writer) int {
-	bin := command[0]
+// Uses a scoped Pi env (CI-005) rather than blanket os.Environ().
+func runDirect(cfg Config, stderr io.Writer) int {
+	bin := cfg.Command[0]
 	// Use exec.LookPath for correct PATH resolution including exec-bit check.
 	resolved, err := exec.LookPath(bin)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise _shim: command not found %q: %v\n", bin, err)
 		return 1
 	}
-	if execErr := syscall.Exec(resolved, command, os.Environ()); execErr != nil {
+	if execErr := syscall.Exec(resolved, cfg.Command, buildPiEnv(cfg.APIKey)); execErr != nil {
 		fmt.Fprintf(stderr, "harmonik supervise _shim: exec %q: %v\n", resolved, execErr)
 		return 1
 	}
 	return 0 // never reached
+}
+
+// buildPiEnv constructs the Pi process environment per specs/credential-isolation.md
+// §4.3 CI-005: strips all credential deny-list keys from the ambient env, then
+// injects apiKey as ANTHROPIC_API_KEY when non-empty.
+//
+// This is the scoped-injection builder: it never passes os.Environ() directly
+// to the Pi process, ensuring no ambient credential leaks through inheritance.
+func buildPiEnv(apiKey string) []string {
+	ambient := os.Environ()
+	env := make([]string, 0, len(ambient)+1)
+	for _, kv := range ambient {
+		key := kv
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			key = kv[:idx]
+		}
+		if handler.IsCredentialDenyListKey(key) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if apiKey != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
+	}
+	return env
 }
 
 // runWithSupervisor runs the supervisee under internal/supervise.Supervisor
@@ -142,6 +170,9 @@ func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
 			Jitter:      0.2,
 			MaxRestarts: restartMax,
 		},
+		// BaseEnv is the pre-filtered Pi env (CI-005): deny-list keys stripped
+		// from ambient + Pi-scoped ANTHROPIC_API_KEY injected if configured.
+		BaseEnv: buildPiEnv(cfg.APIKey),
 	}
 
 	sv := supervise.New(spec, log)

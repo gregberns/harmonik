@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -144,6 +145,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		StartedAt:        now,
 		DaemonInstanceID: instanceID,
 		Command:          command, // may be nil; shim will error if Command is empty
+		APIKey:           resolveAPIKey(projectDir),
 	}
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err)
@@ -205,6 +207,38 @@ func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) i
 	}
 	_ = conn.Close()
 	return 0
+}
+
+// resolveAPIKey reads the Pi-scoped ANTHROPIC_API_KEY from the non-committed
+// scoped source per specs/credential-isolation.md §4.4 CI-006.
+//
+// Precedence:
+//  1. ANTHROPIC_API_KEY already exported by the operator in the current env.
+//  2. A gitignored repo-root .env file (KEY=VALUE lines; comments ignored).
+//  3. Empty string — Pi may authenticate via a different mechanism (e.g. OAuth).
+//
+// The value is stored in config.json (inside .harmonik/cognition/, which is
+// gitignored) and injected into Pi's env by the shim at exec time. The daemon
+// process MUST NOT read config.APIKey (CI-006).
+func resolveAPIKey(projectDir string) string {
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
+		return v
+	}
+	//nolint:gosec // G304: path derived from operator-controlled projectDir
+	data, err := os.ReadFile(filepath.Join(projectDir, ".env"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
+			return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
+		}
+	}
+	return ""
 }
 
 func isSocketAbsent(err error) bool {

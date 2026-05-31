@@ -76,6 +76,12 @@ type Spec struct {
 	// CrashLoopWindow is the sliding window used for crash-loop detection.
 	// Default: 60s.
 	CrashLoopWindow time.Duration
+	// BaseEnv, when non-nil, is used as the base environment for each child
+	// process instead of os.Environ(). Env is appended on top. Use to pass a
+	// pre-filtered env for scoped-injection per specs/credential-isolation.md
+	// §4.3 CI-005. When nil and Env is also empty, cmd.Env is left unset so
+	// the child inherits the shim's environment (legacy / test path).
+	BaseEnv []string
 }
 
 func (s *Spec) applyDefaults() {
@@ -332,8 +338,15 @@ func (s *Supervisor) buildCmd() *exec.Cmd {
 	cmd := exec.Command(s.spec.Command[0], s.spec.Command[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if len(s.spec.Env) > 0 {
-		cmd.Env = append(os.Environ(), s.spec.Env...)
+	// When BaseEnv is set, use it as the base (scoped injection, CI-005);
+	// otherwise fall back to os.Environ() when Env has supplemental vars.
+	// When both are absent, leave cmd.Env nil (inherit parent env, legacy path).
+	if s.spec.BaseEnv != nil || len(s.spec.Env) > 0 {
+		base := s.spec.BaseEnv
+		if base == nil {
+			base = os.Environ()
+		}
+		cmd.Env = append(base, s.spec.Env...)
 	}
 	if s.spec.WorkDir != "" {
 		cmd.Dir = s.spec.WorkDir

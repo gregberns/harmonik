@@ -203,11 +203,16 @@ var credentialDenyListExact = map[string]bool{
 // prefix is treated as a credential env deny-list member.
 const credentialDenyListPrefix = "CLAUDE_CODE_OAUTH"
 
-// isCredentialDenyListKey reports whether key is a member of the credential
-// env deny-list per specs/credential-isolation.md §4 CI-002.
-func isCredentialDenyListKey(key string) bool {
+// IsCredentialDenyListKey reports whether key is a member of the credential
+// env deny-list per specs/credential-isolation.md §4 CI-002. Exported so
+// the Pi scoped-injection builder (CI-005) can reuse the single deny-list
+// definition without duplicating constants.
+func IsCredentialDenyListKey(key string) bool {
 	return credentialDenyListExact[key] || strings.HasPrefix(key, credentialDenyListPrefix)
 }
+
+// isCredentialDenyListKey is the unexported alias used within this package.
+func isCredentialDenyListKey(key string) bool { return IsCredentialDenyListKey(key) }
 
 // ClaudeEnvVars builds the subprocess env slice per CHB-006.
 //

@@ -86,6 +86,12 @@ type Config struct {
 	// Command is the supervisee argv; Command[0] is the binary. Not in the
 	// original schema list but required for the shim to know what to run.
 	Command []string `json:"command,omitempty"`
+	// APIKey is the Pi-scoped ANTHROPIC_API_KEY read from the non-committed
+	// scoped source at `supervise start` time (CI-006). Never read by the
+	// daemon; injected into Pi's env by the shim at exec time (CI-005).
+	// config.json lives under .harmonik/cognition/ which is gitignored, so
+	// the value is never committed (CI-007).
+	APIKey string `json:"api_key,omitempty"`
 }
 
 // WriteConfigAtomic writes cfg to .harmonik/cognition/config.json atomically

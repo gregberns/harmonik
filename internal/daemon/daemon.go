@@ -278,6 +278,21 @@ type Config struct {
 	// Bead ref: hk-5dewt.
 	SkipBrHistoryRotation bool
 
+	// SkipRestartBackoff, when true, disables the persistent boot-record
+	// exponential backoff applied at startup when the daemon has been restarted
+	// rapidly within the last hour.
+	//
+	// The backoff is non-fatal and transparent in production. This field
+	// exists solely for unit tests that must start the daemon without incurring
+	// an artificial delay.
+	//
+	// Default (false): backoff applies when ProjectDir is set and the
+	// boot-record at <ProjectDir>/.harmonik/cognition/restart-record.json
+	// contains recent boot times within restartBackoffWindow.
+	//
+	// Bead ref: hk-7t9g1.
+	SkipRestartBackoff bool
+
 	// NoAutoPull, when true, disables the br-ready fallback poll path in the
 	// work loop so the daemon only dispatches work that arrives via the queue
 	// surface (harmonik queue submit / append).  When false (the default), the
@@ -494,6 +509,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// isolation) or when ProjectDir is empty (unit-test mode).
 	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
 		_ = runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep)
+	}
+
+	// Restart-backoff pre-flight (hk-7t9g1): read the persistent boot record
+	// and sleep for an exponentially-increasing delay when the daemon has been
+	// restarted rapidly within the last hour. This throttles the crash-and-re-pull
+	// loop (incident: 10 boots in a day, each auto-pulling br ready). The call is
+	// non-fatal and ctx-interruptible. Skipped when SkipRestartBackoff is true
+	// (test isolation) or when ProjectDir is empty (unit-test mode).
+	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
+		applyBootBackoff(ctx, cfg.ProjectDir)
 	}
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).

@@ -12,6 +12,7 @@ func TestBudgetScopeValid(t *testing.T) {
 		BudgetScopePerRole,
 		BudgetScopePerRun,
 		BudgetScopePerState,
+		BudgetScopeHandlerAccount,
 	}
 	for _, s := range valid {
 		if !s.Valid() {
@@ -50,6 +51,7 @@ func TestBudgetScopeMarshalText(t *testing.T) {
 		{BudgetScopePerRole, "per_role"},
 		{BudgetScopePerRun, "per_run"},
 		{BudgetScopePerState, "per_state"},
+		{BudgetScopeHandlerAccount, "handler_account"},
 	}
 	for _, tc := range tests {
 		got, err := tc.scope.MarshalText()
@@ -97,6 +99,11 @@ func TestBudgetScopeUnmarshalText(t *testing.T) {
 			name:  "per_state",
 			input: `{"scope":"per_state"}`,
 			want:  BudgetScopePerState,
+		},
+		{
+			name:  "handler_account",
+			input: `{"scope":"handler_account"}`,
+			want:  BudgetScopeHandlerAccount,
 		},
 		{
 			name:    "hyphenated per-role rejected",

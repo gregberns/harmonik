@@ -5,7 +5,7 @@ import "fmt"
 // BudgetScope is the scoping axis for a Budget; it drives how ScopeTarget is
 // interpreted (specs/control-points.md §6.1.4 ENUM BudgetScope).
 //
-// The three values correspond to the three allocation windows the budget
+// The four values correspond to the four allocation windows the budget
 // evaluator recognises:
 //   - BudgetScopePerRole: allowance is shared across all runs for a given role;
 //     ScopeTarget.singleton is a role name.
@@ -13,6 +13,8 @@ import "fmt"
 //     ScopeTarget.singleton is a run_id.
 //   - BudgetScopePerState: allowance is tied to a single state node;
 //     ScopeTarget.singleton is a state_id.
+//   - BudgetScopeHandlerAccount: identifies the handler credential account that
+//     was exhausted; used in budget_exhausted payloads.
 //
 // A reader observing an unknown BudgetScope MUST reject the enclosing
 // BudgetPayload; no silent fallback is permitted.
@@ -39,7 +41,7 @@ const (
 	BudgetScopeHandlerAccount BudgetScope = "handler_account"
 )
 
-// Valid reports whether s is one of the three declared BudgetScope constants.
+// Valid reports whether s is one of the four declared BudgetScope constants.
 // Unknown values are NOT tolerated — a reader observing an unknown BudgetScope
 // MUST reject the enclosing BudgetPayload per specs/control-points.md §6.1.4.
 func (s BudgetScope) Valid() bool {
@@ -53,7 +55,7 @@ func (s BudgetScope) Valid() bool {
 
 // MarshalText implements encoding.TextMarshaler so BudgetScope serialises
 // correctly in JSON and YAML policy documents (specs/control-points.md §6.3).
-// It rejects any value that is not one of the three declared constants.
+// It rejects any value that is not one of the four declared constants.
 func (s BudgetScope) MarshalText() ([]byte, error) {
 	if !s.Valid() {
 		return nil, fmt.Errorf("budgetscope: unknown value %q", string(s))
@@ -62,7 +64,7 @@ func (s BudgetScope) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-// It rejects any value that is not one of the three declared constants.
+// It rejects any value that is not one of the four declared constants.
 // Per specs/control-points.md §6.1.4, unknown BudgetScope values must be
 // rejected; callers MUST NOT silently degrade to a default scope.
 func (s *BudgetScope) UnmarshalText(text []byte) error {

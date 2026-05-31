@@ -31,6 +31,12 @@ const (
 	// BudgetScopePerState scopes the budget to a single state node;
 	// ScopeTarget.singleton is a state_id.
 	BudgetScopePerState BudgetScope = "per_state"
+
+	// BudgetScopeHandlerAccount scopes the budget to a handler's credential
+	// account; used by budget_exhausted payloads to identify the billing
+	// account that was exhausted (prereq for credfence spend governance,
+	// specs/control-points.md §6.1.4).
+	BudgetScopeHandlerAccount BudgetScope = "handler_account"
 )
 
 // Valid reports whether s is one of the three declared BudgetScope constants.
@@ -38,7 +44,7 @@ const (
 // MUST reject the enclosing BudgetPayload per specs/control-points.md §6.1.4.
 func (s BudgetScope) Valid() bool {
 	switch s {
-	case BudgetScopePerRole, BudgetScopePerRun, BudgetScopePerState:
+	case BudgetScopePerRole, BudgetScopePerRun, BudgetScopePerState, BudgetScopeHandlerAccount:
 		return true
 	default:
 		return false
@@ -63,7 +69,7 @@ func (s *BudgetScope) UnmarshalText(text []byte) error {
 	v := BudgetScope(text)
 	if !v.Valid() {
 		return fmt.Errorf(
-			"budgetscope: unknown value %q; must be one of per_role, per_run, per_state",
+			"budgetscope: unknown value %q; must be one of per_role, per_run, per_state, handler_account",
 			string(text),
 		)
 	}

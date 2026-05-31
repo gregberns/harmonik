@@ -18,7 +18,7 @@ const WIDGET_KEY = "harmonik-digest";
 const POLL_MS = 1000;
 
 // DigestJSON mirrors internal/digest/types.go DigestJSON (schema_version=1).
-interface DigestJSON {
+export interface DigestJSON {
   schema_version: number;
   generated_at: string;
   queue: {

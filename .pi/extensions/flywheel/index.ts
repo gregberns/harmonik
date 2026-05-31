@@ -24,14 +24,18 @@
 import { Type } from "typebox";
 import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { prepareNextTurn, type Digest, type WakeEvent } from "./router.js";
 import { BudgetTracker } from "./budget.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
 import { createEventBridge, type Harness } from "./bridge.js";
-import { createDigestPanel, type DigestPanel } from "./tui-panel.js";
+import { createDigestPanel, type DigestPanel, type DigestJSON } from "./tui-panel.js";
 import { createDispatcher } from "./dispatcher.js";
+
+const execFileAsync = promisify(execFile);
 
 const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
@@ -334,8 +338,7 @@ export default function activate(pi: ExtensionAPI) {
   pi.registerCommand?.("reset", {
     description: "Hard reset: open notes survive; reseed a new session from the digest.",
     handler: async (_args, ctx) => {
-      // v0: minimal digest — the production version will call `harmonik digest`.
-      const digestText = buildMinimalDigest();
+      const digestText = await buildDigest();
       await ctx.newSession?.({
         parentSession: ctx.sessionManager?.getSessionFile() ?? undefined,
         withSession: async (rep) => {
@@ -346,14 +349,101 @@ export default function activate(pi: ExtensionAPI) {
   });
 }
 
-function buildMinimalDigest(): string {
-  // TODO(v1): shell out to `harmonik digest --json` and render.
-  return [
-    "## Resumed from prior session",
-    "(v0 scaffold — `harmonik digest` not yet implemented; read your open notes via the filesystem at `.harmonik/cognition/notes.jsonl`.)",
-    "",
-    "Continue from: review open notes, then resume the active priority work.",
-  ].join("\n");
+async function buildDigest(): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "harmonik",
+      ["digest", "--json", "--project", REPO_ROOT],
+      { timeout: 10_000 }
+    );
+    const d = JSON.parse(stdout.trim()) as DigestJSON;
+    return renderDigestAsText(d);
+  } catch {
+    return [
+      "## Resumed from prior session",
+      "(`harmonik digest` unavailable — read open notes at `.harmonik/cognition/notes.jsonl`.)",
+      "",
+      "Continue from: review open notes, then resume the active priority work.",
+    ].join("\n");
+  }
+}
+
+function renderDigestAsText(d: DigestJSON): string {
+  const lines: string[] = [];
+  lines.push("## Harmonik digest (session resume)");
+  lines.push("");
+
+  // Queue status
+  const q = d.queue;
+  if (!q.present) {
+    lines.push("**Queue:** no active queue");
+  } else {
+    lines.push(
+      `**Queue:** ${q.active_run_count} active run(s), ${q.pending_count} pending`
+    );
+    for (const r of q.active_runs ?? []) {
+      const runId = r.run_id ? r.run_id.slice(0, 8) : "—";
+      lines.push(`  - ${r.bead_id}  run=${runId}  ${r.status}`);
+    }
+    const omitted = d.truncated?.active_runs_omitted ?? 0;
+    if (omitted > 0) lines.push(`  - [+${omitted} more omitted]`);
+  }
+
+  // In-progress beads
+  const inProg = d.in_progress_beads ?? [];
+  if (inProg.length > 0) {
+    lines.push("");
+    lines.push(`**In-progress beads (${inProg.length}):**`);
+    for (const b of inProg) {
+      lines.push(`  - ${b.bead_id}  ${b.title}`);
+    }
+  }
+
+  // Ready beads
+  const ready = d.ready_beads ?? [];
+  if (ready.length > 0) {
+    lines.push("");
+    lines.push(`**Ready beads (${ready.length}):**`);
+    for (const b of ready.slice(0, 10)) {
+      lines.push(`  - ${b.bead_id}  ${b.title}`);
+    }
+    if (ready.length > 10) lines.push(`  - [+${ready.length - 10} more]`);
+  }
+
+  // Open notes
+  const notes = d.open_notes ?? [];
+  if (notes.length > 0) {
+    lines.push("");
+    lines.push(`**Open notes (${notes.length}):**`);
+    for (const n of notes.slice(0, 10)) {
+      lines.push(`  - [${n.kind}] ${n.text}`);
+    }
+    const notesOmitted = d.truncated?.open_notes_omitted ?? 0;
+    if (notesOmitted > 0) lines.push(`  - [+${notesOmitted} more]`);
+  }
+
+  // Recent commits
+  const commits = d.recent_commits ?? [];
+  if (commits.length > 0) {
+    lines.push("");
+    lines.push("**Recent commits:**");
+    for (const c of commits.slice(0, 5)) {
+      lines.push(`  - ${c.hash.slice(0, 8)}  ${c.subject}`);
+    }
+  }
+
+  // Warnings
+  if (d.errors && d.errors.length > 0) {
+    lines.push("");
+    for (const e of d.errors) lines.push(`> WARN: ${e}`);
+  }
+
+  lines.push("");
+  lines.push(
+    "Continue from: review in-progress/ready beads above, then resume the active priority work."
+  );
+
+  return lines.join("\n");
 }
 
 // Approximate USD cost per turn using Anthropic list prices (2026-05-30).

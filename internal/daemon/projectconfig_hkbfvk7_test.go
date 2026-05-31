@@ -483,6 +483,28 @@ agents:
 // Tier-2.5: env var default tests (hk-c5oxy)
 // ─────────────────────────────────────────────────────────────────────────────
 
+func TestResolveModelPreference_BeadLabelBeatsEnvVar(t *testing.T) {
+	// Cannot run in parallel: mutates process env.
+	t.Setenv(daemon.EnvModelKey, "haiku")
+	t.Setenv(daemon.EnvEffortKey, "low")
+
+	bus := &projCfgFixtureBus{}
+	cfg := daemon.ExportedProjectConfig{} // no project config
+
+	// Tier-1 label supplies both model and effort — both must beat tier-2.5 env vars.
+	labels := []string{"model:opus", "effort:max"}
+	model, effort := daemon.ExportedResolveModelPreference(
+		context.Background(), labels, core.AgentTypeClaudeCode, cfg, bus, "bead-tier1-beats-env",
+	)
+
+	if model != "opus" {
+		t.Errorf("tier-1 model = %q; want %q (bead label must beat env var)", model, "opus")
+	}
+	if effort != "max" {
+		t.Errorf("tier-1 effort = %q; want %q (bead label must beat env var)", effort, "max")
+	}
+}
+
 func TestResolveModelPreference_EnvVarModelDefault(t *testing.T) {
 	// Cannot run in parallel: mutates process env.
 	t.Setenv(daemon.EnvModelKey, "haiku")

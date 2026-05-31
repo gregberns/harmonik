@@ -93,59 +93,6 @@ func clScenarioMakeAccrualEvent(t *testing.T, basis core.CostBasis, units float6
 	return b
 }
 
-// clScenarioStartDaemon boots daemon.StartForTesting with BrPath="" and
-// ProjectDir="" (no work loop, no filesystem dependencies) and applies opts.
-// It returns the eventbus captured from the WithBusObserver callback, and a
-// startErr channel that receives the return value of StartForTesting.
-//
-// The caller must drain captureBusSet before using captureBus to ensure the
-// observer has fired and captureBus is populated.
-func clScenarioStartDaemon(
-	t *testing.T,
-	opts ...daemon.TestOption,
-) (captureBus eventbus.EventBus, captureBusSet <-chan struct{}, startDone <-chan error) {
-	t.Helper()
-
-	var captured eventbus.EventBus
-	busSet := make(chan struct{})
-
-	busObserver := func(bus eventbus.EventBus) {
-		captured = bus
-		close(busSet)
-	}
-
-	allOpts := append([]daemon.TestOption{daemon.WithBusObserver(busObserver)}, opts...)
-
-	cfg := daemon.Config{
-		BrPath:     "",
-		ProjectDir: "",
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- daemon.StartForTesting(context.Background(), cfg, allOpts...)
-	}()
-
-	// Wait for the bus observer to fire.
-	select {
-	case <-busSet:
-	case <-time.After(5 * time.Second):
-		t.Fatal("clScenario: WithBusObserver did not fire within 5s")
-	}
-
-	// Wait for StartForTesting to return.
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("clScenario: daemon.StartForTesting: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("clScenario: daemon.StartForTesting did not return within 10s in no-op mode")
-	}
-
-	return captured, busSet, errCh
-}
-
 // clScenarioCollectHandlerPaused subscribes to handler_paused events on bus and
 // returns a channel that receives the first payload.  Must be called BEFORE
 // bus.Seal() (i.e., inside the WithBusObserver callback).
@@ -317,7 +264,7 @@ func TestScenario_CognitionLoop_UsdCapTripsHandlerPause(t *testing.T) {
 		}
 		t.Logf("clScenario USD: budget_exhausted received — scope=%v ref=%q spent=%.4f cap=%.4f",
 			got.BudgetScope, got.BudgetRef,
-			ptrFloat64OrZero(got.SpentUSD), ptrFloat64OrZero(got.CapUSD))
+			clScenarioPtrFloat64OrZero(got.SpentUSD), clScenarioPtrFloat64OrZero(got.CapUSD))
 	case <-time.After(3 * time.Second):
 		t.Error("clScenario USD FAIL: budget_exhausted never received after budget_accrual injection + Drain; " +
 			"DaemonSpendMeter.Subscribe() may be missing from daemon.Start composition (CL-090 regression)")
@@ -459,7 +406,7 @@ func TestScenario_CognitionLoop_MaxRunsTripsHandlerPause(t *testing.T) {
 		}
 		t.Logf("clScenario MaxRuns: budget_exhausted received — scope=%v ref=%q spent=%.0f cap=%.0f",
 			got.BudgetScope, got.BudgetRef,
-			ptrFloat64OrZero(got.SpentUSD), ptrFloat64OrZero(got.CapUSD))
+			clScenarioPtrFloat64OrZero(got.SpentUSD), clScenarioPtrFloat64OrZero(got.CapUSD))
 	case <-time.After(3 * time.Second):
 		t.Error("clScenario MaxRuns FAIL: budget_exhausted never received after run_started events + Drain; " +
 			"DaemonSpendMeter run-count wiring broken (CL-090a regression)")
@@ -495,8 +442,8 @@ func TestScenario_CognitionLoop_MaxRunsTripsHandlerPause(t *testing.T) {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ptrFloat64OrZero returns *p if p != nil, else 0.
-func ptrFloat64OrZero(p *float64) float64 {
+// clScenarioPtrFloat64OrZero returns *p if p != nil, else 0.
+func clScenarioPtrFloat64OrZero(p *float64) float64 {
 	if p == nil {
 		return 0
 	}

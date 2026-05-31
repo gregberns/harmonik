@@ -52,3 +52,12 @@
 .env.*
 *.env
 .env.*.local
+
+# Per-thread session handoffs (operator/agent working artifacts). The canonical
+# HANDOFF.md stays tracked; per-thread HANDOFF-<name>.md are scratch and MUST be
+# ignored — otherwise the daemon's worktree-escape detector false-positives on
+# them as main-repo contamination and fails dispatched beads (hk-veoht follow-up).
+HANDOFF-*.md
+
+# Claude Code session scheduler lock
+.claude/scheduled_tasks.lock

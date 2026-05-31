@@ -188,24 +188,62 @@ type ClaudeEnvConfig struct {
 	BaseEnv []string
 }
 
+// credentialDenyListExact is the set of exact env var keys on the credential
+// env deny-list per specs/credential-isolation.md §4 CI-002. Keys in this set
+// MUST be stripped from BaseEnv and actively overridden with empty values in
+// the constructed child env so that the tmux substrate's additive -e mechanism
+// cannot inherit them from the tmux server environment (CI-003).
+var credentialDenyListExact = map[string]bool{
+	"ANTHROPIC_API_KEY":    true,
+	"ANTHROPIC_AUTH_TOKEN": true,
+}
+
+// credentialDenyListPrefix is the prefix for the glob portion of the credential
+// env deny-list (CLAUDE_CODE_OAUTH* per CI-002). Any key beginning with this
+// prefix is treated as a credential env deny-list member.
+const credentialDenyListPrefix = "CLAUDE_CODE_OAUTH"
+
+// isCredentialDenyListKey reports whether key is a member of the credential
+// env deny-list per specs/credential-isolation.md §4 CI-002.
+func isCredentialDenyListKey(key string) bool {
+	return credentialDenyListExact[key] || strings.HasPrefix(key, credentialDenyListPrefix)
+}
+
 // ClaudeEnvVars builds the subprocess env slice per CHB-006.
 //
 // It starts from cfg.BaseEnv (if provided), removes any HARMONIK_SECRET_* keys
-// already present (to prevent double-injection), then appends all required and
+// already present (to prevent double-injection) and any credential env deny-list
+// keys (specs/credential-isolation.md §4 CI-003), then appends all required and
 // optional CHB-006 vars, and finally appends cfg.SecretVars.
+//
+// Credential env deny-list keys (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+// CLAUDE_CODE_OAUTH*) are stripped from BaseEnv AND re-emitted as explicit empty
+// overrides (KEY=) so the tmux substrate's additive -e mechanism cannot inherit
+// live credentials from the tmux server environment (CI-003, CI-INV-002).
 //
 // The returned slice is in "KEY=VALUE" form suitable for exec.Cmd.Env.
 //
-// Spec: specs/claude-hook-bridge.md §4.2 CHB-006.
+// Spec: specs/claude-hook-bridge.md §4.2 CHB-006; specs/credential-isolation.md CI-003.
 func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
-	// Start from BaseEnv with HARMONIK_SECRET_* stripped to prevent double-injection.
+	// Start from BaseEnv with HARMONIK_SECRET_* and credential deny-list keys
+	// stripped. Credential deny-list keys stripped from BaseEnv are tracked so
+	// CLAUDE_CODE_OAUTH* variants can be re-emitted as empty overrides below.
 	var base []string
+	var oauthKeysFromBase []string
 	for _, kv := range cfg.BaseEnv {
 		key := kv
 		if idx := strings.IndexByte(kv, '='); idx >= 0 {
 			key = kv[:idx]
 		}
 		if strings.HasPrefix(key, "HARMONIK_SECRET_") {
+			continue
+		}
+		if isCredentialDenyListKey(key) {
+			// Track CLAUDE_CODE_OAUTH* variants seen in BaseEnv so we can
+			// emit an explicit empty override for each one below.
+			if strings.HasPrefix(key, credentialDenyListPrefix) {
+				oauthKeysFromBase = append(oauthKeysFromBase, key)
+			}
 			continue
 		}
 		base = append(base, kv)
@@ -236,6 +274,25 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	}
 	if cfg.BeadID != "" {
 		env = append(env, "HARMONIK_BEAD_ID="+cfg.BeadID)
+	}
+
+	// Credential env deny-list empty overrides (CI-003, CI-INV-002).
+	// Emitting KEY= (empty value) via tmux -e explicitly zeros a credential var
+	// even when the tmux server env carries a live value — unlike merely omitting
+	// the key, which leaves the server env value intact for the spawned window.
+	// The two exact deny-list keys are always emitted. CLAUDE_CODE_OAUTH* variants
+	// seen in BaseEnv are emitted too; the well-known CLAUDE_CODE_OAUTH_TOKEN is
+	// always included to cover the common case where the tmux server holds it but
+	// it was not threaded through BaseEnv.
+	env = append(env,
+		"ANTHROPIC_API_KEY=",
+		"ANTHROPIC_AUTH_TOKEN=",
+		"CLAUDE_CODE_OAUTH_TOKEN=",
+	)
+	for _, k := range oauthKeysFromBase {
+		if k != "CLAUDE_CODE_OAUTH_TOKEN" {
+			env = append(env, k+"=")
+		}
 	}
 
 	// Secret vars per HC-028 — appended last so they override any stale

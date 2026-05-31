@@ -467,6 +467,128 @@ func TestClaudeEnvVars_NoExtraHarmonikVars(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CI-004a — Credential env deny-list scrub regression test
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestClaudeEnvVars_CredentialDenyList_ScrubbedFromBaseEnv is the named
+// regression test required by specs/credential-isolation.md §4 CI-004a.
+//
+// It verifies that ClaudeEnvVars:
+//  1. Strips ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, and CLAUDE_CODE_OAUTH*
+//     from BaseEnv so they do not appear with their original values.
+//  2. Emits explicit empty overrides (KEY=) for those keys so the tmux substrate's
+//     additive -e mechanism zeros them even when the tmux server env holds a value.
+//  3. Passes through non-deny-list BaseEnv vars unmodified.
+//  4. Does NOT log or emit any matched credential value (the test asserts absence
+//     of the original non-empty string values per CI-007).
+//
+// Spec: specs/credential-isolation.md CI-003, CI-004a, CI-INV-002.
+func TestClaudeEnvVars_CredentialDenyList_ScrubbedFromBaseEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg := handler.ClaudeEnvConfig{
+		RunID:         "run-ci004a",
+		DaemonSocket:  "/tmp/ci004a.sock",
+		WorkspacePath: "/ws/ci004a",
+		HandlerSessionID: "h-ci004a",
+		ClaudeSessionID:  "c-ci004a",
+		WorkflowID:    "wf-ci004a",
+		NodeID:        "n-ci004a",
+		BaseEnv: []string{
+			// Credential deny-list keys that must be scrubbed.
+			"ANTHROPIC_API_KEY=sk-ant-real-secret",
+			"ANTHROPIC_AUTH_TOKEN=bearer-real-secret",
+			"CLAUDE_CODE_OAUTH_TOKEN=oauth-real-secret",
+			"CLAUDE_CODE_OAUTH_CUSTOM=another-secret",
+			// Non-deny-list key that must survive scrubbing.
+			"PATH=/usr/local/bin:/usr/bin",
+		},
+	}
+
+	env := handler.ClaudeEnvVars(cfg)
+
+	// 1. Verify no credential key retains its original non-empty value.
+	//    (We assert on key absence at non-empty value, not on value absence,
+	//    to satisfy CI-007: tests MUST NOT emit credential values in failure messages.)
+	for _, kv := range env {
+		idx := strings.IndexByte(kv, '=')
+		if idx < 0 {
+			continue
+		}
+		key, val := kv[:idx], kv[idx+1:]
+		switch key {
+		case "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+			"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_CUSTOM":
+			if val != "" {
+				// Report key name only — never emit the credential value (CI-007).
+				t.Errorf("credential deny-list key %q has non-empty value in child env; want empty override", key)
+			}
+		}
+	}
+
+	// 2. Verify the known deny-list keys are present as explicit empty overrides
+	//    (needed so tmux -e KEY= zeros the tmux server env value).
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+	for _, key := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_CUSTOM",
+	} {
+		if _, ok := envMap[key]; !ok {
+			t.Errorf("credential deny-list key %q absent from child env; want explicit empty override (KEY=)", key)
+		}
+		if val := envMap[key]; val != "" {
+			// Re-check after map lookup. Suppress actual value per CI-007.
+			t.Errorf("credential deny-list key %q has non-empty value; want \"\"", key)
+		}
+	}
+
+	// 3. Verify non-deny-list BaseEnv var survives.
+	if got, ok := envMap["PATH"]; !ok || got != "/usr/local/bin:/usr/bin" {
+		t.Errorf("PATH = %q ok=%v; want %q", got, ok, "/usr/local/bin:/usr/bin")
+	}
+}
+
+// TestClaudeEnvVars_CredentialDenyList_EmptyOverridesAlwaysPresent verifies
+// that the two exact deny-list keys and CLAUDE_CODE_OAUTH_TOKEN are emitted as
+// empty overrides even when they are absent from BaseEnv — covering the case
+// where the tmux server env holds a credential not threaded through BaseEnv.
+//
+// Spec: specs/credential-isolation.md CI-003, CI-INV-002.
+func TestClaudeEnvVars_CredentialDenyList_EmptyOverridesAlwaysPresent(t *testing.T) {
+	t.Parallel()
+
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-ci003",
+		DaemonSocket:     "/tmp/ci003.sock",
+		WorkspacePath:    "/ws/ci003",
+		HandlerSessionID: "h-ci003",
+		ClaudeSessionID:  "c-ci003",
+		WorkflowID:       "wf-ci003",
+		NodeID:           "n-ci003",
+		// BaseEnv intentionally omits all credential keys.
+		BaseEnv: []string{"HOME=/home/op"},
+	}
+
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	for _, key := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+	} {
+		if _, ok := envMap[key]; !ok {
+			t.Errorf("deny-list key %q absent from child env; want explicit empty override even when not in BaseEnv", key)
+		}
+		if val := envMap[key]; val != "" {
+			t.Errorf("deny-list key %q has non-empty value %q; want \"\"", key, val)
+		}
+	}
+}
+
 // claudeHandlerFixtureEnvMap parses a "KEY=VALUE" env slice into a map.
 func claudeHandlerFixtureEnvMap(t *testing.T, env []string) map[string]string {
 	t.Helper()

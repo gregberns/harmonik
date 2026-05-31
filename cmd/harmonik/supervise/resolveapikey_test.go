@@ -1,6 +1,6 @@
 package supervisecmd
 
-// Regression tests for hk-fo9zz: supervise start must resolve ANTHROPIC_API_KEY
+// Regression tests for resolveAPIKey: supervise start must resolve ANTHROPIC_API_KEY
 // from the Pi-scoped non-committed source and persist it into config.json so the
 // shim can inject it into Pi's env on a fresh boot.
 //
@@ -11,6 +11,24 @@ import (
 	"path/filepath"
 	"testing"
 )
+
+// unsetenvWithRestore calls os.Unsetenv and registers a t.Cleanup that restores
+// the prior value (or re-unsets if absent), preventing env contamination across
+// tests regardless of execution order.
+func unsetenvWithRestore(t *testing.T, key string) {
+	t.Helper()
+	prior, had := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unsetenv %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(key, prior)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
 
 // TestResolveAPIKey_EnvVar verifies that resolveAPIKey returns the value of
 // ANTHROPIC_API_KEY from the ambient environment when it is set.
@@ -27,9 +45,7 @@ func TestResolveAPIKey_EnvVar(t *testing.T) {
 // TestResolveAPIKey_DotEnvFile verifies that resolveAPIKey falls back to reading
 // ANTHROPIC_API_KEY from a .env file at the project root when the env var is absent.
 func TestResolveAPIKey_DotEnvFile(t *testing.T) {
-	if err := os.Unsetenv("ANTHROPIC_API_KEY"); err != nil {
-		t.Fatalf("unsetenv: %v", err)
-	}
+	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
 
 	dir := t.TempDir()
 	envContent := "# comment line\nANTHROPIC_API_KEY=sk-ant-dotenv-key\nOTHER_VAR=irrelevant\n"
@@ -60,11 +76,13 @@ func TestResolveAPIKey_EnvVarTakesPrecedenceOverDotEnv(t *testing.T) {
 }
 
 // TestResolveAPIKey_EmptyWhenNeitherPresent verifies that resolveAPIKey returns ""
-// when neither the env var nor a .env file is present — Pi may use OAuth.
+// when neither the env var nor a .env file is present.
+//
+// NOTE: returning "" is the current behaviour, not a design endorsement. CI-006
+// requires fail-closed error on no-source; the gap (empty string permits silent
+// auth failure on a fresh Pi boot) is tracked in hk-0ziuw.
 func TestResolveAPIKey_EmptyWhenNeitherPresent(t *testing.T) {
-	if err := os.Unsetenv("ANTHROPIC_API_KEY"); err != nil {
-		t.Fatalf("unsetenv: %v", err)
-	}
+	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
 
 	dir := t.TempDir() // no .env file
 	got := resolveAPIKey(dir)
@@ -76,9 +94,7 @@ func TestResolveAPIKey_EmptyWhenNeitherPresent(t *testing.T) {
 // TestResolveAPIKey_DotEnvSkipsCommentAndBlankLines verifies that the .env parser
 // correctly ignores comment lines and blank lines and still finds the key.
 func TestResolveAPIKey_DotEnvSkipsCommentAndBlankLines(t *testing.T) {
-	if err := os.Unsetenv("ANTHROPIC_API_KEY"); err != nil {
-		t.Fatalf("unsetenv: %v", err)
-	}
+	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
 
 	dir := t.TempDir()
 	envContent := "\n# top comment\n\nFOO=bar\n\n# another comment\nANTHROPIC_API_KEY=sk-ant-parse-key\n"

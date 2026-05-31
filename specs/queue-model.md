@@ -75,6 +75,10 @@ ENUM QueueStatus:
   paused-by-failure   -- entered per §8.3 when a group reaches complete-with-failures
   paused-by-drain     -- entered per §8.5 when the daemon enters operator-pause / shutdown drain
   completed           -- all groups complete-success; durable landmark is the final queue_group_completed event
+  cancelled           -- operator cancelled the run (SIGINT/SIGTERM or global timeout) before all groups reached
+                         a terminal state; queue.json is left on disk with this status so the next harmonik run
+                         can detect and overwrite it cleanly without the QM-027 "already active" guard triggering;
+                         exit code 1 is returned to the operator (hk-ppt32)
 ```
 
 ### 2.3 RECORD Group
@@ -643,7 +647,7 @@ A stream group reaches a terminal `GroupStatus` per §5.1 when every item in `it
 
 ## 8. Queue Lifecycle
 
-The queue-level lifecycle is the outer wrapper around the per-group state machine. The four `QueueStatus` values are `active`, `paused-by-failure`, `paused-by-drain`, `completed`.
+The queue-level lifecycle is the outer wrapper around the per-group state machine. The five `QueueStatus` values are `active`, `paused-by-failure`, `paused-by-drain`, `completed`, `cancelled` (see §2.2 for semantics).
 
 ### 8.1 QM-050 — Submit (active entry)
 

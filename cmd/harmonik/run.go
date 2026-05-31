@@ -2,10 +2,11 @@ package main
 
 // run.go — `harmonik run <bead-id>` subcommand implementation.
 //
-// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2):
-//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref, --param.
+// Semantics (hk-icecw + hk-w3cp1 + hk-boiwe + hk-hiqrl + hk-ibilr + hk-qo9pq + hk-55zv2 + hk-cebjc):
+//  1. Parse flags: --project, --beads, --max-concurrent, --context, --review-loop, --notify-stream, --workflow-mode, --workflow-ref, --param, --dry-run/--plan-only.
 //  2. Resolve br binary via PATH.
 //  3. Validate every bead exists and is in a claimable state (open/ready).
+//  3a. [--dry-run] Print intended spawns and exit 0 — no state changes, no daemon.
 //  4. Guard against an existing active queue (QM-027).
 //  5. Construct a wave queue (one group, N items) and persist it to .harmonik/queue.json.
 //  6. Start the daemon with a context cancelled when the queue exits (drain or failure).
@@ -31,6 +32,8 @@ package main
 //	                             for multi-bead runs (len>1 or max-concurrent>1) per hk-ze3op.
 //	--notify-stream=<path>       Same, but write to a FIFO or file instead of stdout.
 //	--no-notify-stream           Opt out of auto-enable; for scripted callers parsing exit code only (hk-ze3op).
+//	--dry-run                    Print intended spawns without launching claude (hk-cebjc).
+//	--plan-only                  Alias for --dry-run.
 //
 // Exit-code contract:
 //
@@ -113,6 +116,7 @@ func runBeadSubcommand(subArgs []string) int {
 	workflowRefFlag := ""  // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
 	noNotifyStream := false // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
 	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
+	dryRun := false        // --dry-run / --plan-only: print plan without launching (hk-cebjc)
 	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
 
@@ -219,6 +223,10 @@ func runBeadSubcommand(subArgs []string) int {
 			key := kv[:eqIdx]
 			val := kv[eqIdx+1:]
 			templateParams[key] = val
+
+		// --dry-run / --plan-only (hk-cebjc): print plan without launching
+		case arg == "--dry-run" || arg == "--plan-only":
+			dryRun = true
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
@@ -390,7 +398,9 @@ func runBeadSubcommand(subArgs []string) int {
 	// This creates a new tmux session that runs harmonik run and attaches the
 	// calling terminal to it. The inner process will see $TMUX set and proceed.
 	// If tmux is not in PATH, a clear actionable error is printed instead.
-	if os.Getenv("TMUX") == "" {
+	//
+	// hk-cebjc: --dry-run does not spawn any processes; skip the tmux guard.
+	if !dryRun && os.Getenv("TMUX") == "" {
 		tmuxBin, lookErr := exec.LookPath("tmux")
 		if lookErr != nil {
 			fmt.Fprintln(os.Stderr, "harmonik run: $TMUX is not set and tmux is not in PATH.\n"+
@@ -427,6 +437,7 @@ func runBeadSubcommand(subArgs []string) int {
 	validateCtx, validateCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer validateCancel()
 
+	beadRecords := make([]core.BeadRecord, 0, len(beadIDs))
 	for _, beadID := range beadIDs {
 		record, showErr := adapter.ShowBead(validateCtx, beadID)
 		if showErr != nil {
@@ -443,6 +454,14 @@ func runBeadSubcommand(subArgs []string) int {
 				beadID, record.Status, core.CoarseStatusOpen)
 			return 1
 		}
+		beadRecords = append(beadRecords, record)
+	}
+
+	// hk-cebjc: --dry-run / --plan-only prints the intended spawn plan and exits
+	// without persisting queue.json, touching the bead ledger, or launching claude.
+	if dryRun {
+		printDryRunPlan(os.Stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs))
+		return 0
 	}
 
 	// --- Construct a wave queue (one group, N items) and persist it ---
@@ -713,6 +732,75 @@ func runBeadSubcommand(subArgs []string) int {
 	return 2
 }
 
+// printDryRunPlan writes the intended spawn plan to out and returns.
+// No state is mutated; no queue is persisted; no daemon is started.
+//
+// Output format (hk-cebjc):
+//
+//	harmonik run --dry-run: plan for N beads (max-concurrent=M, queue=stream)
+//
+//	  hk-abc123  "title..."       workflow=review-loop  → 1 implementer + up to 3 reviewers
+//	  hk-def456  "another title"  workflow=single       → 1 implementer
+//
+//	Total: N implementers + up to R reviewers across N beads (max-concurrent=M)
+//	No changes written. Run without --dry-run to execute.
+//
+// Bead ref: hk-cebjc.
+func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode string, workflowRef string, maxConcurrent int, groupKind queue.GroupKind) {
+	// reviewLoopMaxReviewers mirrors the unexported reviewLoopIterationCap = 3
+	// in internal/daemon/reviewloop.go (hk-cebjc).
+	const reviewLoopMaxReviewers = 3
+
+	n := len(beadRecords)
+	fmt.Fprintf(out, "harmonik run --dry-run: plan for %d bead(s) (max-concurrent=%d, queue=%s)\n\n",
+		n, maxConcurrent, groupKind)
+
+	totalImplementers := 0
+	totalMaxReviewers := 0
+
+	for _, rec := range beadRecords {
+		title := rec.Title
+		if len(title) > 50 {
+			title = title[:47] + "..."
+		}
+
+		var spawnDesc string
+		switch core.WorkflowMode(workflowMode) {
+		case core.WorkflowModeReviewLoop:
+			spawnDesc = fmt.Sprintf("1 implementer + up to %d reviewers", reviewLoopMaxReviewers)
+			totalImplementers++
+			totalMaxReviewers += reviewLoopMaxReviewers
+		case core.WorkflowModeDot:
+			ref := workflowRef
+			if ref == "" {
+				ref = "(no --workflow-ref)"
+			}
+			spawnDesc = fmt.Sprintf("agents per graph %s", ref)
+			totalImplementers++ // at minimum 1 node fires
+		default: // single
+			spawnDesc = "1 implementer"
+			totalImplementers++
+		}
+
+		fmt.Fprintf(out, "  %-12s  %-52s  workflow=%-12s  → %s\n",
+			string(rec.BeadID), fmt.Sprintf("%q", title), workflowMode, spawnDesc)
+	}
+
+	fmt.Fprintln(out)
+	switch core.WorkflowMode(workflowMode) {
+	case core.WorkflowModeReviewLoop:
+		fmt.Fprintf(out, "Total: %d implementer(s) + up to %d reviewer(s) across %d bead(s) (max-concurrent=%d)\n",
+			totalImplementers, totalMaxReviewers, n, maxConcurrent)
+	case core.WorkflowModeDot:
+		fmt.Fprintf(out, "Total: %d+ agent(s) across %d bead(s) — exact count depends on graph (max-concurrent=%d)\n",
+			totalImplementers, n, maxConcurrent)
+	default:
+		fmt.Fprintf(out, "Total: %d implementer(s) across %d bead(s) (max-concurrent=%d)\n",
+			totalImplementers, n, maxConcurrent)
+	}
+	fmt.Fprintln(out, "No changes written. Run without --dry-run to execute.")
+}
+
 // runUsage prints help for `harmonik run --help` and returns, leaving the
 // caller to return exit code 0. Output goes to stdout so it can be captured
 // by agents without stderr redirection (hk-vudz0).
@@ -737,10 +825,12 @@ FLAGS
   --no-notify-stream            Disable per-bead completion lines (opt out of auto-enable on multi-bead runs)
   --wave                        Use wave-mode queue (no mid-flight appends; default: stream)
   --param KEY=VALUE             Template substitution param for .dot workflows (repeatable); replaces __KEY__ in source
+  --dry-run                     Print intended spawns without launching claude or mutating state
+  --plan-only                   Alias for --dry-run
   --project DIR                 Project directory (default: current working directory)
 
 EXIT CODES
-  0   All beads succeeded
+  0   All beads succeeded (or --dry-run plan printed)
   1   At least one bead failed, or argument/validation error
   2   Unexpected queue state (diagnostic)
   5   Another harmonik instance is already running (pidfile locked)
@@ -756,5 +846,7 @@ EXAMPLES
   harmonik run --beads hk-abc123,hk-def456 --project /path/to/project --max-concurrent 4
   harmonik run --beads hk-abc123,hk-def456 --notify-stream
   harmonik run --beads hk-abc123,hk-def456 --notify-stream=/tmp/hk-events.fifo
+  harmonik run --beads hk-abc123,hk-def456 --dry-run
+  harmonik run --beads hk-abc123,hk-def456 --plan-only --max-concurrent 4
 `)
 }

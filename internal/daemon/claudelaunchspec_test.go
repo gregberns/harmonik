@@ -366,6 +366,86 @@ func claudeLaunchSpecAssertEnvKey(t *testing.T, env []string, key string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CI-003 regression: credential deny-list scrub at buildClaudeLaunchSpec boundary
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv is the integration-level
+// regression lock for specs/credential-isolation.md CI-003/CI-004a.
+//
+// It verifies that buildClaudeLaunchSpec never emits a live ANTHROPIC_API_KEY,
+// ANTHROPIC_AUTH_TOKEN, or CLAUDE_CODE_OAUTH_TOKEN value in spec.Env even when
+// those keys are present in baseEnv (simulating a caller that passes os.Environ()
+// directly). The fix is in ClaudeEnvVars; this test locks it at the integration
+// boundary so a refactor that bypasses ClaudeEnvVars would still fail.
+//
+// Root cause: 2026-05-30 API-key burn (hk-f2nm1) — ANTHROPIC_API_KEY in repo
+// .env was inherited by every spawned claude child via tmux server env.
+//
+// Spec: specs/credential-isolation.md CI-002, CI-003, CI-004a.
+func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
+	t.Parallel()
+
+	ws := claudeLaunchSpecFixtureWorkspace(t)
+	runUID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("mint runUID: %v", err)
+	}
+	// Inject live credential values into baseEnv to simulate a caller that
+	// passes os.Environ() without pre-filtering. The values are test-only
+	// sentinels; no real credentials are used (CI-007).
+	rc := daemon.ExportedClaudeRunCtx{
+		RunID:         core.RunID(runUID),
+		BeadID:        "test-bead-ci003",
+		WorkspacePath: ws,
+		DaemonSocket:  "/tmp/harmonik-test-ci003.sock",
+		WorkflowMode:  core.WorkflowModeSingle,
+		Phase:         "",
+		IterationCount: 0,
+		HandlerBinary: "claude",
+		BaseEnv: []string{
+			"HARMONIK_PROJECT_HASH=deadbeef123456",
+			"ANTHROPIC_API_KEY=ci003-sentinel-must-not-reach-child",
+			"ANTHROPIC_AUTH_TOKEN=ci003-sentinel-must-not-reach-child",
+			"CLAUDE_CODE_OAUTH_TOKEN=ci003-sentinel-must-not-reach-child",
+		},
+	}
+
+	spec, _, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv: unexpected error: %v", err)
+	}
+
+	// Assert no credential deny-list key carries a live value in spec.Env (CI-003).
+	// Error messages redact values per CI-007.
+	denyKeys := []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+	for _, kv := range spec.Env {
+		for _, dk := range denyKeys {
+			prefix := dk + "="
+			if strings.HasPrefix(kv, prefix) && len(kv) > len(prefix) {
+				t.Errorf("CI-003 regression: spec.Env carries live value for %q; must be empty override %q", dk, prefix)
+			}
+		}
+	}
+
+	// Assert explicit empty overrides are present (CI-003, CI-INV-002). The tmux
+	// -e mechanism is additive — merely omitting a key leaves the server env value
+	// intact; only an explicit KEY= zeros it in the spawned window.
+	for _, dk := range denyKeys {
+		want := dk + "="
+		found := false
+		for _, kv := range spec.Env {
+			if kv == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("CI-003: spec.Env missing empty override %q; required to zero tmux server env", want)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HC-055b: --dangerously-skip-permissions path-check tests (hk-fdyip)
 // ─────────────────────────────────────────────────────────────────────────────
 

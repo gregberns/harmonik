@@ -56,6 +56,8 @@ export interface BridgeOptions {
   heartbeatIntervalS?: number; // default 60
   watchdog?: WatchdogOptions;
   debounceMs?: number;
+  // CL-051: two-phase done verifier. Defaults to real git spawn; injectable for tests.
+  gitCheck?: (repoRoot: string, beadId: string) => Promise<boolean>;
 }
 
 const DEFAULT_SUBSCRIBE_TYPES = [
@@ -92,6 +94,22 @@ function eventsJsonlPath(repoRoot: string): string {
   return join(repoRoot, ".harmonik/events/events.jsonl");
 }
 
+// CL-051: verify Refs: trailer on origin/main for a bead.
+// Returns true if at least one commit on origin/main carries "Refs: <beadId>".
+function defaultGitCheck(repoRoot: string, beadId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "git",
+      ["-C", repoRoot, "log", "origin/main", `--grep=Refs: ${beadId}`, "--max-count=1", "--oneline"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let out = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString(); });
+    proc.on("exit", () => resolve(out.trim().length > 0));
+    proc.on("error", () => resolve(false));
+  });
+}
+
 function emitCognitionEvent(repoRoot: string, record: Record<string, unknown>): void {
   const path = cogEventPath(repoRoot);
   mkdirSync(join(repoRoot, ".harmonik/cognition"), { recursive: true });
@@ -126,6 +144,7 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     heartbeatIntervalS = 60,
     watchdog: watchdogOpts = {},
     debounceMs,
+    gitCheck: gitCheckFn = defaultGitCheck,
   } = opts;
 
   const sp = statePath(repoRoot);
@@ -251,6 +270,29 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     }
 
     if (tier === "deterministic") {
+      // CL-051: two-phase done verification for run_completed.
+      // Condition 1 (run_completed{success}) is satisfied; check Condition 2
+      // (Refs: trailer on origin/main) before treating the bead as done.
+      if (event.type === "run_completed") {
+        const beadId = (event.payload as { bead_id?: string } | undefined)?.bead_id;
+        if (beadId) {
+          const verified = await gitCheckFn(repoRoot, beadId);
+          if (!verified) {
+            // Condition 1 only — push may have failed after merge. Advance
+            // watermark (event is processed) but wake LLM to investigate.
+            emitCognitionEvent(repoRoot, {
+              type: "run_completed_unverified",
+              bead_id: beadId,
+              event_id: event.event_id,
+            });
+            processedEvent(event.event_id, `deterministic:${event.type}`);
+            harness.followUp(
+              `[harmonik-bridge] CL-051: run_completed for ${beadId} has no Refs: trailer on origin/main. Push may have failed after merge. Verify and re-push if needed.`,
+            );
+            return;
+          }
+        }
+      }
       // Eager refill and watermark advance; model not woken.
       processedEvent(event.event_id, `deterministic:${event.type}`);
       emitCognitionEvent(repoRoot, { type: "deterministic_reaction", event_type: event.type, event_id: event.event_id });

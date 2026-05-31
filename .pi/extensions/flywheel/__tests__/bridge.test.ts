@@ -61,9 +61,10 @@ describe("replayFile — correct reactions without real push (acceptance)", () =
   beforeEach(() => { dir = tmpDir(); vi.useFakeTimers(); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); vi.useRealTimers(); });
 
-  it("processes run_completed deterministically — no followUp", async () => {
+  it("processes run_completed deterministically — no followUp when git check passes", async () => {
     const { harness, calls } = makeHarness();
-    const bridge = createEventBridge(harness, bridgeOpts(dir));
+    // CL-051: inject a gitCheck that confirms the trailer is on origin/main.
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => true }));
 
     const events: SubscribeEvent[] = [
       makeEvent("run_completed", 1, { bead_id: "hk-aaa" }),
@@ -136,6 +137,86 @@ describe("replayFile — correct reactions without real push (acceptance)", () =
     expect(followUps[0].arg).toContain("hk-x");
     expect(followUps[0].arg).toContain("hk-y");
     expect(followUps[0].arg).toContain("hk-z");
+  });
+});
+
+// ── CL-051: two-phase done verification ─────────────────────────────────────
+
+describe("CL-051 two-phase done verification", () => {
+  let dir: string;
+  beforeEach(() => { dir = tmpDir(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("run_completed with bead_id: git check passes → no followUp (deterministic path)", async () => {
+    const { harness, calls } = makeHarness();
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => true }));
+
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_completed", 1, { bead_id: "hk-xyz" }),
+    ]));
+
+    const followUps = calls.filter((c) => c.method === "followUp");
+    expect(followUps).toHaveLength(0);
+  });
+
+  it("run_completed with bead_id: git check fails → followUp warning emitted (CL-051 unverified)", async () => {
+    const { harness, calls } = makeHarness();
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => false }));
+
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_completed", 2, { bead_id: "hk-pushfail" }),
+    ]));
+
+    const followUps = calls.filter((c) => c.method === "followUp");
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0].arg).toContain("hk-pushfail");
+    expect(followUps[0].arg).toContain("CL-051");
+  });
+
+  it("run_completed with bead_id: git check fails → watermark still advances", async () => {
+    const { harness } = makeHarness();
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => false }));
+
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_completed", 3, { bead_id: "hk-pushfail2" }),
+    ]));
+
+    const sp = join(dir, ".harmonik", "cognition", "state.json");
+    const s = readWatermark(sp)!;
+    expect(s.last_processed_event_id).toBe(uuidv7(3));
+    expect(s.reacted_ledger[uuidv7(3)]).toContain("deterministic");
+  });
+
+  it("run_completed without bead_id → no git check, no followUp (backward compat)", async () => {
+    const { harness, calls } = makeHarness();
+    // No gitCheck injection needed; no bead_id means no git check fires.
+    const gitCheckCalled = { value: false };
+    const bridge = createEventBridge(harness, bridgeOpts(dir, {
+      gitCheck: async () => { gitCheckCalled.value = true; return false; },
+    }));
+
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_completed", 4),
+    ]));
+
+    expect(gitCheckCalled.value).toBe(false);
+    const followUps = calls.filter((c) => c.method === "followUp");
+    expect(followUps).toHaveLength(0);
+  });
+
+  it("run_completed unverified: emits run_completed_unverified cognition event", async () => {
+    const { harness } = makeHarness();
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { gitCheck: async () => false }));
+
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_completed", 5, { bead_id: "hk-cogcheck" }),
+    ]));
+
+    const cogPath = join(dir, ".harmonik", "cognition", "cognition-events.jsonl");
+    const lines = readFileSync(cogPath, "utf8").split("\n").filter(Boolean);
+    const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
+    expect(types).toContain("run_completed_unverified");
+    expect(types).not.toContain("deterministic_reaction");
   });
 });
 

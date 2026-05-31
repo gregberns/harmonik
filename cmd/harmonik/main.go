@@ -381,15 +381,14 @@ EXAMPLES
 	var maxConcurrentFlag int
 	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")
 
-	// --no-auto-pull: disable the br-ready fallback poll so the daemon only
-	// dispatches work submitted via 'harmonik queue submit / append'.
-	// Required by the flywheel topology (CL-013/070/071) where a Pi cognition
-	// loop curates dispatch via 'harmonik queue append'. Without this flag the
-	// daemon self-seeds from br ready, conflicting with Pi-controlled dispatch.
-	// Default false preserves the existing backward-compatible behaviour.
-	// Bead ref: hk-exd7m.
-	var noAutoPullFlag bool
-	flag.BoolVar(&noAutoPullFlag, "no-auto-pull", false, "disable br-ready fallback; only dispatch work arriving via the queue surface")
+	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
+	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready
+	// drain for non-queue-driven deployments. --no-auto-pull is kept as an
+	// accepted no-op alias for back-compat (it was the opt-in; now queue-only is
+	// the default so passing it is redundant but harmless).
+	var autoPullFlag bool
+	flag.BoolVar(&autoPullFlag, "auto-pull", false, "enable br-ready fallback poll (historical single-daemon topology; opt-in)")
+	flag.BoolVar(new(bool), "no-auto-pull", false, "no-op alias; queue-only is now the default (back-compat)")
 
 	flag.Usage = harmonikUsage
 	flag.Parse()
@@ -503,7 +502,7 @@ EXAMPLES
 		BrPath:           brPath,
 		JSONLLogPath:     jsonlLogPath,
 		MaxConcurrent:    maxConcurrentFlag,
-		NoAutoPull:       noAutoPullFlag,   // hk-exd7m: queue-only mode for flywheel topology
+		NoAutoPull:       !autoPullFlag,    // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
 		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
 		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash: commitHash,       // stamped via -ldflags at build time (hk-mz0x4)

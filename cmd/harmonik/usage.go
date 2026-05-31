@@ -29,6 +29,8 @@ SUBCOMMANDS
 DAEMON FLAGS (used without a subcommand)
   --project DIR          Project directory (default: current working directory)
   --max-concurrent N     Max simultaneous beads (default 1)
+  --auto-pull            Enable br-ready fallback poll (historical topology; default OFF)
+  --no-auto-pull         No-op alias; queue-only is the default (back-compat)
 
 EXAMPLES
   # Start the daemon in the foreground:

@@ -9,11 +9,11 @@
 //
 // This file ships three layered sensor shapes:
 //
-//   - Shape A: surface-area sensor — asserts that no Go source file under
-//     internal/handler/ imports the core package (which hosts NewEventIDGenerator).
-//     If handler code ever imports core, a future contributor could instantiate
-//     EventIDGenerator in-handler, violating EV-002b. The import boundary is
-//     the structural enforcement of the routing contract.
+//   - Shape A: symbol-reference sensor — asserts that no production Go source
+//     file under internal/handler/ references NewEventIDGenerator or
+//     EventIDGenerator — the only symbols that mint event_id values. Handler
+//     files may import internal/core for legitimate domain types (Run, NodeID,
+//     Outcome, GateRef, etc.); the prohibition is on minting, not on importing.
 //
 //   - Shape B: reflect + AST field-shape sensor — asserts that Event.EventID
 //     carries godoc citing EV-002b and its daemon-stamp contract ("MUST NOT
@@ -41,50 +41,34 @@ import (
 
 // repoRoot is defined in beadsadoption_bi001_test.go (same package); reused here.
 
-// ── Shape A: surface-area sensor ──────────────────────────────────────────────
+// ── Shape A: symbol-reference sensor ─────────────────────────────────────────
 
-// TestEventEV002b_HandlerPackageDoesNotImportCore asserts that no production
-// (non-test) Go source file under internal/handler/ imports the internal/core
-// package.
+// TestEventEV002b_HandlerPackageDoesNotMintEventID asserts that no production
+// (non-test) Go source file under internal/handler/ references the event-id-minting
+// symbols NewEventIDGenerator or EventIDGenerator.
 //
-// EventIDGenerator and NewEventIDGenerator both live in internal/core. If a
-// handler-side production file imports core, the import boundary that enforces
-// EV-002b is broken: handler code could call NewEventIDGenerator() and mint
-// event_id values independently, violating the daemon-watcher-stamps-at-enqueue
-// contract.
+// Per EV-002b, handler subprocesses MUST NOT generate event_id independently.
+// The rule targets event_id minting, not internal/core imports in general:
+// handler files legitimately import core for domain types (Run, NodeID, Outcome,
+// GateRef, GateDecisionPayload, etc.) and that does not violate EV-002b. Only
+// referencing or calling the minting symbols does.
 //
-// Test files (_test.go) are explicitly excluded from this sensor because they
-// do not compile into the handler subprocess binary — they run in the Go test
-// harness as a separate process. A test file that imports internal/core to use
-// shared type aliases (e.g. core.RunID, core.WorkflowID) for assertion fixtures
-// does NOT violate EV-002b: the handler subprocess never links against that code.
-// Including test files would produce false positives on any test that references
-// core types for fixture construction without ever calling NewEventIDGenerator.
-//
-// This test is a surface-area sensor: it does not assert that handler code
-// _does_ call NewEventIDGenerator (that would require execution tracing), but
-// asserts that the structural import boundary in production code that prevents
-// such a call is intact.
+// Test files (_test.go) are excluded because they compile into the Go test
+// harness, not the handler subprocess binary. A test file importing core for
+// assertion fixtures does NOT violate EV-002b.
 //
 // Spec reference: event-model.md §4.1 EV-002b.
-func TestEventEV002b_HandlerPackageDoesNotImportCore(t *testing.T) {
+func TestEventEV002b_HandlerPackageDoesNotMintEventID(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
 	handlerDir := filepath.Join(root, "internal", "handler")
 
-	// If internal/handler does not exist yet, the constraint is vacuously
-	// satisfied: there is no handler code that could import core.
 	if _, err := os.Stat(handlerDir); os.IsNotExist(err) {
 		t.Skip("EV-002b Shape A: internal/handler/ does not exist; constraint vacuously satisfied")
 	}
 
 	// Collect production (non-test) .go files under internal/handler/.
-	// Test files (_test.go) are excluded: they compile into the Go test binary,
-	// not the handler subprocess, so importing internal/core in a test file does
-	// not violate EV-002b's "handler subprocess MUST NOT generate event_id"
-	// constraint. Including test files would produce false positives for test
-	// fixtures that reference core types (e.g. core.RunID) for assertion purposes.
 	var goFiles []string
 	err := filepath.Walk(handlerDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -103,31 +87,38 @@ func TestEventEV002b_HandlerPackageDoesNotImportCore(t *testing.T) {
 		t.Skip("EV-002b Shape A: internal/handler/ has no production .go files; constraint vacuously satisfied")
 	}
 
-	// Parse each file and inspect its imports.
+	// Parse each file's full AST and look for any identifier named
+	// NewEventIDGenerator or EventIDGenerator — the only symbols that mint
+	// event_id values in internal/core.
 	fset := token.NewFileSet()
 	for _, goFile := range goFiles {
-		f, err := parser.ParseFile(fset, goFile, nil, parser.ImportsOnly)
+		f, err := parser.ParseFile(fset, goFile, nil, 0)
 		if err != nil {
 			t.Errorf("EV-002b: parsing %s: %v", goFile, err)
 			continue
 		}
-		for _, imp := range f.Imports {
-			// imp.Path.Value is a quoted string, e.g. `"github.com/gregberns/harmonik/internal/core"`.
-			importPath := strings.Trim(imp.Path.Value, `"`)
-			if strings.HasSuffix(importPath, "/internal/core") || importPath == "internal/core" {
-				rel, err := filepath.Rel(root, goFile)
-				if err != nil {
-					rel = goFile // fallback to absolute path on error
+		ast.Inspect(f, func(n ast.Node) bool {
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if ident.Name == "NewEventIDGenerator" || ident.Name == "EventIDGenerator" {
+				rel, relErr := filepath.Rel(root, goFile)
+				if relErr != nil {
+					rel = goFile
 				}
 				t.Errorf(
-					"EV-002b: %s imports %q; handler-side production packages MUST NOT import internal/core "+
-						"because NewEventIDGenerator lives there and handler subprocesses MUST NOT "+
-						"generate event_id independently (event-model.md §4.1 EV-002b); "+
-						"event_id MUST be stamped by the daemon watcher at enqueue time",
-					rel, importPath,
+					"EV-002b: %s references %q; handler-side production packages "+
+						"MUST NOT call or reference event-id-minting symbols "+
+						"(NewEventIDGenerator, EventIDGenerator) because handler "+
+						"subprocesses MUST NOT generate event_id independently "+
+						"(event-model.md §4.1 EV-002b); event_id MUST be stamped "+
+						"by the daemon watcher at enqueue time",
+					rel, ident.Name,
 				)
 			}
-		}
+			return true
+		})
 	}
 }
 
@@ -170,6 +161,58 @@ func TestEventEV002b_SensorSkipsTestFiles(t *testing.T) {
 				tc.filename, isProduction, tc.isProductionF,
 			)
 		}
+	}
+}
+
+// TestEventEV002b_SensorCatchesEventIDMinting verifies that the Shape A sensor
+// fires when a synthetic handler file references NewEventIDGenerator. This is a
+// meta-sensor: it confirms the detection logic is not accidentally a no-op.
+//
+// Spec reference: event-model.md §4.1 EV-002b.
+func TestEventEV002b_SensorCatchesEventIDMinting(t *testing.T) {
+	t.Parallel()
+
+	// Synthetic source that references the prohibited symbol via a selector
+	// expression (core.NewEventIDGenerator) — the pattern a real violation would
+	// take.
+	const src = `package handler
+
+import "github.com/gregberns/harmonik/internal/core"
+
+var _ = core.NewEventIDGenerator
+`
+	tmp, err := os.CreateTemp(t.TempDir(), "synthetic_handler_*.go")
+	if err != nil {
+		t.Fatalf("EV-002b meta-sensor: creating temp file: %v", err)
+	}
+	if _, err := tmp.WriteString(src); err != nil {
+		t.Fatalf("EV-002b meta-sensor: writing temp file: %v", err)
+	}
+	tmp.Close()
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, tmp.Name(), nil, 0)
+	if err != nil {
+		t.Fatalf("EV-002b meta-sensor: parsing synthetic file: %v", err)
+	}
+
+	var found []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		ident, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if ident.Name == "NewEventIDGenerator" || ident.Name == "EventIDGenerator" {
+			found = append(found, ident.Name)
+		}
+		return true
+	})
+
+	if len(found) == 0 {
+		t.Error(
+			"EV-002b meta-sensor: Shape A did not detect NewEventIDGenerator in a " +
+				"synthetic handler file that references it; the sensor is broken",
+		)
 	}
 }
 

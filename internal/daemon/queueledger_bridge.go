@@ -64,10 +64,27 @@ func (b *brQueueLedger) LookupStatus(ctx context.Context, id core.BeadID) (queue
 
 // BlocksEdge implements queue.BeadLedger.BlocksEdge.
 //
-// Uses ListDependencies on blocker and scans for an outgoing "blocks" edge
-// to blocked. Returns false if either bead is unknown.
+// Contract (queue.BeadLedger): returns true iff blocker must complete before
+// blocked may start — i.e. blocked DEPENDS ON blocker.
+//
+// Beads edge-direction (verified against live `br dep list` and the brcli
+// fixture in listdependencies_test.go): a "blocks" dependency is stored with
+// issue_id = the BLOCKED (dependent) bead and depends_on_id = the BLOCKER bead.
+// brcli.ListDependencies maps issue_id → FromBeadID and depends_on_id →
+// ToBeadID, so the edge for "blocked depends on blocker" is
+// {FromBeadID: blocked, ToBeadID: blocker, EdgeKind: blocks}.
+//
+// We therefore list the dependencies OF blocked (its outgoing edges) and scan
+// for a blocks edge whose target (ToBeadID) is blocker. Returns false if either
+// bead is unknown.
+//
+// Fixes hk-dv8qv: the prior implementation listed dependencies of blocker and
+// matched FromBeadID==blocker / ToBeadID==blocked, which is the reversed edge
+// direction. That made BlocksEdge(a,b) report true when a DEPENDS ON b,
+// inverting all queue ledger-dep deferral — roots of a chain were deferred
+// while leaves with open blockers were dispatched out of order.
 func (b *brQueueLedger) BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error) {
-	edges, err := b.adapter.ListDependencies(ctx, blocker)
+	edges, err := b.adapter.ListDependencies(ctx, blocked)
 	if err != nil {
 		if errors.Is(err, brcli.ErrBeadNotFound) {
 			return false, nil
@@ -76,8 +93,8 @@ func (b *brQueueLedger) BlocksEdge(ctx context.Context, blocker, blocked core.Be
 	}
 	for _, e := range edges {
 		if e.EdgeKind == core.EdgeKindBlocks &&
-			e.FromBeadID == blocker &&
-			e.ToBeadID == blocked {
+			e.FromBeadID == blocked &&
+			e.ToBeadID == blocker {
 			return true, nil
 		}
 	}

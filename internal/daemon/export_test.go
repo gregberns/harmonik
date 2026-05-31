@@ -23,6 +23,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -1417,3 +1418,21 @@ var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 //
 // Bead ref: hk-ry8q1.
 var ExportedNewOperatorPauseController = NewOperatorPauseController
+
+// ─────────────────────────────────────────────────────────────────────────────
+// brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedQueueLedger is the read seam tests use to exercise the production
+// brQueueLedger.BlocksEdge / LookupStatus against a real brcli.Adapter (wired
+// to a mock `br` binary). It mirrors the queue.BeadLedger surface.
+type ExportedQueueLedger interface {
+	LookupStatus(ctx context.Context, id core.BeadID) (queue.BeadStatus, error)
+	BlocksEdge(ctx context.Context, blocker, blocked core.BeadID) (bool, error)
+}
+
+// ExportedNewBRQueueLedger constructs the production brQueueLedger over adapter
+// so package daemon_test can verify the ledger-dep edge direction (hk-dv8qv).
+func ExportedNewBRQueueLedger(adapter *brcli.Adapter) ExportedQueueLedger {
+	return newBRQueueLedger(adapter)
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -90,6 +91,13 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 		// Brief wait for kernel reaping.
 		time.Sleep(500 * time.Millisecond)
 	}
+
+	// Reap the flywheel tmux session (child tree). This kills the pane and any
+	// processes still running under it even if the shim already exited.
+	// Ignore errors: session may not exist if the shim already cleaned up.
+	sessionName := FlywheelSessionName(projectDir)
+	//nolint:gosec // G204: sessionName derived from operator-controlled projectDir
+	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
 
 	_ = cleanup(projectDir)
 	fmt.Fprintln(stdout, "harmonik supervise stop: supervisor stopped")

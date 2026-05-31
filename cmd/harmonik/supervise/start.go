@@ -23,6 +23,11 @@ const ExitCodeDaemonDown = 17
 // a live process. Code 25 per PL-INTERIM (PL-019c).
 const ExitCodeSupervisorRunning = 25
 
+// ExitCodeFlywheelSessionExists is the exit code when the flywheel tmux session
+// already exists (lock free but pane still present after shim crash).
+// Code 24 per PL-INTERIM (`tmux-session-unavailable`; PL-028b).
+const ExitCodeFlywheelSessionExists = 24
+
 // RunStart implements `harmonik supervise start`.
 //
 // Exit codes:
@@ -170,12 +175,19 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	createCmd := exec.Command("tmux", "new-session", "-d", "-s", sessionName,
 		"-c", projectDir, shimCmd)
 	if out, err := createCmd.CombinedOutput(); err != nil {
-		// "duplicate session" → session already exists; non-fatal.
-		if !strings.Contains(string(out), "duplicate session") {
-			fmt.Fprintf(stderr, "harmonik supervise start: tmux new-session: %v: %s\n", err, strings.TrimSpace(string(out)))
+		if strings.Contains(string(out), "duplicate session") {
+			// Flywheel session already exists (lock was free but pane survived shim
+			// crash with remain-on-exit on). Refuse with 24 so the operator runs
+			// `supervise stop` first to reap the stale pane (PL-028b interim).
+			fmt.Fprintf(stderr,
+				"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
+				sessionName)
 			_ = RemoveSentinel(projectDir)
-			return 1
+			return ExitCodeFlywheelSessionExists
 		}
+		fmt.Fprintf(stderr, "harmonik supervise start: tmux new-session: %v: %s\n", err, strings.TrimSpace(string(out)))
+		_ = RemoveSentinel(projectDir)
+		return 1
 	}
 
 	// Set remain-on-exit on the flywheel session (PL-019f).

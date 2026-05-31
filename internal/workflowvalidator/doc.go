@@ -6,7 +6,9 @@
 // Scope (per EM-038):
 //   - DOT parseability.
 //   - Sub-workflow resolution (transitive) and acyclicity (EM-034b).
-//   - Reference resolution: handler_ref, policy_ref, gate_ref, etc.
+//   - Reference resolution: handler_ref, gate_ref, freedom_profile_ref,
+//     budget_ref, and required_skills entries resolve to registered targets.
+//   - CP-056 rejection: policy_ref is deprecated; any occurrence is rejected.
 //   - Attribute type checks: enum values, required attributes, positive integers.
 //   - Reachability: every node reachable from start_node_id; every node can
 //     reach at least one terminal_node_ids entry.

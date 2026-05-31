@@ -32,8 +32,12 @@ type WorkflowResolver interface {
 }
 
 // ReferenceRegistry answers resolution queries for the optional node-level
-// references: handler_ref, policy_ref, gate_ref, freedom_profile_ref,
-// budget_ref, and required_skills entries.
+// references: handler_ref, gate_ref, freedom_profile_ref, budget_ref, and
+// required_skills entries.
+//
+// Note: policy_ref is deprecated (CP-056) and rejected outright; it has no
+// registry lookup. HasPolicy is retained for completeness but is not called
+// by the validator.
 //
 // Any method that returns false means the named target is not registered;
 // the validator treats that as a validation failure per EM-038.
@@ -41,6 +45,7 @@ type ReferenceRegistry interface {
 	// HasHandler reports whether a handler with the given ref name is registered.
 	HasHandler(ref string) bool
 	// HasPolicy reports whether a policy with the given ref name is registered.
+	// Retained for interface completeness; not called by the validator (CP-056).
 	HasPolicy(ref core.PolicyRef) bool
 	// HasGate reports whether a gate with the given ref name is registered.
 	HasGate(ref core.GateRef) bool
@@ -72,7 +77,7 @@ const (
 	codeSubWorkflowUnresolved    = "em038_subworkflow_unresolved"
 	codeSubWorkflowCycle         = "em038_subworkflow_cycle"
 	codeHandlerRefUnresolved     = "em038_handler_ref_unresolved"
-	codePolicyRefUnresolved      = "em038_policy_ref_unresolved"
+	codePolicyRefDeprecated      = "cp056_policy_ref_deprecated"
 	codeGateRefUnresolved        = "em038_gate_ref_unresolved"
 	codeFreedomProfileUnresolved = "em038_freedom_profile_unresolved"
 	codeBudgetRefUnresolved      = "em038_budget_ref_unresolved"
@@ -81,6 +86,7 @@ const (
 	codeBadNodeType              = "em038_bad_node_type"
 	codeMissingHandlerRef        = "em038_missing_handler_ref"
 	codeForbiddenHandlerRef      = "em038_forbidden_handler_ref"
+	codeMissingGateRef           = "em038_missing_gate_ref"
 	codeMissingSubWorkflowRef    = "em038_missing_sub_workflow_ref"
 	codeForbiddenSubWorkflowRef  = "em038_forbidden_sub_workflow_ref"
 	codeBadIdempotencyClass      = "em038_bad_idempotency_class"
@@ -136,11 +142,12 @@ type PreRunValidator struct {
 // applicable (e.g., in tests covering only attribute-level checks); the
 // validator will return an error for any sub-workflow node it encounters.
 //
-// registry is called to verify that handler_ref, policy_ref, gate_ref,
+// registry is called to verify that handler_ref, gate_ref,
 // freedom_profile_ref, budget_ref, and required_skills entries resolve to
 // registered targets. Pass nil to skip reference-resolution checks (e.g.,
 // in unit tests that focus on structural failures). When nil, any node
 // carrying these optional refs passes the resolution check silently.
+// Note: policy_ref is rejected regardless of registry (CP-056).
 func New(resolver WorkflowResolver, registry ReferenceRegistry) *PreRunValidator {
 	return &PreRunValidator{resolver: resolver, registry: registry}
 }
@@ -212,7 +219,7 @@ func (v *PreRunValidator) Validate(dotSrc string) error {
 	subErrs := v.resolveSubWorkflows(g, rootID, []string{rootID})
 	errs = append(errs, subErrs...)
 
-	// Pass 6 — Reference resolution (handler_ref, policy_ref, etc.).
+	// Pass 6 — Reference resolution (handler_ref, gate_ref, etc.) and CP-056 rejection.
 	if v.registry != nil {
 		refErrs := v.validateRefs(g)
 		errs = append(errs, refErrs...)
@@ -237,26 +244,43 @@ func (v *PreRunValidator) Validate(dotSrc string) error {
 func (v *PreRunValidator) validateNodeAttrs(nodeID string, attrs map[string]string) []error {
 	var errs []error
 
+	// policy_ref: deprecated per CP-056. Reject any occurrence unconditionally,
+	// regardless of registry (no resolution attempted). Checked here in Pass 3
+	// so the rejection fires even when no registry is provided.
+	if _, ok := attrs["policy_ref"]; ok {
+		errs = append(errs, vErr(codePolicyRefDeprecated,
+			"node %q: attribute \"policy_ref\" is deprecated and must not be used (CP-056); "+
+				"use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055)", nodeID))
+	}
+
 	// type (required; enum-valued per EM-006).
 	rawType := strings.TrimSpace(attrs["type"])
 	nodeType := core.NodeType(rawType)
 	if !nodeType.Valid() {
 		errs = append(errs, vErr(codeBadNodeType,
-			"node %q: type %q is not one of {agentic, non-agentic, gate, control-point, sub-workflow}", nodeID, rawType))
+			"node %q: type %q is not one of {agentic, non-agentic, gate, sub-workflow}", nodeID, rawType))
 		// Cannot validate conditional fields without a known type; continue checking other attrs.
 	}
 
-	// handler_ref: required iff type=agentic; forbidden otherwise (EM-007).
+	// handler_ref: required on agentic and gate (CP-054); forbidden on all others.
 	handlerRef, hasHandlerRef := attrs["handler_ref"]
 	handlerRef = strings.TrimSpace(handlerRef)
 	if nodeType.Valid() {
-		if nodeType == core.NodeTypeAgentic && (!hasHandlerRef || handlerRef == "") {
+		requiresHandlerRef := nodeType == core.NodeTypeAgentic || nodeType == core.NodeTypeGate
+		if requiresHandlerRef && (!hasHandlerRef || handlerRef == "") {
 			errs = append(errs, vErr(codeMissingHandlerRef,
-				"node %q: agentic node must declare handler_ref", nodeID))
+				"node %q: %v node must declare handler_ref", nodeID, nodeType))
 		}
-		if nodeType != core.NodeTypeAgentic && hasHandlerRef && handlerRef != "" {
+		if !requiresHandlerRef && hasHandlerRef && handlerRef != "" {
 			errs = append(errs, vErr(codeForbiddenHandlerRef,
-				"node %q: non-agentic node must not declare handler_ref", nodeID))
+				"node %q: %v node must not declare handler_ref", nodeID, nodeType))
+		}
+		// gate_ref: required on gate nodes per CP-036 / CP-054.
+		if nodeType == core.NodeTypeGate {
+			if gr, ok := attrs["gate_ref"]; !ok || strings.TrimSpace(gr) == "" {
+				errs = append(errs, vErr(codeMissingGateRef,
+					"node %q: gate node must declare gate_ref (CP-036 / CP-054)", nodeID))
+			}
 		}
 		// sub_workflow_ref: required iff type=sub-workflow; forbidden otherwise.
 		subRef, hasSubRef := attrs["sub_workflow_ref"]
@@ -415,29 +439,22 @@ func chainContains(chain []string, id string) bool {
 
 // --- Pass 6: reference resolution ---
 
-// validateRefs verifies that optional node-level references resolve to registered targets.
+// validateRefs verifies that optional node-level references resolve to
+// registered targets (CP-036). Note: policy_ref rejection (CP-056) is handled
+// in Pass 3 (validateNodeAttrs) and does not require a registry.
 func (v *PreRunValidator) validateRefs(g *rawGraph) []error {
 	var errs []error
 	for _, nodeID := range g.nodeOrder {
 		attrs := g.nodes[nodeID]
 
-		// handler_ref: checked only for agentic nodes.
+		// handler_ref: resolved for agentic and gate nodes (both require it).
 		rawType := strings.TrimSpace(attrs["type"])
-		if rawType == string(core.NodeTypeAgentic) {
+		if rawType == string(core.NodeTypeAgentic) || rawType == string(core.NodeTypeGate) {
 			if hr, ok := attrs["handler_ref"]; ok && strings.TrimSpace(hr) != "" {
 				if !v.registry.HasHandler(strings.TrimSpace(hr)) {
 					errs = append(errs, vErr(codeHandlerRefUnresolved,
 						"node %q: handler_ref %q not registered", nodeID, hr))
 				}
-			}
-		}
-
-		// policy_ref.
-		if pr, ok := attrs["policy_ref"]; ok && strings.TrimSpace(pr) != "" {
-			ref := core.PolicyRef(strings.TrimSpace(pr))
-			if !v.registry.HasPolicy(ref) {
-				errs = append(errs, vErr(codePolicyRefUnresolved,
-					"node %q: policy_ref %q not registered", nodeID, pr))
 			}
 		}
 

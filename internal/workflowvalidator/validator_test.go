@@ -11,6 +11,7 @@ package workflowvalidator
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -723,6 +724,234 @@ func TestPreRunValidator_PositiveTimeout(t *testing.T) {
 	}
 }
 
+// --- Tests: CP-036 / CP-056 — DOT attributes reference policy YAML by name ---
+
+// preRunValidatorFixtureGateDOT returns a minimal valid gate-node workflow DOT
+// string for use in gate_ref reference-resolution tests.
+func preRunValidatorFixtureGateDOT(gateRef, handlerRef string) string {
+	return `digraph workflow {
+    graph [
+        workflow_id       = "018f1e2a-0000-7000-8000-000000000097"
+        name              = "fixture-gate"
+        version           = "0.1.0"
+        start_node_id     = "gate_node"
+        terminal_node_ids = "done_node"
+    ]
+
+    gate_node [
+        type               = "gate"
+        gate_ref           = "` + gateRef + `"
+        handler_ref        = "` + handlerRef + `"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    done_node [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    gate_node -> done_node
+}`
+}
+
+// preRunValidatorFixtureWithRefDOT returns a minimal non-agentic workflow DOT
+// string that carries an optional typed ref attribute (e.g., freedom_profile_ref
+// or budget_ref) on its start node.
+func preRunValidatorFixtureWithRefDOT(attrKey, attrValue string) string {
+	return `digraph workflow {
+    graph [
+        workflow_id       = "018f1e2a-0000-7000-8000-000000000096"
+        name              = "fixture-with-ref"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+        ` + attrKey + `    = "` + attrValue + `"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+}
+
+// TestPreRunValidator_CP056_PolicyRefRejected verifies that a node carrying the
+// deprecated policy_ref attribute fails with codePolicyRefDeprecated (CP-056).
+// policy_ref must be rejected regardless of whether a registry is present.
+func TestPreRunValidator_CP056_PolicyRefRejected(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t) // no registry
+	err := v.Validate(malformedDotFixturePolicyRefDeprecated)
+	if err == nil {
+		t.Fatal("Validate(policy_ref present) = nil, want codePolicyRefDeprecated error")
+	}
+	assertErrorCode(t, err, codePolicyRefDeprecated)
+}
+
+// TestPreRunValidator_CP056_PolicyRefRejectedWithRegistry verifies that the
+// policy_ref rejection fires even when a registry is provided (defense-in-depth).
+func TestPreRunValidator_CP056_PolicyRefRejectedWithRegistry(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	// Even if "some-deprecated-policy" were registered, policy_ref must be rejected.
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	err := v.Validate(malformedDotFixturePolicyRefDeprecated)
+	if err == nil {
+		t.Fatal("Validate(policy_ref with registry) = nil, want codePolicyRefDeprecated error")
+	}
+	assertErrorCode(t, err, codePolicyRefDeprecated)
+}
+
+// TestPreRunValidator_CP056_PolicyRefMessageNamesReplacements verifies that the
+// CP-056 rejection message names the typed replacement attributes per the spec.
+func TestPreRunValidator_CP056_PolicyRefMessageNamesReplacements(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixturePolicyRefDeprecated)
+	if err == nil {
+		t.Fatal("Validate(policy_ref present) = nil, want error")
+	}
+	for _, want := range []string{"gate_ref", "skills_ref", "freedom_profile_ref"} {
+		if !hasDetailSubstring(err, want) {
+			t.Errorf("CP-056 rejection message does not mention replacement attribute %q; got: %v", want, err)
+		}
+	}
+}
+
+// TestPreRunValidator_GateNodeMissingGateRef verifies that a gate node without
+// gate_ref fails with codeMissingGateRef (CP-036 / CP-054).
+func TestPreRunValidator_GateNodeMissingGateRef(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureMissingGateRef)
+	if err == nil {
+		t.Fatal("Validate(gate node without gate_ref) = nil, want codeMissingGateRef error")
+	}
+	assertErrorCode(t, err, codeMissingGateRef)
+}
+
+// TestPreRunValidator_GateNodeValidWithGateRef verifies that a gate node with
+// both gate_ref and handler_ref passes structural validation.
+func TestPreRunValidator_GateNodeValidWithGateRef(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t) // no registry: structural pass only
+	dot := preRunValidatorFixtureGateDOT("my-gate", "handlers/gate-eval")
+	if err := v.Validate(dot); err != nil {
+		t.Errorf("Validate(gate node with gate_ref+handler_ref) = %v, want nil", err)
+	}
+}
+
+// TestPreRunValidator_ReferenceResolution_GateRefUnresolved verifies that a gate
+// node whose gate_ref is not in the registry is rejected (CP-036).
+func TestPreRunValidator_ReferenceResolution_GateRefUnresolved(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	// Registry has no gate named "my-gate".
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureGateDOT("my-gate", "handlers/gate-eval")
+	reg.handlers["handlers/gate-eval"] = true
+	err := v.Validate(dot)
+	if err == nil {
+		t.Fatal("Validate(gate_ref not registered) = nil, want codeGateRefUnresolved error")
+	}
+	assertErrorCode(t, err, codeGateRefUnresolved)
+}
+
+// TestPreRunValidator_ReferenceResolution_GateRefRegistered verifies that a gate
+// node whose gate_ref resolves in the registry passes validation (CP-036).
+func TestPreRunValidator_ReferenceResolution_GateRefRegistered(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	reg.gates["my-gate"] = true
+	reg.handlers["handlers/gate-eval"] = true
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureGateDOT("my-gate", "handlers/gate-eval")
+	if err := v.Validate(dot); err != nil {
+		t.Errorf("Validate(gate_ref registered) = %v, want nil", err)
+	}
+}
+
+// TestPreRunValidator_ReferenceResolution_FreedomProfileRefUnresolved verifies
+// that a node whose freedom_profile_ref is not registered is rejected (CP-036).
+func TestPreRunValidator_ReferenceResolution_FreedomProfileRefUnresolved(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureWithRefDOT("freedom_profile_ref", "strict-profile")
+	err := v.Validate(dot)
+	if err == nil {
+		t.Fatal("Validate(freedom_profile_ref not registered) = nil, want codeFreedomProfileUnresolved error")
+	}
+	assertErrorCode(t, err, codeFreedomProfileUnresolved)
+}
+
+// TestPreRunValidator_ReferenceResolution_FreedomProfileRefRegistered verifies
+// that a node whose freedom_profile_ref resolves in the registry passes (CP-036).
+func TestPreRunValidator_ReferenceResolution_FreedomProfileRefRegistered(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	reg.freedomProfs["strict-profile"] = true
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureWithRefDOT("freedom_profile_ref", "strict-profile")
+	if err := v.Validate(dot); err != nil {
+		t.Errorf("Validate(freedom_profile_ref registered) = %v, want nil", err)
+	}
+}
+
+// TestPreRunValidator_ReferenceResolution_BudgetRefUnresolved verifies that a
+// node whose budget_ref is not registered is rejected (CP-036).
+func TestPreRunValidator_ReferenceResolution_BudgetRefUnresolved(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureWithRefDOT("budget_ref", "token-budget-1k")
+	err := v.Validate(dot)
+	if err == nil {
+		t.Fatal("Validate(budget_ref not registered) = nil, want codeBudgetRefUnresolved error")
+	}
+	assertErrorCode(t, err, codeBudgetRefUnresolved)
+}
+
+// TestPreRunValidator_ReferenceResolution_BudgetRefRegistered verifies that a
+// node whose budget_ref resolves in the registry passes validation (CP-036).
+func TestPreRunValidator_ReferenceResolution_BudgetRefRegistered(t *testing.T) {
+	t.Parallel()
+	reg := newMapRegistry()
+	reg.budgets["token-budget-1k"] = true
+	v := preRunValidatorFixtureWithRegistry(t, reg)
+	dot := preRunValidatorFixtureWithRefDOT("budget_ref", "token-budget-1k")
+	if err := v.Validate(dot); err != nil {
+		t.Errorf("Validate(budget_ref registered) = %v, want nil", err)
+	}
+}
+
 // --- Helper: assertErrorCode ---
 
 // assertErrorCode unwraps err (which may be a joined multi-error) and asserts
@@ -733,6 +962,29 @@ func assertErrorCode(t *testing.T, err error, code string) {
 		return
 	}
 	t.Errorf("expected validation error with code %q, got: %v", code, err)
+}
+
+// hasDetailSubstring recursively unwraps a (possibly joined) error and reports
+// whether any ValidationError's Detail field contains the given substring.
+func hasDetailSubstring(err error, sub string) bool {
+	if err == nil {
+		return false
+	}
+	var ve *ValidationError
+	if errors.As(err, &ve) && strings.Contains(ve.Detail, sub) {
+		return true
+	}
+	type multiUnwrap interface {
+		Unwrap() []error
+	}
+	if mu, ok := err.(multiUnwrap); ok {
+		for _, inner := range mu.Unwrap() {
+			if hasDetailSubstring(inner, sub) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasCode recursively unwraps a (possibly joined) error and reports whether

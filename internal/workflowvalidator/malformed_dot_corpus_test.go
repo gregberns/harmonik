@@ -10,18 +10,20 @@ package workflowvalidator
 // Spec ref: specs/execution-model.md §10.2 EM-038 test obligation.
 //
 // Coverage map:
-//   malformedDotFixtureBadEnum           — EM-006: unknown node type
-//   malformedDotFixtureMissingHandlerRef — EM-007: agentic node without handler_ref
+//   malformedDotFixtureBadEnum                 — EM-006: unknown node type
+//   malformedDotFixtureMissingHandlerRef       — EM-007: agentic node without handler_ref
 //   malformedDotFixtureMissingIdempotencyClass — EM-009: node without idempotency_class
-//   malformedDotFixtureUnreachableNode   — EM-038 reachability: node not reachable from start_node_id
+//   malformedDotFixtureUnreachableNode         — EM-038 reachability: node not reachable from start_node_id
 //   malformedDotFixtureMissingTerminalNodeIDs  — EM-038 attribute: terminal_node_ids is empty
 //   malformedDotFixtureMissingStartNodeID      — EM-038 attribute: start_node_id absent
 //   malformedDotFixtureSubWorkflowRefCycle     — EM-034b: mutual sub-workflow reference cycle
 //   malformedDotFixtureMissingCapCycle         — EM-043: cycle without a per-edge traversal cap
+//   malformedDotFixtureMissingGateRef          — CP-036/CP-054: gate node without gate_ref
+//   malformedDotFixturePolicyRefDeprecated     — CP-056: node with deprecated policy_ref attribute
 
 // malformedDotFixtureBadEnum is a workflow whose node declares an unknown
 // type value ("human"). The validator MUST reject this per EM-006: the only
-// accepted types are agentic, non-agentic, gate, control-point, sub-workflow.
+// accepted types are agentic, non-agentic, gate, sub-workflow.
 const malformedDotFixtureBadEnum = `digraph workflow {
     graph [
         workflow_id    = "wf-bad-enum-001"
@@ -289,4 +291,78 @@ const malformedDotFixtureMissingCapCycle = `digraph workflow {
     node_a -> node_b
     node_b -> node_a
     node_b -> node_c [condition = "done"]
+}`
+
+// malformedDotFixtureMissingGateRef is a workflow whose gate node omits the
+// required gate_ref attribute. The validator MUST reject this per CP-036 /
+// CP-054: every gate node MUST carry gate_ref naming a registered Gate-kind
+// ControlPoint.
+const malformedDotFixtureMissingGateRef = `digraph workflow {
+    graph [
+        workflow_id       = "wf-missing-gate-ref-001"
+        name              = "missing-gate-ref-fixture"
+        version           = "0.1.0"
+        start_node_id     = "gate_node"
+        terminal_node_ids = "done_node"
+    ]
+
+    gate_node [
+        type               = "gate"
+        handler_ref        = "handlers/gate-eval"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    done_node [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    gate_node -> done_node
+}`
+
+// malformedDotFixturePolicyRefDeprecated is a workflow whose node carries the
+// deprecated policy_ref attribute. The validator MUST reject this per CP-056:
+// policy_ref is deprecated at MVH; use gate_ref, skills_ref, or
+// freedom_profile_ref instead (CP-055).
+const malformedDotFixturePolicyRefDeprecated = `digraph workflow {
+    graph [
+        workflow_id       = "wf-policy-ref-deprecated-001"
+        name              = "policy-ref-deprecated-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+        policy_ref         = "some-deprecated-policy"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
 }`

@@ -12,6 +12,10 @@
 
 pre-commit:
   commands:
+    secret-scan:
+      run: scripts/secret-scan.sh
+      # Blocks commits that add API keys, credential patterns, or .env files.
+      # Runs first so a secret is caught before any build work starts.
     check-fast:
       run: make check-fast
       # Runs gofumpt, gci, go vet, go build, delta-lint, go test -short.

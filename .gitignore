@@ -49,3 +49,6 @@
 # Scoped credential file read by `harmonik supervise start` (CI-006, CI-007).
 # MUST NOT be committed — contains ANTHROPIC_API_KEY in plaintext.
 .env
+.env.*
+*.env
+.env.*.local

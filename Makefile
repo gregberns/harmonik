@@ -95,6 +95,14 @@ twins: build-twin-generic  ## Build all twin binaries into twins/ (SH-009 search
 build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
+# Secret scan — runs as the first pre-commit command (lefthook secret-scan).
+# Also callable standalone to audit a working tree before staging.
+# ---------------------------------------------------------------------------
+.PHONY: secret-scan
+secret-scan:  ## Scan staged diff for API keys / credentials / .env files
+	scripts/secret-scan.sh
+
+# ---------------------------------------------------------------------------
 # Tier 1 — check-fast (<15s target)
 # Author-iteration speed.  Pre-commit hook runs this on staged files.
 # ---------------------------------------------------------------------------

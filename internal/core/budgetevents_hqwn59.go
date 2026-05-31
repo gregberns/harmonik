@@ -150,8 +150,17 @@ func (p BudgetAccrualPayload) Valid() bool {
 // to apply the exhaustion protocol per control-points.md §4.5 hk-sx9r.67 and
 // enforcement per hk-a8bg.22).
 //
-// Emitted by the agent-runner (S04) when the budget ceiling is reached and
-// the dispatch is halted per control-points.md §4.5.
+// Two producer variants exist per event-model.md §8.4.3 (additive amendment
+// 2026-05-31):
+//
+//   - Per-run variant (agent-runner S04): emitted when the per-run budget ceiling
+//     is reached and the dispatch is halted per control-points.md §4.5 CP-023.
+//     Carries run_id, budget_ref, and attempted_dispatch_cost.
+//
+//   - Account-scoped variant (cognition-loop CL-090): emitted when the per-day
+//     handler account spend meter reaches its cap per handler-pause.md HP-012.
+//     Carries budget_scope=handler_account, spent_usd, cap_usd. run_id,
+//     session_id, and attempted_dispatch_cost MAY be absent (zero).
 //
 // Note: this type is named BudgetExhaustedEventPayload to avoid collision with
 // the existing BudgetExhaustedPayload (defined in budgetexhaustedpayload.go)
@@ -159,13 +168,21 @@ func (p BudgetAccrualPayload) Valid() bool {
 //
 // # Payload fields (event-model.md §8.4.3)
 //
-//   - run_id                 — the run in whose context budget was exhausted
-//   - session_id             — optional handler-assigned session identifier
-//   - budget_ref             — name of the budget that was exhausted
-//   - attempted_dispatch_cost — cost of the dispatch attempt that was denied due to exhaustion
+//   - run_id                  — optional: run in whose context budget was exhausted;
+//     absent for the account-scoped variant
+//   - session_id              — optional handler-assigned session identifier
+//   - budget_ref              — name of the budget that was exhausted (required)
+//   - budget_scope            — optional: scoping axis (e.g. handler_account for the
+//     account-scoped variant per BudgetScopeHandlerAccount)
+//   - attempted_dispatch_cost — optional: cost of the dispatch attempt that was
+//     denied; absent for the account-scoped variant
+//   - spent_usd               — optional: per-day USD spend at exhaustion time;
+//     present in the account-scoped variant
+//   - cap_usd                 — optional: per-day USD cap that was reached;
+//     present in the account-scoped variant
 type BudgetExhaustedEventPayload struct {
 	// RunID is the run in whose context the budget was exhausted.
-	// Required (must not be uuid.Nil).
+	// Optional per §8.4.3 amendment: absent (uuid.Nil) for the account-scoped variant.
 	RunID RunID `json:"run_id"`
 
 	// SessionID is the optional handler-assigned session identifier.
@@ -176,25 +193,50 @@ type BudgetExhaustedEventPayload struct {
 	// Required; must be a valid (non-empty) BudgetRef.
 	BudgetRef BudgetRef `json:"budget_ref"`
 
+	// BudgetScope is the scoping axis that identifies which budget variant fired.
+	// Optional per §8.4.3 amendment. Set to BudgetScopeHandlerAccount for the
+	// account-scoped variant emitted by the cognition loop (CL-090).
+	BudgetScope *BudgetScope `json:"budget_scope,omitempty"`
+
 	// AttemptedDispatchCost is the cost of the dispatch attempt that was
-	// denied due to budget exhaustion. Required (must be >= 0).
+	// denied due to budget exhaustion. Optional per §8.4.3 amendment (must be
+	// >= 0 when present); absent for the account-scoped variant.
 	AttemptedDispatchCost float64 `json:"attempted_dispatch_cost"`
+
+	// SpentUSD is the per-day USD spend at the time of exhaustion.
+	// Optional per §8.4.3 amendment (must be >= 0 when present); present in
+	// the account-scoped variant emitted by the cognition loop (CL-090).
+	SpentUSD *float64 `json:"spent_usd,omitempty"`
+
+	// CapUSD is the per-day USD cap that was reached.
+	// Optional per §8.4.3 amendment (must be >= 0 when present); present in
+	// the account-scoped variant emitted by the cognition loop (CL-090).
+	CapUSD *float64 `json:"cap_usd,omitempty"`
 }
 
 // Valid reports whether p is a well-formed BudgetExhaustedEventPayload.
 //
-// Rules per event-model.md §8.4.3:
-//   - RunID must not be uuid.Nil.
-//   - BudgetRef must be valid (non-empty).
-//   - AttemptedDispatchCost must be >= 0.
+// Rules per event-model.md §8.4.3 (as amended 2026-05-31):
+//   - BudgetRef must be valid (non-empty). Always required.
+//   - RunID is optional: uuid.Nil is permitted for the account-scoped variant.
+//   - AttemptedDispatchCost must be >= 0 (zero is permitted; absent = 0).
+//   - BudgetScope if non-nil must be a recognised BudgetScope constant.
+//   - SpentUSD if non-nil must be >= 0.
+//   - CapUSD if non-nil must be >= 0.
 func (p BudgetExhaustedEventPayload) Valid() bool {
-	if uuid.UUID(p.RunID) == uuid.Nil {
-		return false
-	}
 	if !p.BudgetRef.Valid() {
 		return false
 	}
 	if p.AttemptedDispatchCost < 0 {
+		return false
+	}
+	if p.BudgetScope != nil && !p.BudgetScope.Valid() {
+		return false
+	}
+	if p.SpentUSD != nil && *p.SpentUSD < 0 {
+		return false
+	}
+	if p.CapUSD != nil && *p.CapUSD < 0 {
 		return false
 	}
 	return true

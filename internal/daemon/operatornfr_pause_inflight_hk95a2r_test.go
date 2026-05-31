@@ -68,7 +68,6 @@ package daemon_test
 //   - specs/operator-nfr.md §4.3 ON-013c (idempotency on no-op transitions)
 //   - specs/process-lifecycle.md §4.1 PL-003a (Unix-socket JSON-RPC surface)
 //   - specs/queue-model.md §8.5 QM-054 (queue active → paused-by-drain)
-//   - specs/queue-model.md §8.6 QM-055 (paused-by-drain persists across restart)
 //
 // Bead: hk-95a2r.
 
@@ -415,6 +414,9 @@ func TestScenario_OperatorNFR_PauseWithRunInFlight(t *testing.T) {
 
 	qPausedEvt := onNfrGetQueuePaused(t, queuePausedCh, 2*time.Second,
 		"queue_paused{operator_drain}")
+	if !qPausedEvt.Valid() {
+		t.Errorf("onNfr (e): queue_paused payload.Valid() = false: %+v", qPausedEvt)
+	}
 	if qPausedEvt.Reason != "operator_drain" {
 		t.Errorf("onNfr (e): queue_paused.reason = %q; want %q",
 			qPausedEvt.Reason, "operator_drain")
@@ -423,7 +425,12 @@ func TestScenario_OperatorNFR_PauseWithRunInFlight(t *testing.T) {
 		t.Errorf("onNfr (e): queue_paused.queue_id = %q; want %q",
 			qPausedEvt.QueueID, queueID)
 	}
-	t.Logf("onNfr (e) PASS: queue_paused{operator_drain} received queue_id=%s", qPausedEvt.QueueID)
+	if qPausedEvt.GroupIndex != 0 {
+		t.Errorf("onNfr (e): queue_paused.group_index = %d; want 0 (QM-054 step 2 requires group_index)",
+			qPausedEvt.GroupIndex)
+	}
+	t.Logf("onNfr (e) PASS: queue_paused{operator_drain} received queue_id=%s group_index=%d",
+		qPausedEvt.QueueID, qPausedEvt.GroupIndex)
 
 	gotQAfterPause := qs.Queue()
 	if gotQAfterPause == nil {

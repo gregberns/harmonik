@@ -41,6 +41,7 @@ import {
   type WatchdogFire,
   type WatchdogOptions,
 } from "./watchdog.js";
+import { type Dispatcher } from "./dispatcher.js";
 
 // Harness interface injected by index.ts; mocked in tests.
 export interface Harness {
@@ -58,6 +59,8 @@ export interface BridgeOptions {
   debounceMs?: number;
   // CL-051: two-phase done verifier. Defaults to real git spawn; injectable for tests.
   gitCheck?: (repoRoot: string, beadId: string) => Promise<boolean>;
+  // CL-071/072/073: eager pure-code refill dispatcher. When absent, no eager refill.
+  dispatcher?: Dispatcher;
 }
 
 const DEFAULT_SUBSCRIBE_TYPES = [
@@ -145,6 +148,7 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     watchdog: watchdogOpts = {},
     debounceMs,
     gitCheck: gitCheckFn = defaultGitCheck,
+    dispatcher,
   } = opts;
 
   const sp = statePath(repoRoot);
@@ -293,10 +297,24 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
           }
         }
       }
-      // Eager refill and watermark advance; model not woken.
+      // Watermark advance; model not woken.
       processedEvent(event.event_id, `deterministic:${event.type}`);
       emitCognitionEvent(repoRoot, { type: "deterministic_reaction", event_type: event.type, event_id: event.event_id });
+      // CL-071: slot freed → eager refill (fire-and-forget).
+      if (event.type === "run_completed" || event.type === "run_canceled") {
+        triggerEagerRefill(event);
+      }
       return;
+    }
+
+    // CL-071/072 guard #3: record bead failure for failed events before waking model.
+    if (event.type === "run_failed" || event.type === "run_canceled") {
+      const failedBeadId = (event.payload as { bead_id?: string } | undefined)?.bead_id;
+      if (failedBeadId && dispatcher) {
+        dispatcher.recordBeadFailure(failedBeadId);
+      }
+      // CL-071: slot freed → eager refill (fire-and-forget).
+      triggerEagerRefill(event);
     }
 
     // Wake-LLM tier: pass through debouncer
@@ -312,6 +330,26 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     const digest = buildEventDigest(events);
     emitCognitionEvent(repoRoot, { type: "wake_llm_flush", event_count: events.length });
     harness.followUp(digest);
+  }
+
+  // CL-071: fire-and-forget eager refill on slot-releasing events.
+  // Errors are logged to cognition-events.jsonl; never throws.
+  function triggerEagerRefill(event: SubscribeEvent): void {
+    if (!dispatcher) return;
+    const beadId = (event.payload as { bead_id?: string } | undefined)?.bead_id;
+    dispatcher.onSlotReleased({
+      triggerType: event.type as import("./dispatcher.js").SlotReleaseTrigger,
+      triggeringEventId: event.event_id,
+      beadId,
+      onWakeModel: (reason: string) => {
+        // CL-073: model woken because kerf next empty or failed-twice halt.
+        emitCognitionEvent(repoRoot, { type: "eager_refill_wake_model", reason, event_id: event.event_id });
+        harness.followUp(`[harmonik-bridge] CL-073: queue empty or refill halted (${reason}). Compose next batch.`);
+      },
+      onCognitionEvent: (record) => emitCognitionEvent(repoRoot, record),
+    }).catch((err) => {
+      emitCognitionEvent(repoRoot, { type: "eager_refill_error", error: String(err), event_id: event.event_id });
+    });
   }
 
   function onWatchdogFire(fires: WatchdogFire[]): void {

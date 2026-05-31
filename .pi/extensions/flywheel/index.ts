@@ -31,6 +31,7 @@ import { BudgetTracker } from "./budget.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
 import { createEventBridge, type Harness } from "./bridge.js";
 import { createDigestPanel, type DigestPanel } from "./tui-panel.js";
+import { createDispatcher } from "./dispatcher.js";
 
 const REPO_ROOT = process.cwd();
 const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
@@ -126,7 +127,8 @@ export default function activate(pi: ExtensionAPI) {
       digestPanel.refresh();
     },
   };
-  const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT });
+  const dispatcher = createDispatcher({ repoRoot: REPO_ROOT });
+  const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT, dispatcher });
   bridge.start();
 
   // ── TUI digest panel (CL-082) ─────────────────────────────────────────

@@ -69,6 +69,7 @@ const TIER_TABLE: Record<string, WakeTier | ((e: SubscribeEvent) => WakeTier)> =
 
   // Tier 3 — Wake-LLM
   run_failed: "wake_llm",
+  run_canceled: "wake_llm",
   merge_conflict: "wake_llm",
   merge_conflict_escalation: "wake_llm",
   decision_required: "wake_llm",

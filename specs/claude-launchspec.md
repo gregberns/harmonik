@@ -105,7 +105,7 @@ The following `claudeRunCtx` fields are always present but have relaxed constrai
 |---|---|---|
 | `beadTitle` | Human-readable bead title from the Beads ledger. Used as the `title:` header in `agent-task.md` (CHB-028). | Falls back to `beadID`. |
 | `beadDescription` | Bead body verbatim from the Beads ledger. Used as the `## Task Description` body in `agent-task.md`. | Falls back to `beadTitle`, then `beadID`, so the file is never structurally empty. |
-| `baseEnv` | Environment inherited from daemon `Config.HandlerEnv`. MUST already include `HARMONIK_PROJECT_HASH` per PL-006a. CHB-006 vars are appended (or overwrite) by `ClaudeEnvVars`. | nil slice is valid; results in an env built solely from CHB-006 vars. |
+| `baseEnv` | Environment inherited from daemon `Config.HandlerEnv`. MUST already include `HARMONIK_PROJECT_HASH` per PL-006a. CHB-006 vars are appended (or overwrite) by `ClaudeEnvVars`. Env assembly additionally removes the **credential env deny-list** keys (`{ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH*}`, per [credential-isolation.md §4.1 CI-002, §4.2 CI-003]) from the constructed child env, symmetric with the existing `HARMONIK_SECRET_*` strip. This is distinct from the forbidden-flag deny-list of [claude-hook-bridge.md §4.2 CHB-007]. | nil slice is valid; results in an env built solely from CHB-006 vars. |
 | `workflowMode` | Resolved workflow mode for this run (e.g. `"single"`, `"review-loop"`). Must be consistent with `phase` per CLS-002. | Empty string is treated as `"single"`. |
 | `agentTaskReAttach` | Signals that this launch is on the re-attach path (daemon restart mid-session). When `true`, `WriteAgentTask` skips collision check and returns nil if `agent-task.md` already exists (CHB-028 re-launch semantics). | `false` (default, non-re-attach). |
 | `extraContext` | Optional operator-supplied free-form string injected into `agent-task.md` as a `## Extra Context` section (hk-boiwe). | Empty means no section is rendered. |
@@ -149,7 +149,7 @@ Cross-ref: [handler-contract.md §4.10 HC-055a] (invariants on the `ModelPrefere
 
 4. **CheckSettingsLocalJSON** — per [claude-hook-bridge.md §4.9 CHB-024]: fail-fast if `settings.local.json` shadows bridge hooks. Returns `ErrStructural` on violation.
 
-5. **Env assembly** — per [claude-hook-bridge.md §4.2 CHB-006]: call `ClaudeEnvVars` with a fully-populated `ClaudeEnvConfig` to derive the subprocess environment slice.
+5. **Env assembly** — per [claude-hook-bridge.md §4.2 CHB-006]: call `ClaudeEnvVars` with a fully-populated `ClaudeEnvConfig` to derive the subprocess environment slice. `ClaudeEnvVars` MUST strip every credential env deny-list key per [credential-isolation.md §4.2 CI-003] (the daemon-side scrub boundary); the substrate handoff is an assertion point per [credential-isolation.md §4.2 CI-004], not a second scrub site.
 
 6. **ModelPreference validation + Argv construction** — per [handler-contract.md §4.10 HC-055, HC-055a, HC-055b]: validate `model` and `effort` fields (CLS-004); emit `--session-id` or `--resume` per `mintResult.ResumeMode`; append `--model` / `--effort` when non-empty; append `--dangerously-skip-permissions` when `isHarmonikManagedWorktree` is true.
 
@@ -273,7 +273,8 @@ Cross-ref: [claude-hook-bridge.md §8] for the sub-reason strings owned by CHB s
 | Per-phase LaunchSpec field invariants (normative table) | [handler-contract.md §4.2 HC-006a] |
 | Env-var schema | [claude-hook-bridge.md §4.2 CHB-006] |
 | Session-ID minting | [claude-hook-bridge.md §4.3 CHB-008, CHB-009] |
-| Forbidden-flag deny-list | [claude-hook-bridge.md §4.2 CHB-007] |
+| Forbidden-flag deny-list (CLI flags) | [claude-hook-bridge.md §4.2 CHB-007] |
+| Credential env deny-list / scrub (env keys) | [credential-isolation.md §4.1 CI-002, §4.2 CI-003] |
 | Settings materialization | [claude-hook-bridge.md §4.1 CHB-001..CHB-005] |
 | Settings-shadow verification | [claude-hook-bridge.md §4.9 CHB-024] |
 | Agent-task.md content shape | [claude-hook-bridge.md §4.11 CHB-028] |
@@ -305,4 +306,5 @@ The authoritative implementation is `internal/daemon/claudelaunchspec.go` (`buil
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-31 | 0.1.1 | agent (kerf `credfence` work) | Additive credential-scrub notes. §4 `baseEnv` row and the env-assembly step (step 5) now record that env assembly removes the credential env deny-list keys (`{ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH*}`) per [credential-isolation.md CI-002/CI-003], symmetric with the `HARMONIK_SECRET_*` strip, distinct from the CHB-007 forbidden-flag deny-list; the §6 Cross-references table gains a credential-env-deny-list row. No existing requirement changed. Source: kerf `credfence` change design. |
 | 2026-05-19 | 0.1 | agent (hk-xpnfy) | Initial spec. Consolidates the assembly sequence, review-loop phase lifecycle state machine, and claudeRunCtx field contract from fragmented coverage across handler-contract.md §4.2 HC-005/006/006a and claude-hook-bridge.md §4.2–4.9 CHB-006..024. No new normative rules added beyond what the code already implements. |

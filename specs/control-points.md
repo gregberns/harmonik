@@ -225,7 +225,9 @@ Tags: mechanism
 
 #### CP-022 — Budget declares a typed, scoped allowance
 
-A `Budget` MUST declare: (a) `resource ∈ {tokens, wall_clock_seconds, iterations}`, (b) `scope ∈ {per_role, per_run, per_state}`, (c) `limit` (positive integer), (d) `warning_threshold` (ratio in [0, 1]). Unless overridden per §4.7 config precedence, `warning_threshold` MUST default to 0.8. Multiple Budgets MAY apply to a single agent run; the tightest applicable Budget wins on any accrual check (tightest = smaller integer `limit` for the same `resource`).
+A `Budget` MUST declare: (a) `resource ∈ {tokens, wall_clock_seconds, iterations}`, (b) `scope ∈ {per_role, per_run, per_state, handler_account}`, (c) `limit` (positive integer), (d) `warning_threshold` (ratio in [0, 1]). Unless overridden per §4.7 config precedence, `warning_threshold` MUST default to 0.8. Multiple Budgets MAY apply to a single agent run; the tightest applicable Budget wins on any accrual check (tightest = smaller integer `limit` for the same `resource`).
+
+> INFORMATIVE: a `handler_account`-scoped Budget represents a per-handler-account ceiling (a session-token cap or a daily quota) rather than a per-role/per-run/per-state allowance. Its exhaustion is handler-fatal per [handler-pause.md §4 HP-012] — the handler type is paused immediately, no hysteresis — distinct from `per_run` exhaustion, which is per-bead and MUST NOT trip a handler pause. NOTE on scope-as-classifier vs. registered Budget: the harmonik unified per-day spend cap of [cognition-loop.md §4.11 CL-090] is NOT a registered CP-022 `Budget` primitive instance — it meters cumulative USD/day, which is not a representable `BudgetResource` (the enum is `{tokens, wall_clock_seconds, iterations}`). Rather, the cognition-loop meter is a cognition-loop-side mechanism that, on exhaustion, emits an account-scoped `budget_exhausted` event whose `scope` field carries the value `handler_account` ([cognition-loop.md CL-090], [event-model.md §8.4.3]). This `scope`-value is what HP-012 reads to discriminate the account-scoped (handler-fatal) exhaustion from the per-run variant; HP-012 needs only the scope-value to discriminate, not a registered Budget. The `budget_scope = handler-account` wording used in [handler-pause.md HP-012] denotes this `scope` field carrying value `handler_account`; there is one field (`scope`), not a parallel `budget_scope` field.
 
 Tags: mechanism
 
@@ -672,7 +674,7 @@ RECORD GuardPayload:
 ```
 RECORD BudgetPayload:
     resource             : BudgetResource        -- one of {tokens, wall_clock_seconds, iterations}
-    scope                : BudgetScope           -- one of {per_role, per_run, per_state}
+    scope                : BudgetScope           -- one of {per_role, per_run, per_state, handler_account}
     limit                : Integer               -- positive; allowance ceiling
     warning_threshold    : Float                 -- ratio in [0, 1]; default 0.8
     scope_target         : ScopeTarget           -- wildcard | predicate | list | singleton
@@ -696,6 +698,7 @@ ENUM BudgetScope:
     per_role
     per_run
     per_state
+    handler_account            -- per-handler-account ceiling (session-token cap / daily quota); handler-fatal per [handler-pause.md HP-012]; see CP-022 INFORMATIVE note (§4.5)
 ```
 
 #### 6.1.5 Delegation path (cognition-tagged evaluator)
@@ -898,7 +901,7 @@ guards:
 budgets:
   - name: <budget-name>
     resource: tokens | wall_clock_seconds | iterations
-    scope: per_role | per_run | per_state
+    scope: per_role | per_run | per_state | handler_account
     limit: <int>
     warning_threshold: 0.8              # default 0.8
     scope_target: "*"                   # wildcard, predicate, list, or singleton per §6.1.4 ScopeTarget
@@ -1223,6 +1226,7 @@ Default-if-unresolved: Keep separate; revisit if a third Kind develops a hash di
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §6.3 policy-expression key path (`run.next_node.handler_type` → `run.next_node.agent_type`); corrected the accompanying cross-reference from `[handler-contract.md §4.1]` to `[handler-contract.md §6.1]` (the LaunchSpec RECORD declaring `agent_type` lives in §6.1, not §4.1). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~15 citations fixed. EV: `§3.2→§6.3`/§8/§8.2/§8.4/§4.3/§4.4 per context (payload registry, taxonomy, specific lifecycle per cite), `§3.7→§4.3` (consumer taxonomy) at §9.1 cross-refs. Reconciliation path fix: `[reconciliation.md §4.N]→[reconciliation/spec.md §4.N]` at §4.8 CP-040a replay-safe rule, §5 CP-INV-003 invariant, and §9.3 cross-refs (both §4.4 wall-clock budget and §4.5 verdict vocabulary). No requirement IDs, invariants, or schemas touched. |
 | 2026-05-23 | 0.4.0 | phase-3-dot/C4 | Added §4.12 (workflow-graph binding: CP-053 `gate` node-type binding, CP-054 `gate_ref` + `handler_ref` pairing, CP-055 typed `*_ref` family, CP-056 `policy_ref` deprecation, CP-057 `skills_ref` semantics); added §4.13 (Gate-decision Outcome payload: CP-058 + §6.1.8 `GateDecisionPayload` record, ownership taken per C3 OQ-C3-1 deferral); added CP-038a (mechanism-tagged Gate schema-version drift discipline mirroring CP-040a / CP-INV-003 envelope-hash + Cat 6 escalation); added `gate_definition_drift` and `gate_redefined_under_cat_6` events to §6.5; added OQ-CP-006 for envelope-hash type-sharing question. No existing requirements renumbered; CP-053 through CP-058 assigned. |
+| 2026-05-31 | 0.4.1 | agent (kerf `credfence` work) | Additive Budget-scope amendment. CP-022's `scope` enum extended to `{per_role, per_run, per_state, handler_account}` and an INFORMATIVE note added explaining that a `handler_account`-scoped Budget is the per-handler-account ceiling whose exhaustion is handler-fatal per [handler-pause.md HP-012] (resolving handler-pause §13 deferred item #3), reconciling the `scope` field name against HP-012's `budget_scope` wording. The note clarifies that the harmonik unified per-day cap of [cognition-loop.md CL-090] is NOT a registered CP-022 Budget (USD/day is not a representable `BudgetResource`); rather its exhaustion event carries `scope = handler_account` so HP-012 can discriminate the account-scoped variant. No existing requirement renumbered; CP-001 single-primitive invariant and CP-005 per-Kind table unchanged (an enum value is not a new primitive). Source: kerf `credfence` change design. |
 
 ## A. Appendices
 

@@ -223,6 +223,8 @@ Drawing from [/Users/gb/github/harmonik/specs/execution-model.md §8] six failur
 
 **HP-012 — Account-budget exhaustion trip.** A handler type MUST be paused immediately (no hysteresis) when a `budget_exhausted` failure is observed with `budget_scope = handler-account`. Per-run budget exhaustion (per-node budget) is NOT handler-fatal and MUST NOT trip a handler pause.
 
+> NOTE: `budget_scope = handler-account` denotes the Budget primitive's `scope` field carrying value `handler_account` per [/Users/gb/github/harmonik/specs/control-points.md §4.5 CP-022] (there is one field, `scope`, not a parallel `budget_scope` field). The producer of the qualifying account-scoped `budget_exhausted` is the cognition loop's unified per-day spend meter ([/Users/gb/github/harmonik/specs/cognition-loop.md §4.11 CL-090]) — the "daily-quota" case named in the §8 classification table. The end-to-end exhaustion path is documented in §11a.
+
 **HP-013 — MVH exclusions.** The following failure signals MUST NOT trip a handler pause:
 - `ErrSkillProvisioningFailed` — per-bead config issue.
 - `daemon_not_ready` — process-lifecycle concern, not handler.
@@ -386,6 +388,16 @@ Emission ordering within a single pause epoch per [/Users/gb/github/harmonik/spe
 
 The handler-pause events are NOT paired-phase lifecycle events per [/Users/gb/github/harmonik/specs/event-model.md §8.9(h)]: Pause and Resume are distinct terminal-distinct outcomes with independent payload shapes.
 
+## 11a. Unified-budget exhaustion hard-halt path (informative)
+
+This subsection documents the end-to-end path by which the cognition-loop unified per-day spend meter halts `claude` dispatch through the existing HP-012 policy. The handler-pause controller behavior (HP-012) is unchanged; this path records how the qualifying event reaches it.
+
+1. The unified spend meter ([/Users/gb/github/harmonik/specs/cognition-loop.md §4.11 CL-090]) sums Pi turns + daemon-spawned `claude` cost (consumed from `budget_accrual` per [/Users/gb/github/harmonik/specs/event-model.md §8.4.2]) and reaches its per-day USD cap, OR the per-day max-runs ceiling ([/Users/gb/github/harmonik/specs/cognition-loop.md §4.11 CL-090a]) is reached.
+2. The meter emits `budget_exhausted{budget_scope = handler_account, spent_usd, cap_usd, ...}` into the shared event stream; the cognition loop is a registered producer of this account-scoped variant per [/Users/gb/github/harmonik/specs/event-model.md §8.4.3].
+3. The registered budget-exhaustion handler-pause policy observes the event; HP-012 fires: the `claude` handler type is paused immediately (no hysteresis). No new `claude` implementer/reviewer sessions launch (held at submission-time validation per HP-025).
+4. The cognition loop enters `budget-paused` per [/Users/gb/github/harmonik/specs/cognition-loop.md §6].
+5. Reset is non-automatic. The operator clears the handler pause via the existing handler-resume surface (`harmonik supervise resume` / the HP-resume path of §6 in this spec, per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3]). The cognition-loop-side pause/resume *producer* (a separate agent-callable control surface) is out of scope here; this path relies only on the existing handler-resume verb to clear the budget-exhaustion handler pause.
+
 ## 12. Forward-looking seams
 
 ### 12.1 Per-handler diagnostic-tool hook (post-MVH)
@@ -408,7 +420,7 @@ The handler-pause events are NOT paired-phase lifecycle events per [/Users/gb/gi
 
 1. **Exact hysteresis for `agent_rate_limited`.** Two-strike (HP-011) is the starting rule. Should it be N-strikes-in-T-window? Tunable per handler type? Deferred.
 2. **`auth-expired` and `api-unreachable` sub-reasons** — not yet formal handler-contract sentinels. Tracked as HP-014 follow-up.
-3. **Budget-scope discrimination.** `budget_exhausted{handler-account}` requires `budget_scope` on the budget-point policy. That field does not exist in [/Users/gb/github/harmonik/specs/control-points.md §4.5]. Deferred to control-points amendment.
+3. **Budget-scope discrimination.** ~~`budget_exhausted{handler-account}` requires `budget_scope` on the budget-point policy. That field does not exist in [/Users/gb/github/harmonik/specs/control-points.md §4.5]. Deferred to control-points amendment.~~ **RESOLVED (kerf `credfence` work).** [/Users/gb/github/harmonik/specs/control-points.md §4.5 CP-022]'s `scope` enum now includes `handler_account`; the `budget_scope = handler-account` wording of HP-012 maps to the Budget primitive's `scope` field carrying value `handler_account` (one field, not a parallel `budget_scope`). The cognition-loop unified per-day spend meter ([/Users/gb/github/harmonik/specs/cognition-loop.md §4.11 CL-090]) is the producer of the qualifying account-scoped `budget_exhausted` per [/Users/gb/github/harmonik/specs/event-model.md §8.4.3]. See §11a for the end-to-end path.
 4. **Handler pause during `paused-by-drain`.** If the queue is mid-drain and a handler trips a pause, the handler pause persists across drain/restart and applies when the queue resumes. Confirm in a future pass.
 5. **Reconciliation interaction.** The reconciliation investigator MUST NOT redispatch in-flight beads from the freeze-list while the handler is paused. Proposal: reconciliation reads `handler-state.json` on startup and respects pauses. Confirm in a future pass.
 
@@ -436,10 +448,18 @@ Per §5 and §12.1 of this spec:
 Per §5 of this spec:
 - **Add INFORMATIVE note at end of §8**: two failure classes carry handler-fatal sub-cases in the handler-pause policy (`transient` rate-limit and `budget_exhausted{handler-account}`); classification authority remains in execution-model §8; handler-pause (this spec) is the downstream policy consumer.
 
+### A.4 credfence amendments (budget-exhaustion hard-halt)
+
+Captured by the kerf `credfence` work; these sibling edits make HP-012 fire from the unified per-day spend meter without a new halt path:
+- **[specs/control-points.md §4.5 CP-022]**: extend the Budget `scope` enum with `handler_account` (the value HP-012 requires); resolves §13 deferred item #3.
+- **[specs/event-model.md §8.4.3]**: add `cognition-loop (flywheel)` to the `budget_exhausted` producer set, with `budget_scope`/`spent_usd`/`cap_usd` optional payload fields, so the Pi-side unified meter emits the account-scoped event HP-012's consumer reads.
+- **[specs/cognition-loop.md §4.11 CL-090/CL-090a]**: the unified meter is the producer of the qualifying `budget_exhausted{budget_scope=handler_account}` (see §11a path).
+
 ---
 
 ## Version history
 
 | Version | Date | Author | Notes |
 |---|---|---|---|
+| 0.1.1 | 2026-05-31 | agent (kerf `credfence` work) | Budget-exhaustion hard-halt wiring. HP-012 text UNCHANGED; added a clarifying note mapping `budget_scope = handler-account` to the Budget primitive `scope` value `handler_account` ([control-points.md CP-022]) and naming the cognition-loop unified meter ([cognition-loop.md CL-090]) as the producer. Added §11a end-to-end exhaustion-path doc. Marked §13 deferred item #3 RESOLVED. Added Appendix A.4 listing the control-points / event-model / cognition-loop sibling amendments. No requirement renumbered; the existing handler-resume surface clears the budget-exhaustion pause. Source: kerf `credfence` change design. |
 | 0.1.0 | 2026-05-18 | foundation-author | Initial normative elevation from [docs/components/internal/handler-pause-and-resume.md]. Added HP-### requirement IDs, §4.a subsystem envelope, §8.3a orthogonality cross-link to queue-model.md §8.3 QM-052, §11 event cross-reference to event-model.md §8.11. Design rationale retained in design doc (marked SUPERSEDED). |

@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.2
+version: 0.1.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-19
+last-updated: 2026-05-31
 depends-on:
   - architecture
   - execution-model
@@ -97,6 +97,8 @@ ENUM GroupKind:
   wave    -- fixed, closed set; dispatched concurrently up to --max-concurrent; not appendable post-submit
   stream  -- ordered, open-ended sequence; dispatched as slots open; appendable while pending or active
 ```
+
+> INFORMATIVE: **Pi-driven curated dispatch uses a `stream` group.** The cognition loop's eager refill (per [/Users/gb/github/harmonik/specs/cognition-loop.md §4.9 CL-071]) and the daemon's eager refill (per [/Users/gb/github/harmonik/specs/execution-model.md §4.13 EM-062]) both dispatch via `queue-append`, which only a `stream` group accepts (§7.1 QM-040, §6 QM-024). `harmonik run --beads` defaults to a `wave` group — correct for a closed, one-shot batch submitted and run to completion, but the wrong primitive for incremental curation, which a wave group cannot accept appends into. The two entry points coexist: `wave` for closed batches, `stream` for incremental curation. A future change MUST NOT alter the `harmonik run --beads` wave default to obtain appendability; the curation path obtains it by submitting a `stream` group. A `stream` group at `--max-concurrent > 1` dispatches its items concurrently (per [/Users/gb/github/harmonik/specs/execution-model.md §4.11 EM-NOTE-STREAM-CONCURRENCY]; `--wave` is for append-closed semantics, not for concurrency), and an appended item wakes the workloop at sub-poll-interval latency (per [/Users/gb/github/harmonik/specs/execution-model.md §4.11 EM-NOTE-WAKE]).
 
 ### 2.5 ENUM GroupStatus
 
@@ -653,6 +655,8 @@ The queue-level lifecycle is the outer wrapper around the per-group state machin
 
 Event payload schemas are owned by [/Users/gb/github/harmonik/specs/event-model.md §8.10].
 
+> INFORMATIVE: `queue-submit` returning `status: active` IS the queue's "start" semantics: group_index 0 activates immediately on submit and the dispatcher picks it up at sub-poll-interval latency (per [/Users/gb/github/harmonik/specs/execution-model.md §4.11 EM-NOTE-WAKE]). There is no separate `start` method — the queue methods are `queue-submit | queue-append | queue-status | queue-dry-run` per §6. A Pi-driven dispatch flow that needs to "start processing" submits the queue; no distinct start verb exists or is required.
+
 ### 8.2 QM-051 — Advance
 
 When the active group reaches `GroupStatus: complete-success` per §5.1 row 3, the daemon MUST:
@@ -702,6 +706,8 @@ On entry to `paused-by-drain` the daemon MUST:
 2. Emit exactly one `queue_paused{queue_id, group_index, reason: "operator_drain"}` event per [/Users/gb/github/harmonik/specs/event-model.md §8.10]. The `group_index` is the currently-active group's index.
 
 No new items are dispatched while `status == paused-by-drain`. In-flight runs continue per ON-027 step (2).
+
+> INFORMATIVE: The `operator_pause_status{status: pausing|paused}` event that drives this `active → paused-by-drain` transition is produced in production by the operator-nfr pause/resume command verb (per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.3 ON-056/ON-057]). This requirement specifies the consumer side only; the producer adds no change to the consumer semantics here. The same `operator_pause_status` is the single source of pause truth observed by both this queue transition and the execution-model br-ready fallback gate (per [/Users/gb/github/harmonik/specs/execution-model.md §7.4 EM-067]).
 
 ### 8.6 QM-055 — Persisted pause survives restart
 
@@ -802,6 +808,16 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.4 — 2026-05-31 — Pi-driven dispatch & control-plane confirmations (kerf `pilot` work, A4). Three annotation-only amendments; no new requirement IDs, no new methods, no consumer-semantics change:
+
+1. **§2.4 GroupKind (informative):** Stated that Pi-driven curated dispatch uses a `stream` group (the only appendable kind), that `harmonik run --beads`'s `wave` default is correct for closed batches but must NOT be changed to obtain appendability, and that a `stream` group is both concurrency-safe (per execution-model EM-NOTE-STREAM-CONCURRENCY) and wake-on-append (per execution-model EM-NOTE-WAKE).
+
+2. **§8.5 QM-054 (informative):** Confirmed that the `operator_pause_status` driving the `active → paused-by-drain` transition is produced in production by the operator-nfr pause/resume command verb (ON-056/ON-057), that this changes no consumer semantics, and that the same event is the single source of pause truth observed by both the queue transition and the execution-model br-ready fallback gate (EM-067).
+
+3. **§8.1 QM-050 (informative):** Confirmed that `queue-submit` returning `status: active` IS the queue's "start" semantics; there is no separate `start` method, and a Pi-driven flow "starts processing" by submitting the queue.
+
+Source: kerf `pilot` 04-design/queue-model-design.md. No QM requirement IDs added, renumbered, or retired.
 
 v0.1.3 — 2026-05-20 — QM-002b three-way reconciliation on startup (hk-nvfvj / hk-11xlj). One additive amendment documenting the implementation that landed in 15c0ad8:
 

@@ -8,10 +8,10 @@ requirement-prefix: ON
 spec-category: foundation-cross-cutting
 status: reviewed
 spec-shape: requirements-first
-version: 0.4.3
+version: 0.4.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-15
+last-updated: 2026-05-31
 depends-on:
   - architecture
   - event-model
@@ -156,7 +156,7 @@ Tags: mechanism
 
 #### ON-004 — Config inventory obligation
 
-The spec-draft pass MUST produce a normative config inventory enumerating every operator-configurable knob referenced across foundation specs. For each knob, the inventory MUST specify: the precedence layer (runtime override / operator-policy file / workflow definition / default, per [control-points.md §4.7] CP-037), the default value, the allowed range or enumeration, and the change-takes-effect semantics (next operator pause, immediate, next daemon start, etc.). At minimum the inventory covers the timer-flush cadence ([event-model.md §4.4]), budget warning threshold ([control-points.md §4.5]), drain timeout (§4.7), RTO thresholds (§4.8), Cat 0 pre-check retry cadence ([reconciliation/spec.md §4.3]), per-Cat reconciliation budgets ([reconciliation/spec.md §4.4]), and the `workflow_mode` knob per §4.1.ON-004a.
+The spec-draft pass MUST produce a normative config inventory enumerating every operator-configurable knob referenced across foundation specs. For each knob, the inventory MUST specify: the precedence layer (runtime override / operator-policy file / workflow definition / default, per [control-points.md §4.7] CP-037), the default value, the allowed range or enumeration, and the change-takes-effect semantics (next operator pause, immediate, next daemon start, etc.). At minimum the inventory covers the timer-flush cadence ([event-model.md §4.4]), budget warning threshold ([control-points.md §4.5]), drain timeout (§4.7), RTO thresholds (§4.8), Cat 0 pre-check retry cadence ([reconciliation/spec.md §4.3]), per-Cat reconciliation budgets ([reconciliation/spec.md §4.4]), the `workflow_mode` knob per §4.1.ON-004a, and the credential & spend-governance knobs per §4.1.ON-004b–ON-004g (credential injection source, per-day USD cap, max-runs, Pi model tiers, daemon `claude` baseline, dry-run mode).
 
 Tags: mechanism
 
@@ -174,6 +174,84 @@ The config inventory of §4.1.ON-004 MUST include an entry for the `workflow_mod
 - **Change-takes-effect semantics:** per-task at claim time (the resolved mode is sealed into the Run record per [execution-model.md §4.3] and is immutable for the run's lifetime); daemon default on next daemon start.
 - **Runtime tunability:** NOT runtime-tunable per §4.3.ON-013d.
 - **Iteration cap (review-loop):** hardcoded at 3 for MVH; NOT operator-tunable.
+
+Tags: mechanism
+
+#### ON-004b — Credential injection-source config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the `supervise start` credential injection source per [credential-isolation.md §4.4 CI-006]:
+
+- **Knob:** the source from which `harmonik supervise start` injects the credential into the Pi cognition (holder) process.
+- **Allowed values:** an explicit operator env export, or a gitignored credential file at repo root (`.env`) read ONLY by `supervise start`.
+- **Default value:** the gitignored repo-root `.env` (read only by `supervise start`; never read by the daemon; never unioned into a child env).
+- **Precedence layers** (highest-to-lowest): (1) explicit operator env export; (2) gitignored repo-root `.env`; (3) no source resolves → fail-closed error (the holder process MUST NOT start unauthenticated).
+- **Change-takes-effect semantics:** next `supervise start`.
+- **Runtime tunability:** NOT runtime-tunable (boot-time).
+
+Tags: mechanism
+
+#### ON-004c — Per-day USD budget cap config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the unified per-day spend cap per [cognition-loop.md §4.11 CL-090]:
+
+- **Knob:** `FLYWHEEL_BUDGET_USD_PER_DAY` / `--budget-usd-per-day`. Caps the unified meter that sums Pi turns AND daemon-spawned `claude` session cost.
+- **Allowed values:** a positive number (USD), or `unlimited` / empty for an explicit opt-out.
+- **Default value:** FINITE (recommended 20 USD; the default MUST NOT be unbounded).
+- **Precedence layers** (highest-to-lowest): (1) runtime flag `--budget-usd-per-day`; (2) `FLYWHEEL_BUDGET_USD_PER_DAY` env; (3) finite built-in default.
+- **Change-takes-effect semantics:** next daemon/loop start; the cap total resets at the local-midnight day-boundary rollover.
+- **Runtime tunability:** NOT runtime-tunable mid-day at v0.1.
+
+Tags: mechanism
+
+#### ON-004d — Per-day max-runs ceiling config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the per-day max-runs ceiling per [cognition-loop.md §4.11 CL-090a]:
+
+- **Knob:** the per-day max-runs ceiling (count of daemon `run_started` events since the last day-boundary rollover). The loss-proof backstop alongside the USD cap.
+- **Allowed values:** a positive integer.
+- **Default value:** a FINITE count (the default MUST NOT be unbounded).
+- **Precedence layers:** runtime flag > env > finite built-in default (mirrors ON-004c).
+- **Change-takes-effect semantics:** next daemon/loop start; the counter resets on the same day-boundary rollover as the USD total.
+- **Runtime tunability:** NOT runtime-tunable mid-day at v0.1.
+
+Tags: mechanism
+
+#### ON-004e — Pi model-tier config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the Pi judgment-model tiers per [cognition-loop.md §4.11 CL-090b]:
+
+- **Knob:** `FLYWHEEL_MODEL_TIER1`, `FLYWHEEL_MODEL_TIER2`, `FLYWHEEL_MODEL_TIER3` (the model IDs the cognition loop uses per tier).
+- **Allowed values:** any valid Anthropic model ID per tier.
+- **Default value:** tier-1 Haiku, tier-2 Sonnet, **tier-3 (judgment) Sonnet** — Opus is gated behind an explicit operator opt-in (the cost-posture default).
+- **Precedence layers** (highest-to-lowest): (1) the `FLYWHEEL_MODEL_TIER*` env override; (2) the extension built-in default.
+- **Change-takes-effect semantics:** next loop start (wired only at the composition root per [cognition-loop.md §4.12 CL-100]).
+- **Runtime tunability:** NOT runtime-tunable at v0.1.
+
+Tags: mechanism
+
+#### ON-004f — Daemon `claude` baseline-model config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the single operator-facing default model the daemon's `claude` implementer/reviewer sessions run at:
+
+- **Knob:** the daemon `claude` baseline model default.
+- **Allowed values:** any valid model ID.
+- **Default value:** the daemon built-in baseline (Sonnet/medium at v0.1).
+- **Precedence layers** (highest-to-lowest): (1) per-bead `model:` label (existing per-task override); (2) the operator-facing daemon-baseline default; (3) the daemon built-in.
+- **Change-takes-effect semantics:** next daemon start. Hot-reload of the baseline is a SHOULD, NOT a MUST; the normative obligation is that ONE operator-facing default exists. The exact configuration surface (env name vs config field) is an implementation choice and is NOT bound to a specific literal by this spec.
+- **Runtime tunability:** the MUST is a single operator default; hot-reload is optional.
+
+Tags: mechanism
+
+#### ON-004g — Dry-run / plan-only mode config-inventory entry
+
+The config inventory of §4.1.ON-004 MUST include an entry for the daemon `--dry-run`/plan-only mode per [cognition-loop.md §4.11 CL-090d]:
+
+- **Knob:** `--dry-run` (daemon plan-only mode).
+- **Allowed values:** present (plan-only) / absent (live).
+- **Default value:** OFF (live).
+- **Behavior:** previews the intended spawn set (per bead: would-launch implementer + reviewer at model X, across M beads) WITHOUT launching any `claude`, reading the credential source ([credential-isolation.md §4.4 CI-006]), or emitting spend. Mirrors the `harmonik queue dry-run` validate-without-execute behavior.
+- **Change-takes-effect semantics:** per invocation.
+- **Runtime tunability:** per-invocation flag.
 
 Tags: mechanism
 
@@ -209,6 +287,16 @@ Tags: mechanism
 #### ON-008 — Pause and upgrade respect the between-task invariant
 
 An operator `pause` or `upgrade` command issued while the daemon status is `ready` MUST NOT interrupt any in-flight run (per §3 `in_flight(run)`). The daemon MUST transition to `pausing`, allow every in-flight run to proceed to its next durable checkpoint per [execution-model.md §4.5], AND complete the full drain sequence of §4.7.ON-027 (all eight steps) before transitioning to `paused`. The `pausing → paused` transition is gated on drain-completion: entry into `paused` is forbidden until (a) no run satisfies `in_flight(run)` AND (b) every drain step of ON-027 has completed (or the drain-timeout escalation path of §4.7.ON-029 has fired). `upgrade` further transitions `paused` → `upgrading` → (exec-replace) → `running` under the contract of §4.6.
+
+Tags: mechanism
+
+#### ON-008a — Credential injection and budget-exhaustion operator surface
+
+`harmonik supervise start` MUST inject the credential into the Pi cognition (holder) process from the non-committed scoped source per [credential-isolation.md §4.4 CI-006] (config-inventory entry ON-004b), so a fresh boot authenticates without a manual operator export. The daemon process and every daemon-spawned `claude` child MUST NOT receive the credential per [credential-isolation.md §4.1 CI-001].
+
+The `budget-paused` pause-reason ([cognition-loop.md §6]) — entered when the unified per-day spend meter exhausts per [cognition-loop.md §4.11 CL-090] and the budget-exhaustion handler-pause policy fires ([handler-pause.md §4 HP-012]) — MUST be surfaced to the operator per §9 alongside `circuit-tripped`. The operator clears the budget-exhaustion handler pause via the existing handler-resume surface (`harmonik supervise resume`); reset is not automatic.
+
+Tags: mechanism
 
 For runs with `workflow_mode = single` or `workflow_mode = dot` (per [handler-contract.md §4.2 HC-006]), the durable checkpoint at which the run yields to the drain gate is the between-task checkpoint per [execution-model.md §4.5]; this is the default semantics. For runs with `workflow_mode = review-loop`, the durable checkpoint set is EXTENDED to include intra-run iteration boundaries: the interval between emission of a `reviewer_verdict` event (per [event-model.md §8.1]) and the next `implementer_resumed` event of the same cycle is a legitimate pause checkpoint. A `pause` issued mid-iteration of a `review-loop` run MUST be honored at the next such iteration-boundary checkpoint OR at the end of the cycle, whichever arrives first; the pause MUST NOT be deferred beyond the next iteration boundary. The amended pause checkpoint set applies ONLY when the run's resolved `workflow_mode` is `review-loop`; the original between-task invariant is unchanged for `single` and `dot` modes. `stop --immediate` aborts mid-iteration per §4.3.ON-009 regardless of mode; the run is left in the standard canceled-and-reconciled state.
 
@@ -288,6 +376,28 @@ The daemon's `workflow_mode` (per §4.1.ON-004a and [handler-contract.md §4.2 H
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### ON-056 — Agent-callable pause/resume command verb
+
+The daemon MUST expose a `pause` and a `resume` operator command reachable over the daemon's Unix-socket JSON-RPC transport per [process-lifecycle.md §4.1 PL-003a], co-located with the `queue-submit` / `queue-append` / `queue-status` / `queue-dry-run` methods and supervised by the §4.3.ON-013a panic barrier. The canonical operator-facing CLI form is `harmonik supervise pause` and `harmonik supervise resume`; the bare `pause` / `resume` names are the RPC `CommandName` wire values only.
+
+The commands MUST be **agent-callable**: an autonomous agent — including the cognition loop per [cognition-loop.md §4.10 CL-080] — MAY issue `pause` / `resume` WITHOUT human intervention by invoking the CLI, which frames the PL-003a RPC, exactly as a human operator would. There MUST NOT be a human-only gate on these verbs; the agent-callable path and the human-operator path are the same command surface.
+
+Issuing `pause` drives the existing `running → pausing` transition of §7.1 with `pause_reason=operator`; the daemon then runs the §4.7.ON-027 drain sequence and gates the `pausing → paused` transition on drain-completion per §4.3.ON-008. Issuing `resume` drives the existing `paused → resuming → running` transitions of §7.1. The drain ordering (§4.7.ON-027), the between-task gate (§4.3.ON-008), the per-transition event emission (§4.3.ON-013), the idempotency-on-no-op rule (§4.3.ON-013c), and the pause-state durable marker (§4.8.ON-030a) are inherited unchanged; this requirement adds the command entry point and the agent-callable obligation only. The reconciliation carve-out of §4.3.ON-010 applies: a `pause` issued during `reconciling` is queued and applied at the reconciliation boundary.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### ON-057 — Pause/resume command verb is the production `operator_pause_status` producer
+
+The pause/resume command verb of §4.3.ON-056 is the production producer of `operator_pause_status{status, pause_reason=operator}` and `operator_resuming`. It emits the existing §4.3.ON-013 events through the existing §7.1 transitions; it introduces no new event type and no new state. The `pause_reason=operator` discriminator is tagged at the emission site per §4.3.ON-013 and the structured-fields mechanism of [event-model.md §6.3], structurally identical to the improvement-pause path (`pause_reason=improvement`) per §4.3.ON-012; the shared state table of §4.3.ON-011 handles coexistence of the two pause origins.
+
+The emitted `operator_pause_status` is the single source of pause truth observed by BOTH (a) the queue-model consumer that transitions the queue `active → paused-by-drain` per [queue-model.md §8.5 QM-054], AND (b) the execution-model daemon dispatch path, including the optional `br ready` fallback path, which MUST NOT dispatch while the operator-control state is `pausing` or `paused` per [execution-model.md §7.4 EM-067]. No subsystem may define a parallel pause-truth source; both read sides consume this producer's output.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+**Conformance (ON-056/ON-057).** With ≥1 run satisfying `in_flight(run)` per §3, an agent issues `harmonik supervise pause` over PL-003a: (a) `operator_pause_status{status=pausing, pause_reason=operator}` is emitted; (b) no new `run_started` is emitted while the daemon is `pausing` or `paused`; (c) every in-flight run reaches a terminal state without abort (the between-task invariant of §4.3.ON-008); (d) `operator_pause_status{status=paused}` carrying `drain_summary` is emitted only after all §4.7.ON-027 drain steps complete; (e) the queue transitions `active → paused-by-drain` per [queue-model.md §8.5 QM-054]; (f) on `harmonik supervise resume`, `operator_resuming` is emitted, the daemon returns to `running`, and dispatch resumes. No human action is required at any step.
 
 #### ON-014 — Reconciliation operator override (pre-execution verdict pause)
 
@@ -773,10 +883,10 @@ States: `running`, `pausing`, `paused`, `resuming`, `stopped`, `upgrading`. Impr
 
 | From | Event | Guard | To | Emits |
 |---|---|---|---|---|
-| `running` | `pause` | daemon status = `ready`; no-op if `reconciling` (queued per §4.3.ON-010) | `pausing` | `operator_pause_status` (`status=pausing`, `pause_reason=operator`) |
+| `running` | `pause` (operator or agent per §4.3.ON-056) | daemon status = `ready`; no-op if `reconciling` (queued per §4.3.ON-010) | `pausing` | `operator_pause_status` (`status=pausing`, `pause_reason=operator`) |
 | `running` | improvement-loop trigger | improvement policy active | `pausing` | `operator_pause_status` (`status=pausing`, `pause_reason=improvement`) |
 | `pausing` | all drain steps (ON-027 steps 1–7, including 3a) complete | no run satisfies `in_flight(run)` per §3 AND every ON-027 step has completed (or drain-timeout escalated per ON-029) | `paused` | `operator_pause_status` (`status=paused`; `pause_reason` preserved from the pausing-edge tag) |
-| `paused` | `resume` (operator) OR improvement-loop completion (when `pause_reason=improvement`) | none | `resuming` | `operator_resuming` |
+| `paused` | `resume` (operator or agent per §4.3.ON-056) OR improvement-loop completion (when `pause_reason=improvement`) | none | `resuming` | `operator_resuming` |
 | `resuming` | dispatch loop re-entered | none | `running` | — |
 | `paused` | `upgrade <hash>` | commit-hash matches §4.2.ON-005 | `upgrading` | `operator_upgrading` |
 | `paused` | `upgrade <hash>` | commit-hash mismatch | `paused` | `operator_upgrade_rejected` |
@@ -1054,6 +1164,8 @@ Default-if-unresolved: Structured logs are N-1 governed; ON-018 enumeration is u
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-31 | 0.4.4 | agent (kerf `pilot` work) | **Agent-callable pause/resume command verb + `operator_pause_status` producer (A3).** Added **ON-056** (agent-callable pause/resume command verb): exposes `pause`/`resume` over the PL-003a Unix-socket JSON-RPC transport co-located with the queue methods; canonical CLI form `harmonik supervise pause/resume` (bare `pause`/`resume` are the RPC `CommandName` wire values); explicit agent-callable obligation (the cognition loop per CL-080 MAY issue them without human intervention; no human-only gate); drives the existing §7.1 `running → pausing → paused` / `paused → resuming → running` transitions with `pause_reason=operator`, inheriting ON-027 drain, ON-008 gate, ON-013 emission, ON-013c idempotency, ON-030a marker, and ON-010 reconciliation carve-out unchanged. Added **ON-057** (the verb is the production `operator_pause_status` producer): emits the existing ON-013 `operator_pause_status`/`operator_resuming` events through the existing transitions with no new event type and no new state; the emitted `operator_pause_status` is the single source of pause truth observed by BOTH the queue consumer ([queue-model.md §8.5 QM-054]) AND the execution-model br-ready fallback gate ([execution-model.md §7.4 EM-067]). Annotated the §7.1 `pause` and `resume` rows to reference ON-056. Added an ON-056/ON-057 conformance obligation. **New IDs (net):** ON-056, ON-057 (2 new requirement IDs). No prior IDs renumbered or retired; no new event types, states, or §8 exit codes added (the verb reuses the existing `operator_pause_status`/`operator_resuming` events and the existing §7.1 state machine). Source: kerf `pilot` 04-design/operator-nfr-design.md. |
+| 2026-05-31 | 0.4.4 | agent (kerf `credfence` work) | Added six credential & spend-governance config-inventory entries (ON-004b credential injection source per [credential-isolation.md CI-006]; ON-004c per-day USD cap; ON-004d max-runs ceiling; ON-004e Pi model tiers, tier-3 judgment defaults Sonnet with Opus opt-in; ON-004f single daemon `claude` baseline default, hot-reload SHOULD-not-MUST, surface left to implementation; ON-004g `--dry-run` plan-only mode), extended the ON-004 "at minimum" list to name them, and added ON-008a (the §4.3 operator-surface note: `supervise start` injects the credential from the scoped source per CI-006; `budget-paused` surfaced and cleared via the existing handler-resume). New IDs: ON-004b, ON-004c, ON-004d, ON-004e, ON-004f, ON-004g, ON-008a (7 new). All additive; no existing requirement reversed. Source: kerf `credfence` change design. |
 | 2026-05-15 | 0.4.3 | foundation-author | ON-020 spec-draft obligation fulfilled: 7 normative sub-rules added as ON-020b–ON-020h within §4.6. **ON-020b** — binary-source mechanism: positional arg or `--binary <path>` flag; absence fails §8 code 16; path MUST resolve to executable regular file. **ON-020c** — operator-supplied hash check: `--expected-hash <sha>` required; absence fails §8 code 14 / `failure_mode=expected-hash-missing`; stamp-absent fails `binary-stamp-missing`; check executes before exec-replace and before ON-020a marker write. **ON-020d** — drain-vs-reconciliation: in-flight reconciliation queues the upgrade (reconciliation carve-out per ON-010 applies); `stop --immediate` discards queued upgrade and aborts normally. **ON-020e** — cross-version state contract: introspect new binary's `--schema-version-query`; succeed for on-disk schema ∈ supported-set (same-version or N-1); refuse with §8 code 15 for N+2 or wider mismatch; no auto-migrate. **ON-020f** — socket fd-passing continuity: outgoing daemon clears `FD_CLOEXEC`, passes fd via `HARMONIK_LISTENER_FD`; new binary adopts via `net.FileListener`, re-sets `FD_CLOEXEC`; adoption gap-free; fd-adoption failure → §8 code 6. **ON-020g** — rollback as first-class: `harmonik upgrade --rollback` exec-replaces back to `.harmonik/daemon.binary.prev`; hash from ON-020a marker; live-window rollback unsupported; `--rollback` while `running` → §8 code 16; `.harmonik/daemon.binary.prev` written atomically before exec-replace. **ON-020h** — post-exec-replace failure recovery: CLI `--rollback` from no running daemon: removes stale pidfile/socket, reads `.harmonik/daemon.upgrading` for prior hash, validates `.harmonik/daemon.binary.prev`, starts prior binary directly, removes marker and prev-binary on success. **§10.2 ON-020–ON-021 test obligation** rewritten to enumerate all seven new sub-rules as test scenarios. **New IDs (net):** ON-020b, ON-020c, ON-020d, ON-020e, ON-020f, ON-020g, ON-020h (7 new requirement IDs). No invariants added or retired. No §8 exit codes added (new sub-rules reference existing codes 14, 15, 16, 6). Status remains `reviewed`. Refs: hk-sx9r.24. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft from components.md Component 7 + round-2 amendments. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE: §1.1→§4.1 (×2 in §4.9 event-envelope clause and §9 cross-refs), §1.2→§4.2 (×2 in §4.9 ZFC-tag clause and §9 cross-refs), §1.3→§4.3 (×1 in §4.9 verification-node clause), §1.5→§4.6 (×1 in §10 STATUS cross-ref), §1.6→§4.8 (×2 in §4.9 audit-privileged-role clause and §9 cross-refs), §1.8→§4.9 (×1 in §9 cross-refs). No requirement IDs, invariants, or schemas were touched. |

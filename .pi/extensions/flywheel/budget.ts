@@ -5,7 +5,7 @@
 //   90% → downgrade Sonnet → Haiku (tier ≤ 2)
 //   100% → halt; emit flywheel_budget_exhausted; loop enters budget-paused
 //
-// Daily reset is NOT automatic. Operator MUST `harmonik supervise resume`.
+// Daily reset is NOT automatic. Operator must run `harmonik supervise resume` (hk-ry8q1) to clear budget-paused state.
 // Day boundary = local-midnight (operator TZ) at v0.1 — tracked as a date string.
 
 import { appendFileSync, mkdirSync } from "node:fs";

@@ -2,7 +2,7 @@
 //
 // Tracks own reaction rate (turns/min) over a sliding window.
 // Sustained rate > threshold → trips the breaker; emits flywheel_circuit_tripped.
-// Loop enters `circuit-tripped` until operator runs `harmonik supervise resume`.
+// Loop enters `circuit-tripped` until operator runs `harmonik supervise resume` (hk-ry8q1).
 //
 // Default: 10 reactions/min over a 60-second sliding window.
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -954,6 +955,50 @@ func ExportedPolicyHandleRateLimitStatus(p *HandlerPausePolicyGoroutine, ctx con
 // Bead ref: hk-37zy8.
 func ExportedPolicyHandleBudgetExhausted(p *HandlerPausePolicyGoroutine, ctx context.Context, evt core.Event) error {
 	return p.handleBudgetExhausted(ctx, evt)
+}
+
+// ExportedNewDaemonSpendMeter constructs a DaemonSpendMeter backed by the
+// given bus for tests in package daemon_test.
+//
+// Bead ref: hk-k3f8g.
+func ExportedNewDaemonSpendMeter(bus eventbus.EventBus) *DaemonSpendMeter {
+	return NewDaemonSpendMeter(bus)
+}
+
+// ExportedSpendMeterHandleRunStarted invokes the unexported handleRunStarted
+// method on a DaemonSpendMeter for tests in package daemon_test.
+//
+// Bead ref: hk-k3f8g.
+func ExportedSpendMeterHandleRunStarted(m *DaemonSpendMeter, ctx context.Context, evt core.Event) error {
+	return m.handleRunStarted(ctx, evt)
+}
+
+// ExportedSpendMeterHandleBudgetAccrual invokes the unexported handleBudgetAccrual
+// method on a DaemonSpendMeter for tests in package daemon_test.
+//
+// Bead ref: hk-k3f8g.
+func ExportedSpendMeterHandleBudgetAccrual(m *DaemonSpendMeter, ctx context.Context, evt core.Event) error {
+	return m.handleBudgetAccrual(ctx, evt)
+}
+
+// ExportedSpendMeterSetMaxRunsPerDay overrides the meter's maxRunsPerDay for
+// deterministic test scenarios (avoids process-env mutation).
+//
+// Bead ref: hk-k3f8g.
+func ExportedSpendMeterSetMaxRunsPerDay(m *DaemonSpendMeter, n int) {
+	m.mu.Lock()
+	m.maxRunsPerDay = n
+	m.mu.Unlock()
+}
+
+// ExportedSpendMeterSetDailyCapBytes overrides the meter's dailyCapBytes for
+// deterministic test scenarios.
+//
+// Bead ref: hk-k3f8g.
+func ExportedSpendMeterSetDailyCapBytes(m *DaemonSpendMeter, b float64) {
+	m.mu.Lock()
+	m.dailyCapBytes = b
+	m.mu.Unlock()
 }
 
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package

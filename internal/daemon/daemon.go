@@ -550,6 +550,24 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
 	}
 
+	// Construct and subscribe the DaemonSpendMeter (hk-k3f8g) BEFORE Seal.
+	//
+	// The meter tracks daily run-count (via run_started) and output-bytes spend
+	// (via budget_accrual) from daemon-spawned claude implementer/reviewer sessions
+	// — invisible to the Pi-side flywheel budget.ts. When either the max-runs
+	// ceiling (HARMONIK_MAX_RUNS_PER_DAY, default 200) or the bytes proxy ceiling
+	// (FLYWHEEL_BUDGET_USD_PER_DAY × bytesPerUSD) is reached it emits
+	// budget_exhausted{budget_scope=handler_account}, which the existing HP-012
+	// policy consumer (pausePolicy, above) turns into a handler pause.
+	//
+	// Spec ref: specs/cognition-loop.md §4.11 CL-090, CL-090a.
+	// Spec ref: specs/handler-pause.md §11a, HP-012.
+	// Bead ref: hk-k3f8g.
+	spendMeter := NewDaemonSpendMeter(bus)
+	if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+	}
+
 	// Construct and subscribe the QueueOperatorEventConsumer BEFORE Seal so
 	// operator_pause_status and operator_resuming events are delivered during the
 	// production run (EV-009: subscribers MUST register before Seal).

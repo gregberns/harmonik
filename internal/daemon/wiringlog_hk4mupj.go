@@ -78,6 +78,16 @@ var compositionRootWirings = []wiringEntry{
 		wires:    "agent_rate_limit_status + budget_exhausted → handlerPauseCtrl",
 	},
 	{
+		symbol:   "spendMeter",
+		callSite: "daemon.go:~555",
+		wires:    "NewDaemonSpendMeter(bus) → daily run-count + bytes ceiling (hk-k3f8g)",
+	},
+	{
+		symbol:   "spendMeter.Subscribe",
+		callSite: "daemon.go:~556",
+		wires:    "run_started + budget_accrual → budget_exhausted{handler_account} (CL-090/CL-090a)",
+	},
+	{
 		symbol:   "queueOpConsumer",
 		callSite: "daemon.go:524",
 		wires:    "NewQueueOperatorEventConsumer(qs, projectDir, bus)",

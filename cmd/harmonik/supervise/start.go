@@ -133,6 +133,21 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// (c2) Pre-flight: check for an existing flywheel session BEFORE writing any
+	// files. If the session exists (remain-on-exit pane from a prior shim crash),
+	// refuse immediately without touching sentinel or config. This prevents
+	// corrupting the existing flywheel's sentinel — which a reparented Pi (from
+	// --watch-restart) may still be relying on to survive the next daemon orphan
+	// sweep (PL-006d, PL-019c, hk-li14r).
+	sessionName := FlywheelSessionName(projectDir)
+	//nolint:gosec // G204: sessionName derived from operator-controlled projectDir
+	if err := exec.Command("tmux", "has-session", "-t", sessionName).Run(); err == nil {
+		fmt.Fprintf(stderr,
+			"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
+			sessionName)
+		return ExitCodeFlywheelSessionExists
+	}
+
 	// Write sentinel before launching (PL-006d).
 	if err := WriteSentinel(projectDir); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: write sentinel: %v\n", err)
@@ -159,7 +174,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// (f) Create tmux session harmonik-<project_hash>-flywheel with remain-on-exit on.
-	sessionName := FlywheelSessionName(projectDir)
+	// sessionName is already computed above (pre-flight check).
 	shimArgs := []string{"supervise", "_shim", projectDir}
 	if watchRestart {
 		shimArgs = append(shimArgs, "--watch-restart")
@@ -176,9 +191,10 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		"-c", projectDir, shimCmd)
 	if out, err := createCmd.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "duplicate session") {
-			// Flywheel session already exists (lock was free but pane survived shim
-			// crash with remain-on-exit on). Refuse with 24 so the operator runs
-			// `supervise stop` first to reap the stale pane (PL-028b interim).
+			// Narrow race: pre-flight has-session showed no session, but between
+			// that check and now an external process created the session. We wrote
+			// sentinel and config above, so remove them as cleanup before exiting.
+			// Normal remain-on-exit cases are caught by the pre-flight check above.
 			fmt.Fprintf(stderr,
 				"harmonik supervise start: flywheel session already exists (%s) — run 'harmonik supervise stop' first\n",
 				sessionName)

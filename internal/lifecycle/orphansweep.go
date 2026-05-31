@@ -97,6 +97,10 @@ var tmuxPollCeiling = 2 * time.Second
 // matches the project-hash prefix harmonik-<projectHash>-, kills each via
 // kill-session, polls for exit, then returns the count killed.
 //
+// excludeSessions is an optional set of session names to skip (used by the
+// PL-006d coordinator sentinel exclusion — sessions with a live supervisor
+// process must not be killed). Nil or empty map means no exclusions.
+//
 // If lister is nil, OSTmuxSessionLister is used.
 // If killer is nil, OSTmuxSessionKiller is used.
 // If logger is nil, log messages are discarded.
@@ -113,6 +117,7 @@ func SweepOrphanTmuxSessions(
 	lister TmuxSessionLister,
 	killer TmuxSessionKiller,
 	logger *log.Logger,
+	excludeSessions map[string]struct{},
 ) (killed int, err error) {
 	if lister == nil {
 		lister = OSTmuxSessionLister{}
@@ -129,6 +134,10 @@ func SweepOrphanTmuxSessions(
 	prefix := TmuxSessionPrefix(projectHash)
 	for _, name := range sessions {
 		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		if _, skip := excludeSessions[name]; skip {
+			orphanLog(logger, "SweepOrphanTmuxSessions: skipping coordinator session %q (PL-006d exclusion)", name)
 			continue
 		}
 		orphanLog(logger, "SweepOrphanTmuxSessions: killing session %q", name)

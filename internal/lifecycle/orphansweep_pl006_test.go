@@ -76,7 +76,7 @@ func TestPL006_SweepOrphanTmuxSessions_Empty(t *testing.T) {
 	lister := &pl006FixtureFakeTmuxLister{}
 	killer := &pl006FixtureFakeTmuxKiller{}
 
-	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil)
+	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil, nil)
 	if err != nil {
 		t.Fatalf("PL-006 tmux empty: unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestPL006_SweepOrphanTmuxSessions_MatchingPrefix(t *testing.T) {
 	tmuxPollCeiling = 0
 	t.Cleanup(func() { tmuxPollCeiling = origCeiling })
 
-	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil)
+	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil, nil)
 	if err != nil {
 		t.Fatalf("PL-006 tmux prefix: unexpected error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestPL006_SweepOrphanTmuxSessions_KillErrorNonFatal(t *testing.T) {
 	t.Cleanup(func() { tmuxPollCeiling = origCeiling })
 
 	// kill error must not surface as a function error.
-	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil)
+	killed, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil, nil)
 	if err != nil {
 		t.Fatalf("PL-006 tmux kill-error: unexpected error: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestPL006_SweepOrphanTmuxSessions_ListError(t *testing.T) {
 	lister := &pl006FixtureFakeTmuxLister{err: wantErr}
 	killer := &pl006FixtureFakeTmuxKiller{}
 
-	_, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil)
+	_, err := SweepOrphanTmuxSessions(t.Context(), hash, lister, killer, nil, nil)
 	if err == nil {
 		t.Fatal("PL-006 tmux list-error: expected error, got nil")
 	}
@@ -215,7 +215,7 @@ func TestPL006_SweepOrphanTmuxSessions_NilListerAndKillerUsesOS(t *testing.T) {
 	t.Cleanup(func() { tmuxPollCeiling = origCeiling })
 
 	// Must not panic even if tmux is not installed.
-	_, err := SweepOrphanTmuxSessions(t.Context(), hash, nil, nil, nil)
+	_, err := SweepOrphanTmuxSessions(t.Context(), hash, nil, nil, nil, nil)
 	if err != nil {
 		t.Logf("PL-006 tmux nil-lister: tmux not available (acceptable): %v", err)
 	}

@@ -1,10 +1,15 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -74,6 +79,16 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-pycay.
 	QueueArchivesDeleted int
 
+	// CoordinatorSessionsSkipped is the count of coordinator (flywheel) tmux
+	// sessions that were SKIPPED by the PL-006d sentinel exclusion: the session
+	// matched the project-hash prefix AND the supervisor sentinel file is present
+	// AND the supervisor PID is live.
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d — "sentinel-present+PID-live →
+	// SKIP with structured-log orphan_sweep_skipped_coordinator_session."
+	// Bead ref: hk-9eury.
+	CoordinatorSessionsSkipped int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -90,6 +105,7 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		StaleIntentsObserved:       r.StaleIntentsObserved,
 		BeadInProgressReset:        r.BeadInProgressReset,
 		BeadCat3cClosed:            r.BeadCat3cClosed,
+		CoordinatorSessionsSkipped: r.CoordinatorSessionsSkipped,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -182,19 +198,147 @@ type OrphanSweepConfig struct {
 	Logger *log.Logger
 }
 
+// coordinatorSentinelDir returns the path to .harmonik/cognition/ for projectDir.
+func coordinatorSentinelDir(projectDir string) string {
+	return filepath.Join(projectDir, ".harmonik", "cognition")
+}
+
+// coordinatorSentinelPath returns the supervisor.sentinel path (PL-006d).
+func coordinatorSentinelPath(projectDir string) string {
+	return filepath.Join(coordinatorSentinelDir(projectDir), "supervisor.sentinel")
+}
+
+// coordinatorPidfilePath returns the supervisor.pid path.
+func coordinatorPidfilePath(projectDir string) string {
+	return filepath.Join(coordinatorSentinelDir(projectDir), "supervisor.pid")
+}
+
+// probeCoordinatorSentinelResult is the outcome of [probeCoordinatorSentinel].
+type probeCoordinatorSentinelResult struct {
+	// Live is true when the coordinator sentinel is present AND the supervisor
+	// PID is still running. The flywheel session MUST be excluded from the
+	// orphan sweep in this case (PL-006d).
+	Live bool
+
+	// SentinelRemoved is true when a stale sentinel file was removed as part
+	// of the probe (sentinel present but PID dead or unreadable).
+	SentinelRemoved bool
+}
+
+// probeCoordinatorSentinel checks whether the supervisor (flywheel) process is
+// live per PL-006d:
+//
+//   - Reads supervisor.sentinel at .harmonik/cognition/supervisor.sentinel.
+//   - If absent → coordinator is not running; result.Live = false.
+//   - If present → reads .harmonik/cognition/supervisor.pid and probes the PID
+//     via kill(pid, 0).
+//   - If PID live → result.Live = true (flywheel session MUST be excluded).
+//   - If PID dead or unreadable → result.Live = false; removes the stale sentinel
+//     and sets result.SentinelRemoved = true.
+//
+// Errors reading or removing the sentinel are non-fatal and are returned
+// alongside the result so the caller can log them.
+func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoordinatorSentinelResult, error) {
+	sentinelPath := coordinatorSentinelPath(projectDir)
+	pidfilePath := coordinatorPidfilePath(projectDir)
+
+	// Probe sentinel existence via stat.
+	if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
+		// Sentinel absent — coordinator is not running; nothing to exclude.
+		return probeCoordinatorSentinelResult{}, nil
+	}
+
+	// Sentinel present. Read supervisor PID.
+	pid, readErr := readSupervisorPID(pidfilePath)
+	if readErr != nil {
+		// Can't read PID — treat as stale sentinel; remove it.
+		if logger != nil {
+			logger.Printf("daemon: probeCoordinatorSentinel: cannot read supervisor.pid (%v); removing stale sentinel", readErr)
+		}
+		removed := removeStaleSentinel(sentinelPath, logger)
+		return probeCoordinatorSentinelResult{SentinelRemoved: removed}, nil
+	}
+
+	// Probe PID liveness.
+	if err := syscall.Kill(pid, 0); err != nil {
+		if err == syscall.EPERM {
+			// Process exists but we lack permission — treat as live.
+			if logger != nil {
+				logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d EPERM (live); skipping flywheel session (PL-006d)", pid)
+			}
+			return probeCoordinatorSentinelResult{Live: true}, nil
+		}
+		// ESRCH or other error → process is dead; remove stale sentinel.
+		if logger != nil {
+			logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d is dead (%v); removing stale sentinel (PL-006d)", pid, err)
+		}
+		removed := removeStaleSentinel(sentinelPath, logger)
+		return probeCoordinatorSentinelResult{SentinelRemoved: removed}, nil
+	}
+
+	// PID is live — coordinator is running; exclude its session.
+	if logger != nil {
+		logger.Printf("daemon: probeCoordinatorSentinel: supervisor PID %d is live; skipping flywheel session (PL-006d)", pid)
+	}
+	return probeCoordinatorSentinelResult{Live: true}, nil
+}
+
+// readSupervisorPID reads a single ASCII decimal PID line from path.
+func readSupervisorPID(path string) (int, error) {
+	//nolint:gosec // G304: path is constructed from operator-controlled projectDir
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("open: %w", err)
+	}
+	defer func() { _ = f.Close() }() //nolint:errcheck
+
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		pid, parseErr := strconv.Atoi(line)
+		if parseErr != nil {
+			return 0, fmt.Errorf("parse pid %q: %w", line, parseErr)
+		}
+		return pid, nil
+	}
+	return 0, fmt.Errorf("supervisor.pid is empty")
+}
+
+// removeStaleSentinel unlinks the sentinel file and fsyncs its parent directory.
+// Returns true if the remove succeeded, false on error (non-fatal).
+func removeStaleSentinel(sentinelPath string, logger *log.Logger) bool {
+	if err := os.Remove(sentinelPath); err != nil && !os.IsNotExist(err) {
+		if logger != nil {
+			logger.Printf("daemon: removeStaleSentinel: Remove %q: %v (non-fatal)", sentinelPath, err)
+		}
+		return false
+	}
+	// fsync parent directory so the unlink is durable.
+	dir := filepath.Dir(sentinelPath)
+	//nolint:gosec // G304: dir is derived from operator-controlled projectDir
+	if dirFd, openErr := os.Open(dir); openErr == nil {
+		_ = dirFd.Sync()  //nolint:errcheck
+		_ = dirFd.Close() //nolint:errcheck
+	}
+	return true
+}
+
 // RunOrphanSweep executes the full PL-006 orphan sweep in order:
 //
-//  1. Kill orphan tmux sessions matching the project-hash prefix (bullet a).
-//  2. Remove stale worktree lease-lock files via workspace.SweepStaleLeaseLocks (bullet b).
-//  3. Kill orphan handler subprocesses with matching provenance marker (bullet c).
-//  4. Kill orphan br subprocesses re-parented to init (bullet c, br half).
-//  5. Enumerate (but do NOT remove) stale intent files (bullet d).
-//  6. Remove stale reconciliation lock files (bullet e).
+//  1. Probe the coordinator (flywheel) sentinel (PL-006d).
+//  2. Kill orphan tmux sessions matching the project-hash prefix (bullet a),
+//     excluding any live coordinator sessions per PL-006d.
+//  3. Remove stale worktree lease-lock files via workspace.SweepStaleLeaseLocks (bullet b).
+//  4. Kill orphan handler subprocesses with matching provenance marker (bullet c).
+//  5. Kill orphan br subprocesses re-parented to init (bullet c, br half).
+//  6. Enumerate (but do NOT remove) stale intent files (bullet d).
+//  7. Remove stale reconciliation lock files (bullet e).
 //
 // On completion it returns an [OrphanSweepResult] ready to be converted to the
 // daemon_orphan_sweep_completed event payload via [OrphanSweepResult.ToPayload].
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006 — full 6-bullet mandate.
+// Spec ref: process-lifecycle.md §4.2 PL-006d — coordinator sentinel exclusion.
 func RunOrphanSweep(
 	ctx context.Context,
 	projectDir string,
@@ -205,9 +349,30 @@ func RunOrphanSweep(
 	var result OrphanSweepResult
 	var errs []string
 
+	// (PL-006d) Probe the coordinator (flywheel) sentinel before the tmux sweep.
+	// If the sentinel is present and the supervisor PID is live, exclude the
+	// flywheel session from the sweep. If the sentinel is stale (dead PID), kill
+	// the session normally and remove the sentinel.
+	var excludedTmuxSessions map[string]struct{}
+	if projectDir != "" {
+		probe, probeErr := probeCoordinatorSentinel(projectDir, cfg.Logger)
+		if probeErr != nil {
+			errs = append(errs, fmt.Sprintf("coordinator-sentinel: %v", probeErr))
+		}
+		if probe.Live {
+			// Coordinator is live: exclude its flywheel session from the kill sweep.
+			flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
+			excludedTmuxSessions = map[string]struct{}{flywheelSession: {}}
+			result.CoordinatorSessionsSkipped = 1
+			if cfg.Logger != nil {
+				cfg.Logger.Printf("daemon: RunOrphanSweep: skipping coordinator session %q (orphan_sweep_skipped_coordinator_session)", flywheelSession)
+			}
+		}
+	}
+
 	// (a) Tmux sessions — two passes:
 	//   (a1) Kill orphan harmonik-owned sessions via the legacy TmuxLister/TmuxKiller path.
-	tmuxKilled, err := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger)
+	tmuxKilled, err := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger, excludedTmuxSessions)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("tmux: %v", err))
 	}
@@ -217,7 +382,7 @@ func RunOrphanSweep(
 	//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those
 	//   with dead PIDs or zero non-zsh windows. Must run BEFORE the window sweep
 	//   so dead sessions are removed before we attempt to sweep their windows.
-	adapterSessionsKilled, err := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
+	adapterSessionsKilled, err := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger, excludedTmuxSessions)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("tmux-sessions-adapter: %v", err))
 	}

@@ -164,7 +164,7 @@ func TestSweepOrphanTmuxSessions_NilAdapterReturnsZero(t *testing.T) {
 	t.Parallel()
 
 	hash := orphanSessionFixtureProjectHash()
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, nil, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, nil, nil, nil)
 	if err != nil {
 		t.Errorf("nil adapter: unexpected error: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestSweepOrphanTmuxSessions_AllZshWindowsKilled(t *testing.T) {
 		sessionName: {"zsh", "zsh"},
 	})
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSweepOrphanTmuxSessions_DeadPIDKilled(t *testing.T) {
 	// PID 0 is invalid — treated as dead.
 	adapter.panePIDs = map[string]int{sessionName: 0}
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestSweepOrphanTmuxSessions_OtherProjectHashUntouched(t *testing.T) {
 		otherSession: {"zsh"},
 	})
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestSweepOrphanTmuxSessions_NonHarmonikSessionUntouched(t *testing.T) {
 		"tmux-main":           {"zsh"},
 	})
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestSweepOrphanTmuxSessions_LiveSessionNotKilled(t *testing.T) {
 	// This simulates a live workload session.
 	adapter.panePIDs = map[string]int{sessionName: 1}
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestSweepOrphanTmuxSessions_MultipleSessions(t *testing.T) {
 	// Live session has PID 1 (always alive).
 	adapter.panePIDs = map[string]int{live: 1}
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestSweepOrphanTmuxSessions_EmptySessionList(t *testing.T) {
 	hash := orphanSessionFixtureProjectHash()
 	adapter := orphanSessionFixtureNewAdapter(map[string][]string{})
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Errorf("empty sessions: unexpected error: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestSweepOrphanTmuxSessions_ListSessionsError(t *testing.T) {
 	adapter := orphanSessionFixtureNewAdapter(map[string][]string{})
 	adapter.listSessionsErr = ErrNoSession
 
-	_, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	_, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err == nil {
 		t.Error("ListSessions error: want non-nil error, got nil")
 	}
@@ -380,7 +380,7 @@ func TestSweepOrphanTmuxSessions_ListWindowsErrorSkipsSession(t *testing.T) {
 		errorSession: ErrNoSession,
 	}
 
-	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil)
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

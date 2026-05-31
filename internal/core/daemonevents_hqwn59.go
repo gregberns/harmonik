@@ -783,6 +783,16 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// Bead ref: hk-lgtq2.
 	BeadCat3cClosed int `json:"bead_cat3c_closed"`
 
+	// CoordinatorSessionsSkipped is the count of coordinator (flywheel) tmux
+	// sessions that were excluded from the orphan-kill pass because the
+	// supervisor sentinel was present AND the supervisor PID was live (PL-006d).
+	// Required (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d — sentinel-present+PID-live →
+	// SKIP with structured-log orphan_sweep_skipped_coordinator_session.
+	// Bead ref: hk-9eury.
+	CoordinatorSessionsSkipped int `json:"coordinator_sessions_skipped"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`

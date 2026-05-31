@@ -33,6 +33,10 @@ func sessionOrphanPrefix(projectHash core.ProjectHash) string {
 //   - The first pane of its first window reports a PID that is no longer alive
 //     (kill(pid, 0) returns ESRCH).
 //
+// excludeSessions is an optional set of session names to skip regardless of
+// orphan status. Used by the PL-006d coordinator sentinel exclusion — sessions
+// with a live supervisor process must not be killed. Nil means no exclusions.
+//
 // Sessions for OTHER project hashes are completely untouched.
 //
 // If adapter is nil, a no-op sweep is performed (returns 0, nil).
@@ -42,12 +46,14 @@ func sessionOrphanPrefix(projectHash core.ProjectHash) string {
 // Returns the count of sessions killed.
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006 — session-level orphan sweep.
+// Spec ref: process-lifecycle.md §4.2 PL-006d — coordinator sentinel exclusion.
 // Bead: hk-kqdpf.3.
 func SweepOrphanTmuxSessions(
 	ctx context.Context,
 	projectHash core.ProjectHash,
 	adapter Adapter,
 	logger *log.Logger,
+	excludeSessions map[string]struct{},
 ) (killed int, err error) {
 	if adapter == nil {
 		return 0, nil
@@ -63,6 +69,11 @@ func SweepOrphanTmuxSessions(
 	for _, session := range sessions {
 		if !strings.HasPrefix(session, prefix) {
 			// Different project hash or non-harmonik session — skip entirely.
+			continue
+		}
+
+		if _, skip := excludeSessions[session]; skip {
+			sessionSweepLog(logger, "SweepOrphanTmuxSessions: skipping coordinator session %q (PL-006d exclusion)", session)
 			continue
 		}
 

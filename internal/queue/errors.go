@@ -61,8 +61,11 @@ const (
 	// Spec ref: queue-model.md §6.11a QM-029b; specs/handler-pause.md §6 HP-025.
 	ErrorCodeHandlerPaused = -32018
 
-	// -32019 is reserved for a future QueueValidationReason addition within
-	// the v0.1 error-code block per QM-029b.
+	// ErrorCodeQueueNameInvalid is the JSON-RPC error code for
+	// ReasonQueueNameInvalid (QM-002/2.1 queue-naming rule: [a-z0-9-], 1–64 chars).
+	// Allocated from the previously-reserved -32019 slot per QM-029b.
+	// Bead ref: hk-tigaf.2.
+	ErrorCodeQueueNameInvalid = -32019
 )
 
 // ---------------------------------------------------------------------------
@@ -96,6 +99,8 @@ func JSONRPCError(reason QueueValidationReason) (code int, message string) {
 		return ErrorCodeQueueTooLarge, "queue_too_large"
 	case ReasonHandlerPaused:
 		return ErrorCodeHandlerPaused, "handler_paused"
+	case ReasonQueueNameInvalid:
+		return ErrorCodeQueueNameInvalid, "queue_name_invalid"
 	default:
 		return -32099, "unknown_validation_reason"
 	}

@@ -12,6 +12,13 @@ import (
 // Any envelope with a different value is rejected at unmarshal time.
 const schemaVersion = 1
 
+// QueueNameMain is the reserved default queue name. Submits that omit the
+// name field are routed to this queue. The name is valid per the naming rule
+// (QM-002/2.1): lowercase alphanum + hyphens, 1–64 chars.
+//
+// Bead ref: hk-tigaf.2.
+const QueueNameMain = "main"
+
 // MaxItemAttempts is the maximum number of outer-loop dispatch attempts per
 // queue item. Items that reach this limit are skipped and marked failed with
 // reason "max_attempts_exceeded". The workloop enforces this bound at Phase 3
@@ -235,6 +242,23 @@ type Queue struct {
 	// implementer-protocol.md).
 	QueueID string `json:"queue_id"`
 
+	// Name is the durable routing key for this queue (QM-002/2.1 queue-naming
+	// rule). Charset: [a-z0-9-], length 1–64. The reserved default is "main"
+	// (QueueNameMain); omitted or empty fields are treated as "main" at submit
+	// and stored normalised.
+	//
+	// Name is distinct from QueueID: QueueID is a per-submission UUIDv7 that
+	// changes on every submit; Name is a stable operator-chosen identifier that
+	// persists across submissions (the per-name single-active guard uses Name,
+	// not QueueID).
+	//
+	// omitempty preserves round-trip compat with existing queue.json files that
+	// predate the name field; absent fields unmarshal to "" and are normalised
+	// to "main" on first use.
+	//
+	// Bead ref: hk-tigaf.2.
+	Name string `json:"name,omitempty"`
+
 	// SubmittedAt is set at queue-submit accept; ISO 8601 / UTC.
 	SubmittedAt time.Time `json:"submitted_at"`
 
@@ -281,6 +305,16 @@ type QueueSubmitRequest struct {
 
 	// SchemaVersion MUST equal 1; forward-incompatible value refuses per QM-002.
 	SchemaVersion int `json:"schema_version"`
+
+	// Name is the durable routing key for the queue to create or extend. When
+	// absent or empty it defaults to QueueNameMain ("main"). Must satisfy the
+	// queue-naming rule: [a-z0-9-], 1–64 chars.
+	//
+	// The single-active guard (QM-027) is now per-name: submitting to a name
+	// that already has an active (non-completed) queue is rejected.
+	//
+	// Bead ref: hk-tigaf.2.
+	Name string `json:"name,omitempty"`
 }
 
 // QueueSubmitResponse is the response payload for queue-submit

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -64,6 +65,12 @@ const (
 	// paused; the detail map includes agent_type and the affected bead_ids.
 	// JSON-RPC error code -32018 per QM-029b (previously reserved slot).
 	ReasonHandlerPaused QueueValidationReason = "handler_paused"
+
+	// ReasonQueueNameInvalid — QM-002/2.1 queue-naming rule: the name field
+	// in a queue-submit request does not satisfy [a-z0-9-], 1–64 chars.
+	// JSON-RPC error code -32019 per QM-029b.
+	// Bead ref: hk-tigaf.2.
+	ReasonQueueNameInvalid QueueValidationReason = "queue_name_invalid"
 )
 
 // ---------------------------------------------------------------------------
@@ -174,6 +181,47 @@ type HandlerPauseChecker interface {
 // ValidationRequest — input shape for Validate
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Queue-naming rule constants (QM-002/2.1, hk-tigaf.2)
+// ---------------------------------------------------------------------------
+
+// maxQueueNameLen is the maximum allowed byte length for a queue name per the
+// QM-002/2.1 naming rule. Charset is [a-z0-9-]; min length is 1.
+const maxQueueNameLen = 64
+
+// queueNameRE is the compiled pattern for the queue-naming rule charset.
+// Matches one or more lowercase ASCII letters, digits, or hyphens.
+var queueNameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// NormaliseQueueName returns name if non-empty, else QueueNameMain ("main").
+// Used by callers to apply the default-to-main rule before validation.
+//
+// Bead ref: hk-tigaf.2.
+func NormaliseQueueName(name string) string {
+	if name == "" {
+		return QueueNameMain
+	}
+	return name
+}
+
+// ValidateQueueName reports whether name satisfies the QM-002/2.1 naming rule:
+// 1–64 chars of [a-z0-9-]. Returns (true, "") on pass; (false, detail) on fail.
+// An empty name is valid here because callers normalise before calling.
+//
+// Bead ref: hk-tigaf.2.
+func ValidateQueueName(name string) (ok bool, detail string) {
+	if name == "" {
+		return false, "name must not be empty after normalisation"
+	}
+	if len(name) > maxQueueNameLen {
+		return false, fmt.Sprintf("name length %d exceeds max %d", len(name), maxQueueNameLen)
+	}
+	if !queueNameRE.MatchString(name) {
+		return false, "name must match [a-z0-9-]+"
+	}
+	return true, ""
+}
+
 // ValidationRequest carries the parameters for a single validation pass.
 // It is created by the JSON-RPC method handlers (T60/hk-nomxl) before calling
 // Validate; the bead body and spec ref live there.
@@ -183,9 +231,22 @@ type ValidationRequest struct {
 	// single target group (after the append target has been located).
 	Groups []Group
 
-	// ActiveQueue is the daemon's current in-memory queue, or nil if no queue
-	// is loaded. Used for QM-027 (single-active-queue) and QM-026 (size bound).
+	// ActiveQueue is the daemon's current in-memory queue for the requested
+	// queue name, or nil if no queue with that name is loaded. Used for
+	// QM-027 (single-active-queue-per-name) and QM-026 (size bound).
+	//
+	// For queue-submit, the caller looks up the queue by QueueName in
+	// QueueStore before building ValidationRequest; QM-027 then checks only
+	// this per-name slot, not a global singleton.
 	ActiveQueue *Queue
+
+	// QueueName is the normalised (non-empty) queue name being submitted.
+	// Set by the caller after applying NormaliseQueueName. Used by the
+	// QM-002/2.1 name-validity pre-check inserted before QM-027.
+	// Ignored when IsAppend is true (append does not carry a queue name).
+	//
+	// Bead ref: hk-tigaf.2.
+	QueueName string
 
 	// IsAppend distinguishes queue-append from queue-submit. When true,
 	// QM-027 is skipped (submit-only) and QM-024 is evaluated instead.
@@ -226,7 +287,30 @@ const maxQueueJSON = 1048576
 // Spec ref: queue-model.md §6 QM-020..QM-027, QM-029, QM-029a;
 // specs/handler-pause.md §6 HP-025 (QM-052a).
 func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]ValidationError, []LedgerDepPair, error) {
-	// --- QM-027: single active queue (submit-only) ---------------------------
+	// --- QM-002/2.1 queue-naming rule (submit-only, pre-QM-027) -------------
+	// Validate the queue name before the single-active-per-name guard so that
+	// callers get a typed name-invalid error rather than a misleading
+	// queue_already_active for a bogus name. Append requests carry no name.
+	// When QueueName is empty the caller did not specify a name; the implicit
+	// default "main" is always valid — skip the check for backward compat.
+	if !req.IsAppend && req.QueueName != "" {
+		if ok, detail := ValidateQueueName(req.QueueName); !ok {
+			return []ValidationError{
+				{
+					Reason: ReasonQueueNameInvalid,
+					Detail: map[string]any{
+						"name":   req.QueueName,
+						"detail": detail,
+					},
+				},
+			}, nil, nil
+		}
+	}
+
+	// --- QM-027: single active queue PER NAME (submit-only) ------------------
+	// ActiveQueue is the queue already stored under req.QueueName. The guard
+	// is now per-name: a submit that targets a name with an existing
+	// non-completed queue is rejected; other names are unaffected.
 	if !req.IsAppend {
 		if req.ActiveQueue != nil && req.ActiveQueue.Status != QueueStatusCompleted {
 			return []ValidationError{

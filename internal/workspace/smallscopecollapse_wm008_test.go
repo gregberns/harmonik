@@ -6,24 +6,28 @@ import (
 
 // TestWM008_SmallScopeCollapseDefaultIsIntegration verifies that the default
 // merge target for a parentless run is "integration" — i.e., squash-merge to
-// harmonik/integration. The "main" override (small-scope-collapse) is operator-gated
-// and must be explicitly configured.
+// harmonik/integration. The "main" target (small-scope-collapse) is configured
+// via the WM-005b precedence chain: per-bead `## Branching` target_branch field,
+// project-level .harmonik/branching.yaml lands_on, or spec-level default.
 //
-// Spec ref: workspace-model.md §4.2 WM-008 — "When a run has no parent-bead
-// relationship in Beads (per [beads-integration.md §4.5 BI-014]), the task branch's
-// merge target MUST be determined by operator policy per [operator-nfr.md §4.3] with
-// two allowed values: `integration` (squash-merge to `harmonik/integration`, the
-// default) or `main` (squash-merge directly to main — the small-scope-collapse shape).
-// Absent an operator override, the default MUST be `integration` (consistent with
-// WM-006). The decision is deterministic on the configured policy value; no cognition
-// participates."
+// Note: WM-008 (the retired two-value operator-policy enum) was superseded by
+// WM-005b at spec v0.5.0. The small-scope-collapse shape (merging directly to
+// main) is now expressed as `target_branch: main` in .harmonik/branching.yaml
+// or the per-bead ## Branching section. The sensor below verifies the resolution
+// semantics — default is `harmonik/integration`; explicit `main` produces the
+// small-scope-collapse landing — consistent with WM-005b and WM-006.
+//
+// Spec refs:
+//   - workspace-model.md §4.2 WM-005b — target_branch resolution precedence.
+//   - workspace-model.md §4.2 WM-006 — default integration branch (harmonik/integration).
 func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	t.Parallel()
 
-	// mergeTarget is a thin policy-gating function that returns the merge target
-	// branch name given the parent bead ID (empty = no parent) and an operator
-	// override string. The two allowed policy values are "integration" and "main".
-	// This is inlined here per bead discipline (do not expose as a package-level helper).
+	// mergeTarget models the WM-005b target_branch resolution for the purpose
+	// of this sensor: given a parent bead ID (empty = no parent context) and a
+	// resolved target_branch string (from branching.yaml lands_on, per-bead ##
+	// Branching section, or absent/empty for the spec-level default), it returns
+	// the branch name the task branch lands on. Inlined per bead discipline.
 	mergeTarget := func(parentBeadID string, operatorOverride string) string {
 		// A non-empty parentBeadID means the run has a parent-bead context;
 		// in that case the integration branch is derived per WM-006, regardless
@@ -90,12 +94,14 @@ func TestWM008_SmallScopeCollapseDefaultIsIntegration(t *testing.T) {
 	})
 }
 
-// TestWM008_PolicyValuesAreExhaustive verifies that only "integration" and "main" are
-// the two allowed operator policy values per WM-008. Any other value MUST be treated
-// as unknown and fall back to the default.
+// TestWM008_PolicyValuesAreExhaustive verifies the two meaningful target_branch
+// values for the small-scope-collapse decision: "harmonik/integration" (default)
+// and "main" (small-scope-collapse). Any other configured value falls back to
+// the spec-level default per WM-005b + WM-006.
 //
-// Spec ref: workspace-model.md §4.2 WM-008 — "two allowed values: `integration` ...
-// or `main` ... Absent an operator override, the default MUST be `integration`".
+// Spec refs:
+//   - workspace-model.md §4.2 WM-005b — target_branch resolution.
+//   - workspace-model.md §4.2 WM-006 — spec-level default is harmonik/integration.
 func TestWM008_PolicyValuesAreExhaustive(t *testing.T) {
 	t.Parallel()
 

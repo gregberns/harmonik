@@ -6,10 +6,11 @@ import "context"
 // parent bead ID, implementing workspace-model.md §4.2 WM-006.
 //
 // When parentBeadID is empty, the caller has no parent-bead context; this
-// function returns the default integration branch "harmonik/integration" per
-// WM-006 and WM-008 (absent a parent-bead relationship, the merge target
-// defaults to "harmonik/integration" per the operator-policy default of
-// "integration").
+// function returns the spec-level default integration branch "harmonik/integration"
+// per WM-006. The small-scope-collapse override (merging directly to main) is
+// expressed via WM-005b's target_branch field in .harmonik/branching.yaml or
+// the per-bead ## Branching section; callers that need the full resolution chain
+// must consult resolveBranching rather than this function.
 //
 // When parentBeadID is non-empty, the returned branch is
 // "harmonik/integration/<parent_bead_id_refsafe>", where
@@ -26,8 +27,8 @@ import "context"
 //   - workspace-model.md §4.2 WM-006 — integration branch naming convention.
 //   - workspace-model.md §4.2 WM-006a — ref-safe bead-ID substitution via
 //     git check-ref-format(1).
-//   - workspace-model.md §4.2 WM-008 — merge-target default when no parent-bead
-//     context (default is "harmonik/integration").
+//   - workspace-model.md §4.2 WM-005b — full target_branch resolution chain
+//     (per-bead → branching.yaml → spec-level default).
 func IntegrationBranchName(ctx context.Context, parentBeadID string) (string, error) {
 	const defaultIntegrationBranch = "harmonik/integration"
 

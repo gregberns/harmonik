@@ -30,7 +30,7 @@ prompts/
 - All three DOT files carry `workflow_class="reconciliation"` per [schemas.md §6.5].
 - All three DOT files route unconditionally: start → investigator → close.
   Verdict routing is daemon-side (RC-025a); no DOT-level verdict branching.
-- Investigator node: `agent_type="claude-code"`, `role="Researcher"` per RC-015a.
+- Investigator node: `agent_type="claude-code"`, `role="investigator"` per RC-015a.
 - Minimum skills: `beads-cli` + `git-inspection` per RC-004. Cat 2 and Cat 6a
   also include `workspace-inspection` (required for WIP capture and workspace probes).
 - Wall-clock budgets per RC-017: Cat 2=600s, Cat 3=300s, Cat 6a=900s.

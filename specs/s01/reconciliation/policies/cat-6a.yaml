@@ -20,7 +20,7 @@ metadata:
   schema_version: 1
 
 roles:
-  - name: Researcher
+  - name: investigator
     permission_schema:
       allowed_tools:
         - Bash

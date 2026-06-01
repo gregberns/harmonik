@@ -8,10 +8,10 @@ requirement-prefix: RC
 status: reviewed
 spec-shape: taxonomy-first
 spec-category: foundation-cross-cutting
-version: 0.4.3
+version: 0.4.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-06-01
+last-updated: 2026-06-02
 depends-on:
   - execution-model
   - event-model
@@ -453,7 +453,7 @@ Tags: mechanism
 
 #### RC-015 — Investigator inputs are bound by snapshot token
 
-The investigator subprocess receives a standard LaunchSpec per [handler-contract.md §6.1] (`agent_type = claude-code`, `role = Researcher`). The `LaunchSpec.snapshot_token` field, declared as `String | None` in HC-006, MUST carry the JSON-serialized form of the SnapshotToken record per [schemas.md §6.1] (`{git_head_hash, beads_audit_entry_id, captured_at_timestamp}`).
+The investigator subprocess receives a standard LaunchSpec per [handler-contract.md §6.1] (`agent_type = claude-code`, `role = investigator`). The `LaunchSpec.snapshot_token` field, declared as `String | None` in HC-006, MUST carry the JSON-serialized form of the SnapshotToken record per [schemas.md §6.1] (`{git_head_hash, beads_audit_entry_id, captured_at_timestamp}`).
 
 The investigator does NOT receive a pre-assembled `InvestigatorInput` payload. The `InvestigatorInput` shape declared in [schemas.md §6.1] is a documented LOGICAL VIEW the investigator constructs at runtime by querying:
 
@@ -469,11 +469,11 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### RC-015a — Investigator is an HC handler
 
-The investigator subprocess is a handler-contract handler per [handler-contract.md §4.1]. Its launch follows the standard handler-launch sequence: dispatcher constructs LaunchSpec per HC-006, calls the launch primitive, watches via HC-011 for outcome emission. The `agent_type` value `claude-code` and `role` value `Researcher` are the canonical pair for the investigator function (see also CP-039). Reconciliation-specific behavior beyond the standard launch is captured in the investigator playbook (RC-016).
+The investigator subprocess is a handler-contract handler per [handler-contract.md §4.1]. Its launch follows the standard handler-launch sequence: dispatcher constructs LaunchSpec per HC-006, calls the launch primitive, watches via HC-011 for outcome emission. The `agent_type` value `claude-code` and `role` value `investigator` are the canonical pair for the investigator function (see also CP-039). Reconciliation-specific behavior beyond the standard launch is captured in the investigator playbook (RC-016).
 
 Tags: mechanism
 
-> INFORMATIVE: The investigator delegates to a Claude Code agent (role: `Researcher`), model-class per the YAML policy attached to the reconciliation workflow (S01-shipped per RC-004). Input is bounded by SnapshotToken (RC-015); output is the `VerdictEvent` in [schemas.md §6.1] emitted via the standard outcome envelope (RC-022a).
+> INFORMATIVE: The investigator delegates to a Claude Code agent (role: `investigator`), model-class per the YAML policy attached to the reconciliation workflow (S01-shipped per RC-004). Input is bounded by SnapshotToken (RC-015); output is the `VerdictEvent` in [schemas.md §6.1] emitted via the standard outcome envelope (RC-022a).
 
 #### RC-016 — Investigator playbook per category
 
@@ -991,6 +991,7 @@ Legacy citations into `reconciliation/spec.md` used the pre-taxonomy-first secti
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-02 | 0.4.4 | agent (hk-63oh.24) | **RC-015a canonical role corrected: `investigator` (not `Researcher`).** RC-015a and RC-015 informative text updated: the canonical `(agent_type, role)` pair for the investigator subprocess is now `(claude-code, investigator)` — correcting a transcription error in v0.4.0 (the changelog had `role=investigator` but the spec text was written with `role=Researcher`). S01 library aligned: three DOT workflows (`cat-2.dot`, `cat-3.dot`, `cat-6a.dot`), three YAML policies (`cat-2.yaml`, `cat-3.yaml`, `cat-6a.yaml`), three prompt templates, and `README.md` all updated from `Researcher` to `investigator`. No new requirement IDs; no schemas touched. Refs: hk-63oh.24. |
 | 2026-06-01 | 0.4.3 | agent (hk-63oh.8) | **RC-004 fulfilled — S01 reconciliation workflow library shipped.** Created `specs/s01/reconciliation/` library with three DOT workflows (`cat-2.dot`, `cat-3.dot`, `cat-6a.dot`), three YAML policies (`cat-2.yaml`, `cat-3.yaml`, `cat-6a.yaml` per CP-035 + RC-016 playbook extension), and three investigator-agent prompt templates (`cat-2-investigator.md`, `cat-3-investigator.md`, `cat-6a-investigator.md`). All DOT files carry `workflow_class="reconciliation"` per schemas.md §6.5, `budget_ref` per RC-017, and `required_skills` per RC-004/RC-016 (beads-cli + git-inspection minimum; Cat 2 and Cat 6a also include workspace-inspection). Wall-clock budgets: Cat 2=600s, Cat 3=300s, Cat 6a=900s. Investigator: `agent_type="claude-code"`, `role="Researcher"` per RC-015a. Cat 6a policy sets `confirm_required: true` per RC-027 opt-in recommendation (default verdict escalate-to-human). No requirement IDs, spec text, or schemas touched. Refs: hk-63oh.8. |
 | 2026-06-01 | 0.4.2 | agent (hk-63oh.42) | **RC-030 Axes + §10.2 sensor.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` to RC-030 per template obligation (RC-030 is a structural prohibition on reconciliation producing intra-run loop edges; no LLM, no IO, no state mutation → idempotent). Extended §10.2 RC-028–RC-030 test obligation to include an explicit negative test for RC-030: for every verdict enum value, verify verdict execution does NOT produce a back-edge in the workflow graph; confirm observed loop-backs trace to edge conditions and Guard/Gate control-points per [control-points.md §4.2, §4.4]. No requirement IDs or schemas touched. Refs: hk-63oh.42. |
 | 2026-06-01 | 0.4.1 | agent (hk-63oh.26) | **RC-017 Axes + test obligation.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` to RC-017 per template obligation (Axes lines on every LLM/IO/state-mutation requirement; RC-017's daemon-enforced wall-clock termination is a non-idempotent state mutation). Added §10.2 test obligation for RC-017 covering: DOT `budget_ref` presence, Budget `resource=wall_clock_seconds`+`scope=per_run` structural check, per-category default values (Cat 2: 600s, Cat 3: 300s, Cat 6a: 900s), and negative lint test for missing `budget_ref`. No requirement IDs or schemas touched. Refs: hk-63oh.26. |

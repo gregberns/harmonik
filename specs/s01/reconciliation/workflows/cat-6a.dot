@@ -47,7 +47,7 @@ digraph "reconciliation-cat-6a" {
         agent_type="claude-code",
         handler_ref="claude-code",
         idempotency_class="non-idempotent",
-        role="Researcher",
+        role="investigator",
         required_skills="beads-cli,git-inspection,workspace-inspection",
         budget_ref="reconciliation-cat-6a-wall-clock"
     ];

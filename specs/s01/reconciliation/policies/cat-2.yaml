@@ -15,10 +15,10 @@ metadata:
   schema_version: 1
 
 # Role definition for the reconciliation investigator.
-# The canonical (agent_type, role) pair for investigators is (claude-code, Researcher)
+# The canonical (agent_type, role) pair for investigators is (claude-code, investigator)
 # per specs/reconciliation/spec.md §4.4 RC-015a.
 roles:
-  - name: Researcher
+  - name: investigator
     permission_schema:
       allowed_tools:
         - Bash

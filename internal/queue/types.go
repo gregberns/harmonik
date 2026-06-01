@@ -259,6 +259,22 @@ type Queue struct {
 	// Bead ref: hk-tigaf.2.
 	Name string `json:"name,omitempty"`
 
+	// Workers is the per-queue concurrent-dispatch ceiling (QM-066). The
+	// dispatcher admits at most Workers in-flight runs for this queue at any
+	// instant, independent of (and never exceeding) the global --max-concurrent
+	// ceiling (QM-062). When zero or absent the daemon defaults it to the global
+	// --max-concurrent at submit/load time (so a queue with no explicit Workers
+	// behaves exactly like the pre-named-queues single-queue daemon). A value
+	// greater than the global cap is permitted (oversubscription) but the global
+	// ceiling still wins at runtime; the daemon logs the oversubscription once at
+	// submit time.
+	//
+	// omitempty preserves round-trip compat with queue.json files that predate
+	// the field; absent unmarshals to 0 and is defaulted on first use.
+	//
+	// Bead ref: hk-tigaf.4 (NQ-B1).
+	Workers int `json:"workers,omitempty"`
+
 	// SubmittedAt is set at queue-submit accept; ISO 8601 / UTC.
 	SubmittedAt time.Time `json:"submitted_at"`
 
@@ -315,6 +331,14 @@ type QueueSubmitRequest struct {
 	//
 	// Bead ref: hk-tigaf.2.
 	Name string `json:"name,omitempty"`
+
+	// Workers is the requested per-queue concurrent-dispatch ceiling (QM-066).
+	// When zero or absent the daemon defaults it to the global --max-concurrent.
+	// A value greater than the global cap is accepted (oversubscription) and
+	// logged once; the global ceiling still wins at runtime.
+	//
+	// Bead ref: hk-tigaf.4 (NQ-B1).
+	Workers int `json:"workers,omitempty"`
 }
 
 // QueueSubmitResponse is the response payload for queue-submit

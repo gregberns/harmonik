@@ -87,7 +87,7 @@ func TestLedgerDepChain_RootEligible_DependentsDeferred_hkdv8qv(t *testing.T) {
 		Groups:        []queue.Group{rpcFixtureWaveGroup(0, R, A, B)},
 	}
 
-	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir)
+	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
 	}
@@ -157,7 +157,7 @@ func TestLedgerDepChain_DependentEligibleAfterBlockerCloses_hkdv8qv(t *testing.T
 		Groups:        []queue.Group{rpcFixtureWaveGroup(0, A, B)},
 	}
 
-	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir)
+	_, q, _, rpcErr := queue.HandleQueueSubmit(context.Background(), req, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
 	}

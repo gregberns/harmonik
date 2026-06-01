@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -542,6 +543,157 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 // §4.3.EM-015f (group-advance gate).
 // Bead ref: hk-45ude.
 
+// queueSelection is the result of selectNextQueue: the snapshot of one eligible
+// (queue, active group, first eligible item) chosen by the cross-queue
+// round-robin policy under the QueueStore write lock. All fields are local
+// copies; the *Queue pointer is NOT retained, so the caller may release the
+// lock and re-acquire it for the dispatch stamp (Phase 3) without holding a
+// stale reference.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+type queueSelection struct {
+	queueName        string
+	queueID          string
+	groupIndex       int
+	itemIdx          int
+	itemBeadID       core.BeadID
+	itemContext      string
+	itemWFMode       string
+	itemWFRef        string
+	itemTemplateMap  map[string]string
+	anyEligible      bool // true if any queue had an active group with eligible items
+	anyPausedOrEmpty bool // true if at least one queue existed but contributed nothing
+}
+
+// effectiveQueueWorkers resolves the per-queue worker ceiling for q, defaulting
+// a zero/absent Workers field to the global cap (QM-066). Mirrors
+// queue.DefaultWorkers but lives here so the workloop never imports the global
+// cap into the queue package's submit path twice.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
+	return queue.DefaultWorkers(q.Workers, globalCap)
+}
+
+// selectNextQueue implements the QM-062/QM-067 two-level capacity gate plus the
+// cross-queue round-robin dispatch policy. Called once per dispatch tick while
+// holding the QueueStore write lock (via lq). It scans every loaded queue and
+// returns the next (queue, active group, first eligible item) to dispatch, or
+// (queueSelection{}, false) when no queue can contribute under its own
+// per-queue Workers cap and the global ceiling.
+//
+// Policy (NQ-B1):
+//   - A queue is a candidate iff it is QueueStatusActive, has an active group
+//     with at least one eligible item, AND its in-flight tally
+//     (runRegistry.LenForQueue(name)) is below its effective Workers ceiling.
+//   - Candidate queue names are sorted lexicographically (name-ordered), then a
+//     daemon-state cursor (*rrCursor, advanced by the CALLER every tick) selects
+//     the starting offset. The cursor is NOT reset to 0 each tick: that is what
+//     prevents a lexicographically-earlier queue (e.g. "investigate") from
+//     perpetually starving a later one (e.g. "main"). This is plain round-robin,
+//     explicitly NOT weighted fairness (deferred to v0.2 / N3).
+//
+// The global ceiling (runRegistry.Len() < globalCap) is enforced by the CALLER
+// before invoking selectNextQueue; this function enforces only the per-queue
+// cap so the two levels compose to min(group_pending, per_queue_workers -
+// queue_running, global_cap - global_running) per QM-062.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int) (queueSelection, bool) {
+	names := lq.LockedAllQueueNames()
+	if len(names) == 0 {
+		return queueSelection{}, false
+	}
+
+	// Build the candidate set: queues with eligible work under their own cap.
+	candidates := make([]string, 0, len(names))
+	sawNonContributing := false
+	for _, name := range names {
+		q := lq.LockedQueueByName(name)
+		if q == nil {
+			continue
+		}
+		if q.Status != queue.QueueStatusActive {
+			// Paused-by-failure / paused-by-drain / completed queues contribute
+			// nothing but MUST NOT block sibling queues.
+			sawNonContributing = true
+			continue
+		}
+		// Per-queue cap: skip when this queue is already at its Workers ceiling.
+		if reg.LenForQueue(name) >= effectiveQueueWorkers(q, globalCap) {
+			sawNonContributing = true
+			continue
+		}
+		// Must have an active group with at least one eligible item.
+		hasEligible := false
+		for gi := range q.Groups {
+			if q.Groups[gi].Status != queue.GroupStatusActive {
+				continue
+			}
+			if len(queue.EligibleItems(&q.Groups[gi])) > 0 {
+				hasEligible = true
+			}
+			break
+		}
+		if !hasEligible {
+			sawNonContributing = true
+			continue
+		}
+		candidates = append(candidates, name)
+	}
+
+	if len(candidates) == 0 {
+		return queueSelection{}, false
+	}
+	sort.Strings(candidates)
+
+	// Round-robin: start at the daemon-state cursor offset (mod candidate count)
+	// and pick the first candidate. The caller advances rrCursor every tick so
+	// the start offset rotates, guaranteeing no queue starves.
+	start := 0
+	if n := len(candidates); n > 0 {
+		start = ((rrCursor % n) + n) % n // guard against negative cursor
+	}
+	chosen := candidates[start]
+
+	q := lq.LockedQueueByName(chosen)
+	if q == nil { // racing clear — caller retries next tick
+		_ = sawNonContributing
+		return queueSelection{}, false
+	}
+
+	// Locate the chosen queue's active group and its first eligible item.
+	for gi := range q.Groups {
+		if q.Groups[gi].Status != queue.GroupStatusActive {
+			continue
+		}
+		eligible := queue.EligibleItems(&q.Groups[gi])
+		if len(eligible) == 0 {
+			break
+		}
+		head := eligible[0]
+		for j := range q.Groups[gi].Items {
+			it := &q.Groups[gi].Items[j]
+			if it.BeadID == head.BeadID && it.Status == queue.ItemStatusPending {
+				return queueSelection{
+					queueName:       chosen,
+					queueID:         q.QueueID,
+					groupIndex:      q.Groups[gi].GroupIndex,
+					itemIdx:         j,
+					itemBeadID:      it.BeadID,
+					itemContext:     it.Context,
+					itemWFMode:      it.WorkflowMode,
+					itemWFRef:       it.WorkflowRef,
+					itemTemplateMap: it.TemplateParams,
+					anyEligible:     true,
+				}, true
+			}
+		}
+		break
+	}
+	return queueSelection{anyPausedOrEmpty: sawNonContributing}, false
+}
+
 func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
@@ -574,6 +726,15 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// dispatcher.  When the epoch advances (pause lifted or new pause window),
 	// all prior-epoch dedup entries are stale and pruned (hk-o48pb).
 	lastSeenPauseEpoch := 0
+
+	// rrCursor is the cross-queue round-robin cursor (NQ-B1). It is daemon state:
+	// declared here and advanced once per successful queue selection across the
+	// ENTIRE life of the loop — never reset to 0 each tick. Resetting it would let
+	// a lexicographically-earlier queue (e.g. "investigate") win every tick and
+	// starve a later one (e.g. "main"); rotating the start offset round-robins
+	// dispatch fairly among active queues. Plain round-robin, NOT weighted
+	// fairness (QM-067; weighting deferred to v0.2).
+	rrCursor := 0
 
 	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
 	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
@@ -647,7 +808,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		var (
 			beadRecord                 core.BeadRecord
-			queueItemIndex             int // item index within the group (-1 = no queue)
+			queueItemIndex             int    // item index within the group (-1 = no queue)
+			capturedQueueName          string // NQ-B1: name of the dispatching queue ("" = br-ready)
 			queueIDField               *string
 			queueGroupIdxFd            *int
 			capturedExtraContext       string            // hk-boiwe: per-item context from queue.Item.Context
@@ -671,7 +833,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// as local copies. Phase 2 (handler-pause gate) runs without the lock.
 			// Phase 3 (dispatch stamp) re-acquires the write lock for a TOCTOU check.
 			var (
-				snapItemIdx            int = -1 // -1 → no item found (q==nil or nothing ready)
+				snapItemIdx            int = -1 // -1 → no item found (no queue can contribute)
 				snapItemBeadID         core.BeadID
 				snapItemContext        string
 				snapItemWFMode         string
@@ -679,116 +841,117 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				snapItemTemplateParams map[string]string
 				snapGroupIndex         int
 				snapQueueID            string
+				snapQueueName          string
 			)
 			{
+				// Two-level capacity gate + cross-queue round-robin (NQ-B1).
+				//
+				// Prior to named queues this block read the single "main" queue via
+				// lq.Queue(). It now scans EVERY loaded queue: it bootstraps each
+				// queue's first pending group (hk-veoht), re-evaluates deferred items
+				// per active group (hk-nbjht), then selectNextQueue picks the next
+				// (queue, group, item) honouring each queue's per-queue Workers cap and
+				// the name-ordered round-robin cursor. The global ceiling was already
+				// checked at Step 2; selectNextQueue enforces only the per-queue cap so
+				// the two compose per QM-062.
+				//
+				// Spec ref: specs/queue-model.md §9.3 QM-062, §9.7 QM-066, §9.8 QM-067.
 				lq := deps.queueStore.LockForMutation()
-				q := lq.Queue()
-				if q != nil {
-					// Queue is loaded: check its status per §7.4 pseudocode.
-					switch q.Status {
-					case queue.QueueStatusPausedByFailure, queue.QueueStatusPausedByDrain, queue.QueueStatusCompleted:
-						// Queue is paused or completed — no dispatch; block indefinitely
-						// until a queue-submit wake signal or shutdown (PL-013 socket-block idle).
-						lq.Done()
-						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
-						}
+
+				// Bootstrap any queue whose first group is still pending. A
+				// freshly-submitted/loaded queue persists group 0 as pending and nothing
+				// else advances it; activate it inline (under the held write lock) so
+				// this same tick can dispatch its items.
+				bootstrapped := false
+				var bootstrapEvents []core.Event
+				for _, name := range lq.LockedAllQueueNames() {
+					q := lq.LockedQueueByName(name)
+					if q == nil || q.Status != queue.QueueStatusActive {
 						continue
 					}
-
-					// Find the active group and its eligible items.
-					activeGroupIdx := -1
+					hasActiveGroup := false
 					for i := range q.Groups {
 						if q.Groups[i].Status == queue.GroupStatusActive {
-							activeGroupIdx = i
+							hasActiveGroup = true
 							break
 						}
 					}
-					if activeGroupIdx < 0 {
-						// No active group yet (all pending or all terminal). Before idle-
-						// waiting, bootstrap the first pending group: a freshly-submitted or
-						// freshly-loaded queue persists its group 0 as pending, and nothing
-						// else advances it (evaluateGroupAdvanceWithOutcome fires only on a
-						// PRIOR run's completion). Activate it here so the loop re-evaluates
-						// and dispatches its eligible items (hk-veoht). Release the read lock
-						// first — activateFirstPendingGroup takes its own write lock.
-						lq.Done()
-						if activateFirstPendingGroup(ctx, deps) {
-							// A pending group is now active — re-evaluate immediately so the
-							// next pass finds the active group and dispatches its items.
+					if hasActiveGroup {
+						continue
+					}
+					if ok, evts := activateFirstPendingGroupLocked(ctx, deps, lq, q); ok {
+						bootstrapped = true
+						bootstrapEvents = append(bootstrapEvents, evts...)
+					}
+				}
+				if bootstrapped {
+					// A pending group became active — emit started events after lock
+					// release, then re-evaluate from the top so the next pass sees the
+					// active group and dispatches its items.
+					lq.Done()
+					for _, evt := range bootstrapEvents {
+						raw, mErr := json.Marshal(evt.Payload)
+						if mErr != nil {
+							raw = evt.Payload
+						}
+						_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
+					}
+					continue
+				}
+
+				// §2.8 deferred-item re-evaluation across every active queue's active
+				// group: transition any deferred-for-ledger-dep item whose blockers all
+				// resolved back to pending (hk-nbjht). Mutates groups in place under the
+				// write lock; persists the owning queue when any flip occurred.
+				for _, name := range lq.LockedAllQueueNames() {
+					q := lq.LockedQueueByName(name)
+					if q == nil || q.Status != queue.QueueStatusActive {
+						continue
+					}
+					for gi := range q.Groups {
+						if q.Groups[gi].Status != queue.GroupStatusActive {
 							continue
 						}
-						// Nothing to activate (no pending group, or AdvanceGroup no-op) —
-						// block indefinitely until a queue-submit wake signal or shutdown
-						// (PL-013 socket-block idle).
-						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
+						if undeferred, reErr := queue.ReevaluateDeferred(ctx, &q.Groups[gi], deps.queueLedger); reErr != nil {
+							fmt.Fprintf(os.Stderr, "daemon: workloop: ReevaluateDeferred queueID=%s groupIndex=%d: %v\n",
+								q.QueueID, q.Groups[gi].GroupIndex, reErr)
+						} else if len(undeferred) > 0 {
+							if persistErr := queue.Persist(ctx, deps.projectDir, q); persistErr != nil {
+								fmt.Fprintf(os.Stderr, "daemon: workloop: Persist after ReevaluateDeferred queueID=%s: %v\n",
+									q.QueueID, persistErr)
+							}
 						}
-						continue
+						break // only the first active group per queue
 					}
-
-					// §2.8 deferred-item re-evaluation: on every dispatch-loop tick,
-					// transition any deferred-for-ledger-dep item whose blockers have
-					// all resolved back to pending. This is the un-defer counterpart
-					// to the QM-025 submit/append-time deferral and reuses the same
-					// queue.BeadLedger.BlocksEdge seam, so the un-defer condition is the
-					// exact inverse of the deferral condition. Without it a chained
-					// stream queue stalls permanently after the first bead completes
-					// (hk-nbjht). Mutates q.Groups[activeGroupIdx] in place under the
-					// write lock; persisted below alongside the dispatch stamp.
-					if undeferred, reErr := queue.ReevaluateDeferred(ctx, &q.Groups[activeGroupIdx], deps.queueLedger); reErr != nil {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: ReevaluateDeferred queueID=%s groupIndex=%d: %v\n",
-							q.QueueID, q.Groups[activeGroupIdx].GroupIndex, reErr)
-					} else if len(undeferred) > 0 {
-						// Persist the deferred → pending flips so on-disk state matches
-						// memory (§2.8: no event is emitted; the next dispatch is the
-						// observable signal).
-						if persistErr := queue.Persist(ctx, deps.projectDir, q); persistErr != nil {
-							fmt.Fprintf(os.Stderr, "daemon: workloop: Persist after ReevaluateDeferred queueID=%s: %v\n",
-								q.QueueID, persistErr)
-						}
-					}
-
-					items := queue.EligibleItems(&q.Groups[activeGroupIdx])
-					if len(items) == 0 {
-						// All items dispatched or deferred — block indefinitely until a
-						// queue-submit wake signal or shutdown (PL-013 socket-block idle).
-						lq.Done()
-						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
-						}
-						continue
-					}
-
-					// Pick the first eligible item and find its index.
-					item := items[0]
-					for j := range q.Groups[activeGroupIdx].Items {
-						it := &q.Groups[activeGroupIdx].Items[j]
-						if it.BeadID == item.BeadID && it.Status == queue.ItemStatusPending {
-							snapItemIdx = j
-							break
-						}
-					}
-					if snapItemIdx < 0 {
-						// Item not found (stale reference) — retry.
-						lq.Done()
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-							return exitClean()
-						}
-						continue
-					}
-
-					// Capture all values needed after lock release as local copies so
-					// we do not access the shared *Queue pointer outside the lock.
-					snapItemBeadID = item.BeadID
-					snapItemContext = item.Context
-					snapItemWFMode = item.WorkflowMode
-					snapItemWFRef = item.WorkflowRef
-					snapItemTemplateParams = item.TemplateParams
-					snapGroupIndex = q.Groups[activeGroupIdx].GroupIndex
-					snapQueueID = q.QueueID
 				}
+
+				// Round-robin selection across all queues honouring per-queue Workers
+				// caps. rrCursor is daemon state (declared before the loop) advanced on
+				// every successful selection so the start offset rotates — this is what
+				// prevents a lexicographically-earlier queue from starving a later one.
+				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor)
 				lq.Done()
+				if !ok {
+					// No queue can contribute (all paused/empty or at their per-queue
+					// cap). Block until a queue-submit wake signal or shutdown.
+					if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+				// Advance the round-robin cursor EVERY time we pick a queue so the next
+				// tick starts at the next name (no reset-to-0 → no starvation).
+				rrCursor++
+
+				snapItemIdx = sel.itemIdx
+				snapItemBeadID = sel.itemBeadID
+				snapItemContext = sel.itemContext
+				snapItemWFMode = sel.itemWFMode
+				snapItemWFRef = sel.itemWFRef
+				snapItemTemplateParams = sel.itemTemplateMap
+				snapGroupIndex = sel.groupIndex
+				snapQueueID = sel.queueID
+				snapQueueName = sel.queueName
 			}
 
 			if snapItemIdx >= 0 {
@@ -817,9 +980,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 
 				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
+				// NQ-B1: operate on the SELECTED queue (snapQueueName), not the "main"
+				// slot, so the dispatch stamp lands on the queue the round-robin chose.
 				{
 					lq := deps.queueStore.LockForMutation()
-					liveQ := lq.Queue()
+					liveQ := lq.LockedQueueByName(snapQueueName)
 					if liveQ == nil {
 						lq.Done()
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
@@ -857,7 +1022,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 					}
 					if maxAttemptsHit {
-						lq.SetQueue(liveQ)
+						lq.LockedSetQueueByName(snapQueueName, liveQ)
 						if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
 							fmt.Fprintf(os.Stderr, "daemon: workloop: Persist max-attempts queueID=%s: %v\n",
 								liveQ.QueueID, persistErr)
@@ -874,7 +1039,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 						continue
 					}
-					lq.SetQueue(liveQ)
+					lq.LockedSetQueueByName(snapQueueName, liveQ)
 					// Persist the dispatched-stamp so queue.json reflects the
 					// in-memory state (hk-xsutm). Non-fatal: RunID placeholder
 					// will be patched shortly; the important invariant is that
@@ -888,6 +1053,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 				beadRecord = core.BeadRecord{BeadID: snapItemBeadID}
 				queueItemIndex = snapItemIdx
+				capturedQueueName = snapQueueName // NQ-B1: tag the run with its queue
 				qID := snapQueueID
 				gIdx := snapGroupIndex
 				queueIDField = &qID
@@ -992,9 +1158,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		runID := core.RunID(runUUID)
 
 		// Patch the placeholder RunID string in the queue item now that we have it.
+		// NQ-B1: target the selected queue by name (capturedQueueName), not "main".
 		if queueItemIndex >= 0 && deps.queueStore != nil {
 			lq := deps.queueStore.LockForMutation()
-			liveQ := lq.Queue()
+			liveQ := lq.LockedQueueByName(capturedQueueName)
 			if liveQ != nil {
 				for gi := range liveQ.Groups {
 					if liveQ.Groups[gi].Status != queue.GroupStatusActive {
@@ -1009,7 +1176,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						liveQ.Groups[gi].Items[queueItemIndex].RunID = &runIDStr
 					}
 				}
-				lq.SetQueue(liveQ)
+				lq.LockedSetQueueByName(capturedQueueName, liveQ)
 				// Persist the RunID patch (hk-xsutm).
 				if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: Persist RunID-patch queueID=%s: %v\n",
@@ -1127,9 +1294,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// main, auto-close them so the next workloop retry can claim the bead.
 			autoCloseStaleBlockersOnClaimFailure(ctx, deps, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
+			// NQ-B1: target the selected queue by name (capturedQueueName).
 			if queueItemIndex >= 0 && deps.queueStore != nil {
 				lq := deps.queueStore.LockForMutation()
-				liveQ := lq.Queue()
+				liveQ := lq.LockedQueueByName(capturedQueueName)
 				if liveQ != nil {
 					for gi := range liveQ.Groups {
 						if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
@@ -1142,7 +1310,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = claimErr.Error()
 						}
 					}
-					lq.SetQueue(liveQ)
+					lq.LockedSetQueueByName(capturedQueueName, liveQ)
 					// Persist the claim-failure revert (hk-xsutm).
 					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
 						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist claim-revert queueID=%s: %v\n",
@@ -1188,7 +1356,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
 		// claim the next bead immediately (up to effectiveMax).
 		deps.runRegistry.Register(runID, &RunHandle{
-			BeadID:    beadID,
+			BeadID: beadID,
+			// QueueName tags the run with its dispatching queue so the per-queue
+			// capacity tally (LenForQueue) bounds this queue independently of the
+			// global ceiling (NQ-B1). Empty for br-ready-fallback runs.
+			QueueName: capturedQueueName,
 			Labels:    beadRecord.Labels,
 			StartedAt: time.Now(),
 		})
@@ -2583,6 +2755,64 @@ func activateFirstPendingGroup(ctx context.Context, deps workLoopDeps) bool {
 	}
 
 	return true
+}
+
+// activateFirstPendingGroupLocked is the under-lock variant of
+// activateFirstPendingGroup for the multi-queue dispatch path (NQ-B1). The
+// caller already holds the QueueStore write lock (lq) and supplies the specific
+// queue q to bootstrap. It advances q's lowest-index pending group pending →
+// active, persists (QM-063), writes the mutated queue back via
+// LockedSetQueueByName, and returns true plus the resulting queue_group_started
+// events for the CALLER to emit AFTER releasing the lock (preserving the
+// EV-002a emit-after-persist-and-unlock idiom).
+//
+// Returns (false, nil) when q has an active group already, no pending group, or
+// AdvanceGroup is a no-op (QM-031 guard).
+//
+// Spec ref: specs/queue-model.md §5 QM-031; §8 QM-063.
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
+	if q == nil {
+		return false, nil
+	}
+	for i := range q.Groups {
+		if q.Groups[i].Status == queue.GroupStatusActive {
+			return false, nil
+		}
+	}
+	groupPos := -1
+	for i := range q.Groups {
+		if q.Groups[i].Status == queue.GroupStatusPending {
+			groupPos = i
+			break
+		}
+	}
+	if groupPos < 0 {
+		return false, nil
+	}
+
+	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, q.QueueID, time.Now())
+	if advErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroupLocked AdvanceGroup queueID=%s groupIndex=%d: %v\n",
+			q.QueueID, q.Groups[groupPos].GroupIndex, advErr)
+		return false, nil
+	}
+	if newStatus != queue.GroupStatusActive {
+		return false, nil
+	}
+
+	q.Groups[groupPos].Status = newStatus
+	if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroupLocked Persist queueID=%s: %v\n",
+			q.QueueID, err)
+		events = nil // describe only durable state
+	}
+	lq.LockedSetQueueByName(queue.NormaliseQueueName(q.Name), q)
+
+	// Events are returned for the caller to emit AFTER releasing the QueueStore
+	// write lock (EV-002a emit-after-persist-and-unlock idiom, matching
+	// activateFirstPendingGroup / evaluateGroupAdvanceWithOutcome).
+	return true, events
 }
 
 // evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)

@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -126,6 +127,7 @@ func HandleQueueSubmit(
 	req QueueSubmitRequest,
 	ledger BeadLedger,
 	projectDir string,
+	globalMaxConcurrent int,
 ) (QueueSubmitResponse, *Queue, []LedgerDepPair, *RPCError) {
 	// Run the validation pipeline.
 	vreq := ValidationRequest{
@@ -205,9 +207,18 @@ func HandleQueueSubmit(
 	q := &Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       queueID,
-		SubmittedAt:   now,
-		Groups:        groups,
-		Status:        QueueStatusActive,
+		// Name is the durable routing key; normalise empty → "main" (QM-002/2.1)
+		// so the per-name slot, persistence path, and per-queue worker pool all
+		// agree on the same key (NQ-A1 / NQ-B1).
+		Name: NormaliseQueueName(req.Name),
+		// Workers is the per-queue dispatch ceiling (QM-066). Default a zero/absent
+		// request to the global --max-concurrent; honour a positive request
+		// verbatim (oversubscription permitted — the runtime global ceiling still
+		// wins per QM-062). The caller (HandlerAdapter) logs oversubscription once.
+		Workers:     DefaultWorkers(req.Workers, globalMaxConcurrent),
+		SubmittedAt: now,
+		Groups:      groups,
+		Status:      QueueStatusActive,
 	}
 
 	// Persist per QM-001 (QM-063: persist before events).
@@ -547,6 +558,43 @@ type HandlerAdapter struct {
 	projectDir string
 	qs         QueueSetter
 	bus        EventEmitter
+
+	// globalMaxConcurrent is the daemon-wide --max-concurrent ceiling. Used to
+	// default Queue.Workers when a submit omits it (QM-066) and to detect
+	// oversubscription (Workers > global cap) for the one-time warning. Zero is
+	// treated as 1, matching the work-loop's effectiveMax floor.
+	//
+	// Bead ref: hk-tigaf.4 (NQ-B1).
+	globalMaxConcurrent int
+}
+
+// SetGlobalMaxConcurrent records the daemon-wide --max-concurrent ceiling so
+// the adapter can default Queue.Workers (QM-066) and warn on oversubscription.
+// Called once by the composition root after construction (daemon.Start). When
+// unset (zero) the default resolves to 1, matching the work-loop floor.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func (a *HandlerAdapter) SetGlobalMaxConcurrent(n int) {
+	a.globalMaxConcurrent = n
+}
+
+// DefaultWorkers resolves the effective per-queue worker count for a queue
+// whose Workers field is requested as `requested`, given the daemon's global
+// --max-concurrent ceiling `globalCap` (QM-066). A zero/negative request
+// defaults to the global cap; a positive request is honoured verbatim (so
+// oversubscription, requested > globalCap, is permitted — the runtime global
+// ceiling still wins per QM-062). globalCap is floored at 1 to mirror the
+// work-loop's effectiveMax.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func DefaultWorkers(requested, globalCap int) int {
+	if globalCap < 1 {
+		globalCap = 1
+	}
+	if requested <= 0 {
+		return globalCap
+	}
+	return requested
 }
 
 // NewHandlerAdapter returns a *HandlerAdapter wired to ledger and projectDir.
@@ -575,9 +623,20 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)}}
 	}
-	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir)
+	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir, a.globalMaxConcurrent)
 	if rpcErr != nil {
 		return nil, rpcErr
+	}
+
+	// QM-066 oversubscription warning: a per-queue Workers count above the global
+	// --max-concurrent is permitted (the runtime global ceiling still wins per
+	// QM-062) but is logged ONCE here at submit so operators notice the queue can
+	// never reach its requested width. Emitted to stderr (the daemon's diagnostic
+	// channel); not an error.
+	if q != nil && a.globalMaxConcurrent >= 1 && q.Workers > a.globalMaxConcurrent {
+		fmt.Fprintf(os.Stderr,
+			"daemon: queue-submit: queue %q workers=%d oversubscribes global --max-concurrent=%d; global ceiling still applies (QM-062/QM-066)\n",
+			q.Name, q.Workers, a.globalMaxConcurrent)
 	}
 
 	// Thread the persisted queue into the running workloop (hk-4ukkq).

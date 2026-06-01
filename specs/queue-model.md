@@ -67,6 +67,8 @@ RECORD Queue:
   status            : QueueStatus -- queue-level lifecycle state (see §2.2)
   name              : String      -- durable routing key (NQ-A1); omitted or empty = "main"; per-queue
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
+  workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
+                                  -- defaults to --max-concurrent; may oversubscribe (global cap still wins)
 ```
 
 > INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
@@ -745,15 +747,23 @@ All mutations to the in-memory `Queue` object MUST be serialized through a singl
 
 v0.1 assumes a single orchestrator client per daemon. Multi-orchestrator submission semantics (two clients racing to enqueue, queue-ownership ACLs) are out of scope. QM-027 ensures at most one active queue exists, which is the v0.1 multi-orchestrator safeguard.
 
-### 9.3 QM-062 — Composition with `--max-concurrent`
+### 9.3 QM-062 — Composition with `--max-concurrent` (two-level capacity gate)
 
-The queue's parallel-group concept composes with the daemon's existing `--max-concurrent N` capacity gate per [/Users/gb/github/harmonik/specs/execution-model.md §4.3]. The dispatcher dispatches up to:
+The queue's parallel-group concept composes with the daemon's existing `--max-concurrent N` **global** capacity gate per [/Users/gb/github/harmonik/specs/execution-model.md §4.3] AND with each queue's **per-queue** worker count (QM-066). With multiple named queues active (NQ-A1), the dispatcher gate is two-level: for a given queue `Q` it dispatches up to
 
 ```
-min(group_pending_count, --max-concurrent - currently_running)
+min(
+  group_pending_count(Q),                       -- eligible items in Q's active group
+  Q.workers       - queue_running(Q),           -- Q's per-queue ceiling (QM-066)
+  --max-concurrent - global_running             -- the daemon-wide ceiling
+)
 ```
 
-The queue narrows parallelism (a wave of 8 with `--max-concurrent 2` runs 2 at a time) but never widens it. The capacity gate is unchanged from its pre-queue behavior.
+where `queue_running(Q)` is the count of in-flight runs tagged with `Q.name` (`RunRegistry.LenForQueue(Q.name)`) and `global_running` is the count of all in-flight runs across every queue plus any `br ready`-fallback runs (`RunRegistry.Len()`). The two ceilings compose multiplicatively-bounded: a queue can never run more than `Q.workers` items at once, and the sum across all queues can never exceed `--max-concurrent`. The global ceiling always wins — even an oversubscribed queue (`Q.workers > --max-concurrent`, permitted per QM-066) is capped at `--max-concurrent` at runtime.
+
+A single queue with `Q.workers` defaulted to `--max-concurrent` (the QM-066 default) reduces exactly to the pre-named-queues behavior `min(group_pending_count, --max-concurrent - currently_running)`. The queue narrows parallelism (a wave of 8 with `--max-concurrent 2` runs 2 at a time) but never widens it.
+
+Cross-queue arbitration — which active queue is offered the next free global slot — is governed by QM-067.
 
 ### 9.4 QM-063 — Persistence ordering with event emission
 
@@ -766,6 +776,32 @@ Events emitted within a single operation are ordered as specified per-operation 
 ### 9.6 QM-064 — No mutation during validation
 
 The validation pipeline (§6) MUST run against an immutable snapshot of the in-memory queue. Any mutation accepted concurrently with a validation pass MUST be sequenced after that pass's snapshot via the QM-060 single-writer discipline. Failed validation MUST NOT leave any partial state, intent log, or event emission behind — per QM-028, validation failures surface only on the JSON-RPC response.
+
+### 9.7 QM-066 — Per-queue worker count
+
+Each queue carries a `workers` field (RECORD `Queue.workers`, §2.1): the maximum number of items that queue may have in-flight simultaneously. It is the per-queue ceiling in the two-level capacity gate (QM-062).
+
+- **Default.** When `workers` is omitted, zero, or negative at submit/load time, the daemon defaults it to the daemon-wide `--max-concurrent`. A queue with no explicit `workers` therefore behaves exactly like the single-queue daemon: bounded only by the global ceiling.
+- **Bound.** A `workers` value MUST be a positive integer. It MAY exceed `--max-concurrent` (oversubscription): this is permitted but never effective, because the global ceiling (QM-062) still caps the queue at `--max-concurrent` at runtime. The daemon MUST log an oversubscription warning exactly ONCE, at queue-submit time, when `workers > --max-concurrent`.
+- **Scope.** `workers` bounds only that queue's own in-flight tally (`RunRegistry.LenForQueue(name)`); it has no effect on any other queue. The reserved `main` queue is not special-cased — it obeys the same default and bound.
+
+This is mechanism, not policy: `workers` is a static per-queue dispatch width, not a budget, quota, or cost gate (named queues have no special semantics per the §2.1 INFORMATIVE note / N2/N4). Cost governance lives at the credential-isolation layer, not here.
+
+### 9.8 QM-067 — Cross-queue dispatch policy (name-ordered round-robin)
+
+When more than one queue is active and a global slot is free (the QM-062 global ceiling has room), the daemon MUST choose which queue is offered the slot by **name-ordered round-robin** among the *candidate* queues. A queue is a candidate on a given dispatch tick iff:
+
+1. its status is `active` (paused-by-failure / paused-by-drain / completed queues contribute nothing but MUST NOT block siblings),
+2. it has an `active` group with at least one eligible item (§5.7), AND
+3. its per-queue tally is below its `workers` ceiling (`LenForQueue(name) < workers`, QM-066).
+
+The arbitration is:
+
+- Candidate queue names are sorted lexicographically (the stable total order over the `[a-z0-9-]` name charset, QM-002).
+- A **round-robin cursor** — daemon state that persists across dispatch ticks — selects the starting offset into the sorted candidate list (`candidates[cursor mod len(candidates)]`). The chosen queue dispatches its head-eligible item.
+- The cursor MUST advance by one on **every** queue selection and MUST NOT be reset to zero each tick. Resetting it would make the lexicographically-first candidate (e.g. `investigate`) win every tick and **starve** a later one (e.g. `main`); advancing it rotates the offset so dispatch is shared fairly. Over a long run no candidate queue starves.
+
+This is plain round-robin — every candidate queue is treated equally. **Weighted fairness** (dispatch shares proportional to `workers`, or priority tiers across queues) is explicitly OUT OF SCOPE for v0.1 and deferred to a later version. The `workers` count gates a queue's *concurrency width* (QM-066); it does NOT weight its *dispatch frequency* under this policy.
 
 ## A. Appendices
 

@@ -33,6 +33,16 @@ type RunHandle struct {
 	// BeadID is the bead being executed during this run.
 	BeadID core.BeadID
 
+	// QueueName is the durable routing key (queue.Queue.Name) of the queue that
+	// dispatched this run. Used by the two-level capacity gate to compute the
+	// per-queue in-flight tally (LenForQueue) so each named queue is bounded by
+	// its own Queue.Workers count while the bare Len() stays the global ceiling
+	// (specs/queue-model.md §9.3 QM-062). Empty for br-ready-fallback runs (no
+	// queue); those count only against the global ceiling.
+	//
+	// Bead ref: hk-tigaf.4 (NQ-B1).
+	QueueName string
+
 	// Labels holds the raw bead label strings copied from BeadRecord.Labels at
 	// registration time. Used by StaleWatcher to apply per-bead overrides (e.g.
 	// "stale_after=<seconds>").
@@ -113,10 +123,33 @@ func (r *RunRegistry) Get(runID core.RunID) (*RunHandle, bool) {
 	return h, ok
 }
 
-// Len returns the number of currently registered in-flight runs.
+// Len returns the number of currently registered in-flight runs. This is the
+// GLOBAL ceiling tally consumed by the work-loop's --max-concurrent gate
+// (specs/execution-model.md §4.3 EM-049): it counts every in-flight run across
+// all queues plus any br-ready-fallback runs.
 func (r *RunRegistry) Len() int {
 	r.mu.RLock()
 	n := len(r.handles)
+	r.mu.RUnlock()
+	return n
+}
+
+// LenForQueue returns the number of currently registered in-flight runs whose
+// QueueName equals name. This is the PER-QUEUE tally consumed by the two-level
+// capacity gate (specs/queue-model.md §9.3 QM-062): a named queue may dispatch
+// only while LenForQueue(name) < Queue.Workers, independent of the global
+// ceiling enforced by Len(). br-ready-fallback runs (empty QueueName) are
+// excluded from every named-queue tally; pass "" to count them explicitly.
+//
+// Bead ref: hk-tigaf.4 (NQ-B1).
+func (r *RunRegistry) LenForQueue(name string) int {
+	r.mu.RLock()
+	n := 0
+	for _, h := range r.handles {
+		if h.QueueName == name {
+			n++
+		}
+	}
 	r.mu.RUnlock()
 	return n
 }

@@ -1008,7 +1008,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				// Bead ref: hk-th378.
 				_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brHandlerErr, "br-new-for-project-handler", bus)
 			} else {
-				queueHandler = queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
+				adapter := queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
+				// Wire the global --max-concurrent so submit can default a queue's
+				// per-queue Workers count (QM-066) and warn on oversubscription
+				// (hk-tigaf.4 NQ-B1). cfg.MaxConcurrent zero → 1 inside the adapter.
+				adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
+				queueHandler = adapter
 			}
 		}
 

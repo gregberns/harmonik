@@ -117,7 +117,7 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 		},
 	}
 
-	resp, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir)
+	resp, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
 	}
@@ -165,7 +165,7 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 	}
 
 	// First submit succeeds.
-	_, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir)
+	_, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("first submit: unexpected RPCError: %v", rpcErr)
 	}
@@ -175,7 +175,7 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadB)},
 	}
-	_, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), req2, ledger, projectDir)
+	_, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), req2, ledger, projectDir, 1)
 	if rpcErr2 == nil {
 		t.Fatal("second submit: expected RPCError, got nil")
 	}
@@ -206,7 +206,7 @@ func TestHandleQueueAppend_HappyPath(t *testing.T) {
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
 	}
-	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir)
+	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("setup submit: unexpected RPCError: %v", rpcErr)
 	}
@@ -298,7 +298,7 @@ func TestHandleQueueStatus_WithActiveQueue(t *testing.T) {
 		SchemaVersion: 1,
 		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
 	}
-	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir)
+	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1)
 	if rpcErr != nil {
 		t.Fatalf("setup submit: unexpected RPCError: %v", rpcErr)
 	}

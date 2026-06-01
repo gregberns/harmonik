@@ -1315,6 +1315,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		defer wtCleanup()
 	}
 
+	// hk-ooexj: snapshot the main repo's pre-existing untracked files at run-start
+	// (before the implementer launches) so the post-run escape check can exclude
+	// files that already existed and which the implementer never touched. A failed
+	// snapshot leaves preRunUntracked nil — the escape check then degrades to its
+	// prior, baseline-free behaviour rather than silently suppressing escapes.
+	preRunUntracked, snapErr := snapshotUntrackedFiles(ctx, deps.projectDir)
+	if snapErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: snapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
+	}
+
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
 
@@ -1934,7 +1944,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// /tmp/escape-recovery.patch pattern.
 	//
 	// Bead: hk-6zylj.
-	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir); escapeErr == nil && mainDirty {
+	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked); escapeErr == nil && mainDirty {
 		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
@@ -3254,31 +3264,43 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
 }
 
-// checkMainWorkingTreeDirty (hk-6zylj) reports whether the main repo's working
-// tree contains dirty files outside the harmonik churn allowlist.
+// snapshotUntrackedFiles (hk-ooexj) captures the set of paths the main repo's
+// working tree reports as dirty/untracked at run-start, BEFORE the implementer
+// launches. The returned set is fed to checkMainWorkingTreeDirty after the run
+// so that files which already existed (and which the implementer never touched)
+// are NOT mistaken for an escape.
 //
-// It runs `git -C <mainPath> status --porcelain` and filters the output:
-//   - `.harmonik/...`           — daemon state (expected churn)
-//   - `.claude/...`             — orchestrator/Claude state (expected churn)
-//   - `.beads/issues.jsonl`     — bead ledger (expected churn from br sync)
+// It uses the same `git status --porcelain` surface as the escape check (which
+// already excludes gitignored paths by default), so a pre-existing
+// untracked-but-not-ignored file (e.g. a scratch note in the project root) is
+// baselined and excluded, while a NET-NEW file the implementer writes outside
+// its worktree still surfaces as an escape.
 //
-// Anything else dirty is treated as an escape. The returned list contains the
-// path portion of each porcelain status line (with the leading XY-and-space
-// prefix stripped).
-//
-// Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
-// treat the check as informational and skip without failing the run.
-func checkMainWorkingTreeDirty(ctx context.Context, mainPath string) (bool, []string, error) {
+// Errors (e.g. git not in PATH) return (nil, err); the caller treats a failed
+// snapshot as "no baseline" — the escape check then degrades to its prior
+// behaviour rather than silently suppressing genuine escapes.
+func snapshotUntrackedFiles(ctx context.Context, mainPath string) (map[string]struct{}, error) {
 	if mainPath == "" {
-		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: empty mainPath")
+		return nil, fmt.Errorf("snapshotUntrackedFiles: empty mainPath")
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
-		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: git status: %w", err)
+		return nil, fmt.Errorf("snapshotUntrackedFiles: git status: %w", err)
 	}
-	var dirty []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+	baseline := make(map[string]struct{})
+	for _, path := range parsePorcelainPaths(string(out)) {
+		baseline[path] = struct{}{}
+	}
+	return baseline, nil
+}
+
+// parsePorcelainPaths extracts the destination path from each line of
+// `git status --porcelain` output, stripping the XY status prefix, resolving
+// rename "old -> new" to the destination, and unquoting special-char paths.
+func parsePorcelainPaths(out string) []string {
+	var paths []string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -3294,12 +3316,93 @@ func checkMainWorkingTreeDirty(ctx context.Context, mainPath string) (bool, []st
 		}
 		// Strip surrounding quotes (git quotes paths with special chars).
 		path = strings.Trim(path, "\"")
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// checkMainWorkingTreeDirty (hk-6zylj) reports whether the main repo's working
+// tree contains dirty files outside the harmonik churn allowlist that did NOT
+// exist before the run started.
+//
+// It runs `git -C <mainPath> status --porcelain` and filters the output:
+//   - `.harmonik/...`           — daemon state (expected churn)
+//   - `.claude/...`             — orchestrator/Claude state (expected churn)
+//   - `.beads/issues.jsonl`     — bead ledger (expected churn from br sync)
+//   - paths in `baseline`       — pre-existing untracked files (hk-ooexj)
+//   - gitignored paths          — never the implementer's escape (hk-ooexj)
+//
+// `git status --porcelain` already omits gitignored paths by default; the
+// explicit check-ignore pass is defense-in-depth against a parent-repo
+// `.gitignore` or core.excludesFile that surfaces an ignored path here.
+//
+// Anything else dirty is treated as an escape. The returned list contains the
+// destination path of each surviving porcelain status line.
+//
+// Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
+// treat the check as informational and skip without failing the run.
+func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
+	if mainPath == "" {
+		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: empty mainPath")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: git status: %w", err)
+	}
+	var candidates []string
+	for _, path := range parsePorcelainPaths(string(out)) {
 		if isHarmonikChurn(path) {
 			continue
 		}
-		dirty = append(dirty, path)
+		// hk-ooexj: pre-existing untracked file — present at run-start, so the
+		// implementer did not create it. Not an escape.
+		if _, preexisting := baseline[path]; preexisting {
+			continue
+		}
+		candidates = append(candidates, path)
 	}
+	// hk-ooexj: drop any gitignored paths (defense-in-depth — git status already
+	// omits these by default, but a parent gitignore could surface them).
+	dirty := filterIgnoredPaths(ctx, mainPath, candidates)
 	return len(dirty) > 0, dirty, nil
+}
+
+// filterIgnoredPaths returns paths minus those git considers ignored under
+// mainPath. It batches the paths through a single `git check-ignore` call
+// (NUL-delimited via --stdin -z). On any real error it returns paths unchanged
+// — failing open keeps genuine escapes visible rather than swallowing them.
+func filterIgnoredPaths(ctx context.Context, mainPath string, paths []string) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "check-ignore", "--stdin", "-z")
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00"))
+	out, err := cmd.Output()
+	// check-ignore exits 0 when ≥1 path is ignored, 1 when none are ignored
+	// (not an error for us), and ≥128 on a real failure. Treat exit 1 (no
+	// matches) as "nothing ignored"; treat other non-zero codes as fail-open.
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return paths // none ignored
+		}
+		return paths // fail open: keep all candidates visible
+	}
+	ignored := make(map[string]struct{})
+	for _, p := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if p != "" {
+			ignored[p] = struct{}{}
+		}
+	}
+	var kept []string
+	for _, p := range paths {
+		if _, isIgnored := ignored[p]; isIgnored {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
 }
 
 // isHarmonikChurn reports whether a path is part of the expected harmonik

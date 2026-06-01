@@ -1446,3 +1446,20 @@ type ExportedQueueLedger interface {
 func ExportedNewBRQueueLedger(adapter *brcli.Adapter) ExportedQueueLedger {
 	return newBRQueueLedger(adapter)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Escape-detector test seams (hk-ooexj — gitignored/pre-existing false positive)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedSnapshotUntrackedFiles exposes snapshotUntrackedFiles for the
+// escape-detector baseline regression test (hk-ooexj).
+func ExportedSnapshotUntrackedFiles(ctx context.Context, mainPath string) (map[string]struct{}, error) {
+	return snapshotUntrackedFiles(ctx, mainPath)
+}
+
+// ExportedCheckMainWorkingTreeDirty exposes checkMainWorkingTreeDirty for the
+// escape-detector regression test (hk-ooexj). baseline is the set of
+// pre-existing untracked paths captured at run-start.
+func ExportedCheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
+	return checkMainWorkingTreeDirty(ctx, mainPath, baseline)
+}

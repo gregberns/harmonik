@@ -362,6 +362,24 @@ type Config struct {
 	// Spec refs: specs/workspace-model.md §4.6 WM-024; specs/operator-nfr.md §4.3.
 	// Bead ref: hk-8mwo.36.
 	ConflictResolutionAttemptCap int
+
+	// ReconciliationScanCadence is the interval for the RC-020a scheduled
+	// background detector scan (dispatch point (c)).
+	//
+	// The zero value falls back to ReconciliationScanCadenceDefault (1 hour)
+	// per reconciliation/spec.md §4.3 RC-020a and the operator-nfr.md §4.3
+	// knob reconciliation_scan_cadence. Negative values are treated as zero
+	// (same fallback). Operators may set a shorter interval (e.g., 15 min) for
+	// high-commit-rate workloads; post-MVH cadence tuning is tracked in OQ-RC-004.
+	//
+	// The field is immutable for the daemon's lifetime; a daemon restart is
+	// required to apply changes (change-takes-effect: next daemon start per
+	// operator-nfr.md §4.3).
+	//
+	// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a — "Scheduled cadence."
+	// Spec ref: specs/operator-nfr/config-inventory.md §2.18 reconciliation_scan_cadence.
+	// Bead ref: hk-63oh.21.
+	ReconciliationScanCadence time.Duration
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the
@@ -896,6 +914,28 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Surface sweep errors as the return value only if no other errors
 		// occurred — but per bead spec, do NOT abort Start on sweep error.
 		_ = sweepErr
+
+		// RC-020a dispatch point (a): emit reconciliation_started{trigger:"startup"}
+		// after the orphan sweep and before the daemon transitions to `ready`.
+		// This marks the boundary at which the startup detector scan runs per
+		// reconciliation/spec.md §4.3 RC-020a.
+		//
+		// The Cat 3c auto-resolver (bead in_progress + merge on main → br close)
+		// ran as part of RunOrphanSweep above (OrphanSweepConfig.BeadCat3cCloser).
+		// The reconciliation_started event here is the observable marker that the
+		// startup scan happened (INFORMATIVE note at §4.3). Non-fatal: a generation
+		// or emit error does not block the daemon from reaching `ready`.
+		//
+		// Bead ref: hk-63oh.21.
+		if startupRunUID, startupUIDErr := uuid.NewV7(); startupUIDErr == nil {
+			startupRecPayload := core.ReconciliationStartedPayload{
+				ReconciliationRunID: core.RunID(startupRunUID),
+				Trigger:             core.ReconciliationTriggerStartup,
+			}
+			if startupRecBytes, marshalErr := json.Marshal(startupRecPayload); marshalErr == nil {
+				_ = bus.Emit(context.Background(), core.EventTypeReconciliationStarted, startupRecBytes)
+			}
+		}
 	}
 
 	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
@@ -1130,6 +1170,24 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// Bead ref: hk-4mupj.
 		logCompositionRoot(cfg.LogWriter)
+
+		// RC-020a dispatch point (c): start the scheduled detector cadence goroutine.
+		//
+		// The goroutine runs until ctx is cancelled and emits
+		// reconciliation_started{trigger:"scheduled-hourly"} on each tick, followed
+		// by a Cat 3c bead-ledger scan. The default interval is 1 h
+		// (ReconciliationScanCadenceDefault); operators may override via
+		// cfg.ReconciliationScanCadence (operator-nfr.md §4.3 reconciliation_scan_cadence).
+		//
+		// Bead ref: hk-63oh.21.
+		StartReconciliationScheduler(ctx, ReconciliationSchedulerConfig{
+			ProjectDir:   cfg.ProjectDir,
+			BrPath:       cfg.BrPath,
+			TargetBranch: "", // defaults to "main" inside the scheduler
+			Interval:     cfg.ReconciliationScanCadence,
+			Emitter:      bus,
+			LogWriter:    cfg.LogWriter,
+		})
 
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that

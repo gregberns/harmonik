@@ -33,22 +33,29 @@ type ReconciliationTrigger string
 
 const (
 	// ReconciliationTriggerStartup indicates the reconciliation run was triggered
-	// at daemon startup.
+	// at daemon startup (RC-020a dispatch point (a)).
 	ReconciliationTriggerStartup ReconciliationTrigger = "startup"
 
 	// ReconciliationTriggerOnDemand indicates the reconciliation run was triggered
-	// by an operator on-demand request.
+	// by an operator on-demand request (RC-020a dispatch point (b)).
 	ReconciliationTriggerOnDemand ReconciliationTrigger = "on-demand"
+
+	// ReconciliationTriggerScheduled indicates the reconciliation run was triggered
+	// by the background scheduled cadence (RC-020a dispatch point (c)).
+	// MVH default interval is hourly (3600 s); configurable via operator YAML
+	// per operator-nfr.md §4.3 (knob: reconciliation_scan_cadence).
+	ReconciliationTriggerScheduled ReconciliationTrigger = "scheduled-hourly"
 
 	// ReconciliationTriggerDivergenceDetected indicates the reconciliation run
 	// was triggered by a detected store divergence.
 	ReconciliationTriggerDivergenceDetected ReconciliationTrigger = "divergence-detected"
 )
 
-// Valid reports whether t is one of the three declared ReconciliationTrigger constants.
+// Valid reports whether t is one of the four declared ReconciliationTrigger constants.
 func (t ReconciliationTrigger) Valid() bool {
 	switch t {
-	case ReconciliationTriggerStartup, ReconciliationTriggerOnDemand, ReconciliationTriggerDivergenceDetected:
+	case ReconciliationTriggerStartup, ReconciliationTriggerOnDemand,
+		ReconciliationTriggerScheduled, ReconciliationTriggerDivergenceDetected:
 		return true
 	default:
 		return false

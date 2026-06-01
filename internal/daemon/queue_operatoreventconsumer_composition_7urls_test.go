@@ -53,16 +53,18 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 		t.Fatal("WithBusObserver was never called; daemon.startWithHooks must invoke the observer pre-Seal")
 	}
 
-	// HandlerPausePolicyGoroutine registers 2 subscribers; QueueOperatorEventConsumer
-	// registers 2 more; SubscribeHub (hk-6ynv4) registers 1 wildcard observer
-	// for a total of 5.
+	// Pre-Seal subscription inventory (composition root audit):
+	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis (hk-37zy8)
+	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic (hk-37zy8)
+	//   3. run_started             — DaemonSpendMeter run counter (hk-k3f8g)
+	//   4. budget_accrual          — DaemonSpendMeter byte-proxy spend (hk-k3f8g)
+	//   5. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain (hk-7urls)
+	//   6. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
+	//   7. * (wildcard)            — SubscribeHub fans events to socket subscribers (hk-6ynv4)
+	//   8. * (wildcard)            — StaleWatcher per-run silence monitor (hk-wkzlc)
 	//
-	//   1. agent_rate_limit_status — HandlerPausePolicyGoroutine rate-limit hysteresis
-	//   2. budget_exhausted        — HandlerPausePolicyGoroutine budget-exhausted logic
-	//   3. operator_pause_status   — QueueOperatorEventConsumer pause → paused-by-drain
-	//   4. operator_resuming       — QueueOperatorEventConsumer resume → active
-	//   5. * (wildcard)            — SubscribeHub (hk-6ynv4) fans events to socket subscribers
-	const wantSubscriptions = 5
+	// Any deviation indicates a composition-root wiring regression.
+	const wantSubscriptions = 8
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"QueueOperatorEventConsumer.Subscribe must be called pre-Seal in daemon.Start (hk-7urls)",

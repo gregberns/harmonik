@@ -417,6 +417,78 @@ func TestRC020a_IdempotentDetectorSameSnapshotSameCategory(t *testing.T) {
 	}
 }
 
+// TestRC020a_ScheduledTriggerConstantIsValid verifies that the
+// ReconciliationTriggerScheduled constant ("scheduled-hourly") is accepted
+// by ReconciliationTrigger.Valid() and that it is distinct from the startup
+// and on-demand triggers (RC-020a dispatch points (a), (b), (c)).
+//
+// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a.
+// Bead ref: hk-63oh.21.
+func TestRC020a_ScheduledTriggerConstantIsValid(t *testing.T) {
+	t.Parallel()
+
+	triggers := []struct {
+		name  string
+		value ReconciliationTrigger
+		want  bool
+	}{
+		{"startup", ReconciliationTriggerStartup, true},
+		{"on-demand", ReconciliationTriggerOnDemand, true},
+		{"scheduled-hourly", ReconciliationTriggerScheduled, true},
+		{"divergence-detected", ReconciliationTriggerDivergenceDetected, true},
+		{"empty", ReconciliationTrigger(""), false},
+		{"unknown", ReconciliationTrigger("unknown"), false},
+	}
+	for _, tc := range triggers {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.value.Valid(); got != tc.want {
+				t.Errorf("ReconciliationTrigger(%q).Valid() = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+
+	// Ensure the scheduled trigger carries the canonical string value.
+	const wantScheduledStr = "scheduled-hourly"
+	if got := string(ReconciliationTriggerScheduled); got != wantScheduledStr {
+		t.Errorf("ReconciliationTriggerScheduled = %q, want %q", got, wantScheduledStr)
+	}
+}
+
+// TestRC020a_ScheduledTriggerPayloadRoundTrips verifies that a
+// ReconciliationStartedPayload with trigger=scheduled-hourly marshals and
+// unmarshals correctly (JSON round-trip).
+//
+// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a.
+// Bead ref: hk-63oh.21.
+func TestRC020a_ScheduledTriggerPayloadRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	runID := RunID(uuid.New())
+	p := ReconciliationStartedPayload{
+		ReconciliationRunID: runID,
+		Trigger:             ReconciliationTriggerScheduled,
+	}
+	if !p.Valid() {
+		t.Fatal("RC-020a: scheduled-trigger payload failed Valid() before marshal")
+	}
+
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("RC-020a: marshal failed: %v", err)
+	}
+
+	var got ReconciliationStartedPayload
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("RC-020a: unmarshal failed: %v", err)
+	}
+	if got.Trigger != ReconciliationTriggerScheduled {
+		t.Errorf("RC-020a: round-trip trigger = %q, want %q", got.Trigger, ReconciliationTriggerScheduled)
+	}
+	if !got.Valid() {
+		t.Error("RC-020a: round-trip payload failed Valid()")
+	}
+}
+
 // ---- RC-020b: Detector panic recovery ----
 
 // TestRC020b_PanicRecoveryFallsThroughToNextDetector verifies that a

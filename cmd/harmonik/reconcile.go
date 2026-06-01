@@ -60,7 +60,9 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // reconcileUsage prints the help text for `harmonik reconcile`.
@@ -68,11 +70,12 @@ func reconcileUsage() {
 	fmt.Print(`harmonik reconcile — close in_progress beads whose implementation has merged
 
 USAGE
-  harmonik reconcile [--project DIR] [--target-branch BRANCH]
+  harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]
 
 FLAGS
   --project DIR           Project directory (default: current working directory)
   --target-branch BRANCH  Git branch to scan for merge commits (default: main)
+  --run RUN_ID            Scope the scan to a single in-flight run ID (OQ-RC-005)
 
 EXIT CODES
   0  All subsumed beads closed (zero matches is also success)
@@ -83,16 +86,18 @@ EXAMPLES
   harmonik reconcile
   harmonik reconcile --target-branch develop
   harmonik reconcile --project /path/to/project --target-branch main
+  harmonik reconcile --run 019e8273-753b-7f3a-bc25-798c33bb8e63
 `)
 }
 
-// runReconcileSubcommand implements `harmonik reconcile [--project DIR] [--target-branch BRANCH]`.
+// runReconcileSubcommand implements `harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]`.
 // subArgs is os.Args[2:] (everything after "reconcile").
 func runReconcileSubcommand(subArgs []string) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
 	targetBranchFlag := ""
+	runIDFlag := "" // OQ-RC-005: scope scan to a single run_id
 	for i := 0; i < len(subArgs); i++ {
 		switch {
 		case subArgs[i] == "--help" || subArgs[i] == "-h":
@@ -108,12 +113,17 @@ func runReconcileSubcommand(subArgs []string) int {
 			targetBranchFlag = subArgs[i]
 		case strings.HasPrefix(subArgs[i], "--target-branch="):
 			targetBranchFlag = strings.TrimPrefix(subArgs[i], "--target-branch=")
+		case subArgs[i] == "--run" && i+1 < len(subArgs):
+			i++
+			runIDFlag = subArgs[i]
+		case strings.HasPrefix(subArgs[i], "--run="):
+			runIDFlag = strings.TrimPrefix(subArgs[i], "--run=")
 		case strings.HasPrefix(subArgs[i], "-"):
 			fmt.Fprintf(os.Stderr, "harmonik reconcile: unknown flag %q\n", subArgs[i])
 			return 1
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik reconcile: unexpected positional argument %q\n", subArgs[i])
-			fmt.Fprintln(os.Stderr, "usage: harmonik reconcile [--project DIR] [--target-branch BRANCH]")
+			fmt.Fprintln(os.Stderr, "usage: harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]")
 			return 1
 		}
 	}
@@ -169,6 +179,17 @@ func runReconcileSubcommand(subArgs []string) int {
 		fmt.Fprintln(os.Stderr, "harmonik reconcile: no in_progress beads — nothing to reconcile")
 		return 0
 	}
+
+	// OQ-RC-005 / RC-020a(b): when --run is provided, scope the scan to the
+	// single bead associated with that run_id by querying the queue ledger.
+	if runIDFlag != "" {
+		beads = filterBeadsByRunID(ctx, projectDir, runIDFlag, beads)
+		if len(beads) == 0 {
+			fmt.Fprintf(os.Stderr, "harmonik reconcile: run %s not found in queue or has no in_progress bead — nothing to reconcile\n", runIDFlag)
+			return 0
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "harmonik reconcile: found %d in_progress bead(s), scanning git log for subsumed beads...\n", len(beads))
 
 	// --- Cat 3c: detect and close subsumed beads ---
@@ -212,4 +233,46 @@ func runReconcileSubcommand(subArgs []string) int {
 		return 2
 	}
 	return 0
+}
+
+// filterBeadsByRunID scopes a bead slice to the single bead whose run_id
+// matches the supplied runID by consulting the main queue ledger.
+//
+// It loads .harmonik/queues/main.json, scans all groups for an item whose
+// RunID pointer equals runID, and intersects the resulting bead_id set with
+// the supplied in-progress beads. Items not found in the queue are silently
+// skipped (the run_id may have been in a now-drained queue entry).
+//
+// If the queue cannot be loaded, the full beads slice is returned unchanged
+// (fail-open: unscoped scan is safer than refusing to run).
+//
+// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a(b); OQ-RC-005.
+func filterBeadsByRunID(ctx context.Context, projectDir, runID string, beads []core.BeadRecord) []core.BeadRecord {
+	q, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
+	if loadErr != nil || q == nil {
+		// Fail-open: queue absent or corrupt; return unscoped beads.
+		return beads
+	}
+
+	// Build a set of bead_ids associated with the requested run_id.
+	matchedBeadIDs := make(map[core.BeadID]struct{})
+	for gi := range q.Groups {
+		for _, item := range q.Groups[gi].Items {
+			if item.RunID != nil && *item.RunID == runID {
+				matchedBeadIDs[item.BeadID] = struct{}{}
+			}
+		}
+	}
+	if len(matchedBeadIDs) == 0 {
+		return nil
+	}
+
+	// Filter the in-progress beads to those matching the run_id.
+	var filtered []core.BeadRecord
+	for _, b := range beads {
+		if _, ok := matchedBeadIDs[b.BeadID]; ok {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }

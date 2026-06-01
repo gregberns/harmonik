@@ -302,3 +302,37 @@ func (lq *LockedQueueStore) SetQueue(q *queue.Queue) {
 func (lq *LockedQueueStore) Done() {
 	lq.s.queueMu.Unlock()
 }
+
+// LockedQueueByName returns the *queue.Queue for the given name while the
+// write lock is held. name MUST be normalised before calling (use
+// queue.NormaliseQueueName). Returns nil when no queue with that name is
+// loaded.
+//
+// Safe to call while holding the LockForMutation write lock.
+//
+// Bead ref: hk-tigaf.6.
+func (lq *LockedQueueStore) LockedQueueByName(name string) *queue.Queue {
+	return lq.s.queues[name]
+}
+
+// LockedSetQueueByName updates the queue pointer at the given name slot
+// while the write lock is held. name MUST be normalised before calling.
+// Does NOT signal the wake channel (use QueueStore.SetQueueByName for that).
+//
+// Bead ref: hk-tigaf.6.
+func (lq *LockedQueueStore) LockedSetQueueByName(name string, q *queue.Queue) {
+	lq.s.queues[name] = q
+}
+
+// LockedAllQueueNames returns the names of all queues currently in the store
+// while the write lock is held. The returned slice is a snapshot; callers
+// must not modify the underlying map entries through this slice.
+//
+// Bead ref: hk-tigaf.6.
+func (lq *LockedQueueStore) LockedAllQueueNames() []string {
+	names := make([]string, 0, len(lq.s.queues))
+	for name := range lq.s.queues {
+		names = append(names, name)
+	}
+	return names
+}

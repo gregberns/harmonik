@@ -55,6 +55,11 @@ type SocketRequest struct {
 
 	// Role is the agent role requesting a claim (present for "claim-next").
 	Role string `json:"role,omitempty"`
+
+	// Queue is the optional named-queue scope for operator-pause and
+	// operator-resume ops (NQ-C1 hk-tigaf.6). When non-empty, the operation
+	// is scoped to the named queue; when absent/empty, the operation is global.
+	Queue string `json:"queue,omitempty"`
 }
 
 // SocketResponse is the daemon's reply to a SocketRequest.
@@ -435,7 +440,7 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
 			break
 		}
-		if err := oh.HandleOperatorPause(ctx); err != nil {
+		if err := oh.HandleOperatorPause(ctx, req.Queue); err != nil {
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-pause: %v", err)}
 		} else {
 			resp = SocketResponse{Ok: true}
@@ -446,7 +451,7 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
 			break
 		}
-		if err := oh.HandleOperatorResume(ctx); err != nil {
+		if err := oh.HandleOperatorResume(ctx, req.Queue); err != nil {
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-resume: %v", err)}
 		} else {
 			resp = SocketResponse{Ok: true}

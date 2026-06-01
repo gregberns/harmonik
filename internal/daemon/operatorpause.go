@@ -1,23 +1,27 @@
 package daemon
 
-// operatorpause.go — OperatorPauseController (hk-ry8q1).
+// operatorpause.go — OperatorPauseController (hk-ry8q1, extended hk-tigaf.6).
 //
 // OperatorPauseController implements OperatorControlHandler for the socket
 // dispatcher and exposes IsPaused for the workloop br-ready dispatch gate.
 //
 // Lifecycle:
-//   - HandleOperatorPause: emits operator_pause_status{pausing} →
-//     sets paused=true → emits operator_pause_status{paused}.
-//     The QueueOperatorEventConsumer reacts to operator_pause_status to
-//     transition the active queue active → paused-by-drain (QM-054).
-//   - HandleOperatorResume: clears paused=false → emits operator_resuming.
-//     The QueueOperatorEventConsumer reacts to operator_resuming to
-//     transition paused-by-drain → active.
+//   - HandleOperatorPause(ctx, ""): global pause — emits operator_pause_status{pausing}
+//     (no queue_name) → sets paused=true → emits operator_pause_status{paused}.
+//     The QueueOperatorEventConsumer reacts to drain ALL queues (QM-054).
+//   - HandleOperatorPause(ctx, queueName): per-queue pause — emits
+//     operator_pause_status{pausing, queue_name=queueName} without touching the
+//     global paused flag. Only the named queue is transitioned by the consumer.
+//   - HandleOperatorResume(ctx, ""): global resume — clears paused=false → emits
+//     operator_resuming (no queue_name). Consumer resumes ALL paused-by-drain queues.
+//   - HandleOperatorResume(ctx, queueName): per-queue resume — emits
+//     operator_resuming{queue_name=queueName} without touching the global paused flag.
 //   - IsPaused: consulted by the workloop br-ready gate before every dispatch.
+//     Returns true ONLY for the global pause; per-queue pauses do not affect it.
 //
 // Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
 // Spec ref: specs/event-model.md §8.7.6 (operator_pause_status), §8.7.7 (operator_resuming).
-// Bead ref: hk-ry8q1.
+// Bead ref: hk-ry8q1, hk-tigaf.6.
 
 import (
 	"context"
@@ -34,14 +38,20 @@ import (
 // requests received from the daemon's Unix socket.
 //
 // Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
+// Bead ref: hk-tigaf.6 (queueName parameter for per-queue scoping).
 type OperatorControlHandler interface {
-	// HandleOperatorPause initiates an operator pause: sets paused state and
-	// emits operator_pause_status events (event-model.md §8.7.6).
-	HandleOperatorPause(ctx context.Context) error
+	// HandleOperatorPause initiates an operator pause. queueName scopes the
+	// pause to a single named queue; empty queueName is a global pause that
+	// affects all queues and sets the EM-067 br-ready gate.
+	//
+	// Emits operator_pause_status events (event-model.md §8.7.6).
+	HandleOperatorPause(ctx context.Context, queueName string) error
 
-	// HandleOperatorResume clears operator pause: resets state and emits
-	// operator_resuming (event-model.md §8.7.7).
-	HandleOperatorResume(ctx context.Context) error
+	// HandleOperatorResume clears an operator pause. queueName scopes the
+	// resume to a single named queue; empty queueName is a global resume.
+	//
+	// Emits operator_resuming (event-model.md §8.7.7).
+	HandleOperatorResume(ctx context.Context, queueName string) error
 }
 
 // OperatorPauseController tracks daemon operator-pause state and emits the
@@ -75,32 +85,51 @@ func (c *OperatorPauseController) IsPaused() bool {
 
 // HandleOperatorPause implements OperatorControlHandler.
 //
-// Emits operator_pause_status{status:"pausing"} to begin the pause sequence
-// (which triggers QueueOperatorEventConsumer to transition the active queue
-// active → paused-by-drain per QM-054), sets the internal paused flag, then
-// emits operator_pause_status{status:"paused"} to complete the paired-phase
-// lifecycle per §8.9(h). Idempotent: no-op when already paused. Concurrent
-// calls are serialised by mu so only one wins; others are silent no-ops.
+// When queueName is empty (global pause): emits operator_pause_status{pausing}
+// with no queue_name, sets the internal paused flag (EM-067 br-ready gate), then
+// emits operator_pause_status{paused}. Triggers QueueOperatorEventConsumer to
+// transition ALL active queues to paused-by-drain (QM-054). Idempotent when
+// already globally paused.
+//
+// When queueName is non-empty (per-queue pause): emits operator_pause_status
+// events scoped to that queue name WITHOUT setting the global paused flag. The
+// br-ready gate is unaffected; only the named queue is drained by the consumer.
+//
+// Concurrent calls for the same scope are serialised by mu.
 //
 // Spec ref: specs/event-model.md §8.7.6; specs/operator-nfr.md §4.3 ON-007–ON-010.
-func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context) error {
+// Bead ref: hk-tigaf.6.
+func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context, queueName string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.paused {
-		return nil // already paused — idempotent
-	}
+	if queueName == "" {
+		// Global pause: gate with the paused flag for idempotency.
+		if c.paused {
+			return nil // already paused — idempotent
+		}
 
-	ts := msTimestamp()
-	if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePausing, ts); err != nil {
-		return fmt.Errorf("operator-pause: emit pausing: %w", err)
-	}
+		ts := msTimestamp()
+		if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePausing, ts, ""); err != nil {
+			return fmt.Errorf("operator-pause: emit pausing: %w", err)
+		}
 
-	c.paused = true
+		c.paused = true
 
-	ts = msTimestamp()
-	if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePaused, ts); err != nil {
-		return fmt.Errorf("operator-pause: emit paused: %w", err)
+		ts = msTimestamp()
+		if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePaused, ts, ""); err != nil {
+			return fmt.Errorf("operator-pause: emit paused: %w", err)
+		}
+	} else {
+		// Per-queue pause: does not touch the global paused flag.
+		ts := msTimestamp()
+		if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePausing, ts, queueName); err != nil {
+			return fmt.Errorf("operator-pause[%s]: emit pausing: %w", queueName, err)
+		}
+		ts = msTimestamp()
+		if err := c.emitPauseStatusLocked(ctx, core.OperatorPauseStatusValuePaused, ts, queueName); err != nil {
+			return fmt.Errorf("operator-pause[%s]: emit paused: %w", queueName, err)
+		}
 	}
 
 	return nil
@@ -108,24 +137,34 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context) error
 
 // HandleOperatorResume implements OperatorControlHandler.
 //
-// Clears the paused flag and emits operator_resuming, which triggers the
-// QueueOperatorEventConsumer to transition the active queue
-// paused-by-drain → active. Idempotent: no-op when not paused. Concurrent
-// calls are serialised by mu so only one wins; others are silent no-ops.
+// When queueName is empty (global resume): clears the paused flag and emits
+// operator_resuming with no queue_name. Triggers QueueOperatorEventConsumer to
+// transition ALL paused-by-drain queues back to active. Idempotent: no-op when
+// not globally paused.
+//
+// When queueName is non-empty (per-queue resume): emits operator_resuming scoped
+// to that queue name WITHOUT touching the global paused flag.
+//
+// Concurrent calls are serialised by mu.
 //
 // Spec ref: specs/event-model.md §8.7.7; specs/operator-nfr.md §4.3.
-func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context) error {
+// Bead ref: hk-tigaf.6.
+func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context, queueName string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if !c.paused {
-		return nil // not paused — idempotent
+	if queueName == "" {
+		// Global resume: gate with paused flag for idempotency.
+		if !c.paused {
+			return nil // not paused — idempotent
+		}
+		c.paused = false
 	}
-
-	c.paused = false
+	// Per-queue resume: no global flag change; always emit (idempotency is in consumer).
 
 	payload := core.OperatorResumingPayload{
 		ResumedAt: msTimestamp(),
+		QueueName: queueName,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -139,11 +178,12 @@ func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context) erro
 }
 
 // emitPauseStatusLocked emits an operator_pause_status event with the given
-// status and changedAt timestamp. Caller must hold mu.
-func (c *OperatorPauseController) emitPauseStatusLocked(ctx context.Context, status core.OperatorPauseStatusValue, changedAt string) error {
+// status, changedAt timestamp, and optional queueName scope. Caller must hold mu.
+func (c *OperatorPauseController) emitPauseStatusLocked(ctx context.Context, status core.OperatorPauseStatusValue, changedAt, queueName string) error {
 	payload := core.OperatorPauseStatusPayload{
 		Status:    status,
 		ChangedAt: changedAt,
+		QueueName: queueName,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

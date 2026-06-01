@@ -1,6 +1,6 @@
 package daemon
 
-// queue_operatoreventconsumer_7urls.go — queue operator-event consumer (hk-7urls).
+// queue_operatoreventconsumer_7urls.go — queue operator-event consumer (hk-7urls, hk-tigaf.6).
 //
 // QueueOperatorEventConsumer subscribes to daemon operator lifecycle events and
 // drives queue-level active ↔ paused-by-drain transitions per
@@ -11,8 +11,12 @@ package daemon
 //   - operator_pause_status (§8.7.6) — transitions queue active → paused-by-drain
 //     on both the pausing and paused status values.  Idempotent when the queue is
 //     already paused-by-drain.
+//     When QueueName is non-empty (NQ-C1 hk-tigaf.6), only the named queue is
+//     transitioned; when empty, ALL active queues are transitioned (back-compat).
 //   - operator_resuming (§8.7.7) — transitions queue paused-by-drain → active.
 //     Idempotent when the queue is already active or absent.
+//     When QueueName is non-empty, only the named queue is resumed; when empty,
+//     ALL paused-by-drain queues are resumed.
 //
 // On entry to paused-by-drain the consumer:
 //  1. Transitions Queue.Status from active → paused-by-drain.
@@ -28,7 +32,7 @@ package daemon
 // reasoning as HandlerPausePolicyGoroutine).
 //
 // Spec ref: specs/queue-model.md §8.5 QM-054, §8.6 QM-055.
-// Bead ref: hk-7urls.
+// Bead ref: hk-7urls, hk-tigaf.6.
 
 import (
 	"context"
@@ -119,11 +123,14 @@ func (c *QueueOperatorEventConsumer) Subscribe(bus eventbus.EventBus) error {
 // ---------------------------------------------------------------------------
 
 // handleOperatorPauseStatus processes operator_pause_status events and
-// transitions the queue from active → paused-by-drain (QM-054).
+// transitions the queue(s) from active → paused-by-drain (QM-054).
 //
-// Both "pausing" and "paused" status values trigger the transition.  The
+// Both "pausing" and "paused" status values trigger the transition. The
 // transition is idempotent: if the queue is already paused-by-drain, this is
 // a no-op (duplicate event safety).
+//
+// When payload.QueueName is non-empty (NQ-C1 hk-tigaf.6), only the named
+// queue is drained; when empty, ALL active queues are drained.
 func (c *QueueOperatorEventConsumer) handleOperatorPauseStatus(ctx context.Context, evt core.Event) error {
 	var payload core.OperatorPauseStatusPayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
@@ -138,7 +145,7 @@ func (c *QueueOperatorEventConsumer) handleOperatorPauseStatus(ctx context.Conte
 	// subscribing to both is idempotent and defends against missed events.
 	switch payload.Status {
 	case core.OperatorPauseStatusValuePausing, core.OperatorPauseStatusValuePaused:
-		return c.transitionToPausedByDrain(ctx)
+		return c.transitionToPausedByDrain(ctx, payload.QueueName)
 	}
 	return nil
 }
@@ -148,104 +155,137 @@ func (c *QueueOperatorEventConsumer) handleOperatorPauseStatus(ctx context.Conte
 // ---------------------------------------------------------------------------
 
 // handleOperatorResuming processes operator_resuming events and transitions the
-// queue from paused-by-drain → active.
+// queue(s) from paused-by-drain → active.
 //
 // Idempotent: if the queue is already active or absent, this is a no-op.
-func (c *QueueOperatorEventConsumer) handleOperatorResuming(ctx context.Context, _ core.Event) error {
-	return c.transitionToActive(ctx)
+//
+// When payload.QueueName is non-empty (NQ-C1 hk-tigaf.6), only the named
+// queue is resumed; when empty, ALL paused-by-drain queues are resumed.
+func (c *QueueOperatorEventConsumer) handleOperatorResuming(ctx context.Context, evt core.Event) error {
+	var payload core.OperatorResumingPayload
+	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
+		return fmt.Errorf("queue-operator-drain: resume: unmarshal: %w", err)
+	}
+	return c.transitionToActive(ctx, payload.QueueName)
 }
 
 // ---------------------------------------------------------------------------
 // transition helpers
 // ---------------------------------------------------------------------------
 
-// transitionToPausedByDrain transitions the in-memory queue from active →
-// paused-by-drain, persists, and emits queue_paused{reason: "operator_drain"}.
+// transitionToPausedByDrain transitions queue(s) from active → paused-by-drain,
+// persists, and emits queue_paused{reason: "operator_drain"} per QM-054.
 //
-// Per QM-054 steps:
+// When queueName is non-empty (NQ-C1 hk-tigaf.6), only the named queue is
+// transitioned. When queueName is empty, ALL queues in the store that are
+// currently active are transitioned (global operator-drain back-compat).
+//
+// Per QM-054 steps (per matched queue):
 //  1. Transition Queue.Status from active → paused-by-drain.
 //  2. Persist via QM-001 (queue.Persist). Persist-before-emit per QM-063.
 //  3. Emit queue_paused{reason: "operator_drain"}.
 //
-// No-op when no queue is loaded or queue is already paused-by-drain.
-func (c *QueueOperatorEventConsumer) transitionToPausedByDrain(ctx context.Context) error {
+// No-op when no queue is loaded or no active queue matches.
+func (c *QueueOperatorEventConsumer) transitionToPausedByDrain(ctx context.Context, queueName string) error {
 	lq := c.cfg.QueueStore.LockForMutation()
 	defer lq.Done()
 
-	q := lq.Queue()
-	if q == nil {
-		return nil // no active queue — nothing to pause
-	}
-	if q.Status != queue.QueueStatusActive {
-		return nil // already paused or completed — idempotent no-op
+	var names []string
+	if queueName != "" {
+		names = []string{queue.NormaliseQueueName(queueName)}
+	} else {
+		names = lq.LockedAllQueueNames()
 	}
 
-	q.Status = queue.QueueStatusPausedByDrain
-	lq.SetQueue(q)
-
-	// QM-063: persist BEFORE emitting the queue_paused event.
-	if c.cfg.ProjectDir != "" {
-		if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
-			return fmt.Errorf("queue-operator-drain: pause: persist: %w", err)
+	for _, name := range names {
+		q := lq.LockedQueueByName(name)
+		if q == nil {
+			continue // queue not loaded — skip
 		}
-	}
-
-	// Find the currently active group index for the queue_paused payload (QM-054
-	// step 2). Use the first group with an active status if present; fall back to
-	// the last group index when no group is currently advancing (e.g. all pending
-	// in a multi-wave queue).
-	activeGroupIndex := 0
-	for _, g := range q.Groups {
-		if g.Status == queue.GroupStatusActive {
-			activeGroupIndex = g.GroupIndex
-			break
+		if q.Status != queue.QueueStatusActive {
+			continue // already paused or completed — idempotent no-op for this queue
 		}
-	}
 
-	// Emit queue_paused{reason: "operator_drain"} per QM-054.
-	pausedPayload := core.QueuePausedPayload{
-		QueueID:    q.QueueID,
-		GroupIndex: activeGroupIndex,
-		FailCount:  0, // operator-drain: no failures contributed
-		PausedAt:   time.Now().UTC().Format(time.RFC3339),
-		Reason:     "operator_drain",
-	}
-	payloadBytes, err := json.Marshal(pausedPayload)
-	if err != nil {
-		return fmt.Errorf("queue-operator-drain: pause: marshal queue_paused payload: %w", err)
-	}
-	if emitErr := c.cfg.Bus.Emit(ctx, core.EventTypeQueuePaused, payloadBytes); emitErr != nil {
-		return fmt.Errorf("queue-operator-drain: pause: emit queue_paused: %w", emitErr)
+		q.Status = queue.QueueStatusPausedByDrain
+		lq.LockedSetQueueByName(name, q)
+
+		// QM-063: persist BEFORE emitting the queue_paused event.
+		if c.cfg.ProjectDir != "" {
+			if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
+				return fmt.Errorf("queue-operator-drain: pause[%s]: persist: %w", name, err)
+			}
+		}
+
+		// Find the currently active group index for the queue_paused payload (QM-054
+		// step 2). Use the first group with an active status if present; fall back to
+		// the last group index when no group is currently advancing (e.g. all pending
+		// in a multi-wave queue).
+		activeGroupIndex := 0
+		for _, g := range q.Groups {
+			if g.Status == queue.GroupStatusActive {
+				activeGroupIndex = g.GroupIndex
+				break
+			}
+		}
+
+		// Emit queue_paused{reason: "operator_drain"} per QM-054.
+		pausedPayload := core.QueuePausedPayload{
+			QueueID:    q.QueueID,
+			GroupIndex: activeGroupIndex,
+			FailCount:  0, // operator-drain: no failures contributed
+			PausedAt:   time.Now().UTC().Format(time.RFC3339),
+			Reason:     "operator_drain",
+		}
+		payloadBytes, err := json.Marshal(pausedPayload)
+		if err != nil {
+			return fmt.Errorf("queue-operator-drain: pause[%s]: marshal queue_paused payload: %w", name, err)
+		}
+		if emitErr := c.cfg.Bus.Emit(ctx, core.EventTypeQueuePaused, payloadBytes); emitErr != nil {
+			return fmt.Errorf("queue-operator-drain: pause[%s]: emit queue_paused: %w", name, emitErr)
+		}
 	}
 
 	return nil
 }
 
-// transitionToActive transitions the in-memory queue from paused-by-drain →
-// active and persists.
+// transitionToActive transitions queue(s) from paused-by-drain → active and
+// persists.
 //
-// No-op when no queue is loaded or queue is not paused-by-drain.
+// When queueName is non-empty (NQ-C1 hk-tigaf.6), only the named queue is
+// resumed. When queueName is empty, ALL paused-by-drain queues in the store
+// are resumed (global resume back-compat).
+//
+// No-op when no matching queue is loaded or none is paused-by-drain.
 // The spec does not define a queue-level resume event; the transition is
 // observable only through queue-status responses.
-func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context) error {
+func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context, queueName string) error {
 	lq := c.cfg.QueueStore.LockForMutation()
 	defer lq.Done()
 
-	q := lq.Queue()
-	if q == nil {
-		return nil // no active queue — nothing to resume
-	}
-	if q.Status != queue.QueueStatusPausedByDrain {
-		return nil // not paused-by-drain — idempotent no-op
+	var names []string
+	if queueName != "" {
+		names = []string{queue.NormaliseQueueName(queueName)}
+	} else {
+		names = lq.LockedAllQueueNames()
 	}
 
-	q.Status = queue.QueueStatusActive
-	lq.SetQueue(q)
+	for _, name := range names {
+		q := lq.LockedQueueByName(name)
+		if q == nil {
+			continue // queue not loaded — skip
+		}
+		if q.Status != queue.QueueStatusPausedByDrain {
+			continue // not paused-by-drain — idempotent no-op for this queue
+		}
 
-	// Persist the resumed status.
-	if c.cfg.ProjectDir != "" {
-		if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
-			return fmt.Errorf("queue-operator-drain: resume: persist: %w", err)
+		q.Status = queue.QueueStatusActive
+		lq.LockedSetQueueByName(name, q)
+
+		// Persist the resumed status.
+		if c.cfg.ProjectDir != "" {
+			if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
+				return fmt.Errorf("queue-operator-drain: resume[%s]: persist: %w", name, err)
+			}
 		}
 	}
 

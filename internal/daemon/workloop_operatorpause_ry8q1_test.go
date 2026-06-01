@@ -76,7 +76,7 @@ func TestOperatorPause_BrReadyPath_HoldOnPaused(t *testing.T) {
 
 	ctrl := daemon.ExportedNewOperatorPauseController(bus)
 	// Pause BEFORE the loop starts — first dispatch tick must be held.
-	if err := ctrl.HandleOperatorPause(context.Background()); err != nil {
+	if err := ctrl.HandleOperatorPause(context.Background(), ""); err != nil {
 		t.Fatalf("HandleOperatorPause: %v", err)
 	}
 
@@ -112,7 +112,7 @@ func TestOperatorPause_BrReadyPath_HoldOnPaused(t *testing.T) {
 	}
 
 	// Resume: gate should release and Ready() should be called within the poll interval.
-	if err := ctrl.HandleOperatorResume(context.Background()); err != nil {
+	if err := ctrl.HandleOperatorResume(context.Background(), ""); err != nil {
 		t.Fatalf("HandleOperatorResume: %v", err)
 	}
 

@@ -52,7 +52,7 @@ func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 		t.Fatal("expected not paused before first Pause call")
 	}
 
-	if err := ctrl.HandleOperatorPause(ctx); err != nil {
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("HandleOperatorPause: %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestOperatorPauseController_PauseThenResume(t *testing.T) {
 	assertPauseStatus(t, pauseEvents[1], core.OperatorPauseStatusValuePaused)
 
 	// Resume.
-	if err := ctrl.HandleOperatorResume(ctx); err != nil {
+	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("HandleOperatorResume: %v", err)
 	}
 
@@ -100,12 +100,12 @@ func TestOperatorPauseController_IdempotentPause(t *testing.T) {
 	ctx := context.Background()
 	ctrl, col := newOpPauseController(t)
 
-	if err := ctrl.HandleOperatorPause(ctx); err != nil {
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("first HandleOperatorPause: %v", err)
 	}
 
 	// Second pause: must be a no-op.
-	if err := ctrl.HandleOperatorPause(ctx); err != nil {
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("second HandleOperatorPause: %v", err)
 	}
 
@@ -126,7 +126,7 @@ func TestOperatorPauseController_IdempotentResume(t *testing.T) {
 	ctrl, col := newOpPauseController(t)
 
 	// Resume on a non-paused controller: no-op and no event.
-	if err := ctrl.HandleOperatorResume(ctx); err != nil {
+	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("HandleOperatorResume on non-paused: %v", err)
 	}
 
@@ -157,7 +157,7 @@ func TestOperatorPauseController_ConcurrentPauseSerializes(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			errs[i] = ctrl.HandleOperatorPause(ctx)
+			errs[i] = ctrl.HandleOperatorPause(ctx, "")
 		}()
 	}
 	wg.Wait()
@@ -192,18 +192,18 @@ func TestOperatorPauseController_PauseResumeCycle(t *testing.T) {
 	ctrl, col := newOpPauseController(t)
 
 	// Cycle 1.
-	if err := ctrl.HandleOperatorPause(ctx); err != nil {
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("cycle1 Pause: %v", err)
 	}
-	if err := ctrl.HandleOperatorResume(ctx); err != nil {
+	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("cycle1 Resume: %v", err)
 	}
 
 	// Cycle 2.
-	if err := ctrl.HandleOperatorPause(ctx); err != nil {
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
 		t.Fatalf("cycle2 Pause: %v", err)
 	}
-	if err := ctrl.HandleOperatorResume(ctx); err != nil {
+	if err := ctrl.HandleOperatorResume(ctx, ""); err != nil {
 		t.Fatalf("cycle2 Resume: %v", err)
 	}
 

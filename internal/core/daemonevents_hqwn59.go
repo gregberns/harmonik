@@ -378,6 +378,11 @@ type OperatorPauseStatusPayload struct {
 	//
 	// TODO(hk-hqwn.71): hoist to typed OperatorID alias when that type lands.
 	OperatorID *string `json:"operator_id,omitempty"`
+
+	// QueueName is the optional named-queue scope for a per-queue pause
+	// (NQ-C1 hk-tigaf.6). When non-empty, only the named queue is
+	// transitioned; when empty, the pause is global (all queues).
+	QueueName string `json:"queue_name,omitempty"`
 }
 
 // Valid reports whether p is a well-formed OperatorPauseStatusPayload.
@@ -412,6 +417,11 @@ type OperatorResumingPayload struct {
 	// ResumedAt is the RFC 3339 wall-clock timestamp at the resume transition.
 	// Required (non-empty).
 	ResumedAt string `json:"resumed_at"`
+
+	// QueueName is the optional named-queue scope for a per-queue resume
+	// (NQ-C1 hk-tigaf.6). When non-empty, only the named queue is
+	// transitioned; when empty, the resume is global (all paused-by-drain queues).
+	QueueName string `json:"queue_name,omitempty"`
 }
 
 // Valid reports whether p is a well-formed OperatorResumingPayload.

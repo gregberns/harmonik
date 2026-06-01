@@ -371,7 +371,7 @@ func TestQueuePaused_PersistRoundTrip(t *testing.T) {
 	}
 
 	// Load simulates the daemon reading queue.json on restart (QM-002).
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestQueuePaused_PersistRoundTrip_ItemStatusesPreserved(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestQueuePaused_PersistRoundTrip_FileAbsentAfterNoQueue(t *testing.T) {
 	projectDir := queuePausedFixtureTempDir(t)
 
 	ctx := context.Background()
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load on absent file: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestQueuePaused_PersistRoundTrip_PausedByDrainAlsoPreserved(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

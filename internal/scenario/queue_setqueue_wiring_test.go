@@ -57,7 +57,7 @@ func queueSetQueueWiringProjectDir(t *testing.T) string {
 
 // queueSetQueueWiringQueueJSON returns the expected path to queue.json.
 func queueSetQueueWiringQueueJSON(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queue.json")
+	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
 // queueSetQueueWiringFakeLedger is a minimal queue.BeadLedger stub.
@@ -333,7 +333,7 @@ func TestQueueSetQueueWiring_AppendUpdatesQueueStore(t *testing.T) {
 	}
 
 	// queue.json on disk must reflect the appended item (hk-lzs8r).
-	loaded, loadErr := queue.Load(t.Context(), projectDir)
+	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Load after append: %v", loadErr)
 	}

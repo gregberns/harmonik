@@ -119,7 +119,7 @@ func queueLifecycleFixtureTwoGroupQueue(t *testing.T) queue.Queue {
 
 // queueLifecycleFixtureQueueJSON returns the canonical .harmonik/queue.json path.
 func queueLifecycleFixtureQueueJSON(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queue.json")
+	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -452,7 +452,7 @@ func TestQueueLifecycle_QueueJSON_UnlinkedOnCompletion(t *testing.T) {
 	}
 
 	// (e) Load after unlink must return nil (no active queue per QM-053 step 4).
-	loaded, err := queue.Load(t.Context(), projectDir)
+	loaded, err := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after CompleteAndUnlink: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestQueueLifecycle_QueueStore_HoldsActiveQueue(t *testing.T) {
 	q := queueLifecycleFixtureTwoGroupQueue(t)
 	qCopy := q // store a copy
 
-	qs := &daemon.QueueStore{}
+	qs := daemon.NewQueueStore()
 	qs.SetQueue(&q)
 
 	// Queue must be readable and match the fixture.

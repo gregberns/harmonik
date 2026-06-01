@@ -120,10 +120,23 @@ func queueCrashRecoveryActiveQueue() queue.Queue {
 	}
 }
 
-// queueCrashRecoveryQueuePath returns the expected path of queue.json under
-// projectDir, for use in direct file assertions.
+// queueCrashRecoveryQueuePath returns the expected path of the per-queue file
+// for the "main" queue under projectDir. After NQ-A2 (hk-tigaf.3) queues live
+// at .harmonik/queues/<name>.json, not at the legacy .harmonik/queue.json.
 func queueCrashRecoveryQueuePath(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queue.json")
+	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+}
+
+// queueCrashRecoveryEnsureQueuesDir ensures .harmonik/queues/ exists under
+// projectDir. Required for tests that write queue files directly (without
+// going through queue.Persist, which creates the directory automatically).
+func queueCrashRecoveryEnsureQueuesDir(t *testing.T, projectDir string) {
+	t.Helper()
+	dir := filepath.Join(projectDir, ".harmonik", "queues")
+	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("queueCrashRecoveryEnsureQueuesDir: MkdirAll: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -263,13 +276,14 @@ func TestQueueCrashRecovery_QM002_CorruptFileWarnAndProceed(t *testing.T) {
 	projectDir := queueCrashRecoveryProjectDir(t)
 	ctx := context.Background()
 
-	// Write a corrupt queue.json — as if a mid-write crash left a partial file
+	// Write a corrupt queue file — as if a mid-write crash left a partial file
 	// that survived as the canonical path (impossible under WM-026 atomic-write
 	// but defensively handled per QM-002 for file-system corruption scenarios).
+	queueCrashRecoveryEnsureQueuesDir(t, projectDir)
 	qPath := queueCrashRecoveryQueuePath(projectDir)
 	//nolint:gosec // G306: 0600 is appropriate for .harmonik test fixture
 	if err := os.WriteFile(qPath, []byte(`{"schema_version":1,"corrupted":`), 0o600); err != nil {
-		t.Fatalf("setup: write corrupt queue.json: %v", err)
+		t.Fatalf("setup: write corrupt queue file: %v", err)
 	}
 
 	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
@@ -302,13 +316,14 @@ func TestQueueCrashRecovery_QM002_ForwardIncompatibleSchemaVersion(t *testing.T)
 	projectDir := queueCrashRecoveryProjectDir(t)
 	ctx := context.Background()
 
-	// Write queue.json with schema_version=99 (future, unsupported).
+	// Write queue file with schema_version=99 (future, unsupported).
+	queueCrashRecoveryEnsureQueuesDir(t, projectDir)
 	qPath := queueCrashRecoveryQueuePath(projectDir)
 	const futureSchema = `{"schema_version":99,"queue_id":"0190b3c4-8f12-7c4e-9a82-000000000099",` +
 		`"submitted_at":"2026-05-14T22:00:00Z","status":"active","groups":[]}`
 	//nolint:gosec // G306: 0600 is appropriate for .harmonik test fixture
 	if err := os.WriteFile(qPath, []byte(futureSchema), 0o600); err != nil {
-		t.Fatalf("setup: write future-schema queue.json: %v", err)
+		t.Fatalf("setup: write future-schema queue file: %v", err)
 	}
 
 	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)

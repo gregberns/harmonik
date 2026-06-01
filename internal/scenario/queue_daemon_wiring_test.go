@@ -54,9 +54,11 @@ func queueDaemonWiringProjectDir(t *testing.T) string {
 	return dir
 }
 
-// queueDaemonWiringQueueJSON returns the expected path to queue.json under projectDir.
+// queueDaemonWiringQueueJSON returns the expected path to the per-queue file
+// for the "main" queue under projectDir. After NQ-A2 (hk-tigaf.3) queues live
+// at .harmonik/queues/<name>.json, not at the legacy .harmonik/queue.json.
 func queueDaemonWiringQueueJSON(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queue.json")
+	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
 // queueDaemonWiringSingleItemQueue builds a minimal Queue with one group and
@@ -87,11 +89,15 @@ func queueDaemonWiringSingleItemQueue(t *testing.T) queue.Queue {
 }
 
 // queueDaemonWiringFakeLedger is a minimal lifecycle.BeadLedger stub.
-// ShowBead returns not-found for all IDs (no dispatched items to cross-check).
+// ShowBead returns not-found for all IDs; ListInFlightBeads returns empty.
 type queueDaemonWiringFakeLedger struct{}
 
 func (f *queueDaemonWiringFakeLedger) ShowBead(_ context.Context, _ core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{}, errors.New("brcli: bead not found")
+}
+
+func (f *queueDaemonWiringFakeLedger) ListInFlightBeads(_ context.Context) ([]core.BeadRecord, error) {
+	return nil, nil
 }
 
 // queueDaemonWiringFakeEmitter is a no-op lifecycle.QueueEventEmitter stub.
@@ -132,9 +138,11 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 	}
 
 	// "Step 8a": daemon startup calls LoadQueueAtStartup.
+	// NQ-A2 (hk-tigaf.3): LoadQueueAtStartup now returns []*queue.Queue,
+	// one entry per queue file found under .harmonik/queues/.
 	ledger := &queueDaemonWiringFakeLedger{}
 	emitter := &queueDaemonWiringFakeEmitter{}
-	loaded, err := lifecycle.LoadQueueAtStartup(
+	loadedQueues, err := lifecycle.LoadQueueAtStartup(
 		context.Background(),
 		projectDir,
 		ledger,
@@ -144,8 +152,19 @@ func TestQueueDaemonWiring_LoadAtStartup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadQueueAtStartup: %v", err)
 	}
+	if len(loadedQueues) == 0 {
+		t.Fatal("LoadQueueAtStartup: returned empty slice; expected at least one queue (queue.json was present)")
+	}
+	// Find the "main" queue in the returned slice.
+	var loaded *queue.Queue
+	for _, lq := range loadedQueues {
+		if lq != nil && queue.NormaliseQueueName(lq.Name) == queue.QueueNameMain {
+			loaded = lq
+			break
+		}
+	}
 	if loaded == nil {
-		t.Fatal("LoadQueueAtStartup: returned nil queue; expected non-nil (queue.json was present)")
+		t.Fatal("LoadQueueAtStartup: main queue not found in returned slice")
 	}
 	if loaded.QueueID != q.QueueID {
 		t.Errorf("loaded.QueueID = %q; want %q", loaded.QueueID, q.QueueID)
@@ -177,7 +196,7 @@ func TestQueueDaemonWiring_Absent_ReturnsNil(t *testing.T) {
 	// No queue.json written.
 
 	ledger := &queueDaemonWiringFakeLedger{}
-	loaded, err := lifecycle.LoadQueueAtStartup(
+	loadedQueues, err := lifecycle.LoadQueueAtStartup(
 		context.Background(),
 		projectDir,
 		ledger,
@@ -187,8 +206,9 @@ func TestQueueDaemonWiring_Absent_ReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadQueueAtStartup (absent): %v", err)
 	}
-	if loaded != nil {
-		t.Errorf("LoadQueueAtStartup (absent): want nil, got non-nil queue (ID=%q)", loaded.QueueID)
+	// NQ-A2: returns empty slice when no queue files present (not nil).
+	if len(loadedQueues) != 0 {
+		t.Errorf("LoadQueueAtStartup (absent): want empty slice, got %d queues", len(loadedQueues))
 	}
 }
 
@@ -229,9 +249,10 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 	}
 
 	// ── Step 2: Load — daemon startup calls LoadQueueAtStartup (PL-005 step 8a). ──
+	// NQ-A2: LoadQueueAtStartup returns []*queue.Queue; find the main queue.
 	ledger := &queueDaemonWiringFakeLedger{}
 	emitter := &queueDaemonWiringFakeEmitter{}
-	loaded, err := lifecycle.LoadQueueAtStartup(
+	loadedQueues, err := lifecycle.LoadQueueAtStartup(
 		context.Background(),
 		projectDir,
 		ledger,
@@ -241,8 +262,18 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("(load) LoadQueueAtStartup: %v", err)
 	}
+	if len(loadedQueues) == 0 {
+		t.Fatal("(load) LoadQueueAtStartup returned empty slice; expected loaded queue")
+	}
+	var loaded *queue.Queue
+	for _, lq := range loadedQueues {
+		if lq != nil && queue.NormaliseQueueName(lq.Name) == queue.QueueNameMain {
+			loaded = lq
+			break
+		}
+	}
 	if loaded == nil {
-		t.Fatal("(load) LoadQueueAtStartup returned nil; expected loaded queue")
+		t.Fatal("(load) main queue not found in LoadQueueAtStartup result")
 	}
 
 	// ── Step 3: Drain — simulate the work loop dispatching and completing the item. ──
@@ -282,15 +313,15 @@ func TestQueueDaemonWiring_DrainAndUnlink(t *testing.T) {
 		t.Fatalf("(unlink) CompleteAndUnlink: %v", err)
 	}
 
-	// queue.json MUST be absent after CompleteAndUnlink (QM-003).
+	// main.json MUST be absent after CompleteAndUnlink (QM-003).
 	if _, statErr := os.Stat(queueDaemonWiringQueueJSON(projectDir)); statErr == nil {
-		t.Error("(unlink QM-003) queue.json still present after CompleteAndUnlink; want absent")
+		t.Error("(unlink QM-003) queues/main.json still present after CompleteAndUnlink; want absent")
 	} else if !os.IsNotExist(statErr) {
-		t.Errorf("(unlink QM-003) queue.json stat error (not IsNotExist): %v", statErr)
+		t.Errorf("(unlink QM-003) queues/main.json stat error (not IsNotExist): %v", statErr)
 	}
 
-	// Verify reload returns nil (queue.json absent → no active queue).
-	reloaded, reloadErr := queue.Load(context.Background(), projectDir)
+	// Verify reload returns nil (main.json absent → no active main queue).
+	reloaded, reloadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if reloadErr != nil {
 		t.Fatalf("(unlink) post-unlink Load: %v", reloadErr)
 	}

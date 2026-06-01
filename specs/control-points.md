@@ -8,10 +8,10 @@ requirement-prefix: CP
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.4.0
+version: 0.4.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-23
+last-updated: 2026-05-31
 depends-on:
   - architecture
   - execution-model
@@ -563,6 +563,13 @@ The Outcome wrapper (status / failure_class / artifact_refs / etc.) follows [exe
 
 Tags: mechanism
 
+#### CP-059 — Egress whitelist governs agent network access per policy
+
+A role's `permission_schema.egress_whitelist` declares the domain patterns the policy permits for outbound network access from agents assigned to that role. The field is optional; when absent (or `None` in the resolved `PermissionSchema`), egress is unrestricted — equivalent to the pre-ON-025 default, preserving backward compatibility. An explicitly empty list (`[]`) means deny all network egress. Domain patterns are glob-style strings; a bare hostname matches that hostname only; a `*` wildcard matches any single label (e.g., `*.anthropic.com` matches `api.anthropic.com` but NOT `foo.bar.anthropic.com`); a double wildcard `**` matches any number of labels (e.g., `**.anthropic.com` matches at any depth). The resolved `egress_whitelist[]` value from the role's `PermissionSchema` MUST be propagated into `LaunchSpec.egress_whitelist` at claim time per [handler-contract.md §4.11.HC-048b]; the handler enforces the list during skill provisioning. Network egress by the agent process at runtime (beyond provisioning) is governed by the same whitelist; enforcement at that level is owned by the sandbox subsystem (S06) and is deferred post-MVH; this spec states the policy-surface obligation.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ## 5. Invariants
 
 #### CP-INV-001 — Registry is the single source of truth
@@ -807,6 +814,7 @@ RECORD PermissionSchema:
     default_skills       : List<String>          -- MUST include "beads-cli" for MVH roles (§4.6.CP-031)
     allowed_hooks        : List<String>          -- Hook names that may modify behavior
     invocable_by         : List<String>          -- role names permitted to spawn this role
+    egress_whitelist     : List<String> | None   -- domain patterns permitted for agent network egress; None = unrestricted; [] = deny all (§4.11.CP-059)
 ```
 
 ```
@@ -841,6 +849,7 @@ roles:
       default_skills: [<skill-name>, ...]
       allowed_hooks: [<hook-name>, ...]
       invocable_by: [<role-name>, ...]
+      egress_whitelist: [<domain-pattern>, ...]  # optional; omit = unrestricted; [] = deny all; per §4.11.CP-059
     status: mvh-required | declared-but-deferred
 
 freedom_profiles:
@@ -1226,6 +1235,7 @@ Default-if-unresolved: Keep separate; revisit if a third Kind develops a hash di
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §6.3 policy-expression key path (`run.next_node.handler_type` → `run.next_node.agent_type`); corrected the accompanying cross-reference from `[handler-contract.md §4.1]` to `[handler-contract.md §6.1]` (the LaunchSpec RECORD declaring `agent_type` lives in §6.1, not §4.1). No requirement IDs, invariants, or schemas were touched. |
 | 2026-04-24 | 0.3.2 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; ~15 citations fixed. EV: `§3.2→§6.3`/§8/§8.2/§8.4/§4.3/§4.4 per context (payload registry, taxonomy, specific lifecycle per cite), `§3.7→§4.3` (consumer taxonomy) at §9.1 cross-refs. Reconciliation path fix: `[reconciliation.md §4.N]→[reconciliation/spec.md §4.N]` at §4.8 CP-040a replay-safe rule, §5 CP-INV-003 invariant, and §9.3 cross-refs (both §4.4 wall-clock budget and §4.5 verdict vocabulary). No requirement IDs, invariants, or schemas touched. |
 | 2026-05-23 | 0.4.0 | phase-3-dot/C4 | Added §4.12 (workflow-graph binding: CP-053 `gate` node-type binding, CP-054 `gate_ref` + `handler_ref` pairing, CP-055 typed `*_ref` family, CP-056 `policy_ref` deprecation, CP-057 `skills_ref` semantics); added §4.13 (Gate-decision Outcome payload: CP-058 + §6.1.8 `GateDecisionPayload` record, ownership taken per C3 OQ-C3-1 deferral); added CP-038a (mechanism-tagged Gate schema-version drift discipline mirroring CP-040a / CP-INV-003 envelope-hash + Cat 6 escalation); added `gate_definition_drift` and `gate_redefined_under_cat_6` events to §6.5; added OQ-CP-006 for envelope-hash type-sharing question. No existing requirements renumbered; CP-053 through CP-058 assigned. |
+| 2026-05-31 | 0.4.2 | agent (hk-sx9r.30) | **ON-025 egress whitelist policy surface (CP-059).** Added `egress_whitelist : List<String> | None` to `PermissionSchema` RECORD (§6.1): `None`/absent = unrestricted; `[]` = deny all; domain patterns are glob-style. Added matching `egress_whitelist` field to §6.3 Policy YAML template under `permission_schema:`. Added **CP-059** — Egress whitelist governs agent network access per policy: declares glob pattern semantics, backward-compatible default (absent = unrestricted), and propagation obligation into `LaunchSpec.egress_whitelist` at claim time per [handler-contract.md §4.11.HC-048b]. Runtime enforcement beyond provisioning is deferred to S06 sandbox subsystem. New ID: CP-059. No existing requirements renumbered. Cross-spec coordination: handler-contract.md gains HC-048b (provisioning enforcement); event-model.md §8.3.8 `skills_provisioned` gains `rejected_skills[]?` field. |
 | 2026-05-31 | 0.4.1 | agent (kerf `credfence` work) | Additive Budget-scope amendment. CP-022's `scope` enum extended to `{per_role, per_run, per_state, handler_account}` and an INFORMATIVE note added explaining that a `handler_account`-scoped Budget is the per-handler-account ceiling whose exhaustion is handler-fatal per [handler-pause.md HP-012] (resolving handler-pause §13 deferred item #3), reconciling the `scope` field name against HP-012's `budget_scope` wording. The note clarifies that the harmonik unified per-day cap of [cognition-loop.md CL-090] is NOT a registered CP-022 Budget (USD/day is not a representable `BudgetResource`); rather its exhaustion event carries `scope = handler_account` so HP-012 can discriminate the account-scoped variant. No existing requirement renumbered; CP-001 single-primitive invariant and CP-005 per-Kind table unchanged (an enum value is not a new primitive). Source: kerf `credfence` change design. |
 
 ## A. Appendices

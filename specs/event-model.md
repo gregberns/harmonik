@@ -8,10 +8,10 @@ requirement-prefix: EV
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.5.3
+version: 0.5.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-23
+last-updated: 2026-05-31
 depends-on:
   - architecture
   - execution-model
@@ -159,8 +159,10 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 | 8.3.5 | `agent_failed` | O | handler (via daemon watcher) | orchestrator-core, reconciliation, audit | `run_id`, `session_id`, `ended_at`, `error_category`, `reason` |
 | 8.3.6 | `agent_rate_limit_status` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `status` (`active` / `cleared`), `rate_limit_source?`, `retry_after_seconds?`, `changed_at` |
 | 8.3.7 | `session_log_location` | O | handler (via daemon watcher) | audit | `run_id`, `session_id`, `node_id`, `agent_type`, `log_path`, `log_format`, `bead_id?` |
-| 8.3.8 | `skills_provisioned` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `skills[]` (each: `name`, `source_path`, `version?`) |
+| 8.3.8 | `skills_provisioned` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `skills[]` (each: `name`, `source_path`, `version?`), `rejected_skills[]?` (each: `name`, `reject_reason`) |
 | 8.3.9 | `handler_capabilities` | O | handler (via daemon watcher) | orchestrator-core | `run_id`, `session_id`, `protocol_versions_supported[]` |
+
+> §8.3.8 (`skills_provisioned`). The `skills[]` list names ONLY the skills successfully installed before `agent_ready`; it is the authoritative record of what actually ran. The optional `rejected_skills[]` list names skills that failed pre-provisioning policy checks per [handler-contract.md §4.11.HC-048b] (egress-policy or workspace-escape violation), each entry carrying a `name` and a `reject_reason` string (e.g., `"egress_domain_not_whitelisted"`, `"path_escapes_workspace"`). `rejected_skills[]` is absent when no skills were rejected; an empty `skills[]` with a non-empty `rejected_skills[]` is valid when all required skills failed. Additive extension to §8.3: `rejected_skills[]?` is an optional field; N-1 readers that do not know the field tolerate its presence per the schema-evolution rule of §6.4.
 | 8.3.10 | `agent_warning_silent_hang` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `threshold_seconds`, `last_progress_event_at`, `fsm_state` |
 | 8.3.11 | `agent_resumed_after_warning` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `resumed_at`, `warning_duration_seconds` |
 | 8.3.12 | `agent_soft_terminating` | O | handler (via daemon watcher) | orchestrator-core, audit | `run_id`, `session_id`, `threshold_seconds`, `started_at` |
@@ -1491,6 +1493,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-31 | 0.5.4 | agent (hk-sx9r.30) | **ON-025 egress/workspace-escape audit: `rejected_skills[]?` added to §8.3.8 `skills_provisioned`.** Updated §8.3.8 payload to add optional `rejected_skills[]` (each: `name`, `reject_reason`). Added INFORMATIVE note: `skills[]` lists only successfully installed skills; `rejected_skills[]` lists skills rejected by pre-provisioning policy checks (egress-policy or workspace-escape per [handler-contract.md §4.11.HC-048b]); absent when no rejections occurred; `reject_reason` strings are `"egress_domain_not_whitelisted"` and `"path_escapes_workspace"`. Additive optional-field extension; N-1 readers tolerate unknown fields per §6.4. No EV requirement IDs added or renumbered. |
 | 2026-05-31 | 0.x | agent (kerf `credfence` work) | Additive producer-set amendment for `budget_exhausted` (§8.4.3). Added `cognition-loop (flywheel)` to the producer set so the unified per-day spend meter ([cognition-loop.md CL-090]) emits the account-scoped `budget_exhausted{budget_scope=handler_account}` that the budget-exhaustion handler-pause policy ([handler-pause.md HP-012]) consumes; added the optional `budget_scope`, `spent_usd`, `cap_usd` payload fields and made `run_id`/`session_id`/`attempted_dispatch_cost` optional for the account-scoped (run-agnostic) variant; added an INFORMATIVE producer-set note distinguishing the per-run (S04) variant from the account-scoped (cognition-loop) variant. Event class O and mechanism tag unchanged. Governed by the §6.4 additive-field rule and the §4.6 amendment protocol. Source: kerf `credfence` change design. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. 54 events; fsync on 4 hardcoded types; paired-phase events split; `gate_evaluated` single-event; envelope-plus-registry Go shape. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 reviewer integration. Event count 54 → 70 (net +16): added 22 missing cross-subsystem emissions (daemon lifecycle, upgrade contract, split gate verdicts, silent-hang FSM family, hook/guard events, `node_dispatch_requested`, `control_points_registered`, `bus_overflow`); merged 3 paired-phase pairs into status-carrying singles; retired 3 orphans (`gate_evaluated` replaced by split, `guard_denied` replaced by `guard_reordered`+`guard_failed`, `policy_violation` and `health_check` removed). Added EV-002a (monotonic UUIDv7), EV-011a (non-blocking back-pressure), EV-014a (dispatch semantics), EV-014b (consumer idempotency), EV-019a (panic bus flush as SHOULD), EV-034a (`source_subsystem` registration). Refactored EV-016 to derive fsync from durability class declared in §8. Added §6.4 breaking-change classification table. Added EV-023 post-crash-window guardrail. Added `TransitionKind`, `FailureClass`, `ErrorCategory`, `session_id` typing to §3. Added §8.9(g) orphan-lint criterion and §8.9(h) paired-event prohibition. Added EV-010 acyclicity clause and `depguard` rule for observers (EV-012). MUST/SHOULD split on EV-019/EV-019a; EV-017 rationale moved to §A.3; EV-011 quota bounded. Status remains `draft`. |

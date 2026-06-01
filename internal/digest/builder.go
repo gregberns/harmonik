@@ -138,7 +138,7 @@ func ensureTruncation(tr *TruncationReport) *TruncationReport {
 // queue.json is absent (no active queue, not an error); a non-nil error is a
 // genuine load failure to be surfaced per DC-007.
 func buildQueueSummary(ctx context.Context, projectDir string, lim Limits) (QueueSummary, error) {
-	q, err := queue.Load(ctx, projectDir)
+	q, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		return QueueSummary{Present: false}, err
 	}

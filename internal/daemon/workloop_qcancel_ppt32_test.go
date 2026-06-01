@@ -78,7 +78,7 @@ func queueCancelFixtureQueuePath(projectDir string) string {
 // contains status=active. Used to assert the file is absent / non-active after cancel.
 func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {
 	t.Helper()
-	q, err := queue.Load(context.Background(), projectDir)
+	q, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Logf("queueCancelFixtureHasActiveQueue: Load error (treating as absent): %v", err)
 		return false
@@ -190,7 +190,7 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 	}
 
 	// (c) A subsequent queue.Load returns nil so QM-027 is not tripped.
-	reloaded, loadErr := queue.Load(context.Background(), projectDir)
+	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Errorf("queue.Load after cancel: %v", loadErr)
 	}
@@ -268,7 +268,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	}
 
 	// queue.json must still exist with paused-by-failure (not archived by drainCancelledQueue).
-	reloaded, loadErr := queue.Load(context.Background(), projectDir)
+	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load: %v", loadErr)
 	}

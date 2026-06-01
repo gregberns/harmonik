@@ -56,13 +56,13 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return 1
 	}
 
-	existingQueue, loadErr := queue.Load(ctx, projectDir)
+	existingQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
-		fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue.json: %v\n", loadErr)
+		fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue file: %v\n", loadErr)
 		return 1
 	}
 	if existingQueue == nil {
-		fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue.json absent)")
+		fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue file absent)")
 		return 0
 	}
 
@@ -71,7 +71,7 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return 1
 	}
 
-	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, time.Now())
+	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queue.NormaliseQueueName(existingQueue.Name), time.Now())
 	if archiveErr != nil {
 		fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive queue.json: %v\n", archiveErr)
 		return 1

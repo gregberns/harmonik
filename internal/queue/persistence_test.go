@@ -22,16 +22,21 @@ func persistFixtureQueue() queue.Queue {
 }
 
 // persistFixtureProjectDir creates a temporary directory to act as projectDir
-// and pre-creates the .harmonik subdirectory. The temp dir and .harmonik are
+// and pre-creates the .harmonik/queues/ subdirectory. The temp dir is
 // cleaned up automatically via t.Cleanup.
 func persistFixtureProjectDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	harmonikDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
-		t.Fatalf("persistFixtureProjectDir: mkdir .harmonik: %v", err)
+	queuesDir := filepath.Join(dir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatalf("persistFixtureProjectDir: mkdir .harmonik/queues: %v", err)
 	}
 	return dir
+}
+
+// mainQueuePath returns the path to the main queue file under projectDir.
+func mainQueuePath(projectDir string) string {
+	return filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 }
 
 // TestPersistRoundTrip verifies that Persist followed by Load returns the
@@ -47,7 +52,7 @@ func TestPersistRoundTrip(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -72,15 +77,15 @@ func TestPersistRoundTrip(t *testing.T) {
 	}
 }
 
-// TestLoadFileAbsent verifies that Load returns (nil, nil) when queue.json
-// does not exist (specs/queue-model.md §3.2 QM-002 "File absent" case).
+// TestLoadFileAbsent verifies that Load returns (nil, nil) when the per-queue
+// file does not exist (specs/queue-model.md §3.2 QM-002 "File absent" case).
 func TestLoadFileAbsent(t *testing.T) {
 	t.Parallel()
 
 	projectDir := persistFixtureProjectDir(t)
 	ctx := context.Background()
 
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load on absent file: expected nil error, got %v", err)
 	}
@@ -89,8 +94,8 @@ func TestLoadFileAbsent(t *testing.T) {
 	}
 }
 
-// TestLoadFileCorrupt verifies that Load returns ErrCorrupt when queue.json
-// exists but contains invalid JSON (specs/queue-model.md §3.2 QM-002
+// TestLoadFileCorrupt verifies that Load returns ErrCorrupt when the per-queue
+// file exists but contains invalid JSON (specs/queue-model.md §3.2 QM-002
 // "File present but unparseable" case).
 func TestLoadFileCorrupt(t *testing.T) {
 	t.Parallel()
@@ -99,12 +104,12 @@ func TestLoadFileCorrupt(t *testing.T) {
 	ctx := context.Background()
 
 	// Write corrupt content directly — bypass Persist to produce a bad file.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if err := os.WriteFile(queuePath, []byte("this is not json {{{"), 0o600); err != nil {
-		t.Fatalf("setup: write corrupt queue.json: %v", err)
+		t.Fatalf("setup: write corrupt queue file: %v", err)
 	}
 
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if got != nil {
 		t.Errorf("Load on corrupt file: expected nil Queue, got %+v", got)
 	}
@@ -117,7 +122,7 @@ func TestLoadFileCorrupt(t *testing.T) {
 
 	// Verify the file is NOT auto-deleted per QM-002 (operator must inspect).
 	if _, statErr := os.Stat(queuePath); os.IsNotExist(statErr) {
-		t.Error("Load on corrupt file: queue.json was auto-deleted, must not be")
+		t.Error("Load on corrupt file: queue file was auto-deleted, must not be")
 	}
 }
 
@@ -153,9 +158,9 @@ func TestPersistSizeBound(t *testing.T) {
 	}
 
 	// Verify no file was written.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("Persist: queue.json exists after ErrTooLarge, should not have been created")
+		t.Error("Persist: queue file exists after ErrTooLarge, should not have been created")
 	}
 }
 
@@ -177,31 +182,31 @@ func persistFixtureLargeItemSlice(n int) []queue.Item {
 
 // TestPersistAtomicCrashSafety verifies that a partial write (temp file
 // present, rename not yet executed) does not corrupt the previously-written
-// canonical queue.json.
+// canonical queue file.
 //
 // Simulates the crash-window between steps 2 and 4 of the WM-026 sequence by
-// planting a .tmp-<pid> orphan alongside an existing good queue.json.
+// planting a .tmp-<pid> orphan alongside an existing good queue file.
 func TestPersistAtomicCrashSafety(t *testing.T) {
 	t.Parallel()
 
 	projectDir := persistFixtureProjectDir(t)
 	ctx := context.Background()
 
-	// Write a known-good queue.json first.
+	// Write a known-good queue file first.
 	original := persistFixtureQueue()
 	if err := queue.Persist(ctx, projectDir, &original); err != nil {
 		t.Fatalf("Persist (initial): %v", err)
 	}
 
 	// Plant a partial / corrupt temp file as if a crash occurred mid-write.
-	canonicalPath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	canonicalPath := mainQueuePath(projectDir)
 	tmpPath := canonicalPath + ".tmp-99999"
 	if err := os.WriteFile(tmpPath, []byte(`{"partial":true}`), 0o600); err != nil {
 		t.Fatalf("setup: plant partial temp file: %v", err)
 	}
 
 	// Load must still return the previously-written good queue.
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after planted partial temp: %v", err)
 	}
@@ -218,7 +223,7 @@ func TestPersistAtomicCrashSafety(t *testing.T) {
 	}
 }
 
-// TestUnlink verifies that Unlink removes queue.json and is idempotent
+// TestUnlink verifies that Unlink removes the per-queue file and is idempotent
 // (specs/queue-model.md §3.3 QM-003).
 func TestUnlink(t *testing.T) {
 	t.Parallel()
@@ -232,18 +237,18 @@ func TestUnlink(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	if err := queue.Unlink(ctx, projectDir); err != nil {
+	if err := queue.Unlink(ctx, projectDir, queue.QueueNameMain); err != nil {
 		t.Fatalf("Unlink: %v", err)
 	}
 
 	// File must be gone.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("Unlink: queue.json still exists after Unlink")
+		t.Error("Unlink: queue file still exists after Unlink")
 	}
 
 	// Load must now return (nil, nil).
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after Unlink: %v", err)
 	}
@@ -252,26 +257,26 @@ func TestUnlink(t *testing.T) {
 	}
 
 	// Second Unlink must be idempotent (no error on missing file).
-	if err := queue.Unlink(ctx, projectDir); err != nil {
+	if err := queue.Unlink(ctx, projectDir, queue.QueueNameMain); err != nil {
 		t.Fatalf("second Unlink (idempotent): %v", err)
 	}
 }
 
-// TestPersistMkdirAll verifies that Persist creates .harmonik/ when it does
-// not exist, rather than failing with a path error.
+// TestPersistMkdirAll verifies that Persist creates .harmonik/queues/ when it
+// does not exist, rather than failing with a path error.
 func TestPersistMkdirAll(t *testing.T) {
 	t.Parallel()
 
-	// Use a raw TempDir without pre-creating .harmonik.
+	// Use a raw TempDir without pre-creating .harmonik/queues/.
 	dir := t.TempDir()
 	ctx := context.Background()
 
 	q := persistFixtureQueue()
 	if err := queue.Persist(ctx, dir, &q); err != nil {
-		t.Fatalf("Persist without pre-existing .harmonik: %v", err)
+		t.Fatalf("Persist without pre-existing .harmonik/queues: %v", err)
 	}
 
-	got, err := queue.Load(ctx, dir)
+	got, err := queue.Load(ctx, dir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -330,10 +335,10 @@ func completeUnlinkFixtureQueue() queue.Queue {
 }
 
 // TestCompleteAndUnlink verifies the QM-053 completion sequence:
-// (a) queue.json is written with status=completed before removal,
-// (b) queue.json is absent after CompleteAndUnlink succeeds,
+// (a) queue file is written with status=completed before removal,
+// (b) queue file is absent after CompleteAndUnlink succeeds,
 // (c) Load returns (nil, nil) after completion, and
-// (d) a fresh Persist can re-create queue.json (new queue-submit is permitted).
+// (d) a fresh Persist can re-create the queue file (new queue-submit is permitted).
 //
 // Spec ref: specs/queue-model.md §8.4 QM-053, §3.3 QM-003.
 func TestCompleteAndUnlink(t *testing.T) {
@@ -360,13 +365,13 @@ func TestCompleteAndUnlink(t *testing.T) {
 	}
 
 	// QM-053 step 3: file must be absent.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("CompleteAndUnlink: queue.json still exists after completion, must be unlinked")
+		t.Error("CompleteAndUnlink: queue file still exists after completion, must be unlinked")
 	}
 
 	// Load must now return (nil, nil) per QM-003.
-	got, err := queue.Load(ctx, projectDir)
+	got, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after CompleteAndUnlink: %v", err)
 	}
@@ -380,7 +385,7 @@ func TestCompleteAndUnlink(t *testing.T) {
 	if err := queue.Persist(ctx, projectDir, &newQ); err != nil {
 		t.Fatalf("Persist after completion (new submit): %v", err)
 	}
-	reloaded, err := queue.Load(ctx, projectDir)
+	reloaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load after new submit: %v", err)
 	}
@@ -394,11 +399,7 @@ func TestCompleteAndUnlink(t *testing.T) {
 
 // TestCompleteAndUnlinkStatusOrdering verifies that CompleteAndUnlink persists
 // status=completed to disk BEFORE removing the file (QM-053 step 1 precedes
-// step 3). It intercepts the intermediate state by observing the file content
-// between Persist and Unlink is not directly testable here, so instead this
-// test verifies the in-memory struct is mutated to "completed" and the file
-// is gone after the call — the ordering guarantee is enforced by the
-// implementation's sequential call to Persist then Unlink.
+// step 3).
 //
 // Spec ref: specs/queue-model.md §8.4 QM-053.
 func TestCompleteAndUnlinkStatusOrdering(t *testing.T) {
@@ -424,20 +425,15 @@ func TestCompleteAndUnlinkStatusOrdering(t *testing.T) {
 	}
 
 	// File must be absent (Unlink ran after persist).
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("queue.json must be absent after CompleteAndUnlink")
+		t.Error("queue file must be absent after CompleteAndUnlink")
 	}
 }
 
 // TestCompleteAndUnlinkIdempotent verifies that calling CompleteAndUnlink a
 // second time (simulating a daemon restart where the file was already unlinked)
 // returns nil and does not corrupt state.
-//
-// After completion + unlink, the queue is gone from disk. On a retry, Persist
-// re-creates the file (a deliberate QM-003 re-persist then re-unlink cycle),
-// and Unlink on the newly-written file succeeds. This matches the "idempotent"
-// semantics described in the CompleteAndUnlink godoc.
 //
 // Spec ref: specs/queue-model.md §3.3 QM-003.
 func TestCompleteAndUnlinkIdempotent(t *testing.T) {
@@ -463,9 +459,9 @@ func TestCompleteAndUnlinkIdempotent(t *testing.T) {
 	}
 
 	// After both calls the file must be absent.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("queue.json must be absent after second CompleteAndUnlink")
+		t.Error("queue file must be absent after second CompleteAndUnlink")
 	}
 }
 
@@ -474,8 +470,8 @@ func TestCompleteAndUnlinkIdempotent(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestArchiveFailedQueue_RenamesFile verifies that ArchiveFailedQueue renames
-// queue.json to queue.json.failed-<timestamp> and that queue.json is absent
-// afterwards, while the archive file contains the original content.
+// the per-queue file to <name>.json.failed-<timestamp> and that the original
+// file is absent afterwards.
 //
 // Bead ref: hk-ly4w5.
 func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
@@ -490,7 +486,7 @@ func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
 	}
 
 	ts := time.Date(2026, 5, 18, 12, 34, 56, 0, time.UTC)
-	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, queue.QueueNameMain, ts)
 	if err != nil {
 		t.Fatalf("ArchiveFailedQueue: %v", err)
 	}
@@ -501,10 +497,10 @@ func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
 		t.Errorf("archivePath %q does not end with %q", archivePath, expectedSuffix)
 	}
 
-	// Original queue.json must be absent.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	// Original queue file must be absent.
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); !os.IsNotExist(statErr) {
-		t.Error("queue.json still exists after ArchiveFailedQueue; must have been renamed")
+		t.Error("queue file still exists after ArchiveFailedQueue; must have been renamed")
 	}
 
 	// Archive file must exist and contain parseable content.
@@ -517,7 +513,7 @@ func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
 	}
 
 	// Load must now return (nil, nil) — no active queue remains.
-	got, loadErr := queue.Load(ctx, projectDir)
+	got, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Load after ArchiveFailedQueue: %v", loadErr)
 	}
@@ -527,7 +523,7 @@ func TestArchiveFailedQueue_RenamesFile(t *testing.T) {
 }
 
 // TestArchiveFailedQueue_AbsentIsNoOp verifies that ArchiveFailedQueue returns
-// ("", nil) when queue.json does not exist (idempotent / missing-file case).
+// ("", nil) when the per-queue file does not exist.
 //
 // Bead ref: hk-ly4w5.
 func TestArchiveFailedQueue_AbsentIsNoOp(t *testing.T) {
@@ -537,9 +533,9 @@ func TestArchiveFailedQueue_AbsentIsNoOp(t *testing.T) {
 	ctx := context.Background()
 	ts := time.Now().UTC()
 
-	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	archivePath, err := queue.ArchiveFailedQueue(ctx, projectDir, queue.QueueNameMain, ts)
 	if err != nil {
-		t.Fatalf("ArchiveFailedQueue on absent queue.json: %v", err)
+		t.Fatalf("ArchiveFailedQueue on absent queue file: %v", err)
 	}
 	if archivePath != "" {
 		t.Errorf("archivePath = %q; want empty string for no-op", archivePath)
@@ -547,8 +543,7 @@ func TestArchiveFailedQueue_AbsentIsNoOp(t *testing.T) {
 }
 
 // TestArchiveFailedQueue_SubsequentRunSucceeds verifies that after
-// ArchiveFailedQueue renames queue.json, a subsequent Persist (simulating a
-// fresh `harmonik run`) succeeds — i.e., re-run is one command (hk-ly4w5 goal).
+// ArchiveFailedQueue renames the queue file, a subsequent Persist succeeds.
 //
 // Bead ref: hk-ly4w5.
 func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
@@ -557,7 +552,7 @@ func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
 	projectDir := persistFixtureProjectDir(t)
 	ctx := context.Background()
 
-	// Simulate a prior failed run: write queue.json with paused-by-failure status.
+	// Simulate a prior failed run: write queue file with paused-by-failure status.
 	failedQueue := persistFixtureQueue()
 	failedQueue.Status = queue.QueueStatusPausedByFailure
 	if err := queue.Persist(ctx, projectDir, &failedQueue); err != nil {
@@ -566,13 +561,13 @@ func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
 
 	// Archive it (as run.go does on paused-by-failure exit).
 	ts := time.Now().UTC()
-	_, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, ts)
+	_, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queue.QueueNameMain, ts)
 	if archiveErr != nil {
 		t.Fatalf("ArchiveFailedQueue: %v", archiveErr)
 	}
 
 	// Simulate guard check: Load should return nil (no active queue).
-	loaded, loadErr := queue.Load(ctx, projectDir)
+	loaded, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Load after archive: %v", loadErr)
 	}
@@ -589,7 +584,7 @@ func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
 	}
 
 	// Verify the new queue is visible.
-	reloaded, loadErr2 := queue.Load(ctx, projectDir)
+	reloaded, loadErr2 := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr2 != nil {
 		t.Fatalf("Load (re-run): %v", loadErr2)
 	}
@@ -602,12 +597,8 @@ func TestArchiveFailedQueue_SubsequentRunSucceeds(t *testing.T) {
 }
 
 // TestArchiveFailedQueue_ActiveQueueGuardPreserved verifies that when a queue
-// is still in active status (not paused-by-failure), the existing guard in
-// run.go continues to block — i.e., exit-5 behavior is unaffected.
-//
-// The guard blocks on any non-completed status. This test exercises the
-// active-status path (QM-027 guard, exit code 5 in run.go) directly via
-// Load-and-check, mirroring the approach in TestRunBead_RefusesActiveQueue.
+// is still in active status (not paused-by-failure), the existing guard
+// continues to block re-run.
 //
 // Bead ref: hk-ly4w5.
 func TestArchiveFailedQueue_ActiveQueueGuardPreserved(t *testing.T) {
@@ -616,16 +607,15 @@ func TestArchiveFailedQueue_ActiveQueueGuardPreserved(t *testing.T) {
 	projectDir := persistFixtureProjectDir(t)
 	ctx := context.Background()
 
-	// Write an active (in-flight) queue — this represents a concurrently-running
-	// harmonik instance; the guard must block.
+	// Write an active (in-flight) queue.
 	activeQueue := persistFixtureQueue()
 	activeQueue.Status = queue.QueueStatusActive
 	if err := queue.Persist(ctx, projectDir, &activeQueue); err != nil {
 		t.Fatalf("Persist (active queue): %v", err)
 	}
 
-	// Simulate the guard logic from run.go (lines 172–183).
-	loaded, loadErr := queue.Load(ctx, projectDir)
+	// Simulate the guard logic from run.go.
+	loaded, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load: %v", loadErr)
 	}
@@ -639,10 +629,10 @@ func TestArchiveFailedQueue_ActiveQueueGuardPreserved(t *testing.T) {
 	}
 
 	// ArchiveFailedQueue is NOT called for active queues — only for
-	// paused-by-failure. Confirm queue.json is still intact.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	// paused-by-failure. Confirm queue file is still intact.
+	queuePath := mainQueuePath(projectDir)
 	if _, statErr := os.Stat(queuePath); os.IsNotExist(statErr) {
-		t.Error("queue.json must not be removed for an active-status queue")
+		t.Error("queue file must not be removed for an active-status queue")
 	}
 }
 
@@ -659,18 +649,220 @@ func TestPersistJSONContent(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := mainQueuePath(projectDir)
 	data, err := os.ReadFile(queuePath) //nolint:gosec // G304: test path built from t.TempDir
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	if !bytes.Contains(data, []byte(q.QueueID)) {
-		t.Errorf("queue.json does not contain QueueID %q", q.QueueID)
+		t.Errorf("queue file does not contain QueueID %q", q.QueueID)
 	}
 
 	// Verify the file is valid JSON.
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Errorf("queue.json is not valid JSON: %v", err)
+		t.Errorf("queue file is not valid JSON: %v", err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MigrateFromLegacy tests (hk-tigaf.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestMigrateFromLegacy_MigratesFile verifies that MigrateFromLegacy reads
+// .harmonik/queue.json, writes .harmonik/queues/main.json, and removes the
+// legacy file.
+//
+// Bead ref: hk-tigaf.3.
+func TestMigrateFromLegacy_MigratesFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	harmonikDir := filepath.Join(dir, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// Write a legacy queue.json with a known queue.
+	legacyPath := filepath.Join(harmonikDir, "queue.json")
+	q := persistFixtureQueue()
+	data, err := json.Marshal(q)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
+		t.Fatalf("write legacy queue.json: %v", err)
+	}
+
+	if err := queue.MigrateFromLegacy(ctx, dir); err != nil {
+		t.Fatalf("MigrateFromLegacy: %v", err)
+	}
+
+	// Legacy file must be gone.
+	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
+		t.Error("legacy queue.json must be removed after migration")
+	}
+
+	// main.json must exist and contain the same queue.
+	got, err := queue.Load(ctx, dir, queue.QueueNameMain)
+	if err != nil {
+		t.Fatalf("Load after migration: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Load after migration: got nil, want migrated Queue")
+	}
+	if got.QueueID != q.QueueID {
+		t.Errorf("migrated QueueID: got %q, want %q", got.QueueID, q.QueueID)
+	}
+}
+
+// TestMigrateFromLegacy_NoOpWhenAbsent verifies that MigrateFromLegacy returns
+// nil when .harmonik/queue.json does not exist (idempotent no-op).
+//
+// Bead ref: hk-tigaf.3.
+func TestMigrateFromLegacy_NoOpWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	if err := queue.MigrateFromLegacy(ctx, dir); err != nil {
+		t.Fatalf("MigrateFromLegacy on absent legacy file: %v", err)
+	}
+}
+
+// TestMigrateFromLegacy_IdempotentWhenMainExists verifies that MigrateFromLegacy
+// is idempotent: if main.json already exists (a prior migration ran), the legacy
+// file is still removed and the function returns nil.
+//
+// Bead ref: hk-tigaf.3.
+func TestMigrateFromLegacy_IdempotentWhenMainExists(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	harmonikDir := filepath.Join(dir, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// Simulate a partial migration: main.json already exists.
+	q := persistFixtureQueue()
+	if err := queue.Persist(ctx, dir, &q); err != nil {
+		t.Fatalf("Persist (setup main.json): %v", err)
+	}
+
+	// Also plant a legacy queue.json (simulates crash after writing main.json
+	// but before removing the legacy file).
+	legacyPath := filepath.Join(harmonikDir, "queue.json")
+	data, _ := json.Marshal(q)
+	if err := os.WriteFile(legacyPath, data, 0o600); err != nil {
+		t.Fatalf("write legacy queue.json: %v", err)
+	}
+
+	if err := queue.MigrateFromLegacy(ctx, dir); err != nil {
+		t.Fatalf("MigrateFromLegacy (idempotent): %v", err)
+	}
+
+	// Legacy file must be gone.
+	if _, statErr := os.Stat(legacyPath); !os.IsNotExist(statErr) {
+		t.Error("legacy queue.json must be removed even when main.json already existed")
+	}
+
+	// main.json must still be intact.
+	got, err := queue.Load(ctx, dir, queue.QueueNameMain)
+	if err != nil {
+		t.Fatalf("Load after idempotent migration: %v", err)
+	}
+	if got == nil || got.QueueID != q.QueueID {
+		t.Errorf("main.json corrupted by idempotent migration; got %v", got)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EnumerateQueueNames tests (hk-tigaf.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestEnumerateQueueNames_Empty verifies that EnumerateQueueNames returns nil
+// when the queues/ directory does not exist.
+//
+// Bead ref: hk-tigaf.3.
+func TestEnumerateQueueNames_Empty(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	names, err := queue.EnumerateQueueNames(dir)
+	if err != nil {
+		t.Fatalf("EnumerateQueueNames on absent queues/: %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("expected 0 names, got %v", names)
+	}
+}
+
+// TestEnumerateQueueNames_ListsQueues verifies that EnumerateQueueNames returns
+// the names of all plain queue files, skipping archives.
+//
+// Bead ref: hk-tigaf.3.
+func TestEnumerateQueueNames_ListsQueues(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	// Persist two queues.
+	qMain := persistFixtureQueue() // name = "" → normalised to "main"
+	if err := queue.Persist(ctx, dir, &qMain); err != nil {
+		t.Fatalf("Persist main: %v", err)
+	}
+
+	qFoo := persistFixtureQueue()
+	qFoo.Name = "foo"
+	qFoo.QueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0099"
+	if err := queue.Persist(ctx, dir, &qFoo); err != nil {
+		t.Fatalf("Persist foo: %v", err)
+	}
+
+	// Plant archive files that must be excluded.
+	queuesDir := filepath.Join(dir, ".harmonik", "queues")
+	archiveFiles := []string{
+		"main.json.failed-20260101000000",
+		"main.json.cancelled-20260101000001",
+		"bar.json.tmp-12345",
+	}
+	for _, f := range archiveFiles {
+		if err := os.WriteFile(filepath.Join(queuesDir, f), []byte(`{}`), 0o600); err != nil {
+			t.Fatalf("write archive file %q: %v", f, err)
+		}
+	}
+
+	names, err := queue.EnumerateQueueNames(dir)
+	if err != nil {
+		t.Fatalf("EnumerateQueueNames: %v", err)
+	}
+
+	nameSet := make(map[string]bool)
+	for _, n := range names {
+		nameSet[n] = true
+	}
+
+	if !nameSet["main"] {
+		t.Error("expected 'main' in names")
+	}
+	if !nameSet["foo"] {
+		t.Error("expected 'foo' in names")
+	}
+	// Archive entries must not appear.
+	for _, bad := range []string{"main.json.failed-20260101000000", "bar"} {
+		if nameSet[bad] {
+			t.Errorf("unexpected name %q in enumeration", bad)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("expected 2 names, got %d: %v", len(names), names)
 	}
 }

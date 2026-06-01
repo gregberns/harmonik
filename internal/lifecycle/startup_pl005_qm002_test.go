@@ -110,21 +110,30 @@ func startupQueueFixtureDispatchedQueue(beadID core.BeadID) queue.Queue {
 	}
 }
 
-// startupQueueFixtureWriteCorruptFile writes invalid JSON to queue.json in
-// the project's .harmonik directory, simulating an unrecoverable file.
+// startupQueueFixtureWriteCorruptFile writes invalid JSON to the per-queue file
+// .harmonik/queues/main.json, simulating an unrecoverable queue file (NQ-A2
+// per-queue persistence).
 func startupQueueFixtureWriteCorruptFile(t *testing.T, projectDir string) {
 	t.Helper()
-	path := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatalf("startupQueueFixtureWriteCorruptFile: MkdirAll queues: %v", err)
+	}
+	path := filepath.Join(queuesDir, "main.json")
 	if err := os.WriteFile(path, []byte(`{{{{not valid json`), 0o600); err != nil {
 		t.Fatalf("startupQueueFixtureWriteCorruptFile: WriteFile: %v", err)
 	}
 }
 
-// startupQueueFixtureWriteUnsupportedSchema writes a queue.json with an
+// startupQueueFixtureWriteUnsupportedSchema writes a per-queue file with an
 // unrecognised schema_version to trigger the QM-002 forward-incompatible path.
 func startupQueueFixtureWriteUnsupportedSchema(t *testing.T, projectDir string) {
 	t.Helper()
-	path := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatalf("startupQueueFixtureWriteUnsupportedSchema: MkdirAll queues: %v", err)
+	}
+	path := filepath.Join(queuesDir, "main.json")
 	// schema_version 99 is forward-incompatible with v0.1 which only reads {1}.
 	payload := `{"schema_version":99,"queue_id":"test","submitted_at":"2026-05-15T00:00:00Z","status":"active","groups":[]}`
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
@@ -260,10 +269,23 @@ func (e *startupQueueFixtureEmitter) Events() []startupQueueFixtureEmittedEvent 
 }
 
 // ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+// firstOrNil returns the first element of qs, or nil when qs is empty.
+// Used to adapt tests after LoadQueueAtStartup changed to return []*queue.Queue.
+func firstOrNil(qs []*queue.Queue) *queue.Queue {
+	if len(qs) == 0 {
+		return nil
+	}
+	return qs[0]
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-// TestLoadQueueAtStartup_FileAbsent covers scenario (a): no queue.json.
+// TestLoadQueueAtStartup_FileAbsent covers scenario (a): no queue file.
 //
 // Expect: LoadQueueAtStartup returns (nil, nil); ledger is never queried.
 //
@@ -278,7 +300,8 @@ func TestLoadQueueAtStartup_FileAbsent(t *testing.T) {
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("scenario (a): expected nil error, got %v", err)
 	}
@@ -327,7 +350,8 @@ func TestLoadQueueAtStartup_CleanLoad(t *testing.T) {
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("scenario (b): expected nil error, got %v", err)
 	}
@@ -363,7 +387,8 @@ func TestLoadQueueAtStartup_CorruptFile(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("scenario (c): expected nil error, got %v", err)
 	}
@@ -372,9 +397,9 @@ func TestLoadQueueAtStartup_CorruptFile(t *testing.T) {
 	}
 
 	// The corrupt file MUST NOT be deleted per QM-002.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 	if _, statErr := os.Stat(queuePath); os.IsNotExist(statErr) {
-		t.Error("scenario (c): corrupt queue.json was auto-deleted; per QM-002 it MUST be left for operator inspection")
+		t.Error("scenario (c): corrupt queue file was auto-deleted; per QM-002 it MUST be left for operator inspection")
 	}
 
 	// A warning MUST have been logged.
@@ -403,7 +428,8 @@ func TestLoadQueueAtStartup_SchemaUnsupported(t *testing.T) {
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if gotQueue != nil {
 		t.Errorf("schema unsupported: expected nil Queue, got %+v", gotQueue)
 	}
@@ -460,7 +486,8 @@ func TestLoadQueueAtStartup_QM002aBeadsCrossCheck(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("scenario (d): unexpected error: %v", err)
 	}
@@ -530,7 +557,7 @@ func TestLoadQueueAtStartup_QM002aBeadsCrossCheck(t *testing.T) {
 	}
 
 	// --- Assertion 5: queue.json on disk reflects the reverted state ---
-	diskQueue, loadErr := queue.Load(ctx, projectDir)
+	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("scenario (d): Load from disk: %v", loadErr)
 	}
@@ -574,7 +601,8 @@ func TestLoadQueueAtStartup_QM002aNoRevertWhenNotOpen(t *testing.T) {
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("no-revert: unexpected error: %v", err)
 	}
@@ -687,7 +715,8 @@ func TestLoadQueueAtStartup_QM002b_ClassA_BeadClosedQueuePending(t *testing.T) {
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("Class A: unexpected error: %v", err)
 	}
@@ -706,7 +735,7 @@ func TestLoadQueueAtStartup_QM002b_ClassA_BeadClosedQueuePending(t *testing.T) {
 	}
 
 	// Assertion 2: on-disk queue reflects completed.
-	diskQueue, loadErr := queue.Load(ctx, projectDir)
+	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("Class A: Load from disk: %v", loadErr)
 	}
@@ -795,7 +824,8 @@ func TestLoadQueueAtStartup_QM002b_ClassB_BeadInProgressQueueAbsent(t *testing.T
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("Class B: unexpected error: %v", err)
 	}
@@ -879,7 +909,8 @@ func TestLoadQueueAtStartup_QM002b_ClassC_BeadClosedQueueInProgress(t *testing.T
 	emitter := &startupQueueFixtureEmitter{}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	gotQueue, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
 	if err != nil {
 		t.Fatalf("Class C: unexpected error: %v", err)
 	}

@@ -545,7 +545,7 @@ func runBeadSubcommand(subArgs []string) int {
 	// Exception (hk-i6hhn): active queues left by a dead daemon (stale or
 	// absent pidfile) are auto-archived so that a kill of a wedged daemon
 	// does not permanently block re-dispatch.
-	existingQueue, loadErr := queue.Load(persistCtx, projectDir)
+	existingQueue, loadErr := queue.Load(persistCtx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot check existing queue: %v\n", loadErr)
 		return 1
@@ -554,7 +554,7 @@ func runBeadSubcommand(subArgs []string) int {
 		switch existingQueue.Status {
 		case queue.QueueStatusPausedByFailure, queue.QueueStatusCancelled:
 			// Auto-archive the stale queue so re-dispatch is one command (hk-ly4w5).
-			archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, time.Now())
+			archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, queue.QueueNameMain, time.Now())
 			if archiveErr != nil {
 				fmt.Fprintf(os.Stderr, "harmonik run: cannot archive stale queue: %v\n", archiveErr)
 				return 1
@@ -564,11 +564,11 @@ func runBeadSubcommand(subArgs []string) int {
 			// For active (or other non-terminal) queues, probe the pidfile to
 			// detect whether the daemon that owns the queue is still alive
 			// (hk-i6hhn). If the pidfile is absent or stale, the daemon died
-			// before it could finalise queue.json — auto-archive and proceed.
+			// before it could finalise the queue file — auto-archive and proceed.
 			pidStatus, _, pidErr := lifecycle.ProbePidfileLock(projectDir)
 			daemonDead := errors.Is(pidErr, os.ErrNotExist) || pidStatus == lifecycle.PidfileLockStatusStale
 			if daemonDead {
-				archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, time.Now())
+				archivePath, archiveErr := queue.ArchiveFailedQueue(persistCtx, projectDir, queue.QueueNameMain, time.Now())
 				if archiveErr != nil {
 					fmt.Fprintf(os.Stderr, "harmonik run: cannot archive orphaned queue: %v\n", archiveErr)
 					return 1
@@ -744,9 +744,9 @@ func runBeadSubcommand(subArgs []string) int {
 	}
 	if finalQueue.Status == queue.QueueStatusPausedByFailure {
 		fmt.Fprintf(os.Stderr, "harmonik run: one or more beads failed (queue paused-by-failure)\n")
-		archivePath, archiveErr := queue.ArchiveFailedQueue(context.Background(), projectDir, time.Now())
+		archivePath, archiveErr := queue.ArchiveFailedQueue(context.Background(), projectDir, queue.NormaliseQueueName(finalQueue.Name), time.Now())
 		if archiveErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik run: warning: could not archive queue.json: %v\n", archiveErr)
+			fmt.Fprintf(os.Stderr, "harmonik run: warning: could not archive queue file: %v\n", archiveErr)
 		} else if archivePath != "" {
 			fmt.Fprintf(os.Stderr, "harmonik run: archived failed queue → %s\n", archivePath)
 		}

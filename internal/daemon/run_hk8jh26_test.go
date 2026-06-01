@@ -192,7 +192,7 @@ func TestRunBead_RefusesActiveQueue(t *testing.T) {
 	}
 
 	// Simulate the guard logic from run.go Fix 3: Load and check status.
-	loaded, loadErr := queue.Load(ctx, projectDir)
+	loaded, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load: %v", loadErr)
 	}

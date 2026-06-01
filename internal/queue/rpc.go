@@ -135,7 +135,8 @@ func HandleQueueSubmit(
 	}
 	// Note: the caller is responsible for loading the active queue and passing it
 	// in via a wrapper; here we use projectDir to load it ourselves per QM-027.
-	existing, loadErr := Load(ctx, projectDir)
+	// Load by the normalised request name to enforce the per-name single-active guard.
+	existing, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
 	if loadErr != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
 			Code:    -32099,
@@ -252,7 +253,7 @@ func HandleQueueAppend(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
-	q, loadErr := Load(ctx, projectDir)
+	q, loadErr := Load(ctx, projectDir, QueueNameMain)
 	if loadErr != nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    -32099,
@@ -336,7 +337,7 @@ func HandleQueueStatus(
 	ctx context.Context,
 	projectDir string,
 ) (QueueStatusResponse, *RPCError) {
-	q, loadErr := Load(ctx, projectDir)
+	q, loadErr := Load(ctx, projectDir, QueueNameMain)
 	if loadErr != nil {
 		return QueueStatusResponse{}, &RPCError{
 			Code:    -32099,
@@ -371,7 +372,7 @@ func HandleQueueDryRun(
 	projectDir string,
 ) (QueueDryRunResponse, *RPCError) {
 	// Load the active queue for QM-027 check (single-active-queue).
-	existing, loadErr := Load(ctx, projectDir)
+	existing, loadErr := Load(ctx, projectDir, QueueNameMain)
 	if loadErr != nil {
 		return QueueDryRunResponse{}, &RPCError{
 			Code:    -32099,

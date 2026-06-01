@@ -166,7 +166,7 @@ func TestQueueCrashRecovery_QM002_LoadsActiveQueueAfterRestart(t *testing.T) {
 	// The file is left exactly as written. Nothing to do in the test.
 
 	// Step 3: daemon restart — read queue.json per QM-002 (PL-005 step 8a).
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load (post-restart): %v", err)
 	}
@@ -242,7 +242,7 @@ func TestQueueCrashRecovery_QM002_FileAbsentMeansNoQueue(t *testing.T) {
 	ctx := context.Background()
 
 	// No prior Persist call — simulate a clean restart with no persisted queue.
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load on absent queue.json: unexpected error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestQueueCrashRecovery_QM002_CorruptFileWarnAndProceed(t *testing.T) {
 		t.Fatalf("setup: write corrupt queue.json: %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loaded != nil {
 		t.Errorf("Load on corrupt file: got non-nil Queue %+v; want nil", loaded)
 	}
@@ -311,7 +311,7 @@ func TestQueueCrashRecovery_QM002_ForwardIncompatibleSchemaVersion(t *testing.T)
 		t.Fatalf("setup: write future-schema queue.json: %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if loaded != nil {
 		t.Errorf("Load on future schema: got non-nil Queue; want nil (forward-incompatible refusal)")
 	}
@@ -382,7 +382,7 @@ func TestQueueCrashRecovery_QM002a_NoRevertForCompletedItem(t *testing.T) {
 		t.Fatalf("Persist: %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestQueueCrashRecovery_DispatchResumedFromCorrectGroupIndex(t *testing.T) {
 		t.Fatalf("Persist (pre-crash): %v", err)
 	}
 
-	loaded, err := queue.Load(ctx, projectDir)
+	loaded, err := queue.Load(ctx, projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load (post-restart): %v", err)
 	}

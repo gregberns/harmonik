@@ -71,24 +71,21 @@ type QueueEventEmitter interface {
 
 // LoadQueueAtStartup implements PL-005 step 8a for the queue subsystem.
 //
-// Three outcomes per QM-002:
+// It first runs MigrateFromLegacy to promote any pre-NQ-A2 .harmonik/queue.json
+// singleton to .harmonik/queues/main.json (one-shot migration; no-op thereafter).
+// It then enumerates all per-queue files under .harmonik/queues/ and loads each
+// one, running QM-002a + QM-002b reconciliation on every loaded queue.
 //
-//   - File absent: returns (nil, nil). The daemon starts with no active queue.
-//   - Corrupt / unparseable: returns (nil, nil) after logging a structured
-//     warning. The daemon continues without a queue; the file is NOT deleted.
+// Per-queue outcomes per QM-002:
+//
+//   - File absent (empty queues/ dir): returns (nil, nil). The daemon starts
+//     with no active queues.
+//   - Corrupt / unparseable: that queue is skipped with a structured warning.
+//     The daemon continues without it; the file is NOT deleted.
 //   - schema_version unsupported (forward-incompatible): returns
 //     (nil, ErrQueueSchemaUnsupported). The caller MUST refuse startup with
 //     exit code 2.
-//   - Clean parse: returns (q, nil) after the QM-002a Beads cross-check and
-//     any necessary in-memory + on-disk corrections.
-//
-// On a successful load, QM-002a Beads cross-check runs inline:
-//   - For every item with status=dispatched, ShowBead is called.
-//   - If Beads shows the bead as open, the item is reverted to pending, the
-//     queue is re-persisted via QM-001, and a queue_item_reconciled event is
-//     emitted with reason=claim_write_lost.
-//   - ShowBead errors are logged as warnings; the item is not reverted (only a
-//     confirmed Beads-open status triggers revert).
+//   - Clean parse: included in the returned slice after QM-002a + QM-002b.
 //
 // The emitter parameter MAY be nil; when nil, events are not emitted (useful
 // for testing scenarios that don't care about event emission, but production
@@ -97,62 +94,97 @@ type QueueEventEmitter interface {
 // Spec ref: specs/queue-model.md §3.2 QM-002.
 // Spec ref: specs/queue-model.md §3.2a QM-002a.
 // Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+// Bead ref: hk-tigaf.3.
 func LoadQueueAtStartup(
 	ctx context.Context,
 	projectDir string,
 	ledger BeadLedger,
 	emitter QueueEventEmitter,
 	logger *slog.Logger,
-) (*queue.Queue, error) {
+) ([]*queue.Queue, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	q, err := queue.Load(ctx, projectDir)
+	// NQ-A2: migrate legacy .harmonik/queue.json → .harmonik/queues/main.json
+	// before enumeration so the per-queue scan picks it up.
+	if err := queue.MigrateFromLegacy(ctx, projectDir); err != nil {
+		// Non-fatal: log and proceed. A failed migration leaves the legacy file
+		// in place; the next startup attempt retries the migration.
+		logger.WarnContext(ctx, "queue: MigrateFromLegacy failed; legacy file may persist",
+			"error", err,
+		)
+	}
+
+	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
-		// Distinguish schema_version mismatch (forward-incompatible → exit 2)
-		// from general corruption (warn + proceed with nil queue).
-		if errors.Is(err, queue.ErrSchemaVersion) {
-			// Forward-incompatible schema_version: refuse startup with exit code 2
-			// per QM-002.
-			logger.ErrorContext(ctx, "queue.json schema_version is not in supported read-set; startup refused per QM-002",
-				"error", err,
-			)
-			return nil, ErrQueueSchemaUnsupported
-		}
-
-		// ErrCorrupt or any other parse failure: log warning and treat as absent.
-		// The file is NOT deleted; operator inspection comes first per QM-002.
-		if errors.Is(err, queue.ErrCorrupt) {
-			logger.WarnContext(ctx, "queue.json is present but unparseable; treating as absent per QM-002",
-				"error", err,
-			)
-			return nil, nil
-		}
-
-		// Unexpected I/O error (permission denied, etc.) — also log and treat as absent
-		// so startup is not blocked by transient FS issues, but surface as a warning.
-		logger.WarnContext(ctx, "queue.json read failed unexpectedly; treating as absent",
+		logger.WarnContext(ctx, "queue: EnumerateQueueNames failed; starting with no active queues",
 			"error", err,
 		)
 		return nil, nil
 	}
 
-	// File absent: q == nil, err == nil.
+	var loaded []*queue.Queue
+	for _, name := range names {
+		q, loadErr := loadOneQueueAtStartup(ctx, projectDir, name, ledger, emitter, logger)
+		if loadErr != nil {
+			// schema_version mismatch is fatal per QM-002.
+			return nil, loadErr
+		}
+		if q != nil {
+			loaded = append(loaded, q)
+		}
+	}
+	return loaded, nil
+}
+
+// loadOneQueueAtStartup loads a single named queue file and runs QM-002a +
+// QM-002b reconciliation. Returns (nil, nil) when the file is absent or
+// corrupt. Returns (nil, ErrQueueSchemaUnsupported) on forward-incompatible
+// schema_version.
+func loadOneQueueAtStartup(
+	ctx context.Context,
+	projectDir string,
+	name string,
+	ledger BeadLedger,
+	emitter QueueEventEmitter,
+	logger *slog.Logger,
+) (*queue.Queue, error) {
+	q, err := queue.Load(ctx, projectDir, name)
+	if err != nil {
+		if errors.Is(err, queue.ErrSchemaVersion) {
+			logger.ErrorContext(ctx, "queue file schema_version not in supported read-set; startup refused per QM-002",
+				"queue_name", name,
+				"error", err,
+			)
+			return nil, ErrQueueSchemaUnsupported
+		}
+		if errors.Is(err, queue.ErrCorrupt) {
+			logger.WarnContext(ctx, "queue file is present but unparseable; treating as absent per QM-002",
+				"queue_name", name,
+				"error", err,
+			)
+			return nil, nil
+		}
+		logger.WarnContext(ctx, "queue file read failed unexpectedly; treating as absent",
+			"queue_name", name,
+			"error", err,
+		)
+		return nil, nil
+	}
+
 	if q == nil {
 		return nil, nil
 	}
 
 	// QM-002a: Beads cross-check for dispatched items.
 	if err := reconcileDispatchedItems(ctx, projectDir, q, ledger, emitter, logger); err != nil {
-		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup: QM-002a reconcile: %w", err)
+		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: QM-002a reconcile: %w", name, err)
 	}
 
-	// QM-002b: Full three-way reconciliation — catches mismatch classes not
-	// covered by QM-002a (dispatched-only). Runs after QM-002a so that any
-	// claim_write_lost reverts are already applied before the broader scan.
+	// QM-002b: Full three-way reconciliation.
 	if err := reconcileThreeWay(ctx, projectDir, q, ledger, emitter, logger); err != nil {
-		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup: QM-002b three-way reconcile: %w", err)
+		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: QM-002b three-way reconcile: %w", name, err)
 	}
 
 	return q, nil

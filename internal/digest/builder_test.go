@@ -420,7 +420,11 @@ func writeQueueJSON(t *testing.T, dir string, n int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(harmonikDir, "queue.json"), data, 0o600); err != nil {
+	queuesDir := filepath.Join(harmonikDir, "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(queuesDir, "main.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

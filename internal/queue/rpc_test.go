@@ -141,10 +141,10 @@ func TestHandleQueueSubmit_HappyPath(t *testing.T) {
 		t.Errorf("returned queue status = %q, want %q", q.Status, queue.QueueStatusActive)
 	}
 
-	// queue.json must exist on disk.
-	queueFile := filepath.Join(projectDir, ".harmonik", "queue.json")
+	// queues/main.json must exist on disk (NQ-A2 per-queue persistence).
+	queueFile := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 	if _, statErr := os.Stat(queueFile); statErr != nil {
-		t.Errorf("queue.json not found after submit: %v", statErr)
+		t.Errorf("queues/main.json not found after submit: %v", statErr)
 	}
 }
 

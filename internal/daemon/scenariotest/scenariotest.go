@@ -313,14 +313,14 @@ type QueueExpectation struct {
 	ItemStatuses []string
 }
 
-// AssertQueueJSON reads .harmonik/queue.json under projectDir and asserts the
-// fields in expected. When queue.json is absent and expected.Status is empty,
+// AssertQueueJSON reads .harmonik/queues/main.json under projectDir and asserts
+// the fields in expected. When the file is absent and expected.Status is empty,
 // the assertion passes (no queue was written).
 //
-// Bead: hk-jf2tb.
+// Bead: hk-jf2tb, hk-tigaf.3.
 func AssertQueueJSON(t *testing.T, projectDir string, expected QueueExpectation) {
 	t.Helper()
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
+	queuePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
 	data, err := os.ReadFile(queuePath)
 	if err != nil {
@@ -328,7 +328,7 @@ func AssertQueueJSON(t *testing.T, projectDir string, expected QueueExpectation)
 			if expected.Status == "" && len(expected.ItemStatuses) == 0 {
 				return // absence is acceptable when no expectation is set
 			}
-			t.Fatalf("AssertQueueJSON: queue.json absent but status=%q expected", expected.Status)
+			t.Fatalf("AssertQueueJSON: queues/main.json absent but status=%q expected", expected.Status)
 		}
 		t.Fatalf("AssertQueueJSON: read %s: %v", queuePath, err)
 	}
@@ -341,7 +341,7 @@ func AssertQueueJSON(t *testing.T, projectDir string, expected QueueExpectation)
 		} `json:"groups"`
 	}
 	if decErr := json.Unmarshal(data, &q); decErr != nil {
-		t.Fatalf("AssertQueueJSON: parse queue.json: %v", decErr)
+		t.Fatalf("AssertQueueJSON: parse queues/main.json: %v", decErr)
 	}
 	if expected.Status != "" && q.Status != expected.Status {
 		t.Errorf("AssertQueueJSON: status: got %q, want %q", q.Status, expected.Status)

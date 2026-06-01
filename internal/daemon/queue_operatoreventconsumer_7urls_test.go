@@ -407,7 +407,7 @@ func TestQueueOpDrain_PauseSurvivesReload(t *testing.T) {
 	}
 
 	// Reload and assert status is preserved.
-	loaded, err := queue.Load(context.Background(), projectDir)
+	loaded, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

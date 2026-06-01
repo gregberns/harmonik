@@ -793,7 +793,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Bug ref: hk-2ty0g.
 		var queueDispatched lifecycle.QueueDispatchedSet
 		var queueOwned lifecycle.QueueOwnedSet
-		rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir)
+		rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir, queue.QueueNameMain)
 		if rawQErr != nil {
 			logW := cfg.LogWriter
 			if logW == nil {
@@ -892,17 +892,20 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	hookStore := newHookSessionStore()
 
-	// PL-005 step 8a (QM-002 / QM-002a): load queue.json at startup BEFORE the
-	// socket listener or work loop start.  Only runs when both ProjectDir and
-	// BrPath are set (production mode); unit-test callers that omit one or both
-	// skip the load cleanly.
+	// PL-005 step 8a (QM-002 / QM-002a): load per-queue files at startup BEFORE
+	// the socket listener or work loop start.  LoadQueueAtStartup first runs the
+	// NQ-A2 legacy migration (.harmonik/queue.json → .harmonik/queues/main.json),
+	// then enumerates .harmonik/queues/ and loads each queue with QM-002a + QM-002b
+	// reconciliation.  Only runs when both ProjectDir and BrPath are set
+	// (production mode); unit-test callers that omit one or both skip cleanly.
 	//
 	// A forward-incompatible schema_version causes a fatal return with exit-code-2
-	// semantics per QM-002.  Corrupt but parseable files produce a warning and a
-	// nil queue (daemon proceeds without a queue).
+	// semantics per QM-002.  Corrupt but parseable files produce a warning and are
+	// skipped (daemon proceeds without that queue).
 	//
 	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+	// Bead ref: hk-tigaf.3.
 	if cfg.ProjectDir != "" && cfg.BrPath != "" {
 		brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
 		if brAdapterErr != nil {
@@ -914,7 +917,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			// Bead ref: hk-th378.
 			_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
 		} else {
-			loadedQueue, loadErr := lifecycle.LoadQueueAtStartup(
+			loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
 				context.Background(),
 				cfg.ProjectDir,
 				brAdapterForQueue,
@@ -923,10 +926,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			)
 			if loadErr != nil {
 				// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
-				return fmt.Errorf("daemon.Start: queue.json load: %w", loadErr)
+				return fmt.Errorf("daemon.Start: queue load: %w", loadErr)
 			}
-			if loadedQueue != nil {
-				qs.SetQueue(loadedQueue)
+			for _, lq := range loadedQueues {
+				qs.SetQueue(lq)
 			}
 		}
 	}

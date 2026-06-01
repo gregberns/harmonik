@@ -389,6 +389,45 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario/plan_to_shipped_now_test.go` (drives mock handler responses against eight scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, spec-review RC loop, load-beads non-SUCCESS commit gate, consolidate BLOCK including the red-build path, consolidate cap-hit, docs-review APPROVE, and docs-review unrecognized-label fallback).
 
+### `plan-to-shipped-faithful.dot` (DEMO D2)
+
+**Purpose.** The north-star post-parity SDLC arc: the same phases as D1 but with the deterministic steps done right. New primitives enabled by the parity beads:
+
+- `frame_problem` — non-committing analysis node (`non_committing="true"`, pending `hk-69asi` for zero-commit SUCCESS) that frames the problem space before drafting the plan.
+- `load_beads` + `cycle_check` — tool-node proxies (`type="non-agentic"`, `handler_ref="shell"`, pending `hk-l8rpd` for `type="tool"`) replacing the agentic `load_beads` implementer from D1. `cycle_check` runs `br dep cycles` and blocks on a detected cycle before any implementation starts.
+- `green_build` — deterministic build gate (`go build ./... && go vet ./... && go test ./...`) replacing D1's in-session build check. Uses the `outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'` compound condition (D5 v1 `&&` dialect) to loop back to `implement` on a fixable build failure.
+- Per-node `prompt=` on all implementer nodes (live for implementers per HC-006a `§III.3`; pending `hk-sdnzj` for reviewer-class nodes where it is accepted-but-inert at v1).
+
+**Topology.** idea → frame_problem → plan → spec → tasking (load_beads + cycle_check) → implement → triple-reviewer-consolidate (rev_correct + rev_tests + consolidate) → green_build → close.
+
+**PENDING capabilities.** The three `type="non-agentic"` shell-node proxies (`load_beads`, `cycle_check`, `green_build`) will be replaced with `type="tool"` nodes once `hk-l8rpd` lands. The `non_committing="true"` on `frame_problem` is already live for implementer-class nodes; on reviewer nodes (`rev_correct`, `rev_tests`, `consolidate`) it is a v1 warning (retained, not dispatched — reviewers do not require HEAD advance). The `class="hard"` on `draft_plan` and `decompose` are permissive warnings (retained in `UnknownAttrs`; not dispatched until `hk-q8nqr` lands).
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §D2` (plan-to-shipped-faithful, DEMO post-parity target) and the corpus dialect contract (§"Dialect contract").
+- Uses the marquee brief discipline from `docs/sdlc-workflow-corpus.md §"Marquee brief discipline"`: `rev_correct` and `rev_tests` write+commit `reviews/reviewer-<axis>.md` FIRST, then write `.harmonik/review.json`; `consolidate` reads all findings files, severity-joins, and writes the final verdict.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` and `non_committing="true"` for `frame_problem` (hk-69asi pending); `agent_type="implementer"` for `draft_plan`, `draft_spec`, `decompose`, `implement`; `agent_type="reviewer"` for `plan_review`, `spec_review`, `rev_correct`, `rev_tests`, `consolidate`; and `type="non-agentic"` for entry + terminal + tool-proxy nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `type="non-agentic"` with `handler_ref="shell"` and `tool_command=` for `load_beads`, `cycle_check`, and `green_build` as valid v1 proxies for the pending `type="tool"` (hk-l8rpd) per WG-039.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on all verdict branches — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`. Verdict literals are uppercase (`APPROVE` / `REQUEST_CHANGES` / `BLOCK`).
+- Uses `outcome.status == 'SUCCESS'` as the edge-condition LHS on the `load_beads→cycle_check` and `cycle_check→implement` commit-gate edges — per the D4 LHS whitelist (row 1, `outcome.status`).
+- Uses the compound condition `outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'` on the `green_build→implement` back-edge — per the D5 v1 edge-condition dialect (`&&` operator, equality only) per `specs/workflow-graph.md §6 WG-013`.
+- Uses `traversal_cap="3"` on all verdict back-edges (`plan_review→draft_plan`, `spec_review→draft_spec`, `consolidate→implement`, `green_build→implement`) — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality + `&&`) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+- The `rev_correct→rev_tests→consolidate` spine is fully unconditional: both per-axis reviewers always run before the consolidate node branches per marquee brief discipline.
+- Uses `non_committing="true"` on `frame_problem` per `specs/workflow-graph.md §4 WG-041` and `specs/examples/authoring-notes.md §1` (non_committing contract).
+- Uses `prompt=` on implementer nodes per HC-006a `§III.3` (CHB-028 Body channel replacement). Accepted-but-inert on reviewer nodes at v1 per WG-040 §I.3; use `role=` to specialize reviewer briefs today.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically). Two permissive warnings for `class="hard"` on `draft_plan` and `decompose` are expected (retained in `UnknownAttrs`, not dispatched at v1).
+- Scenario harness: `internal/workflow/scenario/plan_to_shipped_faithful_test.go` (drives mock handler responses against nine scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, plan-review RC loop, load-beads non-SUCCESS tool gate, cycle-check non-SUCCESS tool gate, consolidate BLOCK, consolidate cap-hit, green-build deterministic fail → implement loop, and green-build non-deterministic fail → unconditional fallback).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

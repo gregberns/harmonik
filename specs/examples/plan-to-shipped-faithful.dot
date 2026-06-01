@@ -1,0 +1,352 @@
+// plan-to-shipped-faithful.dot — DEMO D2: whole-SDLC arc, the north-star post-parity target.
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §D2 (plan-to-shipped-faithful, DEMO post-parity target)
+//   - docs/sdlc-workflow-corpus.md §Marquee brief discipline (reviewer-commit channel)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//   - specs/workflow-graph.md §4 WG-041 (non_committing — see specs/examples/authoring-notes.md §1)
+//
+// The honest end-to-end arc once the parity beads land. Same phases as D1
+// (plan-to-shipped-now) but with the deterministic steps done right:
+//   - analysis/decision nodes are non-committing (hk-69asi)
+//   - each distinct step carries its own prompt (hk-sdnzj)
+//   - br decomposition steps and build/test gates use the tool node type (hk-l8rpd)
+//
+// Composes: plan-review-loop (#5 style), spec gate, decompose-review-load (#9 SOON form),
+// MARQUEE triple-review-consolidate (#2 style), and the green-build merge gate (#15).
+//
+// ★ PENDING CAPABILITIES (referenced in comments throughout):
+//   - hk-l8rpd: tool/shell node type (type="tool", handler_ref="shell"). Keystone.
+//     TODAY: load_beads, cycle_check, green_build use type="non-agentic" + handler_ref="shell"
+//     as a dialect-valid proxy. Replace with type="tool" when hk-l8rpd lands.
+//   - hk-sdnzj: inline per-node prompt="..." (node carries its own brief, not the bead's).
+//     TODAY: prompt= on implementer nodes is live (replaces bead body per HC-006a §III.3);
+//     prompt= on reviewer nodes is accepted-but-inert at v1 (use role= to specialize today).
+//   - hk-69asi: non-committing agentic node (SUCCESS without HEAD advance).
+//     TODAY: non_committing="true" on frame_problem is live for implementer-class.
+//     On reviewer nodes (rev_correct, rev_tests, consolidate) it is a v1 warning (retained,
+//     ignored at dispatch — reviewers do NOT require HEAD advance anyway per engine contract).
+//   - hk-q8nqr: per-node model/effort (class="hard" → Opus). OPTIONAL, P3.
+//     TODAY: class= is permissive (retained in UnknownAttrs; not dispatched).
+//
+// Marquee brief discipline (docs/sdlc-workflow-corpus.md §Marquee brief discipline):
+//   rev_correct and rev_tests MUST, in order:
+//     1. Write + git commit their findings to reviews/reviewer-<axis>.md FIRST.
+//     2. THEN write .harmonik/review.json with their own verdict.
+//   The consolidate node reads all reviews/reviewer-*.md, severity-joins
+//   (BLOCK > REQUEST_CHANGES > APPROVE), and writes ONE merged verdict to
+//   .harmonik/review.json. Its verdict is the one the branch edges read.
+//
+// Green-build gate (PENDING hk-l8rpd):
+//   green_build runs `go build ./... && go vet ./... && go test ./...`.
+//   Exit 0 → outcome.status=SUCCESS → close (shipped).
+//   Exit non-0, failure_class=deterministic → back to implement (capped at 3).
+//   Any other outcome → close-needs-attention (triage).
+
+digraph "plan-to-shipped-faithful" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="plan-to-shipped-faithful";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: workflow entry.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="idea bead — entry point"
+    ];
+
+    // ── PLAN phase ────────────────────────────────────────────────────────────
+
+    // frame_problem: problem-framing analysis node; writes .ai/plan/problem.md.
+    // non_committing="true" — this is the hk-69asi usage: the node produces analysis
+    // without committing. Clean exit → SUCCESS regardless of HEAD advance.
+    // prompt= is the hk-sdnzj usage (replaces bead body at dispatch for implementer-class).
+    frame_problem [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Frame the problem space; write .ai/plan/problem.md. Do NOT commit.",
+        role="frame problem space — non-committing analysis (hk-69asi)"
+    ];
+
+    // draft_plan: write or revise plans/<cn>.md; on re-entry address plan_review feedback.
+    // class="hard" is the hk-q8nqr usage (permissive, retained but not dispatched at v1).
+    // prompt= replaces the bead body for this node's dispatch (hk-sdnzj live for implementers).
+    draft_plan [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        class="hard",
+        prompt="Write plans/<cn>.md from .ai/plan/*; on re-entry revise per plan reviewer feedback. Commit.",
+        role="write plans/<cn>.md from problem frame"
+    ];
+
+    // plan_review: render verdict on the plan.
+    // non_committing + prompt on a reviewer-class node are accepted-but-inert at v1.
+    // Use role= to specialize the reviewer brief today; prompt= takes effect after hk-sdnzj.
+    plan_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Review the plan for scope, Done-means, and actionability.",
+        role="plan verdict: APPROVE / REQUEST_CHANGES / BLOCK — check scope + Done-means"
+    ];
+
+    // ── SPEC phase ────────────────────────────────────────────────────────────
+
+    // draft_spec: draft the spec from the approved plan; on re-entry revise per spec_review feedback.
+    draft_spec [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        prompt="Draft specs/<cn>.md from the approved plan; on re-entry revise per spec reviewer feedback. Commit.",
+        role="draft spec from approved plan"
+    ];
+
+    // spec_review: render verdict on the spec.
+    spec_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Review the spec for completeness, spec-first discipline, and normative contract quality.",
+        role="spec verdict: APPROVE / REQUEST_CHANGES / BLOCK"
+    ];
+
+    // ── TASKING phase ─────────────────────────────────────────────────────────
+
+    // decompose: decompose approved spec into tasks.md; commit.
+    decompose [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        class="hard",
+        prompt="Decompose spec → tasks.md. Commit.",
+        role="decompose spec into tasks.md"
+    ];
+
+    // load_beads: create beads from tasks.md; commit .beads JSONL.
+    // PENDING hk-l8rpd: this node will become type="tool" once the tool-node handler
+    // contract lands. TODAY it is expressed as type="non-agentic" with handler_ref="shell"
+    // (the current valid dialect for shell-executed nodes per WG-039).
+    // SUCCESS (exit 0) → cycle_check; any non-SUCCESS → close-needs-attention.
+    load_beads [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="non-idempotent",
+        tool_command="kerf finalize ${bead_id} && br create --from-tasks tasks.md",
+        timeout="120",
+        role="create beads from tasks.md — PENDING hk-l8rpd (type=tool)"
+    ];
+
+    // cycle_check: detect dependency cycles in the newly-loaded bead graph.
+    // PENDING hk-l8rpd: same proxy as load_beads above.
+    // SUCCESS (exit 0, ACYCLIC) → implement; FAIL (exit 1, CYCLE) → close-needs-attention.
+    cycle_check [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="br dep cycles",
+        timeout="30",
+        role="detect dependency cycles — PENDING hk-l8rpd (type=tool)"
+    ];
+
+    // ── IMPLEMENT + MULTI-REVIEW (MARQUEE) phase ──────────────────────────────
+
+    // implement: produce or revise the change; on re-entry address consolidated feedback.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        prompt="Implement the change; on re-entry address consolidated reviewer feedback and fix the build. Commit.",
+        role="implement the change; on re-entry address consolidated feedback"
+    ];
+
+    // rev_correct: correctness axis reviewer.
+    // Per marquee brief discipline: write+commit reviews/reviewer-correctness.md FIRST,
+    // then write .harmonik/review.json.
+    // non_committing on reviewer-class emits a v1 warning (retained, not dispatched).
+    rev_correct [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Correctness lens; write+commit reviews/reviewer-correctness.md, then write .harmonik/review.json.",
+        role="correctness review; write+commit reviews/reviewer-correctness.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // rev_tests: test-adequacy axis reviewer.
+    // Per marquee brief discipline: write+commit reviews/reviewer-tests.md FIRST,
+    // then write .harmonik/review.json.
+    rev_tests [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Test-adequacy lens; write+commit reviews/reviewer-tests.md, then write .harmonik/review.json.",
+        role="test-adequacy review; write+commit reviews/reviewer-tests.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // consolidate: severity-join correctness + tests findings; write final verdict.
+    // Reads reviews/reviewer-*.md committed by rev_correct and rev_tests.
+    // severity-join: BLOCK > REQUEST_CHANGES > APPROVE. Its review.json is the one the
+    // branch edges read (it is the last reviewer launched, so its verdict survives the
+    // single-slot review.json per the marquee brief discipline).
+    consolidate [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Severity-join reviews/reviewer-*.md (BLOCK>REQUEST_CHANGES>APPROVE); write .harmonik/review.json.",
+        role="severity-join reviews/reviewer-*.md; write final verdict to .harmonik/review.json"
+    ];
+
+    // ── GREEN-BUILD GATE ──────────────────────────────────────────────────────
+
+    // green_build: deterministic build + test gate.
+    // PENDING hk-l8rpd: will become type="tool" once the tool-node handler lands.
+    // TODAY expressed as type="non-agentic" + handler_ref="shell" (WG-039 valid proxy).
+    // Exit 0 → outcome.status=SUCCESS → close (shipped).
+    // Non-zero + deterministic failure_class → outcome.status=FAIL + failure_class=deterministic
+    //   → loop back to implement (capped at 3) to fix the build.
+    // Any other outcome (transient infra, budget, etc.) → close-needs-attention.
+    green_build [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="go build ./... && go vet ./... && go test ./...",
+        timeout="900",
+        role="green-build merge gate — PENDING hk-l8rpd (type=tool)"
+    ];
+
+    // ── Terminals ─────────────────────────────────────────────────────────────
+
+    // close: terminal — shipped successfully.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="shipped — all phases green"
+    ];
+
+    // close-needs-attention: terminal — BLOCK, cap-hit, tool failure, or cycle detected.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / tool failure / cycle detected — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+
+    // Entry.
+    start -> frame_problem;
+
+    // ── PLAN phase edges ──────────────────────────────────────────────────────
+    // frame_problem always advances to draft_plan (unconditional; it is non-committing
+    // and always succeeds on a clean exit — the hk-69asi contract).
+    frame_problem -> draft_plan;
+
+    draft_plan -> plan_review;
+    plan_review -> draft_spec [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    plan_review -> draft_plan [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    plan_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or no-progress escalates.
+    plan_review -> "close-needs-attention";
+
+    // ── SPEC phase edges ──────────────────────────────────────────────────────
+    draft_spec -> spec_review;
+    spec_review -> decompose [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    spec_review -> draft_spec [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    spec_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011).
+    spec_review -> "close-needs-attention";
+
+    // ── TASKING phase edges ───────────────────────────────────────────────────
+    decompose -> load_beads;
+
+    // load_beads (tool node proxy): SUCCESS (exit 0) → cycle_check; non-SUCCESS → triage.
+    load_beads -> cycle_check [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): non-SUCCESS (br error, no commit) escalates.
+    load_beads -> "close-needs-attention";
+
+    // cycle_check (tool node proxy): ACYCLIC (exit 0, SUCCESS) → implement;
+    // CYCLE (exit 1, FAIL) or any other non-SUCCESS → triage.
+    cycle_check -> implement [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): cycle detected or tool error → triage.
+    cycle_check -> "close-needs-attention";
+
+    // ── IMPLEMENT + MULTI-REVIEW edges ───────────────────────────────────────
+    // Unconditional reviewer spine: always run both per-axis reviewers then consolidate.
+    implement -> rev_correct;
+    rev_correct -> rev_tests;
+    rev_tests -> consolidate;
+
+    // Branch on the CONSOLIDATED verdict.
+    consolidate -> green_build [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    consolidate -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    consolidate -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or no-progress escalates.
+    consolidate -> "close-needs-attention";
+
+    // ── GREEN-BUILD GATE edges ────────────────────────────────────────────────
+    // SUCCESS (all tests pass) → shipped.
+    green_build -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Deterministic build failure (compilation error, test failure):
+    // loop back to implement for a fix pass (capped at 3).
+    // The && conjunction (D5 v1 dialect) requires BOTH status=FAIL AND failure_class=deterministic.
+    green_build -> implement [
+        condition="outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'",
+        traversal_cap="3"
+    ];
+    // Unconditional fallback (WG-011): transient infra / budget / other failures → triage.
+    green_build -> "close-needs-attention";
+}

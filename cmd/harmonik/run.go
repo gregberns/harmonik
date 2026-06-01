@@ -831,7 +831,12 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode 
 // caller to return exit code 0. Output goes to stdout so it can be captured
 // by agents without stderr redirection (hk-vudz0).
 func runUsage() {
-	fmt.Print(`harmonik run — execute beads and exit on completion
+	fmt.Print(`harmonik run — legacy/solo-bootstrap bead execution
+
+  Not the primary dispatcher. For ongoing work, start one persistent daemon
+  (queue-only) and submit beads with 'harmonik queue submit'. 'harmonik run'
+  submits to a running daemon if one exists, else runs the beads inline and
+  exits on completion (see EXIT CODES).
 
 USAGE
   harmonik run <bead-id> [flags]

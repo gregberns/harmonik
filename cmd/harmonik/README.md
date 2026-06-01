@@ -2,16 +2,42 @@
 
 Agent-driven bead execution daemon and workflow tooling.
 
+## Dispatch model
+
+The canonical dispatch path is **one persistent daemon per project plus a
+shared queue**. Start the daemon once (queue-only) in a detached tmux session:
+
+```
+harmonik --project /path/to/project --no-auto-pull --max-concurrent N
+```
+
+then dispatch work by submitting beads to its queue with `harmonik queue submit
+--beads ...` (see `harmonik queue` below) and watch progress with `harmonik
+subscribe`. The daemon spawns claude per bead, commits, merges to main
+one-at-a-time, pushes, and closes each bead. `harmonik run` is the legacy /
+solo-bootstrap path — see below.
+
 ## Subcommands
 
 ### `harmonik run`
 
-Execute one or more beads and exit on completion.
+Legacy / solo-bootstrap path. **Not** the primary dispatcher — prefer the
+persistent daemon + `harmonik queue submit` for ongoing work.
 
 ```
 harmonik run <bead-id>
 harmonik run --beads hk-abc,hk-def --max-concurrent 2
 ```
+
+Current behavior:
+
+- **If a daemon is already running** for the project (detected via
+  `daemon.sock`), `harmonik run` submits its beads to that daemon's queue as a
+  stream group and blocks until they reach a terminal state — it does not
+  collide on the pidfile lock (exit 5 is not returned).
+- **If no daemon is running**, `harmonik run` becomes an inline daemon for the
+  duration of its beads, then exits on completion. Use this only to bootstrap a
+  one-shot solo batch when you don't want a persistent daemon.
 
 ### `harmonik graph validate`
 

@@ -1,0 +1,278 @@
+// plan-to-shipped-now.dot — DEMO D1: whole-SDLC arc on TODAY's primitives (all-NOW topology)
+//
+// Pinned by:
+//   - docs/sdlc-workflow-corpus.md §D1 (plan-to-shipped-now, all-NOW topology)
+//   - docs/sdlc-workflow-corpus.md §Marquee brief discipline (reviewer-commit channel)
+//   - docs/sdlc-workflow-corpus.md §"Changes from _consolidated.md" fix #2 (in-session build gate)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md WG-028 (cycle bounding / traversal_cap)
+//
+// DEMO arc: idea → plan → spec → tasking → implement → multi-review-consolidate → docs → close.
+// Built entirely from proven NOW primitives: no hk-l8rpd tool node needed.
+//
+// Composes: plan-review-loop (#5), spec-R1-R2-cycle-style spec gate (#7), decompose-review-load
+// (#9 style), dual/triple-review-consolidate MARQUEE (#2/#3), docs-sync (#11).
+//
+// ★ Green-build gate (review fix #2): because the deterministic tool node is SOON (hk-l8rpd),
+//   this all-NOW arc demonstrates a green build by folding the gate INTO two agentic node briefs:
+//   the `consolidate` reviewer and the `docs_review` reviewer each run
+//   `go build ./... && go test ./...` in-session and BLOCK on red.
+//   Red build → BLOCK verdict → close-needs-attention (the ship-blocking escalation path).
+//
+// Marquee brief discipline (docs/sdlc-workflow-corpus.md §Marquee brief discipline):
+//   rev_correct and rev_design MUST, in order:
+//     1. Write + git commit their findings to reviews/reviewer-<axis>.md FIRST.
+//     2. THEN write .harmonik/review.json with their own verdict.
+//   The consolidate node reads all reviews/reviewer-*.md, severity-joins
+//   (BLOCK > REQUEST_CHANGES > APPROVE; red build → BLOCK), and writes ONE merged
+//   verdict to .harmonik/review.json. Its verdict is the one the branch edges read.
+
+digraph "plan-to-shipped-now" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="plan-to-shipped-now";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: workflow entry.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="idea bead — entry point"
+    ];
+
+    // ── PLAN phase ────────────────────────────────────────────────────────────
+
+    // draft_plan: write or revise plans/<cn>.md; on re-entry address plan_review feedback.
+    draft_plan [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="write plans/<cn>.md; on re-entry revise per plan reviewer feedback"
+    ];
+
+    // plan_review: render verdict on the plan.
+    plan_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="plan verdict: APPROVE / REQUEST_CHANGES / BLOCK"
+    ];
+
+    // ── SPEC phase ────────────────────────────────────────────────────────────
+
+    // draft_spec: draft the spec from the approved plan; on re-entry revise per spec_review feedback.
+    draft_spec [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="draft spec from approved plan; on re-entry revise per spec reviewer feedback"
+    ];
+
+    // spec_review: render verdict on the spec.
+    spec_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="spec verdict: APPROVE / REQUEST_CHANGES / BLOCK"
+    ];
+
+    // ── TASKING phase ─────────────────────────────────────────────────────────
+
+    // decompose: decompose approved spec into tasks.md; commit.
+    decompose [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="decompose spec → tasks.md; commit"
+    ];
+
+    // load_beads: create beads from tasks.md; commit .beads JSONL.
+    // SUCCESS → implement; any non-SUCCESS → close-needs-attention (unconditional fallback).
+    load_beads [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="create beads from tasks.md; commit .beads JSONL"
+    ];
+
+    // ── IMPLEMENT + MULTI-REVIEW (MARQUEE) phase ──────────────────────────────
+
+    // implement: produce or revise the change; on re-entry address consolidated feedback.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the change; on re-entry address consolidated reviewer feedback"
+    ];
+
+    // rev_correct: correctness axis reviewer.
+    // Per marquee brief discipline: write+commit reviews/reviewer-correctness.md FIRST,
+    // then write .harmonik/review.json.
+    rev_correct [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="correctness review; write+commit reviews/reviewer-correctness.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // rev_design: design axis reviewer.
+    // Per marquee brief discipline: write+commit reviews/reviewer-design.md FIRST,
+    // then write .harmonik/review.json.
+    rev_design [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="design review; write+commit reviews/reviewer-design.md FIRST, then write .harmonik/review.json"
+    ];
+
+    // consolidate: severity-join correctness + design findings; ALSO run green-build gate.
+    // Reads reviews/reviewer-*.md committed by rev_correct and rev_design.
+    // ★ Green-build gate (review fix #2): also runs `go build ./... && go test ./...` in-session;
+    //   red build → BLOCK (ship-blocking defect).
+    // Being last in the reviewer chain, its review.json is the one the branch edges read.
+    consolidate [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="severity-join reviews/reviewer-*.md (BLOCK>REQUEST_CHANGES>APPROVE); ALSO run `go build ./... && go test ./...` in-session and BLOCK on red (red build = ship-blocking defect); write .harmonik/review.json"
+    ];
+
+    // ── DOCS phase ────────────────────────────────────────────────────────────
+
+    // update_docs: sync docs to the change; commit.
+    update_docs [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="sync docs to the change; commit"
+    ];
+
+    // docs_review: verify code+docs agree; ALSO re-run green-build gate.
+    // ★ Green-build gate (review fix #2): also runs `go build ./... && go test ./...` in-session;
+    //   red build → BLOCK.
+    docs_review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="verify code+docs agree; ALSO re-run `go build ./... && go test ./...` in-session and BLOCK on red; write .harmonik/review.json"
+    ];
+
+    // ── Terminals ─────────────────────────────────────────────────────────────
+
+    // close: terminal — shipped successfully.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="shipped — all phases green"
+    ];
+
+    // close-needs-attention: terminal — BLOCK, cap-hit, or non-SUCCESS anywhere in the arc.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / load failure / red build — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+
+    // Entry.
+    start -> draft_plan;
+
+    // ── PLAN phase edges ──────────────────────────────────────────────────────
+    draft_plan -> plan_review;
+    plan_review -> draft_spec [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    plan_review -> draft_plan [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    plan_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or no-progress escalates.
+    plan_review -> "close-needs-attention";
+
+    // ── SPEC phase edges ──────────────────────────────────────────────────────
+    draft_spec -> spec_review;
+    spec_review -> decompose [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    spec_review -> draft_spec [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    spec_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011).
+    spec_review -> "close-needs-attention";
+
+    // ── TASKING phase edges ───────────────────────────────────────────────────
+    decompose -> load_beads;
+    // Commit gate: SUCCESS advances; any non-SUCCESS falls through to needs-attention.
+    load_beads -> implement [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): non-SUCCESS (br error, no commit) escalates.
+    load_beads -> "close-needs-attention";
+
+    // ── IMPLEMENT + MULTI-REVIEW edges ───────────────────────────────────────
+    // Unconditional spine: always run both per-axis reviewers then consolidate.
+    implement -> rev_correct;
+    rev_correct -> rev_design;
+    rev_design -> consolidate;
+
+    // Branch on the CONSOLIDATED verdict (from consolidate, which also runs build gate).
+    consolidate -> update_docs [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    consolidate -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    // BLOCK includes red-build verdict (review fix #2).
+    consolidate -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or no-progress escalates.
+    consolidate -> "close-needs-attention";
+
+    // ── DOCS phase edges ──────────────────────────────────────────────────────
+    update_docs -> docs_review;
+    // docs_review APPROVE → close (shipped).
+    docs_review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    docs_review -> update_docs [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    // BLOCK includes red-build verdict from the docs_review green-build gate.
+    docs_review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or no-progress escalates.
+    docs_review -> "close-needs-attention";
+}

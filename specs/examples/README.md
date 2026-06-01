@@ -362,6 +362,33 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario/characterize_refactor_verify_test.go` (drives mock handler responses against scenarios including APPROVE-on-first-verify, REQUEST_CHANGES loop back to refactor (not characterize), BLOCK escalation, and cap-hit fallback, each asserting the terminal node and dispatch sequence).
 
+### `plan-to-shipped-now.dot` (DEMO D1)
+
+**Purpose.** End-to-end SDLC arc on TODAY's primitives (all-NOW topology): idea → plan → spec → tasking → implement → multi-review-consolidate → docs → close. Built entirely from proven NOW loops and composing `plan-review-loop` (#5), a spec gate, `decompose-review-load` (#9 style), the MARQUEE `dual-review-consolidate` (#3), and `docs-sync` (#11). Classed DEMO because a full clean walk is 14+ agentic nodes; it is heavy for routine use but demonstrates the whole SDLC in one graph. **★ Green-build gate (review fix #2):** because the deterministic tool node is SOON (`hk-l8rpd`), the `consolidate` reviewer and the `docs_review` reviewer each run `go build ./... && go test ./...` in-session and BLOCK on red (red build = ship-blocking defect). D2 (`plan-to-shipped-faithful`) replaces this in-session check with a real tool node once `hk-l8rpd` lands.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §D1` (plan-to-shipped-now, all-NOW topology, DEMO arc) and the corpus dialect contract (§"Dialect contract").
+- Uses the marquee brief discipline from `docs/sdlc-workflow-corpus.md §"Marquee brief discipline"`: `rev_correct` and `rev_design` write+commit `reviews/reviewer-<axis>.md` FIRST, then write `.harmonik/review.json`; `consolidate` reads all findings files, severity-joins, and writes the final verdict.
+- Green-build gate documented in `docs/sdlc-workflow-corpus.md §"Changes from _consolidated.md"` fix #2: `consolidate` and `docs_review` briefs run `go build ./... && go test ./...` in-session and BLOCK on red until `hk-l8rpd` lands a real tool node.
+- Pinned by `specs/workflow-graph.md §8 WG-021..WG-023` (terminal-node declaration). `terminal_node_ids="close,close-needs-attention"`.
+- Uses `type="agentic"` with `agent_type="implementer"` for `draft_plan`, `draft_spec`, `decompose`, `load_beads`, `implement`, `update_docs`; `agent_type="reviewer"` for `plan_review`, `spec_review`, `rev_correct`, `rev_design`, `consolidate`, `docs_review`; and `type="non-agentic"` (with `handler_ref="noop"`) for entry + terminal nodes — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on all verdict branches — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`. Verdict literals are uppercase (`APPROVE` / `REQUEST_CHANGES` / `BLOCK`).
+- Uses `outcome.status == 'SUCCESS'` as the edge-condition LHS on the `load_beads→implement` commit-gate edge — per the D4 LHS whitelist (row 1, `outcome.status`).
+- Uses `traversal_cap="3"` on all verdict back-edges (`plan_review→draft_plan`, `spec_review→draft_spec`, `consolidate→implement`, `docs_review→update_docs`) — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses the D5 v1 edge-condition dialect (equality only) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+- The `rev_correct→rev_design→consolidate` spine is fully unconditional: both per-axis reviewers always run before the consolidate node branches per `docs/sdlc-workflow-corpus.md §3` marquee discipline.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/plan_to_shipped_now_test.go` (drives mock handler responses against eight scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, spec-review RC loop, load-beads non-SUCCESS commit gate, consolidate BLOCK including the red-build path, consolidate cap-hit, docs-review APPROVE, and docs-review unrecognized-label fallback).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

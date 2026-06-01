@@ -169,6 +169,10 @@ type mergeToMainRecordingLedger struct {
 	// reopenedCount is incremented by each ReopenBead call.
 	reopenedCount int
 
+	// reopenReason captures the reason string of the last ReopenBead call
+	// (used by the hk-4ie1z no-commit-guard regression assertion).
+	reopenReason string
+
 	// doneCh is closed after the first Close or Reopen so the test can unblock.
 	doneCh   chan struct{}
 	doneOnce sync.Once
@@ -216,12 +220,19 @@ func (l *mergeToMainRecordingLedger) CloseBead(_ context.Context, _ string, _ br
 	return nil
 }
 
-func (l *mergeToMainRecordingLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
+func (l *mergeToMainRecordingLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, reason string) error {
 	l.mu.Lock()
 	l.reopenedCount++
+	l.reopenReason = reason
 	l.mu.Unlock()
 	l.doneOnce.Do(func() { close(l.doneCh) })
 	return nil
+}
+
+func (l *mergeToMainRecordingLedger) getReopenReason() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.reopenReason
 }
 
 func (l *mergeToMainRecordingLedger) getClosedCount() int {
@@ -377,14 +388,14 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 
 	// The handler exits 0 immediately — triggers the auto-close heuristic (branch 2).
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:       ledger,
-		Bus:             collector,
-		ProjectDir:      projectDir,
-		HandlerBinary:   "/bin/sh",
-		HandlerArgs:     []string{"-c", "exit 0"},
-		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory: mergeToMainCommittingFactory(t),
+		WorktreeFactory:  mergeToMainCommittingFactory(t),
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

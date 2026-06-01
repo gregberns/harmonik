@@ -2,28 +2,45 @@ package daemon_test
 
 // mergetomain_hkcwxow_test.go — regression test for the false-positive
 // non_ff_merge when an agent makes no commits and main has advanced past the
-// fork point (bead hk-cwxow).
+// fork point (bead hk-cwxow), AS CORRECTED BY hk-4ie1z.
 //
 // Scenario:
 //   1. Run is forked from main at commit X (headSHA = X).
 //   2. Agent exits 0 without committing anything (runTip == X).
-//   3. A concurrent commit advances main to Y (Y ≠ X).
-//   4. Without the fix, is-ancestor(Y, X) fails → daemon reports non_ff_merge.
-//   5. With the fix, runTip == headSHA is detected → noChange, bead is closed.
+//   3. A concurrent commit advances main to Y (Y ≠ X) for UNRELATED reasons
+//      (no `Refs: <thisBead>` trailer — this bead's work never landed).
+//   4. The hk-cwxow property still holds: the daemon must NOT report a
+//      false-positive non_ff_merge.
 //
-// Test assertions:
-//   (i)  CloseBead called exactly once (noChange path closes the bead).
-//   (ii) ReopenBead NOT called (false-positive "non_ff_merge" must not happen).
-//   (iii) run_completed{success:true} emitted.
+// hk-4ie1z correction: the ORIGINAL hk-cwxow test asserted the run was
+// CLOSED AS SUCCESS in this scenario (step 5: "runTip == headSHA → noChange,
+// bead is closed"). That was the bug: an agent that produced no commit was
+// falsely closed as success merely because main had advanced for unrelated
+// reasons (a sibling bead landing). Under hk-4ie1z the single-mode no-commit
+// guard now fires a `no_commit` REOPEN unless THIS bead's own work is on main
+// (Refs-trailer check) — so this no-work run REOPENS, it does not auto-close.
 //
-// Spec refs: specs/execution-model.md §4.12 EM-052.
-// Bead: hk-cwxow.
+// The hk-cwxow property (no false non_ff_merge) is preserved a fortiori: the
+// no-commit guard fires BEFORE mergeRunBranchToMain is ever reached, so the
+// merge helper cannot emit a spurious non_ff_merge for this run. (The merge
+// helper's own runTip == headSHA → noChange short-circuit, workloop.go ~2804,
+// remains in place and independently covers the false-non_ff concern.)
+//
+// Test assertions (post-hk-4ie1z):
+//   (i)   ReopenBead called exactly once with a `no_commit` reason.
+//   (ii)  CloseBead NOT called (no-commit run must not be auto-closed success).
+//   (iii) NO false-positive non_ff_merge reason (the hk-cwxow property).
+//   (iv)  run_completed{success:false} emitted.
+//
+// Spec refs: specs/execution-model.md §4.12 EM-052; EM-015d (HEAD-advance).
+// Beads: hk-cwxow, hk-4ie1z.
 
 import (
 	"context"
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,10 +49,11 @@ import (
 )
 
 // TestMergeToMain_NoWorkAgentMainAdvanced verifies that when an agent makes no
-// commits (runTip == headSHA) but main has moved forward since the fork, the
-// daemon treats the run as noChange (closes the bead, does not report non_ff_merge).
+// commits (runTip == headSHA) but main has moved forward since the fork for
+// UNRELATED reasons, the daemon REOPENS the bead as `no_commit` (hk-4ie1z) and
+// never reports a false-positive non_ff_merge (hk-cwxow).
 //
-// Bead: hk-cwxow.
+// Beads: hk-cwxow, hk-4ie1z.
 func TestMergeToMain_NoWorkAgentMainAdvanced(t *testing.T) {
 	t.Parallel()
 
@@ -116,31 +134,43 @@ func TestMergeToMain_NoWorkAgentMainAdvanced(t *testing.T) {
 		t.Error("work loop did not exit within 5s")
 	}
 
-	// ── Assertion (i): CloseBead called exactly once. ─────────────────────────
-	if got := ledger.getClosedCount(); got != 1 {
-		t.Errorf("CloseBead call count = %d; want 1 (noChange path must close bead)", got)
+	// ── Assertion (i): ReopenBead called exactly once with a no_commit reason. ─
+	// hk-4ie1z: a no-commit run whose work is NOT on main must REOPEN, not close,
+	// even though a (sibling/unrelated) commit advanced main.
+	if got := ledger.getReopenedCount(); got != 1 {
+		t.Errorf("ReopenBead call count = %d; want 1 (no-commit run must be reopened, not auto-closed — hk-4ie1z)", got)
+	}
+	if reason := ledger.getReopenReason(); !strings.Contains(reason, "no_commit") {
+		t.Errorf("ReopenBead reason = %q; want a no_commit reason (hk-4ie1z guard)", reason)
 	}
 
-	// ── Assertion (ii): ReopenBead NOT called (no false-positive non_ff_merge). ─
-	if got := ledger.getReopenedCount(); got != 0 {
-		t.Errorf("ReopenBead call count = %d; want 0 — false-positive non_ff_merge regression (hk-cwxow)", got)
+	// ── Assertion (ii): CloseBead NOT called. ─────────────────────────────────
+	// The pre-hk-4ie1z bug auto-closed this run as success; that must not happen.
+	if got := ledger.getClosedCount(); got != 0 {
+		t.Errorf("CloseBead call count = %d; want 0 — a no-commit run must NOT be falsely closed as success (hk-4ie1z)", got)
 	}
 
-	// ── Assertion (iii): run_completed{success:true}. ─────────────────────────
-	runCompletedEvs := mergeToMainFindEvents(collector, "run_completed")
-	if len(runCompletedEvs) == 0 {
-		t.Error("no run_completed events found")
-	} else {
+	// ── Assertion (iii): no false-positive non_ff_merge (the hk-cwxow property). ─
+	if reason := ledger.getReopenReason(); strings.Contains(reason, "non_ff") {
+		t.Errorf("ReopenBead reason = %q; contains non_ff — false-positive non_ff_merge regression (hk-cwxow)", reason)
+	}
+
+	// ── Assertion (iv): run_failed emitted (no run_completed-success). ────────
+	// emitDone(false, …) on the no-commit guard path surfaces as run_failed; the
+	// run must NOT emit a successful run_completed (that was the false-close).
+	if evs := mergeToMainFindEvents(collector, "run_completed"); len(evs) > 0 {
 		var m map[string]interface{}
-		if err := json.Unmarshal(runCompletedEvs[0].Payload, &m); err != nil {
+		if err := json.Unmarshal(evs[0].Payload, &m); err != nil {
 			t.Fatalf("run_completed payload unmarshal: %v", err)
 		}
-		success, _ := m["success"].(bool)
-		if !success {
-			t.Errorf("run_completed success = false; want true for noChange path")
+		if success, _ := m["success"].(bool); success {
+			t.Errorf("run_completed success = true; want a run_failed for a no-commit run reopened as no_commit (hk-4ie1z)")
 		}
+	}
+	if evs := mergeToMainFindEvents(collector, "run_failed"); len(evs) == 0 {
+		t.Errorf("no run_failed event found; want one for the no_commit reopen path (hk-4ie1z)")
 	}
 
 	types := mergeToMainEventOrder(collector)
-	t.Logf("hk-cwxow regression OK: agent-no-work + main-advanced → noChange, events: %v", types)
+	t.Logf("hk-cwxow/hk-4ie1z regression OK: agent-no-work + unrelated-main-advance → no_commit REOPEN (no false non_ff, no false close), events: %v", types)
 }

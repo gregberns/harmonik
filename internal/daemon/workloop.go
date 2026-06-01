@@ -1966,24 +1966,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// failed run when HEAD == headSHA.
 	//
 	// Bead: hk-mmh8f.
-	if curHeadSHA, curHeadErr := resolveWorktreeHEAD(ctx, wtPath); curHeadErr == nil && curHeadSHA == headSHA {
-		// hk-cwxow: if main has advanced past headSHA the agent made no commits
-		// but there is nothing to merge — skip the guard and let
-		// mergeRunBranchToMain return noChange (runTip == headSHA path).
-		// When main is still at headSHA, no progress was made → ReopenBead.
-		mainAdvanced := false
-		mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
-		mainTipCmd.Dir = deps.projectDir
-		if mainTipOut, mainTipErr := mainTipCmd.Output(); mainTipErr == nil {
-			mainAdvanced = strings.TrimRight(string(mainTipOut), "\n") != headSHA
-		}
-		if !mainAdvanced {
-			failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
-			emitDone(false, failReason)
-			return
-		}
-		// main has advanced — fall through; mergeRunBranchToMain handles noChange.
+	if curHeadSHA, curHeadErr := resolveWorktreeHEAD(ctx, wtPath); curHeadErr == nil &&
+		noCommitGuardShouldReopen(ctx, deps.projectDir, curHeadSHA, headSHA, beadID) {
+		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
+		// parent (NO commit) AND this bead's own work is not on main. The prior
+		// escape hatch (hk-cwxow) bypassed the guard whenever refs/heads/main had
+		// moved at all — but under concurrent/wave dispatch a SIBLING bead merging
+		// to main satisfies "main moved" while THIS bead's code is still absent,
+		// so a genuine no-commit run was falsely closed as success (hk-tigaf.4).
+		// The positive per-bead Refs-trailer check inside noCommitGuardShouldReopen
+		// replaces "did main move?" with "did THIS bead land?". Removing the escape
+		// does NOT reintroduce the hk-cwxow false-`non_ff`: mergeRunBranchToMain
+		// independently short-circuits to noChange when runTip == headSHA
+		// (workloop.go ~2804), regardless of where main points. This mirrors the
+		// review-loop no-commit guard (reviewloop.go ~567), which never had the
+		// escape.
+		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		emitDone(false, failReason)
+		return
 	}
 
 	switch {
@@ -2099,6 +2100,35 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 // Bead ref: hk-gql20.14.
 func isWatcherErrCanceled(err error) bool {
 	return errors.Is(err, handlercontract.ErrCanceled)
+}
+
+// noCommitGuardShouldReopen decides whether the single-mode no-commit guard
+// must fail the run as `no_commit` and reopen the bead.
+//
+// It returns true when BOTH:
+//   - the implementer's worktree HEAD never advanced past the parent
+//     (curHeadSHA == parentSHA → no commit was produced), AND
+//   - THIS bead's own work is not already on main (no `Refs: <beadID>` trailer
+//     in the recent main history).
+//
+// This is the positive per-bead replacement for the buggy hk-cwxow
+// `mainAdvanced` escape, which asked "did refs/heads/main move at all?" — a
+// question that a SIBLING bead landing concurrently answers `true` even though
+// THIS bead's code never landed, falsely closing a genuine no-commit run as
+// success (hk-4ie1z, observed live on hk-tigaf.4). The only legitimate
+// fall-through (the run made no commit, but the bead's work is genuinely on
+// main because a prior run subsumed it) is preserved via
+// beadAlreadySubsumedInMain. Mirrors the review-loop guard
+// (reviewloop.go ~567), which compares HEAD == parentSHA with no escape.
+//
+// Bead: hk-4ie1z.
+func noCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {
+	if curHeadSHA != parentSHA {
+		// The implementer advanced HEAD — a commit exists; the guard does not fire.
+		return false
+	}
+	// No commit. Fail (reopen) UNLESS this bead's own work is already on main.
+	return !beadAlreadySubsumedInMain(ctx, projectDir, beadID)
 }
 
 // beadAlreadySubsumedInMain checks whether beadID appears as a "Refs: <id>"

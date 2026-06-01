@@ -557,6 +557,12 @@ func ExportedForceTeardownSession(sess handler.Session) {
 	forceTeardownSession(sess)
 }
 
+// ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the
+// single-mode no-commit guard regression test (hk-4ie1z).
+func ExportedNoCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {
+	return noCommitGuardShouldReopen(ctx, projectDir, curHeadSHA, parentSHA, beadID)
+}
+
 // ExportedHookRegister exposes RegisterHookSession for tests.
 func ExportedHookRegister(s *hookSessionStore, runID, claudeSessionID string) {
 	s.RegisterHookSession(runID, claudeSessionID)

@@ -148,6 +148,26 @@ func (s *QueueStore) WakeCh() <-chan struct{} {
 	return s.wakeC
 }
 
+// Wake fires the wake channel without mutating the queue pointer. Unlike
+// SetQueue it touches only wakeC, so callers that have already persisted the
+// queue (or that mutate it via the LockedQueueStore.SetQueue no-wake variant)
+// can signal the idle dispatch loop without a second SetQueue/persist round —
+// avoiding a double-persist race.
+//
+// The per-run completion path (evaluateGroupAdvanceWithOutcome) calls Wake on
+// every run_completed so the idle loop re-runs its §2.8 deferred-item
+// re-evaluation: a freshly-terminal blocker un-defers its dependent, but the
+// loop must tick to observe it (hk-nbjht). The send is non-blocking and
+// coalesces (buffer of 1), matching SetQueue's wake semantics.
+//
+// Bead ref: hk-nbjht.
+func (s *QueueStore) Wake() {
+	select {
+	case s.wakeC <- struct{}{}:
+	default:
+	}
+}
+
 // LockForMutation acquires the write lock and returns a *LockedQueueStore
 // whose Done method releases it. Use for read-then-write sequences
 // (validate-then-mutate per QM-064).

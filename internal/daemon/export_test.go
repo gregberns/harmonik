@@ -150,6 +150,15 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-45ude.
 	QueueStore *QueueStore
 
+	// QueueLedger, when non-nil, is the queue.BeadLedger seam the dispatch loop
+	// uses to re-evaluate deferred-for-ledger-dep items on every tick (§2.8).
+	// Tests that exercise ledger-dep deferral/un-deferral inject a fake here.
+	// When nil the re-evaluation pass no-ops (queue.ReevaluateDeferred returns
+	// early on a nil ledger).
+	//
+	// Bead ref: hk-nbjht.
+	QueueLedger queue.BeadLedger
+
 	// CancelOnQueueDrain, when non-nil, is called once after the queue
 	// transitions to all-success and ClearQueue completes.  Mirrors
 	// daemon.Config.CancelOnQueueDrain; used by hk-icecw tests to verify
@@ -281,6 +290,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentReadyTimeout:      p.AgentReadyTimeout,
 		projectCfg:             p.ProjectCfg,
 		queueStore:             p.QueueStore,
+		queueLedger:            p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
 		submitWakeC:            submitWakeC,
 		cancelOnQueueDrain:     p.CancelOnQueueDrain,
 		cancelOnQueueExit:      p.CancelOnQueueExit,

@@ -262,6 +262,18 @@ type workLoopDeps struct {
 	// Bead ref: hk-24xn1.
 	submitWakeC <-chan struct{}
 
+	// queueLedger is the queue.BeadLedger seam used by the dispatch loop to
+	// re-evaluate deferred-for-ledger-dep items on every tick (queue-model.md
+	// §2.8: "when the blocking bead closes, the dispatcher MUST re-evaluate and
+	// transition the item back to pending"). Production wires
+	// newBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
+	// pass is skipped (queue.ReevaluateDeferred no-ops on a nil ledger), preserving
+	// legacy behaviour for callers that do not exercise ledger-dep deferral.
+	//
+	// Spec ref: specs/queue-model.md §2.8, §6.6 QM-025.
+	// Bead ref: hk-nbjht.
+	queueLedger queue.BeadLedger
+
 	// cancelOnQueueDrain, when non-nil, is called once after the queue
 	// transitions to all-success and ClearQueue completes. Used by the
 	// `harmonik run <bead-id>` subcommand (hk-icecw) to exit the daemon
@@ -480,9 +492,10 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil,            // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		staleBlockerCloser:  adapter,        // hk-rnsjs: auto-close stale blockers on claim failure
-		noAutoPull:          cfg.NoAutoPull, // hk-exd7m: queue-only mode for flywheel topology
+		queueStore:          nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:         newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:  adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
+		noAutoPull:          cfg.NoAutoPull,            // hk-exd7m: queue-only mode for flywheel topology
 	}, nil
 }
 
@@ -712,6 +725,28 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							return exitClean()
 						}
 						continue
+					}
+
+					// §2.8 deferred-item re-evaluation: on every dispatch-loop tick,
+					// transition any deferred-for-ledger-dep item whose blockers have
+					// all resolved back to pending. This is the un-defer counterpart
+					// to the QM-025 submit/append-time deferral and reuses the same
+					// queue.BeadLedger.BlocksEdge seam, so the un-defer condition is the
+					// exact inverse of the deferral condition. Without it a chained
+					// stream queue stalls permanently after the first bead completes
+					// (hk-nbjht). Mutates q.Groups[activeGroupIdx] in place under the
+					// write lock; persisted below alongside the dispatch stamp.
+					if undeferred, reErr := queue.ReevaluateDeferred(ctx, &q.Groups[activeGroupIdx], deps.queueLedger); reErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: ReevaluateDeferred queueID=%s groupIndex=%d: %v\n",
+							q.QueueID, q.Groups[activeGroupIdx].GroupIndex, reErr)
+					} else if len(undeferred) > 0 {
+						// Persist the deferred → pending flips so on-disk state matches
+						// memory (§2.8: no event is emitted; the next dispatch is the
+						// observable signal).
+						if persistErr := queue.Persist(ctx, deps.projectDir, q); persistErr != nil {
+							fmt.Fprintf(os.Stderr, "daemon: workloop: Persist after ReevaluateDeferred queueID=%s: %v\n",
+								q.QueueID, persistErr)
+						}
 					}
 
 					items := queue.EligibleItems(&q.Groups[activeGroupIdx])
@@ -2640,6 +2675,16 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		pausedByFailure := q.Status == queue.QueueStatusPausedByFailure
 		lq.SetQueue(q)
 		lq.Done()
+		// hk-nbjht Gap 2: wake the idle dispatch loop after every run completion.
+		// lq.SetQueue (the LockedQueueStore no-wake variant) does NOT fire wakeC,
+		// so without this the loop stays parked in workloopIdleWait and never runs
+		// its §2.8 deferred-item re-evaluation — a chained stream queue would stall
+		// permanently once its head bead completes. Wake touches only wakeC (no
+		// queue mutation, no second persist), so there is no double-persist race
+		// with the SetQueue above. Fired unconditionally on run_completed: the
+		// woken loop re-runs EligibleItems + ReevaluateDeferred, which is cheap and
+		// idempotent if no item un-defers.
+		deps.queueStore.Wake()
 		// hk-8jh26 Fix 1: if the queue is now paused-by-failure and an exit-cancel
 		// is registered (harmonik run path), cancel the daemon context so the work
 		// loop exits promptly instead of idle-spinning waiting for more work.

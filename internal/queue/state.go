@@ -301,6 +301,91 @@ func streamEligible(g *Group) []*Item {
 	return nil
 }
 
+// ReevaluateDeferred re-evaluates every deferred-for-ledger-dep item in g and
+// transitions any whose blockers have all resolved back to pending, per the
+// §2.8 normative rule:
+//
+//	"When the blocking bead closes, the dispatcher MUST re-evaluate and
+//	 transition the item back to pending."
+//
+// It is the un-defer counterpart to the QM-025 submit/append-time deferral
+// (Validate / buildDeferredSet): both consult the same BeadLedger.BlocksEdge
+// seam so the un-defer condition is the exact inverse of the deferral
+// condition. An item I deferred at submit time because a sibling B satisfied
+// BlocksEdge(B, I) becomes eligible again only once ALL such blockers are
+// resolved.
+//
+// A blocker B of item I is resolved when EITHER:
+//   - B is terminal within this queue group (completed/failed); the daemon
+//     marks the completing item terminal before the dispatch loop re-evaluates,
+//     so a chained predecessor that just finished satisfies this branch; or
+//   - B is no longer open in the Beads ledger — LookupStatus(B) reports a
+//     status other than open/in_progress (closed, tombstoned, not-found). This
+//     branch covers blockers closed externally via `br close` independent of
+//     queue completion.
+//
+// ReevaluateDeferred is called on every dispatch-loop tick (execution-model.md
+// §7.4) under the QM-060 single-writer write lock; g is mutated in place. It
+// returns the bead IDs that were transitioned deferred → pending (for logging;
+// per §2.8 no event is emitted on this transition). A nil ledger is a no-op
+// (returns nil, nil) so legacy/test callers without a ledger seam are safe.
+//
+// Spec ref: specs/queue-model.md §2.8, §6.6 QM-025; specs/execution-model.md §7.4.
+// Bead ref: hk-nbjht.
+func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]core.BeadID, error) {
+	if g == nil || ledger == nil {
+		return nil, nil
+	}
+
+	var undeferred []core.BeadID
+	for i := range g.Items {
+		if g.Items[i].Status != ItemStatusDeferredForLedgerDep {
+			continue
+		}
+		blocked := g.Items[i].BeadID
+
+		// Find this item's blockers among its in-group siblings and check
+		// whether every one is resolved. The deferral at submit time was keyed
+		// on intra-group BlocksEdge pairs (validation.go §QM-025), so the
+		// un-defer check scans the same sibling set.
+		allResolved := true
+		for j := range g.Items {
+			if j == i {
+				continue
+			}
+			blocker := g.Items[j].BeadID
+			blocks, err := ledger.BlocksEdge(ctx, blocker, blocked)
+			if err != nil {
+				return undeferred, fmt.Errorf("queue: ReevaluateDeferred: BlocksEdge %q→%q: %w", blocker, blocked, err)
+			}
+			if !blocks {
+				continue
+			}
+			// blocker blocks blocked. It is resolved iff it is terminal in the
+			// queue OR no longer open in the ledger.
+			if itemIsTerminal(g.Items[j].Status) {
+				continue
+			}
+			status, err := ledger.LookupStatus(ctx, blocker)
+			if err != nil {
+				return undeferred, fmt.Errorf("queue: ReevaluateDeferred: LookupStatus %q: %w", blocker, err)
+			}
+			if status == BeadStatusOpen || status == BeadStatusInProgress {
+				// Blocker still open → item stays deferred.
+				allResolved = false
+				break
+			}
+		}
+
+		if allResolved {
+			g.Items[i].Status = ItemStatusPending
+			undeferred = append(undeferred, blocked)
+		}
+	}
+
+	return undeferred, nil
+}
+
 // newEvent constructs a core.Event for the given type+payload, marshalling
 // the payload to json.RawMessage and stamping a fresh UUIDv7 EventID.
 //

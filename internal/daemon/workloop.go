@@ -1028,7 +1028,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 								liveQ.QueueID, persistErr)
 						}
 						lq.Done()
-						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueID, snapGroupIndex, snapItemIdx, false)
+						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						continue
 					}
 					if !foundItem {
@@ -1279,7 +1279,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				if isBlocked {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
-					evaluateGroupAdvanceWithOutcome(ctx, deps, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
+					evaluateGroupAdvanceWithOutcome(ctx, deps, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
 					continue
 				}
 			}
@@ -1365,18 +1365,23 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 		})
 		wg.Add(1)
-		go func(runID core.RunID, beadRecord core.BeadRecord, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string) {
+		// NQ-B1: capture the dispatching queue's name so the completion path can
+		// resolve the right queue by name (evaluateGroupAdvanceWithOutcome) and
+		// the review-loop-failure budget (beadRunOne) updates the right queue.
+		// Without this both default to the main-only shim and a non-"main" queue
+		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
+		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string) {
 			defer wg.Done()
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
+			beadRunOne(ctx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
-				evaluateGroupAdvanceWithOutcome(ctx, deps, *qid, *qgidx, itemIdx, runSucceeded)
+				evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runSucceeded)
 			}
-		}(runID, beadRecord, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
+		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
 	}
 }
 
@@ -1399,7 +1404,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
 	beadID := beadRecord.BeadID
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -1548,7 +1553,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if rlResult.needsAttention && queueID != nil && queueGroupIndex != nil &&
 				queueItemIndex >= 0 && deps.queueStore != nil {
 				lq := deps.queueStore.LockForMutation()
-				liveQ := lq.Queue()
+				// NQ-B1: resolve the queue BY NAME (capturedQueueName), not the
+				// main-only lq.Queue() shim — otherwise the review-loop-failure
+				// budget for a non-"main" queue is read/written against the wrong
+				// queue (or nil) and the cap never trips (hk-tigaf.4).
+				normName := queue.NormaliseQueueName(queueName)
+				liveQ := lq.LockedQueueByName(normName)
 				if liveQ != nil {
 				outerBudgetLoop:
 					for gi := range liveQ.Groups {
@@ -1565,7 +1575,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 							break outerBudgetLoop
 						}
 					}
-					lq.SetQueue(liveQ)
+					lq.LockedSetQueueByName(normName, liveQ)
 					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
 						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist rl-failures queueID=%s: %v\n",
 							liveQ.QueueID, persistErr)
@@ -2826,16 +2836,29 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 // it also activates the next group (pending → active). If complete-with-failures,
 // it marks the queue status as paused-by-failure.
 //
+// queueName identifies the queue the run was dispatched from (NQ-B1). It is
+// the normalised name captured at dispatch time (capturedQueueName). The
+// completion path MUST resolve the queue by name — using the main-only
+// lq.Queue() shim instead would, for a non-"main" queue, return the wrong
+// queue (or nil), trip the QueueID guard, and return early WITHOUT marking the
+// item terminal, stalling that queue's group forever (hk-tigaf.4).
+//
 // Spec ref: specs/execution-model.md §4.3.EM-015f.
-// Bead ref: hk-45ude.
-func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueID string, groupIndex int, itemIdx int, success bool) {
+// Bead ref: hk-45ude, hk-tigaf.4.
+func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
 	if deps.queueStore == nil {
 		return
 	}
 
 	lq := deps.queueStore.LockForMutation()
 
-	q := lq.Queue()
+	// NQ-B1: resolve the queue BY NAME (capturedQueueName), mirroring the
+	// dispatch path's LockedQueueByName usage. queueName is already normalised
+	// (the round-robin selector reads it from the QueueStore's map keys), so it
+	// is passed straight through. The QueueID equality check is retained as a
+	// staleness guard: it rejects a completion whose queue was cleared and a new
+	// queue installed at the same name slot before this goroutine ran.
+	q := lq.LockedQueueByName(queue.NormaliseQueueName(queueName))
 	if q == nil || q.QueueID != queueID {
 		lq.Done()
 		return
@@ -2866,7 +2889,8 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 	if advErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup queueID=%s groupIndex=%d: %v\n",
 			queueID, groupIndex, advErr)
-		lq.SetQueue(q)
+		// NQ-B1: write back to the same name slot we resolved from.
+		lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
 		lq.Done()
 		return
 	}
@@ -2919,8 +2943,11 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 			// Fall through: still clear in-memory state so the loop isn't stuck.
 		}
 		lq.Done()
-		// Release the write lock before ClearQueue (which acquires its own lock).
-		deps.queueStore.ClearQueue()
+		// Release the write lock before ClearQueueByName (which acquires its own
+		// lock). NQ-B1: clear the slot for THIS queue's name, not the main-only
+		// ClearQueue shim — otherwise a completed non-"main" queue lingers in the
+		// store and the round-robin selector keeps re-scanning a drained queue.
+		deps.queueStore.ClearQueueByName(queue.NormaliseQueueName(queueName))
 		// hk-icecw: if a drain-cancel is registered (harmonik run path), cancel
 		// the daemon context now so the work loop exits cleanly instead of
 		// idle-spinning waiting for more work.
@@ -2943,7 +2970,8 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 			events = nil
 		}
 		pausedByFailure := q.Status == queue.QueueStatusPausedByFailure
-		lq.SetQueue(q)
+		// NQ-B1: write back to the same name slot we resolved from.
+		lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
 		lq.Done()
 		// hk-nbjht Gap 2: wake the idle dispatch loop after every run completion.
 		// lq.SetQueue (the LockedQueueStore no-wake variant) does NOT fire wakeC,

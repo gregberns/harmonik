@@ -312,7 +312,7 @@ func TestQueueDispatch_EM015f_GroupAdvanceGate(t *testing.T) {
 	})
 
 	// Advance item 0 only (beadA success) — group should stay active.
-	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, queueID, groupIndex, 0, true)
+	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, "", queueID, groupIndex, 0, true)
 
 	q2 := qs.Queue()
 	if q2 == nil {
@@ -326,7 +326,7 @@ func TestQueueDispatch_EM015f_GroupAdvanceGate(t *testing.T) {
 	}
 
 	// Advance item 1 (beadB success) — now both terminal; group 0 → complete-success.
-	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, queueID, groupIndex, 1, true)
+	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, "", queueID, groupIndex, 1, true)
 
 	q3 := qs.Queue()
 	if q3 == nil {
@@ -378,7 +378,7 @@ func TestQueueDispatch_FailurePath_QueuePaused(t *testing.T) {
 	})
 
 	// Simulate a failed run outcome.
-	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, queueID, 0, 0, false)
+	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, "", queueID, 0, 0, false)
 
 	q2 := qs.Queue()
 	if q2 == nil {

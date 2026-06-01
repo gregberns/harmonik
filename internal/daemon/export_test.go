@@ -1172,9 +1172,12 @@ func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitt
 // for tests in package daemon_test. Drives EM-015f group-advance evaluation
 // directly without running a full work loop cycle.
 //
-// Bead ref: hk-45ude.
-func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueID string, groupIndex int, itemIdx int, success bool) {
-	evaluateGroupAdvanceWithOutcome(ctx, deps, queueID, groupIndex, itemIdx, success)
+// queueName (NQ-B1) selects the queue slot the completion path resolves; pass
+// "" for the main queue (it normalises to "main").
+//
+// Bead ref: hk-45ude, hk-tigaf.4.
+func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
+	evaluateGroupAdvanceWithOutcome(ctx, deps, queueName, queueID, groupIndex, itemIdx, success)
 }
 
 // ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the

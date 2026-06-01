@@ -127,7 +127,7 @@ func TestEvaluateGroupAdvance_WakesLoopOnRunCompleted_hknbjht(t *testing.T) {
 	})
 
 	// A completes successfully — the completion path must wake the loop.
-	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, queueID, 0, 0, true)
+	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, "", queueID, 0, 0, true)
 
 	select {
 	case <-qs.WakeCh():
@@ -197,7 +197,7 @@ func TestQueueDispatch_DeferredChainRecovers_hknbjht(t *testing.T) {
 	})
 
 	// ── Step 1: A's run completes ────────────────────────────────────────────
-	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, queueID, 0, 0, true)
+	daemon.ExportedEvaluateGroupAdvanceWithOutcome(context.Background(), deps, "", queueID, 0, 0, true)
 
 	// Gap 2: the completion path must have woken the idle dispatch loop.
 	select {

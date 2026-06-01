@@ -8,10 +8,10 @@ requirement-prefix: CP
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.4.2
+version: 0.4.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-31
+last-updated: 2026-06-01
 depends-on:
   - architecture
   - execution-model
@@ -269,9 +269,10 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CP-027 — Reconciliation wall-clock budget is an outer bound
 
-Reconciliation workflows carry a mandatory wall-clock Budget per [docs/foundation/components.md §9.4a]. That budget MUST register as a Budget instance with `resource = wall_clock_seconds`, `scope = per_run`, `scope_target = <reconciliation_run_id>`. The outer-bound enforcement mechanism lives in reconciliation.md §4.4; this spec contributes the normative composition rule: when a reconciliation wall-clock Budget is active for a run, inner per-role or per-state Budgets MUST NOT extend the effective wall-clock beyond the outer bound. On any conflict between an inner Budget limit and the outer wall-clock Budget remaining, the outer Budget wins (a dispatch admissible under the inner Budget but not the outer's remaining allowance is DENIED with failure class `budget_exhausted` per [execution-model.md §8.5]).
+Reconciliation workflows carry a mandatory wall-clock Budget per [reconciliation/spec.md §4.4 RC-017]. That budget MUST register as a Budget instance with `resource = wall_clock_seconds`, `scope = per_run`, `scope_target = <reconciliation_run_id>`. The outer-bound enforcement mechanism lives in [reconciliation/spec.md §4.4]; this spec contributes the normative composition rule: when a reconciliation wall-clock Budget is active for a run, inner per-role or per-state Budgets MUST NOT extend the effective wall-clock beyond the outer bound. On any conflict between an inner Budget limit and the outer wall-clock Budget remaining, the outer Budget wins (a dispatch admissible under the inner Budget but not the outer's remaining allowance is DENIED with failure class `budget_exhausted` per [execution-model.md §8.5]).
 
 Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 ### 4.6 Role permissions and freedom profiles
 
@@ -1230,6 +1231,7 @@ Default-if-unresolved: Keep separate; revisit if a third Kind develops a hash di
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-01 | 0.4.3 | agent (hk-63oh.26) | **CP-027 citation fix + Axes.** Migrated bootstrap citation `[docs/foundation/components.md §9.4a]` → `[reconciliation/spec.md §4.4 RC-017]` (reconciliation spec is now finalized at v0.4.1); updated inline reference `reconciliation.md §4.4` → `[reconciliation/spec.md §4.4]`. Added missing `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` to CP-027 per template obligation. No requirement IDs or schemas touched. Refs: hk-63oh.26. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft. |
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 integration: migrated self-citations (architecture/reconciliation/workspace-model/operator-nfr) to new §4.x numbering; added INTERFACE Registry (§6.1.7) and GateVerdictRecord / HookVerdictRecord / SideEffect / CognitionMeta (§6.1.6); added CP-040a (input-envelope hash) and rewrote CP-041 + CP-INV-003 for envelope-match replay-safety; added CP-034b (evaluation-cost ceiling); collapsed CP-050 to the union-computation only (handler-contract owns resolution/provisioning); split skill fail-points between ingest-time syntactic validity and launch-time package resolution in CP-049; extended §6.3 YAML with `skill_sets[]`; added `guard_failed`, `verdict_envelope_mismatch`, `policy_expression_exceeded_cost`, `control_points_registered` to §6.5; strengthened CP-027 with wall-clock composition rule; fixed CP-032/CP-033 tightest-wins wording and model_tier ordering; demoted CP-INV-004/CP-INV-005 per template §5 selection test; clarified CP-007 ordering as record-side declaration; Hook trigger namespace clarified in CP-013; §A.3 rationale added for cel-go comparison and for registration-layer Kind peerage; §7.1 registration sequence restructured to two passes for cross-document references. Downstream specs (execution-model, handler-contract, event-model, reconciliation, operator-nfr, beads-integration) carry ~30 citations to CP at legacy §6.x addresses; those specs MUST migrate their citations to the §4.x addresses used here. |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Completed AR-MIG-001 `handler_type` → `agent_type` rename at §6.3 policy-expression key path (`run.next_node.handler_type` → `run.next_node.agent_type`); corrected the accompanying cross-reference from `[handler-contract.md §4.1]` to `[handler-contract.md §6.1]` (the LaunchSpec RECORD declaring `agent_type` lives in §6.1, not §4.1). No requirement IDs, invariants, or schemas were touched. |

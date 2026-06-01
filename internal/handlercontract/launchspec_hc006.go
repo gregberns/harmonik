@@ -1,6 +1,7 @@
 package handlercontract
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -113,11 +114,18 @@ type LaunchSpec struct {
 	// nil otherwise.
 	BeadID *string `json:"bead_id,omitempty"`
 
-	// SnapshotToken is the opaque token for reconciliation-investigator handlers,
-	// binding the agent's reads to a captured (git_head_hash, beads_audit_entry_id)
-	// per [reconciliation/spec.md §9.4b] (bootstrap phase).
+	// SnapshotToken is the JSON-serialized core.SnapshotToken for
+	// reconciliation-investigator handlers, binding the agent's reads to a
+	// captured (git_head_hash, beads_audit_entry_id) per RC-015 and
+	// [specs/handler-contract.md §6.1 HC-006].
+	//
+	// Declared String|None in HC-006: the wire value is a JSON string whose
+	// contents are the JSON-encoded SnapshotToken record
+	// ({git_head_hash, beads_audit_entry_id, captured_at_timestamp}).
+	// Use MarshalSnapshotToken to encode and ParseSnapshotToken to decode.
+	//
 	// Optional: present only for investigator handlers; nil otherwise.
-	SnapshotToken *core.SnapshotToken `json:"snapshot_token,omitempty"`
+	SnapshotToken *string `json:"snapshot_token,omitempty"`
 
 	// WorkflowMode is the dispatch shape resolved for this run per
 	// specs/handler-contract.md §6.1 HC-006 and execution-model.md §4.3.EM-012.
@@ -233,4 +241,44 @@ func (s LaunchSpec) Valid() error {
 		return fmt.Errorf("handlercontract: LaunchSpec.SchemaVersion must be positive, got %d", s.SchemaVersion)
 	}
 	return nil
+}
+
+// MarshalSnapshotToken JSON-encodes tok and returns the resulting string,
+// suitable for assignment to LaunchSpec.SnapshotToken.
+//
+// Per RC-015 and specs/handler-contract.md §6.1 HC-006, the snapshot_token
+// wire field is String|None: a JSON string whose contents are the JSON-encoded
+// SnapshotToken record. The caller MUST verify tok.Valid() before encoding.
+//
+// MarshalSnapshotToken returns an error only when json.Marshal fails, which
+// cannot happen for a plain struct with no custom marshal logic.
+func MarshalSnapshotToken(tok core.SnapshotToken) (string, error) {
+	b, err := json.Marshal(tok)
+	if err != nil {
+		return "", fmt.Errorf("handlercontract: MarshalSnapshotToken: %w", err)
+	}
+	return string(b), nil
+}
+
+// ParseSnapshotToken decodes a LaunchSpec.SnapshotToken string (JSON-encoded
+// SnapshotToken record) back into a core.SnapshotToken.
+//
+// Per RC-015 and specs/handler-contract.md §6.1 HC-006, the snapshot_token
+// wire field is String|None carrying a JSON-encoded SnapshotToken record. The
+// investigator subprocess calls this function to recover the structured token
+// from the LaunchSpec it received.
+//
+// Returns an error if s is not valid JSON or the decoded token fails
+// core.SnapshotToken.Valid().
+func ParseSnapshotToken(s string) (core.SnapshotToken, error) {
+	var tok core.SnapshotToken
+	if err := json.Unmarshal([]byte(s), &tok); err != nil {
+		return core.SnapshotToken{}, fmt.Errorf("handlercontract: ParseSnapshotToken: %w", err)
+	}
+	if !tok.Valid() {
+		return core.SnapshotToken{}, fmt.Errorf(
+			"handlercontract: ParseSnapshotToken: decoded token fails Valid() (missing required fields)",
+		)
+	}
+	return tok, nil
 }

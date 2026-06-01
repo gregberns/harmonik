@@ -20,10 +20,14 @@ func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 	runID := core.RunID(uuid.MustParse("0196e100-0000-7000-8000-000000000001"))
 	wfID := core.WorkflowID(uuid.MustParse("0196e100-0000-7000-8000-000000000002"))
 	beadID := "hk-8i31.74"
-	tok := core.SnapshotToken{
+	// snapshot_token is String|None per HC-006: encode the SnapshotToken as JSON.
+	tokEncoded, err := handlercontract.MarshalSnapshotToken(core.SnapshotToken{
 		GitHeadHash:         "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 		BeadsAuditEntryID:   "audit-001",
 		CapturedAtTimestamp: "2026-05-10T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("launchspecFixtureValid: MarshalSnapshotToken: %v", err)
 	}
 	return handlercontract.LaunchSpec{
 		RunID:               runID,
@@ -38,7 +42,7 @@ func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 		Budget:              core.BudgetRef("default"),
 		FreedomProfileRef:   "standard",
 		BeadID:              &beadID,
-		SnapshotToken:       &tok,
+		SnapshotToken:       &tokEncoded,
 		SchemaVersion:       handlercontract.LaunchSpecSchemaVersion,
 	}
 }
@@ -617,6 +621,116 @@ func TestLaunchSpec_ReviewLoopFieldsOmittedWhenAbsent(t *testing.T) {
 		if _, ok := raw[field]; ok {
 			t.Errorf("HC-006: %q present in JSON with nil value; want omitted", field)
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RC-015 / HC-006: SnapshotToken is String|None (wire format)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestHC006_SnapshotTokenIsJSONStringInWireFormat verifies that the
+// snapshot_token field serialises as a JSON string value (not a JSON object)
+// in the marshalled LaunchSpec — matching the String|None declaration in
+// specs/handler-contract.md §6.1 RECORD LaunchSpec.
+//
+// RC-015: "LaunchSpec.snapshot_token field, declared as String|None in HC-006,
+// MUST carry the JSON-serialized form of the SnapshotToken record."
+//
+// Spec ref: specs/handler-contract.md §6.1; specs/reconciliation/spec.md §4.4 RC-015.
+func TestHC006_SnapshotTokenIsJSONStringInWireFormat(t *testing.T) {
+	t.Parallel()
+
+	spec := launchspecFixtureValid(t)
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatalf("HC-006: json.Marshal(LaunchSpec): %v", err)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("HC-006: json.Unmarshal to raw map: %v", err)
+	}
+
+	rawTok, ok := raw["snapshot_token"]
+	if !ok {
+		t.Fatal("HC-006: snapshot_token absent from marshalled LaunchSpec; want present (fixture includes it)")
+	}
+
+	// The wire value MUST be a JSON string, not a JSON object.
+	// A JSON string starts with '"'; a JSON object starts with '{'.
+	if len(rawTok) == 0 || rawTok[0] != '"' {
+		t.Errorf("HC-006: snapshot_token wire value = %s; want a JSON string (starting with '\"'); "+
+			"field must be String|None per HC-006, not an embedded object", rawTok)
+	}
+}
+
+// TestHC006_MarshalSnapshotTokenRoundTrip verifies that MarshalSnapshotToken
+// and ParseSnapshotToken are exact inverses: round-tripping a SnapshotToken
+// through both functions recovers all three fields identically.
+//
+// Spec ref: specs/handler-contract.md §6.1; specs/reconciliation/spec.md §4.4 RC-015.
+func TestHC006_MarshalSnapshotTokenRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := core.SnapshotToken{
+		GitHeadHash:         "abc123abc123abc123abc123abc123abc123abc1",
+		BeadsAuditEntryID:   "audit-hk6306.23",
+		CapturedAtTimestamp: "2026-05-31T12:00:00Z",
+	}
+
+	encoded, err := handlercontract.MarshalSnapshotToken(original)
+	if err != nil {
+		t.Fatalf("HC-006: MarshalSnapshotToken: %v", err)
+	}
+	if encoded == "" {
+		t.Fatal("HC-006: MarshalSnapshotToken returned empty string")
+	}
+
+	decoded, err := handlercontract.ParseSnapshotToken(encoded)
+	if err != nil {
+		t.Fatalf("HC-006: ParseSnapshotToken: %v", err)
+	}
+
+	if decoded.GitHeadHash != original.GitHeadHash {
+		t.Errorf("HC-006: GitHeadHash = %q, want %q", decoded.GitHeadHash, original.GitHeadHash)
+	}
+	if decoded.BeadsAuditEntryID != original.BeadsAuditEntryID {
+		t.Errorf("HC-006: BeadsAuditEntryID = %q, want %q", decoded.BeadsAuditEntryID, original.BeadsAuditEntryID)
+	}
+	if decoded.CapturedAtTimestamp != original.CapturedAtTimestamp {
+		t.Errorf("HC-006: CapturedAtTimestamp = %q, want %q", decoded.CapturedAtTimestamp, original.CapturedAtTimestamp)
+	}
+	if !decoded.Valid() {
+		t.Error("HC-006: decoded SnapshotToken.Valid() = false; want true")
+	}
+}
+
+// TestHC006_ParseSnapshotTokenRejectsInvalidJSON verifies that ParseSnapshotToken
+// returns an error on malformed JSON input.
+//
+// Spec ref: specs/handler-contract.md §6.1; specs/reconciliation/spec.md §4.4 RC-015.
+func TestHC006_ParseSnapshotTokenRejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := handlercontract.ParseSnapshotToken("not-valid-json")
+	if err == nil {
+		t.Error("HC-006: ParseSnapshotToken(invalid JSON) = nil error; want error")
+	}
+}
+
+// TestHC006_ParseSnapshotTokenRejectsIncompleteToken verifies that
+// ParseSnapshotToken returns an error when the decoded SnapshotToken fails
+// Valid() (i.e. a required field is missing).
+//
+// Spec ref: specs/handler-contract.md §6.1; specs/reconciliation/spec.md §4.4 RC-015.
+func TestHC006_ParseSnapshotTokenRejectsIncompleteToken(t *testing.T) {
+	t.Parallel()
+
+	// Only git_head_hash present — missing beads_audit_entry_id and captured_at_timestamp.
+	incomplete := `{"git_head_hash":"deadbeef"}`
+	_, err := handlercontract.ParseSnapshotToken(incomplete)
+	if err == nil {
+		t.Error("HC-006: ParseSnapshotToken(incomplete token) = nil error; want error (Valid() should fail)")
 	}
 }
 

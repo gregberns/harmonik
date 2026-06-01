@@ -134,3 +134,113 @@ func TestAcquireReconciliationLock_MetadataWritten(t *testing.T) {
 		t.Errorf("lock file does not contain creator_pid= line; content: %q", content)
 	}
 }
+
+// ---- RC-002b: WriteVerdictExecuted tests ----
+
+// TestWriteVerdictExecuted_AppendsTrailerAndSyncs verifies that
+// WriteVerdictExecuted appends "Harmonik-Verdict-Executed: true" to the lock
+// file and that the content is readable after the call.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b — "verdict-executor writes
+// Harmonik-Verdict-Executed: true to the lock file just before releasing the lock."
+// Bead ref: hk-63oh.5.
+func TestWriteVerdictExecuted_AppendsTrailerAndSyncs(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const targetRunID = "run-write-verdict-test"
+
+	lock, err := AcquireReconciliationLock(projectDir, targetRunID)
+	if err != nil {
+		t.Fatalf("AcquireReconciliationLock: %v", err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	if err := lock.WriteVerdictExecuted(); err != nil {
+		t.Fatalf("WriteVerdictExecuted: unexpected error: %v", err)
+	}
+
+	//nolint:gosec // G304: path is constructed from t.TempDir() + known relative segments, not user input
+	data, err := os.ReadFile(lock.LockPath())
+	if err != nil {
+		t.Fatalf("ReadFile lock: %v", err)
+	}
+	const wantTrailer = "Harmonik-Verdict-Executed: true"
+	if !strings.Contains(string(data), wantTrailer) {
+		t.Errorf("WriteVerdictExecuted: lock file does not contain %q after write; content: %q",
+			wantTrailer, string(data))
+	}
+}
+
+// TestWriteVerdictExecuted_AfterReleaseFails verifies that WriteVerdictExecuted
+// returns an error when called after Release (the fd is closed).
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b — write must be before Release.
+// Bead ref: hk-63oh.5.
+func TestWriteVerdictExecuted_AfterReleaseFails(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const targetRunID = "run-write-verdict-after-release"
+
+	lock, err := AcquireReconciliationLock(projectDir, targetRunID)
+	if err != nil {
+		t.Fatalf("AcquireReconciliationLock: %v", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	if err := lock.WriteVerdictExecuted(); err == nil {
+		t.Error("WriteVerdictExecuted after Release: expected error, got nil")
+	}
+}
+
+// TestWriteVerdictExecuted_LockFileContentReadableAfterRelease verifies that the
+// verdict-executed trailer written by WriteVerdictExecuted persists in the lock
+// file after Release (fd closed). This is the artifact the PL-006 sweep reads on
+// next-daemon-startup to discriminate between "lock outlived purpose" (has trailer)
+// vs. "verdict not executed" (no trailer) per RC-002b.
+//
+// Note: the startup sweep's staleness criterion requires the creator PID to be
+// dead (cross-daemon-invocation boundary). The sweep behavior with a dead creator
+// PID is covered by TestRC002b_SweepWithVerdictExecutedNoCat3b using the
+// startupSweepFixtureSeedReconciliationLock fixture.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b.
+// Bead ref: hk-63oh.5.
+func TestWriteVerdictExecuted_LockFileContentReadableAfterRelease(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const targetRunID = "run-e2e-content-check"
+
+	// Simulate verdict-executor: acquire → write verdict-executed → release.
+	lock, err := AcquireReconciliationLock(projectDir, targetRunID)
+	if err != nil {
+		t.Fatalf("AcquireReconciliationLock: %v", err)
+	}
+	if err := lock.WriteVerdictExecuted(); err != nil {
+		t.Fatalf("WriteVerdictExecuted: %v", err)
+	}
+	lockPath := lock.LockPath()
+	if err := lock.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	// Lock file must still exist on disk after Release.
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+		t.Fatal("lock file absent after Release; WriteVerdictExecuted must leave the file on disk")
+	}
+
+	// The verdict-executed trailer must be readable from the file.
+	//nolint:gosec // G304: path constructed from t.TempDir() + known relative segments, not user input
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("ReadFile after Release: %v", err)
+	}
+	const wantTrailer = "Harmonik-Verdict-Executed: true"
+	if !strings.Contains(string(data), wantTrailer) {
+		t.Errorf("lock file after Release does not contain trailer %q; content: %q", wantTrailer, string(data))
+	}
+}

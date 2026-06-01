@@ -47,6 +47,12 @@ type OrphanSweepResult struct {
 	// files removed.
 	ReconciliationLocksRemoved int
 
+	// Cat3bRunIDs holds target_run_ids from stale reconciliation lock files that
+	// did NOT carry "Harmonik-Verdict-Executed: true". These runs must be routed
+	// through Cat 3b (verdict-emitted-but-unexecuted) on the next reconciliation
+	// pass per specs/reconciliation/spec.md §4.1 RC-002b.
+	Cat3bRunIDs []string
+
 	// StaleIntentsObserved is the count of stale intent files enumerated.
 	// These are left on disk for the reconciliation Cat 3a detector.
 	StaleIntentsObserved int
@@ -435,12 +441,13 @@ func RunOrphanSweep(
 	}
 	result.StaleIntentsObserved = staleIntents
 
-	// (e) Stale reconciliation locks.
-	reconRemoved, err := lifecycle.SweepStaleReconciliationLocks(projectDir, cfg.Logger)
+	// (e) Stale reconciliation locks (RC-002b discrimination).
+	reconResult, err := lifecycle.SweepStaleReconciliationLocks(projectDir, cfg.Logger)
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("recon-locks: %v", err))
 	}
-	result.ReconciliationLocksRemoved = reconRemoved
+	result.ReconciliationLocksRemoved = reconResult.Removed
+	result.Cat3bRunIDs = reconResult.Cat3bRunIDs
 
 	// (f) Stale in_progress bead markers (PL-006 sixth bullet — hk-iuaed.4).
 	// Run after the filesystem+process sweep and after the BI-024a `br --version`

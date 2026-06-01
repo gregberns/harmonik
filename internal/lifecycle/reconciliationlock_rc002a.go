@@ -59,6 +59,36 @@ func (l *ReconciliationLock) LockPath() string {
 	return l.lockPath
 }
 
+// WriteVerdictExecuted appends "Harmonik-Verdict-Executed: true\n" to the lock
+// file and calls Sync. This MUST be called by the verdict-executor just before
+// releasing the lock (i.e., before the verdict-executed commit is pushed to git
+// and before Release is called).
+//
+// Writing this line is the physical write that pairs with the verdict-executed
+// git commit. Because the two writes are NOT atomic (RC-002b), the startup
+// sweep (PL-006) reads this line to discriminate: lock-with-trailer → lock
+// outlived its purpose → delete; lock-without-trailer → route to Cat 3b.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b — "Lock acquisition
+// (RC-002a) and the verdict-executed-commit emission (RC-025 + schemas.md §6.4)
+// are two physically distinct write operations and CANNOT be made atomic."
+func (l *ReconciliationLock) WriteVerdictExecuted() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.fd == nil {
+		return fmt.Errorf("lifecycle: WriteVerdictExecuted: lock already released")
+	}
+	const line = "Harmonik-Verdict-Executed: true\n"
+	if _, err := fmt.Fprint(l.fd, line); err != nil {
+		return fmt.Errorf("lifecycle: WriteVerdictExecuted: write: %w", err)
+	}
+	if err := l.fd.Sync(); err != nil {
+		return fmt.Errorf("lifecycle: WriteVerdictExecuted: sync: %w", err)
+	}
+	return nil
+}
+
 // Release closes the underlying fd, which also releases the advisory flock
 // per PL-002a (fd-lifetime lock). Release is idempotent: a second call returns
 // nil without a double-close.

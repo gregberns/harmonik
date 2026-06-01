@@ -440,12 +440,12 @@ func TestPL006_SweepStaleReconciliationLocks_NoDir(t *testing.T) {
 
 	projectDir := plFixtureTempProjectDir(t)
 
-	removed, err := SweepStaleReconciliationLocks(projectDir, nil)
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
 	if err != nil {
 		t.Fatalf("PL-006 recon-locks no-dir: unexpected error: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("PL-006 recon-locks no-dir: removed = %d, want 0", removed)
+	if result.Removed != 0 {
+		t.Errorf("PL-006 recon-locks no-dir: removed = %d, want 0", result.Removed)
 	}
 }
 
@@ -471,12 +471,12 @@ func TestPL006_SweepStaleReconciliationLocks_RemovesStale(t *testing.T) {
 		t.Fatalf("PL-006 recon-locks remove: lock file absent before sweep")
 	}
 
-	removed, err := SweepStaleReconciliationLocks(projectDir, nil)
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
 	if err != nil {
 		t.Fatalf("PL-006 recon-locks remove: unexpected error: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("PL-006 recon-locks remove: removed = %d, want 1", removed)
+	if result.Removed != 1 {
+		t.Errorf("PL-006 recon-locks remove: removed = %d, want 1", result.Removed)
 	}
 
 	// File must be gone after sweep.
@@ -502,12 +502,12 @@ func TestPL006_SweepStaleReconciliationLocks_MultipleFiles(t *testing.T) {
 		startupSweepFixtureSeedReconciliationLock(t, projectDir, name, deadPID, false)
 	}
 
-	removed, err := SweepStaleReconciliationLocks(projectDir, nil)
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
 	if err != nil {
 		t.Fatalf("PL-006 recon-locks multi: unexpected error: %v", err)
 	}
-	if removed != 3 {
-		t.Errorf("PL-006 recon-locks multi: removed = %d, want 3", removed)
+	if result.Removed != 3 {
+		t.Errorf("PL-006 recon-locks multi: removed = %d, want 3", result.Removed)
 	}
 }
 
@@ -528,15 +528,19 @@ func TestPL006_SweepStaleReconciliationLocks_WithVerdictTrailer(t *testing.T) {
 
 	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-verdict", deadPID, true)
 
-	removed, err := SweepStaleReconciliationLocks(projectDir, nil)
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
 	if err != nil {
 		t.Fatalf("PL-006 recon-locks verdict: unexpected error: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("PL-006 recon-locks verdict: removed = %d, want 1", removed)
+	if result.Removed != 1 {
+		t.Errorf("PL-006 recon-locks verdict: removed = %d, want 1", result.Removed)
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Error("PL-006 recon-locks verdict: lock file still exists; want removed")
+	}
+	// RC-002b: stale lock WITH verdict-executed must NOT produce Cat 3b run IDs.
+	if len(result.Cat3bRunIDs) != 0 {
+		t.Errorf("PL-006 recon-locks verdict: Cat3bRunIDs = %v, want empty (verdict was executed)", result.Cat3bRunIDs)
 	}
 }
 
@@ -561,15 +565,121 @@ func TestPL006_SweepStaleReconciliationLocks_NonLockFilesIgnored(t *testing.T) {
 		t.Fatalf("PL-006 recon-locks non-lock: WriteFile: %v", err)
 	}
 
-	removed, err := SweepStaleReconciliationLocks(projectDir, nil)
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
 	if err != nil {
 		t.Fatalf("PL-006 recon-locks non-lock: unexpected error: %v", err)
 	}
-	if removed != 0 {
-		t.Errorf("PL-006 recon-locks non-lock: removed = %d, want 0", removed)
+	if result.Removed != 0 {
+		t.Errorf("PL-006 recon-locks non-lock: removed = %d, want 0", result.Removed)
 	}
 	// README.txt must still be present.
 	if _, err := os.Stat(notLockPath); os.IsNotExist(err) {
 		t.Error("PL-006 recon-locks non-lock: README.txt was removed; MUST be ignored")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// RC-002b: SweepStaleReconciliationLocks Cat3b routing
+// ──────────────────────────────────────────────────────────────────────────────
+
+// TestRC002b_SweepWithVerdictExecutedNoCat3b verifies that a stale lock file
+// carrying "Harmonik-Verdict-Executed: true" is removed and NOT included in
+// Cat3bRunIDs. Per RC-002b: the lock outlived its useful purpose; no Cat 3b
+// routing is required.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b.
+func TestRC002b_SweepWithVerdictExecutedNoCat3b(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const deadPID = 99988
+	if plFixtureIsPidLive(deadPID) {
+		t.Skipf("RC-002b sweep with-verdict: PID %d is live; skipping", deadPID)
+	}
+
+	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, "run-rc002b-with-verdict", deadPID, true)
+
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
+	if err != nil {
+		t.Fatalf("RC-002b sweep with-verdict: unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("RC-002b sweep with-verdict: Removed = %d, want 1", result.Removed)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Error("RC-002b sweep with-verdict: lock file still exists after sweep; want removed")
+	}
+	if len(result.Cat3bRunIDs) != 0 {
+		t.Errorf("RC-002b sweep with-verdict: Cat3bRunIDs = %v, want empty (verdict was already executed)", result.Cat3bRunIDs)
+	}
+}
+
+// TestRC002b_SweepWithoutVerdictExecutedYieldsCat3b verifies that a stale lock
+// file NOT carrying "Harmonik-Verdict-Executed: true" is removed AND its run ID
+// appears in Cat3bRunIDs. Per RC-002b: the daemon must route that run through
+// Cat 3b (verdict-emitted-but-unexecuted) on the next reconciliation pass.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b.
+func TestRC002b_SweepWithoutVerdictExecutedYieldsCat3b(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const deadPID = 99987
+	if plFixtureIsPidLive(deadPID) {
+		t.Skipf("RC-002b sweep no-verdict: PID %d is live; skipping", deadPID)
+	}
+
+	const runID = "run-rc002b-no-verdict"
+	lockPath := startupSweepFixtureSeedReconciliationLock(t, projectDir, runID, deadPID, false)
+
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
+	if err != nil {
+		t.Fatalf("RC-002b sweep no-verdict: unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("RC-002b sweep no-verdict: Removed = %d, want 1", result.Removed)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Error("RC-002b sweep no-verdict: lock file still exists after sweep; want removed")
+	}
+	if len(result.Cat3bRunIDs) != 1 {
+		t.Fatalf("RC-002b sweep no-verdict: Cat3bRunIDs = %v, want [%q]", result.Cat3bRunIDs, runID)
+	}
+	if result.Cat3bRunIDs[0] != runID {
+		t.Errorf("RC-002b sweep no-verdict: Cat3bRunIDs[0] = %q, want %q", result.Cat3bRunIDs[0], runID)
+	}
+}
+
+// TestRC002b_SweepMixedVerdictStateDiscriminates verifies that when both kinds
+// of stale lock (with and without verdict-executed trailer) exist, only the
+// without-verdict run ID appears in Cat3bRunIDs.
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b.
+func TestRC002b_SweepMixedVerdictStateDiscriminates(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const deadPID = 99986
+	if plFixtureIsPidLive(deadPID) {
+		t.Skipf("RC-002b sweep mixed: PID %d is live; skipping", deadPID)
+	}
+
+	const withVerdictRunID = "run-rc002b-mix-with"
+	const withoutVerdictRunID = "run-rc002b-mix-without"
+	startupSweepFixtureSeedReconciliationLock(t, projectDir, withVerdictRunID, deadPID, true)
+	startupSweepFixtureSeedReconciliationLock(t, projectDir, withoutVerdictRunID, deadPID, false)
+
+	result, err := SweepStaleReconciliationLocks(projectDir, nil)
+	if err != nil {
+		t.Fatalf("RC-002b sweep mixed: unexpected error: %v", err)
+	}
+	if result.Removed != 2 {
+		t.Errorf("RC-002b sweep mixed: Removed = %d, want 2", result.Removed)
+	}
+	if len(result.Cat3bRunIDs) != 1 {
+		t.Fatalf("RC-002b sweep mixed: Cat3bRunIDs = %v, want [%q]", result.Cat3bRunIDs, withoutVerdictRunID)
+	}
+	if result.Cat3bRunIDs[0] != withoutVerdictRunID {
+		t.Errorf("RC-002b sweep mixed: Cat3bRunIDs[0] = %q, want %q", result.Cat3bRunIDs[0], withoutVerdictRunID)
 	}
 }

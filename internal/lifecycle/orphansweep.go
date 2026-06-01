@@ -366,12 +366,35 @@ func SweepOrphanHandlers(
 // (e) Stale reconciliation lock sweep
 // ──────────────────────────────────────────────────────────────────────────────
 
+// SweepReconciliationLocksResult is the result of [SweepStaleReconciliationLocks].
+//
+// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b — stale lock files are
+// removed unconditionally; their verdict-executed state discriminates downstream routing.
+type SweepReconciliationLocksResult struct {
+	// Removed is the count of stale lock files unlinked.
+	Removed int
+
+	// Cat3bRunIDs contains the target_run_id values from stale lock files that
+	// did NOT carry the "Harmonik-Verdict-Executed: true" line. Per RC-002b,
+	// these runs must be routed through Cat 3b (verdict-emitted-but-unexecuted)
+	// on the next reconciliation pass (§8.5).
+	//
+	// Spec ref: specs/reconciliation/spec.md §4.1 RC-002b.
+	Cat3bRunIDs []string
+}
+
 // SweepStaleReconciliationLocks enumerates .harmonik/reconciliation-locks/*.lock,
 // probes each file with flock(LOCK_EX|LOCK_NB), and removes files that are both
 // unlocked and whose recorded creator_pid does not respond to kill(pid, 0).
 //
-// Returns the count of lock files removed. Returns 0 (no error) if the
-// reconciliation-locks directory does not exist.
+// For each removed file, it checks whether the lock file carries the
+// "Harmonik-Verdict-Executed: true" line (written by the verdict-executor per
+// RC-002b just before releasing the lock). Stale locks WITHOUT this line are
+// returned in [SweepReconciliationLocksResult.Cat3bRunIDs] so the daemon can
+// route those runs through Cat 3b on the next reconciliation pass.
+//
+// Returns a zero-value result (no error) if the reconciliation-locks directory
+// does not exist.
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006 — "Stale reconciliation locks.
 // The daemon MUST enumerate .harmonik/reconciliation-locks/*.lock. For each
@@ -384,15 +407,19 @@ func SweepOrphanHandlers(
 // NOT racily unlink a lock file currently being acquired by another daemon
 // process — the flock(LOCK_EX|LOCK_NB) probe is the serialization point; if
 // EWOULDBLOCK is observed the lock is in active use and MUST NOT be removed."
-func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (removed int, err error) {
+// Also: specs/reconciliation/spec.md §4.1 RC-002b — "stale lock with verdict-executed
+// trailer: delete, no re-classification; stale lock without: delete and route Cat 3b."
+func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (SweepReconciliationLocksResult, error) {
+	var result SweepReconciliationLocksResult
+
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
 
 	entries, err := os.ReadDir(lockDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return result, nil
 		}
-		return 0, fmt.Errorf("lifecycle: SweepStaleReconciliationLocks: ReadDir: %w", err)
+		return result, fmt.Errorf("lifecycle: SweepStaleReconciliationLocks: ReadDir: %w", err)
 	}
 
 	var lastRemoveErr error
@@ -416,20 +443,37 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (remov
 			continue
 		}
 
+		// RC-002b: read verdict-executed state and run_id before unlinking.
+		runID, hasVerdictExecuted, metaErr := reconLockReadMeta(lockPath)
+		if metaErr != nil {
+			// Cannot read meta; treat conservatively as no-verdict-executed so the run
+			// is routed to Cat 3b (the safer choice: Cat 3b re-execution is idempotent).
+			orphanLog(logger, "SweepStaleReconciliationLocks: read meta %q: %v (treating as no-verdict)", name, metaErr)
+			hasVerdictExecuted = false
+			runID = strings.TrimSuffix(name, ".lock")
+		}
+
 		// Stale: remove via unlink + fsync(parent dir).
 		if removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger); removeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: remove %q: %v", name, removeErr)
 			lastRemoveErr = removeErr
 			continue
 		}
-		orphanLog(logger, "SweepStaleReconciliationLocks: removed stale lock %q", name)
-		removed++
+		orphanLog(logger, "SweepStaleReconciliationLocks: removed stale lock %q (verdict_executed=%v)", name, hasVerdictExecuted)
+		result.Removed++
+
+		if !hasVerdictExecuted {
+			// No verdict-executed line: route the target run through Cat 3b
+			// (verdict-emitted-but-unexecuted) per RC-002b / §8.5.
+			result.Cat3bRunIDs = append(result.Cat3bRunIDs, runID)
+			orphanLog(logger, "SweepStaleReconciliationLocks: run %q queued for Cat 3b routing (no verdict-executed)", runID)
+		}
 	}
 
 	if lastRemoveErr != nil {
-		return removed, fmt.Errorf("lifecycle: SweepStaleReconciliationLocks: some removals failed (last: %w)", lastRemoveErr)
+		return result, fmt.Errorf("lifecycle: SweepStaleReconciliationLocks: some removals failed (last: %w)", lastRemoveErr)
 	}
-	return removed, nil
+	return result, nil
 }
 
 // reconLockIsStale reports whether a reconciliation lock file is stale:
@@ -487,6 +531,41 @@ func reconLockReadCreatorPID(f *os.File) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("reconLockReadCreatorPID: creator_pid line not found in %q", f.Name())
+}
+
+// reconLockReadMeta reads the run_id and verdict-executed state from a
+// reconciliation lock file at lockPath.
+//
+// Per RC-002b, the verdict-executor writes "Harmonik-Verdict-Executed: true" to
+// the lock file just before releasing the lock. If this line is present the
+// verdict was already committed to git; the lock only outlived its useful purpose.
+// If absent, the verdict was not executed before the daemon crashed.
+//
+// runID falls back to the filename-derived value (strip ".lock" suffix) if the
+// "run_id=" line is not found in the file.
+func reconLockReadMeta(lockPath string) (runID string, hasVerdictExecuted bool, err error) {
+	//nolint:gosec // G304: lockPath is constructed from projectDir + known relative path, not user input
+	f, err := os.Open(lockPath)
+	if err != nil {
+		return "", false, fmt.Errorf("reconLockReadMeta: open %q: %w", lockPath, err)
+	}
+	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "run_id=") {
+			runID = strings.TrimPrefix(line, "run_id=")
+		}
+		if line == "Harmonik-Verdict-Executed: true" {
+			hasVerdictExecuted = true
+		}
+	}
+	if runID == "" {
+		// Filename is the canonical source when run_id line is absent.
+		runID = strings.TrimSuffix(filepath.Base(lockPath), ".lock")
+	}
+	return runID, hasVerdictExecuted, nil
 }
 
 // reconLockUnlinkAndFsync removes lockPath and fsyncs the parent directory,

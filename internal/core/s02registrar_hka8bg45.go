@@ -126,6 +126,11 @@ func (s *S02Registrar) RegisterFromDocument(doc PolicyDocument) error {
 		return err
 	}
 
+	// CP-038: schema_version must be a positive integer.
+	if err := doc.ValidateSchemaVersion(); err != nil {
+		return err
+	}
+
 	sv := doc.Metadata.SchemaVersion
 
 	for _, pg := range doc.Gates {

@@ -204,6 +204,12 @@ var ErrFreedomProfileEmptyName = errors.New("freedom_profile missing required na
 // when a freedom profile's max_iterations is not positive (§6.2.CP-032).
 var ErrFreedomProfileInvalidMaxIterations = errors.New("freedom_profile max_iterations must be positive (≥ 1)")
 
+// ErrInvalidPolicySchemaVersion is returned by ValidateSchemaVersion when the
+// policy document's metadata.schema_version is zero or negative
+// (specs/control-points.md §4.7.CP-038). schema_version MUST be a positive
+// integer; a zero value indicates the field was absent from the YAML source.
+var ErrInvalidPolicySchemaVersion = errors.New("policy document metadata.schema_version must be a positive integer")
+
 // requiredSections lists the seven required top-level keys per CP-035.
 var requiredSections = []string{
 	"metadata",
@@ -367,6 +373,41 @@ func (d *PolicyDocument) ValidateFreedomProfiles() error {
 		}
 	}
 	return nil
+}
+
+// ValidateSchemaVersion reports whether the document's metadata.schema_version
+// is valid per §4.7.CP-038.
+//
+// CP-038 requires every policy YAML document to carry a schema_version integer
+// in its metadata block. The value MUST be a positive integer (≥ 1); a zero
+// value means the field was absent or explicitly set to zero, which is rejected.
+// Negative values are also rejected.
+//
+// ValidateSchemaVersion does NOT enforce the N-1 compat window — that is the
+// reader's responsibility per PolicyDocumentAcceptsSchemaVersion. This method
+// only enforces that the document carries a syntactically valid version number.
+func (d *PolicyDocument) ValidateSchemaVersion() error {
+	if d.Metadata.SchemaVersion < 1 {
+		return fmt.Errorf("%w: got %d", ErrInvalidPolicySchemaVersion, d.Metadata.SchemaVersion)
+	}
+	return nil
+}
+
+// PolicyDocumentAcceptsSchemaVersion reports whether a reader at readerVersion
+// can accept a policy document written at docVersion, per the N-1 readability
+// contract of §4.7.CP-038 and operator-nfr.md §4.5.ON-018.
+//
+// Acceptance rules:
+//   - docVersion == readerVersion   → accepted (same version)
+//   - docVersion == readerVersion-1 → accepted (N-1; the prior schema version)
+//   - docVersion > readerVersion    → accepted (additive-only; future versions
+//     are accepted because unknown fields are treated as non-fatal per ON-018)
+//   - docVersion < readerVersion-1  → rejected (too old; migration release required)
+//
+// Breaking changes that advance readerVersion beyond docVersion+1 MUST be
+// accompanied by a migration release per operator-nfr.md §4.5.ON-019.
+func PolicyDocumentAcceptsSchemaVersion(docVersion, readerVersion int) bool {
+	return docVersion >= readerVersion-1
 }
 
 // missingSections returns the names of required sections that were absent.

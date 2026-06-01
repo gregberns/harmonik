@@ -83,6 +83,14 @@ const (
 	// Spec ref: reconciliation/spec.md §4.4 RC-019; reconciliation/spec.md §4.5 RC-022.
 	reconciliationSubdir = "reconciliation"
 
+	// reconciliationAttemptsSubdir is the subdirectory under .harmonik/ holding
+	// per-target-run Cat 3b retry attempt counter files. Each target run's
+	// counter is stored at .harmonik/reconciliation-attempts/<target_run_id>.json,
+	// written atomically per WM-026 by the lifecycle I/O layer.
+	//
+	// Spec ref: reconciliation/spec.md §4.5 RC-026a.
+	reconciliationAttemptsSubdir = "reconciliation-attempts"
+
 	// wipCaptureSubdir is the leaf subdirectory name under an investigator's
 	// evidence directory for WIP capture files.
 	//
@@ -213,4 +221,29 @@ func InvestigatorEvidenceDir(projectDir, investigatorRunID string) string {
 // Spec ref: reconciliation/spec.md §4.4 RC-019.
 func WIPCaptureDir(projectDir, investigatorRunID string) string {
 	return filepath.Join(InvestigatorEvidenceDir(projectDir, investigatorRunID), wipCaptureSubdir)
+}
+
+// ReconciliationAttemptsDir returns the absolute path of the
+// reconciliation-attempts/ subdirectory for a project.
+//
+// Each target run's Cat 3b retry counter file is stored under this directory
+// at <targetRunID>.json. The files are written atomically per WM-026 by
+// the lifecycle I/O layer (lifecycle/verdictretrycap_rc026a.go).
+//
+// Spec ref: reconciliation/spec.md §4.5 RC-026a.
+func ReconciliationAttemptsDir(projectDir string) string {
+	return filepath.Join(HarmonikDir(projectDir), reconciliationAttemptsSubdir)
+}
+
+// ReconciliationAttemptPath returns the absolute path of the per-run Cat 3b
+// retry attempt counter file for a target run:
+//
+//	.harmonik/reconciliation-attempts/<targetRunID>.json
+//
+// The file is written atomically per WM-026 by WriteVerdictAttemptAtomic and
+// read by ReadVerdictAttempt.
+//
+// Spec ref: reconciliation/spec.md §4.5 RC-026a.
+func ReconciliationAttemptPath(projectDir, targetRunID string) string {
+	return filepath.Join(ReconciliationAttemptsDir(projectDir), targetRunID+".json")
 }

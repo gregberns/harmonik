@@ -75,6 +75,19 @@ const (
 	//
 	// Spec ref: reconciliation/spec.md §4.1 RC-002a.
 	reconciliationLocksSubdir = "reconciliation-locks"
+
+	// reconciliationSubdir is the subdirectory under .harmonik/ holding
+	// per-investigator evidence directories. Each investigator run gets its own
+	// subdirectory at .harmonik/reconciliation/<investigator_run_id>/.
+	//
+	// Spec ref: reconciliation/spec.md §4.4 RC-019; reconciliation/spec.md §4.5 RC-022.
+	reconciliationSubdir = "reconciliation"
+
+	// wipCaptureSubdir is the leaf subdirectory name under an investigator's
+	// evidence directory for WIP capture files.
+	//
+	// Spec ref: reconciliation/spec.md §4.4 RC-019.
+	wipCaptureSubdir = "wip-capture"
 )
 
 // HarmonikDir returns the absolute .harmonik/ directory path for a project.
@@ -168,4 +181,36 @@ func ReconciliationLockPath(projectDir, runID string) string {
 // Spec ref: event-model.md §6.2; event-model.md §4.4 (EV-011a).
 func SpillFilePath(projectDir, consumerName string) string {
 	return filepath.Join(EventsDir(projectDir), fmt.Sprintf("spill-%s.jsonl", consumerName))
+}
+
+// ReconciliationDir returns the absolute path of the reconciliation/ evidence
+// root under .harmonik/. Each investigator run writes its evidence under a
+// per-run subdirectory of this root.
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019; §4.5 RC-022.
+func ReconciliationDir(projectDir string) string {
+	return filepath.Join(HarmonikDir(projectDir), reconciliationSubdir)
+}
+
+// InvestigatorEvidenceDir returns the absolute path of the per-investigator
+// evidence directory: .harmonik/reconciliation/<investigatorRunID>/
+//
+// The verdict commit (RC-022) and any evidence files (including WIP capture)
+// are committed from this directory.
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019; §4.5 RC-022.
+func InvestigatorEvidenceDir(projectDir, investigatorRunID string) string {
+	return filepath.Join(ReconciliationDir(projectDir), investigatorRunID)
+}
+
+// WIPCaptureDir returns the absolute path of the WIP capture subdirectory for
+// a given investigator run: .harmonik/reconciliation/<investigatorRunID>/wip-capture/
+//
+// Before emitting a reopen-bead verdict the investigator MUST write the outer
+// run's WIP (git status, diff, untracked file listing) into this directory so
+// that the daemon's verdict commit preserves recoverable work.
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019.
+func WIPCaptureDir(projectDir, investigatorRunID string) string {
+	return filepath.Join(InvestigatorEvidenceDir(projectDir, investigatorRunID), wipCaptureSubdir)
 }

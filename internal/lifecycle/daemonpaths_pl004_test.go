@@ -210,6 +210,9 @@ func TestPL004_AllPathsRootedUnderHarmonik(t *testing.T) {
 		{"ReconciliationLocksDir", ReconciliationLocksDir(projectDir)},
 		{"ReconciliationLockPath", ReconciliationLockPath(projectDir, "some-run")},
 		{"SpillFilePath", SpillFilePath(projectDir, "consumer")},
+		{"ReconciliationDir", ReconciliationDir(projectDir)},
+		{"InvestigatorEvidenceDir", InvestigatorEvidenceDir(projectDir, "inv-run-id")},
+		{"WIPCaptureDir", WIPCaptureDir(projectDir, "inv-run-id")},
 	}
 
 	for _, tc := range paths {
@@ -221,5 +224,61 @@ func TestPL004_AllPathsRootedUnderHarmonik(t *testing.T) {
 					tc.name, tc.path, harmonikDir)
 			}
 		})
+	}
+}
+
+// TestRC019_ReconciliationDir verifies the canonical reconciliation/ evidence
+// root path under .harmonik/.
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019; §4.5 RC-022.
+func TestRC019_ReconciliationDir(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	got := ReconciliationDir(projectDir)
+	want := filepath.Join(projectDir, ".harmonik", "reconciliation")
+	if got != want {
+		t.Errorf("ReconciliationDir: got %q, want %q", got, want)
+	}
+}
+
+// TestRC019_InvestigatorEvidenceDir verifies the per-investigator evidence
+// directory path under .harmonik/reconciliation/<investigatorRunID>/.
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019; §4.5 RC-022.
+func TestRC019_InvestigatorEvidenceDir(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const invRunID = "01900000-0000-7000-0000-000000000042"
+	got := InvestigatorEvidenceDir(projectDir, invRunID)
+	want := filepath.Join(projectDir, ".harmonik", "reconciliation", invRunID)
+	if got != want {
+		t.Errorf("InvestigatorEvidenceDir: got %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(got, ReconciliationDir(projectDir)) {
+		t.Errorf("InvestigatorEvidenceDir: path %q not under ReconciliationDir", got)
+	}
+}
+
+// TestRC019_WIPCaptureDir verifies the canonical WIP capture path:
+// .harmonik/reconciliation/<investigatorRunID>/wip-capture/
+//
+// Spec ref: reconciliation/spec.md §4.4 RC-019.
+func TestRC019_WIPCaptureDir(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	const invRunID = "01900000-0000-7000-0000-000000000042"
+	got := WIPCaptureDir(projectDir, invRunID)
+	want := filepath.Join(projectDir, ".harmonik", "reconciliation", invRunID, "wip-capture")
+	if got != want {
+		t.Errorf("WIPCaptureDir: got %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(got, "wip-capture") {
+		t.Errorf("WIPCaptureDir: path %q must end with 'wip-capture'", got)
+	}
+	if !strings.HasPrefix(got, InvestigatorEvidenceDir(projectDir, invRunID)) {
+		t.Errorf("WIPCaptureDir: path %q not under InvestigatorEvidenceDir", got)
 	}
 }

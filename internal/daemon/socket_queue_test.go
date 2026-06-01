@@ -46,6 +46,10 @@ func (s *socketQueueFixtureStub) HandleQueueDryRun(_ context.Context, _ json.Raw
 	return json.RawMessage(`{"resolved_queue":{},"ledger_dep_notices":[],"parallelism_narrowed":false}`), nil
 }
 
+func (s *socketQueueFixtureStub) HandleQueueList(_ context.Context) (json.RawMessage, *queue.RPCError) {
+	return json.RawMessage(`{"queues":[]}`), nil
+}
+
 // ---------------------------------------------------------------------------
 // Fixture helper: start listener with optional QueueHandler
 // ---------------------------------------------------------------------------
@@ -91,7 +95,7 @@ func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
 	socketQueueFixtureStartListenerWithQH(t, sockPath, h, qh)
 	socketFixtureWaitReady(t, sockPath)
 
-	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run"}
+	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list"}
 	for _, op := range queueOps {
 		op := op
 		t.Run(op, func(t *testing.T) {
@@ -142,7 +146,7 @@ func TestSocketListener_QueueMethodsNilHandler(t *testing.T) {
 	socketQueueFixtureStartListenerWithQH(t, sockPath, h, nil)
 	socketFixtureWaitReady(t, sockPath)
 
-	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run"}
+	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list"}
 	for _, op := range queueOps {
 		op := op
 		t.Run(op, func(t *testing.T) {

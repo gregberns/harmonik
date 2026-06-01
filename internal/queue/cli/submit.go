@@ -9,12 +9,15 @@ import (
 	"strings"
 )
 
-// RunQueueSubmit implements `hk queue submit [--beads hk-a,hk-b | <queue-file>]`.
+// RunQueueSubmit implements `hk queue submit [--queue <name>] [--beads hk-a,hk-b | <queue-file>]`.
 //
 // Accepts either:
 //   - --beads hk-a,hk-b (or positional bead IDs): builds a minimal
 //     stream-group QueueSubmitRequest from the given bead IDs.
 //   - <queue-file>: reads a QueueSubmitRequest JSON document from the file.
+//
+// When --queue <name> is given, the request is routed to that named queue
+// (auto-created on first submit). When absent, routes to "main" (QueueNameMain).
 //
 // Sends the request to the daemon via the Unix socket, prints the
 // QueueSubmitResponse to out (human-readable by default; JSON with --json or
@@ -22,7 +25,9 @@ import (
 //
 // Flag args (subArgs is os.Args[3:]):
 //
-//	--beads hk-a,hk-b[,...]  comma-separated bead IDs (expands to stream group)
+//	--queue <name>           target queue name (default: main)
+//	--queue=<name>           equals form
+//	--beads hk-a,hk-b[,...] comma-separated bead IDs (expands to stream group)
 //	--beads hk-a --beads hk-b repeated form; accumulates across flags
 //	--project <dir>          project directory (default: cwd)
 //	--project=<dir>          equals form
@@ -33,9 +38,10 @@ import (
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
 //   - specs/queue-model.md §2.10 RECORD QueueSubmitRequest / QueueSubmitResponse
 //
-// Bead ref: hk-eblue, hk-m9a7g.
+// Bead ref: hk-eblue, hk-m9a7g, hk-tigaf.8.
 func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
 	var beadIDs []string
+	var queueName string
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--beads" && i+1 < len(args):
@@ -43,6 +49,12 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 			return i + 2, true
 		case strings.HasPrefix(args[i], "--beads="):
 			beadIDs = append(beadIDs, parseBeadsFlag(strings.TrimPrefix(args[i], "--beads="))...)
+			return i + 1, true
+		case args[i] == "--queue" && i+1 < len(args):
+			queueName = args[i+1]
+			return i + 2, true
+		case strings.HasPrefix(args[i], "--queue="):
+			queueName = strings.TrimPrefix(args[i], "--queue=")
 			return i + 1, true
 		}
 		return i, false
@@ -57,7 +69,7 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 	case len(beadIDs) > 0:
 		// --beads flag: synthesise a minimal stream-group request.
 		var buildErr error
-		queueDoc, buildErr = beadsToQueueDoc(beadIDs)
+		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName)
 		if buildErr != nil {
 			fmt.Fprintf(errOut, "harmonik queue submit: cannot build queue doc: %v\n", buildErr)
 			return exitTransportError
@@ -75,6 +87,11 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 		if jsonErr := json.Unmarshal(data, &queueDoc); jsonErr != nil {
 			fmt.Fprintf(errOut, "harmonik queue submit: invalid JSON in %q: %v\n", queueFile, jsonErr)
 			return exitTransportError
+		}
+		// Inject --queue name into file-based doc when provided.
+		if queueName != "" {
+			nameBytes, _ := json.Marshal(queueName) //nolint:errcheck // string; cannot fail
+			queueDoc["name"] = nameBytes
 		}
 
 	default:

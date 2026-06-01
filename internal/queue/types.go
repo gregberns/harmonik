@@ -334,8 +334,17 @@ type QueueSubmitResponse struct {
 // (specs/queue-model.md §2.10 RECORD QueueAppendRequest).
 type QueueAppendRequest struct {
 	// QueueID is an identity guard; rejected if it does not match the active
-	// queue_id.
-	QueueID string `json:"queue_id"`
+	// queue_id. When empty, the daemon resolves the active queue by Name.
+	QueueID string `json:"queue_id,omitempty"`
+
+	// Name is the durable routing key for append-by-name. When non-empty and
+	// QueueID is absent, the daemon loads the active queue for this name and
+	// uses its queue_id as the identity guard. When both Name and QueueID are
+	// supplied, QueueID takes precedence. Defaults to QueueNameMain ("main")
+	// when both are absent.
+	//
+	// Bead ref: hk-tigaf.8.
+	Name string `json:"name,omitempty"`
 
 	// GroupIndex is the 0-based index of the target stream group.
 	GroupIndex int `json:"group_index"`
@@ -363,6 +372,43 @@ type QueueAppendResponse struct {
 type QueueStatusResponse struct {
 	// Queue is the full Queue envelope, or nil when no queue is active.
 	Queue *Queue `json:"queue"`
+}
+
+// QueueSummary is a single-queue row in a QueueListResponse.
+//
+// Bead ref: hk-tigaf.8.
+type QueueSummary struct {
+	// Name is the durable routing key for the queue.
+	Name string `json:"name"`
+
+	// QueueID is the daemon-minted UUIDv7 for the current submission.
+	QueueID string `json:"queue_id"`
+
+	// Status is the queue-level lifecycle state.
+	Status QueueStatus `json:"status"`
+
+	// PendingItems is the count of items in pending or deferred-for-ledger-dep
+	// status across all groups.
+	PendingItems int `json:"pending_items"`
+
+	// Workers is the count of items currently dispatched (in-flight).
+	Workers int `json:"workers"`
+
+	// CompletedItems is the count of items that reached completed status.
+	CompletedItems int `json:"completed_items"`
+
+	// FailedItems is the count of items that reached failed status.
+	FailedItems int `json:"failed_items"`
+}
+
+// QueueListResponse is the response payload for queue-list
+// (specs/queue-model.md §2.10 RECORD QueueListResponse).
+//
+// Bead ref: hk-tigaf.8.
+type QueueListResponse struct {
+	// Queues is the list of queue summaries, one per active queue file.
+	// Empty when no queues are present in .harmonik/queues/.
+	Queues []QueueSummary `json:"queues"`
 }
 
 // QueueDryRunRequest is the payload for the queue-dry-run JSON-RPC method

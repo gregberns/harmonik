@@ -216,6 +216,9 @@ VERBS
   submit    Submit a new bead to the queue (daemon must be running)
   append    Append a bead to an existing queue run (daemon must be running)
   status    Show current queue state and bead statuses (daemon must be running)
+  list      List all active queues with status and worker counts (daemon must be running)
+  pause     Pause a named queue (daemon must be running)
+  resume    Resume a paused named queue (daemon must be running)
   dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
 
@@ -224,6 +227,8 @@ NOTES
   'cancel' works without a live daemon — use it to clear a queue left by a
   killed daemon (e.g. after SIGTERM of a wedged harmonik process).
   Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
+  Queues are created automatically on first submit to a new name (--queue flag).
+  Absent --queue defaults to the 'main' queue.
 
 EXIT CODES
   0   Success (JSON response to stdout)
@@ -233,12 +238,17 @@ EXIT CODES
 
 EXAMPLES
   harmonik queue submit --beads hk-abc123
+  harmonik queue submit --queue investigate --beads hk-abc,hk-def
   harmonik queue submit --beads hk-abc,hk-def,hk-ghi
   harmonik queue submit /tmp/batch.json
   harmonik queue dry-run --beads hk-abc123
   harmonik queue dry-run /tmp/batch.json
   harmonik queue append --queue-id <uuid> 0 hk-abc123
+  harmonik queue append --queue investigate 0 hk-abc123
   harmonik queue status
+  harmonik queue list
+  harmonik queue pause investigate
+  harmonik queue resume investigate
   harmonik queue cancel
   harmonik queue cancel --force
 `)
@@ -256,12 +266,18 @@ EXAMPLES
 			return queuecli.RunQueueAppend(ctx, subArgs, os.Stdout, os.Stderr)
 		case "status":
 			return queuecli.RunQueueStatus(ctx, subArgs, os.Stdout, os.Stderr)
+		case "list":
+			return queuecli.RunQueueList(ctx, subArgs, os.Stdout, os.Stderr)
+		case "pause":
+			return queuecli.RunQueuePause(ctx, subArgs, os.Stdout, os.Stderr)
+		case "resume":
+			return queuecli.RunQueueResume(ctx, subArgs, os.Stdout, os.Stderr)
 		case "dry-run":
 			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
 		case "cancel":
 			return queuecli.RunQueueCancel(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, dry-run, cancel\n", verb)
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel\n", verb)
 			return 2
 		}
 	}

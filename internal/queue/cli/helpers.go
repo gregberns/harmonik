@@ -122,10 +122,15 @@ func marshalJSON(v any) ([]byte, error) {
 // bead IDs. Produces a single stream group (kind=stream, status=pending,
 // group_index=0) containing one item per bead ID.
 //
+// queueName is the optional routing key (absent/empty → default "main"). When
+// non-empty it is embedded as the "name" field in the returned document.
+//
 // The returned map is in the same shape expected by buildEnvelope — a
 // map[string]json.RawMessage keyed by field name — so the caller can pass it
 // directly to buildEnvelope("queue-submit", ...) or buildEnvelope("queue-dry-run", ...).
-func beadsToQueueDoc(beadIDs []string) (map[string]json.RawMessage, error) {
+//
+// Bead ref: hk-tigaf.8.
+func beadsToQueueDoc(beadIDs []string, queueName string) (map[string]json.RawMessage, error) {
 	type itemDoc struct {
 		BeadID string `json:"bead_id"`
 		Status string `json:"status"`
@@ -138,6 +143,7 @@ func beadsToQueueDoc(beadIDs []string) (map[string]json.RawMessage, error) {
 	}
 	type queueDoc struct {
 		SchemaVersion int        `json:"schema_version"`
+		Name          string     `json:"name,omitempty"`
 		Groups        []groupDoc `json:"groups"`
 	}
 
@@ -147,6 +153,7 @@ func beadsToQueueDoc(beadIDs []string) (map[string]json.RawMessage, error) {
 	}
 	doc := queueDoc{
 		SchemaVersion: 1,
+		Name:          queueName,
 		Groups: []groupDoc{
 			{GroupIndex: 0, Kind: "stream", Status: "pending", Items: items},
 		},

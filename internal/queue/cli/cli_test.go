@@ -710,6 +710,318 @@ func TestExitCodes_ValidationRange(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// queue list tests
+// ---------------------------------------------------------------------------
+
+// TestRunQueueList_HappyPath verifies exit 0 and human-readable output.
+func TestRunQueueList_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	listPayload := map[string]any{
+		"queues": []map[string]any{
+			{
+				"name":            "main",
+				"queue_id":        "77777777-0000-7000-8000-000000000000",
+				"status":          "active",
+				"pending_items":   2,
+				"workers":         1,
+				"completed_items": 0,
+				"failed_items":    0,
+			},
+		},
+	}
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, listPayload)
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueList(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueList happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if !strings.Contains(out.String(), "main") {
+		t.Errorf("RunQueueList happy-path: stdout %q does not contain queue name 'main'", out.String())
+	}
+}
+
+// TestRunQueueList_EmptyQueues verifies exit 0 when no queues are active.
+func TestRunQueueList_EmptyQueues(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, map[string]any{"queues": []any{}})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueList(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueList empty: exit = %d, want 0", got)
+	}
+	if !strings.Contains(out.String(), "no active queues") {
+		t.Errorf("RunQueueList empty: stdout %q does not contain 'no active queues'", out.String())
+	}
+}
+
+// TestRunQueueList_DaemonDown verifies exit 17 when the socket is absent.
+func TestRunQueueList_DaemonDown(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueList(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got != 17 {
+		t.Errorf("RunQueueList daemon-down: exit = %d, want 17", got)
+	}
+}
+
+// TestRunQueueList_JSON verifies exit 0 and raw JSON with --json.
+func TestRunQueueList_JSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, map[string]any{"queues": []any{}})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueList(context.Background(), []string{"--json", "--project", projectDir}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueList --json: exit = %d, want 0", got)
+	}
+	if !json.Valid([]byte(strings.TrimSpace(out.String()))) {
+		t.Errorf("RunQueueList --json: stdout is not valid JSON: %q", out.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// queue pause tests
+// ---------------------------------------------------------------------------
+
+// TestRunQueuePause_HappyPath verifies exit 0 and human-readable output.
+func TestRunQueuePause_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedOp string
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if opBytes, ok := msg["op"]; ok {
+				_ = json.Unmarshal(opBytes, &capturedOp)
+			}
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueuePause(context.Background(), []string{"--project", projectDir, "investigate"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueuePause happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedOp != "operator-pause" {
+		t.Errorf("RunQueuePause: op = %q, want %q", capturedOp, "operator-pause")
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("RunQueuePause: queue = %q, want %q", capturedQueue, "investigate")
+	}
+	if !strings.Contains(out.String(), "paused") {
+		t.Errorf("RunQueuePause: stdout %q does not contain 'paused'", out.String())
+	}
+}
+
+// TestRunQueuePause_MissingName verifies exit 2 when no queue name is given.
+func TestRunQueuePause_MissingName(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueuePause(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got != 2 {
+		t.Errorf("RunQueuePause missing-name: exit = %d, want 2", got)
+	}
+}
+
+// TestRunQueuePause_DaemonDown verifies exit 17 when the socket is absent.
+func TestRunQueuePause_DaemonDown(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueuePause(context.Background(), []string{"--project", projectDir, "main"}, &out, &errOut)
+
+	if got != 17 {
+		t.Errorf("RunQueuePause daemon-down: exit = %d, want 17", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// queue resume tests
+// ---------------------------------------------------------------------------
+
+// TestRunQueueResume_HappyPath verifies exit 0 and human-readable output.
+func TestRunQueueResume_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedOp string
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if opBytes, ok := msg["op"]; ok {
+				_ = json.Unmarshal(opBytes, &capturedOp)
+			}
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueResume(context.Background(), []string{"--project", projectDir, "investigate"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueResume happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedOp != "operator-resume" {
+		t.Errorf("RunQueueResume: op = %q, want %q", capturedOp, "operator-resume")
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("RunQueueResume: queue = %q, want %q", capturedQueue, "investigate")
+	}
+	if !strings.Contains(out.String(), "resumed") {
+		t.Errorf("RunQueueResume: stdout %q does not contain 'resumed'", out.String())
+	}
+}
+
+// TestRunQueueResume_DaemonDown verifies exit 17 when the socket is absent.
+func TestRunQueueResume_DaemonDown(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueResume(context.Background(), []string{"--project", projectDir, "main"}, &out, &errOut)
+
+	if got != 17 {
+		t.Errorf("RunQueueResume daemon-down: exit = %d, want 17", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// submit --queue flag tests
+// ---------------------------------------------------------------------------
+
+// TestRunQueueSubmit_QueueFlag verifies that --queue name is embedded in the
+// request sent to the daemon.
+func TestRunQueueSubmit_QueueFlag(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedName string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if nameBytes, ok := msg["name"]; ok {
+				_ = json.Unmarshal(nameBytes, &capturedName)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":    "88888888-0000-7000-8000-000000000000",
+			"status":      "active",
+			"group_count": 1,
+		})
+	})
+
+	queueFile := queueCliFixtureWriteQueueFile(t)
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueSubmit(context.Background(), []string{
+		"--project", projectDir,
+		"--queue", "investigate",
+		queueFile,
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueSubmit --queue flag: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedName != "investigate" {
+		t.Errorf("RunQueueSubmit --queue flag: captured name = %q, want %q", capturedName, "investigate")
+	}
+}
+
+// TestRunQueueSubmit_DefaultsToMain verifies that absent --queue routes to main
+// (no name field or name="" in request, which the daemon normalises to "main").
+func TestRunQueueSubmit_DefaultsToMain(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedName string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if nameBytes, ok := msg["name"]; ok {
+				_ = json.Unmarshal(nameBytes, &capturedName)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":    "99999999-0000-7000-8000-000000000000",
+			"status":      "active",
+			"group_count": 1,
+		})
+	})
+
+	queueFile := queueCliFixtureWriteQueueFile(t)
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueSubmit(context.Background(), []string{"--project", projectDir, queueFile}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueSubmit default-main: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	// capturedName should be empty (omitempty in JSON) when no --queue is given.
+	if capturedName != "" {
+		t.Errorf("RunQueueSubmit default-main: name = %q, want empty (absent=main default)", capturedName)
+	}
+}
+
 // TestQueueSubmit_RequestContainsOp verifies the socket request includes "op"
 // = "queue-submit" and the queue document fields at the top level.
 func TestQueueSubmit_RequestContainsOp(t *testing.T) {

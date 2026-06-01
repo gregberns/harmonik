@@ -212,10 +212,17 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	"queue-append":  "queue-model.md §8; append to pending group, drain-safe ON-008",
 	"queue-status":  "queue-model.md §9; read-only status query, no run impact",
 	"queue-dry-run": "queue-model.md §8; validation-only, no state mutation, ON-008",
+	// hk-tigaf.8: read-only enumeration of named queues; no state mutation.
+	"queue-list": "queue-model.md §9; read-only queue enumeration, no run impact",
 	// hk-6ynv4: read-only observation surface; streams NDJSON envelopes on
 	// the connection until close. Cannot mutate daemon state, cannot abort
 	// in-flight runs. Authorised by operator-nfr.md §4.9 ON-055.
 	"subscribe": "operator-nfr.md §4.9 ON-055; read-only observation, no run impact",
+	// hk-tigaf.6: per-queue or global pause/resume routes through QueueOperatorEventConsumer
+	// → Queue.Status transition (paused-by-drain). Does not abort in-flight runs
+	// (in-flight items complete; new dispatches are gated). ON-007/ON-010.
+	"operator-pause":  "operator-nfr.md §4.3 ON-007; drain-gated pause, no mid-run abort",
+	"operator-resume": "operator-nfr.md §4.3 ON-010; resume from paused-by-drain, ON-010",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

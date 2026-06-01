@@ -144,6 +144,11 @@ type QueueHandler interface {
 
 	// HandleQueueDryRun dispatches a queue-dry-run request.
 	HandleQueueDryRun(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueList dispatches a queue-list request.
+	//
+	// Bead ref: hk-tigaf.8.
+	HandleQueueList(ctx context.Context) (json.RawMessage, *queue.RPCError)
 }
 
 // noopRequestHandler is a minimal RequestHandler that rejects every request
@@ -401,6 +406,11 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 	case "queue-dry-run":
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueDryRun(ctx, reEncoded)
+		})
+
+	case "queue-list":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueList(ctx)
 		})
 
 	case "subscribe":

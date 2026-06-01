@@ -253,7 +253,12 @@ func HandleQueueAppend(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
-	q, loadErr := Load(ctx, projectDir, QueueNameMain)
+	// Resolve queue by name when QueueID is absent (append-by-name, hk-tigaf.8).
+	loadName := QueueNameMain
+	if req.Name != "" {
+		loadName = NormaliseQueueName(req.Name)
+	}
+	q, loadErr := Load(ctx, projectDir, loadName)
 	if loadErr != nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    -32099,
@@ -273,8 +278,9 @@ func HandleQueueAppend(
 		}
 	}
 
-	// Identity guard: reject if queue_id does not match.
-	if q.QueueID != req.QueueID {
+	// Identity guard: when QueueID is supplied, reject on mismatch; when absent,
+	// name-resolved queue_id is accepted without an explicit guard (hk-tigaf.8).
+	if req.QueueID != "" && q.QueueID != req.QueueID {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
 			Message: "append_target_invalid",
@@ -454,6 +460,67 @@ func HandleQueueDryRun(
 		LedgerDepNotices:    notices,
 		ParallelismNarrowed: len(notices) > 0,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// HandleQueueList
+// ---------------------------------------------------------------------------
+
+// HandleQueueList handles a queue-list JSON-RPC request.
+//
+// Enumerates all queue files under .harmonik/queues/ and returns a summary
+// for each: name, queue_id, status, and item counts by status (pending,
+// workers/dispatched, completed, failed).
+//
+// Returns an empty Queues slice (not nil) when no queue files are present.
+// Does not modify state or emit events.
+//
+// Bead ref: hk-tigaf.8.
+func HandleQueueList(
+	ctx context.Context,
+	projectDir string,
+) (QueueListResponse, *RPCError) {
+	names, err := EnumerateQueueNames(projectDir)
+	if err != nil {
+		return QueueListResponse{}, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": err.Error()},
+		}
+	}
+
+	summaries := make([]QueueSummary, 0, len(names))
+	for _, name := range names {
+		q, loadErr := Load(ctx, projectDir, name)
+		if loadErr != nil || q == nil {
+			continue
+		}
+		s := QueueSummary{
+			Name:    q.Name,
+			QueueID: q.QueueID,
+			Status:  q.Status,
+		}
+		if s.Name == "" {
+			s.Name = NormaliseQueueName(name)
+		}
+		for _, g := range q.Groups {
+			for _, item := range g.Items {
+				switch item.Status {
+				case ItemStatusPending, ItemStatusDeferredForLedgerDep:
+					s.PendingItems++
+				case ItemStatusDispatched:
+					s.Workers++
+				case ItemStatusCompleted:
+					s.CompletedItems++
+				case ItemStatusFailed:
+					s.FailedItems++
+				}
+			}
+		}
+		summaries = append(summaries, s)
+	}
+
+	return QueueListResponse{Queues: summaries}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +708,23 @@ func (a *HandlerAdapter) HandleQueueDryRun(ctx context.Context, params json.RawM
 	if err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("encode queue-dry-run response: %v", err)}}
+	}
+	return data, nil
+}
+
+// HandleQueueList calls HandleQueueList and encodes the response.
+// Satisfies daemon.QueueHandler.
+//
+// Bead ref: hk-tigaf.8.
+func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, *RPCError) {
+	resp, rpcErr := HandleQueueList(ctx, a.projectDir)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return nil, &RPCError{Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-list response: %v", err)}}
 	}
 	return data, nil
 }

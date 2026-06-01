@@ -58,7 +58,7 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 	switch {
 	case len(beadIDs) > 0:
 		var buildErr error
-		queueDoc, buildErr = beadsToQueueDoc(beadIDs)
+		queueDoc, buildErr = beadsToQueueDoc(beadIDs, "")
 		if buildErr != nil {
 			fmt.Fprintf(errOut, "harmonik queue dry-run: cannot build queue doc: %v\n", buildErr)
 			return exitTransportError

@@ -8,10 +8,10 @@ requirement-prefix: AR
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.3.1
+version: 0.3.2
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-04-24
+last-updated: 2026-05-31
 depends-on: []
 ---
 ```
@@ -330,6 +330,23 @@ Merge responsibility MUST NOT be a top-level role. A workflow MAY contain a dist
 
 Tags: mechanism
 
+#### AR-054 — Privileged roles for audit-record derivation
+
+For the purpose of [operator-nfr.md §4.9.ON-038] audit-record derivation, the following roles from the seven-role taxonomy (AR-032) are classified as **privileged**: Planner, Reviewer, Scheduler, and Governor. A role is privileged if its canonical actions include decisions that affect policy configuration, role-permission grants, or resource-budget allocation.
+
+- **Planner** — orchestrates workflow composition; assigns roles to workflow nodes; proposes policy amendments. Privileged because role-assignment decisions are permission-shaping.
+- **Reviewer** — approves or rejects transitions and work products; its `APPROVE` / `REQUEST_CHANGES` / `BLOCK` verdict IS a policy-gating action on the run's progression. Privileged because approval authority is inherently access-control.
+- **Scheduler** — allocates timing windows and resource budget across nodes. Privileged because budget-allocation decisions are budget-affecting.
+- **Governor** — enforces constraints; can restrict or allow further execution. Privileged because enforcement decisions are policy-affecting at the run level.
+
+Builder, Researcher, and Verifier are NOT privileged for audit purposes: Builder modifies work products, not policy or permissions; Researcher is read-only exploration; Verifier runs deterministic checks. Their transitions MUST NOT appear in the derived audit set, regardless of `chosen_action` content.
+
+The daemon-synthesized `actor_role` values `daemon` and `reconciliation` (per [execution-model.md §4.10.EM-046]) are treated as privileged because daemon-synthesized transitions include reconciliation verdicts and policy-state resets that are audit-relevant.
+
+**This classification is a pre-filter only.** The AND-clause in ON-038 — that `chosen_action` MUST ALSO have affected policy, role permissions, or budget — is the definitive gate. A Reviewer transition for a routine `APPROVE` with no policy change does NOT generate an audit record; the role is privileged but the specific action did not affect policy.
+
+Tags: mechanism
+
 ### 4.9 Centralized-controller principle and harness-engineering invariants
 
 #### AR-037 — Retired (promoted to AR-INV-007)
@@ -588,6 +605,7 @@ Default-if-unresolved: Keep reviewer-enforced. Revisit after the first three sub
 | 2026-04-24 | 0.2.0 | foundation-author | Round-1 review integration. Fixed §1 Purpose self-citations (§1.x → §4.x). Added AR-052 (spec-category: `runtime-subsystem` vs `foundation-cross-cutting`) and AR-053 (pin §4.0 envelope section slot); scoped AR-013 to runtime-subsystem specs. Fixed AR-011 and AR-029 to state verification as a role-function over `{agentic, non-agentic}` nodes (not a distinct node-type enum member), aligning with execution-model EM-006. Added `handler_type` → `agent_type` migration note to AR-027 (downstream specs event-model, handler-contract, workspace-model MUST rename in their next cycle). Retired AR-008 (duplicated AR-006 + AR-INV-001; anti-pattern list moved to AR-007 EXAMPLE). Retired AR-INV-002, AR-INV-004, AR-INV-005, AR-INV-006 as duplicates of §4 requirements per template selection test; retained AR-INV-001 and AR-INV-003 as genuinely cross-subsystem. Re-tagged AR-007 as `mechanism` (it is a spec-authoring obligation, not a runtime cognition event). Tightened AR-042 to "invariants MUST name their sensor." Demoted AR-023's "mechanical overlap detector" to a declared `touches:` front-matter contract with reviewer-enforced overlap detection until tooling lands. Added explicit RETRY-exclusion to AR-030. Dropped "expected" from AR-003 title. Merged AR-035 into AR-026 as a cross-reference. Tightened AR-017 with explicit amendment-required clause. Added envelope-declaration exemplar in §A.1. NOTE: downstream specs carry wrong citation anchors (`[architecture.md §1.x]`, `§1.4a`, `§1.6a`) pointing at sections that never existed in architecture.md; the coordinated corpus-fix maps `§1.1→§4.1`, `§1.2→§4.2`, `§1.3→§4.3`, `§1.4→§4.4`, `§1.4a→§4.5` (subsystem runtime realization), `§1.5→§4.6`, `§1.6→§4.8`, `§1.6a→§4.7` or `§6.1` (agent-type identifier), `§1.8→§4.9`, `§1.9→§4.10`. Downstream specs fix these in their own integration cycles. |
 | 2026-04-24 | 0.3.0 | foundation-author | Round-2 review integration; status `draft` → `reviewed`. Fixed AR-053 §4.0 collision by renaming envelope slot to §4.a (letter suffix) and reserving a `<PREFIX>-ENV-NNN` ID range so envelope blocks do not consume topical ID space in existing subsystem specs; §A.1 exemplar updated in lockstep. Added front-matter `spec-category: foundation-cross-cutting`. Promoted AR-037 → AR-INV-007 (centralized-controller invariant, including new daemon-owned cross-subsystem registry clause per S02-implementer R1) and AR-046 → AR-INV-008 (three-artifact separation with explicit fourth-artifact forbid and configuration-artifact exemption); AR-037 and AR-046 retired (IDs never reused) per skeptic S5. Reworked AR-027: removed the self-violating "downstream specs MUST rename handler_type → agent_type in next revision cycle" migration clause from the normative body; the rename is now tracked as foundation-amendment `AR-MIG-001` in this revision-history row. **AR-MIG-001 (amendment SHOULD):** coordinated rename of `handler_type` → `agent_type` across event-model.md §8.3.2 and §8.3.8, handler-contract.md HC-008, workspace-model.md §5.3a and `harmonik.meta.json` sidecar; processed under AR-020/AR-023 on each owning spec's next revision; overlap-free since sites are non-overlapping per `touches:` accounting. AR-021 cognition-tagged delegation path completed per conformance-auditor: role=Reviewer(architect persona), model-class=agentic, input-shape=amendment doc + spec-diff against prior foundation baseline, output=`material | non-material` verdict with rationale. AR-INV-001 sensor weakened to "reviewer-enforced corpus-search heuristic" per conformance-auditor; known false-negative rate tracked in new OQ-AR-005 (candidate `Process:` tag amendment). Added polymorphic/sum-type tagging INFORMATIVE note under AR-004 (S02-implementer R3). Added reviewer-persona informative block at §10.2 top (architect / conformance-auditor / critic / scope-steward defaults). Added new OQs: OQ-AR-005 (AR-INV-001 false-negative tracking + `Process:` tag), OQ-AR-006 (AR-012 trace-shape uniformity under deterministic dispatch — skeptic hidden assumption 7), OQ-AR-007 (mechanical test for spec-category assignment — skeptic S4 / beads-integration edge case). §10.1 and §10.2 updated for retirements (AR-037, AR-046) and new invariants (AR-INV-007, AR-INV-008). Not addressed in this revision and deferred: corpus-wide §1.N → §4.N anchor migration (tracked per prior v0.2 NOTE); AR-022 `foundation-version:` front-matter enforcement across downstream specs (carried forward as a coordinated amendment). |
 | 2026-04-24 | 0.3.1 | foundation-author | Corpus citation-drift cleanup pass 2: migrated legacy §N.N cross-spec anchors to current template §N.N form per the central remap table; 2 citations fixed (both in §A.1 envelope exemplar: `[event-model.md §3.2]` → `[event-model.md §6.3]` for payload schema references). |
+| 2026-05-31 | 0.3.2 | agent (hk-sx9r.54) | **AR-054 — Privileged roles for audit-record derivation.** Added §4.8.AR-054 defining which of the seven roles (AR-032) are "privileged" for the purpose of [operator-nfr.md §4.9.ON-038] audit-record derivation: Planner, Reviewer, Scheduler, Governor, plus synthesized `daemon`/`reconciliation` actor_roles (per [execution-model.md §4.10.EM-046]). Builder, Researcher, and Verifier are explicitly NOT privileged. The requirement clarifies that this is a pre-filter only — the AND-clause in ON-038 (action must ALSO have affected policy, role permissions, or budget) is the definitive gate. **New IDs (net):** AR-054 (1 new requirement ID). No invariants added or retired; no cross-cutting invariants affected (additive elaboration to an existing taxonomy section; does not widen or narrow §2.1/§2.2 scope). Refs: hk-sx9r.54. |
 
 ## A. Appendices
 

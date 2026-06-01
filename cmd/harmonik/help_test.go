@@ -286,5 +286,100 @@ func TestReconcileHelpFlag(t *testing.T) {
 	}
 }
 
+// TestConfirmVerdictHelpFlag verifies that `harmonik confirm-verdict --help`
+// exits 0 and the output contains the expected grammar, flags, and exit codes.
+//
+// Parallel: safe — runConfirmVerdictSubcommand does not touch flag.CommandLine.
+//
+// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
+//           specs/operator-nfr.md §4.3 ON-014.
+func TestConfirmVerdictHelpFlag(t *testing.T) {
+	t.Parallel()
+
+	var exitCode int
+	output := helpFixtureCaptureStdout(t, func() {
+		exitCode = runConfirmVerdictSubcommand([]string{"--help"})
+	})
+
+	if exitCode != 0 {
+		t.Errorf("runConfirmVerdictSubcommand([--help]): got exit code %d, want 0", exitCode)
+	}
+
+	for _, want := range []string{
+		"confirm-verdict",
+		"<run_id>",
+		"--project",
+		"EXIT CODES",
+		"16",  // operator-control-invalid-state
+		"17",  // daemon not running
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("confirm-verdict --help output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestVetoVerdictHelpFlag verifies that `harmonik veto-verdict --help` exits 0
+// and the output contains the expected grammar, flags (including --promote-to),
+// and exit codes.
+//
+// Parallel: safe — runVetoVerdictSubcommand does not touch flag.CommandLine.
+//
+// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
+//           specs/operator-nfr.md §4.3 ON-014 —
+//           "harmonik veto-verdict <run_id> [--promote-to escalate-to-human]".
+func TestVetoVerdictHelpFlag(t *testing.T) {
+	t.Parallel()
+
+	var exitCode int
+	output := helpFixtureCaptureStdout(t, func() {
+		exitCode = runVetoVerdictSubcommand([]string{"--help"})
+	})
+
+	if exitCode != 0 {
+		t.Errorf("runVetoVerdictSubcommand([--help]): got exit code %d, want 0", exitCode)
+	}
+
+	for _, want := range []string{
+		"veto-verdict",
+		"<run_id>",
+		"--promote-to",
+		"escalate-to-human",
+		"--project",
+		"EXIT CODES",
+		"16",  // operator-control-invalid-state
+		"17",  // daemon not running
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("veto-verdict --help output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestTopLevelHelpListsConfirmVetoCmds verifies that the top-level
+// `harmonik --help` output lists the confirm-verdict and veto-verdict
+// subcommands.
+//
+// Not parallel: mutates os.Args and flag.CommandLine.
+//
+// Spec ref: specs/operator-nfr.md §4.3 ON-014.
+func TestTopLevelHelpListsConfirmVetoCmds(t *testing.T) {
+	mainFixtureResetFlags(t)
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--help"})
+
+	output := helpFixtureCaptureStderr(t, func() {
+		_ = run()
+	})
+
+	for _, want := range []string{
+		"confirm-verdict",
+		"veto-verdict",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("top-level help missing %q:\n%s", want, output)
+		}
+	}
+}
+
 // Compile-time assertion: flag package is imported and used (avoids unused-import lint).
 var _ = flag.CommandLine

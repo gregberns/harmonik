@@ -190,6 +190,41 @@ EXAMPLES
 		return runReconcileSubcommand(os.Args[2:])
 	}
 
+	// harmonik confirm-verdict <run_id> [--project DIR]
+	// Operator verdict-confirmation surface: confirm a pending reconciliation
+	// verdict so the daemon proceeds with verdict execution.
+	//
+	// Exit-code contract:
+	//   0  — success
+	//   1  — argument or flag error
+	//  16  — no pending verdict for run_id (operator-control-invalid-state)
+	//  17  — daemon not running
+	//
+	// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
+	//           specs/operator-nfr.md §4.3 ON-014.
+	// Bead ref: hk-63oh.39.
+	if len(os.Args) >= 2 && os.Args[1] == "confirm-verdict" {
+		return runConfirmVerdictSubcommand(os.Args[2:])
+	}
+
+	// harmonik veto-verdict <run_id> [--promote-to escalate-to-human] [--project DIR]
+	// Operator verdict-veto surface: veto a pending reconciliation verdict.
+	// With --promote-to escalate-to-human, the daemon substitutes the vetoed
+	// verdict with escalate-to-human and executes that instead.
+	//
+	// Exit-code contract:
+	//   0  — success
+	//   1  — argument or flag error
+	//  16  — no pending verdict for run_id (operator-control-invalid-state)
+	//  17  — daemon not running
+	//
+	// Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
+	//           specs/operator-nfr.md §4.3 ON-014.
+	// Bead ref: hk-63oh.39.
+	if len(os.Args) >= 2 && os.Args[1] == "veto-verdict" {
+		return runVetoVerdictSubcommand(os.Args[2:])
+	}
+
 	// harmonik beads-merge %O %A %B %P — custom git merge-driver for .beads/issues.jsonl.
 	//
 	// Union-by-bead-ID merge with last-writer-wins collision resolution on updated_at.

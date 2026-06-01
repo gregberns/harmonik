@@ -16,15 +16,17 @@ USAGE
   harmonik <subcommand> [flags]
 
 SUBCOMMANDS
-  run          Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
-  handler      Inspect or resume a paused handler
-  queue        Submit or inspect the bead queue (daemon must be running)
-  reconcile    Close in_progress beads whose implementation has merged
-  graph        Workflow graph utilities (validate, etc.)
-  supervise    Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
-  beads-merge  Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
-  tmux-start   Bootstrap a tmux session and start the daemon inside it
-  hook-relay   Forward a Claude hook event to the daemon (internal use)
+  run              Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
+  handler          Inspect or resume a paused handler
+  queue            Submit or inspect the bead queue (daemon must be running)
+  reconcile        Close in_progress beads whose implementation has merged
+  confirm-verdict  Confirm a pending reconciliation verdict (daemon must be running)
+  veto-verdict     Veto a pending reconciliation verdict (daemon must be running)
+  graph            Workflow graph utilities (validate, etc.)
+  supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
+  beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
+  tmux-start       Bootstrap a tmux session and start the daemon inside it
+  hook-relay       Forward a Claude hook event to the daemon (internal use)
 
 DAEMON FLAGS (used without a subcommand)
   --project DIR          Project directory (default: current working directory)

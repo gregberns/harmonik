@@ -8,7 +8,7 @@ requirement-prefix: RC
 status: reviewed
 spec-shape: taxonomy-first
 spec-category: foundation-cross-cutting
-version: 0.4.1
+version: 0.4.2
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-06-01
@@ -652,6 +652,8 @@ Tags: mechanism
 
 Intra-run loops (workflow edges routing back to an earlier node) are NOT produced by reconciliation. Those loops are ordinary workflow-graph traversal handled by edge conditions and Guard/Gate control-points per [control-points.md §4.2, §4.4]. Reconciliation handles only restart and store-divergence cases.
 
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 Tags: mechanism
 
 ### 4.7 Testing obligation
@@ -853,7 +855,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **RC-017 (wall-clock budget declaration).** Structural tests verifying: (1) every S01-shipped reconciliation workflow DOT carries a `budget_ref` attribute on the workflow's root node or equivalent policy-attachment point; (2) the referenced Budget in the YAML policy has `resource = wall_clock_seconds` and `scope = per_run`; (3) when no explicit per-workflow budget is declared, the S01 packaging supplies the per-category defaults (Cat 2: 600s, Cat 3: 300s, Cat 6a: 900s); (4) negative test: a DOT that omits `budget_ref` and has no S01-packaging default MUST fail the workflow-library lint.
 - **RC-015 — RC-019 (investigator contract).** End-to-end tests with twin handler: verify snapshot-token plumbing; wall-clock budget enforcement (RC-018); WIP-capture on `reopen-bead` (RC-019).
 - **RC-020 — RC-027 (verdict and execution).** Schema-validation tests for every verdict enum value and every malformation reason (RC-023); staleness-detection tests (RC-024); verdict-execution idempotency tests (RC-025); restart-discovery tests for Cat 3b (RC-026).
-- **RC-028 — RC-030 (re-run vs. intra-run).** Scenario tests verifying `reopen-bead` produces a new `run_id`; `reset-to-checkpoint` preserves `run_id`.
+- **RC-028 — RC-030 (re-run vs. intra-run).** Scenario tests verifying `reopen-bead` produces a new `run_id`; `reset-to-checkpoint` preserves `run_id`. **RC-030 (no intra-run loops from reconciliation).** Negative test: for every verdict enum value, verify that verdict execution does NOT produce a workflow edge routing back to a prior node; confirm that any loop-back transitions observed in a live run trace to edge conditions and Guard/Gate control-points (per [control-points.md §4.2, §4.4]), not to reconciliation verdict execution.
 - **RC-031 (crash-recovery).** See `docs/methodology/TESTING.md` crash-recovery layer. Migration to `[testing.md §<layer>]` tracked in OQ-RC-006.
 
 - **RC-002a (concurrent reconciliation).** Crash-recovery scenario: dispatch two reconciliation workflows against the same `target_run_id`; verify `flock(LOCK_EX|LOCK_NB)` on `.harmonik/reconciliation-locks/<target_run_id>.lock` causes the second dispatch to emit `reconciliation_dispatch_deduplicated` and skip without classification. Stale-lock recovery test: kill the daemon mid-investigation, restart, verify orphan-sweep cleans up the lock file via PL-006 and the next reconciliation cadence proceeds. **RC-002b (non-atomic recovery).** Stale-lock-with-verdict-executed test: place a lock file at the path while the investigator branch already carries `Harmonik-Verdict-Executed: true`; verify the lock is deleted on next startup and the run is NOT reclassified.
@@ -989,6 +991,7 @@ Legacy citations into `reconciliation/spec.md` used the pre-taxonomy-first secti
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-01 | 0.4.2 | agent (hk-63oh.42) | **RC-030 Axes + §10.2 sensor.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` to RC-030 per template obligation (RC-030 is a structural prohibition on reconciliation producing intra-run loop edges; no LLM, no IO, no state mutation → idempotent). Extended §10.2 RC-028–RC-030 test obligation to include an explicit negative test for RC-030: for every verdict enum value, verify verdict execution does NOT produce a back-edge in the workflow graph; confirm observed loop-backs trace to edge conditions and Guard/Gate control-points per [control-points.md §4.2, §4.4]. No requirement IDs or schemas touched. Refs: hk-63oh.42. |
 | 2026-06-01 | 0.4.1 | agent (hk-63oh.26) | **RC-017 Axes + test obligation.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` to RC-017 per template obligation (Axes lines on every LLM/IO/state-mutation requirement; RC-017's daemon-enforced wall-clock termination is a non-idempotent state mutation). Added §10.2 test obligation for RC-017 covering: DOT `budget_ref` presence, Budget `resource=wall_clock_seconds`+`scope=per_run` structural check, per-category default values (Cat 2: 600s, Cat 3: 300s, Cat 6a: 900s), and negative lint test for missing `budget_ref`. No requirement IDs or schemas touched. Refs: hk-63oh.26. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft from components.md Component 9 + round-2 amendments; split into spec.md + schemas.md. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchors to the §4.N map per the v0.2 NOTE: §1.2→§4.2 (×2 in §4.5.RC-023 malformed-verdict RATIONALE and §9 cross-refs), §1.5→§4.6 (×4 in §4.1.RC-006 upgrade-discipline clause, §4.2.RC-009 taxonomy-shape lock clause, §9 cross-refs, and §11 open-question default). No requirement IDs, invariants, or schemas were touched. |

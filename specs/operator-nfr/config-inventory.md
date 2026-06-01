@@ -7,7 +7,7 @@ spec-id: operator-nfr/config-inventory
 requirement-prefix: ON-CFG
 spec-category: foundation-cross-cutting
 status: draft
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-31
@@ -80,10 +80,10 @@ A change to any layer takes effect at the next operator pause per CP-037, except
 | Spec source | [operator-nfr.md §4.7 ON-029] |
 | Knob | Per-step drain timeout (`timeout.step_2`, `timeout.step_3`, `timeout.step_3a`, etc.) and optional aggregate `drain_timeout_total` |
 | Precedence layer | Operator-policy file ▷ default |
-| Default value | **TBD** (implementation-defined at v0.1; tracked in OQ-ON-006 as PL adopts ON-027 drain steps) |
-| Allowed range | Positive integer (seconds) per step; `drain_timeout_total` MUST be ≥ sum of all per-step values |
+| Default value | step_2: **300 s** · step_3: **60 s** · step_3a: **30 s** · step_4: **10 s** · step_5: **10 s** · step_6: **10 s** · `drain_timeout_total`: **not declared** (operator opt-in; if declared, MUST be ≥ sum of step values; with all defaults the sum is 410 s) |
+| Allowed range | Positive integer (seconds) per step; when `drain_timeout_total` is declared it MUST satisfy: `drain_timeout_total ≥ sum(step_2 + step_3 + step_3a + step_4 + step_5 + step_6)` — validated at daemon startup |
 | Change-takes-effect | Next daemon start (drain timeouts are read once at startup per ON-029) |
-| Notes | The eight drain steps correspond to ON-027 steps 1–7 plus step 3a (intent-log drain). On step-timeout, the daemon escalates to SIGKILL for the blocked subprocess, synthesizes `agent_warning_silent_hang{reason=drain_forced}` per ON-040, and advances to the next step. On `drain_timeout_total` breach, the daemon exits with §8 code for "drain-timeout-escalated". |
+| Notes | Step 1 (`stop_queue_advancement`) is non-blocking and carries no timeout knob. Steps 2 and 3 involve agent subprocesses: on timeout, the daemon sends SIGKILL and synthesizes `agent_warning_silent_hang{reason=drain_forced}` per ON-040 before advancing to the next step. Steps 3a, 4, 5, and 6 involve no external subprocesses: on timeout, the operation is aborted and the step is marked exceeded. All exceeded steps contribute to the `drain-timeout-escalated` exit code (§8 taxonomy) emitted in step 7. The `drain_timeout_total` runtime check fires after all steps complete; a breach is a configuration error (the config validation at startup should prevent it). The §7.2 pseudocode is the normative reference for per-step apportionment. |
 
 ---
 

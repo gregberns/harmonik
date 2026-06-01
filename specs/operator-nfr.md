@@ -8,7 +8,7 @@ requirement-prefix: ON
 spec-category: foundation-cross-cutting
 status: reviewed
 spec-shape: requirements-first
-version: 0.4.7
+version: 0.4.8
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-05-31
@@ -904,21 +904,28 @@ States: `running`, `pausing`, `paused`, `resuming`, `stopped`, `upgrading`. Impr
 
 ```
 FUNCTION drain_graceful(timeout):
-    -- §4.7.ON-027 eight drain steps (1, 2, 3, 3a, 4, 5, 6, 7)
-    stop_queue_advancement()                             -- step 1: no new dispatches; queue → `paused-by-drain` per [queue-model.md §5]
-    wait_for_runs_to_checkpoint(timeout.step_2)          -- step 2
-    wait_for_handler_subprocess_exit(timeout.step_3)     -- step 3
-    drain_br_intent_log(timeout.step_3a)                 -- step 3a; per beads-integration BI-029/BI-030
-    flush_event_bus()                                    -- step 4; fsync per event-model
-    flush_memory_indexing()                              -- step 5
-    unlock_leased_workspaces()                           -- step 6; per workspace-model
-    IF any_step_exceeded_its_bound:                      -- step 7
-        RETURN exit_code("drain-timeout-escalated")      -- step 7: exit or enter paused (pause/upgrade path)
+    -- §4.7.ON-027 eight drain steps (1, 2, 3, 3a, 4, 5, 6, 7); per-step apportionment per ON-029
+    -- timeout.step_N: per-step bound (positive seconds); timeout.drain_timeout_total: optional sum-bound (ON-029)
+    -- Config validation (checked at startup): IF timeout.drain_timeout_total IS SET:
+    --     ASSERT sum(timeout.step_2, timeout.step_3, timeout.step_3a, timeout.step_4, timeout.step_5, timeout.step_6) ≤ timeout.drain_timeout_total
+    wall_start := now()
+    exceeded := false
+    stop_queue_advancement()                                         -- step 1: atomic; no timeout knob (non-blocking)
+    exceeded |= !wait_for_runs_to_checkpoint(timeout.step_2)        -- step 2; SIGKILL + agent_warning_silent_hang{reason=drain_forced} on timeout (ON-040)
+    exceeded |= !wait_for_handler_subprocess_exit(timeout.step_3)   -- step 3; SIGKILL + agent_warning_silent_hang on timeout (ON-040)
+    exceeded |= !drain_br_intent_log(timeout.step_3a)               -- step 3a; per BI-029/BI-030; failure → Cat 3a routing on restart
+    exceeded |= !flush_event_bus(timeout.step_4)                    -- step 4; fsync per event-model; timeout aborts flush (no subprocess)
+    exceeded |= !flush_memory_indexing(timeout.step_5)              -- step 5; timeout aborts flush
+    exceeded |= !unlock_leased_workspaces(timeout.step_6)           -- step 6; per workspace-model; timeout aborts cleanup
+    IF timeout.drain_timeout_total IS SET AND (now() - wall_start) > timeout.drain_timeout_total:
+        exceeded := true                                             -- wall-clock sum-bound breach (should not occur if config validation passed)
+    IF exceeded:                                                     -- step 7
+        RETURN exit_code("drain-timeout-escalated")                 -- step 7: exit or enter paused (pause/upgrade path)
     ELSE:
-        RETURN exit_code("success")                      -- step 7: exit or enter paused (pause/upgrade path)
+        RETURN exit_code("success")                                  -- step 7: exit or enter paused (pause/upgrade path)
 ```
 
-Every branch corresponds to a normative requirement: steps 1–7 (and 3a, enumerated as eight steps) to ON-027; timeout escalation to ON-029; stop-immediate skip-steps to ON-028; step-atomicity and crash-recovery to ON-027a.
+Every branch corresponds to a normative requirement: steps 1–7 (and 3a, enumerated as eight steps) to ON-027; per-step timeout apportionment and sum-bound to ON-029; stop-immediate skip-steps to ON-028; step-atomicity and crash-recovery to ON-027a.
 
 ### 7.3 Upgrade protocol pseudocode
 
@@ -1165,6 +1172,7 @@ Default-if-unresolved: Structured logs are N-1 governed; ON-018 enumeration is u
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-05-31 | 0.4.8 | agent (hk-sx9r.43) | **ON-029 §7.2 pseudocode — per-step timeout apportionment for all drain steps + `drain_timeout_total` enforcement.** Extended the `drain_graceful` pseudocode in §7.2 to make ON-029's per-step timeout apportionment normative for ALL six timed steps: steps 4 (`flush_event_bus`), 5 (`flush_memory_indexing`), and 6 (`unlock_leased_workspaces`) now carry explicit `timeout.step_N` parameters, consistent with the steps-2/3/3a pattern already present. Added a startup config-validation assertion: when `drain_timeout_total` is declared, `sum(step_N)` MUST be ≤ the total. Added a runtime wall-clock check of `drain_timeout_total` after all steps complete. Distinguished timeout escalation semantics by step class in the pseudocode comments: steps 2 and 3 (subprocess waits) → SIGKILL + `agent_warning_silent_hang{reason=drain_forced}` per ON-040; steps 3a, 4, 5, 6 (no subprocess) → abort-and-advance. Step 1 (`stop_queue_advancement`) is non-blocking and carries no timeout knob. The sentence after the pseudocode block now cites ON-029 for the per-step apportionment alongside the existing ON-027/ON-028/ON-027a citations. No new requirement IDs; no exit-code changes; no invariants added or retired. Config-inventory §2.3 (companion file) updated in the same revision to resolve the TBD defaults. Refs: hk-sx9r.43. |
 | 2026-05-31 | 0.4.7 | agent (hk-sx9r.30) | **ON-025 sensor expansion in §10.2.** Added five explicit ON-025 egress/skill-injection test assertions to the §10.2 ON-022–ON-029 test-surface obligation: (a) whitelisted domain provisions successfully; (b) non-whitelisted domain fails provisioning + partial `skills_provisioned` event; (c) `egress_whitelist=None` is a no-op; (d) workspace-escape path fails per ON-024; (e) `rejected_skills[]` carries name + reason. Cross-spec coordination: control-points.md v0.4.2 adds CP-059 + `egress_whitelist` field to `PermissionSchema`; handler-contract.md v0.5.3 adds HC-048b (provisioning enforcement) + `egress_whitelist` to LaunchSpec; event-model.md v0.5.4 adds `rejected_skills[]?` to §8.3.8 `skills_provisioned`. No ON requirement IDs added or renumbered. |
 | 2026-05-31 | 0.4.6 | agent (hk-sx9r.26) | **ON-021 iff-drain-completed — Axes classification, §7.3 branch-point attribution fix, §10.2 sensor expansion.** Three surgical amendments: (1) Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` to ON-021 (§4.6), aligning it with the Axes discipline of every other mechanism requirement in this spec. (2) Fixed the §7.3 upgrade-protocol branch-point annotation: the paused-precondition check enforces the iff-drain-completed invariant of ON-021 (not the schema-compat check as previously annotated); the schema-compat check maps to ON-019 + ON-020e; the socket-continuity branch maps to ON-020f (not the pre-sub-requirement "ON-020(e)" reference left stale after hk-sx9r.24 introduced ON-020b–ON-020h). (3) Expanded the §10.2 ON-020–ON-021 test obligation: added an explicit ON-021 iff-drain-completed sensor with three sub-assertions — (a) upgrade rejected (exit code 13) when not yet paused; (b) upgrade accepted after all eight drain steps complete + no `in_flight(run)`, with run-state reconstructible from git + Beads; (c) cross-version state preservation per ON-020e. **No new requirement IDs; no invariants added or retired; no §8 exit-code changes.** Refs: hk-sx9r.26. |
 | 2026-05-31 | 0.4.5 | agent (hk-sx9r.1) | **ON-ENV-001 envelope confirmation — `resume` added to (h) boundary classification table.** ON-056 (v0.4.4) introduced `resume` as a first-class agent-callable command verb alongside `pause`; the ON-ENV-001 boundary classification row in §4.a(h) previously listed only "`pause` / `upgrade` command ingress", omitting `resume`. Updated to "`pause` / `resume` / `upgrade` command ingress". No new requirement IDs, no event-type changes, no §8 exit-code additions; the axes and Tags remain unchanged. Refs: hk-sx9r.1. |

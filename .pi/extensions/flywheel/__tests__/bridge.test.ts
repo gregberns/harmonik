@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { createEventBridge, type Harness, type BridgeOptions } from "../bridge.js";
+import { createEventBridge, type Harness, type BridgeOptions, type InvestigateBeadDeps } from "../bridge.js";
 import { readWatermark } from "../watermark.js";
 import type { SubscribeEvent } from "../wake-filter.js";
 
@@ -473,5 +473,116 @@ describe("cognition-events.jsonl emission", () => {
     const lines = readFileSync(cogPath, "utf8").split("\n").filter(Boolean);
     const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
     expect(types).toContain("urgent_abort_issued");
+  });
+});
+
+// ── SC4: flywheel files investigate bead on run_failed (fire-and-forget) ────
+
+describe("SC4: flywheel files investigate bead on run_failed", () => {
+  let dir: string;
+  beforeEach(() => { dir = tmpDir(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  function makeInvestigateDeps(overrides: Partial<InvestigateBeadDeps> = {}): {
+    deps: InvestigateBeadDeps;
+    calls: { check: string[]; created: Array<{ title: string; eventId: string }>; submitted: string[] };
+  } {
+    const calls = { check: [] as string[], created: [] as Array<{ title: string; eventId: string }>, submitted: [] as string[] };
+    const deps: InvestigateBeadDeps = {
+      checkReactionLabel: async (_r, eventId) => { calls.check.push(eventId); return false; },
+      createInvestigateBead: async (_r, title, eventId) => { calls.created.push({ title, eventId }); return "hk-inv-001"; },
+      submitInvestigateQueue: async (_r, beadId) => { calls.submitted.push(beadId); return true; },
+      ...overrides,
+    };
+    return { deps, calls };
+  }
+
+  it("files an investigate bead and submits to investigate queue on run_failed", async () => {
+    const { harness } = makeHarness();
+    const { deps, calls } = makeInvestigateDeps();
+
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { investigateDeps: deps }));
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_failed", 1, { bead_id: "hk-failed" }),
+    ]));
+
+    // Give the fire-and-forget async chain time to settle
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls.check).toHaveLength(1);
+    expect(calls.created).toHaveLength(1);
+    expect(calls.created[0].title).toContain("hk-failed");
+    expect(calls.submitted).toEqual(["hk-inv-001"]);
+  });
+
+  it("is idempotent: skips creation when reaction bead already exists", async () => {
+    const { harness } = makeHarness();
+    const { deps, calls } = makeInvestigateDeps({
+      checkReactionLabel: async () => true, // already filed
+    });
+
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { investigateDeps: deps }));
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_failed", 2, { bead_id: "hk-failed2" }),
+    ]));
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls.created).toHaveLength(0);
+    expect(calls.submitted).toHaveLength(0);
+  });
+
+  it("does not block the wake-LLM followUp — fire-and-forget", async () => {
+    const { harness, calls: harnessCalls } = makeHarness();
+    let filingStarted = false;
+
+    const deps: InvestigateBeadDeps = {
+      checkReactionLabel: async () => { filingStarted = true; return false; },
+      createInvestigateBead: async (_r, title, eventId) => { return "hk-inv-003"; },
+      submitInvestigateQueue: async () => true,
+    };
+
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { debounceMs: 0, investigateDeps: deps }));
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_failed", 3, { bead_id: "hk-failed3" }),
+    ]));
+
+    // The followUp (wake-LLM digest) is synchronous; filing is async fire-and-forget.
+    // replayFile returns before the fire-and-forget resolves, so followUp must be present.
+    const followUps = harnessCalls.filter((c) => c.method === "followUp");
+    expect(followUps.length).toBeGreaterThan(0);
+    expect(followUps[0].arg).toContain("run_failed");
+  });
+
+  it("does not file when run_failed has no bead_id", async () => {
+    const { harness } = makeHarness();
+    const { deps, calls } = makeInvestigateDeps();
+
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { investigateDeps: deps }));
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_failed", 4), // no bead_id in payload
+    ]));
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls.created).toHaveLength(0);
+    expect(calls.submitted).toHaveLength(0);
+  });
+
+  it("emits investigate_bead_filed cognition event after successful filing", async () => {
+    const { harness } = makeHarness();
+    const { deps } = makeInvestigateDeps();
+
+    const bridge = createEventBridge(harness, bridgeOpts(dir, { investigateDeps: deps }));
+    await bridge.replayFile(writeTmpReplay([
+      makeEvent("run_failed", 5, { bead_id: "hk-failed5" }),
+    ]));
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const cogPath = join(dir, ".harmonik", "cognition", "cognition-events.jsonl");
+    const lines = readFileSync(cogPath, "utf8").split("\n").filter(Boolean);
+    const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
+    expect(types).toContain("investigate_bead_filed");
   });
 });

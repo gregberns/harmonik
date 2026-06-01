@@ -65,7 +65,11 @@ RECORD Queue:
   submitted_at      : Timestamp   -- ISO 8601 with ms, UTC; set at queue-submit accept
   groups            : List<Group> -- ordered; at least one entry; group_index is dense 0..N-1
   status            : QueueStatus -- queue-level lifecycle state (see §2.2)
+  name              : String      -- durable routing key (NQ-A1); omitted or empty = "main"; per-queue
+                                  -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
 ```
+
+> INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
 
 ### 2.2 ENUM QueueStatus
 

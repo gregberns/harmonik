@@ -41,13 +41,39 @@ import {
   type WatchdogFire,
   type WatchdogOptions,
 } from "./watchdog.js";
-import { type Dispatcher } from "./dispatcher.js";
+import { type Dispatcher, makeQueueSubmit } from "./dispatcher.js";
 
 // Harness interface injected by index.ts; mocked in tests.
 export interface Harness {
   abort(): void | Promise<void>;
   prompt(msg: string): void;
   followUp(msg: string): void;
+}
+
+/**
+ * SC4: Injectable deps for the investigate-bead filing path.
+ * Fire-and-forget: flywheel files an investigate bead on run_failed and submits
+ * it to the dedicated 'investigate' queue. The 'investigate' queue is an
+ * ordinary named queue with no special semantics — routing through it IS the
+ * billing mechanism (a subscription-billed Claude daemon pulls from it).
+ * No per-queue budget; no special queue state. The cognition-loop/flywheel-bridge
+ * spec owns the behavioral contract; queue-model.md §2.1 N4 note governs naming.
+ */
+export interface InvestigateBeadDeps {
+  /**
+   * Return true when a bead with label `reaction:<eventId>` already exists (open).
+   * Used as the idempotency guard before creating a duplicate investigate bead.
+   */
+  checkReactionLabel(repoRoot: string, eventId: string): Promise<boolean>;
+  /**
+   * Create a new investigate bead tagged with `reaction:<eventId>`.
+   * Returns the new bead ID on success, null on failure.
+   */
+  createInvestigateBead(repoRoot: string, title: string, eventId: string): Promise<string | null>;
+  /**
+   * Submit beadId to the 'investigate' queue. Fire-and-forget at call site.
+   */
+  submitInvestigateQueue(repoRoot: string, beadId: string): Promise<boolean>;
 }
 
 export interface BridgeOptions {
@@ -61,6 +87,8 @@ export interface BridgeOptions {
   gitCheck?: (repoRoot: string, beadId: string) => Promise<boolean>;
   // CL-071/072/073: eager pure-code refill dispatcher. When absent, no eager refill.
   dispatcher?: Dispatcher;
+  // SC4: investigate bead filing deps. When absent, production defaults are used.
+  investigateDeps?: Partial<InvestigateBeadDeps>;
 }
 
 const DEFAULT_SUBSCRIBE_TYPES = [
@@ -95,6 +123,59 @@ function statePath(repoRoot: string): string {
 
 function eventsJsonlPath(repoRoot: string): string {
   return join(repoRoot, ".harmonik/events/events.jsonl");
+}
+
+// SC4 production defaults — br-backed investigate bead filing.
+
+function defaultCheckReactionLabel(_repoRoot: string, eventId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "br",
+      ["list", "--label", `reaction:${eventId}`, "--status", "open", "--json"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let out = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString(); });
+    proc.on("exit", () => {
+      try {
+        const parsed = JSON.parse(out.trim()) as { total?: number };
+        resolve((parsed.total ?? 0) > 0);
+      } catch {
+        resolve(false);
+      }
+    });
+    proc.on("error", () => resolve(false));
+  });
+}
+
+function defaultCreateInvestigateBead(_repoRoot: string, title: string, eventId: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "br",
+      ["create", `--title=${title}`, "--type=task", "--priority=1",
+       "--labels", `reaction:${eventId}`, "--json"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let out = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString(); });
+    proc.on("exit", () => {
+      try {
+        const parsed = JSON.parse(out.trim()) as { id?: string };
+        resolve(parsed.id ?? null);
+      } catch {
+        resolve(null);
+      }
+    });
+    proc.on("error", () => resolve(null));
+  });
+}
+
+function makeDefaultSubmitInvestigateQueue(harmonikBin: string): InvestigateBeadDeps["submitInvestigateQueue"] {
+  const submit = makeQueueSubmit(harmonikBin, "investigate");
+  return async (repoRoot: string, beadId: string) => {
+    const result = await submit(repoRoot, beadId);
+    return result.ok;
+  };
 }
 
 // CL-051: verify Refs: trailer on origin/main for a bead.
@@ -149,7 +230,14 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     debounceMs,
     gitCheck: gitCheckFn = defaultGitCheck,
     dispatcher,
+    investigateDeps: investigateDepsOverride = {},
   } = opts;
+
+  const investigateDeps: InvestigateBeadDeps = {
+    checkReactionLabel: investigateDepsOverride.checkReactionLabel ?? defaultCheckReactionLabel,
+    createInvestigateBead: investigateDepsOverride.createInvestigateBead ?? defaultCreateInvestigateBead,
+    submitInvestigateQueue: investigateDepsOverride.submitInvestigateQueue ?? makeDefaultSubmitInvestigateQueue(harmonikBin),
+  };
 
   const sp = statePath(repoRoot);
   let state: WatermarkState | null = null;
@@ -317,6 +405,10 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
       if (failedBeadId && dispatcher) {
         dispatcher.recordBeadFailure(failedBeadId);
       }
+      // SC4: fire-and-forget file an investigate bead when a bead fails.
+      if (failedBeadId) {
+        fileInvestigateBead(failedBeadId, event.event_id);
+      }
     }
     if (event.type === "run_failed" || event.type === "run_canceled") {
       triggerEagerRefill(event);
@@ -335,6 +427,29 @@ export function createEventBridge(harness: Harness, opts: BridgeOptions): EventB
     const digest = buildEventDigest(events);
     emitCognitionEvent(repoRoot, { type: "wake_llm_flush", event_count: events.length });
     harness.followUp(digest);
+  }
+
+  // SC4: fire-and-forget investigate bead filing on run_failed.
+  // Idempotency: checks `reaction:<eventId>` label before creating.
+  // The investigate queue is an ordinary named queue; routing = the billing mechanism.
+  function fileInvestigateBead(beadId: string, eventId: string): void {
+    (async () => {
+      const exists = await investigateDeps.checkReactionLabel(repoRoot, eventId);
+      if (exists) return;
+      const newBeadId = await investigateDeps.createInvestigateBead(
+        repoRoot,
+        `Investigate: ${beadId} failed`,
+        eventId,
+      );
+      if (!newBeadId) {
+        emitCognitionEvent(repoRoot, { type: "investigate_bead_create_failed", trigger_bead: beadId, event_id: eventId });
+        return;
+      }
+      await investigateDeps.submitInvestigateQueue(repoRoot, newBeadId);
+      emitCognitionEvent(repoRoot, { type: "investigate_bead_filed", trigger_bead: beadId, investigate_bead: newBeadId, event_id: eventId });
+    })().catch((err) => {
+      emitCognitionEvent(repoRoot, { type: "investigate_bead_file_error", error: String(err), trigger_bead: beadId, event_id: eventId });
+    });
   }
 
   // CL-071: fire-and-forget eager refill on slot-releasing events.

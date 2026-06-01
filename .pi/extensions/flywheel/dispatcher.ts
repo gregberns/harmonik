@@ -137,9 +137,9 @@ function makeKerfNextBeads(kerfBin: string): DispatcherDeps["kerfNextBeads"] {
   };
 }
 
-function makeReadActiveQueue(): DispatcherDeps["readActiveQueue"] {
+function makeReadActiveQueue(queueName: string = "main"): DispatcherDeps["readActiveQueue"] {
   return (repoRoot: string): ActiveQueueInfo | null => {
-    const queuePath = join(repoRoot, ".harmonik", "queue.json");
+    const queuePath = join(repoRoot, ".harmonik", "queues", `${queueName}.json`);
     let raw: string;
     try {
       raw = readFileSync(queuePath, "utf8");
@@ -183,7 +183,7 @@ function defaultGitCheck(repoRoot: string, beadId: string): Promise<boolean> {
   });
 }
 
-function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
+export function makeQueueSubmit(harmonikBin: string, queueName?: string): DispatcherDeps["queueSubmit"] {
   return async (
     repoRoot: string,
     beadId: string,
@@ -195,11 +195,10 @@ function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
     const tmpFile = join(tmpdir(), `dispatch-${randomUUID()}.json`);
     try {
       writeFileSync(tmpFile, queueDoc, "utf8");
-      const { stdout, code } = await spawnCapture(
-        harmonikBin,
-        ["queue", "submit", "--json", tmpFile],
-        { cwd: repoRoot },
-      );
+      const args = ["queue", "submit", "--json"];
+      if (queueName) args.push("--queue", queueName);
+      args.push(tmpFile);
+      const { stdout, code } = await spawnCapture(harmonikBin, args, { cwd: repoRoot });
       if (code !== 0) return { queueId: null, ok: false };
       try {
         const parsed = JSON.parse(stdout.trim()) as { queue_id?: string };
@@ -216,17 +215,20 @@ function makeQueueSubmit(harmonikBin: string): DispatcherDeps["queueSubmit"] {
   };
 }
 
-function makeQueueAppend(harmonikBin: string): DispatcherDeps["queueAppend"] {
+function makeQueueAppend(harmonikBin: string, queueName?: string): DispatcherDeps["queueAppend"] {
   return async (
     repoRoot: string,
     queueId: string,
     beadId: string,
   ): Promise<boolean> => {
-    const { code } = await spawnCapture(
-      harmonikBin,
-      ["queue", "append", "--queue-id", queueId, "0", beadId],
-      { cwd: repoRoot },
-    );
+    const args = ["queue", "append"];
+    if (queueName) {
+      args.push("--queue", queueName);
+    } else {
+      args.push("--queue-id", queueId);
+    }
+    args.push("0", beadId);
+    const { code } = await spawnCapture(harmonikBin, args, { cwd: repoRoot });
     return code === 0;
   };
 }

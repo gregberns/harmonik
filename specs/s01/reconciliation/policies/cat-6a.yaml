@@ -1,0 +1,179 @@
+# cat-6a.yaml — S01 reconciliation policy: Cat 6a (integrity violation, LLM-triageable)
+#
+# Pinned by:
+#   - specs/reconciliation/spec.md §4.1 RC-004 (S01 ships YAML policy per category)
+#   - specs/reconciliation/spec.md §4.4 RC-016 (playbook per category)
+#   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget 900s default for Cat 6a)
+#   - specs/reconciliation/spec.md §8.11 (default verdict escalate-to-human; MAY downgrade)
+#   - specs/control-points.md §4.7 CP-035 (policy document required sections)
+#   - specs/control-points.md §4.5 CP-022 (Budget resource/scope/limit/warning_threshold)
+#   - specs/handler-contract.md §4.11 (skill injection — beads-cli + git-inspection minimum)
+#
+# IMPORTANT: The default verdict for Cat 6a is escalate-to-human (RC-020).
+# The investigator MAY downgrade to a repair verdict only when the evidence
+# clearly supports a safe mechanical resolution. When in doubt, escalate.
+
+metadata:
+  name: reconciliation-cat-6a
+  version: "1.0"
+  author: "S01 (Orchestrator Core)"
+  schema_version: 1
+
+roles:
+  - name: Researcher
+    permission_schema:
+      allowed_tools:
+        - Bash
+        - Read
+        - WebSearch
+      writable_paths: []
+      readable_paths:
+        - "**"
+      model_tier: null
+      # Beads-CLI and git-inspection are the minimum skill set per RC-004.
+      # workspace-inspection is required for Cat 6a (worktree integrity probes).
+      default_skills:
+        - beads-cli
+        - git-inspection
+        - workspace-inspection
+      allowed_hooks: []
+      invocable_by:
+        - Orchestrator
+
+freedom_profiles: []
+gates: []
+hooks: []
+guards: []
+
+budgets:
+  - name: reconciliation-cat-6a-wall-clock
+    # wall_clock_seconds: Cat 6a default per RC-017. Extended budget (vs Cat 3)
+    # because integrity violations require more thorough investigation before
+    # escalation is appropriate.
+    resource: wall_clock_seconds
+    scope: per_run
+    limit: 900
+    warning_threshold: 0.8
+
+reconciliation_playbook:
+  category: cat-6a
+  prompt_template_ref: "specs/s01/reconciliation/prompts/cat-6a-investigator.md"
+
+  steps:
+    - step: 1
+      name: read-snapshot-context
+      description: >
+        Read the SnapshotToken from LaunchSpec.snapshot_token. Record
+        git_head_hash, beads_audit_entry_id, captured_at_timestamp, and the
+        store_divergence_detected / infrastructure event that triggered Cat 6a
+        dispatch. Identify the specific detector subtype that fired (per §8.11):
+        workspace-missing+sibling-absent, trailer-mismatch, git-in-progress-op,
+        or multi-branch.
+
+    - step: 2
+      name: probe-workspace
+      description: >
+        Using the workspace-inspection skill, determine: (a) does the workspace
+        path exist on disk? (b) If yes, what is the current git status — is there
+        a rebase, merge, cherry-pick, or bisect in progress? (c) What files are
+        present or absent under .harmonik/reconciliation/<run_id>/? Record
+        git_in_progress_op (none | rebase | merge | cherry-pick | bisect).
+
+    - step: 3
+      name: inspect-checkpoint-integrity
+      description: >
+        Using the git-inspection skill, read the last checkpoint commit at
+        git_head_hash. Verify: (a) Harmonik-Transition-ID trailer is present;
+        (b) transition-record sibling file exists at the path declared in the
+        trailer per execution-model.md §4.4 EM-018; (c) Harmonik-Run-ID matches
+        the target run. Record any mismatch between trailer presence and sibling
+        file existence.
+
+    - step: 4
+      name: check-multiple-task-branches
+      description: >
+        Using the git-inspection skill, enumerate all branches in the repo that
+        carry Harmonik-Run-ID trailers for the target bead_id. For each branch,
+        check: does a Harmonik-Verdict-Executed: true commit exist? Record the
+        count of branches without a verdict-executed marker.
+
+    - step: 5
+      name: query-bead-status
+      description: >
+        Using the beads-cli skill, run `br show <bead_id>` and `br show
+        <bead_id> --audit` as-of beads_audit_entry_id. Record status and any
+        evidence of prior runs for this bead.
+
+    - step: 6
+      name: classify-integrity-subtype
+      description: >
+        Classify the integrity violation into the specific subtype that fired:
+        (A) workspace-missing + sibling-absent: worktree does not exist AND the
+            transition-record sibling file is absent from the checkpoint tree;
+        (B) trailer-mismatch: Harmonik-Transition-ID trailer present but sibling
+            file missing (or vice versa) on a checkpoint commit;
+        (C) git-in-progress-op: git_in_progress_op is not 'none' in the worktree;
+        (D) multi-branch: bead in_progress with two or more task branches each
+            advertising Harmonik-Run-ID without Harmonik-Verdict-Executed.
+        Multiple subtypes MAY apply; record all that fired.
+
+    - step: 7
+      name: assess-repair-feasibility
+      description: >
+        For each subtype, assess whether a safe mechanical repair verdict exists:
+        (A) workspace-missing + sibling-absent: if git shows no useful work landed,
+            reopen-bead may be appropriate; if some commits landed, evaluate
+            accept-close-with-note;
+        (B) trailer-mismatch: the corruption is structural; typically escalate-to-human
+            unless the sibling file can be deterministically reconstructed from the
+            trailer payload and the commit tree;
+        (C) git-in-progress-op: the worktree has uncommitted state; escalate-to-human
+            is almost always appropriate since the in-progress op outcome is unknown;
+        (D) multi-branch: evaluate which branch is authoritative by timestamp and
+            Harmonik-Run-ID; if one branch is clearly the correct one, reopen-bead
+            or accept-close-with-note may apply; otherwise escalate-to-human.
+
+    - step: 8
+      name: select-verdict
+      description: >
+        Apply the verdict-selection rubric. Default is escalate-to-human.
+        Downgrade ONLY when the evidence clearly supports a safe repair path.
+        Emit exactly one verdict via outcome_emitted with
+        outcome_kind=reconciliation_verdict.
+
+  required_evidence_outputs:
+    - "snapshot_token_used.json"
+    - "workspace_probe.md"             # workspace existence, git_in_progress_op
+    - "checkpoint_integrity.md"        # trailer+sibling check result
+    - "branch_inventory.md"            # all branches for bead, verdict-executed status
+    - "bead_status.json"               # br show output as-of snapshot
+    - "integrity_subtype.md"           # A/B/C/D classification (all that fired)
+    - "repair_feasibility.md"          # per-subtype repair assessment
+    - "verdict_rationale.md"           # chosen verdict + rationale
+
+  verdict_selection_rubric: |
+    DEFAULT: escalate-to-human. Use this when ANY of the following apply:
+      - The integrity violation subtype is B (trailer-mismatch) or C (git-in-progress-op).
+      - Evidence is contradictory or insufficient to determine a safe repair.
+      - More than one subtype fired and their implications conflict.
+      - Repair would require writing to the worktree or modifying git history.
+
+    Downgrade to repair verdict ONLY when ALL of the following apply:
+      - The specific subtype is A (workspace-missing+sibling-absent) or D (multi-branch).
+      - The evidence clearly and unambiguously supports the repair verdict.
+      - The mechanical action is idempotent and does not risk data loss.
+
+    reopen-bead:
+      Use for subtype A when: workspace is gone, no work appears to have landed
+      on the branch (no non-reconciliation commits since the last checkpoint),
+      and re-dispatching the bead fresh is safe.
+
+    accept-close-with-note:
+      Use for subtype A when: git evidence shows the run did reach a completed
+      state but Beads was not updated; annotate with the integrity-violation details.
+
+    escalate-to-human is ALWAYS appropriate for Cat 6a when in doubt.
+
+  # Cat 6a requires operator confirmation by default (RC-027 opt-in pattern).
+  # This default REQUIRES operator confirmation before verdict execution for Cat 6a.
+  confirm_required: true

@@ -8,7 +8,7 @@ requirement-prefix: RC
 status: reviewed
 spec-shape: taxonomy-first
 spec-category: foundation-cross-cutting
-version: 0.4.2
+version: 0.4.3
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-06-01
@@ -991,6 +991,7 @@ Legacy citations into `reconciliation/spec.md` used the pre-taxonomy-first secti
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-01 | 0.4.3 | agent (hk-63oh.8) | **RC-004 fulfilled — S01 reconciliation workflow library shipped.** Created `specs/s01/reconciliation/` library with three DOT workflows (`cat-2.dot`, `cat-3.dot`, `cat-6a.dot`), three YAML policies (`cat-2.yaml`, `cat-3.yaml`, `cat-6a.yaml` per CP-035 + RC-016 playbook extension), and three investigator-agent prompt templates (`cat-2-investigator.md`, `cat-3-investigator.md`, `cat-6a-investigator.md`). All DOT files carry `workflow_class="reconciliation"` per schemas.md §6.5, `budget_ref` per RC-017, and `required_skills` per RC-004/RC-016 (beads-cli + git-inspection minimum; Cat 2 and Cat 6a also include workspace-inspection). Wall-clock budgets: Cat 2=600s, Cat 3=300s, Cat 6a=900s. Investigator: `agent_type="claude-code"`, `role="Researcher"` per RC-015a. Cat 6a policy sets `confirm_required: true` per RC-027 opt-in recommendation (default verdict escalate-to-human). No requirement IDs, spec text, or schemas touched. Refs: hk-63oh.8. |
 | 2026-06-01 | 0.4.2 | agent (hk-63oh.42) | **RC-030 Axes + §10.2 sensor.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` to RC-030 per template obligation (RC-030 is a structural prohibition on reconciliation producing intra-run loop edges; no LLM, no IO, no state mutation → idempotent). Extended §10.2 RC-028–RC-030 test obligation to include an explicit negative test for RC-030: for every verdict enum value, verify verdict execution does NOT produce a back-edge in the workflow graph; confirm observed loop-backs trace to edge conditions and Guard/Gate control-points per [control-points.md §4.2, §4.4]. No requirement IDs or schemas touched. Refs: hk-63oh.42. |
 | 2026-06-01 | 0.4.1 | agent (hk-63oh.26) | **RC-017 Axes + test obligation.** Added `Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` to RC-017 per template obligation (Axes lines on every LLM/IO/state-mutation requirement; RC-017's daemon-enforced wall-clock termination is a non-idempotent state mutation). Added §10.2 test obligation for RC-017 covering: DOT `budget_ref` presence, Budget `resource=wall_clock_seconds`+`scope=per_run` structural check, per-category default values (Cat 2: 600s, Cat 3: 300s, Cat 6a: 900s), and negative lint test for missing `budget_ref`. No requirement IDs or schemas touched. Refs: hk-63oh.26. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft from components.md Component 9 + round-2 amendments; split into spec.md + schemas.md. |

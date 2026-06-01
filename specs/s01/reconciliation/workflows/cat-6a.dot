@@ -1,0 +1,65 @@
+// cat-6a.dot — S01 reconciliation workflow: Cat 6a (integrity violation, LLM-triageable)
+//
+// Pinned by:
+//   - specs/reconciliation/spec.md §4.1 RC-004 (S01-owned library obligation)
+//   - specs/reconciliation/spec.md §8.11 Cat 6a (detection rule)
+//   - specs/reconciliation/spec.md §4.4 RC-015/RC-015a (investigator-agent contract)
+//   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget; default 900s for Cat 6a)
+//   - specs/reconciliation/spec.md §4.5 RC-020 (default verdict escalate-to-human)
+//   - specs/reconciliation/schemas.md §6.5 (workflow_class extension)
+//
+// Cat 6a triggers on structurally wrong data whose cause an LLM can reason
+// about: workspace path missing + transition-record absent; trailer/sibling
+// mismatch on a checkpoint commit; uncommitted git-in-progress op in worktree;
+// bead in_progress with two or more task branches advertising Harmonik-Run-ID
+// without Harmonik-Verdict-Executed.
+//
+// Default verdict: escalate-to-human (investigator MAY downgrade to a repair
+// path when evidence supports it).
+// Wall-clock budget: 900 seconds (RC-017; declared in policies/cat-6a.yaml).
+
+digraph "reconciliation-cat-6a" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="reconciliation-cat-6a";
+    workflow_class="reconciliation";
+    start_node="start";
+    terminal_node_ids="close";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow entry point"
+    ];
+
+    // investigator: reads git, Beads, workspace state, and JSONL divergence
+    // evidence bounded by SnapshotToken; classifies the integrity-violation
+    // subtype (workspace-missing, trailer-mismatch, git-in-progress-op,
+    // multi-branch); defaults to escalate-to-human but MAY downgrade to a
+    // repair verdict when the evidence supports it. Emits verdict via
+    // outcome_emitted (RC-022a). The daemon's verdict-executor (RC-025a)
+    // owns the verdict commit and mechanical action.
+    investigator [
+        type="agentic",
+        agent_type="claude-code",
+        handler_ref="claude-code",
+        idempotency_class="non-idempotent",
+        role="Researcher",
+        required_skills="beads-cli,git-inspection,workspace-inspection",
+        budget_ref="reconciliation-cat-6a-wall-clock"
+    ];
+
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow terminal"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    start -> investigator;
+    investigator -> close;
+}

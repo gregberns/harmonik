@@ -1,0 +1,67 @@
+// cat-2.dot — S01 reconciliation workflow: Cat 2 (non-idempotent in-flight)
+//
+// Pinned by:
+//   - specs/reconciliation/spec.md §4.1 RC-004 (S01-owned library obligation)
+//   - specs/reconciliation/spec.md §8.3 Cat 2 (detection rule)
+//   - specs/reconciliation/spec.md §4.4 RC-015/RC-015a (investigator-agent contract)
+//   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget; default 600s for Cat 2)
+//   - specs/reconciliation/schemas.md §6.5 (workflow_class extension)
+//
+// Cat 2 triggers when a node with idempotency_class ∈ {non-idempotent,
+// recoverable-non-idempotent} was interrupted (bead in_progress, no
+// run_completed/run_failed event since last checkpoint).
+//
+// Typical verdicts: resume-with-context, reset-to-checkpoint, reopen-bead.
+// Investigator input is bounded by SnapshotToken (RC-015).
+// Wall-clock budget: 600 seconds (RC-017; declared in policies/cat-2.yaml).
+
+digraph "reconciliation-cat-2" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="reconciliation-cat-2";
+    workflow_class="reconciliation";
+    start_node="start";
+    terminal_node_ids="close";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow entry point"
+    ];
+
+    // investigator: the cognition-tagged agent that reads state bounded by
+    // SnapshotToken, reasons about the non-idempotent interruption, and emits
+    // a verdict via outcome_emitted (RC-022a). The daemon's verdict-executor
+    // (RC-025a) owns the verdict commit and mechanical action.
+    investigator [
+        type="agentic",
+        agent_type="claude-code",
+        handler_ref="claude-code",
+        idempotency_class="non-idempotent",
+        role="Researcher",
+        required_skills="beads-cli,git-inspection,workspace-inspection",
+        budget_ref="reconciliation-cat-2-wall-clock"
+    ];
+
+    // close: terminal node; the workflow ends after the investigator emits its
+    // verdict outcome. The daemon's verdict-executor handles the verdict commit
+    // and subsequent mechanical action outside this workflow graph (RC-025a).
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow terminal"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry — unconditional.
+    start -> investigator;
+
+    // (2) Investigator to terminal — unconditional. Verdict routing is handled
+    // by the daemon's verdict-executor (RC-025a) via the HC outcome envelope;
+    // no graph-level verdict branching is needed for reconciliation workflows.
+    investigator -> close;
+}

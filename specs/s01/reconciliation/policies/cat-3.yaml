@@ -1,0 +1,138 @@
+# cat-3.yaml — S01 reconciliation policy: Cat 3 (store disagreement, generic)
+#
+# Pinned by:
+#   - specs/reconciliation/spec.md §4.1 RC-004 (S01 ships YAML policy per category)
+#   - specs/reconciliation/spec.md §4.4 RC-016 (playbook per category)
+#   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget 300s default for Cat 3)
+#   - specs/reconciliation/spec.md §5 RC-INV-001 (git-wins orientation)
+#   - specs/control-points.md §4.7 CP-035 (policy document required sections)
+#   - specs/control-points.md §4.5 CP-022 (Budget resource/scope/limit/warning_threshold)
+#   - specs/handler-contract.md §4.11 (skill injection — beads-cli + git-inspection minimum)
+
+metadata:
+  name: reconciliation-cat-3
+  version: "1.0"
+  author: "S01 (Orchestrator Core)"
+  schema_version: 1
+
+roles:
+  - name: Researcher
+    permission_schema:
+      allowed_tools:
+        - Bash
+        - Read
+        - WebSearch
+      writable_paths: []
+      readable_paths:
+        - "**"
+      model_tier: null
+      # Beads-CLI and git-inspection are the minimum skill set per RC-004.
+      default_skills:
+        - beads-cli
+        - git-inspection
+      allowed_hooks: []
+      invocable_by:
+        - Orchestrator
+
+freedom_profiles: []
+gates: []
+hooks: []
+guards: []
+
+budgets:
+  - name: reconciliation-cat-3-wall-clock
+    # wall_clock_seconds: Cat 3 default per RC-017.
+    resource: wall_clock_seconds
+    scope: per_run
+    limit: 300
+    warning_threshold: 0.8
+
+reconciliation_playbook:
+  category: cat-3
+  prompt_template_ref: "specs/s01/reconciliation/prompts/cat-3-investigator.md"
+
+  steps:
+    - step: 1
+      name: read-snapshot-context
+      description: >
+        Read the SnapshotToken from LaunchSpec.snapshot_token. Record
+        git_head_hash, beads_audit_entry_id, captured_at_timestamp, and the
+        store_divergence_detected event that triggered Cat 3 dispatch (including
+        corroboration value: git-corroborated or beads-corroborated).
+
+    - step: 2
+      name: read-git-state
+      description: >
+        Using the git-inspection skill, read the target run's task branch tip
+        at git_head_hash: all checkpoint commits (ordered by git DAG parentage
+        per RC-011), their Harmonik-Run-ID and Harmonik-Transition-ID trailers,
+        and transition-record sibling files. Identify any duplicate transition_id
+        values, missing sibling files, or orphaned branch indicators.
+
+    - step: 3
+      name: read-beads-state
+      description: >
+        Using the beads-cli skill, run `br show <bead_id>` and `br show
+        <bead_id> --audit` as-of beads_audit_entry_id. Record current status,
+        audit history, and any multi-run history for this bead.
+
+    - step: 4
+      name: read-jsonl-evidence
+      description: >
+        Using the bounded JSONL divergence-evidence reader (RC-014), read
+        events related to this run_id to identify inconsistencies:
+        checkpoint_written events without corresponding git commits; transition
+        events without corresponding sibling files. DO NOT use JSONL to
+        reconstruct run_id, state_id, or transition_id — those come from git.
+
+    - step: 5
+      name: classify-divergence
+      description: >
+        Apply the git-wins orientation (RC-INV-001): git is the authority for
+        completion state. Classify the divergence type:
+        (A) git says run completed (merge commit exists) but Beads says in_progress
+            → Cat 3c pattern leaked through; accept-close-with-note;
+        (B) duplicate transition_id on the same branch
+            → data corruption; evaluate reopen-bead;
+        (C) bead in_progress, worktree missing, no terminal marker
+            → lost-worktree; evaluate reopen-bead or accept-close-with-note;
+        (D) JSONL references events not corroborated by git or Beads
+            → JSONL is the inconsistent store; accept-close-with-note or no-op-accept;
+        (E) other unclassifiable inconsistency → escalate-to-human.
+
+    - step: 6
+      name: select-verdict
+      description: >
+        Apply the verdict-selection rubric and emit exactly one verdict via
+        outcome_emitted with outcome_kind=reconciliation_verdict.
+
+  required_evidence_outputs:
+    - "snapshot_token_used.json"
+    - "git_branch_summary.md"          # checkpoint list, trailers, any duplicate transition_ids
+    - "beads_status.json"              # br show output as-of snapshot
+    - "jsonl_evidence.md"              # relevant events found, inconsistencies noted
+    - "divergence_classification.md"   # A-E classification with reasoning
+    - "verdict_rationale.md"           # chosen verdict + rationale
+
+  verdict_selection_rubric: |
+    APPLY the git-wins orientation (RC-INV-001): if git says a run is complete,
+    it is complete regardless of what Beads or JSONL say.
+
+    accept-close-with-note:
+      Use when: git evidence confirms the run reached a successful terminal state
+      but Beads was not updated (type A, D). Annotate with divergence details.
+
+    reopen-bead:
+      Use when: the divergence indicates the run did not complete and the bead
+      should be re-dispatched with a fresh worktree (type B, C). The bead's
+      in-flight state is irrecoverable.
+
+    no-op-accept:
+      Use when: investigation confirms the state is actually consistent and the
+      divergence was a false positive (type D, JSONL-only anomaly).
+
+    escalate-to-human:
+      Use when: divergence is unclassifiable (type E), evidence is contradictory
+      across all three stores, or the mechanical action cannot be determined safely.
+
+  confirm_required: false

@@ -1,0 +1,60 @@
+// cat-3.dot — S01 reconciliation workflow: Cat 3 (store disagreement, generic)
+//
+// Pinned by:
+//   - specs/reconciliation/spec.md §4.1 RC-004 (S01-owned library obligation)
+//   - specs/reconciliation/spec.md §8.4 Cat 3 (detection rule)
+//   - specs/reconciliation/spec.md §4.4 RC-015/RC-015a (investigator-agent contract)
+//   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget; default 300s for Cat 3)
+//   - specs/reconciliation/spec.md §5 RC-INV-001 (git-wins orientation)
+//   - specs/reconciliation/schemas.md §6.5 (workflow_class extension)
+//
+// Cat 3 triggers when git, Beads, and JSONL tell inconsistent stories about a
+// run and no Cat 3 sub-category (3a/3b/3c) matches (duplicate transition_id,
+// bead in_progress with worktree missing and no terminal marker, etc.).
+//
+// Typical verdicts: accept-close-with-note, reopen-bead, no-op-accept.
+// The investigator applies a git-wins orientation per RC-INV-001.
+// Wall-clock budget: 300 seconds (RC-017; declared in policies/cat-3.yaml).
+
+digraph "reconciliation-cat-3" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="reconciliation-cat-3";
+    workflow_class="reconciliation";
+    start_node="start";
+    terminal_node_ids="close";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow entry point"
+    ];
+
+    // investigator: reads git, Beads, and JSONL divergence evidence bounded by
+    // SnapshotToken; applies the git-wins orientation per RC-INV-001; emits
+    // verdict via outcome_emitted (RC-022a). The daemon's verdict-executor
+    // (RC-025a) owns the verdict commit and mechanical action.
+    investigator [
+        type="agentic",
+        agent_type="claude-code",
+        handler_ref="claude-code",
+        idempotency_class="non-idempotent",
+        role="Researcher",
+        required_skills="beads-cli,git-inspection",
+        budget_ref="reconciliation-cat-3-wall-clock"
+    ];
+
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="reconciliation workflow terminal"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    start -> investigator;
+    investigator -> close;
+}

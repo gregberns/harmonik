@@ -1,0 +1,159 @@
+# cat-2.yaml — S01 reconciliation policy: Cat 2 (non-idempotent in-flight)
+#
+# Pinned by:
+#   - specs/reconciliation/spec.md §4.1 RC-004 (S01 ships YAML policy per category)
+#   - specs/reconciliation/spec.md §4.4 RC-016 (playbook per category)
+#   - specs/reconciliation/spec.md §4.4 RC-017 (wall-clock budget 600s default for Cat 2)
+#   - specs/control-points.md §4.7 CP-035 (policy document required sections)
+#   - specs/control-points.md §4.5 CP-022 (Budget resource/scope/limit/warning_threshold)
+#   - specs/handler-contract.md §4.11 (skill injection — beads-cli + git-inspection minimum)
+
+metadata:
+  name: reconciliation-cat-2
+  version: "1.0"
+  author: "S01 (Orchestrator Core)"
+  schema_version: 1
+
+# Role definition for the reconciliation investigator.
+# The canonical (agent_type, role) pair for investigators is (claude-code, Researcher)
+# per specs/reconciliation/spec.md §4.4 RC-015a.
+roles:
+  - name: Researcher
+    permission_schema:
+      allowed_tools:
+        - Bash
+        - Read
+        - WebSearch
+      writable_paths: []
+      readable_paths:
+        - "**"
+      model_tier: null
+      # Beads-CLI and git-inspection are the minimum skill set per RC-004.
+      # workspace-inspection is included for Cat 2 (worktree WIP check per RC-019).
+      default_skills:
+        - beads-cli
+        - git-inspection
+        - workspace-inspection
+      allowed_hooks: []
+      invocable_by:
+        - Orchestrator
+
+freedom_profiles: []
+gates: []
+hooks: []
+guards: []
+
+budgets:
+  - name: reconciliation-cat-2-wall-clock
+    # wall_clock_seconds: Cat 2 default per RC-017.
+    resource: wall_clock_seconds
+    scope: per_run
+    limit: 600
+    warning_threshold: 0.8
+
+# reconciliation_playbook is a reconciliation-specific extension of the policy
+# document per RC-016. The ordered steps below constitute the Cat 2 playbook
+# that the investigator MUST execute. Evidence outputs are captured in the
+# reconciliation commit at .harmonik/reconciliation/<investigator_run_id>/.
+reconciliation_playbook:
+  category: cat-2
+  prompt_template_ref: "specs/s01/reconciliation/prompts/cat-2-investigator.md"
+
+  # Ordered playbook steps (RC-016 obligation).
+  steps:
+    - step: 1
+      name: read-snapshot-context
+      description: >
+        Read the SnapshotToken from LaunchSpec.snapshot_token. Record
+        git_head_hash, beads_audit_entry_id, and captured_at_timestamp.
+        All subsequent reads are bounded by this token.
+
+    - step: 2
+      name: inspect-checkpoint
+      description: >
+        Using the git-inspection skill, read the last checkpoint commit at
+        git_head_hash on the target run's task branch. Extract: node_id,
+        idempotency_class, Harmonik-Run-ID trailer, Harmonik-Transition-ID
+        trailer, and the transition-record sibling file content.
+
+    - step: 3
+      name: check-liveness-events
+      description: >
+        Using the bounded JSONL divergence-evidence reader, issue a controlled
+        indexed query: "has run_completed or run_failed been emitted for this
+        run_id since the last checkpoint?" (RC-014 Cat 2 liveness probe).
+        Record the answer and any partial-completion events found.
+
+    - step: 4
+      name: query-bead-status
+      description: >
+        Using the beads-cli skill, run `br show <bead_id>` and `br show
+        <bead_id> --audit` to read the bead's current status and audit history
+        as-of beads_audit_entry_id. Verify the bead is still in_progress.
+
+    - step: 5
+      name: inspect-worktree
+      description: >
+        Using the workspace-inspection skill, check: (a) worktree path exists;
+        (b) `git status --porcelain` output (WIP files, staged changes);
+        (c) untracked files that represent in-progress work product.
+        Record all WIP evidence — this is mandatory input for the reopen-bead
+        verdict path (RC-019).
+
+    - step: 6
+      name: classify-interruption
+      description: >
+        Based on evidence gathered, classify the interruption into one of:
+        (A) clean pre-commit interruption — agent had not yet committed any
+            output; safe to resume-with-context or reset-to-checkpoint;
+        (B) partial commit — one or more commits on the branch but the node's
+            work is incomplete;
+        (C) unknown state — evidence is insufficient to classify safely.
+
+    - step: 7
+      name: select-verdict
+      description: >
+        Apply the verdict-selection rubric (see below) and select exactly one
+        verdict from the Verdict enum. Emit the verdict via outcome_emitted
+        with outcome_kind=reconciliation_verdict.
+
+  # Evidence outputs the investigator MUST capture in the reconciliation commit.
+  required_evidence_outputs:
+    - "snapshot_token_used.json"      # copy of the SnapshotToken
+    - "checkpoint_summary.md"          # node_id, idempotency_class, last transition
+    - "liveness_probe_result.md"       # JSONL liveness-probe answer + events found
+    - "bead_status.json"               # br show output as-of snapshot
+    - "wip_capture.diff"               # git status + diff (required for reopen-bead per RC-019)
+    - "interruption_classification.md" # A/B/C classification with rationale
+    - "verdict_rationale.md"           # chosen verdict + one-paragraph reasoning
+
+  # Verdict-selection rubric for Cat 2 (RC-016 obligation).
+  verdict_selection_rubric: |
+    ALWAYS prefer the least-destructive option consistent with the evidence.
+
+    resume-with-context:
+      Use when: the node was interrupted cleanly (no WIP committed), the agent
+      can resume without risk of double-applying side effects, and the
+      interruption context (why it stopped) can be reconstructed. Include
+      the context string in the VerdictEvent.
+
+    reset-to-checkpoint:
+      Use when: partial work was committed but the work was non-idempotent and
+      the safest path is to roll back to the prior checkpoint and re-run from
+      there. Set checkpoint_ref to the target state's transition_id.
+
+    reopen-bead:
+      Use when: the partial work cannot be safely resumed or rolled back, the
+      WIP is too entangled to recover without operator review, or the node
+      failed in a way that invalidates the bead's current plan. MUST capture
+      WIP before emitting this verdict (RC-019).
+
+    escalate-to-human:
+      Use when: the classification is "unknown state" (step 6C), WIP capture
+      failed, or evidence is contradictory and no safe resolution path exists.
+
+    reset-to-checkpoint or reopen-bead are PREFERRED over escalate-to-human
+    whenever the evidence supports a safe mechanical resolution.
+
+  # Operator-confirmation default per RC-027 (operator may override via policy).
+  confirm_required: false

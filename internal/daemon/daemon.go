@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // Config holds the startup configuration for the harmonik daemon.
@@ -344,6 +345,23 @@ type Config struct {
 	//
 	// Bead ref: hk-ibilr.
 	NotifyStream io.Writer
+
+	// ConflictResolutionAttemptCap is the operator-configurable cap on
+	// conflict-resolution re-dispatch attempts per merge-pending cycle, per
+	// specs/workspace-model.md §4.6.WM-024 and specs/operator-nfr.md §4.3.
+	//
+	// The workspace manager dispatches a fresh conflict-resolver LaunchSpec up
+	// to this many times before routing to merge_conflict_escalation per WM-023.
+	// Valid range: [1, 10]. Out-of-range values are rejected at daemon startup.
+	//
+	// The zero value is treated as the built-in default (3) per WM-024:
+	// "DEFAULT of THREE (3) attempts per merge-pending cycle." Zero means "not
+	// set by operator; use default" — this preserves backward-compatible
+	// behaviour for daemon configurations that do not set the field.
+	//
+	// Spec refs: specs/workspace-model.md §4.6 WM-024; specs/operator-nfr.md §4.3.
+	// Bead ref: hk-8mwo.36.
+	ConflictResolutionAttemptCap int
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the
@@ -481,6 +499,21 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		workflowModeDefault = core.WorkflowModeSingle
 	} else if !workflowModeDefault.Valid() {
 		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
+	}
+
+	// WM-024: validate ConflictResolutionAttemptCap at startup.
+	//
+	// The zero value is treated as the built-in default (3) — operators who do
+	// not set the field get three attempts per merge-pending cycle (WM-024).
+	// A non-zero value MUST be in [1, 10]; values outside this range are
+	// rejected here so the daemon fails fast rather than silently misconfiguring
+	// the workspace manager (operator-nfr.md §4.3).
+	//
+	// Bead ref: hk-8mwo.36.
+	if cfg.ConflictResolutionAttemptCap != 0 {
+		if err := workspace.ValidateConflictResolutionAttemptCap(cfg.ConflictResolutionAttemptCap); err != nil {
+			return fmt.Errorf("daemon.Start: invalid conflict_resolution_attempt_cap %d: %w", cfg.ConflictResolutionAttemptCap, err)
+		}
 	}
 
 	// EM-012b tier-2: load .harmonik/config.yaml once at startup and cache in cfg.

@@ -469,7 +469,7 @@ type QueueSetConcurrencyResponse struct {
 // QueueDryRunRequest is the payload for the queue-dry-run JSON-RPC method
 // (specs/queue-model.md §2.10 RECORD QueueDryRunRequest).
 //
-// The shape is identical to [QueueSubmitRequest]; the method name differs.
+// The shape mirrors [QueueSubmitRequest]; the method name differs.
 // The daemon routes the request through the full validation pipeline without
 // persisting state or emitting events.
 type QueueDryRunRequest struct {
@@ -478,6 +478,15 @@ type QueueDryRunRequest struct {
 
 	// SchemaVersion MUST equal 1; forward-incompatible value refuses per QM-002.
 	SchemaVersion int `json:"schema_version"`
+
+	// Name is the durable routing key for the queue to validate against. When
+	// absent or empty it defaults to QueueNameMain ("main"). The per-name
+	// single-active guard (QM-027) is evaluated against this name so that a
+	// dry-run targeting a non-main named queue does not falsely collide with an
+	// active "main" queue (NQ-A1).
+	//
+	// Bead ref: hk-40r9b.
+	Name string `json:"name,omitempty"`
 }
 
 // LedgerDepNotice records a single would-be deferred-for-ledger-dep item

@@ -129,16 +129,20 @@ func HandleQueueSubmit(
 	projectDir string,
 	globalMaxConcurrent int,
 ) (QueueSubmitResponse, *Queue, []LedgerDepPair, *RPCError) {
+	// Normalise the queue name for the per-name single-active guard and for
+	// the QM-002/2.1 name-validity pre-check inside Validate.
+	queueName := NormaliseQueueName(req.Name)
+
 	// Run the validation pipeline.
 	vreq := ValidationRequest{
-		Groups:      req.Groups,
-		ActiveQueue: nil, // caller should pass active queue; for now no-queue path
-		IsAppend:    false,
+		Groups:    req.Groups,
+		QueueName: queueName,
+		IsAppend:  false,
 	}
 	// Note: the caller is responsible for loading the active queue and passing it
 	// in via a wrapper; here we use projectDir to load it ourselves per QM-027.
 	// Load by the normalised request name to enforce the per-name single-active guard.
-	existing, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
+	existing, loadErr := Load(ctx, projectDir, queueName)
 	if loadErr != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
 			Code:    -32099,
@@ -207,10 +211,10 @@ func HandleQueueSubmit(
 	q := &Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       queueID,
-		// Name is the durable routing key; normalise empty → "main" (QM-002/2.1)
+		// Name is the durable routing key; already normalised above (QM-002/2.1)
 		// so the per-name slot, persistence path, and per-queue worker pool all
 		// agree on the same key (NQ-A1 / NQ-B1).
-		Name: NormaliseQueueName(req.Name),
+		Name: queueName,
 		// Workers is the per-queue dispatch ceiling (QM-066). Default a zero/absent
 		// request to the global --max-concurrent; honour a positive request
 		// verbatim (oversubscription permitted — the runtime global ceiling still
@@ -388,8 +392,12 @@ func HandleQueueDryRun(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueDryRunResponse, *RPCError) {
-	// Load the active queue for QM-027 check (single-active-queue).
-	existing, loadErr := Load(ctx, projectDir, QueueNameMain)
+	// Normalise the queue name so the per-name single-active guard (QM-027)
+	// is evaluated against the correct per-name slot, not always "main".
+	queueName := NormaliseQueueName(req.Name)
+
+	// Load the active queue for QM-027 check (single-active-queue per name).
+	existing, loadErr := Load(ctx, projectDir, queueName)
 	if loadErr != nil {
 		return QueueDryRunResponse{}, &RPCError{
 			Code:    -32099,
@@ -401,6 +409,7 @@ func HandleQueueDryRun(
 	vreq := ValidationRequest{
 		Groups:      req.Groups,
 		ActiveQueue: existing,
+		QueueName:   queueName,
 		IsAppend:    false,
 	}
 
@@ -452,6 +461,7 @@ func HandleQueueDryRun(
 	resolvedQueue := Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       "00000000-0000-0000-0000-000000000000",
+		Name:          queueName,
 		SubmittedAt:   now,
 		Groups:        groups,
 		Status:        QueueStatusActive,

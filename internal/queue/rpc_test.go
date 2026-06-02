@@ -385,6 +385,92 @@ func TestHandleQueueDryRun_ValidationError_BeadNotFound(t *testing.T) {
 	}
 }
 
+// TestHandleQueueDryRun_NamedQueue_IgnoresMainActive is the regression test for
+// hk-40r9b: dry-run targeting a non-main named queue must NOT be rejected with
+// queue_already_active when the "main" queue is active.
+//
+// Pre-fix, HandleQueueDryRun always called Load(..., QueueNameMain), so an
+// active "main" queue triggered QM-027 regardless of the requested name.
+func TestHandleQueueDryRun_NamedQueue_IgnoresMainActive(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpc052"
+	const beadB core.BeadID = "hk-rpc053"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA, beadB)
+
+	// Establish an active "main" queue so QM-027 would falsely fire if the dry-run
+	// checks the wrong per-name slot.
+	mainReq := queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+	}
+	if _, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), mainReq, ledger, projectDir, 1); rpcErr != nil {
+		t.Fatalf("setup: submit main queue: unexpected RPCError: %v", rpcErr)
+	}
+
+	// Dry-run targeting "extqueue" must succeed — "main" is a different per-name
+	// slot and must not trigger QM-027 here.
+	dryReq := queue.QueueDryRunRequest{
+		SchemaVersion: 1,
+		Name:          "extqueue",
+		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadB)},
+	}
+	resp, rpcErr := queue.HandleQueueDryRun(t.Context(), dryReq, ledger, projectDir)
+	if rpcErr != nil {
+		t.Fatalf("dry-run for extqueue with active main: unexpected RPCError (code=%d %s): want success",
+			rpcErr.Code, rpcErr.Message)
+	}
+
+	// ResolvedQueue.Name must reflect the requested queue name.
+	if resp.ResolvedQueue.Name != "extqueue" {
+		t.Errorf("ResolvedQueue.Name = %q, want %q", resp.ResolvedQueue.Name, "extqueue")
+	}
+
+	// No file must have been written for "extqueue" (dry-run must not persist per QM-028).
+	if _, statErr := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "extqueue.json")); statErr == nil {
+		t.Error("extqueue.json written by dry-run, want no file (QM-028: dry-run must not persist)")
+	}
+}
+
+// TestHandleQueueDryRun_NamedQueue_AlreadyActive verifies that dry-run correctly
+// rejects a submit when the targeted named queue itself is already active.
+func TestHandleQueueDryRun_NamedQueue_AlreadyActive(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpc054"
+	const beadB core.BeadID = "hk-rpc055"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA, beadB)
+
+	// Establish an active "extqueue" queue via a real submit.
+	submitReq := queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Name:          "extqueue",
+		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+	}
+	if _, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1); rpcErr != nil {
+		t.Fatalf("setup: submit extqueue: unexpected RPCError: %v", rpcErr)
+	}
+
+	// Dry-run targeting the same "extqueue" must be rejected with queue_already_active.
+	dryReq := queue.QueueDryRunRequest{
+		SchemaVersion: 1,
+		Name:          "extqueue",
+		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadB)},
+	}
+	_, rpcErr := queue.HandleQueueDryRun(t.Context(), dryReq, ledger, projectDir)
+	if rpcErr == nil {
+		t.Fatal("dry-run for active extqueue: expected RPCError, got nil")
+	}
+	if rpcErr.Code != queue.ErrorCodeQueueAlreadyActive {
+		t.Errorf("RPCError.Code = %d, want %d (queue_already_active)",
+			rpcErr.Code, queue.ErrorCodeQueueAlreadyActive)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HandlerAdapter round-trip (JSON encode/decode)
 // ---------------------------------------------------------------------------

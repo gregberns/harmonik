@@ -38,7 +38,7 @@ func (s *socketQueueFixtureStub) HandleQueueAppend(_ context.Context, _ json.Raw
 	return json.RawMessage(`{"appended_count":1,"new_tail_indices":[0]}`), nil
 }
 
-func (s *socketQueueFixtureStub) HandleQueueStatus(_ context.Context) (json.RawMessage, *queue.RPCError) {
+func (s *socketQueueFixtureStub) HandleQueueStatus(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return json.RawMessage(`{"queue":null}`), nil
 }
 

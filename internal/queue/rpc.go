@@ -268,19 +268,43 @@ func HandleQueueAppend(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
-	// Resolve queue by name when QueueID is absent (append-by-name, hk-tigaf.8).
-	loadName := QueueNameMain
-	if req.Name != "" {
-		loadName = NormaliseQueueName(req.Name)
-	}
-	q, loadErr := Load(ctx, projectDir, loadName)
-	if loadErr != nil {
-		return QueueAppendResponse{}, nil, nil, &RPCError{
-			Code:    -32099,
-			Message: "internal_error",
-			Detail:  map[string]any{"error": loadErr.Error()},
+	// Resolve the target queue (bead ref: hk-1k5as):
+	//   1. Name given → load by name (append-by-name, hk-tigaf.8).
+	//   2. Name absent, QueueID given → enumerate all queues and find by UUID
+	//      so that --queue-id alone works for non-main queues.
+	//   3. Both absent → default to "main".
+	var q *Queue
+	switch {
+	case req.Name != "":
+		loadedQ, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
+		if loadErr != nil {
+			return QueueAppendResponse{}, nil, nil, &RPCError{
+				Code:    -32099,
+				Message: "internal_error",
+				Detail:  map[string]any{"error": loadErr.Error()},
+			}
 		}
+		q = loadedQ
+
+	case req.QueueID != "":
+		foundQ, rpcErr := findQueueByID(ctx, projectDir, req.QueueID)
+		if rpcErr != nil {
+			return QueueAppendResponse{}, nil, nil, rpcErr
+		}
+		q = foundQ
+
+	default:
+		loadedQ, loadErr := Load(ctx, projectDir, QueueNameMain)
+		if loadErr != nil {
+			return QueueAppendResponse{}, nil, nil, &RPCError{
+				Code:    -32099,
+				Message: "internal_error",
+				Detail:  map[string]any{"error": loadErr.Error()},
+			}
+		}
+		q = loadedQ
 	}
+
 	if q == nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
@@ -293,9 +317,10 @@ func HandleQueueAppend(
 		}
 	}
 
-	// Identity guard: when QueueID is supplied, reject on mismatch; when absent,
-	// name-resolved queue_id is accepted without an explicit guard (hk-tigaf.8).
-	if req.QueueID != "" && q.QueueID != req.QueueID {
+	// Identity guard: when QueueID is supplied AND Name is also supplied,
+	// reject on mismatch (hk-tigaf.8). When resolved by UUID above, q.QueueID
+	// already equals req.QueueID by construction — no re-check needed.
+	if req.QueueID != "" && req.Name != "" && q.QueueID != req.QueueID {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
 			Message: "append_target_invalid",
@@ -348,27 +373,59 @@ func HandleQueueAppend(
 
 // HandleQueueStatus handles a queue-status JSON-RPC request.
 //
-// Loads and returns the current queue envelope from .harmonik/queue.json.
+// Loads and returns the current queue envelope.
+//
+// Resolution order (bead ref: hk-1k5as):
+//  1. When req.Name is non-empty: load by that name.
+//  2. When req.Name is empty and req.QueueID is non-empty: enumerate all
+//     active queues and return the one whose QueueID matches; returns
+//     {queue: null} when no match is found.
+//  3. When both are absent: load the default "main" queue (QM-057 backward
+//     compatibility).
+//
 // Returns {queue: null} when no queue is loaded (file absent or completed and
 // unlinked per QM-003). MUST NOT mutate state or emit events per QM-057.
 //
 // Spec ref: specs/queue-model.md §8.8 QM-057, §2.10.
-// Bead ref: hk-nomxl.
+// Bead ref: hk-nomxl, hk-1k5as.
 func HandleQueueStatus(
 	ctx context.Context,
 	projectDir string,
+	req QueueStatusRequest,
 ) (QueueStatusResponse, *RPCError) {
-	q, loadErr := Load(ctx, projectDir, QueueNameMain)
-	if loadErr != nil {
-		return QueueStatusResponse{}, &RPCError{
-			Code:    -32099,
-			Message: "internal_error",
-			Detail:  map[string]any{"error": loadErr.Error()},
+	switch {
+	case req.Name != "":
+		// Name-based lookup.
+		q, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
+		if loadErr != nil {
+			return QueueStatusResponse{}, &RPCError{
+				Code:    -32099,
+				Message: "internal_error",
+				Detail:  map[string]any{"error": loadErr.Error()},
+			}
 		}
+		return QueueStatusResponse{Queue: q}, nil
+
+	case req.QueueID != "":
+		// UUID-based lookup: enumerate all queues and find the matching one.
+		q, rpcErr := findQueueByID(ctx, projectDir, req.QueueID)
+		if rpcErr != nil {
+			return QueueStatusResponse{}, rpcErr
+		}
+		return QueueStatusResponse{Queue: q}, nil
+
+	default:
+		// Backward-compatible default: load the "main" queue.
+		q, loadErr := Load(ctx, projectDir, QueueNameMain)
+		if loadErr != nil {
+			return QueueStatusResponse{}, &RPCError{
+				Code:    -32099,
+				Message: "internal_error",
+				Detail:  map[string]any{"error": loadErr.Error()},
+			}
+		}
+		return QueueStatusResponse{Queue: q}, nil
 	}
-	// q is nil when no queue is loaded; QueueStatusResponse.Queue is *Queue so
-	// a nil value marshals to JSON null per §2.10.
-	return QueueStatusResponse{Queue: q}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +538,37 @@ func HandleQueueDryRun(
 		LedgerDepNotices:    notices,
 		ParallelismNarrowed: len(notices) > 0,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// findQueueByID — UUID-based queue resolution shared by status + append
+// ---------------------------------------------------------------------------
+
+// findQueueByID enumerates all active queues under projectDir and returns the
+// first one whose QueueID equals queueID.  Returns (nil, nil) when no match is
+// found (callers should treat this as {queue: null}).  Returns a non-nil
+// *RPCError only on I/O failure.
+//
+// Bead ref: hk-1k5as.
+func findQueueByID(ctx context.Context, projectDir, queueID string) (*Queue, *RPCError) {
+	names, err := EnumerateQueueNames(projectDir)
+	if err != nil {
+		return nil, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": err.Error()},
+		}
+	}
+	for _, name := range names {
+		q, loadErr := Load(ctx, projectDir, name)
+		if loadErr != nil || q == nil {
+			continue
+		}
+		if q.QueueID == queueID {
+			return q, nil
+		}
+	}
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -769,10 +857,20 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 	return data, nil
 }
 
-// HandleQueueStatus calls HandleQueueStatus and encodes the response.
-// Satisfies daemon.QueueHandler.
-func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context) (json.RawMessage, *RPCError) {
-	resp, rpcErr := HandleQueueStatus(ctx, a.projectDir)
+// HandleQueueStatus decodes the optional request, calls HandleQueueStatus, and
+// encodes the response.  Satisfies daemon.QueueHandler.
+//
+// When params is nil or empty the request defaults to the zero QueueStatusRequest
+// (backward-compatible: returns the "main" queue per QM-057).
+func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
+	var req QueueStatusRequest
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, &RPCError{Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("decode queue-status request: %v", err)}}
+		}
+	}
+	resp, rpcErr := HandleQueueStatus(ctx, a.projectDir, req)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}

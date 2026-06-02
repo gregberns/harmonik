@@ -144,8 +144,12 @@ type QueueHandler interface {
 	// HandleQueueAppend dispatches a queue-append request.
 	HandleQueueAppend(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 
-	// HandleQueueStatus dispatches a queue-status request (no params needed).
-	HandleQueueStatus(ctx context.Context) (json.RawMessage, *queue.RPCError)
+	// HandleQueueStatus dispatches a queue-status request.
+	// params carries an optional QueueStatusRequest JSON payload (name / queue_id
+	// filter). When nil or empty the handler defaults to the "main" queue.
+	//
+	// Bead ref: hk-1k5as.
+	HandleQueueStatus(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 
 	// HandleQueueDryRun dispatches a queue-dry-run request.
 	HandleQueueDryRun(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
@@ -413,7 +417,7 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 
 	case "queue-status":
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueStatus(ctx)
+			return h.HandleQueueStatus(ctx, reEncoded)
 		})
 
 	case "queue-dry-run":

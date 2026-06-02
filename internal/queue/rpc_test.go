@@ -275,7 +275,7 @@ func TestHandleQueueStatus_NoQueue(t *testing.T) {
 
 	projectDir := rpcFixtureTempProjectDir(t)
 
-	resp, rpcErr := queue.HandleQueueStatus(t.Context(), projectDir)
+	resp, rpcErr := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{})
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueStatus: unexpected RPCError: %v", rpcErr)
 	}
@@ -303,7 +303,7 @@ func TestHandleQueueStatus_WithActiveQueue(t *testing.T) {
 		t.Fatalf("setup submit: unexpected RPCError: %v", rpcErr)
 	}
 
-	resp, rpcErr2 := queue.HandleQueueStatus(t.Context(), projectDir)
+	resp, rpcErr2 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{})
 	if rpcErr2 != nil {
 		t.Fatalf("HandleQueueStatus: unexpected RPCError: %v", rpcErr2)
 	}
@@ -315,6 +315,153 @@ func TestHandleQueueStatus_WithActiveQueue(t *testing.T) {
 	}
 	if resp.Queue.Status != queue.QueueStatusActive {
 		t.Errorf("Queue.Status = %q, want %q", resp.Queue.Status, queue.QueueStatusActive)
+	}
+}
+
+// TestHandleQueueStatus_ByName verifies that status returns the correct queue
+// when a name is supplied (hk-1k5as: named-queue status routing).
+func TestHandleQueueStatus_ByName(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpc-sbn-a"
+	const beadB core.BeadID = "hk-rpc-sbn-b"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA, beadB)
+
+	// Submit to "alpha" named queue.
+	alphaResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Name:          "alpha",
+		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+	}, ledger, projectDir, 1)
+	if rpcErr != nil {
+		t.Fatalf("submit alpha: unexpected RPCError: %v", rpcErr)
+	}
+
+	// Submit to "beta" named queue.
+	betaResp, _, _, rpcErr2 := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Name:          "beta",
+		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadB)},
+	}, ledger, projectDir, 1)
+	if rpcErr2 != nil {
+		t.Fatalf("submit beta: unexpected RPCError: %v", rpcErr2)
+	}
+
+	// Status with Name="alpha" must return alpha's queue.
+	respAlpha, rpcErr3 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{Name: "alpha"})
+	if rpcErr3 != nil {
+		t.Fatalf("HandleQueueStatus(alpha): unexpected RPCError: %v", rpcErr3)
+	}
+	if respAlpha.Queue == nil {
+		t.Fatal("status(alpha): Queue is nil, want non-nil")
+	}
+	if respAlpha.Queue.QueueID != alphaResp.QueueID {
+		t.Errorf("status(alpha): QueueID = %q, want %q", respAlpha.Queue.QueueID, alphaResp.QueueID)
+	}
+
+	// Status with Name="beta" must return beta's queue.
+	respBeta, rpcErr4 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{Name: "beta"})
+	if rpcErr4 != nil {
+		t.Fatalf("HandleQueueStatus(beta): unexpected RPCError: %v", rpcErr4)
+	}
+	if respBeta.Queue == nil {
+		t.Fatal("status(beta): Queue is nil, want non-nil")
+	}
+	if respBeta.Queue.QueueID != betaResp.QueueID {
+		t.Errorf("status(beta): QueueID = %q, want %q", respBeta.Queue.QueueID, betaResp.QueueID)
+	}
+}
+
+// TestHandleQueueStatus_ByQueueID verifies that status returns the correct
+// queue when resolved by UUID (hk-1k5as).
+func TestHandleQueueStatus_ByQueueID(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpc-sbq-a"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA)
+
+	// Submit to a named queue.
+	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Name:          "flywheel",
+		Groups:        []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+	}, ledger, projectDir, 1)
+	if rpcErr != nil {
+		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
+	}
+
+	// Status by UUID must find the flywheel queue without specifying its name.
+	resp, rpcErr2 := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{QueueID: submitResp.QueueID})
+	if rpcErr2 != nil {
+		t.Fatalf("HandleQueueStatus(queue_id): unexpected RPCError: %v", rpcErr2)
+	}
+	if resp.Queue == nil {
+		t.Fatal("status(queue_id): Queue is nil, want non-nil (UUID should resolve flywheel queue)")
+	}
+	if resp.Queue.QueueID != submitResp.QueueID {
+		t.Errorf("status(queue_id): QueueID = %q, want %q", resp.Queue.QueueID, submitResp.QueueID)
+	}
+	if resp.Queue.Name != "flywheel" {
+		t.Errorf("status(queue_id): Name = %q, want %q", resp.Queue.Name, "flywheel")
+	}
+}
+
+// TestHandleQueueStatus_ByQueueID_NotFound verifies that status returns
+// {queue: null} when no queue matches the given UUID.
+func TestHandleQueueStatus_ByQueueID_NotFound(t *testing.T) {
+	t.Parallel()
+
+	projectDir := rpcFixtureTempProjectDir(t)
+
+	resp, rpcErr := queue.HandleQueueStatus(t.Context(), projectDir, queue.QueueStatusRequest{
+		QueueID: "00000000-0000-7000-8000-000000000000",
+	})
+	if rpcErr != nil {
+		t.Fatalf("HandleQueueStatus(unknown uuid): unexpected RPCError: %v", rpcErr)
+	}
+	if resp.Queue != nil {
+		t.Errorf("Queue = %v, want nil for unknown queue_id", resp.Queue)
+	}
+}
+
+// TestHandleQueueAppend_ByQueueID_NonMainQueue verifies that append resolves a
+// non-main queue by UUID when --queue-id is given without --queue (hk-1k5as).
+func TestHandleQueueAppend_ByQueueID_NonMainQueue(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpc-abq-a"
+	const beadB core.BeadID = "hk-rpc-abq-b"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA, beadB)
+
+	// Submit a stream group to a non-main named queue.
+	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Name:          "flywheel",
+		Groups:        []queue.Group{rpcFixtureStreamGroup(0, beadA)},
+	}, ledger, projectDir, 1)
+	if rpcErr != nil {
+		t.Fatalf("submit flywheel: unexpected RPCError: %v", rpcErr)
+	}
+
+	// Append using only queue_id (no name) — previously this would fail with
+	// queue_id_mismatch because it defaulted to loading "main" (hk-1k5as fix).
+	appendResp, _, _, rpcErr2 := queue.HandleQueueAppend(t.Context(), queue.QueueAppendRequest{
+		QueueID:    submitResp.QueueID,
+		GroupIndex: 0,
+		BeadIDs:    []core.BeadID{beadB},
+	}, ledger, projectDir)
+	if rpcErr2 != nil {
+		t.Fatalf("HandleQueueAppend(queue_id only): unexpected RPCError: code=%d msg=%s",
+			rpcErr2.Code, rpcErr2.Message)
+	}
+	if appendResp.AppendedCount != 1 {
+		t.Errorf("AppendedCount = %d, want 1", appendResp.AppendedCount)
 	}
 }
 
@@ -484,7 +631,7 @@ func TestHandlerAdapter_QueueStatus_RoundTrip(t *testing.T) {
 	ledger := rpcFixtureOpenLedger()
 	adapter := queue.NewHandlerAdapter(ledger, projectDir, nil, nil)
 
-	raw, rpcErr := adapter.HandleQueueStatus(t.Context())
+	raw, rpcErr := adapter.HandleQueueStatus(t.Context(), nil)
 	if rpcErr != nil {
 		t.Fatalf("HandleQueueStatus: unexpected RPCError: %v", rpcErr)
 	}

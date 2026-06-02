@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // RunQueueStatus implements `hk queue status`.
@@ -20,7 +21,9 @@ import (
 //
 //	--project <dir>    project directory (default: cwd)
 //	--project=<dir>    equals form
-//	--queue-id <uuid>  optional; for future filtering (currently informational)
+//	--queue <name>     show status of the named queue (default: main)
+//	--queue=<name>     equals form
+//	--queue-id <uuid>  find and show the queue with this queue_id
 //	--queue-id=<uuid>  equals form
 //	--json             output raw JSON (shorthand for --format json)
 //	--format json|text output format (default text)
@@ -29,18 +32,43 @@ import (
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
 //   - specs/queue-model.md §2.10 RECORD QueueStatusResponse, QM-057
 //
-// Bead ref: hk-eblue.
+// Bead ref: hk-eblue, hk-1k5as.
 func RunQueueStatus(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
-	projectDir, _, outputJSON, ok := parseQueueFlags(subArgs, errOut)
+	var queueID string
+	var queueName string
+	projectDir, _, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
+		switch {
+		case args[i] == "--queue-id" && i+1 < len(args):
+			queueID = args[i+1]
+			return i + 2, true
+		case len(args[i]) > len("--queue-id=") && args[i][:len("--queue-id=")] == "--queue-id=":
+			queueID = args[i][len("--queue-id="):]
+			return i + 1, true
+		case args[i] == "--queue" && i+1 < len(args):
+			queueName = args[i+1]
+			return i + 2, true
+		case strings.HasPrefix(args[i], "--queue="):
+			queueName = strings.TrimPrefix(args[i], "--queue=")
+			return i + 1, true
+		}
+		return i, false
+	})
 	if !ok {
 		return exitTransportError
 	}
 
-	// queue-status has no required positional arguments. The handler does not
-	// need a params payload; we send only the "op" discriminator.
-	msg := struct {
-		Op string `json:"op"`
-	}{Op: "queue-status"}
+	// Build the request payload. Include name/queue_id when provided so the
+	// daemon routes to the correct named queue (hk-1k5as).
+	type statusPayload struct {
+		Op      string `json:"op"`
+		Name    string `json:"name,omitempty"`
+		QueueID string `json:"queue_id,omitempty"`
+	}
+	msg := statusPayload{
+		Op:      "queue-status",
+		Name:    queueName,
+		QueueID: queueID,
+	}
 
 	payload, marshalErr := json.Marshal(msg)
 	if marshalErr != nil {

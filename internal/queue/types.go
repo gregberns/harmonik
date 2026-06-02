@@ -388,6 +388,23 @@ type QueueAppendResponse struct {
 	NewTailIndices []int `json:"new_tail_indices"`
 }
 
+// QueueStatusRequest is the optional payload for the queue-status JSON-RPC
+// method. All fields are optional: when both are absent the daemon returns the
+// status of the "main" queue (backward-compatible default).
+//
+// Bead ref: hk-1k5as.
+type QueueStatusRequest struct {
+	// Name is the durable routing key; when non-empty the daemon loads the
+	// queue for that name. Defaults to "main" when both Name and QueueID are
+	// absent.
+	Name string `json:"name,omitempty"`
+
+	// QueueID is an identity selector; when non-empty (and Name is absent) the
+	// daemon enumerates all active queues and returns the one whose queue_id
+	// matches. Returns {queue: null} when no match is found.
+	QueueID string `json:"queue_id,omitempty"`
+}
+
 // QueueStatusResponse is the response payload for queue-status
 // (specs/queue-model.md §2.10 RECORD QueueStatusResponse).
 //

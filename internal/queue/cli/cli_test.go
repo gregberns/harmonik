@@ -543,6 +543,80 @@ func TestRunQueueStatus_DaemonDown(t *testing.T) {
 	}
 }
 
+// TestRunQueueStatus_QueueFlag verifies that --queue <name> is passed in the
+// request so the daemon routes to the correct named queue (hk-1k5as).
+func TestRunQueueStatus_QueueFlag(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedName string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if nameBytes, ok := msg["name"]; ok {
+				_ = json.Unmarshal(nameBytes, &capturedName)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue": map[string]any{
+				"schema_version": 1,
+				"queue_id":       "aabbccdd-0000-7000-8000-000000000000",
+				"name":           "flywheel",
+				"status":         "active",
+			},
+		})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueStatus(context.Background(), []string{
+		"--project", projectDir,
+		"--queue", "flywheel",
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueStatus --queue flag: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedName != "flywheel" {
+		t.Errorf("RunQueueStatus --queue flag: captured name = %q, want %q", capturedName, "flywheel")
+	}
+}
+
+// TestRunQueueStatus_QueueIDFlag verifies that --queue-id <uuid> is passed in
+// the request so the daemon can resolve by UUID (hk-1k5as).
+func TestRunQueueStatus_QueueIDFlag(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedQueueID string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if qidBytes, ok := msg["queue_id"]; ok {
+				_ = json.Unmarshal(qidBytes, &capturedQueueID)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{"queue": nil})
+	})
+
+	const wantID = "aabbccdd-1111-7000-8000-000000000000"
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueStatus(context.Background(), []string{
+		"--project", projectDir,
+		"--queue-id", wantID,
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueStatus --queue-id flag: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedQueueID != wantID {
+		t.Errorf("RunQueueStatus --queue-id flag: captured queue_id = %q, want %q", capturedQueueID, wantID)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // queue dry-run tests
 // ---------------------------------------------------------------------------

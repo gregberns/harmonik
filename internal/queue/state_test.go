@@ -11,7 +11,7 @@ package queue_test
 //   - QM-032: no re-entry of terminal states.
 //   - QM-034: failed items do not interrupt sibling dispatches
 //     (active group with in-flight items stays active).
-//   - QM-035: stream HOL blocking (deferred-only; dispatched head is skipped per hk-9a27q).
+//   - QM-035: stream out-of-order dispatch — deferred items skipped, not HOL-blocking (hk-cb5ow, hk-9a27q).
 //   - QM-036: wave unordered admission with deferred siblings skipped.
 //   - ErrGroupNil / ErrQueueIDEmpty sentinel errors.
 //
@@ -397,20 +397,58 @@ func TestAdvanceGroup_QM034_AllTerminalWithFailure(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// QM-035 — stream HOL (head-of-line blocking)
+// QM-035 — stream out-of-order dispatch (hk-cb5ow)
 // -----------------------------------------------------------------------
 
-// TestEligibleItems_Stream_HOLBlocked_Deferred verifies that a stream with a
-// deferred-for-ledger-dep head item returns no eligible items (QM-035).
-func TestEligibleItems_Stream_HOLBlocked_Deferred(t *testing.T) {
+// TestEligibleItems_Stream_DeferredHeadSkipped verifies that a stream with a
+// deferred-for-ledger-dep head item skips it and returns the next pending
+// tail item (QM-035 + hk-cb5ow out-of-order dispatch fix).
+func TestEligibleItems_Stream_DeferredHeadSkipped(t *testing.T) {
 	t.Parallel()
 	g := stateFixtureGroup(0, queue.GroupKindStream, queue.GroupStatusActive, []queue.Item{
-		stateFixtureItem("hk-lll01", queue.ItemStatusDeferredForLedgerDep), // head: HOL blocked
-		stateFixtureItem("hk-lll02", queue.ItemStatusPending),              // tail: must not skip
+		stateFixtureItem("hk-lll01", queue.ItemStatusDeferredForLedgerDep), // head: deferred, skipped
+		stateFixtureItem("hk-lll02", queue.ItemStatusPending),              // tail: dep-free, eligible
+	})
+	eligible := queue.EligibleItems(&g)
+	if len(eligible) != 1 {
+		t.Fatalf("EligibleItems = %d items, want 1 (deferred head skipped, tail pending eligible)", len(eligible))
+	}
+	if string(eligible[0].BeadID) != "hk-lll02" {
+		t.Errorf("eligible[0].BeadID = %q, want %q", eligible[0].BeadID, "hk-lll02")
+	}
+}
+
+// TestEligibleItems_Stream_MultipleDeferredThenPending verifies that multiple
+// consecutive deferred items are all skipped and the first pending tail item
+// is returned (hk-cb5ow).
+func TestEligibleItems_Stream_MultipleDeferredThenPending(t *testing.T) {
+	t.Parallel()
+	g := stateFixtureGroup(0, queue.GroupKindStream, queue.GroupStatusActive, []queue.Item{
+		stateFixtureItem("hk-lll03", queue.ItemStatusDeferredForLedgerDep), // deferred, skipped
+		stateFixtureItem("hk-lll04", queue.ItemStatusDeferredForLedgerDep), // deferred, skipped
+		stateFixtureItem("hk-lll05", queue.ItemStatusPending),              // first pending: eligible
+		stateFixtureItem("hk-lll06", queue.ItemStatusPending),              // second pending: not returned
+	})
+	eligible := queue.EligibleItems(&g)
+	if len(eligible) != 1 {
+		t.Fatalf("EligibleItems = %d items, want 1 (only first pending after deferred items)", len(eligible))
+	}
+	if string(eligible[0].BeadID) != "hk-lll05" {
+		t.Errorf("eligible[0].BeadID = %q, want %q", eligible[0].BeadID, "hk-lll05")
+	}
+}
+
+// TestEligibleItems_Stream_AllDeferred verifies that a stream where all items
+// are deferred returns nil (nothing to dispatch).
+func TestEligibleItems_Stream_AllDeferred(t *testing.T) {
+	t.Parallel()
+	g := stateFixtureGroup(0, queue.GroupKindStream, queue.GroupStatusActive, []queue.Item{
+		stateFixtureItem("hk-lll07", queue.ItemStatusDeferredForLedgerDep),
+		stateFixtureItem("hk-lll08", queue.ItemStatusDeferredForLedgerDep),
 	})
 	eligible := queue.EligibleItems(&g)
 	if len(eligible) != 0 {
-		t.Errorf("EligibleItems = %d items, want 0 (stream HOL blocked by deferred head)", len(eligible))
+		t.Errorf("EligibleItems = %d items, want 0 (all items deferred)", len(eligible))
 	}
 }
 

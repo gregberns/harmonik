@@ -100,11 +100,10 @@ func AdvanceGroup(
 // Wave groups (QM-036): any pending item (not deferred-for-ledger-dep) is
 // eligible. Order is not prescribed; the slice preserves item-list order.
 //
-// Stream groups (QM-035): dispatched and terminal items are skipped; the
-// first pending item found is returned. HOL blocking applies only when the
-// first non-terminal, non-dispatched item is deferred-for-ledger-dep — in
-// that case nil is returned. An in-flight (dispatched) head does NOT block
-// subsequent pending items; this allows --max-concurrent > 1 to work.
+// Stream groups (QM-035): dispatched, terminal, and deferred-for-ledger-dep
+// items are skipped; the first pending item found is returned. Deferred items
+// do not HOL-block dep-free tail items (hk-cb5ow). An in-flight (dispatched)
+// head does NOT block subsequent pending items; this allows --max-concurrent > 1.
 //
 // Returns nil (empty slice) when:
 //   - g is nil or not active.
@@ -266,20 +265,23 @@ func waveEligible(g *Group) []*Item {
 }
 
 // streamEligible returns at most the earliest-indexed eligible item in a
-// stream group per QM-035 head-of-line blocking.
+// stream group (QM-035).
 //
-// Scanning skips terminal items (completed, failed) and in-flight items
-// (dispatched). The first non-skipped item is evaluated:
-//   - If it is pending → return it (eligible for dispatch).
-//   - If it is deferred-for-ledger-dep → return nil (HOL blocked per QM-035 v0.1).
+// Scanning skips terminal items (completed, failed), in-flight items
+// (dispatched), and deferred-for-ledger-dep items. The first pending item
+// found after skipping those is returned:
+//   - pending, within attempt limit → return it (eligible for dispatch).
+//   - deferred-for-ledger-dep → skip; its own blocker is unresolved, but
+//     dep-free items later in the stream are not affected (hk-cb5ow).
+//   - dispatched / completed / failed → skip.
 //
-// Dispatched items are skipped (not HOL-blocking) so that a second pending
-// item can be dispatched concurrently with an in-flight head under
-// --max-concurrent > 1. This matches QM-035: "after all earlier items have
-// at least entered dispatched" the tail item is eligible.
+// This out-of-order skipping of deferred items means a tail item whose own
+// ledger deps are clear can be dispatched before a deferred predecessor
+// resolves. The ordering guarantee ("after all earlier items have at least
+// entered dispatched") applies only to non-deferred peers.
 //
 // Spec ref: specs/queue-model.md §5.6 QM-035.
-// Bead ref: hk-9a27q.
+// Bead ref: hk-9a27q, hk-cb5ow.
 func streamEligible(g *Group) []*Item {
 	for i := range g.Items {
 		switch g.Items[i].Status {
@@ -290,9 +292,9 @@ func streamEligible(g *Group) []*Item {
 			}
 			return []*Item{&g.Items[i]}
 		case ItemStatusDeferredForLedgerDep:
-			// HOL blocked: deferred head prevents dispatch of subsequent items
-			// in v0.1 (out-of-order dispatch is deferred per QM-035).
-			return nil
+			// Deferred items are skipped: their own ledger dep is unresolved,
+			// but they do not block dep-free tail items (hk-cb5ow).
+			continue
 		case ItemStatusDispatched, ItemStatusCompleted, ItemStatusFailed:
 			// In-flight or terminal: skip and scan for the next pending item.
 			continue

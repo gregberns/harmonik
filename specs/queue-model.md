@@ -448,7 +448,7 @@ Within an `active` group, an item's transition to `failed` MUST NOT cause the da
 
 ### 5.6 QM-035 — Stream item-source semantics
 
-For a stream group in `active`, the dispatcher MUST select the earliest-indexed item whose `status` is `pending` and whose `deferred-for-ledger-dep` status (if any) has resolved. Items appended after submit (per §7) are placed at the tail; the dispatcher's head-first selection rule ensures appended items dispatch in append order, after all earlier items have at least entered `dispatched`. A `pending` item that follows a `deferred-for-ledger-dep` head item is NOT eligible for dispatch out-of-order in v0.1; head-of-line blocking is the v0.1 behavior. Out-of-order dispatch within a stream is deferred.
+For a stream group in `active`, the dispatcher MUST select the earliest-indexed item whose `status` is `pending`. `deferred-for-ledger-dep` items and terminal items (completed, failed) are skipped during the scan; the first `pending` item found is dispatched. Items appended after submit (per §7) are placed at the tail; the head-first scan ensures appended items dispatch in order, after all earlier non-deferred items have at least entered `dispatched`. A `deferred-for-ledger-dep` item does NOT block dep-free tail items — the scan skips past it and returns the next `pending` item regardless of position (hk-cb5ow).
 
 ### 5.7 QM-036 — Wave dispatch admission
 

@@ -164,12 +164,23 @@ const (
 	// after a timed backoff derived from the rate-limit retry_after window.
 	// Post-MVH: see specs/handler-pause.md §1.2 and bead hk-0otqs.
 	HandlerResumedByAutoBackoff HandlerResumedBy = "auto-backoff"
+
+	// HandlerResumedBySignal indicates the resume was triggered by an OS signal
+	// (SIGUSR1) sent to the daemon process.
+	//
+	// Auth model: SIGUSR1 can only be sent by processes with the same UID as the
+	// daemon or by the superuser (root).  The kernel enforces this via kill(2)
+	// permission checks; no additional application-level authentication is needed.
+	//
+	// Post-MVH: see specs/handler-pause.md §1.2 (external-trigger resume) and
+	// bead hk-bdvae.
+	HandlerResumedBySignal HandlerResumedBy = "signal"
 )
 
 // Valid reports whether b is one of the declared HandlerResumedBy constants.
 func (b HandlerResumedBy) Valid() bool {
 	switch b {
-	case HandlerResumedByOperator, HandlerResumedByAutoBackoff:
+	case HandlerResumedByOperator, HandlerResumedByAutoBackoff, HandlerResumedBySignal:
 		return true
 	default:
 		return false

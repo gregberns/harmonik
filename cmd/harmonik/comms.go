@@ -7,8 +7,9 @@ package main
 //   - log   (C3 read-only operator view; bead hk-onn1x T5)
 //   - join  (C6 presence join; bead hk-7t27s T10)
 //   - leave (C6 presence leave; bead hk-7t27s T10)
+//   - who   (C3/C6 presence view; bead hk-ofxd0 T11)
 //
-// Further verbs (recv, who) land in subsequent tasks (T8–T11).
+// Further verbs (recv) land in subsequent tasks (T8–T9).
 //
 // Flag reference for `harmonik comms send`:
 //
@@ -36,14 +37,19 @@ package main
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
 //
+// Flag reference for `harmonik comms who`:
+//
+//	--json                     Emit one JSON object per online agent (NDJSON).
+//	--project DIR              Project directory (default: cwd).
+//
 // Exit codes:
 //
 //	0   Success
 //	1   Argument error or read failure
 //	17  Daemon not running (send/join/leave only — socket missing or ECONNREFUSED)
 //
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.4, §2.5, §4.
-// Bead ref: hk-cnjhx (T3), hk-onn1x (T5), hk-7t27s (T10).
+// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.3, §2.4, §2.5, §4.
+// Bead ref: hk-cnjhx (T3), hk-onn1x (T5), hk-7t27s (T10), hk-ofxd0 (T11).
 
 import (
 	"context"
@@ -82,8 +88,10 @@ func runCommsSubcommand(subArgs []string) int {
 		return runCommsPresenceSubcommand(subArgs[1:], "join")
 	case "leave":
 		return runCommsPresenceSubcommand(subArgs[1:], "leave")
+	case "who":
+		return runCommsWhoSubcommand(subArgs[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log, join, leave\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log, join, leave, who\n", verb)
 		return 2
 	}
 }
@@ -322,6 +330,7 @@ VERBS
   log     Read-only operator view of recent agent_message events (no daemon needed)
   join    Emit an agent_presence{online, reason:"join"} beat (presence registry)
   leave   Emit an agent_presence{offline, reason:"leave"} beat (presence registry)
+  who     List currently-online agents from the presence registry (no daemon needed)
 
 EXIT CODES
   0   Success
@@ -336,6 +345,8 @@ EXAMPLES
   harmonik comms log --since 30m --to myagent --json
   harmonik comms join --name myagent
   harmonik comms leave --name myagent
+  harmonik comms who
+  harmonik comms who --json
 `)
 }
 
@@ -762,6 +773,125 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 
 	fmt.Println(result.EventID)
 	return 0
+}
+
+// runCommsWhoSubcommand implements `harmonik comms who` (agent-comms spec §2.3, bead hk-ofxd0 T11).
+//
+// Reads the presence projection (T10's ComputePresenceRegistry) and prints agents
+// that are online within the 120s staleness window (presenceTTL). Read-only; emits
+// nothing, advances no cursor. No daemon connection required.
+//
+// subArgs is os.Args[3:].
+func runCommsWhoSubcommand(subArgs []string) int {
+	jsonFlag := false
+	projectFlag := ""
+
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			commsWhoUsage()
+			return 0
+		case arg == "--json":
+			jsonFlag = true
+		case arg == "--project" && i+1 < len(subArgs):
+			i++
+			projectFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "harmonik comms who: unknown flag %q\n", arg)
+			return 1
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik comms who: unexpected argument %q\n", arg)
+			return 1
+		}
+	}
+
+	// Resolve project directory and events.jsonl path.
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms who: cannot determine cwd: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	absProject, err := filepath.Abs(projectFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms who: cannot resolve project path: %v\n", err)
+		return 1
+	}
+	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
+
+	registry := ComputePresenceRegistry(eventsPath)
+
+	// Collect online agents in a deterministic order (sorted by name).
+	type onlineEntry struct {
+		Agent    string    `json:"agent"`
+		LastSeen time.Time `json:"last_seen"`
+	}
+	var online []onlineEntry
+	for _, rec := range registry {
+		if IsOnline(rec) {
+			online = append(online, onlineEntry{Agent: rec.Agent, LastSeen: rec.LastSeen})
+		}
+	}
+	// Sort by agent name for stable output.
+	for i := 1; i < len(online); i++ {
+		for j := i; j > 0 && online[j].Agent < online[j-1].Agent; j-- {
+			online[j], online[j-1] = online[j-1], online[j]
+		}
+	}
+
+	if len(online) == 0 {
+		if !jsonFlag {
+			fmt.Fprintln(os.Stderr, "harmonik comms who: no agents currently online")
+		}
+		return 0
+	}
+
+	for _, e := range online {
+		if jsonFlag {
+			line, marshalErr := json.Marshal(e)
+			if marshalErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms who: marshal entry: %v\n", marshalErr)
+				return 1
+			}
+			fmt.Println(string(line))
+		} else {
+			fmt.Printf("%-30s  last_seen %s\n", e.Agent, e.LastSeen.UTC().Format(time.RFC3339))
+		}
+	}
+	return 0
+}
+
+func commsWhoUsage() {
+	fmt.Print(`harmonik comms who — list currently-online agents from the presence registry
+
+USAGE
+  harmonik comms who [--json] [--project DIR]
+
+Reads the presence projection over events.jsonl and prints agents that are
+online within the staleness window (~120s). An agent is online if its latest
+agent_presence beat has status="online" and last_seen is within 120s of now.
+Read-only: emits nothing, advances no cursor. No daemon connection required.
+
+FLAGS
+  --json          Emit one JSON object per online agent (NDJSON).
+                  Fields: agent (string), last_seen (RFC3339).
+  --project DIR   Project directory (default: cwd). Used to locate
+                  .harmonik/events/events.jsonl.
+
+EXIT CODES
+  0   Success (zero or more agents listed)
+  1   Argument error or read failure
+
+EXAMPLES
+  harmonik comms who                  # human-readable list of online agents
+  harmonik comms who --json           # machine-readable NDJSON
+  harmonik comms who --project /path  # specify project directory
+`)
 }
 
 func commsPresenceUsage(verb string) {

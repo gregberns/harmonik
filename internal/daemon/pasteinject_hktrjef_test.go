@@ -306,3 +306,31 @@ func TestBeadAlreadySubsumedInMain(t *testing.T) {
 		t.Error("expected bead hk-absent01 to NOT be found in main commits")
 	}
 }
+
+// TestBeadAlreadySubsumedInMainPrefixRegression is a regression test for
+// hk-kizwo: a Refs trailer "hk-tigaf.10" must NOT satisfy a query for
+// "hk-tigaf.1" (which is a strict prefix of the longer ID).
+func TestBeadAlreadySubsumedInMainPrefixRegression(t *testing.T) {
+	dir := t.TempDir()
+	hktrjefGit(t, dir, "init", "--initial-branch=main")
+	hktrjefGit(t, dir, "config", "user.email", "test@test.com")
+	hktrjefGit(t, dir, "config", "user.name", "Test")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hktrjefGit(t, dir, "add", ".")
+	// Commit carries hk-tigaf.10, NOT hk-tigaf.1.
+	hktrjefGit(t, dir, "commit", "-m", "fix something\n\nRefs: hk-tigaf.10\nCo-Authored-By: Test")
+
+	ctx := context.Background()
+
+	if !daemon.ExportedBeadAlreadySubsumedInMain(ctx, dir, core.BeadID("hk-tigaf.10")) {
+		t.Error("expected hk-tigaf.10 to be found in main commits")
+	}
+	// Bug: old strings.Contains returned true here because "Refs: hk-tigaf.1"
+	// is a substring of "Refs: hk-tigaf.10".
+	if daemon.ExportedBeadAlreadySubsumedInMain(ctx, dir, core.BeadID("hk-tigaf.1")) {
+		t.Error("hk-tigaf.1 must NOT match a commit that only carries 'Refs: hk-tigaf.10'")
+	}
+}

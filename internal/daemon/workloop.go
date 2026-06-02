@@ -2336,7 +2336,15 @@ func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID co
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), "Refs: "+string(beadID))
+	// Use line-exact match to avoid false positives: "Refs: hk-foo.1" must not
+	// match a commit that only contains "Refs: hk-foo.10".
+	needle := "Refs: " + string(beadID)
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimRight(line, "\r") == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // autoCloseStaleBlockersOnClaimFailure is called after a ClaimBead failure to

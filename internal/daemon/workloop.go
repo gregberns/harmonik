@@ -218,6 +218,21 @@ type workLoopDeps struct {
 	// Bead ref: hk-kqdpf.1.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
+	// cpRegistry is the daemon's ControlPoint registry, populated from policy
+	// YAML during daemon startup per specs/control-points.md §4.9.CP-043.
+	//
+	// When non-nil, driveDotWorkflow uses it to resolve gate_ref values to
+	// Gate ControlPoints for mechanism/cognition evaluation (hk-karlz).
+	// When nil, gate node dispatch returns a structural eval-failure Outcome
+	// (status=FAIL) so the cascade routes normally without crashing.
+	//
+	// Production wires CPRegistry from Config.CPRegistry in newWorkLoopDeps;
+	// tests that do not exercise gate dispatch may leave this nil.
+	//
+	// Spec ref: specs/control-points.md §4.9.CP-043, §4.9.CP-045.
+	// Bead ref: hk-karlz.
+	cpRegistry core.Registry
+
 	// adapterRegistry is the sealed adapter registry used to look up the
 	// per-agent-type Adapter (for Adapter.DetectReady) in the single-mode
 	// completion path (HC-056 / hk-gql20.14).
@@ -503,6 +518,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		runRegistry:         NewRunRegistry(),
 		maxConcurrent:       maxConcurrent,
 		hookStore:           store,
+		cpRegistry:          cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:     registry,
 		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,

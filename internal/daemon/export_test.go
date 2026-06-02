@@ -112,6 +112,14 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
 
+	// CPRegistry, when non-nil, is the ControlPoint registry used to resolve
+	// gate_ref values during DOT workflow gate-node dispatch (hk-karlz). When
+	// nil, gate nodes return a structural eval-failure Outcome without crashing.
+	// Tests that exercise gate dispatch must supply a populated registry.
+	//
+	// Bead ref: hk-karlz.
+	CPRegistry core.Registry
+
 	// ProjectCfg is the decoded .harmonik/config.yaml for EM-012b tier-2 resolution.
 	// The zero value is safe: LookupAgent returns ("","") for all agent types.
 	//
@@ -297,6 +305,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		workflowModeDefault:    wmd,
 		runRegistry:            reg,
 		maxConcurrent:          maxConcurrent,
+		cpRegistry:             p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		hookStore:              hookStore,
 		launchSpecBuilder:      lsb,
 		worktreeFactory:        wtf,

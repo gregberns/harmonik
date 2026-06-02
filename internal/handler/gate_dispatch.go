@@ -41,7 +41,7 @@ import (
 	"fmt"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // GateEvalFunc is the function type the daemon provides to evaluate a gate
@@ -106,7 +106,7 @@ func DispatchGateNode(
 	nodeID core.NodeID,
 	gateRef core.GateRef,
 	evalFn GateEvalFunc,
-	bus eventbus.EventBus,
+	bus handlercontract.EventEmitter,
 ) (*GateDispatchResult, error) {
 	// Step 1 — validate gate_ref. A missing gate_ref is a graph-authoring /
 	// configuration error, not an evaluation outcome, so it remains a Go error.
@@ -198,7 +198,7 @@ func gateEvalFailureResult(reason string) *GateDispatchResult {
 }
 
 // emitGateEvent marshals the payload and emits it on the event bus.
-func emitGateEvent(ctx context.Context, bus eventbus.EventBus, runID core.RunID, payload core.GateDecisionRecordedPayload) error {
+func emitGateEvent(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, payload core.GateDecisionRecordedPayload) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal gate_decision_recorded: %w", err)

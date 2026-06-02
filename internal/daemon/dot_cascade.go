@@ -19,19 +19,15 @@ package daemon
 //         outcome.preferred_label = the verdict (APPROVE / REQUEST_CHANGES / BLOCK).
 //       * other agentic nodes (implementer): outcome = SUCCESS, no preferred_label
 //         (the implementer→reviewer edge is unconditional). HEAD MUST have advanced.
-//   - gate: the gate-decision SEMANTICS are now resolved (CP-058 wins; a gate
+//   - gate: the gate-decision SEMANTICS are resolved (CP-058 wins; a gate
 //     deny/allow/escalate is status=SUCCESS, the cascade routes on the decision
-//     surfaced via outcome.preferred_label; see handler.DispatchGateNode). What is
-//     still missing is the daemon-side EVALUATOR seam: there is no GateEvalFunc
-//     provider, no ControlPoint-registry loading from the daemon, and no
-//     mechanism/cognition policy resolution. Wiring a real evaluator (resolve
-//     gate_ref → ControlPoint, run the policy expression for mechanism gates or
-//     dispatch+read-verdict for cognition gates) is substantial infrastructure
-//     that does not exist yet, tracked as bead hk-karlz. Rather than fabricate a
-//     fake evaluator (which would make tests green without real semantics), the
-//     driver returns a deterministic needs-attention failure for gate nodes,
-//     citing hk-karlz. The handler-layer dispatch + cascade routing IS exercised
-//     by handler.DispatchGateNode's tests and the DecideNextNode routing tests.
+//     surfaced via outcome.preferred_label; see handler.DispatchGateNode). The
+//     daemon-side EVALUATOR seam is wired via dispatchDotGateNode (dot_gate.go,
+//     hk-karlz): resolves gate_ref → ControlPoint, evaluates mechanism-tagged
+//     gates via PolicyExprEvaluator (bool→GateAction per §6.4), dispatches
+//     cognition-tagged gates as a fresh subprocess analogous to the reviewer
+//     path, and reads gate-verdict.json. When cpRegistry is nil (no policy YAML
+//     loaded) the node returns a structural eval-failure Outcome.
 //   - sub-workflow: OUT OF SCOPE (separate bead). Same deterministic-failure
 //     treatment.
 //
@@ -302,25 +298,22 @@ func driveDotWorkflow(
 			outcome = nodeOutcome
 
 		case core.NodeTypeGate:
-			// Gate-decision SEMANTICS are resolved (CP-058: allow/deny/escalate are
-			// all status=SUCCESS, routed on the decision via preferred_label; the
-			// handler.DispatchGateNode + DecideNextNode path is implemented and
-			// tested). The remaining gap is the daemon-side EVALUATOR seam: there is
-			// no GateEvalFunc provider, no ControlPoint-registry loading here, and no
-			// mechanism/cognition policy resolution. Wiring a real evaluator is
-			// substantial infrastructure tracked as hk-karlz. We refuse rather than
-			// fabricate a fake evaluator that would green tests without real gate
-			// semantics. TODO(hk-karlz): construct a GateEvalFunc from the resolved
-			// ControlPoint and call handler.DispatchGateNode, feeding the outcome
-			// into DecideNextNode like any other node.
-			return dotWorkflowResult{
-				success:        false,
-				needsAttention: true,
-				summary: fmt.Sprintf("dot: gate node %q cannot be dispatched yet — "+
-					"the gate-decision semantics are resolved (CP-058) but the "+
-					"daemon-side gate evaluator (GateEvalFunc provider) is not wired "+
-					"(hk-karlz)", currentNodeID),
+			// Gate dispatch: resolve gate_ref → ControlPoint, build GateEvalFunc
+			// (mechanism: PolicyExpression eval; cognition: subprocess dispatch),
+			// call handler.DispatchGateNode. Wired by hk-karlz.
+			gateOutcome, gateErr := dispatchDotGateNode(
+				ctx, deps, runID, run, wtPath, daemonSocket, node,
+				iterationCount, resolvedModel, resolvedEffort,
+				beadID, beadTitle, beadDescription, extraContext, baseBranch,
+			)
+			if gateErr != nil {
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: true,
+					summary:        fmt.Sprintf("dot: gate node %q dispatch failed: %v", currentNodeID, gateErr),
+				}
 			}
+			outcome = gateOutcome
 
 		case core.NodeTypeSubWorkflow:
 			// OUT OF SCOPE (separate bead): deterministic needs-attention failure.

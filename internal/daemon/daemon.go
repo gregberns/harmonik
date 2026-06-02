@@ -180,6 +180,26 @@ type Config struct {
 	// Bead ref: hk-kqdpf.6.
 	DaemonBinaryPath string
 
+	// CPRegistry is the daemon's ControlPoint registry loaded from policy YAML
+	// at startup per specs/control-points.md §4.9.CP-043 and CP-045.
+	//
+	// When non-nil, the work loop uses it to resolve gate_ref values to Gate
+	// ControlPoints during DOT workflow gate-node dispatch (hk-karlz). Both
+	// mechanism-tagged gates (PolicyExpression evaluation) and cognition-tagged
+	// gates (subprocess dispatch) are supported.
+	//
+	// The zero value (nil) is safe: gate nodes return a structural eval-failure
+	// Outcome (status=FAIL) without crashing. Pass a populated core.Registry
+	// (e.g. from S02PolicyEngine.Registry()) to enable real gate evaluation.
+	//
+	// Callers: cmd/harmonik/main.go SHOULD populate this from the project's
+	// policy YAML before calling daemon.Start. Until policy YAML loading is
+	// wired into the composition root, nil is the correct production value.
+	//
+	// Spec ref: specs/control-points.md §4.9.CP-043, §4.9.CP-045.
+	// Bead ref: hk-karlz.
+	CPRegistry core.Registry
+
 	// ProjectCfg is the decoded .harmonik/config.yaml loaded once at startup
 	// (EM-012b tier-2). Populated by Start via LoadProjectConfig; callers may
 	// leave it zero-value for tests that do not exercise project-config resolution.

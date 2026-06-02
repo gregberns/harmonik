@@ -484,6 +484,35 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario/release_with_rollback_test.go` (drives mock handler responses against five scenarios covering the S2 path obligations: happy-path full arc, build-failure fallback, build-infra fallback, publish-failure rollback via explicit FAIL condition, and publish-fallback rollback via unconditional fallback).
 
+### `quality-gate-policy.dot`
+
+**Purpose.** Policy gate node (`allow` / `deny` / `escalate-to-human`) inserted after a subjective reviewer, demonstrating the distinction between a reviewer's human-judgment verdict and a `gate` node's deterministic ControlPoint decision. The reviewer renders `APPROVE / REQUEST_CHANGES / BLOCK`; an `APPROVE` then enters a `gate` node that evaluates the named `merge-quality-policy` ControlPoint — a deterministic quality-bar check that can allow the merge, deny it (loop back to the implementer), or escalate to a human operator. Subsumes the review-slice `security-cognition-gate` (same gate node topology with a security-policy `gate_ref`). This is SDLC corpus workflow #19 (SOON — required hk-karlz, now landed as 58c6348f).
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §19` (quality-gate-policy topology) and the corpus dialect contract (§"Dialect contract").
+- Uses `type="gate"` with `gate_ref="merge-quality-policy"` and `handler_ref="gate-evaluator"` for `quality_gate` — per `specs/workflow-graph.md §4 WG-005` (gate node attribute set: MUST carry both `gate_ref` AND `handler_ref`; MUST NOT carry `agent_type`, `idempotency_class`, or `policy_ref`).
+- Gate decisions (allow/deny/escalate-to-human) are ALL `status=SUCCESS` per `specs/control-points.md §6.1.8 CP-058`. Routing is on `outcome.preferred_label` only (not `outcome.status`), per `specs/execution-model.md §4.1 EM-005b`.
+- Gate eval-failure (registry nil, structural error) yields `status=FAIL`, caught by the unconditional fallback edge per `specs/workflow-graph.md §5 WG-011`.
+- Uses `type="agentic"` with `agent_type="implementer"` and `handler_ref="claude-implementer"` for `implementer`, and `agent_type="reviewer"` and `handler_ref="claude-reviewer"` for `reviewer` — per `specs/workflow-graph.md §4 WG-001/WG-002`.
+- Uses `type="non-agentic"` with `handler_ref="noop"` for `start`, `close`, and `close-needs-attention` — per WG-001/WG-002.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `terminal_node_ids="close,close-needs-attention"` — per `specs/workflow-graph.md §8 WG-021..WG-023`.
+- Uses `outcome.preferred_label` as the edge-condition LHS on both reviewer outgoing edges (`== 'APPROVE'`, `== 'REQUEST_CHANGES'`, `== 'BLOCK'`) and gate outgoing edges (`== 'allow'`, `== 'deny'`, `== 'escalate-to-human'`) — per the D4 LHS whitelist (row 3, `outcome.*`) and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on both the `reviewer→implementer` (REQUEST_CHANGES) and `quality_gate→implementer` (deny) back-edges — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`. The two caps are independent (separate edge keys in the cycle counter).
+- Uses the D5 v1 edge-condition dialect (equality only; no `<`/`>`) — per `specs/workflow-graph.md §6 WG-013`.
+- Every branching node (`reviewer`, `quality_gate`) carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+
+**Gap coverage.** First example demonstrating the `gate` node type (WG-005 / CP-058). Shows that (a) gate decisions are status=SUCCESS and MUST be distinguished by `preferred_label`, not by `outcome.status`; (b) a gate node has no `idempotency_class` (it is a policy decision, not an agent dispatch); and (c) two independent `traversal_cap` back-edges can coexist on different source nodes (reviewer RC cap and gate deny cap are counted separately).
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario_quality_gate_policy_hko52fm21_test.go` (drives synthetic outcomes through the real loader → cascade pipeline against nine scenarios covering the S2 path obligations: gate-allow happy path, gate-deny loop, gate-escalate-to-human, reviewer-REQUEST_CHANGES loop → approve, reviewer-BLOCK escalation, reviewer-fallback, gate-fallback/eval-failure, reviewer-cap-hit, and gate-deny-cap-hit).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

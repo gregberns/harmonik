@@ -1,0 +1,169 @@
+// quality-gate-policy.dot — policy gate node (allow/deny/escalate-to-human) (v1)
+//
+// Demonstrates the `gate` node type as a deterministic policy decision that
+// runs AFTER a subjective reviewer, distinct from the reviewer's own verdict
+// cascade. The reviewer exercises human judgment (APPROVE / REQUEST_CHANGES /
+// BLOCK); the quality_gate then enforces a named ControlPoint policy
+// (allow / deny / escalate-to-human) before the change may close. This is the
+// canonical example for specs/control-points.md §4.2 Gate semantics.
+//
+// Topology:
+//   start
+//   → implementer (produces or revises the change; commit required)
+//   → reviewer (APPROVE / REQUEST_CHANGES / BLOCK)
+//     APPROVE           → quality_gate
+//     REQUEST_CHANGES   → implementer (capped at 3)
+//     BLOCK             → close-needs-attention
+//     fallback          → close-needs-attention
+//   → quality_gate (gate: merge-quality-policy)
+//     allow             → close
+//     deny              → implementer (capped at 3)
+//     escalate-to-human → close-needs-attention
+//     fallback          → close-needs-attention (eval-failure or unknown decision)
+//
+// Key design notes:
+//   - The `gate` node carries BOTH `gate_ref` (the named ControlPoint) and
+//     `handler_ref` (the gate-evaluator handler) per WG-005. It MUST NOT carry
+//     `agent_type`, `idempotency_class`, or `policy_ref`.
+//   - Gate decisions (allow/deny/escalate-to-human) are ALL status=SUCCESS per
+//     specs/control-points.md §6.1.8 CP-058. The decision is distinguished
+//     ONLY by routing on outcome.preferred_label (not on outcome.status).
+//   - A gate eval-failure (registry nil, structural error) yields status=FAIL
+//     and falls through to the unconditional fallback → close-needs-attention.
+//   - The reviewer→implementer back-edge (REQUEST_CHANGES) and the
+//     quality_gate→implementer back-edge (deny) each carry traversal_cap="3".
+//     Both caps are independent and enforced separately by the cycle counter.
+//   - SOON status: requires hk-karlz (daemon-side GateEvalFunc provider) for
+//     runtime gate evaluation. The `.dot` parses and round-trips through the C2
+//     validator today; `driveDotWorkflow` dispatches gate nodes after hk-karlz.
+//     (hk-karlz is now landed as of 58c6348f.)
+//
+// Spec refs:
+//   - docs/sdlc-workflow-corpus.md §19 (quality-gate-policy topology)
+//   - specs/workflow-graph.md §4 WG-001/WG-002 — node-type closed enum + catalog
+//   - specs/workflow-graph.md §4 WG-005 — gate node attribute set
+//   - specs/workflow-graph.md §4 WG-007 — gate legal outcome statuses: SUCCESS, FAIL
+//   - specs/control-points.md §4.2 CP-006..CP-011 — Gate semantics
+//   - specs/control-points.md §4.5 CP-008 — gate subtype quality-gate
+//   - specs/control-points.md §6.1.8 CP-058 — gate is SUCCESS regardless of decision
+//   - specs/execution-model.md §4.1 EM-005b — gate_decision Outcome
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §6 WG-028 — traversal_cap
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+
+digraph "quality-gate-policy" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="quality-gate-policy";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ────────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implementer: produces or revises the change; HEAD must advance (commit required).
+    // On re-entry (after reviewer REQUEST_CHANGES or gate deny), addresses feedback.
+    implementer [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="produce or revise the change; on re-entry address reviewer or gate feedback"
+    ];
+
+    // reviewer: renders a subjective verdict (APPROVE / REQUEST_CHANGES / BLOCK)
+    // on the implementer's change. APPROVE advances to the policy gate for a
+    // deterministic quality check; REQUEST_CHANGES loops back to the implementer
+    // (capped at 3); BLOCK routes directly to close-needs-attention.
+    reviewer [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
+    ];
+
+    // quality_gate: deterministic policy decision via the merge-quality-policy
+    // ControlPoint. Returns status=SUCCESS on every evaluated decision (allow /
+    // deny / escalate-to-human), distinguished only by outcome.preferred_label
+    // (CP-058). Returns status=FAIL on eval-failure (registry nil, structural
+    // error), which falls through to the unconditional fallback.
+    //
+    // PENDING hk-karlz: gate evaluation is live after 58c6348f. The DOT round-trips
+    // through C2 today; runtime dispatch requires the daemon's CPRegistry populated
+    // with the merge-quality-policy Gate ControlPoint.
+    quality_gate [
+        type="gate",
+        gate_ref="merge-quality-policy",
+        handler_ref="gate-evaluator",
+        role="deterministic quality-bar check: allow / deny / escalate-to-human"
+    ];
+
+    // close: reviewer approved AND gate allowed — quality bar met.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="allow — quality bar met; mergeable"
+    ];
+
+    // close-needs-attention: gate escalated, reviewer blocked, or cap-hit.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="gate escalate-to-human / reviewer BLOCK / cap-hit — operator attention required"
+    ];
+
+    // ─── Edges ────────────────────────────────────────────────────────────────
+
+    start -> implementer;
+
+    // implementer always advances to reviewer after committing.
+    implementer -> reviewer;
+
+    // reviewer: APPROVE → deterministic quality gate.
+    reviewer -> quality_gate [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    // reviewer: REQUEST_CHANGES → loop back to implementer (capped at 3).
+    reviewer -> implementer [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+    // reviewer: BLOCK → escalate directly to close-needs-attention.
+    reviewer -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback (WG-011): unrecognized label or infra failure → triage.
+    reviewer -> "close-needs-attention";
+
+    // quality_gate: allow → quality bar met; close.
+    // Decision arrives as status=SUCCESS, preferred_label='allow' (CP-058).
+    quality_gate -> close [
+        condition="outcome.preferred_label == 'allow'"
+    ];
+    // quality_gate: deny → policy rejected the change; loop back to implementer (capped at 3).
+    // The deny cap is independent of the reviewer→implementer cap.
+    quality_gate -> implementer [
+        condition="outcome.preferred_label == 'deny'",
+        traversal_cap="3"
+    ];
+    // quality_gate: escalate-to-human → policy requires human sign-off; triage.
+    quality_gate -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'escalate-to-human'"
+    ];
+    // Unconditional fallback (WG-011): eval-failure (status=FAIL) or unknown decision → triage.
+    quality_gate -> "close-needs-attention";
+}

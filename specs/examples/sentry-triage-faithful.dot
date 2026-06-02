@@ -1,0 +1,206 @@
+// sentry-triage-faithful.dot — Sentry issue triage: investigate→confidence→dedup→create-issue
+// (the zero-commit, shell-gate faithful form) (v1)
+//
+// SOON workflow #18 from the SDLC corpus. The cleanest demonstration of why
+// hk-69asi (non-committing agentic node) is load-bearing: all three agentic
+// nodes produce NO git commit. The confidence and dedup decisions are
+// deterministic shell gates, NOT agent verdicts. A whole run with zero git
+// commits is impossible in harmonik v1 without hk-69asi.
+//
+// Three pending capabilities:
+//   - hk-l8rpd: tool/shell node type (type="tool", handler_ref="shell").
+//     TODAY: init / assess_confidence / check_dedup use type="non-agentic" +
+//     handler_ref="shell" as a dialect-valid proxy (WG-039).
+//     Replace with type="tool" when hk-l8rpd lands.
+//   - hk-sdnzj: inline per-node prompt=. TODAY: prompt= on reviewer-class nodes is
+//     accepted-but-inert at v1 (emits no warning, no dispatch effect). Use role=
+//     to specialize the reviewer brief today; prompt= takes effect after hk-sdnzj.
+//   - hk-69asi: non-committing agentic node (SUCCESS without HEAD advance).
+//     TODAY: non_committing="true" on reviewer-class nodes is a v1 warning
+//     (retained, not dispatched — reviewer nodes do not require HEAD advance
+//     anyway per the engine contract, so the node still succeeds today).
+//
+// Topology:
+//   start
+//   → init (shell: sentry issue view __SID__ --json → .ai/issue.json)
+//   → investigate (agentic non-committing: root-cause hypothesis → .ai/investigation.md)
+//   → assess_confidence (shell: grep confidence; HIGH/MEDIUM → SUCCESS, LOW → FAIL)
+//     SUCCESS  → dedup_check (agentic non-committing: compare gh issues → .ai/dedup.md)
+//     fallback → close-skip (LOW confidence — triage skipped)
+//   → check_dedup (shell: grep dedup; NOVEL → SUCCESS, DUPLICATE → FAIL)
+//     SUCCESS  → create_issue (agentic non-committing: gh issue create → .ai/created_issue.txt)
+//     fallback → close-skip (DUPLICATE — triage skipped)
+//   → close (issue created successfully)
+//
+// Key design notes:
+//   - assess_confidence uses exit code as a binary decision: exit 0 = HIGH or MEDIUM
+//     (proceed), exit 1 = LOW (skip). The modeling tension for >2-way verdicts from
+//     a single exit code (HIGH vs MEDIUM vs LOW each needing distinct routing) is a
+//     known limitation of the shell-node proxy and is deferred to hk-l8rpd's design.
+//   - check_dedup similarly: exit 0 = NOVEL (create), exit 1 = DUPLICATE (skip).
+//   - init → investigate is UNCONDITIONAL. If init fails (Sentry CLI unavailable),
+//     investigate still runs but will find no .ai/issue.json; its own failure propagates
+//     through assess_confidence's unconditional fallback to close-skip. This keeps the
+//     topology simple at the cost of requiring investigate to handle a missing input file.
+//   - Both skip paths (LOW confidence, DUPLICATE) reach close-skip via the WG-011
+//     unconditional fallback: the FAIL outcome has no matching conditional edge, so the
+//     fallback fires.
+//   - create_issue → close is UNCONDITIONAL: a successful gh issue create always closes.
+//
+// Spec refs:
+//   - /tmp/sdlc-corpus/_final.md §18 (sentry-triage-faithful PSEUDO-DOT)
+//   - specs/workflow-graph.md §4 WG-001/WG-002 — node-type closed enum + catalog
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler proxy
+//   - specs/workflow-graph.md §4 WG-041 — non_committing attribute (hk-69asi)
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+
+digraph "sentry-triage-faithful" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="sentry-triage-faithful";
+    start_node="start";
+    terminal_node_ids="close,close-skip";
+
+    // ─── Nodes ────────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // init: fetch the Sentry issue JSON into .ai/issue.json.
+    // PENDING hk-l8rpd: will become type="tool" + handler_ref="shell".
+    // TODAY expressed as type="non-agentic" + handler_ref="shell" (WG-039 valid proxy).
+    // The edge to investigate is unconditional: a fetch failure surfaces via
+    // investigate's own failure path (no .ai/issue.json) → assess_confidence fallback.
+    init [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="mkdir -p .ai && sentry issue view __SID__ --json > .ai/issue.json",
+        timeout="120",
+        role="fetch Sentry issue JSON into .ai/issue.json — PENDING hk-l8rpd (type=tool)"
+    ];
+
+    // investigate: build a root-cause hypothesis from the issue JSON.
+    // non_committing="true" is the hk-69asi usage: SUCCESS does not require HEAD advance.
+    // On reviewer-class nodes at v1, non_committing= is a retained-but-inert warning.
+    // prompt= is the hk-sdnzj usage; on reviewer nodes at v1 use role= to specialize.
+    investigate [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Read .ai/issue.json; build a root-cause hypothesis; write .ai/investigation.md ending 'Confidence: HIGH|MEDIUM|LOW'.",
+        role="read .ai/issue.json; write .ai/investigation.md with root-cause hypothesis and Confidence: HIGH|MEDIUM|LOW"
+    ];
+
+    // assess_confidence: binary confidence gate.
+    // Reads the confidence level from .ai/investigation.md.
+    // Exit 0 (SUCCESS) = HIGH or MEDIUM → proceed to dedup.
+    // Exit 1 (FAIL)    = LOW            → unconditional fallback → close-skip.
+    // PENDING hk-l8rpd: will become type="tool" once the tool-node handler lands.
+    assess_confidence [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="C=$(grep -oE 'HIGH|MEDIUM|LOW' .ai/investigation.md | head -1); [ \"$C\" = LOW ] && exit 1 || exit 0",
+        timeout="30",
+        role="confidence gate: HIGH/MEDIUM → SUCCESS (dedup), LOW → FAIL (close-skip) — PENDING hk-l8rpd"
+    ];
+
+    // dedup_check: compare this issue against existing GitHub issues by root cause.
+    // Writes .ai/dedup.md with first line 'NOVEL' or 'DUPLICATE of #N'.
+    // non_committing="true" is the hk-69asi usage (v1 warning on reviewer-class).
+    dedup_check [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Compare to gh issue list by ROOT CAUSE; write .ai/dedup.md with first line 'NOVEL' or 'DUPLICATE of #N'.",
+        role="deduplicate against existing gh issues by root cause; write .ai/dedup.md — first line NOVEL or DUPLICATE of #N"
+    ];
+
+    // check_dedup: binary dedup gate.
+    // Reads the dedup result from .ai/dedup.md.
+    // Exit 0 (SUCCESS) = NOVEL     → proceed to create_issue.
+    // Exit 1 (FAIL)    = DUPLICATE → unconditional fallback → close-skip.
+    // PENDING hk-l8rpd: will become type="tool".
+    check_dedup [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="R=$(head -1 .ai/dedup.md | grep -o 'NOVEL\\|DUPLICATE'); [ \"$R\" = DUPLICATE ] && exit 1 || exit 0",
+        timeout="30",
+        role="dedup gate: NOVEL → SUCCESS (create issue), DUPLICATE → FAIL (close-skip) — PENDING hk-l8rpd"
+    ];
+
+    // create_issue: file the GitHub issue from the investigation.
+    // Writes the created issue URL to .ai/created_issue.txt.
+    // non_committing="true" is the hk-69asi usage (v1 warning on reviewer-class).
+    create_issue [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        non_committing="true",
+        prompt="Build a GitHub issue from .ai/investigation.md; run gh issue create; write the created issue URL to .ai/created_issue.txt.",
+        role="create GitHub issue from .ai/investigation.md; write URL to .ai/created_issue.txt"
+    ];
+
+    // close: issue created successfully.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="issue created"
+    ];
+
+    // close-skip: LOW confidence or DUPLICATE — triage skipped.
+    "close-skip" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="LOW confidence or DUPLICATE — triage skipped"
+    ];
+
+    // ─── Edges ────────────────────────────────────────────────────────────────
+
+    start -> init;
+
+    // init always advances to investigate (unconditional — see design note above).
+    init -> investigate;
+
+    // investigate always advances to assess_confidence.
+    investigate -> assess_confidence;
+
+    // assess_confidence: HIGH/MEDIUM (exit 0, SUCCESS) → proceed to dedup.
+    assess_confidence -> dedup_check [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): LOW confidence (exit 1, FAIL) → skip.
+    assess_confidence -> "close-skip";
+
+    // dedup_check always advances to check_dedup.
+    dedup_check -> check_dedup;
+
+    // check_dedup: NOVEL (exit 0, SUCCESS) → create the issue.
+    check_dedup -> create_issue [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): DUPLICATE (exit 1, FAIL) → skip.
+    check_dedup -> "close-skip";
+
+    // create_issue always advances to close (unconditional — a successful create always closes).
+    create_issue -> close;
+}

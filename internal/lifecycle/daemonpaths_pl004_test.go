@@ -207,6 +207,7 @@ func TestPL004_AllPathsRootedUnderHarmonik(t *testing.T) {
 		{"EventIDHWMPath", EventIDHWMPath(projectDir)},
 		{"EventsDir", EventsDir(projectDir)},
 		{"BeadsIntentsDir", BeadsIntentsDir(projectDir)},
+		{"BeadsOwnedDir", BeadsOwnedDir(projectDir)},
 		{"ReconciliationLocksDir", ReconciliationLocksDir(projectDir)},
 		{"ReconciliationLockPath", ReconciliationLockPath(projectDir, "some-run")},
 		{"SpillFilePath", SpillFilePath(projectDir, "consumer")},

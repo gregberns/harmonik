@@ -91,6 +91,19 @@ const (
 	// Spec ref: reconciliation/spec.md §4.5 RC-026a.
 	reconciliationAttemptsSubdir = "reconciliation-attempts"
 
+	// beadsOwnedSubdir is the subdirectory under .harmonik/ holding per-bead
+	// ownership sentinel files. A file at .harmonik/beads-owned/<bead-id>
+	// records that THIS project's daemon has ever successfully claimed that bead.
+	// The sentinel outlives the BI-030 claim intent file (which is deleted on
+	// claim success) and provides an independent provenance signal for the PL-006
+	// sixth-bullet orphan sweep. Sentinel files are created on successful
+	// ClaimBead and deleted on successful CloseBead, ReopenBead, or ResetBead.
+	//
+	// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet (provenance OR clause);
+	// §4.4 PL-006a (project_hash discipline).
+	// Bead ref: hk-11xkn (audit-log actor=project_hash provenance followup).
+	beadsOwnedSubdir = "beads-owned"
+
 	// wipCaptureSubdir is the leaf subdirectory name under an investigator's
 	// evidence directory for WIP capture files.
 	//
@@ -165,6 +178,21 @@ func EventsDir(projectDir string) string {
 // Spec ref: beads-integration.md §4.10 BI-030.
 func BeadsIntentsDir(projectDir string) string {
 	return filepath.Join(HarmonikDir(projectDir), beadsIntentsSubdir)
+}
+
+// BeadsOwnedDir returns the absolute path of the beads-owned/ subdirectory for
+// a project. Each file under this directory is a zero-byte ownership sentinel
+// named by bead ID; its presence asserts that THIS project's daemon has
+// successfully claimed the bead at least once.
+//
+// The sentinel outlives the BI-030 claim intent file (which is deleted after
+// successful claim) and provides an independent provenance signal for the
+// PL-006 sixth-bullet orphan sweep when all intent files have been cleared.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet; §4.4 PL-006a.
+// Bead ref: hk-11xkn.
+func BeadsOwnedDir(projectDir string) string {
+	return filepath.Join(HarmonikDir(projectDir), beadsOwnedSubdir)
 }
 
 // ReconciliationLocksDir returns the absolute path of the reconciliation-locks/

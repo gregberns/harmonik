@@ -176,8 +176,15 @@ func (a *Adapter) terminalTransitionWrite(
 // The full BI-030 intent-log protocol is applied: intent file is written
 // before the br invocation and deleted on success.
 //
+// On success, ClaimBead also writes a per-bead ownership sentinel file at
+// .harmonik/beads-owned/<bead-id>. The sentinel outlives the claim intent file
+// (deleted in step 6) and provides an independent provenance signal for the
+// PL-006 sixth-bullet orphan sweep. The write is best-effort and non-fatal —
+// a failure degrades to the existing intent-log signal.
+//
 // Spec: beads-integration.md §4.4 BI-010 (claim); §4.4 BI-010a (status table);
-// §4.10 BI-029, BI-030.
+// §4.10 BI-029, BI-030; process-lifecycle.md §4.5 PL-006 sixth bullet;
+// §4.4 PL-006a. Bead ref: hk-11xkn.
 func (a *Adapter) ClaimBead(
 	ctx context.Context,
 	intentLogDir string,
@@ -186,7 +193,7 @@ func (a *Adapter) ClaimBead(
 	transitionID core.TransitionID,
 	beadID core.BeadID,
 ) error {
-	return a.terminalTransitionWrite(
+	if err := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
 		cfg,
@@ -196,7 +203,13 @@ func (a *Adapter) ClaimBead(
 		core.TerminalOpClaim,
 		core.CoarseStatusInProgress,
 		[]string{"update", string(beadID), "--claim"},
-	)
+	); err != nil {
+		return err
+	}
+	// Write ownership sentinel (best-effort; non-fatal if projectDir is empty
+	// or the write fails — falls back to intent-log provenance signal).
+	_ = writeBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; see hk-11xkn
+	return nil
 }
 
 // CloseBead issues the BI-010 close write: in_progress → closed.
@@ -245,6 +258,9 @@ func (a *Adapter) CloseBead(
 		return err
 	}
 
+	// Delete ownership sentinel (best-effort; bead is no longer in_progress).
+	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
+
 	if !needsAttention {
 		return nil
 	}
@@ -292,10 +308,11 @@ func (a *Adapter) CloseBead(
 // mid-run). `br update --status open` works for both in_progress→open and
 // closed→open, making ReopenBead reliable for crash-recovery (hk-wdeen).
 //
-// The full BI-030 intent-log protocol is applied.
+// The full BI-030 intent-log protocol is applied. On success, the ownership
+// sentinel (if any) is deleted best-effort — the bead is no longer in_progress.
 //
 // Spec: beads-integration.md §4.4 BI-010 (reopen); §4.4 BI-010a (status table);
-// §4.10 BI-029, BI-030.
+// §4.10 BI-029, BI-030. Bead ref: hk-11xkn.
 func (a *Adapter) ReopenBead(
 	ctx context.Context,
 	intentLogDir string,
@@ -309,7 +326,7 @@ func (a *Adapter) ReopenBead(
 	if reason != "" {
 		args = append(args, "--notes", reason)
 	}
-	return a.terminalTransitionWrite(
+	if err := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
 		cfg,
@@ -319,7 +336,12 @@ func (a *Adapter) ReopenBead(
 		core.TerminalOpReopen,
 		core.CoarseStatusOpen,
 		args,
-	)
+	); err != nil {
+		return err
+	}
+	// Delete ownership sentinel (best-effort; bead is no longer in_progress).
+	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
+	return nil
 }
 
 // ResetBead issues the BI-010d reset write: in_progress → open.
@@ -426,6 +448,9 @@ func (a *Adapter) ResetBead(
 		// protocol on next startup.
 		return fmt.Errorf("brcli.ResetBead: delete intent file: %w", err)
 	}
+
+	// Delete ownership sentinel (best-effort; bead is back to open).
+	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
 
 	return nil
 }

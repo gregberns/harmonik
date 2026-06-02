@@ -907,6 +907,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				BeadLedger:      beadLedger,
 				BeadResetter:    beadResetter,
 				BeadCat3cCloser: beadCat3cCloser,
+				// BeadProvenance: sentinel-file checker (hk-11xkn). Reads
+				// .harmonik/beads-owned/<bead-id> written by ClaimBead on
+				// successful claim. The sentinel outlives the BI-030 claim intent
+				// file (deleted in step 6) and provides provenance when all intent
+				// files have been cleared by prior crash-recovery runs.
+				BeadProvenance: lifecycle.NewSentinelFileProvenanceChecker(
+					lifecycle.BeadsOwnedDir(cfg.ProjectDir),
+				),
 				MergeCommitScanner: lifecycle.GitMergeCommitScanner{
 					ProjectDir:   cfg.ProjectDir,
 					TargetBranch: "", // defaults to "main" inside the scanner

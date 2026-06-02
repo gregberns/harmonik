@@ -6,6 +6,16 @@ Add a `harmonik run <bead-id>` subcommand that submits a single-bead queue and e
 ## Status
 not-started
 
+## Done means...
+
+`harmonik run <bead-id>` is done when a single command targets a bead, runs it, and exits cleanly — no manual daemon management, no queue JSON authoring, no priority-bump workarounds.
+
+1. **Exits on terminal state.** `harmonik run <bead-id>` exits 0 when the bead reaches DONE, exits non-zero when the bead reaches FAILED. Verified by `hk-icecw` acceptance criteria.
+2. **One-shot semantics.** After the target bead terminates, the daemon does NOT cascade to the next `br ready` bead. Verified by a test that submits a 1-item queue and confirms the daemon exits rather than claiming a second eligible bead. Covers `hk-ajchp`.
+3. **Help is discoverable.** `harmonik run --help` exits 0 and names `<bead-id>` as a required positional argument with a one-line description. Per plan 009 CLI-help criteria.
+4. **Scenario test GREEN.** A twin-based test confirms that `harmonik run <id>` against a real bead: spawns the implementer, observes a commit, emits `run_completed` in JSONL, and exits cleanly with no orphaned processes. This is the scenario-test bead required by `plans/README.md`; file it alongside `hk-icecw`.
+5. **Exploratory test GREEN.** An agent can run `harmonik run --help` followed by `harmonik run <real-bead-id>` and produce a closed bead without reading any other documentation. This is the exploratory-test bead required by `plans/README.md`.
+
 ## What's done
 - Queue subsystem wired into the daemon composition root (commit `9925ce7`), with the close-out commit at `9b89471`. This was the prerequisite blocker: the submit + drain machinery `harmonik run` reuses is now reachable from the daemon entry path.
 - `internal/queue/` has the surface needed: `internal/queue/cli/submit.go` (submit path), `internal/queue/queue.go` + `state.go` (state), `internal/queue/rpc.go` (daemon-side RPC).

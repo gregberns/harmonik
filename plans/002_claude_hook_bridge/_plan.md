@@ -16,6 +16,17 @@ CHB-025/026/027 spec additions). Remainder is finishing the
 hook-relay subcommand surface (CHB-006 → CHB-024), the three CHB-INV sensors,
 and the real-Claude end-to-end test.
 
+## Done means...
+
+Claude-hook-bridge is done when ALL of the following are observably true:
+
+1. **Hook-relay subcommand functional.** `harmonik hook-relay` receives a Stop-hook POST and writes the outcome to the daemon socket within the CHB-003 timeout budget. Verified by `hk-lj848` + `hk-crf9a` + `hk-pcvw8` acceptance criteria.
+2. **CHB-006 through CHB-024 implemented.** All hook-relay protocol requirements in `specs/claude-hook-bridge.md` are implemented: settings.json materialization, socket-based completion, durable `claude_session_id` checkpoint, dedup (CHB-025), concurrent-socket serialization (CHB-026), partial-write safety (CHB-027). Verified by `hk-qo08q.6–.24` beads closed.
+3. **CHB invariant sensors GREEN.** INV-001 two-contributor (`hk-gerqr`), INV-002 single-terminal (`hk-qo96c`), INV-003 mechanism-no-cognition (`hk-xlach`) — all three pass. These are the exploratory-test beads for this plan.
+4. **Real-claude review-loop integration test GREEN (`hk-7uasg`).** Daemon dispatches real claude, implementer commits, reviewer returns REQUEST_CHANGES, iteration-2 fires, final APPROVE closes bead. This is the scenario-test bead required by `plans/README.md`.
+5. **Relay-failure path covered (`hk-pcgms`).** Daemon socket missing → `bridge_dial_failed` event written to JSONL and bead transitions to `run_failed`. No silent hang.
+6. **Epic `hk-qo08q` closed.** All 31 remaining open beads under `codename:claude-hook-bridge` reach a terminal state (closed or explicitly deferred with a rationale).
+
 ## What's done
 - Spec corpus finalized: `2c320dc spec(claude-hook-bridge): finalize hook-bridge spec corpus`, `df06fb9 docs(spec-review): claude-hook-bridge corpus review — MINOR_REVISIONS`
 - Late spec additions: `b38c441` CHB-025 Stop-hook dedup; `feb6494` CHB-026 concurrent socket serialization; `405a517` CHB-027 + §8 partial-write

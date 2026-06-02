@@ -8,6 +8,17 @@ mostly-done
 
 The bridge-integration kerf work (jig=plan, status=ready in `spec.yaml`) has effectively landed: single-mode and review-loop smokes both reached GREEN in May 2026, the bridge-followup umbrella epic closed, and all four normative spec amendments (PL / WM / HC / CHB) are present in `specs/`. A handful of post-landing follow-ups remain open as standalone beads; they are not large enough to warrant a separate plan folder and are tracked here.
 
+## Done means...
+
+Bridge-integration is done when ALL of the following are observably true — not "the beads shipped":
+
+1. **Single-mode smoke GREEN.** Daemon spawns real claude in a deterministically-named tmux window, implementer commits work, bead closes via Stop hook. Reproducible with the current binary against the harmonik repo itself. Confirmed at commit `f24ff5f`; must remain GREEN.
+2. **Review-loop smoke GREEN.** REQUEST_CHANGES → iteration-2 implementer resume → APPROVE cycle completes and bead closes without manual intervention. Confirmed at `a8b6568`; must remain GREEN.
+3. **All normative spec amendments present and reviewed.** PL-021b/c, PL-028/028b, WM-002a, HC-054..057 all in `specs/` and cited from their emission sections in the respective specs.
+4. **CHB sensor suite GREEN.** CHB-022 (`7c54c76`), CHB-024 (`be91ba6`), CHB-INV-001 (`79e7f19`), CHB-INV-002 (`8956ebc`) pass in CI. CHB-INV-003 (`hk-xlach`) verified closed vs `514c0f6`.
+5. **Scenario test covers bridge thesis end-to-end.** A twin-based test confirms Stop-hook propagation, `hookSessionStore.WaitForOutcome` returning on terminal signal, and `run_completed` event written to JSONL. This is the scenario-test bead requirement per `plans/README.md`.
+6. **Five P2 follow-up beads tracked.** `hk-44w19`, `hk-pcgms`, `hk-cw56j`, `hk-s2vpx`, `hk-q7atz` are each either closed or queued as standalone beads with no blocking edge to items 1–5.
+
 ## What's done
 
 - **Streams A (specs):** PL-021b/c + PL-028/028b, WM-002a, HC-054..057 all merged into `specs/process-lifecycle.md`, `specs/workspace-model.md`, `specs/handler-contract.md`. CHB-028 deliberately not filed (twin parity stays wire-level — Stream A4 decision record).

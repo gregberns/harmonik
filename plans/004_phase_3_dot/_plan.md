@@ -6,6 +6,16 @@ Define harmonik's DOT-based workflow-graph dialect (nodes, edges, outcomes, cont
 ## Status
 active / research-phase (pass-4 design, ~6 of ~20 decisions landed; pass-5 spec drafts not started)
 
+## Done means...
+
+Phase-3 DOT is done when the workflow-graph dialect is specified, implemented, and verifiable end-to-end. NOT "the spec is written" or "the beads shipped." Concrete gate:
+
+1. **All 14 open pass-4 design decisions resolved.** D7–D20 each have a written D-doc artifact under `plans/004_phase_3_dot/source/04-design/` with a clear decision and rationale. No pending decisions block spec drafting.
+2. **Normative DOT-dialect spec present.** `specs/workflow-graph.md` (or the path confirmed by the integration pass) covers: node types, edge conditions, `Outcome` shape, `schema_version`, `failure_class` taxonomy, control-point node type, terminal-node differentiation, bead↔node binding, tool-node contract, observability hooks, sub-workflow mechanics, migration/N-1 rule. Reviewer APPROVE on the spec.
+3. **Spec amendments filed.** All affected specs (execution-model, handler-contract, event-model, beads-integration, process-lifecycle) amended per §4.6 amendment protocol. Each amendment has a cross-reference back to the workflow-graph spec.
+4. **At least one worked DOT example.** A `.dot` fixture in `specs/examples/` or `internal/workflow/scenario/` is validated against the normative spec. The fixture exercises at least one control-point node and one edge with a `failure_class` condition.
+5. **Implementation epic filed.** Beads filed for at minimum: DOT parser, workflow runner wiring, scenario-test bead (end-to-end: harmonik dispatches a bead via a `.dot` workflow and the expected event trace appears in JSONL), and exploratory-test bead (operator invokes harmonik with a `.dot` workflow and observes outcome via CLI or JSONL). These scenario and exploratory beads are required by `plans/README.md` before the plan closes.
+
 ## What's done
 
 - **Pass 1 — problem space** (`source/01-problem-space.md`): scope, constraints, success criteria. Reviewer APPROVE.

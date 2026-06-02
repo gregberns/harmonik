@@ -6,6 +6,17 @@ Make harmonik-as-orchestrator-dispatcher *routine* rather than exceptional. Phas
 ## Status
 active
 
+## Done means...
+
+Phase-2 dogfood scale-out is done when orchestrator dispatch via harmonik is routine — not exceptional. NOT "the blockers are filed" or "beads shipped."
+
+1. **`harmonik run <bead-id>` available (plan 006 done).** Orchestrators target specific beads without priority-bump-and-pray. The `hk-cd92e` anti-pattern (priority-bump to steer the daemon) is structurally prevented. Verified by plan 006's "Done means..." criteria being met.
+2. **`hk-rp48p` resolved.** Either closed as subsumed-by-design after `hk-icecw` lands (confirmed by re-triage), or the claim-path priority bug is independently fixed with a test that proves the daemon selects by priority when multiple beads are eligible.
+3. **Orphan-sweep telemetry correct (`hk-sc3o4`).** `bead_in_progress_reset > 0` observed in JSONL when stale-IN_PROGRESS beads exist at startup. Verified by a test that injects stale state and confirms the sweep counter increments.
+4. **`harmonik reconcile` functional (`hk-lgtq2`).** Subcommand runs the 6-category reconciliation table on demand and exits 0. Verified by CLI integration test.
+5. **Three consecutive sessions route ≥75% of substantive commits through harmonik.** Verified by session audit: commit messages reference `queue_id` or bead_id dispatched via `harmonik queue submit`, not inline sub-agent invocations. The 75% target is per `CLAUDE.md §"Daily loop"`.
+6. **Smoke test GREEN.** A 3-bead batch dispatched via `harmonik queue submit` completes with all three beads closing successfully and JSONL showing the full lifecycle event chain per §8.10 (queue_submitted → queue_group_started → run_started × 3 → run_completed × 3 → queue_group_completed).
+
 ## What's done (May 14–18 fixes)
 - `hk-yjsk8` (P1) — daemon `br close` retry on `Unavailable`, so a transient `br` outage after `claude` succeeds no longer leaves the bead stuck IN_PROGRESS. Commit `fb809b0`. *(Note: bead still shows OPEN in `br list`; needs status flip on the bead itself.)*
 - `hk-jvzc2` (P1) — daemon no longer silently mutates the parent repo's `.gitignore` + `.claude/settings.json` per-run; those entries are expected to be committed once at install/init. Commit `1c5f525`. *(Note: bead still shows OPEN in `br list`; needs status flip.)*

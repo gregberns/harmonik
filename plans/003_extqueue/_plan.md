@@ -6,6 +6,19 @@ Land the queue subsystem (`internal/queue/`) that lets an external orchestrator 
 ## Status
 mostly-done
 
+## Done means...
+
+Extqueue v0.1 is done when ALL of the following are observably true:
+
+1. **Submit functional.** `harmonik queue submit <file>` accepts a `QueueSubmitRequest` JSON, atomically persists to `.harmonik/queue.json`, and returns a `queue_id`. Verified by T60 (`51a3f1c`) and T83 validation unit sweep. GREEN.
+2. **Dry-run functional.** `harmonik queue dry-run <file>` validates without persisting and reports ledger-dep deferrals without starting any bead. Verified by T83. GREEN.
+3. **Mid-flight append functional.** `harmonik queue append <group-index> <bead-id>` adds beads to a stream group while it is active; the daemon picks them up on the next workloop tick. Verified by T42 (`73c78ee`). GREEN.
+4. **Status functional.** `harmonik queue status` returns the live queue envelope as JSON. Verified by T60. GREEN.
+5. **Crash-recovery GREEN.** On daemon restart from a non-empty `.harmonik/queue.json`, in-flight beads are reconciled per T82 (`8201de3`) scenario test.
+6. **Wave-lifecycle (T80) and paused-by-failure (T81) scenario tests GREEN.**
+7. **T71 closed (`hk-dji5z`).** PL-013 Beads-poll idle-wait retired, replaced with socket-block idle. This is the only remaining open child of the extqueue epic (`hk-lj0pb`); its closure closes the epic.
+8. **Enqueue-retirement conformance sensor GREEN.** T84 (`28113ae`) passes in CI.
+
 ## What's done
 - Spec drafted, reviewed, integrated, and landed: `specs/queue-model.md` v0.1.1 (commits `e228bc3` v0.1.0, `e2a11ee` gap-closure).
 - 6 amended specs (queue-model, execution-model, beads-integration, process-lifecycle, event-model, operator-nfr) all in-tree.

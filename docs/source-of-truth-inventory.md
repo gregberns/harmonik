@@ -1,6 +1,6 @@
 # Source-of-Truth Inventory: Subsystems vs. Normative Specs
 
-*Last verified 2026-05-18 (post-77ae7ee handler-pause elevation + claude-hook-bridge normative confirmation). Re-run whenever a new subsystem is added under `internal/` or a spec is promoted/added under `specs/`.*
+*Last verified 2026-06-01 (second pass: `Done means...` added to plans 001–006, 008; no new subsystem drift found). Prior pass 2026-05-18 (post-77ae7ee handler-pause elevation + claude-hook-bridge normative confirmation). Re-run whenever a new subsystem is added under `internal/` or a spec is promoted/added under `specs/`.*
 
 ---
 
@@ -60,6 +60,13 @@ Three prefix reservations were missing from `specs/_registry.yaml` for specs wit
 | `HP` | `specs/handler-pause.md` |
 | `CHB` | `specs/claude-hook-bridge.md` |
 | `QM` | `specs/queue-model.md` |
+
+### Gaps corrected in second pass (2026-06-01, hk-ux915)
+
+| Gap | Resolution |
+|---|---|
+| Plans 001–006, 008 missing `## Done means...` section | Added behavioral acceptance criteria to each `_plan.md`; plan 007 was covered by the first pass; plan 009 already had the section. |
+| Remaining terminology drift scan | No new `MVH scope` / `bootstrap scope` / `Phase-1-only` drift found in `docs/`, `specs/`, or `plans/` beyond `docs/foundation/` and `docs/subsystems/` which use `MVH` as a historical milestone label (not a per-feature scope qualifier) — permitted under `AGENTS.md §"Terminology — avoid MVH"`. |
 
 ---
 

@@ -8,6 +8,17 @@ mostly-done
 
 Spec deltas, core types, event types, daemon driver, bridge wiring, and a GREEN smoke have all landed. Remaining surface is a real-Claude end-to-end test (hk-7uasg) and the workspace settings.json materialization gap (hk-02sp0). The kerf itself reached `ready` (jig progressed all the way through problem-space → decompose → research → change-design → spec-draft → integration → tasks).
 
+## Done means...
+
+Workflow-modes is done when all three modes are exercised end-to-end and the workspace materialization gap is closed. NOT "the spec is merged" or "the beads shipped."
+
+1. **Mode-resolution tests GREEN.** `single`, `review-loop`, and `dot` are each recognized by the daemon's mode-resolution precedence path. Verified by mode-resolution tests in `internal/daemon/workloop_test.go` (or equivalent).
+2. **Review-loop real-claude E2E GREEN (`hk-7uasg`).** Daemon dispatches real claude, implementer commits, reviewer returns REQUEST_CHANGES, iteration-2 resumes via `--resume`, final APPROVE closes bead. This is the scenario-test bead required by `plans/README.md`. Until `hk-7uasg` is GREEN, this plan is not done.
+3. **Settings.json materialized (`hk-02sp0`).** Workspace `.claude/settings.json` is written per WM-040a before every agent launch — no per-run parent-repo mutation. Verified by `hk-02sp0` acceptance criteria. This is the exploratory-test bead for this plan.
+4. **All seven workflow-modes event types emitted.** `review_loop_started` and its six siblings appear in JSONL during a review-loop run. Verified by `internal/core/eventreg_*` tests.
+5. **T-WM-001..T-WM-032 audit complete.** Every task has either a landing commit or a tracking bead; no silent gaps remain. Tasks verified against git history.
+6. **Review-loop smoke reproducible.** The smoke scenario from `a8b6568` runs GREEN with the current binary on the harmonik repo.
+
 ## What's done
 - Kerf finalized through all seven passes; sources in `source/` (problem-space, components, research/, design/, spec-drafts/, integration, tasks).
 - Spec deltas landed across 7 specs (handler-contract, execution-model, event-model, process-lifecycle, beads-integration, workspace-model, operator-nfr) — `caf4b57 feat(specs): workflow-modes — three dispatch modes (single/review-loop/dot)`.

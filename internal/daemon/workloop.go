@@ -1685,6 +1685,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
+			// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
+			if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
+				emitDone(false, sgr.reason)
+				return
+			}
 			// §4.12.EM-052: merge run-branch to main before CloseBead.
 			// Mirrors the single-mode merge path (hk-ftyvo).
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
@@ -1827,6 +1835,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 		transitionTID, _ := deps.tidGen.Next()
 		if dotResult.success {
+			// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
+			if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
+				emitDone(false, sgr.reason)
+				return
+			}
 			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
 			// single-mode and review-loop merge path).
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
@@ -2337,6 +2353,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	switch {
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
+		// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
+		if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
+			emitDone(false, sgr.reason)
+			return
+		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
 		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {
@@ -2364,6 +2388,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// MVH twin-blind runs.
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
+		// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
+		if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
+			emitDone(false, sgr.reason)
+			return
+		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
 		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {

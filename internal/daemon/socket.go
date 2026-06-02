@@ -60,6 +60,11 @@ type SocketRequest struct {
 	// operator-resume ops (NQ-C1 hk-tigaf.6). When non-empty, the operation
 	// is scoped to the named queue; when absent/empty, the operation is global.
 	Queue string `json:"queue,omitempty"`
+
+	// Payload carries op-specific request data (present for "comms-send").
+	// The shape of Payload depends on the op; for comms-send it is a CommsSendRequest.
+	// Bead ref: hk-nbrmf (comms-send T4).
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // SocketResponse is the daemon's reply to a SocketRequest.
@@ -253,15 +258,16 @@ func RunSocketListener(ctx context.Context, sockPath string, h RequestHandler, h
 // RunSocketListenerWithSubscribe is RunSocketListener with an optional
 // SubscribeHandler. When sub is nil, "subscribe" ops return an error response.
 func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, qh ...QueueHandler) error {
-	return RunSocketListenerFull(ctx, sockPath, h, hr, sub, nil, qh...)
+	return RunSocketListenerFull(ctx, sockPath, h, hr, sub, nil, nil, qh...)
 }
 
-// RunSocketListenerFull is RunSocketListenerWithSubscribe with an additional
-// OperatorControlHandler for operator-pause and operator-resume ops. When oh
-// is nil, those ops return an error response.
+// RunSocketListenerFull is RunSocketListenerWithSubscribe with additional
+// OperatorControlHandler and CommsSendHandler parameters. When oh is nil,
+// operator-pause/resume ops return an error response. When ch is nil,
+// comms-send ops return an error response.
 //
-// Bead ref: hk-ry8q1.
-func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, qh ...QueueHandler) error {
+// Bead ref: hk-ry8q1 (operator control), hk-nbrmf (comms-send T4).
+func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, qh ...QueueHandler) error {
 	if err := removeStaleSocket(sockPath); err != nil {
 		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
 	}
@@ -298,7 +304,7 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch)
 	}
 }
 
@@ -316,7 +322,7 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -452,6 +458,22 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		}
 		sub.HandleSubscribe(ctx, conn, subReq)
 		return // suppress SocketResponse write; conn is closed by defer
+
+	// -----------------------------------------------------------------------
+	// Agent-comms ops (agent-comms spec §2.1 C2, bead hk-nbrmf)
+	// -----------------------------------------------------------------------
+
+	case "comms-send":
+		if ch == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: CommsSendHandler not registered"}
+			break
+		}
+		result, err := ch.HandleCommsSend(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
 
 	// -----------------------------------------------------------------------
 	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)

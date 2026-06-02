@@ -1150,13 +1150,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
 		}
 
+		// commsSendHandler emits agent_message events on behalf of CLI callers.
+		// NewCommsSendHandler returns nil if bus does not implement CommsMessageEmitter
+		// (e.g. test stubs), in which case comms-send ops return an error response.
+		// Bead ref: hk-nbrmf (comms-send T4).
+		commsSendHandler := NewCommsSendHandler(bus)
+
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
 		// channel to avoid goroutine leaks; error is discarded per the same
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListenerFull(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, queueHandler)
+			socketDone <- RunSocketListenerFull(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}

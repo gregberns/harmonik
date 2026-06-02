@@ -508,6 +508,98 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	return nil
 }
 
+// EmitAgentMessage emits an agent_message event and returns the minted event_id.
+//
+// This satisfies [CommsMessageEmitter] for the comms-send socket op (agent-comms
+// spec §2.1 C2, bead hk-nbrmf). It mirrors [Emit] but returns the event_id so
+// the caller can relay it to the CLI — the [EventBus.Emit] signature does not
+// return the ID, so this separate method is used instead of modifying the interface.
+//
+// agent_message is F-class (fsync-boundary per fsyncBoundaryEventTypes), so the
+// JSONL append is fsynced before this method returns, satisfying the "no silent
+// drops" guarantee (G2, agent-comms spec §1.1).
+func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessagePayload) (core.EventID, error) {
+	payloadBytes, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: marshal payload: %w", marshalErr)
+	}
+
+	// Steps 1–3: redaction pipeline (EV-035) — same as Emit.
+	var rawPayload map[string]any
+	if err := json.Unmarshal(payloadBytes, &rawPayload); err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: payload unmarshal for redaction: %w", err)
+	}
+	redacted := b.registry.RedactionMiddleware(rawPayload)
+	redactedBytes, err := json.Marshal(redacted)
+	if err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: re-encoding redacted payload: %w", err)
+	}
+
+	// Step 4a: generate event_id BEFORE building the envelope so we can return it.
+	eventID, idErr := b.idGen.Next()
+	if idErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: generate event_id: %w", idErr)
+	}
+	const agentMessageType = "agent_message"
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(agentMessageType)
+	if !knownType {
+		typeSchemaVersion = 1
+	}
+	evt := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   typeSchemaVersion,
+		Type:            agentMessageType,
+		TimestampWall:   time.Now(),
+		SourceSubsystem: "eventbus",
+		Payload:         redactedBytes,
+	}
+
+	// Step 4b: JSONL append with fsync (F-class per fsyncBoundaryEventTypes).
+	envelopeBytes, marshalEnvErr := json.Marshal(evt)
+	if marshalEnvErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: marshal envelope: %w", marshalEnvErr)
+	}
+	if appendErr := b.jsonlWriter.Append(envelopeBytes, true /* always fsync — F-class */); appendErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: JSONL append: %w", appendErr)
+	}
+
+	// Steps 5–6: fan-out to subscribers — same pattern as Emit (no run_id, no runWG).
+	b.mu.Lock()
+	subs := make([]core.Subscription, len(b.subscriptions))
+	copy(subs, b.subscriptions)
+	b.mu.Unlock()
+
+	for _, sub := range subs {
+		if !sub.EventPattern.MatchesType(agentMessageType) {
+			continue
+		}
+		if sub.Handler == nil {
+			continue
+		}
+		switch sub.ConsumerClass {
+		case core.ConsumerClassSynchronous:
+			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+				return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
+			}
+		default:
+			sub := sub // capture loop variable
+			b.wg.Add(1)
+			go func() {
+				defer b.wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+					}
+				}()
+				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+				}
+			}()
+		}
+	}
+	return eventID, nil
+}
+
 // ErrDuplicateSynchronousConsumer is the typed configuration error returned
 // by Subscribe when a second synchronous consumer registers for an event type
 // that already has one. At most one synchronous consumer per event type is

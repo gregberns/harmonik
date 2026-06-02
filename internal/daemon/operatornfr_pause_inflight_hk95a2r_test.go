@@ -352,7 +352,7 @@ func TestScenario_OperatorNFR_PauseWithRunInFlight(t *testing.T) {
 	t.Cleanup(sockCancel)
 
 	go func() {
-		_ = daemon.RunSocketListenerFull(sockCtx, sockPath, nil, nil, nil, ctrl)
+		_ = daemon.RunSocketListenerFull(sockCtx, sockPath, nil, nil, nil, ctrl, nil)
 	}()
 
 	socketFixtureWaitReady(t, sockPath)

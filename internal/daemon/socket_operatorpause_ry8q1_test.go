@@ -34,7 +34,7 @@ func socketOpFixtureStartListenerFull(t *testing.T, oh daemon.OperatorControlHan
 
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
-		_ = daemon.RunSocketListenerFull(ctx, sockPath, nil, nil, nil, oh)
+		_ = daemon.RunSocketListenerFull(ctx, sockPath, nil, nil, nil, oh, nil)
 	}()
 	t.Cleanup(func() { cancel() })
 

@@ -35,6 +35,28 @@ type RunDrainer interface {
 	DrainRun(ctx context.Context, runID core.RunID) error
 }
 
+// CommsMessageEmitter is an optional capability implemented by bus implementations
+// that support emitting agent_message events and returning the minted event_id.
+//
+// busImpl satisfies this interface via [busImpl.EmitAgentMessage]. Callers that
+// need to emit an agent_message and receive the event_id (e.g. the comms-send
+// socket op at agent-comms spec §2.1 C2) should type-assert the EventBus value:
+//
+//	if ce, ok := bus.(eventbus.CommsMessageEmitter); ok {
+//	    eventID, err := ce.EmitAgentMessage(ctx, payload)
+//	}
+//
+// This is a separate interface (not on [EventBus]) so the core EventBus contract
+// is unchanged. The pattern follows [RunDrainer].
+//
+// Bead: hk-nbrmf (comms-send T4).
+type CommsMessageEmitter interface {
+	// EmitAgentMessage emits an agent_message event (F-class, fsync-boundary per
+	// agent-comms spec §1.1) and returns the minted event_id so the caller can
+	// relay it back to the CLI. The event_id is UUIDv7-ordered.
+	EmitAgentMessage(ctx context.Context, payload core.AgentMessagePayload) (core.EventID, error)
+}
+
 // TailTruncationCallback is the optional consumer-supplied callback the bus
 // invokes immediately after restart replay completes when the JSONL tail was
 // truncated by the read-recovery rule (specs/event-model.md §6.2).

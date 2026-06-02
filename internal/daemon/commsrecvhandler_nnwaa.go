@@ -98,6 +98,12 @@ type CommsRecvResult struct {
 	// Messages contains the unread agent_message events since the caller's cursor.
 	// Empty slice (not null) when there are no new messages.
 	Messages []CommsRecvMessage `json:"messages"`
+
+	// CursorAfter is the agent's cursor position after this op: the last delivered
+	// event_id (if any messages were returned), otherwise the previously-stored cursor.
+	// Empty string when no cursor has ever been stored and the backlog was empty.
+	// Clients use this as the since-event-id anchor for a follow-mode subscribe.
+	CursorAfter string `json:"cursor_after,omitempty"`
 }
 
 // SetRecvDeps wires the cursor store and events JSONL path into the handler so
@@ -194,7 +200,13 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(_ context.Context, payload json.R
 	if messages == nil {
 		messages = []CommsRecvMessage{}
 	}
-	result := CommsRecvResult{Messages: messages}
+	// cursor_after: new cursor position (for --follow anchor).
+	// If we advanced the cursor, use lastEventID; otherwise use the stored cursor.
+	cursorAfter := lastEventID
+	if cursorAfter == "" {
+		cursorAfter = cursorStr
+	}
+	result := CommsRecvResult{Messages: messages, CursorAfter: cursorAfter}
 	resultBytes, marshalErr := json.Marshal(result)
 	if marshalErr != nil {
 		return nil, fmt.Errorf("comms-recv: marshal result: %w", marshalErr)

@@ -46,6 +46,7 @@ package main
 //	--agent NAME               Agent identity (default: $HARMONIK_AGENT env var).
 //	--from NAME                Filter: only messages from NAME.
 //	--topic T                  Filter: only messages with topic T.
+//	--follow                   After draining the backlog, tail live messages via subscribe (streams until signal).
 //	--json                     Emit one JSON object per message (NDJSON) instead of human-readable.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
@@ -67,6 +68,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -353,6 +355,7 @@ EXAMPLES
   harmonik comms send --to other-agent -- Hello
   harmonik comms send --broadcast --from myagent -- Status update
   harmonik comms recv --agent myagent
+  harmonik comms recv --agent myagent --follow
   harmonik comms recv --agent myagent --from orchestrator --json
   harmonik comms log --since 30m
   harmonik comms log --since 30m --to myagent --json
@@ -937,18 +940,25 @@ EXAMPLES
 	}(), verb, verb, verb)
 }
 
-// runCommsRecvSubcommand implements `harmonik comms recv` (agent-comms spec §2.2 C2/C5,
-// bead hk-nnwaa T8).
+// runCommsRecvSubcommand implements `harmonik comms recv [--follow]` (agent-comms
+// spec §2.2 C2/C5/C3, beads hk-nnwaa T8 and hk-oqmrs T9).
 //
-// Sends a comms-recv socket op to the daemon, which reads unread agent_message
-// events from the caller's durable cursor, advances the cursor (at-least-once,
-// N3), and returns the matched messages.
+// Without --follow: sends one comms-recv op to the daemon, drains the backlog
+// for the agent's durable cursor, prints matched messages, and exits.
+//
+// With --follow: drains the backlog via comms-recv (same as above), then
+// opens a subscribe connection anchored at cursor_after (the position returned
+// by the comms-recv op) and streams live agent_message events until a signal.
+// The subscribe server registers for live events BEFORE replaying the gap
+// (subscribe.go:304), so no messages are dropped between the drain and the
+// live tail.
 //
 // subArgs is os.Args[3:].
 func runCommsRecvSubcommand(subArgs []string) int {
 	agentFlag := ""
 	fromFlag := ""
 	topicFlag := ""
+	followFlag := false
 	jsonFlag := false
 	socketFlag := ""
 	projectFlag := ""
@@ -974,6 +984,8 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			topicFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--topic="):
 			topicFlag = strings.TrimPrefix(arg, "--topic=")
+		case arg == "--follow":
+			followFlag = true
 		case arg == "--json":
 			jsonFlag = true
 		case arg == "--socket" && i+1 < len(subArgs):
@@ -1099,13 +1111,14 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			InReplyTo string `json:"in_reply_to,omitempty"`
 			Ts        string `json:"ts"`
 		} `json:"messages"`
+		CursorAfter string `json:"cursor_after,omitempty"`
 	}
 	if unmarshalErr := json.Unmarshal(resp.Result, &result); unmarshalErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: decode result: %v\n", unmarshalErr)
 		return 1
 	}
 
-	if len(result.Messages) == 0 && !jsonFlag {
+	if len(result.Messages) == 0 && !jsonFlag && !followFlag {
 		fmt.Fprintln(os.Stderr, "harmonik comms recv: no new messages")
 		return 0
 	}
@@ -1127,6 +1140,141 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			}
 		}
 	}
+
+	if !followFlag {
+		return 0
+	}
+
+	// --follow: open a subscribe connection anchored at cursor_after to tail
+	// live agent_message events with no gap.
+	//
+	// The subscribe server registers for live events BEFORE replaying the gap
+	// (subscribe.go:304), so any agent_message events that arrived between the
+	// comms-recv call and this subscribe dial are covered by the replay path.
+	return runCommsRecvFollow(sockPath, agent, fromFlag, topicFlag, result.CursorAfter, jsonFlag)
+}
+
+// runCommsRecvFollow opens a subscribe connection for live agent_message events
+// anchored at sinceEventID (the cursor_after from the preceding comms-recv drain).
+// Streams until signal or connection close.
+func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool) int {
+	// Build the subscribe request.
+	reqBody := map[string]any{
+		"op":                "subscribe",
+		"heartbeat_seconds": 60,
+		"types":             []string{"agent_message"},
+		"to":                agent,
+	}
+	if fromFilter != "" {
+		reqBody["from"] = fromFilter
+	}
+	if topicFilter != "" {
+		reqBody["topic"] = topicFilter
+	}
+	if sinceEventID != "" {
+		reqBody["since_event_id"] = sinceEventID
+	}
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal subscribe request: %v\n", err)
+		return 1
+	}
+
+	// Dial.
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancelDial()
+	if dialErr != nil {
+		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon not running (socket %s missing or refused)\n", sockPath)
+			return 17
+		}
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: dial %s: %v\n", sockPath, dialErr)
+		return 1
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: write subscribe request: %v\n", writeErr)
+		return 1
+	}
+
+	// On signal, close conn so the scan loop exits cleanly.
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-sigCtx.Done()
+		_ = conn.Close()
+	}()
+
+	// Stream: read lines, parse event envelopes, format and print.
+	dec := json.NewDecoder(conn)
+	for {
+		var env struct {
+			Type          string          `json:"type"`
+			EventID       string          `json:"event_id"`
+			TimestampWall string          `json:"timestamp_wall"`
+			Payload       json.RawMessage `json:"payload"`
+		}
+		if decErr := dec.Decode(&env); decErr != nil {
+			if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode event: %v\n", decErr)
+			return 1
+		}
+
+		// Skip non-message events (heartbeats, etc.).
+		if env.Type != "agent_message" {
+			continue
+		}
+
+		var p struct {
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Topic     string `json:"topic,omitempty"`
+			Body      string `json:"body"`
+			InReplyTo string `json:"in_reply_to,omitempty"`
+		}
+		if decErr := json.Unmarshal(env.Payload, &p); decErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode agent_message payload: %v\n", decErr)
+			continue
+		}
+
+		if jsonOut {
+			msg := struct {
+				EventID   string `json:"event_id"`
+				From      string `json:"from"`
+				To        string `json:"to"`
+				Topic     string `json:"topic,omitempty"`
+				Body      string `json:"body"`
+				InReplyTo string `json:"in_reply_to,omitempty"`
+				Ts        string `json:"ts"`
+			}{
+				EventID:   env.EventID,
+				From:      p.From,
+				To:        p.To,
+				Topic:     p.Topic,
+				Body:      p.Body,
+				InReplyTo: p.InReplyTo,
+				Ts:        env.TimestampWall,
+			}
+			line, marshalErr := json.Marshal(msg)
+			if marshalErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal message: %v\n", marshalErr)
+				return 1
+			}
+			fmt.Println(string(line))
+		} else {
+			ts := env.TimestampWall
+			direction := fmt.Sprintf("%s → %s", p.From, p.To)
+			if p.Topic != "" {
+				fmt.Printf("%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body)
+			} else {
+				fmt.Printf("%s  %-30s  %s\n", ts, direction, p.Body)
+			}
+		}
+	}
 	return 0
 }
 
@@ -1134,29 +1282,39 @@ func commsRecvUsage() {
 	fmt.Print(`harmonik comms recv — receive unread agent_messages from the durable cursor
 
 USAGE
-  harmonik comms recv [--agent NAME] [--from NAME] [--topic T] [--json] [--socket PATH] [--project DIR]
+  harmonik comms recv [--agent NAME] [--from NAME] [--topic T] [--follow] [--json] [--socket PATH] [--project DIR]
 
 Sends a comms-recv op to the daemon. The daemon reads unread agent_message events
 from the agent's durable cursor, advances the cursor (at-least-once delivery: N3),
 and returns the matched messages. Recipients should deduplicate on event_id.
 
+Without --follow: drains the backlog once and exits.
+
+With --follow: drains the backlog, then streams live agent_message events via the
+subscribe transport. The subscribe connection is anchored at the cursor position
+returned by the drain (cursor_after), so no messages are missed between the drain
+and the live tail. Streams until SIGINT/SIGTERM.
+
 FLAGS
   --agent NAME    Agent identity (default: $HARMONIK_AGENT env var). Required.
   --from NAME     Filter: only messages from NAME.
   --topic T       Filter: only messages with topic T.
+  --follow        After draining the backlog, tail live messages (streams until signal).
   --json          Emit one JSON object per message (NDJSON) instead of human-readable output.
   --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR   Project directory (default: cwd).
 
 EXIT CODES
-  0   Success (zero or more messages printed)
+  0   Success (zero or more messages printed; --follow exits on signal)
   1   Argument error or daemon rejected the op
   17  Daemon not running (socket missing or ECONNREFUSED)
 
 EXAMPLES
   harmonik comms recv --agent myagent
+  harmonik comms recv --agent myagent --follow
   harmonik comms recv --agent myagent --from orchestrator
   harmonik comms recv --agent myagent --topic status --json
+  harmonik comms recv --agent myagent --follow --json
   harmonik comms recv                    # uses $HARMONIK_AGENT
 `)
 }

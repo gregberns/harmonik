@@ -154,6 +154,7 @@ type workLoopDeps struct {
 	// MUST be a field on workLoopDeps — NOT a package-level variable (see
 	// POST_MVH_PARALLELISM_ROADMAP.md §6 anti-pattern).
 	//
+	// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
 	// Bead ref: hk-e61c3.2.
 	runRegistry *RunRegistry
 
@@ -164,6 +165,7 @@ type workLoopDeps struct {
 	// POST_MVH_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
 	// or adapter.
 	//
+	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent configuration).
 	// Bead ref: hk-e61c3.2.
 	maxConcurrent int
 
@@ -454,6 +456,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	}
 
 	// Normalise MaxConcurrent: zero value → 1 (default single-threaded behavior when unset).
+	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent ≥ 1, default 1, sealed at startup).
 	maxConcurrent := cfg.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
@@ -714,6 +717,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// Anti-pattern (roadmap §6): do NOT push the semaphore into brAdapter. The
 	// ceiling belongs here in the work-loop scheduler.
 	//
+	// Spec ref: specs/execution-model.md §4.11 EM-050 (claim-write serialization token-pool of size max_concurrent).
 	// Bead ref: hk-e61c3.3.
 	claimSem := make(chan struct{}, effectiveMax)
 
@@ -789,6 +793,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
+		// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
 		if deps.runRegistry.Len() >= effectiveMax {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
@@ -1245,6 +1250,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
 		// The select allows dispatch-halt to abort the acquire so the loop
 		// does not block indefinitely on shutdown (hk-2o2i9: use dispatchCtx).
+		// Spec ref: specs/execution-model.md §4.11 EM-050 (acquire token before ClaimBead, release after).
 		select {
 		case claimSem <- struct{}{}:
 		case <-dispatchCtx.Done():

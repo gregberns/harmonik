@@ -373,10 +373,10 @@ EXAMPLES
 		return runSubscribeSubcommand(os.Args[2:])
 	}
 
-	// harmonik comms <verb> — agent-to-agent messaging surface (agent-comms spec §2.1 C2).
-	// Currently supports: comms send.
-	// Exit code 17 = daemon not running.
-	// Bead ref: hk-cnjhx (T3).
+	// harmonik comms <verb> — agent-to-agent messaging surface (agent-comms spec §2.1 C2/C3).
+	// Currently supports: comms send (T3), comms log (T5).
+	// Exit code 17 = daemon not running (send only; log reads directly from events.jsonl).
+	// Bead ref: hk-cnjhx (T3), hk-onn1x (T5).
 	if len(os.Args) >= 2 && os.Args[1] == "comms" {
 		return runCommsSubcommand(os.Args[2:])
 	}

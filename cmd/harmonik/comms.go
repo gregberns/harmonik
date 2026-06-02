@@ -1,10 +1,12 @@
 package main
 
-// comms.go — `harmonik comms` CLI subcommand block (agent-comms spec §2.1 C2, bead hk-cnjhx T3).
+// comms.go — `harmonik comms` CLI subcommand block (agent-comms spec §2.1 C2/C3).
 //
-// Routes `harmonik comms <verb>` to the appropriate handler. Currently
-// implements `send` (C2 CLI half); further verbs (recv, log, who, join, leave)
-// land in subsequent tasks (T5, T8–T11).
+// Routes `harmonik comms <verb>` to the appropriate handler. Currently implements:
+//   - send  (C2 CLI half; bead hk-cnjhx T3)
+//   - log   (C3 read-only operator view; bead hk-onn1x T5)
+//
+// Further verbs (recv, who, join, leave) land in subsequent tasks (T8–T11).
 //
 // Flag reference for `harmonik comms send`:
 //
@@ -17,14 +19,23 @@ package main
 //	--                         End of flags; remaining args are the message body.
 //	<body> | -                 Message body as trailing args joined by space, or "-" to read stdin.
 //
+// Flag reference for `harmonik comms log`:
+//
+//	--since EVENT_ID|DURATION  Scan after the given event_id, or within the last DURATION (e.g. 30m).
+//	--to NAME                  Filter: only messages directed to NAME (or broadcast).
+//	--from NAME                Filter: only messages from NAME.
+//	--topic T                  Filter: only messages with topic T.
+//	--json                     Emit one JSON object per matched event (NDJSON).
+//	--project DIR              Project directory (default: cwd).
+//
 // Exit codes:
 //
-//	0   Success (event_id printed to stdout)
-//	1   Argument error or op rejected by daemon
-//	17  Daemon not running (socket missing or ECONNREFUSED)
+//	0   Success
+//	1   Argument error or read failure
+//	17  Daemon not running (send only — socket missing or ECONNREFUSED)
 //
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1.
-// Bead ref: hk-cnjhx (T3).
+// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.4.
+// Bead ref: hk-cnjhx (T3), hk-onn1x (T5).
 
 import (
 	"context"
@@ -38,6 +49,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
 // runCommsSubcommand routes `harmonik comms <verb> [args]`.
@@ -54,8 +68,10 @@ func runCommsSubcommand(subArgs []string) int {
 		return 0
 	case "send":
 		return runCommsSendSubcommand(subArgs[1:])
+	case "log":
+		return runCommsLogSubcommand(subArgs[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log\n", verb)
 		return 2
 	}
 }
@@ -291,16 +307,19 @@ USAGE
 
 VERBS
   send    Send an agent_message to a named agent or broadcast to all
+  log     Read-only operator view of recent agent_message events (no daemon needed)
 
 EXIT CODES
   0   Success
   1   Argument error or op rejected
   2   Unrecognised verb
-  17  Daemon not running
+  17  Daemon not running (send only)
 
 EXAMPLES
   harmonik comms send --to other-agent -- Hello
   harmonik comms send --broadcast --from myagent -- Status update
+  harmonik comms log --since 30m
+  harmonik comms log --since 30m --to myagent --json
 `)
 }
 
@@ -331,5 +350,192 @@ EXAMPLES
   harmonik comms send --to alice --from bob --topic status -- ready
   harmonik comms send --broadcast --from orchestrator -- Batch complete
   echo "body text" | harmonik comms send --to alice --from me -
+`)
+}
+
+// runCommsLogSubcommand implements `harmonik comms log` (agent-comms spec §2.4, bead hk-onn1x T5).
+//
+// Scans events.jsonl for ALL agent_message events ordered by event_id (file order).
+// Does NOT advance any agent cursor — pure read-only operator view.
+// No daemon connection required.
+//
+// --since accepts either:
+//   - a UUIDv7 event_id string (scan after that event)
+//   - a Go duration string (e.g. "30m", "1h") — delivers events whose TimestampWall
+//     is at or after now minus the given duration
+//
+// subArgs is os.Args[3:].
+func runCommsLogSubcommand(subArgs []string) int {
+	sinceFlag := ""
+	toFlag := ""
+	fromFlag := ""
+	topicFlag := ""
+	jsonFlag := false
+	projectFlag := ""
+
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			commsLogUsage()
+			return 0
+		case arg == "--since" && i+1 < len(subArgs):
+			i++
+			sinceFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--since="):
+			sinceFlag = strings.TrimPrefix(arg, "--since=")
+		case arg == "--to" && i+1 < len(subArgs):
+			i++
+			toFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--to="):
+			toFlag = strings.TrimPrefix(arg, "--to=")
+		case arg == "--from" && i+1 < len(subArgs):
+			i++
+			fromFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--from="):
+			fromFlag = strings.TrimPrefix(arg, "--from=")
+		case arg == "--topic" && i+1 < len(subArgs):
+			i++
+			topicFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--topic="):
+			topicFlag = strings.TrimPrefix(arg, "--topic=")
+		case arg == "--json":
+			jsonFlag = true
+		case arg == "--project" && i+1 < len(subArgs):
+			i++
+			projectFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "harmonik comms log: unknown flag %q\n", arg)
+			return 1
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik comms log: unexpected argument %q\n", arg)
+			return 1
+		}
+	}
+
+	// Resolve project directory and events.jsonl path.
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms log: cannot determine cwd: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	absProject, err := filepath.Abs(projectFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms log: cannot resolve project path: %v\n", err)
+		return 1
+	}
+	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
+
+	// Parse --since: try as event_id UUID first, then as a duration.
+	var sinceID core.EventID // zero value = scan from beginning
+	var wallCutoff time.Time  // zero = no wall-time filter
+	if sinceFlag != "" {
+		if err := sinceID.UnmarshalText([]byte(sinceFlag)); err == nil {
+			// Parsed as event_id — sinceID is set; ScanAfter will skip events ≤ sinceID.
+		} else {
+			// Try as a duration.
+			dur, durErr := time.ParseDuration(sinceFlag)
+			if durErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms log: --since %q is not a valid event_id or duration: %v\n", sinceFlag, durErr)
+				return 1
+			}
+			wallCutoff = time.Now().Add(-dur)
+		}
+	}
+
+	// Scan events.jsonl, filter for agent_message, apply addressing filters.
+	count := 0
+	for ev := range eventbus.ScanAfter(eventsPath, sinceID) {
+		if ev.Type != "agent_message" {
+			continue
+		}
+
+		// Apply wall-time cutoff for duration-based --since.
+		if !wallCutoff.IsZero() && ev.TimestampWall.Before(wallCutoff) {
+			continue
+		}
+
+		// Decode payload to apply addressing filters.
+		var p core.AgentMessagePayload
+		if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
+			// Malformed payload — skip with warning.
+			fmt.Fprintf(os.Stderr, "harmonik comms log: malformed agent_message payload (event_id=%s): %v\n", ev.EventID, decErr)
+			continue
+		}
+
+		// Apply --from filter.
+		if fromFlag != "" && p.From != fromFlag {
+			continue
+		}
+		// Apply --to filter: match directed-to-name or broadcast "*".
+		if toFlag != "" && p.To != toFlag && p.To != "*" {
+			continue
+		}
+		// Apply --topic filter.
+		if topicFlag != "" && p.Topic != topicFlag {
+			continue
+		}
+
+		count++
+		if jsonFlag {
+			// Emit the full event envelope as NDJSON.
+			line, marshalErr := json.Marshal(ev)
+			if marshalErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms log: marshal event: %v\n", marshalErr)
+				return 1
+			}
+			fmt.Println(string(line))
+		} else {
+			// Human-readable: timestamp  from → to  [topic]  body
+			ts := ev.TimestampWall.UTC().Format(time.RFC3339)
+			direction := fmt.Sprintf("%s → %s", p.From, p.To)
+			if p.Topic != "" {
+				fmt.Printf("%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body)
+			} else {
+				fmt.Printf("%s  %-30s  %s\n", ts, direction, p.Body)
+			}
+		}
+	}
+
+	if count == 0 && !jsonFlag {
+		fmt.Fprintln(os.Stderr, "harmonik comms log: no agent_message events found")
+	}
+	return 0
+}
+
+func commsLogUsage() {
+	fmt.Print(`harmonik comms log — read-only operator view of agent_message events
+
+USAGE
+  harmonik comms log [--since <event_id|duration>] [--to NAME] [--from NAME] [--topic T] [--json] [--project DIR]
+
+Scans events.jsonl for all agent_message events ordered by event_id (file/chronological order).
+Does NOT advance any agent cursor. No daemon connection required.
+
+FLAGS
+  --since EVENT_ID|DURATION
+                  Start from: an event_id (scan after that event) OR a duration (e.g. 30m, 1h,
+                  12h) meaning "events in the last <duration>". Without --since, scans all events.
+  --to NAME       Filter: only messages directed to NAME or broadcast ("*").
+  --from NAME     Filter: only messages from NAME.
+  --topic T       Filter: only messages with topic T.
+  --json          Emit one JSON event envelope per line (NDJSON) instead of human-readable output.
+  --project DIR   Project directory (default: cwd). Used to locate .harmonik/events/events.jsonl.
+
+EXIT CODES
+  0   Success
+  1   Argument error or read failure
+
+EXAMPLES
+  harmonik comms log                          # all agent_message events
+  harmonik comms log --since 30m              # last 30 minutes
+  harmonik comms log --since 1h --to alice    # last hour, directed to alice or broadcast
+  harmonik comms log --from orchestrator      # all messages from orchestrator
+  harmonik comms log --json                   # machine-readable NDJSON
 `)
 }

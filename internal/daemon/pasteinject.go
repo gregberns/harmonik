@@ -156,7 +156,32 @@ type paneLivenessChecker interface {
 // children-only probe (`pgrep -P <panePID>`) returns nothing for a perfectly
 // healthy agent.  We therefore also accept the pane PID *itself* as evidence of
 // liveness when its command matches one of these fragments.
+//
+// This is the fallback used by hasChildProcess and by perRunSubstrate instances
+// whose HandlerBinary resolves to "claude". Derived-binary overrides are set per
+// run via agentCommandFragmentsFor.
 var livePaneCommandSubstrings = []string{"claude", "node"}
+
+// agentCommandFragmentsFor returns command-name substrings to match against the
+// tmux pane's foreground process command for liveness detection.
+//
+// When binary is empty or its basename is "claude", the function returns
+// livePaneCommandSubstrings (preserving the existing "claude"/"node" behaviour,
+// since the claude CLI is a Node.js application that may exec as "node").  For
+// any other binary the basename alone is returned so that custom handler binaries
+// (non-claude agents) are matched correctly.
+//
+// Bead: hk-vhped.
+func agentCommandFragmentsFor(binary string) []string {
+	if binary == "" {
+		return livePaneCommandSubstrings
+	}
+	base := filepath.Base(binary)
+	if base == "claude" {
+		return livePaneCommandSubstrings
+	}
+	return []string{base}
+}
 
 // hasChildProcess reports whether the process identified by pid represents a
 // live hosted agent — either because pid has at least one descendant process,
@@ -200,7 +225,7 @@ func hasChildProcess(pid int) bool {
 	}
 	// (b) No children — but the pane PID may itself be the agent (exec'd shell).
 	//     Treat a recognised agent command as live.
-	return commandMatchesLiveAgent(pid)
+	return commandMatchesLiveAgent(pid, livePaneCommandSubstrings)
 }
 
 // hasAnyDirectChild reports whether pid has at least one direct child process,
@@ -210,10 +235,10 @@ func hasAnyDirectChild(pid int) bool {
 }
 
 // commandMatchesLiveAgent reports whether the command name of pid contains one
-// of livePaneCommandSubstrings (e.g. "claude" or its "node" runtime).  Uses
+// of the provided fragments (e.g. "claude" or its "node" runtime).  Uses
 // `ps -o comm= -p <pid>`, which is available on macOS and mainstream Linux.
 // Returns false on any error or empty output (conservative).
-func commandMatchesLiveAgent(pid int) bool {
+func commandMatchesLiveAgent(pid int, fragments []string) bool {
 	out, err := exec.Command("ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
 	if err != nil {
 		return false
@@ -222,7 +247,7 @@ func commandMatchesLiveAgent(pid int) bool {
 	if comm == "" {
 		return false
 	}
-	for _, frag := range livePaneCommandSubstrings {
+	for _, frag := range fragments {
 		if strings.Contains(comm, frag) {
 			return true
 		}

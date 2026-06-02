@@ -1085,9 +1085,12 @@ func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) str
 // newPerRunSubstrate semantics). Tests that call WriteLastPane on the returned
 // value must call SpawnWindow first to capture the pane target.
 //
-// Bead ref: hk-jfh59.
+// Passes "" for handlerBinary so agentCommandFragments defaults to
+// livePaneCommandSubstrings, preserving the existing test behaviour.
+//
+// Bead ref: hk-jfh59, hk-vhped.
 func ExportedNewPerRunSubstrate(sub handler.Substrate) handler.Substrate {
-	prs := newPerRunSubstrate(sub)
+	prs := newPerRunSubstrate(sub, "")
 	if prs == nil {
 		return nil
 	}

@@ -1782,7 +1782,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// tmuxSubstrate removed.)
 	var runSubstrate handler.Substrate = deps.substrate
 	var runPasteTarget handler.Substrate = deps.substrate // fallback: shared substrate
-	if prs := newPerRunSubstrate(deps.substrate); prs != nil {
+	if prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary); prs != nil {
 		runSubstrate = prs
 		runPasteTarget = prs
 	}

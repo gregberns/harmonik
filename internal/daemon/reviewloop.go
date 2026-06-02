@@ -242,7 +242,7 @@ func runReviewLoop(
 		// (hk-jfh59: shared-state methods on tmuxSubstrate removed.)
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		implPRS := newPerRunSubstrate(deps.substrate)
+		implPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary)
 		var implSubstrate handler.Substrate = deps.substrate
 		var implPasteTarget handler.Substrate = deps.substrate
 		if implPRS != nil {
@@ -791,7 +791,7 @@ func runReviewLoop(
 		// cross-run pane misdirection under MaxConcurrent>1.
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		revPRS := newPerRunSubstrate(deps.substrate)
+		revPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary)
 		var revSubstrate handler.Substrate = deps.substrate
 		var revPasteTarget handler.Substrate = deps.substrate
 		if revPRS != nil {

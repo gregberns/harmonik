@@ -385,6 +385,14 @@ type perRunSubstrate struct {
 	// Empty when SpawnWindow has not yet been called or when the session does
 	// not implement paneTargeter.
 	cachedPaneTarget string
+
+	// agentCommandFragments holds command-name substrings used by
+	// PaneHasActiveProcess to recognise the handler process when it is the pane
+	// PID itself (exec'd shell, no children during thinking phase). Derived from
+	// HandlerBinary via agentCommandFragmentsFor at construction time.
+	//
+	// Bead: hk-vhped.
+	agentCommandFragments []string
 }
 
 // Compile-time assertions for perRunSubstrate.
@@ -451,6 +459,11 @@ func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
 // sub and captures the spawned pane target from the returned SubstrateSession.
 //
+// handlerBinary is the handler executable path (e.g. "claude" or a custom
+// binary).  It is used to derive agentCommandFragments for pane-liveness
+// matching via agentCommandFragmentsFor; pass "" to fall back to the global
+// livePaneCommandSubstrings default.
+//
 // When sub implements substrateWithAdapter, perRunSubstrate can forward
 // paste-inject calls to the underlying tmux.Adapter using the captured pane
 // target; this is the production path (*tmuxSubstrate).
@@ -463,7 +476,7 @@ func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 //
 // Returns nil when sub is nil (safe: the caller falls back to the shared-substrate
 // path which is correct for the exec.CommandContext / no-tmux code path).
-func newPerRunSubstrate(sub handler.Substrate) *perRunSubstrate {
+func newPerRunSubstrate(sub handler.Substrate, handlerBinary string) *perRunSubstrate {
 	if sub == nil {
 		return nil
 	}
@@ -475,7 +488,10 @@ func newPerRunSubstrate(sub handler.Substrate) *perRunSubstrate {
 		// isolation (e.g. spy substrates in pasteinject_hk2hb2y_test.go).
 		return nil
 	}
-	return &perRunSubstrate{inner: ts}
+	return &perRunSubstrate{
+		inner:                 ts,
+		agentCommandFragments: agentCommandFragmentsFor(handlerBinary),
+	}
 }
 
 // SpawnWindow delegates to the inner tmuxSubstrate.SpawnWindow and captures the
@@ -547,16 +563,24 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 }
 
 // PaneHasActiveProcess returns true when the tmux pane shell (identified by the
-// pane target captured at SpawnWindow time) has at least one child process —
-// i.e. the hosted claude process is still running under the shell.
+// pane target captured at SpawnWindow time) has at least one child process, or
+// when the pane PID itself is the handler process (exec'd shell with no
+// children during a thinking phase).
 //
 // The implementation retrieves the shell PID via WindowPanePID (using the
-// stable per-run pane target), then calls hasChildProcess to check for children
-// via `pgrep -P <pid>`.  Returns false on any error (conservative).
+// stable per-run pane target), checks for direct children via hasAnyDirectChild,
+// and — if none are found — checks whether the pane PID itself is a recognised
+// handler command by matching against agentCommandFragments (derived from
+// HandlerBinary at construction time via agentCommandFragmentsFor).
+//
+// Using the per-run fragments instead of the global livePaneCommandSubstrings
+// means custom handler binaries (non-claude agents) are matched correctly.
+//
+// Returns false on any error (conservative).
 //
 // Implements paneLivenessChecker.
 //
-// Bead: hk-fbydv.
+// Beads: hk-fbydv, hk-vhped.
 func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	target := p.paneTarget()
 	if target == "" {
@@ -569,7 +593,10 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	return hasChildProcess(pid)
+	if hasAnyDirectChild(pid) {
+		return true
+	}
+	return commandMatchesLiveAgent(pid, p.agentCommandFragments)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

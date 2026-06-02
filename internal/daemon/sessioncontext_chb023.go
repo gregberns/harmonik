@@ -139,13 +139,14 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 			"daemon: persistClaudeSessionID: write context file %q: %w", contextFilePath, err)
 	}
 
-	// Stage the context file.
+	// Stage the context file. Use -f because .harmonik/ is in .gitignore;
+	// without -f, git add exits 1 and persistence silently fails (hk-gtgwn).
 	relPath := filepath.Join(runContextDirPrefix, runID.String(), runContextFileName)
-	addCmd := exec.CommandContext(ctx, "git", "add", relPath)
+	addCmd := exec.CommandContext(ctx, "git", "add", "-f", relPath)
 	addCmd.Dir = wtPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
-			"daemon: persistClaudeSessionID: git add %q: %w\ngit output: %s", relPath, err, out)
+			"daemon: persistClaudeSessionID: git add -f %q: %w\ngit output: %s", relPath, err, out)
 	}
 
 	// Commit with a trailerised message so EM-031 state-reconstruction can find

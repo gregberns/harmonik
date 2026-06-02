@@ -233,12 +233,28 @@ func cpinv003FixtureSideEffect(t *testing.T) SideEffect {
 	}
 }
 
+// cpinv003FixtureGateEnvelope returns a minimal valid InputEnvelope for use in
+// CP-INV-003 Gate replay-safety tests. The caller must pass this same envelope
+// to both cpinv003GateHash and InvokeCognitionGate so that the pre-seeded stored
+// hash matches the hash computed at invocation time.
+func cpinv003FixtureGateEnvelope(t *testing.T, run *Run) InputEnvelope {
+	t.Helper()
+	return InputEnvelope{
+		ExpressionText:    nil, // pure-cognition: no expression body (item 1)
+		PromptTemplate:    "You are a quality gate reviewer. Assess: {{.work}}",
+		SkillPackages:     []string{"code-reviewer@1.0.0"},
+		ContextSubset:     run.Context,
+		PolicyMeta:        map[string]any{"name": "test-gate-policy", "schema_version": 1},
+		ContextSubsetMode: ContextSubsetModeConservative,
+	}
+}
+
 // cpinv003GateHash computes the gate envelope hash the same way InvokeCognitionGate
 // will. Used to pre-seed a reader with a verdict carrying the correct stored hash
 // so that the hash-match replay path is exercised.
-func cpinv003GateHash(t *testing.T, cp ControlPoint, run *Run) string {
+func cpinv003GateHash(t *testing.T, envelope InputEnvelope) string {
 	t.Helper()
-	hash, err := computeGateEnvelopeHash(cp, run)
+	hash, err := ComputeInputEnvelopeHash(envelope)
 	if err != nil {
 		t.Fatalf("cpinv003GateHash: %v", err)
 	}
@@ -314,14 +330,14 @@ func TestCPINV003_Sensor_EnvelopeHashDeterminism(t *testing.T) {
 	run := cpinv003FixtureRun(t)
 	triggeringEventID := EventID(uuid.Must(uuid.NewV7()))
 
-	gateCP := cpinv003FixtureCognitionGate(t, "sensor-hash-det-gate")
 	hookCP := cpinv003FixtureCognitionHook(t, "sensor-hash-det-hook")
 
 	t.Run("Gate", func(t *testing.T) {
 		t.Parallel()
 
-		h1 := cpinv003GateHash(t, gateCP, run)
-		h2 := cpinv003GateHash(t, gateCP, run)
+		gateEnv := cpinv003FixtureGateEnvelope(t, run)
+		h1 := cpinv003GateHash(t, gateEnv)
+		h2 := cpinv003GateHash(t, gateEnv)
 
 		if h1 != h2 {
 			t.Errorf("CP-040a: Gate envelope hash is non-deterministic: run1=%q run2=%q — replay-safety is structurally broken", h1, h2)
@@ -347,9 +363,11 @@ func TestCPINV003_Sensor_EnvelopeHashDeterminism(t *testing.T) {
 
 	t.Run("GateAndHookDifferByKind", func(t *testing.T) {
 		t.Parallel()
-		// Gate and Hook hashes over the same run MUST differ to prevent a Gate
-		// verdict from being accepted as a Hook verdict (or vice versa).
-		gateHash := cpinv003GateHash(t, gateCP, run)
+		// Gate and Hook hashes over the same run MUST differ so a Gate verdict
+		// cannot be accepted as a Hook verdict. Gate uses ComputeInputEnvelopeHash
+		// while Hook still uses the computeHookEnvelopeHash (hook narrowings tracked
+		// separately); the different JSON shapes guarantee distinct digests.
+		gateHash := cpinv003GateHash(t, cpinv003FixtureGateEnvelope(t, run))
 		hookHash := cpinv003HookHash(t, hookCP, run, triggeringEventID)
 		if gateHash == hookHash {
 			t.Error("CP-040a: Gate and Hook envelope hashes are identical — kind is not covered in the hash surface")
@@ -373,9 +391,10 @@ func TestCPINV003_Sensor_GateReplayConsumesPersistedVerdictOnHashMatch(t *testin
 	run := cpinv003FixtureRun(t)
 	chosen := Edge{FromNode: "node-src", ToNode: "node-dst", Weight: 1, OrderingKey: "a"}
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
+	envelope := cpinv003FixtureGateEnvelope(t, run)
 
 	// Pre-seed reader with a persisted verdict whose hash matches the current envelope.
-	storedHash := cpinv003GateHash(t, cp, run)
+	storedHash := cpinv003GateHash(t, envelope)
 	persistedVerdict := GateVerdictRecord{
 		GateName:          cp.Name,
 		Action:            GateActionAllow,
@@ -385,7 +404,7 @@ func TestCPINV003_Sensor_GateReplayConsumesPersistedVerdictOnHashMatch(t *testin
 	reader := &cpinv003GateReader{found: true, verdict: persistedVerdict}
 	eval := &cpinv003GateEval{}
 
-	got, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	got, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err != nil {
 		t.Fatalf("CP-INV-003 Gate hash-match: unexpected error: %v", err)
 	}
@@ -466,6 +485,7 @@ func TestCPINV003_Sensor_GateHashMismatchPreventsSilentReInvoke(t *testing.T) {
 	run := cpinv003FixtureRun(t)
 	chosen := Edge{FromNode: "node-src", ToNode: "node-dst", Weight: 1, OrderingKey: "a"}
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
+	envelope := cpinv003FixtureGateEnvelope(t, run)
 
 	// Pre-seed reader with a verdict carrying a STALE hash (64 f's — obviously wrong).
 	staleHash := strings.Repeat("f", 64)
@@ -478,7 +498,7 @@ func TestCPINV003_Sensor_GateHashMismatchPreventsSilentReInvoke(t *testing.T) {
 	reader := &cpinv003GateReader{found: true, verdict: persistedVerdict}
 	eval := &cpinv003GateEval{}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-INV-003 Gate hash-mismatch: expected error, got nil")
 	}
@@ -563,6 +583,7 @@ func TestCPINV003_Sensor_MismatchErrorsCarryBothHashes(t *testing.T) {
 		cp := cpinv003FixtureCognitionGate(t, "sensor-gate-mismatch-hashes")
 		chosen := Edge{FromNode: "node-src", ToNode: "node-dst", Weight: 1, OrderingKey: "a"}
 		outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
+		envelope := cpinv003FixtureGateEnvelope(t, run)
 
 		staleHash := strings.Repeat("a", 64)
 		reader := &cpinv003GateReader{
@@ -575,7 +596,7 @@ func TestCPINV003_Sensor_MismatchErrorsCarryBothHashes(t *testing.T) {
 			},
 		}
 
-		_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, &cpinv003GateEval{}, reader)
+		_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, &cpinv003GateEval{}, reader, envelope)
 		if err == nil {
 			t.Fatal("expected mismatch error, got nil")
 		}
@@ -658,6 +679,7 @@ func TestCPINV003_Sensor_GateMismatchPayloadIsWellFormed(t *testing.T) {
 	cp := cpinv003FixtureCognitionGate(t, "sensor-gate-mismatch-payload")
 	chosen := Edge{FromNode: "node-src", ToNode: "node-dst", Weight: 1, OrderingKey: "a"}
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
+	envelope := cpinv003FixtureGateEnvelope(t, run)
 
 	staleHash := strings.Repeat("c", 64)
 	reader := &cpinv003GateReader{
@@ -670,7 +692,7 @@ func TestCPINV003_Sensor_GateMismatchPayloadIsWellFormed(t *testing.T) {
 		},
 	}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, &cpinv003GateEval{}, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, &cpinv003GateEval{}, reader, envelope)
 	var me *ErrGateVerdictEnvelopeMismatch
 	if !errors.As(err, &me) {
 		t.Fatalf("expected *ErrGateVerdictEnvelopeMismatch, got %T: %v", err, err)
@@ -802,8 +824,9 @@ func TestCPINV003_Sensor_GateDecisionTable(t *testing.T) {
 	cp := cpinv003FixtureCognitionGate(t, "sensor-gate-decision-table")
 	chosen := Edge{FromNode: "node-src", ToNode: "node-dst", Weight: 1, OrderingKey: "a"}
 	outcome := Outcome{Status: OutcomeStatusSuccess, Kind: OutcomeKindDefault}
+	envelope := cpinv003FixtureGateEnvelope(t, run)
 
-	matchingHash := cpinv003GateHash(t, cp, run)
+	matchingHash := cpinv003GateHash(t, envelope)
 	staleHash := strings.Repeat("9", 64)
 
 	type tableRow struct {
@@ -853,7 +876,7 @@ func TestCPINV003_Sensor_GateDecisionTable(t *testing.T) {
 				Action: GateActionAllow,
 			}}
 
-			_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+			_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 
 			if row.wantMismatchError {
 				var me *ErrGateVerdictEnvelopeMismatch

@@ -114,12 +114,28 @@ func cp011FixtureCognitionGate(t *testing.T, name string) ControlPoint {
 	}
 }
 
-// cp011ComputeExpectedHash computes the hash that InvokeCognitionGate should
-// produce for the given cp and run. Used in tests that pre-seed the reader
-// with a correctly-hashed persisted verdict.
-func cp011ComputeExpectedHash(t *testing.T, cp ControlPoint, run *Run) string {
+// cp011FixtureEnvelope returns a minimal valid InputEnvelope for use in CP-011
+// tests. ContextSubsetModeConservative is used with the full run.Context map per
+// CP-040a. Callers must pass the same envelope to both InvokeCognitionGate and
+// cp011ComputeExpectedHash to ensure hash-match replay tests are coherent.
+func cp011FixtureEnvelope(t *testing.T, run *Run) InputEnvelope {
 	t.Helper()
-	hash, err := computeGateEnvelopeHash(cp, run)
+	return InputEnvelope{
+		ExpressionText:    nil, // pure-cognition: no expression body (item 1)
+		PromptTemplate:    "You are a quality reviewer. Assess the work item for merge readiness.",
+		SkillPackages:     []string{"code-reviewer@1.0.0"},
+		ContextSubset:     run.Context,
+		PolicyMeta:        map[string]any{"name": "test-quality-policy", "schema_version": 1},
+		ContextSubsetMode: ContextSubsetModeConservative,
+	}
+}
+
+// cp011ComputeExpectedHash computes the hash that InvokeCognitionGate should
+// produce for the given envelope. Used in tests that pre-seed the reader with
+// a correctly-hashed persisted verdict.
+func cp011ComputeExpectedHash(t *testing.T, envelope InputEnvelope) string {
+	t.Helper()
+	hash, err := ComputeInputEnvelopeHash(envelope)
 	if err != nil {
 		t.Fatalf("cp011ComputeExpectedHash: %v", err)
 	}
@@ -142,6 +158,7 @@ func TestCP011_FirstInvocation_EvaluatorCalledOnce(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	reason := "quality bar not met"
 	eval := &cp011StubEval{returnVerdict: GateVerdictRecord{
@@ -153,7 +170,7 @@ func TestCP011_FirstInvocation_EvaluatorCalledOnce(t *testing.T) {
 	}}
 	reader := &cp011StubReader{found: false}
 
-	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err != nil {
 		t.Fatalf("CP-011: unexpected error: %v", err)
 	}
@@ -199,8 +216,9 @@ func TestCP011_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
-	correctHash := cp011ComputeExpectedHash(t, cp, run)
+	correctHash := cp011ComputeExpectedHash(t, envelope)
 
 	persistedVerdict := GateVerdictRecord{
 		GateName:          "approval-gate",
@@ -212,7 +230,7 @@ func TestCP011_Replay_HashMatch_EvaluatorNotCalled(t *testing.T) {
 	eval := &cp011StubEval{}
 	reader := &cp011StubReader{found: true, verdict: persistedVerdict}
 
-	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err != nil {
 		t.Fatalf("CP-011: unexpected error on replay: %v", err)
 	}
@@ -250,6 +268,7 @@ func TestCP011_Replay_HashMismatch_ReturnsEnvelopeMismatchError(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	staleHash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -263,7 +282,7 @@ func TestCP011_Replay_HashMismatch_ReturnsEnvelopeMismatchError(t *testing.T) {
 	eval := &cp011StubEval{}
 	reader := &cp011StubReader{found: true, verdict: persistedVerdict}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-011: expected ErrGateVerdictEnvelopeMismatch, got nil error")
 	}
@@ -304,12 +323,13 @@ func TestCP011_EvaluatorError_PropagatesError(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	dispatchErr := fmt.Errorf("cognition dispatch failed: model timeout")
 	eval := &cp011StubEval{returnErr: dispatchErr}
 	reader := &cp011StubReader{found: false}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-011: expected error from evaluator, got nil")
 	}
@@ -335,12 +355,13 @@ func TestCP011_ReaderError_PropagatesError(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	readErr := fmt.Errorf("verdict store unavailable: I/O error")
 	eval := &cp011StubEval{}
 	reader := &cp011StubReader{readErr: readErr}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-011: expected error from reader, got nil")
 	}
@@ -383,11 +404,12 @@ func TestCP011_MechanismTaggedCP_ReturnsError(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	eval := &cp011StubEval{}
 	reader := &cp011StubReader{}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-011: expected error for mechanism-tagged ControlPoint, got nil")
 	}
@@ -427,11 +449,12 @@ func TestCP011_NilDelegationPath_ReturnsError(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	eval := &cp011StubEval{}
 	reader := &cp011StubReader{}
 
-	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	_, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err == nil {
 		t.Fatal("CP-011: expected error for nil DelegationPath, got nil")
 	}
@@ -451,6 +474,7 @@ func TestCP011_GateName_StampedFromControlPoint(t *testing.T) {
 	run := cp011FixtureRun(t)
 	chosen := cp011FixtureEdge(t)
 	outcome := cp011FixtureOutcome(t)
+	envelope := cp011FixtureEnvelope(t, run)
 
 	eval := &cp011StubEval{returnVerdict: GateVerdictRecord{
 		GateName:          "wrong-name-set-by-evaluator",
@@ -460,7 +484,7 @@ func TestCP011_GateName_StampedFromControlPoint(t *testing.T) {
 	}}
 	reader := &cp011StubReader{found: false}
 
-	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader)
+	verdict, err := InvokeCognitionGate(context.Background(), cp, run, chosen, outcome, eval, reader, envelope)
 	if err != nil {
 		t.Fatalf("CP-011: unexpected error: %v", err)
 	}

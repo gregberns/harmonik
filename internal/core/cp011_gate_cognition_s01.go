@@ -24,12 +24,10 @@ package core
 //
 //	cognition (role dispatch via CognitionGateEvaluator — boundary per CP-042).
 //
-// Refs: hk-a8bg.10
+// Refs: hk-a8bg.10, hk-021nw
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -82,67 +80,6 @@ func (e *ErrGateVerdictEnvelopeMismatch) Error() string {
 		e.GateName, e.StoredHash, e.CurrentHash)
 }
 
-// gateInputEnvelope is the canonical set of inputs hashed to produce the
-// InputEnvelopeHash for a cognition-tagged Gate evaluator per
-// specs/control-points.md §4.8.CP-040a.
-//
-// CP-040a declares five envelope inputs. This implementation covers a subset;
-// the covered and deferred items are listed below so readers know the exact
-// replay-safety surface:
-//
-// Item 1 — expression_text: covered via ControlPointName + DelegationPath refs
-//   (cognition-tagged gates have no policy expression body; the delegation-path
-//   ref set serves as the structural identity of the evaluator).
-//
-// Item 2 — resolved prompt-template body: NOT YET IMPLEMENTED. This envelope
-//   carries PromptTemplateRef (a registry name) rather than the resolved
-//   template body. A template content change that leaves the ref name unchanged
-//   will NOT bust the hash and will NOT trigger Cat 6 escalation. Tracked as a
-//   known narrowing; full coverage requires a template-resolver pass at
-//   invocation time. File a follow-up bead to add resolved body inclusion.
-//
-// Item 3 — skill_packages snapshot: NOT YET IMPLEMENTED. No skill-package
-//   snapshot is included in the envelope. A skill-package update will NOT bust
-//   the hash. Tracked as a known narrowing; coverage requires the skill-package
-//   registry snapshot surface. File a follow-up bead to add snapshotting.
-//
-// Item 4 — context_subset (conservative fallback): covered. The full run.Context
-//   map is used since this implementation does not AST-walk delegation-path
-//   prompt templates to determine the reachable subset. Any change to run.Context
-//   busts the hash and triggers Cat 6 escalation on replay per CP-041. This
-//   behaviour is declared explicitly on cognition-tagged Gate ControlPoints per
-//   the single-mode rule in CP-040a.
-//
-// Item 5 — policy_meta block: PARTIALLY COVERED. Only the integer SchemaVersion
-//   field is included rather than the full policy_meta block declared in CP-040a.
-//   Changes to other policy metadata fields (e.g., document hash, policy name)
-//   will NOT bust the hash. Tracked as a known narrowing; full coverage requires
-//   the PolicyMeta record to be carried on the ControlPoint. File a follow-up
-//   bead to promote SchemaVersion to a full PolicyMeta struct.
-type gateInputEnvelope struct {
-	ControlPointName string         `json:"control_point_name"`
-	DelegationPath   DelegationPath `json:"delegation_path"`
-	RunContext       map[string]any `json:"run_context"`
-	SchemaVersion    int            `json:"schema_version"`
-}
-
-// computeGateEnvelopeHash returns the SHA-256 hex digest of the canonical JSON
-// of the gate's input envelope per specs/control-points.md §4.8.CP-040a.
-func computeGateEnvelopeHash(cp ControlPoint, run *Run) (string, error) {
-	envelope := gateInputEnvelope{
-		ControlPointName: cp.Name,
-		DelegationPath:   *cp.Evaluator.DelegationPath,
-		RunContext:       run.Context,
-		SchemaVersion:    cp.SchemaVersion,
-	}
-	data, err := json.Marshal(envelope)
-	if err != nil {
-		return "", fmt.Errorf("marshal gate input envelope: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%x", sum), nil
-}
-
 // InvokeCognitionGate implements the §7.2 cognition-tagged evaluator invocation
 // path for Gate ControlPoints per CP-011 / CP-039–CP-042.
 //
@@ -180,8 +117,21 @@ func computeGateEnvelopeHash(cp ControlPoint, run *Run) (string, error) {
 // Verdict persistence (Evidence.SetGateVerdict + Transition commit) is the
 // caller's responsibility and MUST happen before the transition advances.
 //
+// # envelope parameter (CP-040a, hk-021nw)
+//
+// envelope is the fully-populated five-input CP-040a envelope. The caller MUST
+// supply the resolved prompt template body (item 2 — NOT the ref name from
+// DelegationPath.PromptTemplateRef, but the body resolved from the template
+// registry at invocation time), the skill_packages snapshot from the originating
+// handler launch's skills_provisioned event (item 3), the run context subset
+// (item 4; ContextSubsetModeConservative = full run.Context when no AST walk is
+// performed), and the full policy_meta block from the declaring policy document
+// (item 5). ExpressionText (item 1) MUST be nil for cognition-tagged Gate
+// evaluators. ComputeInputEnvelopeHash is called internally; the caller must
+// not pre-hash the envelope. See [InputEnvelope] for full field semantics.
+//
 // Spec ref: specs/control-points.md §4.2.CP-011, §4.8 CP-039–CP-042, §7.2.
-// Refs: hk-a8bg.10
+// Refs: hk-a8bg.10, hk-021nw
 func InvokeCognitionGate(
 	ctx context.Context,
 	cp ControlPoint,
@@ -190,6 +140,7 @@ func InvokeCognitionGate(
 	outcome Outcome,
 	eval CognitionGateEvaluator,
 	reader GateVerdictReader,
+	envelope InputEnvelope,
 ) (GateVerdictRecord, error) {
 	// Structural invariant: cp must be cognition-tagged with a valid delegation path.
 	if cp.Evaluator.Mode != ModeTagCognition || cp.Evaluator.DelegationPath == nil {
@@ -197,7 +148,7 @@ func InvokeCognitionGate(
 	}
 
 	// CP-040a: compute the input envelope hash for replay-safety checks.
-	currentHash, err := computeGateEnvelopeHash(cp, run)
+	currentHash, err := ComputeInputEnvelopeHash(envelope)
 	if err != nil {
 		return GateVerdictRecord{}, fmt.Errorf("gate %q: envelope hash computation failed: %w", cp.Name, err)
 	}

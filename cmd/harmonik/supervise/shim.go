@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
@@ -90,7 +91,7 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Watch-restart mode: use internal/supervise.Supervisor.
-	return runWithSupervisor(cfg, stdout, stderr)
+	return runWithSupervisor(cfg, projectDir, stdout, stderr)
 }
 
 // runDirect exec-replaces the shim with the supervisee command.
@@ -136,8 +137,9 @@ func buildPiEnv(apiKey string) []string {
 }
 
 // runWithSupervisor runs the supervisee under internal/supervise.Supervisor
-// with restart policy from config.json.
-func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
+// with restart policy from config.json, and concurrently runs a DaemonWatchdog
+// that revives the harmonik daemon if it dies (supervisor-owned revival, CL-083).
+func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) int {
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	policy := supervise.PolicyOnFailure
@@ -180,6 +182,23 @@ func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
 	ctx, stop := setupSignals()
 	defer stop()
 
+	// Daemon watchdog: runs alongside the Pi supervisor, reviving the harmonik
+	// daemon when it is detected dead via socket probe (CL-083 supervisor-owned
+	// revival). The daemon command is built from the current executable and the
+	// project directory known to the shim.
+	if daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent); len(daemonCmd) > 0 {
+		dw := supervise.NewDaemonWatchdog(supervise.DaemonWatchdogSpec{
+			SocketPath: lifecycle.SocketPath(projectDir),
+			Command:    daemonCmd,
+			WorkDir:    projectDir,
+		}, log)
+		go func() {
+			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(stderr, "daemon-watchdog: exited: %v\n", err)
+			}
+		}()
+	}
+
 	if err := sv.Run(ctx); err != nil {
 		state := sv.Snapshot()
 		if state.Status == supervise.StatusCrashLoop {
@@ -191,6 +210,23 @@ func runWithSupervisor(cfg Config, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// buildDaemonCmd constructs the harmonik daemon revival argv from the current
+// executable and the project parameters. The daemon is restarted with
+// --no-auto-pull (queue-only, safe default per process-lifecycle.md §"Start the
+// daemon once") and --max-concurrent when cfg.MaxConcurrent is set.
+// Returns nil when the executable path cannot be resolved.
+func buildDaemonCmd(projectDir string, maxConcurrent int) []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	cmd := []string{exe, "--project", projectDir, "--no-auto-pull"}
+	if maxConcurrent > 0 {
+		cmd = append(cmd, "--max-concurrent", fmt.Sprintf("%d", maxConcurrent))
+	}
+	return cmd
 }
 
 // setupSignals returns a context cancelled on SIGINT/SIGTERM and a stop func.

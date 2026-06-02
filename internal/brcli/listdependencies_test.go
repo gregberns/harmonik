@@ -3,7 +3,6 @@ package brcli_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -191,8 +190,10 @@ func TestListDependenciesMalformedJSON(t *testing.T) {
 }
 
 func TestListDependenciesUnknownEdgeKind(t *testing.T) {
-	// "related" is a real Beads dep-type but is not in core.EdgeKind constants.
-	// UnmarshalText must reject it. Tracked at hk-872.55.
+	// "related" is a real Beads dep-type not yet in core.EdgeKind constants.
+	// ListDependencies must SKIP (not error) unknown edge kinds so that QM-025
+	// blocking checks are not disrupted by unrelated dep types (hk-hpqat fix /
+	// hk-872.55 read-surface tolerance).
 	jsonStr := `[{"issue_id":"hk-872.14","depends_on_id":"hk-872","type":"related","title":"Parent","status":"open","priority":2}]`
 	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
 
@@ -201,11 +202,40 @@ func TestListDependenciesUnknownEdgeKind(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = adapter.ListDependencies(context.Background(), core.BeadID("hk-872.14"))
-	if err == nil {
-		t.Fatal("expected error for unknown EdgeKind 'related', got nil")
+	edges, err := adapter.ListDependencies(context.Background(), core.BeadID("hk-872.14"))
+	if err != nil {
+		t.Fatalf("ListDependencies: unexpected error for unknown EdgeKind 'related': %v", err)
 	}
-	if !strings.Contains(err.Error(), "related") {
-		t.Errorf("expected error message to contain %q for diagnostics; got: %v", "related", err)
+	// Unknown edge kinds are silently skipped; only known-kind edges are returned.
+	if len(edges) != 0 {
+		t.Errorf("expected 0 edges (unknown kind skipped), got %d", len(edges))
+	}
+}
+
+func TestListDependenciesMixedKnownUnknownEdgeKinds(t *testing.T) {
+	// One "blocks" (known) + one "related" (unknown). Only the "blocks" edge
+	// must be returned; the "related" edge is silently skipped.
+	// Regression test for hk-hpqat: multi-bead submit internal_error when any
+	// bead has a "related" dep.
+	jsonStr := `[` +
+		`{"issue_id":"hk-a","depends_on_id":"hk-b","type":"blocks","title":"A blocks B","status":"open","priority":2},` +
+		`{"issue_id":"hk-a","depends_on_id":"hk-c","type":"related","title":"A related C","status":"open","priority":2}` +
+		`]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	edges, err := adapter.ListDependencies(context.Background(), core.BeadID("hk-a"))
+	if err != nil {
+		t.Fatalf("ListDependencies: unexpected error: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 edge (blocks only, related skipped), got %d", len(edges))
+	}
+	if edges[0].EdgeKind != core.EdgeKindBlocks {
+		t.Errorf("expected EdgeKindBlocks, got %q", edges[0].EdgeKind)
 	}
 }

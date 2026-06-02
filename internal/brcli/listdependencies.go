@@ -103,10 +103,9 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 
 	edges := make([]core.DependencyEdge, 0, len(items))
 	for _, item := range items {
-		// TODO(hk-872.55): "related" and other Beads dep-types not in the spec
-		// will be rejected here until EdgeKind is extended.
 		var kind core.EdgeKind
 		if kindErr := kind.UnmarshalText([]byte(item.Type)); kindErr != nil {
+			// Only fails when item.Type is empty — a structural br output bug.
 			return nil, fmt.Errorf("brcli.ListDependencies: edge %q→%q: %w", item.IssueID, item.DependsOnID, kindErr)
 		}
 		edge := core.DependencyEdge{
@@ -115,10 +114,13 @@ func (a *Adapter) ListDependencies(ctx context.Context, id core.BeadID) ([]core.
 			EdgeKind:   kind,
 		}
 		if !edge.Valid() {
-			return nil, fmt.Errorf(
-				"brcli.ListDependencies: invalid edge from br dep list output: from=%q to=%q kind=%q",
-				item.IssueID, item.DependsOnID, item.Type,
-			)
+			// Read-surface tolerance (edgekind.go BI-007 / hk-872.55): Beads may
+			// expose dep-types not yet in harmonik's write-surface enum (e.g.
+			// "related"). Skip them rather than erroring so that QM-025 blocking
+			// checks are not disrupted by unrelated edge kinds. Fixes: multi-bead
+			// submit returning internal_error (-32099) when any bead has a "related"
+			// dep (hk-hpqat regression).
+			continue
 		}
 		edges = append(edges, edge)
 	}

@@ -876,6 +876,161 @@ func TestLoadQueueAtStartup_QM002b_ClassB_BeadInProgressQueueAbsent(t *testing.T
 	}
 }
 
+// TestLoadQueueAtStartup_QM002b_ClassAPrime_DispatchedBeadClosed covers the Class A'
+// mismatch: queue item is dispatched but the Beads ledger reports the bead as
+// closed/tombstone (daemon restart abandoned the goroutine; bead closed via another
+// path such as a sibling queue).
+//
+// Assertions:
+//  1. Item status is advanced to completed in the returned Queue.
+//  2. Queue.json on disk reflects the completed status (persist happened).
+//  3. A reconciliation_mismatch_observed event is emitted with
+//     mismatch_class=bead_closed_queue_dispatched.
+//  4. A dispatched item whose bead is still open/in_progress is NOT advanced
+//     (Class A' only fires on closed/tombstone).
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b — Class A'.
+// Bead: hk-z0pmi.
+func TestLoadQueueAtStartup_QM002b_ClassAPrime_DispatchedBeadClosed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const testBeadID = core.BeadID("hk-z0pmi-classAprime-01")
+
+	// A dispatched queue item (QM-002a fixture already builds this shape).
+	q := startupQueueFixtureDispatchedQueue(testBeadID)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// Ledger: bead is closed → Class A' condition.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			testBeadID: core.CoarseStatusClosed,
+		},
+		nil,
+	)
+
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("Class A': unexpected error: %v", err)
+	}
+	if gotQueue == nil {
+		t.Fatal("Class A': expected non-nil Queue")
+	}
+
+	// Assertion 1: item advanced to completed.
+	if len(gotQueue.Groups) == 0 || len(gotQueue.Groups[0].Items) == 0 {
+		t.Fatal("Class A': returned queue has no items")
+	}
+	item := gotQueue.Groups[0].Items[0]
+	if item.Status != queue.ItemStatusCompleted {
+		t.Errorf("Class A': item status: got %q, want %q (bead_closed_queue_dispatched advance)",
+			item.Status, queue.ItemStatusCompleted)
+	}
+
+	// Assertion 2: on-disk queue reflects completed.
+	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
+	if loadErr != nil {
+		t.Fatalf("Class A': Load from disk: %v", loadErr)
+	}
+	if diskQueue == nil || len(diskQueue.Groups) == 0 || len(diskQueue.Groups[0].Items) == 0 {
+		t.Fatal("Class A': disk queue missing items")
+	}
+	if diskQueue.Groups[0].Items[0].Status != queue.ItemStatusCompleted {
+		t.Errorf("Class A': disk item status: got %q, want %q",
+			diskQueue.Groups[0].Items[0].Status, queue.ItemStatusCompleted)
+	}
+
+	// Assertion 3: reconciliation_mismatch_observed event with bead_closed_queue_dispatched.
+	evs := emitter.Events()
+	if len(evs) == 0 {
+		t.Fatal("Class A': expected reconciliation_mismatch_observed event, got none")
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.EventType != core.EventTypeReconciliationMismatchObserved {
+			continue
+		}
+		var p core.ReconciliationMismatchObservedPayload
+		if unmarshalErr := json.Unmarshal(ev.Payload, &p); unmarshalErr != nil {
+			t.Fatalf("Class A': unmarshal payload: %v", unmarshalErr)
+		}
+		if p.MismatchClass != "bead_closed_queue_dispatched" {
+			t.Errorf("Class A': mismatch_class: got %q, want bead_closed_queue_dispatched", p.MismatchClass)
+		}
+		if p.BeadID != string(testBeadID) {
+			t.Errorf("Class A': bead_id: got %q, want %q", p.BeadID, testBeadID)
+		}
+		if p.QueueStatus != "dispatched" {
+			t.Errorf("Class A': queue_status: got %q, want dispatched", p.QueueStatus)
+		}
+		if !p.Valid() {
+			t.Errorf("Class A': ReconciliationMismatchObservedPayload.Valid() false: %+v", p)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Error("Class A': reconciliation_mismatch_observed event not found in emitted events")
+	}
+}
+
+// TestLoadQueueAtStartup_QM002b_ClassAPrime_NoAdvanceWhenBeadOpen verifies that a
+// dispatched item is NOT advanced when the bead is still open or in_progress.
+// Class A' only fires on closed/tombstone.
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b — Class A'.
+// Bead: hk-z0pmi.
+func TestLoadQueueAtStartup_QM002b_ClassAPrime_NoAdvanceWhenBeadOpen(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const testBeadID = core.BeadID("hk-z0pmi-classAprime-open")
+
+	q := startupQueueFixtureDispatchedQueue(testBeadID)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// Ledger: bead is in_progress → Class A' must NOT fire.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			testBeadID: core.CoarseStatusInProgress,
+		},
+		nil,
+	)
+
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("Class A' no-advance: unexpected error: %v", err)
+	}
+	if gotQueue == nil {
+		t.Fatal("Class A' no-advance: expected non-nil Queue")
+	}
+
+	item := gotQueue.Groups[0].Items[0]
+	if item.Status != queue.ItemStatusDispatched {
+		t.Errorf("Class A' no-advance: item status: got %q, want dispatched (must NOT advance in_progress bead)",
+			item.Status)
+	}
+	if evs := emitter.Events(); len(evs) != 0 {
+		t.Errorf("Class A' no-advance: expected no events, got %d", len(evs))
+	}
+}
+
 // TestLoadQueueAtStartup_QM002b_ClassC_BeadClosedQueueInProgress covers the Class C
 // mismatch: queue item is completed/failed but the Beads ledger still shows in_progress.
 //

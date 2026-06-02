@@ -507,13 +507,16 @@ func (p QueueItemReconciledPayload) Valid() bool {
 //
 // Emitted during daemon startup three-way reconciliation (QM-002b) for each
 // mismatch class that is observed, regardless of whether an in-place correction
-// is also applied. Three mismatch classes are defined at v0.1:
+// is also applied. Four mismatch classes are defined at v0.1:
 //
-//   - "bead_closed_queue_pending"    — queue item is pending/deferred but the Beads
+//   - "bead_closed_queue_pending"     — queue item is pending/deferred but the Beads
 //     ledger shows the bead is already closed; item is advanced to completed.
-//   - "bead_inprogress_queue_absent" — Beads ledger shows the bead in_progress but
+//   - "bead_closed_queue_dispatched"  — queue item is dispatched but the Beads ledger
+//     shows the bead is already closed (daemon restart abandoned goroutine; bead
+//     closed via another path); item is advanced to completed (Class A').
+//   - "bead_inprogress_queue_absent"  — Beads ledger shows the bead in_progress but
 //     there is no queue item for it at all; logged for operator inspection.
-//   - "bead_closed_queue_inprogress" — queue item is completed/failed but the Beads
+//   - "bead_closed_queue_inprogress"  — queue item is completed/failed but the Beads
 //     ledger still shows in_progress; logged for operator inspection.
 //
 // # Payload fields
@@ -522,7 +525,7 @@ func (p QueueItemReconciledPayload) Valid() bool {
 //     the mismatch class has no associated queue item (bead_inprogress_queue_absent)
 //   - group_index    — zero-based group index; -1 when no queue item exists
 //   - bead_id        — the bead ID involved in the mismatch
-//   - mismatch_class — one of the three string constants above
+//   - mismatch_class — one of the four string constants above
 //   - ledger_status  — CoarseStatus string from the Beads ledger at observation time
 //   - queue_status   — ItemStatus string from queue.json; empty when no queue item
 //   - observed_at    — RFC 3339 wall-clock timestamp
@@ -557,6 +560,7 @@ type ReconciliationMismatchObservedPayload struct {
 // queue-model.md §3.2b QM-002b.
 var validMismatchClasses = map[string]struct{}{
 	"bead_closed_queue_pending":    {},
+	"bead_closed_queue_dispatched": {},
 	"bead_inprogress_queue_absent": {},
 	"bead_closed_queue_inprogress": {},
 }
@@ -565,7 +569,7 @@ var validMismatchClasses = map[string]struct{}{
 //
 // Rules:
 //   - BeadID must be non-empty.
-//   - MismatchClass must be one of the three declared constants.
+//   - MismatchClass must be one of the four declared constants.
 //   - LedgerStatus must be non-empty.
 //   - ObservedAt must be non-empty.
 //   - GroupIndex must be >= -1.

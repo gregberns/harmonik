@@ -394,6 +394,7 @@ const (
 	// Emitted during daemon startup three-way reconciliation (QM-002b) for every
 	// mismatch class that does not produce a queue_item_reconciled correction:
 	//   - bead_closed_queue_pending    — queue item pending but ledger shows closed
+	//   - bead_closed_queue_dispatched — queue item dispatched but ledger shows closed (Class A')
 	//   - bead_inprogress_queue_absent — ledger in_progress with no queue record
 	//   - bead_closed_queue_inprogress — queue item completed/failed but ledger in_progress
 	EventTypeReconciliationMismatchObserved EventType = "reconciliation_mismatch_observed"

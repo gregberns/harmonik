@@ -418,6 +418,11 @@ func reconcileThreeWay(
 			beadsInQueue[item.BeadID] = item.Status
 
 			// Class A: queue item is pending or deferred but bead is already closed.
+			// Class A': queue item is dispatched but bead is already closed
+			//   (daemon restart abandoned the goroutine; bead was closed via another
+			//   path — e.g. a sibling queue or a direct br close).  Without this
+			//   branch the item is stuck at dispatched forever and blocks
+			//   QM-027's single-active check.  Mirrors Class A persist-before-emit.
 			isPendingLike := item.Status == queue.ItemStatusPending ||
 				item.Status == queue.ItemStatusDeferredForLedgerDep
 			if !isPendingLike {
@@ -425,6 +430,53 @@ func reconcileThreeWay(
 				isQueueTerminal := item.Status == queue.ItemStatusCompleted ||
 					item.Status == queue.ItemStatusFailed
 				if !isQueueTerminal {
+					// Class A': dispatched + bead closed → advance to completed.
+					if item.Status != queue.ItemStatusDispatched {
+						continue
+					}
+					dispRecord, dispShowErr := ledger.ShowBead(ctx, item.BeadID)
+					if dispShowErr != nil {
+						logger.WarnContext(ctx, "QM-002b Class A': ShowBead failed; skipping",
+							"bead_id", string(item.BeadID),
+							"error", dispShowErr,
+						)
+						continue
+					}
+					isDispLedgerClosed := dispRecord.Status == core.CoarseStatusClosed ||
+						dispRecord.Status == core.CoarseStatusTombstone
+					if !isDispLedgerClosed {
+						continue
+					}
+					logger.InfoContext(ctx, "QM-002b Class A': advancing dispatched item to completed (bead_closed_queue_dispatched)",
+						"bead_id", string(item.BeadID),
+						"group_index", gi,
+						"ledger_status", string(dispRecord.Status),
+					)
+					item.Status = queue.ItemStatusCompleted
+					classACount++
+					if emitter != nil {
+						p := core.ReconciliationMismatchObservedPayload{
+							QueueID:       q.QueueID,
+							GroupIndex:    gi,
+							BeadID:        string(item.BeadID),
+							MismatchClass: "bead_closed_queue_dispatched",
+							LedgerStatus:  string(dispRecord.Status),
+							QueueStatus:   "dispatched",
+							ObservedAt:    observedAt,
+						}
+						payloadBytes, marshalErr := json.Marshal(p)
+						if marshalErr != nil {
+							logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
+								"bead_id", string(item.BeadID),
+								"error", marshalErr,
+							)
+						} else {
+							pendingEvents = append(pendingEvents, pendingEvent{
+								eventType: core.EventTypeReconciliationMismatchObserved,
+								payload:   payloadBytes,
+							})
+						}
+					}
 					continue
 				}
 				// Class C: queue says terminal; check ledger.

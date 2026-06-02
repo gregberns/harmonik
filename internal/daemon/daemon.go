@@ -1006,6 +1006,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				brAdapterForQueue,
 				bus,
 				nil, // slog.Default() is used when nil
+				&lifecycle.QM002bReapConfig{
+					Resetter:      brAdapterForQueue,
+					IntentLogDir:  lifecycle.BeadsIntentsDir(cfg.ProjectDir),
+					ProjectHash:   lifecycle.ComputeProjectHash(cfg.ProjectDir),
+					DaemonStartNS: daemonStartTime.UnixNano(),
+				},
 			)
 			if loadErr != nil {
 				// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).

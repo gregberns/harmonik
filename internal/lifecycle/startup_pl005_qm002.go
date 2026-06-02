@@ -1,11 +1,14 @@
 package lifecycle
 
-// startup_pl005_qm002.go — PL-005 step 8a queue.json load hook (QM-002 + QM-002a).
+// startup_pl005_qm002.go — PL-005 step 8a queue.json load hook (QM-002 + QM-002a + QM-002b).
 //
 // Implements the daemon startup obligation to:
 //   1. Read .harmonik/queue.json per QM-002 with three declared outcomes.
 //   2. On a successful load, cross-check every dispatched item against the live
 //      Beads ledger per QM-002a and revert claim-write-lost items to pending.
+//   3. Run the full three-way reconciliation pass per QM-002b, including
+//      Class B orphan reaping (hk-5pg37): beads in_progress with no queue
+//      item are reset to open and their worktrees are removed.
 //
 // This check MUST complete before the daemon reaches ready state and before any
 // dispatch-loop tick.
@@ -13,6 +16,7 @@ package lifecycle
 // Spec refs:
 //   - specs/queue-model.md §3.2 QM-002 — startup read
 //   - specs/queue-model.md §3.2a QM-002a — Beads cross-check
+//   - specs/queue-model.md §3.2b QM-002b — three-way reconciliation (incl. Class B reap)
 //   - specs/process-lifecycle.md §4.2 PL-005 step 8a
 
 import (
@@ -21,8 +25,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -69,6 +78,39 @@ type QueueEventEmitter interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
 }
 
+// QM002bReapConfig carries optional dependencies for the QM-002b Class B
+// ("bead_inprogress_queue_absent") reap path. When nil (or when Resetter is
+// nil), Class B beads are observed (mismatch event emitted) but not reaped —
+// existing behaviour. When fully populated, Class B orphans are:
+//  1. Reset to open (dispatchable) via the BI-010d reset write.
+//  2. Their worktrees (discovered via cancelled/failed queue archives) are
+//     removed via git worktree remove --force --force.
+//
+// This config is optional and backward-compatible: callers that omit it get
+// the old observe-only behaviour.
+//
+// Spec ref: hk-5pg37 — reconciler must reap orphans from queue-cancel+restart.
+type QM002bReapConfig struct {
+	// Resetter is the BI adapter write surface for the BI-010d reset op
+	// (in_progress → open). When nil, reaping is skipped.
+	Resetter BeadResetter
+
+	// IntentLogDir is the absolute path of .harmonik/beads-intents/.
+	IntentLogDir string
+
+	// ProjectHash is the per-project provenance marker per PL-006a.
+	ProjectHash core.ProjectHash
+
+	// DaemonStartNS is the daemon's startup wall-clock time in nanoseconds.
+	// Used to derive the BI-010d idempotency key
+	// `<project_hash>:<bead_id>:reset:<daemon_start_ns>`.
+	DaemonStartNS int64
+
+	// BrTimeoutCfg is the BI-025c timeout configuration forwarded to ResetBead.
+	// Zero value is acceptable (defaults apply).
+	BrTimeoutCfg brcli.TimeoutConfig
+}
+
 // LoadQueueAtStartup implements PL-005 step 8a for the queue subsystem.
 //
 // It first runs MigrateFromLegacy to promote any pre-NQ-A2 .harmonik/queue.json
@@ -101,9 +143,16 @@ func LoadQueueAtStartup(
 	ledger BeadLedger,
 	emitter QueueEventEmitter,
 	logger *slog.Logger,
+	reapCfg ...*QM002bReapConfig,
 ) ([]*queue.Queue, error) {
 	if logger == nil {
 		logger = slog.Default()
+	}
+
+	// Resolve the optional Class B reap config (first element if present; nil otherwise).
+	var classBReap *QM002bReapConfig
+	if len(reapCfg) > 0 {
+		classBReap = reapCfg[0]
 	}
 
 	// NQ-A2: migrate legacy .harmonik/queue.json → .harmonik/queues/main.json
@@ -126,7 +175,7 @@ func LoadQueueAtStartup(
 
 	var loaded []*queue.Queue
 	for _, name := range names {
-		q, loadErr := loadOneQueueAtStartup(ctx, projectDir, name, ledger, emitter, logger)
+		q, loadErr := loadOneQueueAtStartup(ctx, projectDir, name, ledger, emitter, logger, classBReap)
 		if loadErr != nil {
 			// schema_version mismatch is fatal per QM-002.
 			return nil, loadErr
@@ -149,6 +198,7 @@ func loadOneQueueAtStartup(
 	ledger BeadLedger,
 	emitter QueueEventEmitter,
 	logger *slog.Logger,
+	classBReap *QM002bReapConfig,
 ) (*queue.Queue, error) {
 	q, err := queue.Load(ctx, projectDir, name)
 	if err != nil {
@@ -182,8 +232,8 @@ func loadOneQueueAtStartup(
 		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: QM-002a reconcile: %w", name, err)
 	}
 
-	// QM-002b: Full three-way reconciliation.
-	if err := reconcileThreeWay(ctx, projectDir, q, ledger, emitter, logger); err != nil {
+	// QM-002b: Full three-way reconciliation (including Class B orphan reap).
+	if err := reconcileThreeWay(ctx, projectDir, q, ledger, emitter, logger, classBReap); err != nil {
 		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: QM-002b three-way reconcile: %w", name, err)
 	}
 
@@ -344,6 +394,7 @@ func reconcileThreeWay(
 	ledger BeadLedger,
 	emitter QueueEventEmitter,
 	logger *slog.Logger,
+	classBReap *QM002bReapConfig,
 ) error {
 	observedAt := time.Now().UTC().Format(time.RFC3339Nano)
 
@@ -479,9 +530,10 @@ func reconcileThreeWay(
 	}
 
 	// --- Class B scan: enumerate in-progress ledger beads ---
-	// Only run if the emitter is non-nil (Class B produces no queue mutation,
-	// only an observability event).
-	if emitter != nil {
+	// Run if the emitter is non-nil (observability event) OR if classBReap is
+	// configured (reap action). Class B produces no queue mutation.
+	reapEnabled := classBReap != nil && classBReap.Resetter != nil
+	if emitter != nil || reapEnabled {
 		inFlight, listErr := ledger.ListInFlightBeads(ctx)
 		if listErr != nil {
 			// Non-fatal: log and skip Class B entirely.
@@ -490,6 +542,7 @@ func reconcileThreeWay(
 				"error", listErr,
 			)
 		} else {
+			var classBOrphans []core.BeadID
 			for _, rec := range inFlight {
 				if _, inQueue := beadsInQueue[rec.BeadID]; inQueue {
 					continue // bead has a queue item — not a Class B orphan
@@ -497,27 +550,40 @@ func reconcileThreeWay(
 				logger.WarnContext(ctx, "QM-002b Class B: ledger in_progress bead has no queue item (bead_inprogress_queue_absent)",
 					"bead_id", string(rec.BeadID),
 				)
-				p := core.ReconciliationMismatchObservedPayload{
-					QueueID:       "",
-					GroupIndex:    -1,
-					BeadID:        string(rec.BeadID),
-					MismatchClass: "bead_inprogress_queue_absent",
-					LedgerStatus:  string(rec.Status),
-					QueueStatus:   "",
-					ObservedAt:    observedAt,
+				if emitter != nil {
+					p := core.ReconciliationMismatchObservedPayload{
+						QueueID:       "",
+						GroupIndex:    -1,
+						BeadID:        string(rec.BeadID),
+						MismatchClass: "bead_inprogress_queue_absent",
+						LedgerStatus:  string(rec.Status),
+						QueueStatus:   "",
+						ObservedAt:    observedAt,
+					}
+					payloadBytes, marshalErr := json.Marshal(p)
+					if marshalErr != nil {
+						logger.WarnContext(ctx, "QM-002b: failed to marshal Class B mismatch payload",
+							"bead_id", string(rec.BeadID),
+							"error", marshalErr,
+						)
+					} else {
+						pendingEvents = append(pendingEvents, pendingEvent{
+							eventType: core.EventTypeReconciliationMismatchObserved,
+							payload:   payloadBytes,
+						})
+					}
 				}
-				payloadBytes, marshalErr := json.Marshal(p)
-				if marshalErr != nil {
-					logger.WarnContext(ctx, "QM-002b: failed to marshal Class B mismatch payload",
-						"bead_id", string(rec.BeadID),
-						"error", marshalErr,
-					)
-				} else {
-					pendingEvents = append(pendingEvents, pendingEvent{
-						eventType: core.EventTypeReconciliationMismatchObserved,
-						payload:   payloadBytes,
-					})
+				if reapEnabled {
+					classBOrphans = append(classBOrphans, rec.BeadID)
 				}
+			}
+			// Reap Class B orphans: reset each bead to open and remove its
+			// worktree. Non-fatal: a reap failure for one bead does not block
+			// the others or the startup sequence.
+			//
+			// Spec ref: hk-5pg37 — reconciler reaps queue-cancel orphans.
+			for _, beadID := range classBOrphans {
+				reapClassBOrphan(ctx, projectDir, beadID, classBReap, logger)
 			}
 		}
 	}
@@ -532,4 +598,124 @@ func reconcileThreeWay(
 	}
 
 	return nil
+}
+
+// reapClassBOrphan resets a Class B orphan bead (in_progress → open) and
+// attempts to remove its associated worktree. Both operations are best-effort:
+// a failure in either step is logged but does not block startup or prevent the
+// other bead reaps from proceeding.
+//
+// Spec ref: hk-5pg37 — reconciler must reap queue-cancel+restart orphans.
+func reapClassBOrphan(
+	ctx context.Context,
+	projectDir string,
+	beadID core.BeadID,
+	cfg *QM002bReapConfig,
+	logger *slog.Logger,
+) {
+	logger.InfoContext(ctx, "QM-002b Class B: reaping orphaned bead (queue_cancel_reap)",
+		"bead_id", string(beadID),
+	)
+	if resetErr := cfg.Resetter.ResetBead(
+		ctx,
+		cfg.IntentLogDir,
+		cfg.BrTimeoutCfg,
+		beadID,
+		cfg.ProjectHash,
+		cfg.DaemonStartNS,
+	); resetErr != nil {
+		logger.WarnContext(ctx, "QM-002b Class B: ResetBead failed; bead remains in_progress",
+			"bead_id", string(beadID),
+			"error", resetErr,
+		)
+		// Do not attempt worktree removal when the bead reset failed:
+		// leaving the worktree intact gives the operator a chance to inspect
+		// the state. The bead will be retried on the next daemon restart.
+		return
+	}
+	logger.InfoContext(ctx, "QM-002b Class B: bead reset to open",
+		"bead_id", string(beadID),
+	)
+	// Best-effort: find and remove the orphaned worktree from cancelled/failed
+	// queue archives. A failure here is non-fatal — the bead is already reset
+	// and can be redispatched to a new worktree.
+	reapOrphanWorktreesFromArchives(ctx, projectDir, beadID, logger)
+}
+
+// reapOrphanWorktreesFromArchives scans .harmonik/queues/ for archived
+// (cancelled or failed) queue files, finds items whose bead_id matches
+// beadID, and removes the associated worktrees via
+// git worktree remove --force --force. Non-fatal: each step that fails is
+// logged and the scan continues.
+//
+// Spec ref: hk-5pg37.
+func reapOrphanWorktreesFromArchives(
+	ctx context.Context,
+	projectDir string,
+	beadID core.BeadID,
+	logger *slog.Logger,
+) {
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	entries, err := os.ReadDir(queuesDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.WarnContext(ctx, "QM-002b reap: ReadDir queues failed",
+				"bead_id", string(beadID),
+				"error", err,
+			)
+		}
+		return
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		// Only scan cancelled and failed archive files.
+		if !strings.Contains(name, ".cancelled-") && !strings.Contains(name, ".failed-") {
+			continue
+		}
+		archivePath := filepath.Join(queuesDir, name)
+		//nolint:gosec // G304: path is constructed from projectDir + .harmonik/queues/ + entry name
+		data, readErr := os.ReadFile(archivePath)
+		if readErr != nil {
+			logger.WarnContext(ctx, "QM-002b reap: read archive failed",
+				"bead_id", string(beadID),
+				"archive", name,
+				"error", readErr,
+			)
+			continue
+		}
+		var q queue.Queue
+		if unmarshalErr := json.Unmarshal(data, &q); unmarshalErr != nil {
+			continue // skip corrupt archives silently
+		}
+		for _, g := range q.Groups {
+			for _, item := range g.Items {
+				if item.BeadID != beadID {
+					continue
+				}
+				if item.RunID == nil || *item.RunID == "" {
+					continue
+				}
+				wtPath := filepath.Join(projectDir, ".harmonik", "worktrees", *item.RunID)
+				if _, statErr := os.Stat(wtPath); os.IsNotExist(statErr) {
+					continue // already gone
+				}
+				logger.InfoContext(ctx, "QM-002b reap: removing orphaned worktree",
+					"bead_id", string(beadID),
+					"run_id", *item.RunID,
+					"path", wtPath,
+				)
+				//nolint:gosec // G204: projectDir is operator-controlled; runID is a uuid from queue.json
+				cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "worktree", "remove", "--force", "--force", wtPath)
+				if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
+					logger.WarnContext(ctx, "QM-002b reap: git worktree remove failed",
+						"bead_id", string(beadID),
+						"run_id", *item.RunID,
+						"error", cmdErr,
+						"output", strings.TrimSpace(string(out)),
+					)
+				}
+			}
+		}
+	}
 }

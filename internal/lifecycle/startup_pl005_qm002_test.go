@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -952,5 +953,140 @@ func TestLoadQueueAtStartup_QM002b_ClassC_BeadClosedQueueInProgress(t *testing.T
 	}
 	if !found {
 		t.Error("Class C: reconciliation_mismatch_observed event not found in emitted events")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Class B reap fake
+// ---------------------------------------------------------------------------
+
+// startupQueueFixtureFakeResetter is a test-double BeadResetter that records
+// every ResetBead call.
+type startupQueueFixtureFakeResetter struct {
+	mu    sync.Mutex
+	calls []startupQueueFixtureResetCall
+	err   error // if non-nil, returned for every ResetBead call
+}
+
+type startupQueueFixtureResetCall struct {
+	BeadID core.BeadID
+}
+
+func (r *startupQueueFixtureFakeResetter) ResetBead(
+	_ context.Context,
+	_ string,
+	_ brcli.TimeoutConfig,
+	beadID core.BeadID,
+	_ core.ProjectHash,
+	_ int64,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, startupQueueFixtureResetCall{BeadID: beadID})
+	return r.err
+}
+
+func (r *startupQueueFixtureFakeResetter) Calls() []startupQueueFixtureResetCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]startupQueueFixtureResetCall, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Class B reap test
+// ---------------------------------------------------------------------------
+
+// TestLoadQueueAtStartup_QM002b_ClassB_Reaping covers the hk-5pg37 fix: when
+// a bead is in_progress in the ledger but has no queue item (Class B orphan),
+// and a QM002bReapConfig is provided, LoadQueueAtStartup MUST call
+// ResetBead to transition the bead from in_progress → open.
+//
+// Assertions:
+//  1. ResetBead is called exactly once for the orphan bead.
+//  2. The reset is called with the correct beadID.
+//  3. The mismatch event is still emitted (existing Class B behaviour preserved).
+//  4. No error is returned from LoadQueueAtStartup.
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b — Class B reap.
+// Bead ref: hk-5pg37.
+func TestLoadQueueAtStartup_QM002b_ClassB_Reaping(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const orphanBeadID = core.BeadID("hk-5pg37-classB-reap-orphan")
+
+	// Active queue has a different bead — not the orphan.
+	q := startupQueueFixturePendingQueue(core.BeadID("hk-5pg37-classB-reap-known"))
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// Ledger: the known queue bead is open; the orphan is in_progress with no queue item.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			core.BeadID("hk-5pg37-classB-reap-known"): core.CoarseStatusOpen,
+		},
+		nil,
+	)
+	ledger.withInFlight([]core.BeadRecord{
+		{
+			BeadID:   orphanBeadID,
+			Status:   core.CoarseStatusInProgress,
+			Title:    "orphan bead (queue-cancelled)",
+			BeadType: "task",
+		},
+	})
+
+	resetter := &startupQueueFixtureFakeResetter{}
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	reapCfg := &QM002bReapConfig{
+		Resetter:      resetter,
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		ProjectHash:   core.ProjectHash("test-project-hash"),
+		DaemonStartNS: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).UnixNano(),
+	}
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger, reapCfg)
+	if err != nil {
+		t.Fatalf("Class B reap: unexpected error: %v", err)
+	}
+	if len(gotQueues) == 0 {
+		t.Fatal("Class B reap: expected non-nil Queue")
+	}
+
+	// Assertion 1 & 2: ResetBead called exactly once for the orphan bead.
+	resetCalls := resetter.Calls()
+	if len(resetCalls) != 1 {
+		t.Fatalf("Class B reap: expected 1 ResetBead call, got %d", len(resetCalls))
+	}
+	if resetCalls[0].BeadID != orphanBeadID {
+		t.Errorf("Class B reap: ResetBead called with bead_id=%q, want %q",
+			resetCalls[0].BeadID, orphanBeadID)
+	}
+
+	// Assertion 3: mismatch event still emitted (observability preserved).
+	evs := emitter.Events()
+	found := false
+	for _, ev := range evs {
+		if ev.EventType != core.EventTypeReconciliationMismatchObserved {
+			continue
+		}
+		var p core.ReconciliationMismatchObservedPayload
+		if unmarshalErr := json.Unmarshal(ev.Payload, &p); unmarshalErr != nil {
+			continue
+		}
+		if p.BeadID == string(orphanBeadID) && p.MismatchClass == "bead_inprogress_queue_absent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Class B reap: reconciliation_mismatch_observed event for orphan not found")
 	}
 }

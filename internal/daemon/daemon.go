@@ -445,11 +445,12 @@ type daemonTestHooks struct {
 	// The zero value (nil) falls back to productionWorktreeFactory.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
-	// mergeMu, when non-nil, is held across the full rebase → update-ref →
-	// push sequence of every mergeRunBranchToMain call, serialising concurrent
-	// merges.  Tests that exercise concurrent dispatch inject a mutex here via
-	// WithMergeMutex to prevent non-fast-forward push failures.  The zero
-	// value (nil) leaves merges unserialized (production default).
+	// mergeMu, when set via WithMergeMutex, OVERRIDES the production merge mutex
+	// so a test can share/inspect the lock held across the full
+	// rebase → update-ref → push sequence of every mergeRunBranchToMain call.
+	// The zero value (nil) is this hook's default and leaves production's own
+	// non-nil mutex (set unconditionally in newWorkLoopDeps, hk-yyso7) in place —
+	// merges are serialised across all queues in production regardless.
 	mergeMu *sync.Mutex
 }
 
@@ -1263,8 +1264,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			deps.worktreeFactory = hooks.worktreeFactory
 		}
 
-		// Inject the test-only merge mutex when set via WithMergeMutex.
-		// Nil (the default) leaves merges unserialized (production default).
+		// Inject the test-only merge-mutex override when set via WithMergeMutex.
+		// Nil (the default) keeps production's own mutex from newWorkLoopDeps
+		// (hk-yyso7), so production merges stay serialised.
 		if hooks.mergeMu != nil {
 			deps.mergeMu = hooks.mergeMu
 		}

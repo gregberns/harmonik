@@ -1020,16 +1020,19 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
-				// Pre-claim deferred-status guard for queue-path (hk-6ri5k): a bead
-				// can be set to deferred after being enqueued (e.g. operator defers
-				// it while the queue is active).  Dispatching it would waste a slot;
-				// ClaimBead would fail anyway since br rejects claims on deferred
-				// beads.  Check ShowBead and hold the item (no Attempts increment)
-				// so it retries on the next tick once the bead is re-opened.
+				// Pre-claim status guard for queue-path: a bead's ledger status can
+				// change after it is enqueued.  Three cases are handled here before
+				// Phase 3 stamps the item as dispatched:
 				//
-				// Only deferred status is caught here; other non-open statuses
-				// (blocked, draft, closed) fall through to Phase 3 and ClaimBead,
-				// where dedicated guards (hk-n91y0, hk-p4xbw) handle them.
+				//   deferred (hk-6ri5k): operator deferred the bead; hold without
+				//     Attempts increment so it is retried once the bead is re-opened.
+				//
+				//   closed / draft (hk-febd6): terminal or unworkable statuses;
+				//     ClaimBead would fail and retrying would loop forever.  Fail
+				//     the queue item immediately so the group can advance.
+				//
+				//   blocked (hk-n91y0): deps-blocked beads fall through to Phase 3
+				//     and ClaimBead, where the dedicated guard handles them.
 				{
 					preClaimRecord, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
 					if preClaimErr != nil {
@@ -1042,11 +1045,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 						continue
 					}
-					if preClaimRecord.Status == core.CoarseStatusDeferred {
+					switch preClaimRecord.Status {
+					case core.CoarseStatusDeferred:
 						fmt.Fprintf(os.Stderr, "daemon: workloop: bead_queue_path_held %s status=deferred — holding without Attempts increment (hk-6ri5k)\n", snapItemBeadID)
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
+						continue
+					case core.CoarseStatusClosed, core.CoarseStatusDraft:
+						fmt.Fprintf(os.Stderr, "daemon: workloop: bead_queue_path_skip %s status=%s — failing queue item (hk-febd6)\n", snapItemBeadID, preClaimRecord.Status)
+						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						continue
 					}
 				}

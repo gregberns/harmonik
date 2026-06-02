@@ -825,7 +825,11 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	bufName := bufferName(claudeSessID, "review")
 	msg := "Read .harmonik/review-target.md in this worktree." +
 		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +
-		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1.\n"
+		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1." +
+		" CRITICAL: when the bead body's '## Implementation Notes' section names exact field/struct names" +
+		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
+		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
+		" a field-name violation, re-check that EXACT field name in the new diff before approving.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer WriteLastPane: %v\n", err)
 	}

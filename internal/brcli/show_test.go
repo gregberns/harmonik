@@ -3,6 +3,7 @@ package brcli_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -380,6 +381,74 @@ func TestShowBeadLabelsSurface(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Labels does not contain %q; got %v", wantLabel, record.Labels)
+	}
+}
+
+// TestShowBeadDesignFieldSurfaced verifies that ShowBead appends the "design"
+// field to BeadRecord.Description when non-empty. The design field carries bead
+// enrichment (re-impl notes, spec-field-name constraints, BLOCK-iteration
+// corrections) that must reach both the implementer and the reviewer via
+// agent-task.md / review-target.md. Regression guard for hk-vh1jc.
+func TestShowBeadDesignFieldSurfaced(t *testing.T) {
+	desc := "Build the lifecycle FSM."
+	design := "RE-IMPL NOTE: InvalidStateTransitionError fields MUST be From, To, SessionID string (HC-066) — NOT SessID."
+	jsonStr := `[{"id":"hk-q0uba","title":"Port FSM","description":"` + desc + `","design":"` + design + `","status":"open","issue_type":"feature","dependencies":[],"dependents":[],"parent":""}]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	record, err := adapter.ShowBead(context.Background(), core.BeadID("hk-q0uba"))
+	if err != nil {
+		t.Fatalf("ShowBead: unexpected error: %v", err)
+	}
+
+	// Description must contain the original description text.
+	if !strings.Contains(record.Description, desc) {
+		t.Errorf("Description does not contain original description %q; got %q", desc, record.Description)
+	}
+
+	// Description must contain the design field text.
+	if !strings.Contains(record.Description, design) {
+		t.Errorf("Description does not contain design field %q; got %q", design, record.Description)
+	}
+
+	// Must contain the section header.
+	if !strings.Contains(record.Description, "## Implementation Notes") {
+		t.Errorf("Description does not contain '## Implementation Notes' header; got %q", record.Description)
+	}
+
+	// Description must appear before design in the combined string.
+	descIdx := strings.Index(record.Description, desc)
+	designIdx := strings.Index(record.Description, design)
+	if descIdx >= designIdx {
+		t.Errorf("description text must precede design text; desc at %d, design at %d", descIdx, designIdx)
+	}
+}
+
+// TestShowBeadDesignFieldAbsent verifies that ShowBead does not alter
+// Description when the design field is absent (empty string or missing from JSON).
+func TestShowBeadDesignFieldAbsent(t *testing.T) {
+	wantDesc := "Build ShowBead method on top of Run."
+	// JSON without a design field — standard fixture.
+	jsonStr := `[{"id":"hk-872.15","title":"Implement bead-detail query","description":"` + wantDesc + `","status":"in_progress","issue_type":"task","dependencies":[],"dependents":[],"parent":""}]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	record, err := adapter.ShowBead(context.Background(), core.BeadID("hk-872.15"))
+	if err != nil {
+		t.Fatalf("ShowBead: unexpected error: %v", err)
+	}
+
+	// Description must equal the original description exactly when design is absent.
+	if record.Description != wantDesc {
+		t.Errorf("Description = %q; want %q (design absent — must not alter Description)", record.Description, wantDesc)
 	}
 }
 

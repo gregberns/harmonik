@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -31,10 +32,17 @@ var ErrBrShowFailed = errors.New("brcli: br show failed")
 // with --body as a CLI alias.  `br show --format json` always emits the field as
 // "description", never "body".  Consumers of br show JSON output MUST read the
 // "description" key; checking for "body" will always yield an empty string.
+//
+// Design field: `br show --format json` also emits a "design" field when present.
+// The design field carries bead enrichment (re-implementation notes, spec-field-name
+// overrides, BLOCK-iteration corrections) that MUST reach both the implementer and
+// reviewer. ShowBead appends the design field to Description with a clear header so
+// it propagates through BeadRecord.Description into agent-task.md and review-target.md.
 type brShowItem struct {
 	ID           string       `json:"id"`
 	Title        string       `json:"title"`
 	Description  string       `json:"description"` // always "description" in JSON; --body is a br create alias only
+	Design       string       `json:"design"`       // enrichment/re-impl notes; appended to Description when non-empty
 	Status       string       `json:"status"`
 	IssueType    string       `json:"issue_type"`
 	Labels       []string     `json:"labels"`
@@ -71,6 +79,9 @@ type brShowErrorEnvelope struct {
 //   - title          → Title
 //   - description    → Description  (NOTE: br create's --body flag is a CLI alias
 //     for --description; the JSON output field is always "description", not "body")
+//   - design         → appended to Description as "## Implementation Notes\n\n<design>"
+//     when non-empty; carries bead enrichment (re-impl notes, spec-field-name
+//     constraints, BLOCK-iteration corrections) that must reach implementer and reviewer
 //   - issue_type     → BeadType
 //   - status         → Status (via CoarseStatus.UnmarshalText)
 //   - dependencies[] → outgoing edges (FromBeadID = this bead)
@@ -172,10 +183,24 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		})
 	}
 
+	// Combine description and design fields. The design field carries bead
+	// enrichment (re-impl notes, spec-field-name overrides added after a BLOCK
+	// verdict) that must reach both the implementer and the reviewer. Appending
+	// it to Description with a labeled section ensures it propagates through
+	// BeadRecord.Description into agent-task.md and review-target.md without
+	// requiring changes to BeadRecord, ReviewTargetPayload, or their templates.
+	description := item.Description
+	if strings.TrimSpace(item.Design) != "" {
+		if description != "" && !strings.HasSuffix(description, "\n") {
+			description += "\n"
+		}
+		description += "\n## Implementation Notes\n\n" + item.Design
+	}
+
 	record := core.BeadRecord{
 		BeadID:        core.BeadID(item.ID),
 		Title:         item.Title,
-		Description:   item.Description,
+		Description:   description,
 		BeadType:      item.IssueType,
 		Status:        status,
 		Labels:        item.Labels,

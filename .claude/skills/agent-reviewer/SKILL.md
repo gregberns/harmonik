@@ -132,7 +132,25 @@ For every new exported symbol, goroutine, or subscription introduced by the diff
 
 Findings → flag: `x-missing-wire-up`
 
-### 7. Scenario test for bug beads
+### 7. Spec field-name conformance from enrichment and prior verdicts
+
+When the bead body (or its `## Implementation Notes` section) or a prior BLOCK/REQUEST_CHANGES
+verdict explicitly names required field/struct identifiers:
+
+- Extract every "MUST be X" / "NOT Y" / "field named Z" constraint.
+- Grep the diff for each named identifier and verify the EXACT name appears in the code.
+- A diff that uses a wrong name (e.g. `SessID` when the enrichment says `SessionID` per HC-066)
+  is a spec violation even if the logic is otherwise correct — field names are part of the
+  normative contract.
+- When a prior verdict had flag `spec-field-name` or named a field-name violation in its notes,
+  re-check that EXACT field name in the new diff before emitting APPROVE.
+
+This check exists because a reviewer APPROVED `SessID` at iter-2 despite the iter-1 BLOCK and
+the bead enrichment both naming `SessionID` — hk-vh1jc, the root-cause bead for this check.
+
+Findings → flag: `spec-field-name`
+
+### 8. Scenario test for bug beads
 
 Per `docs/foundation/project-level/build-practices.md §Bug fixes require a reproducing scenario test`: if the bead is labeled `bug` or was filed against a runtime failure observed in dogfooding:
 
@@ -166,6 +184,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `constitution-edit-missing-trailer` | CONSTITUTION.md touched without `Constitution-Edit-Approved-By:` trailer. |
 | `x-missing-wire-up` | New symbol/goroutine/subscription not wired into production composition root. |
 | `missing-scenario-test` | Bug bead has no reproducing scenario test in the diff and no valid exemption. |
+| `spec-field-name` | Diff uses a wrong field/struct/type name vs. the normative name in the spec or bead enrichment. |
 
 ---
 

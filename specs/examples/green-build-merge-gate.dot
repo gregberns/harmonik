@@ -1,0 +1,125 @@
+// green-build-merge-gate.dot — deterministic merge gate on a full green build (v1)
+//
+// Gates a merge on a real green build: an agent makes the change, then a shell
+// node runs the full green-build suite (go build + go vet + go test). Only a
+// green build (exit 0) reaches close. The deterministic analog of harmonik's
+// own review-loop merge gate.
+//
+// Topology:
+//   start
+//   → make_change (agent: implementer; commit required)
+//   → green_build (tool: go build ./... && go vet ./... && go test ./...)
+//     SUCCESS              → close
+//     FAIL+deterministic   → make_change (capped at 3 — fix the build/test failure)
+//     FAIL+transient       → green_build (self-loop, capped at 2 — retry infra glitch)
+//     fallback             → close-needs-attention (structural / compilation_loop / unknown)
+//
+// Key design notes:
+//   - The deterministic back-edge (green_build → make_change) is capped at 3:
+//     at most 3 fix attempts before routing to triage.
+//   - The transient self-loop (green_build → green_build) is capped at 2:
+//     transient infra glitches are retried at most twice before escalating.
+//   - The unconditional fallback (WG-011) fires for any outcome that does not
+//     match SUCCESS, FAIL+deterministic, or FAIL+transient (e.g. structural,
+//     budget_exhausted, canceled, unknown).
+//
+// Spec refs:
+//   - docs/sdlc-workflow-corpus.md §15 (green-build-merge-gate topology)
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
+//   - specs/execution-model.md §II.7 EM-057 item 7 — exit-code → outcome
+//   - specs/execution-model.md §II.8 EM-058 — non-agentic row + sub-note
+//   - specs/handler-contract.md §III.1 HC-063 — in-process shell handler
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §6 WG-028 — traversal_cap
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+
+digraph "green-build-merge-gate" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="green-build-merge-gate";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ────────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // make_change: agent implements the bead's change; a commit is required.
+    make_change [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the bead's change; commit required"
+    ];
+
+    // green_build: full green-build gate.
+    // Runs go build + go vet + go test in the run worktree.
+    // Exit 0 (SUCCESS) → build and tests pass → close (mergeable).
+    // Non-zero deterministic → build or test failure → loop back to make_change (capped at 3).
+    // Non-zero transient → infra glitch → retry self-loop (capped at 2).
+    // Any other outcome → unconditional fallback → close-needs-attention.
+    green_build [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="go build ./... && go vet ./... && go test ./...",
+        timeout="900",
+        role="full green-build gate; exit 0 = mergeable"
+    ];
+
+    // close: build is green — change is mergeable.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="green — mergeable"
+    ];
+
+    // close-needs-attention: cap-hit / structural failure / unexpected outcome.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="cap-hit / structural / unexpected — operator attention required"
+    ];
+
+    // ─── Edges ────────────────────────────────────────────────────────────────
+
+    start -> make_change;
+
+    // make_change always advances to green_build after committing.
+    make_change -> green_build;
+
+    // green_build: exit 0 → build and tests pass → close.
+    green_build -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // Build or test failure (deterministic): loop back to make_change (capped at 3).
+    // The && conjunction (WG-013 v1 dialect) requires BOTH status=FAIL AND
+    // failure_class=deterministic (compilation error, test assertion failure).
+    green_build -> make_change [
+        condition="outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'",
+        traversal_cap="3"
+    ];
+
+    // Transient infra glitch: retry the build step (self-loop, capped at 2).
+    green_build -> green_build [
+        condition="outcome.status == 'FAIL' && outcome.failure_class == 'transient'",
+        traversal_cap="2"
+    ];
+
+    // Unconditional fallback (WG-011): structural / budget / canceled / unknown → triage.
+    green_build -> "close-needs-attention";
+}

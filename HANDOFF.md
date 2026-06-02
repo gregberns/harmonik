@@ -1,4 +1,4 @@
-<!-- PP-TRIAL:v2 2026-06-02 main — CLEAN. Two-agent overnight session (named-queues + flywheel). Shipped: set-concurrency feature, a 6-fix daemon-reliability cluster, and a WHOLE agent-comms event bus (inter-agent messaging through harmonik) — built+deployed+validated+in-production. Main @ 5c51df8f, 0/0 origin, daemon UP on latest binary at -c6. START HERE = comms is the `harmonik comms` bus now (.md files retired); pick deferred work or new from `kerf next`. -->
+<!-- PP-TRIAL:v2 2026-06-02 (afternoon) main @0d5cbf79 in-sync origin — CLEAN, nothing blocking. AFTERNOON SESSION (named-queues agent): (1) found+fixed a SILENT dispatch DEADLOCK — hk-z0pmi P1: a stuck-`dispatched` queue item wedged `main` active → QM-027 blocked ALL submits → both agents sat idle (fix f82c051e, QM-002b Class A'); also hk-febd6 + hk-40r9b. (2) SCENARIO-TEST COVERAGE UPLIFT (operator ask): 4-scout coverage-matrix → 6 new //go:build scenario tests across the daemon-reliability gaps, full tagged suite GREEN @6ecfb017 (1 false gap retired, hk-5mlvk). flywheel ran the ledger/kerf lane (33 stale closes incl epics hk-i0tw+hk-fgy9o, kerf baseline acked) then handed off. START HERE = deferred (hk-ymav1/ulp7v/x6j6r) or `kerf next`; my follow-ups hk-i2ie5 (daemon gate skips scenario tests) + hk-yyso7 (concurrent-push race). See HANDOFF-named-queues.md. Overnight summary below. -->
 
 Read order (per CLAUDE.md): AGENT_INDEX.md → STATUS.md → TASKS.md. Cross-project rules: `~/.claude/CLAUDE.md`. Dispatch loop: skill `harmonik-dispatch`.
 
@@ -26,7 +26,7 @@ Main `5c51df8f`, `0/0` origin, build green, daemon UP at `--max-concurrent 6` on
 `.kerf/works/agent-comms/` (05-spec-draft.md, 07-tasks.md) · `internal/daemon/workloop.go` (dispatch gate) · `internal/queue/` (comms ops in socket.go) · the `agent-comms` skill.
 
 # Translations glossary
-- **named-queues / flywheel** — the two concurrent Claude orchestrator sessions (peers) sharing one daemon; you are likely `named-queues`.
+- **named-queues / flywheel** — the two concurrent Claude orchestrator sessions (peers) sharing one daemon. A `/clear` can mis-ID which one you are (on 2026-06-02 flywheel mis-read this very line, thought it was named-queues, and aliased itself `nq-resume` before correcting). Determine your identity by LANE, not this line: daemon+queues+scenario-tests = named-queues; ledger+kerf hygiene = flywheel. Check which HANDOFF-<role>.md is yours.
 - **agent-comms bus** — the new `harmonik comms` inter-agent messaging feature (replaces the AGENT_COMMS.md file hack).
 - **keeper** — `/tmp/hk-keeper.sh`, the while-loop that auto-revives the daemon on death (at `-c6`).
 - **set-concurrency** — runtime daemon dispatch-ceiling RPC (`hk-ohiaf`).

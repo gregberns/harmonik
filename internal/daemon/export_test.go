@@ -865,6 +865,12 @@ type ExitInfoExported struct {
 	StderrTail []byte
 }
 
+// ExportedStopHookGrace exposes the stopHookGrace constant so tests can assert
+// that the fast-path returns well within the grace window.
+//
+// Bead: hk-3jmke.
+const ExportedStopHookGrace = stopHookGrace
+
 // ExportedWaitWithSocketGrace exposes waitWithSocketGrace for tests in package
 // daemon_test.
 //

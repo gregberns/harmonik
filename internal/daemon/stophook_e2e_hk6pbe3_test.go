@@ -362,9 +362,11 @@ func TestStopHookE2E_TwinRelayWaitGrace(t *testing.T) {
 
 	// waitWithSocketGrace must find the stored outcome via LatestOutcome (fast
 	// path) and return it without waiting the full 3 s grace window.
+	start := time.Now()
 	got, ei := daemon.ExportedWaitWithSocketGrace(
 		t.Context(), store, nil, sess, runID, claudeSessionID,
 	)
+	elapsed := time.Since(start)
 
 	if got == nil {
 		t.Fatal("ExportedWaitWithSocketGrace returned nil outcome; " +
@@ -375,5 +377,16 @@ func TestStopHookE2E_TwinRelayWaitGrace(t *testing.T) {
 	}
 	if ei.ExitCode != 0 {
 		t.Errorf("exitCode=%d; want 0", ei.ExitCode)
+	}
+	// Fast-path timing guard: the outcome is already in the store before
+	// waitWithSocketGrace is called, so the fast-path LatestOutcome check must
+	// return without sleeping the full stopHookGrace window.  Use half of
+	// stopHookGrace as the bound — a 2.9 s regression (implicit near-timeout)
+	// would exceed this and surface as a test failure.
+	const graceMargin = daemon.ExportedStopHookGrace / 2
+	if elapsed > graceMargin {
+		t.Errorf("ExportedWaitWithSocketGrace took %v; want <%v (half of stopHookGrace %v); "+
+			"fast-path should not delay when outcome is already stored",
+			elapsed, graceMargin, daemon.ExportedStopHookGrace)
 	}
 }

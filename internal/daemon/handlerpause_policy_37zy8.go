@@ -186,6 +186,12 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 			if err := p.cfg.Controller.Pause(ctx, agentType, cause, inFlight); err != nil {
 				return fmt.Errorf("handler-pause-policy: rate-limit: Pause: %w", err)
 			}
+			// Schedule auto-resume if the provider reported a retry_after window
+			// (hk-0otqs).  The controller applies flap-backoff internally.
+			if payload.RetryAfterSeconds != nil && *payload.RetryAfterSeconds > 0 {
+				after := time.Duration(*payload.RetryAfterSeconds) * time.Second
+				p.cfg.Controller.Schedule(ctx, agentType, after)
+			}
 		}
 	}
 	return nil

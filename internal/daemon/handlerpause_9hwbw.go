@@ -99,6 +99,24 @@ type handlerEntry struct {
 	// to 2 on the second Pause after a Resume, and so on.
 	// Matches the PausedEpoch field on HandlerPausedPayload / HandlerResumedPayload.
 	pausedEpoch int
+
+	// --- auto-resume state (hk-0otqs) ---
+
+	// scheduledResumeCancel cancels a pending auto-resume goroutine.
+	// Non-nil when a Schedule call has fired and the timer has not yet expired
+	// or been superseded.  Nil when no auto-resume is pending.
+	scheduledResumeCancel context.CancelFunc
+
+	// autoResumeAttempts counts consecutive auto-resume attempts that did not
+	// "stick" (i.e. the handler got re-paused quickly after auto-resume).
+	// Reset to zero on a successful auto-resume that persists beyond the flap window.
+	autoResumeAttempts int
+
+	// lastAutoResumedAt records when the most recent auto-resume fired.
+	// Used by Pause to detect flapping: if Pause is called while
+	// lastAutoResumedAt is recent, autoResumeAttempts is incremented.
+	// Zero value means no auto-resume has fired for this handler.
+	lastAutoResumedAt time.Time
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +199,11 @@ type HandlerPauseController struct {
 	// Injected via SetAdapter after construction; nil until wired.
 	// Spec: specs/handler-contract.md §4.3a HC-014a.  Bead: hk-tvsl7.
 	adapter handlercontract.Adapter
+
+	// autoResumeCfgs holds per-handler-type auto-resume configuration (hk-0otqs).
+	// Entries are set via SetAutoResumeConfig.  Absent entries use zero-value
+	// AutoResumeConfig (Disabled=false, defaults apply).
+	autoResumeCfgs map[core.AgentType]AutoResumeConfig
 }
 
 // NewHandlerPauseController returns a ready-to-use HandlerPauseController.
@@ -196,9 +219,10 @@ type HandlerPauseController struct {
 // Bead ref: hk-m0k0a.
 func NewHandlerPauseController(bus eventbus.EventBus, persistFn func(ctx context.Context, snapshots []HandlerPauseStatusSnapshot) error) *HandlerPauseController {
 	return &HandlerPauseController{
-		handlers:  make(map[core.AgentType]*handlerEntry),
-		bus:       bus,
-		persistFn: persistFn,
+		handlers:       make(map[core.AgentType]*handlerEntry),
+		bus:            bus,
+		persistFn:      persistFn,
+		autoResumeCfgs: make(map[core.AgentType]AutoResumeConfig),
 	}
 }
 
@@ -234,6 +258,25 @@ func (c *HandlerPauseController) SetAdapter(adapter handlercontract.Adapter) {
 	c.mu.Lock()
 	c.adapter = adapter
 	c.mu.Unlock()
+}
+
+// SetAutoResumeConfig sets the auto-resume configuration for agentType (hk-0otqs).
+//
+// When cfg.Disabled is true, Schedule calls for this agent type are no-ops.
+// When not set (absent from the map), the zero-value AutoResumeConfig applies:
+// auto-resume is enabled with default backoff parameters.
+//
+// Must be called before the first Schedule call for agentType.
+func (c *HandlerPauseController) SetAutoResumeConfig(agentType core.AgentType, cfg AutoResumeConfig) {
+	c.mu.Lock()
+	c.autoResumeCfgs[agentType] = cfg
+	c.mu.Unlock()
+}
+
+// autoResumeCfgLocked returns the AutoResumeConfig for agentType.
+// MUST be called while mu is held.
+func (c *HandlerPauseController) autoResumeCfgLocked(agentType core.AgentType) AutoResumeConfig {
+	return c.autoResumeCfgs[agentType] // zero value when absent
 }
 
 // runDiagnose calls adapter.Diagnose (HC-014a) and returns the result.
@@ -305,6 +348,24 @@ func (c *HandlerPauseController) Pause(
 		// Already paused — single-writer no-op.
 		c.mu.Unlock()
 		return nil
+	}
+
+	// Flap detection (hk-0otqs): if the handler was recently auto-resumed and
+	// is being re-paused, increment the flap counter so the next Schedule call
+	// applies exponential backoff.
+	if !entry.lastAutoResumedAt.IsZero() {
+		elapsed := time.Since(entry.lastAutoResumedAt)
+		if elapsed < autoResumeFlapWindow {
+			entry.autoResumeAttempts++
+		}
+		entry.lastAutoResumedAt = time.Time{} // reset; the new pause starts a fresh epoch
+	}
+
+	// Cancel any pending auto-resume for this handler type.  The new pause
+	// supersedes the scheduled resume from the previous epoch.
+	if entry.scheduledResumeCancel != nil {
+		entry.scheduledResumeCancel()
+		entry.scheduledResumeCancel = nil
 	}
 
 	// Mutate state.
@@ -395,12 +456,30 @@ func (c *HandlerPauseController) Resume(
 	priorCause := *entry.cause
 	epoch := entry.pausedEpoch
 
+	// Cancel any pending auto-resume timer for this handler type.
+	// The operator resume supersedes it.
+	if entry.scheduledResumeCancel != nil {
+		entry.scheduledResumeCancel()
+		entry.scheduledResumeCancel = nil
+	}
+
 	// Clear state.
 	entry.status = pauseStatusLive
 	entry.cause = nil
 	entry.inFlightAtPause = nil
 	// pausedEpoch is NOT reset — it is monotonically increasing to support the
 	// dispatcher's dedup contract (queue_item_held_for_handler_pause §8.11.3).
+
+	// Operator resume resets the flap counter: the operator has confirmed the
+	// handler is operational, so prior auto-resume history is irrelevant.
+	//
+	// Auto-backoff resume does NOT reset these fields: the next Pause call may
+	// detect a flap (re-pause within autoResumeFlapWindow) and must see the
+	// lastAutoResumedAt timestamp set by doAutoResume.
+	if resumedBy == core.HandlerResumedByOperator {
+		entry.autoResumeAttempts = 0
+		entry.lastAutoResumedAt = time.Time{}
+	}
 
 	// Persist under the lock before emitting the bus event (hk-m0k0a).
 	if c.persistFn != nil {

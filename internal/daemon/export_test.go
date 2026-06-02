@@ -1448,6 +1448,32 @@ var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 var ExportedNewOperatorPauseController = NewOperatorPauseController
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Auto-resume test seams (hk-0otqs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedAutoResumeConfig is a type alias for AutoResumeConfig so tests in
+// package daemon_test can reference the type directly.
+//
+// Bead ref: hk-0otqs.
+type ExportedAutoResumeConfig = AutoResumeConfig
+
+// ExportedHandlerPauseControllerSchedule exposes HandlerPauseController.Schedule
+// for tests in package daemon_test.
+//
+// Bead ref: hk-0otqs.
+func ExportedHandlerPauseControllerSchedule(c *HandlerPauseController, ctx context.Context, agentType core.AgentType, after time.Duration) {
+	c.Schedule(ctx, agentType, after)
+}
+
+// ExportedHandlerPauseControllerSetAutoResumeCfg exposes
+// HandlerPauseController.SetAutoResumeConfig for tests in package daemon_test.
+//
+// Bead ref: hk-0otqs.
+func ExportedHandlerPauseControllerSetAutoResumeCfg(c *HandlerPauseController, agentType core.AgentType, cfg AutoResumeConfig) {
+	c.SetAutoResumeConfig(agentType, cfg)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // brQueueLedger test seam (hk-dv8qv — ledger-dep direction regression)
 // ─────────────────────────────────────────────────────────────────────────────
 

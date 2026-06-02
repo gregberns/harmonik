@@ -159,12 +159,17 @@ const (
 	// HandlerResumedByOperator indicates the resume was triggered by an operator
 	// via `harmonik handler resume <agent-type>`.
 	HandlerResumedByOperator HandlerResumedBy = "operator"
+
+	// HandlerResumedByAutoBackoff indicates the resume was triggered automatically
+	// after a timed backoff derived from the rate-limit retry_after window.
+	// Post-MVH: see specs/handler-pause.md §1.2 and bead hk-0otqs.
+	HandlerResumedByAutoBackoff HandlerResumedBy = "auto-backoff"
 )
 
 // Valid reports whether b is one of the declared HandlerResumedBy constants.
 func (b HandlerResumedBy) Valid() bool {
 	switch b {
-	case HandlerResumedByOperator:
+	case HandlerResumedByOperator, HandlerResumedByAutoBackoff:
 		return true
 	default:
 		return false

@@ -428,6 +428,34 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically). Two permissive warnings for `class="hard"` on `draft_plan` and `decompose` are expected (retained in `UnknownAttrs`, not dispatched at v1).
 - Scenario harness: `internal/workflow/scenario/plan_to_shipped_faithful_test.go` (drives mock handler responses against nine scenarios covering the full S2 path obligations: happy-path full arc, plan-review BLOCK early exit, plan-review RC loop, load-beads non-SUCCESS tool gate, cycle-check non-SUCCESS tool gate, consolidate BLOCK, consolidate cap-hit, green-build deterministic fail → implement loop, and green-build non-deterministic fail → unconditional fallback).
 
+### `regression-gate.dot`
+
+**Purpose.** Reproduce-before-fix encoded as a graph structure: a shell tool node whose **FAIL is the desired forward path** (the bug must reproduce before we trust a fix), followed by an agentic fix node, followed by a full regression suite that catches both "fix didn't take" and "fix broke something else." Subsumes the debugging-slice `sentry-bugfix-faithful` and the degraded-NOW `bugfix-loop-now` (the latter folds the shell gates into the agent's session, trading deterministic exit codes for an LLM opinion). This is SDLC corpus workflow #16 (SOON — depends on the tool/shell node handler).
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §16` (regression-gate topology) and the corpus dialect contract (§"Dialect contract").
+- Uses `type="non-agentic"` with `handler_ref="shell"` and `tool_command=` for `reproduce` and `regression_suite` — per `specs/workflow-graph.md §4 WG-039` (tool_command / shell handler). The shell handler maps exit codes to Outcomes per `specs/execution-model.md §II.7 EM-057 item 7` (exit 0 → SUCCESS; non-zero → FAIL+deterministic) and `§II.8 EM-058` (non-agentic row). In-process handler contract: `specs/handler-contract.md §III.1 HC-063`.
+- Uses `type="agentic"` with `agent_type="implementer"` and `handler_ref="claude-implementer"` for `fix_bug` — per `specs/workflow-graph.md §4 WG-001/WG-002` (closed node-type enum) and `specs/handler-contract.md §4.1 HC-001` (handler_ref required).
+- Uses `type="non-agentic"` with `handler_ref="noop"` for `start`, `cannot_reproduce`, `close`, and `close-needs-attention` — per WG-001/WG-002.
+- Uses `outcome.status` as the edge-condition LHS on the `reproduce→fix_bug` (`== 'FAIL'`) and `reproduce→cannot_reproduce` (`== 'SUCCESS'`) edges, and on the `regression_suite→close` (`== 'SUCCESS'`) edge — per the D4 LHS whitelist (row 1, `outcome.status`).
+- Uses the compound condition `outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'` on the `regression_suite→fix_bug` back-edge — per the D5 v1 edge-condition dialect (`&&` operator, equality only) per `specs/workflow-graph.md §6 WG-013`.
+- Uses `traversal_cap="3"` on the `regression_suite→fix_bug` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `terminal_node_ids="close,close-needs-attention"` — per `specs/workflow-graph.md §8 WG-021..WG-023`.
+- Every branching node (`reproduce`, `regression_suite`) carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+- Uses the D5 v1 edge-condition dialect (equality + `&&` only; no `<`/`>`) — per `specs/workflow-graph.md §6 WG-013`.
+
+**Gap coverage.** Demonstrates the "FAIL-as-forward-path" pattern: a tool node where non-zero exit is the *expected* success path for the overall workflow (the bug must reproduce before a fix is trusted). Extends the tool-node pattern of `tool-node.dot` with a compound `&&` condition on a capped back-edge.
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/regression_gate_test.go` (drives mock handler responses against six scenarios covering the S2 path obligations: happy-path bug-reproduced arc, cannot-reproduce routing, reproduce infra fallback, regression-suite fix-loop, regression-suite cap-hit, and regression-suite transient fallback).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

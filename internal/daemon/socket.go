@@ -490,6 +490,22 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: true, Result: result}
 		}
 
+	case "comms-recv":
+		// Type-assert ch to CommsRecvHandler. In production, *commsSendHandlerImpl
+		// implements CommsSendHandler, CommsPresenceHandler, and CommsRecvHandler
+		// (hk-nnwaa T8). The recv deps are set via SetRecvDeps after handler creation.
+		cr, ok := ch.(CommsRecvHandler)
+		if !ok || cr == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: CommsRecvHandler not registered"}
+			break
+		}
+		result, err := cr.HandleCommsRecv(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
 	// -----------------------------------------------------------------------
 	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
 	// -----------------------------------------------------------------------

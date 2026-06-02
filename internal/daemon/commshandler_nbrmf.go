@@ -61,14 +61,21 @@ type CommsSendResult struct {
 	EventID string `json:"event_id"`
 }
 
-// commsSendHandlerImpl is the concrete CommsSendHandler (and CommsPresenceHandler)
-// backed by a CommsMessageEmitter and an optional CommsPresenceEmitter.
-// Both interfaces are implemented on this single struct so the daemon can pass one
-// handler value to RunSocketListenerFull and the socket op switch can type-assert
-// to CommsPresenceHandler when processing comms-presence ops (hk-7t27s T10).
+// commsSendHandlerImpl is the concrete CommsSendHandler (and CommsPresenceHandler,
+// CommsRecvHandler) backed by a CommsMessageEmitter and an optional
+// CommsPresenceEmitter. All three interfaces are implemented on this single struct
+// so the daemon can pass one handler value to RunSocketListenerFull and the socket
+// op switch can type-assert to the appropriate sub-interface per op.
+//
+// cursorStore and eventsJSONLPath are set post-construction via SetRecvDeps
+// (commsrecvhandler_nnwaa.go) and enable the comms-recv op (hk-nnwaa T8).
 type commsSendHandlerImpl struct {
 	emitter     eventbus.CommsMessageEmitter
 	presEmitter eventbus.CommsPresenceEmitter // nil when bus does not support presence
+
+	// recv deps — set by SetRecvDeps; nil/empty disables comms-recv.
+	cursorStore     *CursorStore
+	eventsJSONLPath string
 }
 
 // NewCommsSendHandler constructs a CommsSendHandler that emits agent_message

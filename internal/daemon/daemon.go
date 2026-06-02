@@ -1155,6 +1155,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// (e.g. test stubs), in which case comms-send ops return an error response.
 		// Bead ref: hk-nbrmf (comms-send T4).
 		commsSendHandler := NewCommsSendHandler(bus)
+		// Wire comms-recv deps (T8, hk-nnwaa): cursor store + events JSONL path.
+		// SetRecvDeps is a no-op when commsSendHandler is nil (bus stub case).
+		if impl, ok := commsSendHandler.(*commsSendHandlerImpl); ok && cfg.ProjectDir != "" {
+			cursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
+			impl.SetRecvDeps(NewCursorStore(cursorDir), cfg.JSONLLogPath)
+		}
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done

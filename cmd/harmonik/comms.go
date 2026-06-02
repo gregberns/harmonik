@@ -8,8 +8,7 @@ package main
 //   - join  (C6 presence join; bead hk-7t27s T10)
 //   - leave (C6 presence leave; bead hk-7t27s T10)
 //   - who   (C3/C6 presence view; bead hk-ofxd0 T11)
-//
-// Further verbs (recv) land in subsequent tasks (T8–T9).
+//   - recv  (C2/C5 durable recv; bead hk-nnwaa T8)
 //
 // Flag reference for `harmonik comms send`:
 //
@@ -42,11 +41,20 @@ package main
 //	--json                     Emit one JSON object per online agent (NDJSON).
 //	--project DIR              Project directory (default: cwd).
 //
+// Flag reference for `harmonik comms recv`:
+//
+//	--agent NAME               Agent identity (default: $HARMONIK_AGENT env var).
+//	--from NAME                Filter: only messages from NAME.
+//	--topic T                  Filter: only messages with topic T.
+//	--json                     Emit one JSON object per message (NDJSON) instead of human-readable.
+//	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
+//	--project DIR              Project directory (default: cwd).
+//
 // Exit codes:
 //
 //	0   Success
 //	1   Argument error or read failure
-//	17  Daemon not running (send/join/leave only — socket missing or ECONNREFUSED)
+//	17  Daemon not running (send/join/leave/recv — socket missing or ECONNREFUSED)
 //
 // Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.3, §2.4, §2.5, §4.
 // Bead ref: hk-cnjhx (T3), hk-onn1x (T5), hk-7t27s (T10), hk-ofxd0 (T11).
@@ -90,8 +98,10 @@ func runCommsSubcommand(subArgs []string) int {
 		return runCommsPresenceSubcommand(subArgs[1:], "leave")
 	case "who":
 		return runCommsWhoSubcommand(subArgs[1:])
+	case "recv":
+		return runCommsRecvSubcommand(subArgs[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log, join, leave, who\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log, join, leave, who, recv\n", verb)
 		return 2
 	}
 }
@@ -327,6 +337,7 @@ USAGE
 
 VERBS
   send    Send an agent_message to a named agent or broadcast to all
+  recv    Receive unread agent_messages from the durable cursor (daemon required)
   log     Read-only operator view of recent agent_message events (no daemon needed)
   join    Emit an agent_presence{online, reason:"join"} beat (presence registry)
   leave   Emit an agent_presence{offline, reason:"leave"} beat (presence registry)
@@ -336,11 +347,13 @@ EXIT CODES
   0   Success
   1   Argument error or op rejected
   2   Unrecognised verb
-  17  Daemon not running (send/join/leave only)
+  17  Daemon not running (send/recv/join/leave)
 
 EXAMPLES
   harmonik comms send --to other-agent -- Hello
   harmonik comms send --broadcast --from myagent -- Status update
+  harmonik comms recv --agent myagent
+  harmonik comms recv --agent myagent --from orchestrator --json
   harmonik comms log --since 30m
   harmonik comms log --since 30m --to myagent --json
   harmonik comms join --name myagent
@@ -922,4 +935,228 @@ EXAMPLES
 		}
 		return "offline"
 	}(), verb, verb, verb)
+}
+
+// runCommsRecvSubcommand implements `harmonik comms recv` (agent-comms spec §2.2 C2/C5,
+// bead hk-nnwaa T8).
+//
+// Sends a comms-recv socket op to the daemon, which reads unread agent_message
+// events from the caller's durable cursor, advances the cursor (at-least-once,
+// N3), and returns the matched messages.
+//
+// subArgs is os.Args[3:].
+func runCommsRecvSubcommand(subArgs []string) int {
+	agentFlag := ""
+	fromFlag := ""
+	topicFlag := ""
+	jsonFlag := false
+	socketFlag := ""
+	projectFlag := ""
+
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			commsRecvUsage()
+			return 0
+		case arg == "--agent" && i+1 < len(subArgs):
+			i++
+			agentFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--agent="):
+			agentFlag = strings.TrimPrefix(arg, "--agent=")
+		case arg == "--from" && i+1 < len(subArgs):
+			i++
+			fromFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--from="):
+			fromFlag = strings.TrimPrefix(arg, "--from=")
+		case arg == "--topic" && i+1 < len(subArgs):
+			i++
+			topicFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--topic="):
+			topicFlag = strings.TrimPrefix(arg, "--topic=")
+		case arg == "--json":
+			jsonFlag = true
+		case arg == "--socket" && i+1 < len(subArgs):
+			i++
+			socketFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--socket="):
+			socketFlag = strings.TrimPrefix(arg, "--socket=")
+		case arg == "--project" && i+1 < len(subArgs):
+			i++
+			projectFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "harmonik comms recv: unknown flag %q\n", arg)
+			return 1
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik comms recv: unexpected argument %q\n", arg)
+			return 1
+		}
+	}
+
+	// Resolve agent name: --agent > $HARMONIK_AGENT.
+	agent := agentFlag
+	if agent == "" {
+		agent = os.Getenv("HARMONIK_AGENT")
+	}
+	if agent == "" {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: --agent is required (or set $HARMONIK_AGENT)\n")
+		return 1
+	}
+
+	// Resolve socket path.
+	sockPath := socketFlag
+	if sockPath == "" {
+		projectDir := projectFlag
+		if projectDir == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv: cannot determine cwd: %v\n", err)
+				return 1
+			}
+			projectDir = wd
+		}
+		absProject, err := filepath.Abs(projectDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv: cannot resolve project path: %v\n", err)
+			return 1
+		}
+		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
+	}
+
+	// Build the CommsRecvRequest payload.
+	recvPayload := map[string]any{
+		"agent": agent,
+	}
+	if fromFlag != "" {
+		recvPayload["from"] = fromFlag
+	}
+	if topicFlag != "" {
+		recvPayload["topic"] = topicFlag
+	}
+
+	payloadBytes, err := json.Marshal(recvPayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: marshal payload: %v\n", err)
+		return 1
+	}
+
+	reqBytes, err := json.Marshal(map[string]any{
+		"op":      "comms-recv",
+		"payload": json.RawMessage(payloadBytes),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: marshal request: %v\n", err)
+		return 1
+	}
+
+	// Dial, send, read response.
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancelDial()
+	if dialErr != nil {
+		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv: daemon not running (socket %s missing or refused)\n", sockPath)
+			return 17
+		}
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: dial %s: %v\n", sockPath, dialErr)
+		return 1
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: write request: %v\n", writeErr)
+		return 1
+	}
+	if uw, ok := conn.(*net.UnixConn); ok {
+		_ = uw.CloseWrite()
+	}
+
+	var resp struct {
+		Ok     bool            `json:"ok"`
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  string          `json:"error,omitempty"`
+	}
+	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: decode response: %v\n", decErr)
+		return 1
+	}
+
+	if !resp.Ok {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: %s\n", resp.Error)
+		return 1
+	}
+
+	// Decode CommsRecvResult.
+	var result struct {
+		Messages []struct {
+			EventID   string `json:"event_id"`
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Topic     string `json:"topic,omitempty"`
+			Body      string `json:"body"`
+			InReplyTo string `json:"in_reply_to,omitempty"`
+			Ts        string `json:"ts"`
+		} `json:"messages"`
+	}
+	if unmarshalErr := json.Unmarshal(resp.Result, &result); unmarshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: decode result: %v\n", unmarshalErr)
+		return 1
+	}
+
+	if len(result.Messages) == 0 && !jsonFlag {
+		fmt.Fprintln(os.Stderr, "harmonik comms recv: no new messages")
+		return 0
+	}
+
+	for _, msg := range result.Messages {
+		if jsonFlag {
+			line, marshalErr := json.Marshal(msg)
+			if marshalErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv: marshal message: %v\n", marshalErr)
+				return 1
+			}
+			fmt.Println(string(line))
+		} else {
+			direction := fmt.Sprintf("%s → %s", msg.From, msg.To)
+			if msg.Topic != "" {
+				fmt.Printf("%s  %-30s  [%s]  %s\n", msg.Ts, direction, msg.Topic, msg.Body)
+			} else {
+				fmt.Printf("%s  %-30s  %s\n", msg.Ts, direction, msg.Body)
+			}
+		}
+	}
+	return 0
+}
+
+func commsRecvUsage() {
+	fmt.Print(`harmonik comms recv — receive unread agent_messages from the durable cursor
+
+USAGE
+  harmonik comms recv [--agent NAME] [--from NAME] [--topic T] [--json] [--socket PATH] [--project DIR]
+
+Sends a comms-recv op to the daemon. The daemon reads unread agent_message events
+from the agent's durable cursor, advances the cursor (at-least-once delivery: N3),
+and returns the matched messages. Recipients should deduplicate on event_id.
+
+FLAGS
+  --agent NAME    Agent identity (default: $HARMONIK_AGENT env var). Required.
+  --from NAME     Filter: only messages from NAME.
+  --topic T       Filter: only messages with topic T.
+  --json          Emit one JSON object per message (NDJSON) instead of human-readable output.
+  --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
+  --project DIR   Project directory (default: cwd).
+
+EXIT CODES
+  0   Success (zero or more messages printed)
+  1   Argument error or daemon rejected the op
+  17  Daemon not running (socket missing or ECONNREFUSED)
+
+EXAMPLES
+  harmonik comms recv --agent myagent
+  harmonik comms recv --agent myagent --from orchestrator
+  harmonik comms recv --agent myagent --topic status --json
+  harmonik comms recv                    # uses $HARMONIK_AGENT
+`)
 }

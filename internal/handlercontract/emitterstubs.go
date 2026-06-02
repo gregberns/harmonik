@@ -59,26 +59,12 @@ func (NoopWatcherDeadLetter) Append(_ core.EventType, _ []byte, _ string) error 
 	return nil
 }
 
-// NoopDeadLetterSink is a DeadLetterSink that silently discards all
-// dead-letter records.  Use as the required-argument default when the caller
-// does not need to persist undeliverable events.
-//
-// Constructors that accept a DeadLetterSink argument MUST substitute nil with
-// NoopDeadLetterSink{} rather than storing a nil interface value; the eventbus
-// implementation relies on unconditional calls to Record (no nil-guard).
+// NoopDeadLetterSink is a type alias for core.NoopDeadLetterSink, re-exported
+// so that handler-side packages can name the type without importing
+// internal/core directly (EV-002b boundary).
 //
 // Bead ref: hk-2m3bq.
-type NoopDeadLetterSink struct{}
-
-// Record discards the event and returns nil.
-func (NoopDeadLetterSink) Record(_ context.Context, _ core.EventEnvelope, _ string) error {
-	return nil
-}
-
-// Close is a no-op and returns nil.
-func (NoopDeadLetterSink) Close() error {
-	return nil
-}
+type NoopDeadLetterSink = core.NoopDeadLetterSink
 
 // Compile-time interface checks.
 var _ EventEmitter = (*CollectingEmitter)(nil)

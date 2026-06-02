@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // jsonlAppender is the write surface of [JSONLWriter] used by [busImpl].
@@ -35,7 +34,7 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 //
 // Emit applies the full EV-035 redaction pipeline before JSONL append and
 // consumer dispatch: HC-031 common-prefix field-name redaction PLUS HC-032
-// per-handler value-pattern redaction via the [handlercontract.RedactionRegistry]
+// per-handler value-pattern redaction via the [core.RedactionRegistry]
 // supplied at construction.
 //
 // When constructed via [NewBusImpl] (no patterns), the registry applies HC-031
@@ -55,12 +54,12 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 //
 // # Dead-letter sink (hk-xvpwb)
 //
-// When constructed via [NewBusImplWithSink], a [handlercontract.DeadLetterSink]
+// When constructed via [NewBusImplWithSink], a [core.DeadLetterSink]
 // is injected at construction time and receives undeliverable events:
 //   - Observer/async consumer panics are recorded with reason "observer_panic".
 //   - Async/observer consumer dispatch errors are recorded with reason "consumer_error".
 //
-// When no sink is provided, deadLetterSink holds a [handlercontract.NoopDeadLetterSink]
+// When no sink is provided, deadLetterSink holds a [core.NoopDeadLetterSink]
 // and Record calls are unconditional no-ops (no nil-guard required).
 //
 // # Dispatch order (EV-014a)
@@ -85,9 +84,9 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014a, EV-016, EV-035.
 // Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb, hk-2m3bq.
 type busImpl struct {
-	registry       *handlercontract.RedactionRegistry
+	registry       *core.RedactionRegistry
 	jsonlWriter    jsonlAppender                  // never nil; nullJSONLWriter when no log path configured
-	deadLetterSink handlercontract.DeadLetterSink // never nil; NoopDeadLetterSink when no sink configured
+	deadLetterSink core.DeadLetterSink // never nil; NoopDeadLetterSink when no sink configured
 	idGen          *core.EventIDGenerator
 	mu             sync.Mutex
 	subscriptions  []core.Subscription
@@ -156,16 +155,16 @@ func isFsyncBoundaryEvent(eventType core.EventType) bool {
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-035, PL-005 step 0.
 func NewBusImpl() EventBus {
 	return &busImpl{
-		registry:       handlercontract.NewRedactionRegistry(),
+		registry:       core.NewRedactionRegistry(),
 		jsonlWriter:    nullJSONLWriter{},
-		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
 		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
 // NewBusImplWithRegistry constructs a busImpl that delegates all redaction to
-// the supplied [handlercontract.RedactionRegistry].
+// the supplied [core.RedactionRegistry].
 //
 // The registry MUST be fully populated (all RegisterPattern calls complete)
 // before the bus is sealed per PL-005 step 0. Passing a nil registry is
@@ -175,21 +174,21 @@ func NewBusImpl() EventBus {
 // before calling Seal (EV-009). The returned value satisfies [EventBus].
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-035; specs/handler-contract.md §4.7.HC-032.
-func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBus {
+func NewBusImplWithRegistry(registry *core.RedactionRegistry) EventBus {
 	if registry == nil {
 		return NewBusImpl()
 	}
 	return &busImpl{
 		registry:       registry,
 		jsonlWriter:    nullJSONLWriter{},
-		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
 		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
 // NewBusImplWithWriter constructs a busImpl with both a
-// [handlercontract.RedactionRegistry] and a [*JSONLWriter] for durable event
+// [core.RedactionRegistry] and a [*JSONLWriter] for durable event
 // logging.
 //
 // Every Emit call will append the redacted event to the JSONL log via writer.
@@ -207,9 +206,9 @@ func NewBusImplWithRegistry(registry *handlercontract.RedactionRegistry) EventBu
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
 // specs/handler-contract.md §4.7.HC-032.
 // Bead ref: hk-8mup.63, hk-2m3bq.
-func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *JSONLWriter) EventBus {
+func NewBusImplWithWriter(registry *core.RedactionRegistry, writer *JSONLWriter) EventBus {
 	if registry == nil {
-		registry = handlercontract.NewRedactionRegistry()
+		registry = core.NewRedactionRegistry()
 	}
 	var w jsonlAppender = nullJSONLWriter{}
 	if writer != nil {
@@ -218,14 +217,14 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 	return &busImpl{
 		registry:       registry,
 		jsonlWriter:    w,
-		deadLetterSink: handlercontract.NoopDeadLetterSink{},
+		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
 		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 
-// NewBusImplWithSink constructs a busImpl with a [handlercontract.RedactionRegistry],
-// a [*JSONLWriter], and a [handlercontract.DeadLetterSink] for undeliverable events.
+// NewBusImplWithSink constructs a busImpl with a [core.RedactionRegistry],
+// a [*JSONLWriter], and a [core.DeadLetterSink] for undeliverable events.
 //
 // Async/observer consumer panics are recorded to sink with reason "observer_panic".
 // Async/observer consumer dispatch errors are recorded to sink with reason "consumer_error".
@@ -233,7 +232,7 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 // Passing nil for registry, writer, or sink is safe:
 //   - nil registry falls back to HC-031-only redaction (same as [NewBusImpl]).
 //   - nil writer substitutes a [nullJSONLWriter] (JSONL append is a no-op).
-//   - nil sink substitutes a [handlercontract.NoopDeadLetterSink] (undeliverable
+//   - nil sink substitutes a [core.NoopDeadLetterSink] (undeliverable
 //     events are silently discarded). Record is called unconditionally — no nil-guard.
 //
 // This constructor is the preferred call site for daemon.Start when
@@ -245,16 +244,16 @@ func NewBusImplWithWriter(registry *handlercontract.RedactionRegistry, writer *J
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-016, EV-016a, EV-035;
 // specs/handler-contract.md §4.7.HC-032.
 // Bead ref: hk-xvpwb, hk-2m3bq.
-func NewBusImplWithSink(registry *handlercontract.RedactionRegistry, writer *JSONLWriter, sink handlercontract.DeadLetterSink) EventBus {
+func NewBusImplWithSink(registry *core.RedactionRegistry, writer *JSONLWriter, sink core.DeadLetterSink) EventBus {
 	if registry == nil {
-		registry = handlercontract.NewRedactionRegistry()
+		registry = core.NewRedactionRegistry()
 	}
 	var w jsonlAppender = nullJSONLWriter{}
 	if writer != nil {
 		w = writer
 	}
 	if sink == nil {
-		sink = handlercontract.NoopDeadLetterSink{}
+		sink = core.NoopDeadLetterSink{}
 	}
 	return &busImpl{
 		registry:       registry,

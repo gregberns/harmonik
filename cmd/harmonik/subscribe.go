@@ -12,6 +12,9 @@ package main
 //	--types t1,t2,...      Comma-separated event-type filter (default: all)
 //	--heartbeat <dur>      Idle heartbeat cadence (default 60s; clamped 10s..600s)
 //	--since-event-id <id>  Resume cursor: replay events strictly after this event_id before delivering live stream
+//	--to <name>            Agent-message addressing filter: only deliver agent_message events addressed to <name> or "*"
+//	--from <name>          Agent-message addressing filter: only deliver agent_message events sent by <name>
+//	--topic <topic>        Agent-message addressing filter: only deliver agent_message events with matching topic
 //	--socket <path>        Override socket path (default: <project>/.harmonik/daemon.sock)
 //	--project <dir>        Project directory (default: cwd)
 //
@@ -42,6 +45,9 @@ func runSubscribeSubcommand(subArgs []string) int {
 	typesFlag := ""
 	heartbeatFlag := 60 * time.Second
 	sinceFlag := ""
+	toFlag := ""
+	fromFlag := ""
+	topicFlag := ""
 	socketFlag := ""
 	projectFlag := ""
 
@@ -76,6 +82,21 @@ func runSubscribeSubcommand(subArgs []string) int {
 			sinceFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--since-event-id="):
 			sinceFlag = strings.TrimPrefix(arg, "--since-event-id=")
+		case arg == "--to" && i+1 < len(subArgs):
+			i++
+			toFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--to="):
+			toFlag = strings.TrimPrefix(arg, "--to=")
+		case arg == "--from" && i+1 < len(subArgs):
+			i++
+			fromFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--from="):
+			fromFlag = strings.TrimPrefix(arg, "--from=")
+		case arg == "--topic" && i+1 < len(subArgs):
+			i++
+			topicFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--topic="):
+			topicFlag = strings.TrimPrefix(arg, "--topic=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -136,6 +157,15 @@ func runSubscribeSubcommand(subArgs []string) int {
 	}
 	if sinceFlag != "" {
 		reqBody["since_event_id"] = sinceFlag
+	}
+	if toFlag != "" {
+		reqBody["to"] = toFlag
+	}
+	if fromFlag != "" {
+		reqBody["from"] = fromFlag
+	}
+	if topicFlag != "" {
+		reqBody["topic"] = topicFlag
 	}
 	reqBytes, err := json.Marshal(reqBody)
 	if err != nil {
@@ -198,6 +228,9 @@ FLAGS
   --types t1,t2,...      Comma-separated event-type filter (default: all)
   --heartbeat DUR        Idle heartbeat cadence (default 60s; clamped 10s..600s)
   --since-event-id ID    Replay cursor: replay events strictly after this event_id before delivering live stream
+  --to NAME              Agent-message filter: only agent_message events addressed to NAME or "*"
+  --from NAME            Agent-message filter: only agent_message events sent by NAME
+  --topic TOPIC          Agent-message filter: only agent_message events with matching topic
   --socket PATH          Override socket path (default: <project>/.harmonik/daemon.sock)
   --project DIR          Project directory (default: cwd)
   --json                 No-op alias; output is already NDJSON
@@ -211,5 +244,7 @@ EXAMPLES
   harmonik subscribe
   harmonik subscribe --types run_completed,run_failed
   harmonik subscribe --heartbeat 30s --types heartbeat,run_completed
+  harmonik subscribe --types agent_message --to alice
+  harmonik subscribe --types agent_message --to alice --from bob --topic status
 `)
 }

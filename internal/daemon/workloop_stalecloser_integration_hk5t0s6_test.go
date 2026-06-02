@@ -56,10 +56,14 @@ func (l *hk5t0s6Ledger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRe
 	defer l.mu.Unlock()
 	if id == l.targetID {
 		l.showBeadCalls++
-		if l.showBeadCalls == 1 {
-			// First ShowBead call: the queue-path isBlocked guard (hk-n91y0)
-			// checks status after ClaimBead fails. Return Open so the guard
-			// does not intercept the error — letting it fall through to the
+		if l.showBeadCalls <= 2 {
+			// First two ShowBead calls must return Open:
+			//   1. hk-6ri5k pre-claim guard: checks status before Phase 3;
+			//      Open lets the guard pass and dispatch proceeds to ClaimBead.
+			//   2. hk-n91y0 isBlocked check: called when ClaimBead fails with a
+			//      non-"blocked" error; Open keeps isBlocked=false so the code
+			//      falls through to the autoCloseStaleBlockersOnClaimFailure path.
+			// (was: showBeadCalls == 1 before hk-6ri5k added the pre-claim call) — letting it fall through to the
 			// retry path where autoCloseStaleBlockersOnClaimFailure runs.
 			return core.BeadRecord{
 				BeadID:        l.targetID,

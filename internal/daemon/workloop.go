@@ -1020,6 +1020,37 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
+				// Pre-claim deferred-status guard for queue-path (hk-6ri5k): a bead
+				// can be set to deferred after being enqueued (e.g. operator defers
+				// it while the queue is active).  Dispatching it would waste a slot;
+				// ClaimBead would fail anyway since br rejects claims on deferred
+				// beads.  Check ShowBead and hold the item (no Attempts increment)
+				// so it retries on the next tick once the bead is re-opened.
+				//
+				// Only deferred status is caught here; other non-open statuses
+				// (blocked, draft, closed) fall through to Phase 3 and ClaimBead,
+				// where dedicated guards (hk-n91y0, hk-p4xbw) handle them.
+				{
+					preClaimRecord, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
+					if preClaimErr != nil {
+						if dispatchCtx.Err() != nil {
+							return exitClean()
+						}
+						fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim (queue-path) %s error (will retry): %v\n", snapItemBeadID, preClaimErr)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+							return exitClean()
+						}
+						continue
+					}
+					if preClaimRecord.Status == core.CoarseStatusDeferred {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: bead_queue_path_held %s status=deferred — holding without Attempts increment (hk-6ri5k)\n", snapItemBeadID)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+							return exitClean()
+						}
+						continue
+					}
+				}
+
 				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
 				// NQ-B1: operate on the SELECTED queue (snapQueueName), not the "main"
 				// slot, so the dispatch stamp lands on the queue the round-robin chose.

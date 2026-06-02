@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync/atomic"
 	"syscall"
@@ -130,6 +131,16 @@ type session struct {
 	// stderrBuf accumulates stderr bytes for the ring buffer.
 	stderrBuf *ringBuffer
 
+	// stderrDone is closed by the drainStderr goroutine when it finishes.
+	// runWait waits for this before reading stderrBuf.Bytes() to avoid a race
+	// between concurrent Write and Bytes calls on the unsynchronized ringBuffer.
+	stderrDone chan struct{}
+
+	// outcomeDone is closed by runWait after outcome is fully populated.
+	// Wait() blocks on this so callers see a consistent Outcome() immediately
+	// after Wait() returns.
+	outcomeDone chan struct{}
+
 	// machine is the per-session lifecycle FSM (HC-064..HC-067).
 	// Constructed in NewSession and transitions to StateSpawning→StateInitializing
 	// on successful cmd.Start. The Machine() accessor exposes it to the watcher
@@ -168,15 +179,25 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 		return nil, fmt.Errorf("handler: NewSession: StdinPipe: %w: %w", err, ErrStructural)
 	}
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	// Use os.Pipe directly instead of cmd.StdoutPipe / cmd.StderrPipe.
+	// cmd.StdoutPipe adds the read-end to closeAfterWait, so cmd.Wait closes it
+	// while callers (e.g. io.ReadAll) may still be reading — a data race under
+	// parallel test load ("read |0: file already closed"). By owning the OS pipe
+	// ourselves and setting cmd.Stdout/Stderr to the write ends, closeAfterWait
+	// stays empty for stdout/stderr, and cmd.Wait never closes the read ends.
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("handler: NewSession: StdoutPipe: %w: %w", err, ErrStructural)
+		return nil, fmt.Errorf("handler: NewSession: stdout Pipe: %w: %w", err, ErrStructural)
 	}
+	cmd.Stdout = stdoutW
 
-	stderrPipe, err := cmd.StderrPipe()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("handler: NewSession: StderrPipe: %w: %w", err, ErrStructural)
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		return nil, fmt.Errorf("handler: NewSession: stderr Pipe: %w: %w", err, ErrStructural)
 	}
+	cmd.Stderr = stderrW
 
 	// Construct the lifecycle Machine in StateSpawning (HC-065 initial state).
 	// sessID and runID default to placeholder values when not provided; they are
@@ -193,28 +214,55 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 		// HC-065: Spawning→Failed when cmd.Start returns an error. The machine is
 		// discarded along with the error path — no caller can observe this session.
 		_ = machine.Transition(hclifecycle.StateFailed, hclifecycle.ReasonError, "cmd_start_error", err.Error())
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		return nil, fmt.Errorf("handler: NewSession: cmd.Start: %w: %w", err, ErrStructural)
 	}
+
+	// Close the parent's write ends — the subprocess inherited them; keeping
+	// them open in the parent would prevent EOF from reaching the readers.
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 
 	// HC-065: Spawning→Initializing — subprocess started successfully.
 	_ = machine.Transition(hclifecycle.StateInitializing, hclifecycle.ReasonSpawnStarted, "", "")
 
+	// Bridge stdoutR through an io.Pipe so callers receive a clean io.Reader
+	// whose lifetime is independent of the OS file descriptor. The bridge
+	// goroutine copies until EOF (subprocess exit closes write end), then closes
+	// both ends so callers see EOF. cmd.Wait has no closeAfterWait entry for
+	// stdout, so it cannot race with ongoing reads.
+	stdoutPR, stdoutPW := io.Pipe()
+	go func() {
+		_, _ = io.Copy(stdoutPW, stdoutR)
+		_ = stdoutR.Close()
+		_ = stdoutPW.Close()
+	}()
+
 	ring := newRingBuffer(stderrRingCapBytes)
 
 	s := &session{
-		cmd:       cmd,
-		waitOwner: lifecycle.NewWaitOwner(cmd),
-		stdin:     stdinPipe,
-		stdout:    stdoutPipe,
-		stderr:    stderrPipe,
-		startedAt: time.Now(),
-		stderrBuf: ring,
-		machine:   machine,
+		cmd:         cmd,
+		waitOwner:   lifecycle.NewWaitOwner(cmd),
+		stdin:       stdinPipe,
+		stdout:      stdoutPR,
+		stderr:      stderrR,
+		startedAt:   time.Now(),
+		stderrBuf:   ring,
+		stderrDone:  make(chan struct{}),
+		outcomeDone: make(chan struct{}),
+		machine:     machine,
 	}
 
 	// Drain stderr into the ring buffer concurrently so it never blocks the
-	// subprocess.
-	go s.drainStderr(stderrPipe)
+	// subprocess. Close stderrDone when finished so runWait can safely read the
+	// ring buffer without racing the drain goroutine's writes.
+	go func() {
+		s.drainStderr(stderrR)
+		close(s.stderrDone)
+	}()
 
 	// Run WaitAndReap in the single dedicated goroutine per PL-014/PL-016, then
 	// populate outcome.
@@ -244,6 +292,9 @@ func (s *session) drainStderr(r io.Reader) {
 func (s *session) runWait(_ context.Context) {
 	startedAt := s.startedAt
 	waitErr := s.waitOwner.WaitAndReap()
+	// Wait for drainStderr to finish before reading stderrBuf so that concurrent
+	// ringBuffer.Write and ringBuffer.Bytes calls don't race.
+	<-s.stderrDone
 	duration := time.Since(startedAt)
 
 	o := Outcome{
@@ -269,6 +320,7 @@ func (s *session) runWait(_ context.Context) {
 
 	s.outcome = o
 	s.outcomeReady.Store(true)
+	close(s.outcomeDone)
 }
 
 // SendInput writes line + '\n' to the subprocess stdin.
@@ -311,11 +363,15 @@ func (s *session) Kill(ctx context.Context) error {
 	}
 }
 
-// Wait blocks until the subprocess has exited and been reaped.  Delegates to
-// lifecycle.WaitOwner.Wait; the WaitOwner holds the PL-014 single-owner
-// discipline so callers never race on cmd.Wait.
+// Wait blocks until the subprocess has exited, been reaped, and the outcome has
+// been fully populated (including stderr tail).  After Wait returns, Outcome()
+// is guaranteed to reflect the final process state.
 func (s *session) Wait(_ context.Context) error {
-	return s.waitOwner.Wait()
+	err := s.waitOwner.Wait()
+	// Block until runWait has populated s.outcome so callers can call Outcome()
+	// immediately after Wait without racing the drain goroutine.
+	<-s.outcomeDone
+	return err
 }
 
 // Outcome returns the exit metadata populated once Wait returns.  Before Wait

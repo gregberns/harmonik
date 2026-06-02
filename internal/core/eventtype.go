@@ -255,6 +255,24 @@ const (
 	// Spec ref: event-model.md §8.3.14.
 	// Bead ref: hk-xrygh.
 	EventTypeLifecycleTransition EventType = "lifecycle_transition"
+
+	// EventTypePasteInjectFailed is the pasteinject_failed event type.
+	// Emitted by the daemon when the paste-inject step cannot deliver the
+	// kick-off message to the tmux pane (file absent, WriteLastPane error, etc.).
+	// Payload: run_id, phase, reason.
+	// Durability class: O.
+	// Refs: hk-fra5l.
+	EventTypePasteInjectFailed EventType = "pasteinject_failed"
+
+	// EventTypeLaunchStallDetected is the launch_stall_detected event type.
+	// Emitted by the stale watcher when a run has emitted run_started but no
+	// launch_initiated within launchStallThreshold (30 s). Indicates the
+	// pre-exec sequence stalled — most likely a tmux window creation failure
+	// or a pre-exec emission gap in the daemon.
+	// Payload: run_id, bead_id, stall_seconds.
+	// Durability class: O.
+	// Refs: hk-fra5l.
+	EventTypeLaunchStallDetected EventType = "launch_stall_detected"
 )
 
 // ---------------------------------------------------------------------------

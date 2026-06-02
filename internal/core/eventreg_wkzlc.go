@@ -91,6 +91,14 @@ type RunStaleSnapshot struct {
 	// empty. Provides a wall-clock reference for "how long has the session been
 	// stuck in this state?" at run_stale emission time.
 	LifecycleEnteredAt string `json:"lifecycle_entered_at,omitempty"`
+
+	// WorktreeCommitSHA is the HEAD commit SHA in the run's worktree at
+	// run_stale emission time.  Non-empty when the worktree has at least one
+	// commit (i.e. the implementer made progress even if no lifecycle events
+	// were recorded).  Empty when the worktree path is unknown, the worktree
+	// has no commits, or the git probe fails.
+	// Added by hk-fra5l for orphan-commit visibility (acceptance criterion 3).
+	WorktreeCommitSHA string `json:"worktree_commit_sha,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunStalePayload.

@@ -160,6 +160,12 @@ func registerAgentEvents() {
 	// workloop on every LifecycleState machine transition per HC-064..HC-067.
 	// Durability class: O.
 	mustRegister("lifecycle_transition", func() EventPayload { return &LifecycleTransitionPayload{} })
+	// pasteinject_failed (hk-fra5l): emitted by the daemon when paste-inject
+	// cannot deliver the kick-off message to the tmux pane. Durability class: O.
+	mustRegister("pasteinject_failed", func() EventPayload { return &PasteInjectFailedPayload{} })
+	// launch_stall_detected (hk-fra5l): emitted by the stale watcher when
+	// run_started fires but launch_initiated is absent for >30 s. Durability class: O.
+	mustRegister("launch_stall_detected", func() EventPayload { return &LaunchStallDetectedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

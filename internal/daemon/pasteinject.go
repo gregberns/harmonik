@@ -31,6 +31,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -634,6 +635,10 @@ func pasteInjectQuitOnCommit(
 //   - phase        — the review-loop phase (empty string = single-mode / implementer-initial).
 //   - iterCount    — the 1-based iteration count (used in the feedback file name).
 //   - wtPath       — absolute worktree path; used to stat the task/review files.
+//   - bus          — event emitter used to emit pasteinject_failed on failure;
+//     may be nil (event emission is skipped when nil).
+//   - runID        — run identifier stamped on pasteinject_failed events; ignored
+//     when bus is nil.
 //
 // Returns a channel that is closed once the kick-off paste has been written
 // (or immediately when no paste is performed because the substrate does not
@@ -643,6 +648,8 @@ func pasteInjectQuitOnCommit(
 // Errors are non-fatal to the caller: a failed paste-inject is logged to
 // stderr but does not reopen the bead.  The operator may manually trigger a
 // paste using tmux.
+//
+// Bead: hk-fra5l (bus/runID parameters for pasteinject_failed emission).
 func pasteInjectOnLaunch(
 	ctx context.Context,
 	substrate handler.Substrate,
@@ -650,6 +657,8 @@ func pasteInjectOnLaunch(
 	phase handlercontract.ReviewLoopPhase,
 	iterCount int,
 	wtPath string,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
 ) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
@@ -662,19 +671,44 @@ func pasteInjectOnLaunch(
 			return
 		}
 
+		var failReason string
 		switch phase {
 		case handlercontract.ReviewLoopPhaseReviewer:
-			pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
+			failReason = pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
 
 		case handlercontract.ReviewLoopPhaseImplementerResume:
-			pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath)
+			failReason = pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath)
 
 		default:
 			// Single-mode or implementer-initial: deliver agent-task.md kick-off.
-			pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+			failReason = pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+		}
+
+		// hk-fra5l: emit pasteinject_failed when the delivery failed.
+		if failReason != "" && bus != nil {
+			emitPasteInjectFailed(ctx, bus, runID, string(phase), failReason)
 		}
 	}()
 	return ch
+}
+
+// emitPasteInjectFailed emits a pasteinject_failed event to bus.
+// Non-fatal: errors are silently discarded (the paste failure is already logged
+// to stderr by the calling helper).
+//
+// Bead: hk-fra5l.
+func emitPasteInjectFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, phase, reason string) {
+	pl := core.PasteInjectFailedPayload{
+		RunID:  runID.String(),
+		Phase:  phase,
+		Reason: reason,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emitPasteInjectFailed: marshal: %v\n", err)
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypePasteInjectFailed, b)
 }
 
 // splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.
@@ -701,11 +735,17 @@ func splashDismissWait(ctx context.Context) {
 // Enter key event.  The send-keys form bypasses bracketed-paste mode.
 // A 750ms delay between Enter and paste allows the splash animation to
 // complete and the REPL input state to activate before the message arrives.
-func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) {
+//
+// Returns a non-empty failure reason string when the paste-inject step could
+// not complete (e.g. task file absent, WriteLastPane error).  The caller
+// (pasteInjectOnLaunch) emits pasteinject_failed when the reason is non-empty.
+// Returns "" on success.
+func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFile(taskFile); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial: %v (skipping inject)\n", err)
-		return
+		reason := fmt.Sprintf("implementer-initial: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
+		return reason
 	}
 
 	// Dismiss the welcome splash with an Enter keypress before the paste (hk-rf4ux).
@@ -722,7 +762,9 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 	bufName := bufferName(claudeSessID, "task")
 	msg := "Please read .harmonik/agent-task.md and begin.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial WriteLastPane: %v\n", err)
+		reason := fmt.Sprintf("implementer-initial WriteLastPane: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+		return reason
 	}
 	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
 	if es, ok := inj.(enterSender); ok {
@@ -730,6 +772,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial post-paste SendEnterToLastPane: %v\n", err)
 		}
 	}
+	return ""
 }
 
 // pasteInjectImplementerResume delivers a single combined paste-inject message
@@ -747,7 +790,10 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 //
 // If the feedback file is absent (first iteration or write failure), the message
 // degrades gracefully to the task-only form used by implementer-initial.
-func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string) {
+//
+// Returns a non-empty failure reason string when the paste-inject step could not
+// complete.  Returns "" on success.
+func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string) string {
 	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
@@ -758,8 +804,9 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
 	if err := statTaskFile(taskFile); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume task: %v (skipping inject)\n", err)
-		return
+		reason := fmt.Sprintf("implementer-resume task: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
+		return reason
 	}
 
 	// Build the combined message. Append the feedback section when the prior
@@ -785,7 +832,9 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 
 	bufName := bufferName(claudeSessID, "task")
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume WriteLastPane: %v\n", err)
+		reason := fmt.Sprintf("implementer-resume WriteLastPane: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+		return reason
 	}
 	// Send Enter after paste to submit the message regardless of terminal
 	// bracketed-paste mode (hk-8cq23).  On the resume path the freshly-resumed
@@ -797,6 +846,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	if es, ok := inj.(enterSender); ok {
 		sendResumeSubmitEnter(ctx, es)
 	}
+	return ""
 }
 
 // sendResumeSubmitEnter delivers the submit Enter for the implementer-resume
@@ -832,11 +882,15 @@ func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
 // Buffer purpose slug: "review" → buffer name "harmonik-<session-id>-review".
 // Kick-off message: directs Claude to read .harmonik/review-target.md and
 // produce the verdict file.
-func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) {
+//
+// Returns a non-empty failure reason string when the paste-inject step could not
+// complete.  Returns "" on success.
+func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
 	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
 	if err := statTaskFile(reviewFile); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer: %v (skipping inject)\n", err)
-		return
+		reason := fmt.Sprintf("reviewer: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
+		return reason
 	}
 
 	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
@@ -856,7 +910,9 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
 		" a field-name violation, re-check that EXACT field name in the new diff before approving.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer WriteLastPane: %v\n", err)
+		reason := fmt.Sprintf("reviewer WriteLastPane: %v", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+		return reason
 	}
 	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
 	if es, ok := inj.(enterSender); ok {
@@ -864,6 +920,7 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer post-paste SendEnterToLastPane: %v\n", err)
 		}
 	}
+	return ""
 }
 
 // reviewFileTimeout is the maximum time to wait for .harmonik/review.json to

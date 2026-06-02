@@ -321,6 +321,16 @@ func runReviewLoop(
 			}
 		}
 
+		// hk-fra5l: emit pre-exec messages (handler_capabilities →
+		// session_log_location → skills_provisioned → launch_initiated) on the
+		// bus BEFORE Launch, mirroring the single-mode path (workloop.go step 3,
+		// line 1799).  Without this the review-loop path emitted run_started but
+		// no launch_initiated, making the hk-j7o3i incident undetectable: operators
+		// saw only run_started and run_stale with no intervening lifecycle events.
+		for _, msg := range implArtifacts.preExecMsgs {
+			emitPreExecMessage(ctx, deps.bus, runID, msg)
+		}
+
 		// Create a per-run tapping emitter so waitAgentReady can observe
 		// watcher events from the implementer launch without a post-seal bus
 		// subscription (EV-009). A new handler is constructed using the tap so
@@ -485,7 +495,7 @@ func runReviewLoop(
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 		// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
 		implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
-			implPhase, state.iterationCount, wtPath)
+			implPhase, state.iterationCount, wtPath, deps.bus, runID)
 
 		// Quit-on-commit: after the implementer's task commit lands in the worktree,
 		// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
@@ -811,6 +821,14 @@ func runReviewLoop(
 			deps.hookStore.RegisterHookSession(runID.String(), revArtifacts.claudeSessionID)
 		}
 
+		// hk-fra5l: emit reviewer pre-exec messages (handler_capabilities →
+		// session_log_location → skills_provisioned → launch_initiated) on the
+		// bus BEFORE Launch, mirroring the implementer path above and the
+		// single-mode path (workloop.go step 3).
+		for _, msg := range revArtifacts.preExecMsgs {
+			emitPreExecMessage(ctx, deps.bus, runID, msg)
+		}
+
 		// Create a per-phase tapping emitter so waitAgentReady can observe watcher
 		// events from the reviewer launch without a post-seal bus subscription (EV-009).
 		// A new handler is constructed using the tap so events flow through the channel.
@@ -935,7 +953,8 @@ func runReviewLoop(
 		// reviewer claude hangs indefinitely at a prompt.
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
 		revBriefDelivered := pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath)
+			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
+			deps.bus, runID)
 		if qs, ok := revPasteTarget.(quitSender); ok {
 			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revWtPath, revBriefDelivered)
 		}

@@ -1051,7 +1051,10 @@ func ExportedSpendMeterSetDailyCapBytes(m *DaemonSpendMeter, b float64) {
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.  Returns the briefDelivered channel (hk-930o3).
 //
-// Bead ref: hk-zrj83, hk-930o3.
+// bus and runID are passed as zero values (nil / uuid.Nil) so tests that do
+// not need pasteinject_failed event emission continue to work without changes.
+//
+// Bead ref: hk-zrj83, hk-930o3, hk-fra5l.
 func ExportedPasteInjectOnLaunch(
 	ctx context.Context,
 	substrate handler.Substrate,
@@ -1060,7 +1063,7 @@ func ExportedPasteInjectOnLaunch(
 	iterCount int,
 	wtPath string,
 ) <-chan struct{} {
-	return pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath)
+	return pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath, nil, core.RunID{})
 }
 
 // ExportedBufferName exposes the bufferName helper for tests in package

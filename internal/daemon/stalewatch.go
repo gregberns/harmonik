@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -50,6 +51,18 @@ const (
 	staleWatchScanInterval = 30 * time.Second
 )
 
+// launchStallThreshold is the maximum time allowed between run_started and the
+// first launch_initiated event.  If launch_initiated does not appear within
+// this window the stale watcher emits launch_stall_detected once per run.
+//
+// 30 s is generous: under normal operation the pre-exec messages are emitted
+// synchronously (milliseconds) between run_started and Launch().  A gap this
+// wide therefore indicates a structural failure (tmux window creation failed,
+// pre-exec emission gap) rather than normal latency.
+//
+// Declared as var so tests can override without waiting real wall time.
+var launchStallThreshold = 30 * time.Second
+
 // runStaleState tracks per-run staleness accounting inside StaleWatcher.
 type runStaleState struct {
 	// beadID is the bead being executed in this run.
@@ -67,6 +80,20 @@ type runStaleState struct {
 	// nextEmitAfter is the quiet-window threshold for the next emission.
 	// Starts at staleAfter, doubles after each emission.
 	nextEmitAfter time.Duration
+
+	// runStartedAt is the wall-clock time when run_started was observed for
+	// this run.  Zero until the event is seen.
+	// Used by the launch-stall detector (hk-fra5l).
+	runStartedAt time.Time
+
+	// launchInitiatedSeen is true once launch_initiated has been observed.
+	// When true, the launch-stall check is suppressed for this run.
+	// Used by the launch-stall detector (hk-fra5l).
+	launchInitiatedSeen bool
+
+	// launchStallEmitted is true once a launch_stall_detected event has been
+	// emitted for this run.  The event is emitted at most once per run.
+	launchStallEmitted bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -175,6 +202,16 @@ func (w *StaleWatcher) observe(_ context.Context, evt core.Event) error {
 	}
 	st.lastEventType = typeStr
 	st.lastEventAt = now
+
+	// hk-fra5l: track run_started and launch_initiated for the launch-stall
+	// detector.  Both checks are inexpensive string comparisons.
+	if core.EventType(typeStr) == core.EventTypeRunStarted && st.runStartedAt.IsZero() {
+		st.runStartedAt = now
+	}
+	if core.EventType(typeStr) == core.EventTypeLaunchInitiated {
+		st.launchInitiatedSeen = true
+	}
+
 	w.mu.Unlock()
 	return nil
 }
@@ -246,6 +283,30 @@ func (w *StaleWatcher) checkRun(
 		st.beadID = handle.BeadID
 	}
 
+	// hk-fra5l: launch-stall detection — emit launch_stall_detected (once per
+	// run) when run_started has been seen but launch_initiated has not arrived
+	// within launchStallThreshold (30 s).  This fires independently of the main
+	// staleness threshold so it is detectable even on short-lived runs.
+	//
+	// Capture fields needed for the stall check under the mutex.
+	runStartedAt := st.runStartedAt
+	launchInitiatedSeen := st.launchInitiatedSeen
+	launchStallEmitted := st.launchStallEmitted
+	beadIDForStall := st.beadID
+	if !runStartedAt.IsZero() && !launchInitiatedSeen && !launchStallEmitted &&
+		now.Sub(runStartedAt) > launchStallThreshold {
+		st.launchStallEmitted = true
+		w.mu.Unlock()
+		w.emitLaunchStallDetected(ctx, runID, beadIDForStall, now.Sub(runStartedAt))
+		w.mu.Lock()
+		// Re-acquire st after unlock/lock cycle.
+		st = w.states[runID]
+		if st == nil {
+			w.mu.Unlock()
+			return
+		}
+	}
+
 	// Determine the reference time for age calculation. When an event has been
 	// observed, use the last event time. When no event has arrived yet, fall
 	// back to the run's StartedAt (guaranteed non-zero from RunHandle).
@@ -300,6 +361,13 @@ func (w *StaleWatcher) checkRun(
 		lifecycleEnteredAtStr = m.EnteredAt().UTC().Format(time.RFC3339)
 	}
 
+	// hk-fra5l: probe the worktree HEAD so orphan commits (implementer did
+	// work but no lifecycle events were recorded) are visible in the run_stale
+	// payload.  A non-empty WorktreeCommitSHA in the snapshot means the
+	// worktree branch has at least one commit — operators can cherry-pick it.
+	// The probe is best-effort: errors leave the field empty.
+	worktreeCommitSHA := probeWorktreeHEAD(ctx, handle.WorktreePath)
+
 	pl := core.RunStalePayload{
 		RunID:         runID.String(),
 		BeadID:        string(beadID),
@@ -312,6 +380,7 @@ func (w *StaleWatcher) checkRun(
 			GoroutineCount:     goroutineCount,
 			LifecycleState:     lifecycleStateStr,
 			LifecycleEnteredAt: lifecycleEnteredAtStr,
+			WorktreeCommitSHA:  worktreeCommitSHA,
 		},
 	}
 	b, err := json.Marshal(pl)
@@ -320,6 +389,51 @@ func (w *StaleWatcher) checkRun(
 		return
 	}
 	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeRunStale, b)
+}
+
+// emitLaunchStallDetected emits a launch_stall_detected warning event.
+// Called at most once per run by checkRun when run_started has been seen for
+// longer than launchStallThreshold without a subsequent launch_initiated.
+//
+// Bead: hk-fra5l.
+func (w *StaleWatcher) emitLaunchStallDetected(ctx context.Context, runID core.RunID, beadID core.BeadID, stall time.Duration) {
+	pl := core.LaunchStallDetectedPayload{
+		RunID:        runID.String(),
+		BeadID:       string(beadID),
+		StallSeconds: int64(stall.Seconds()),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: marshal launch_stall_detected for run %s: %v\n", runID, err)
+		return
+	}
+	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeLaunchStallDetected, b)
+}
+
+// probeWorktreeHEAD returns the HEAD commit SHA of the git worktree at wtPath,
+// or "" when wtPath is empty, the worktree has no commits, or the git probe
+// fails.  Used to surface orphan commits in the run_stale payload (hk-fra5l).
+func probeWorktreeHEAD(ctx context.Context, wtPath string) string {
+	if wtPath == "" {
+		return ""
+	}
+	out, err := execGitRevParse(ctx, wtPath)
+	if err != nil {
+		return ""
+	}
+	sha := strings.TrimSpace(out)
+	// A bare "HEAD" output means the worktree has no commits (detached, empty).
+	if sha == "HEAD" || sha == "" {
+		return ""
+	}
+	return sha
+}
+
+// execGitRevParse runs `git -C dir rev-parse HEAD` and returns stdout.
+// Declared as var so tests can stub it without spawning real git processes.
+var execGitRevParse = func(ctx context.Context, dir string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD").Output()
+	return string(out), err
 }
 
 // emitSilentHangTransition emits a lifecycle_transition event for the

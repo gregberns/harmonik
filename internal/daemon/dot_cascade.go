@@ -642,7 +642,7 @@ func dispatchDotAgenticNode(
 	// kick-off message and the submitting Enter via SendEnterToLastPane (hk-8cq23);
 	// firing it before the REPL is input-ready leaves the prompt unsubmitted.
 	briefDelivered := pasteInjectOnLaunch(ctx, pasteTarget, artifacts.claudeSessionID,
-		phase, iterationCount, wtPath)
+		phase, iterationCount, wtPath, deps.bus, runID)
 	if qs, ok := pasteTarget.(quitSender); ok {
 		if isReviewer {
 			go pasteInjectQuitOnReviewFile(ctx, qs, sess, wtPath, briefDelivered)

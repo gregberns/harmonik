@@ -2020,7 +2020,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
 	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
 	briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
-		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath)
+		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath,
+		deps.bus, runID)
 
 	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
 	// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop

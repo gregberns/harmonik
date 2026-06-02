@@ -456,6 +456,34 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario/regression_gate_test.go` (drives mock handler responses against six scenarios covering the S2 path obligations: happy-path bug-reproduced arc, cannot-reproduce routing, reproduce infra fallback, regression-suite fix-loop, regression-suite cap-hit, and regression-suite transient fallback).
 
+### `release-with-rollback.dot`
+
+**Purpose.** Release pipeline with a compensating-action node: a failed `publish` routes to a `rollback` shell node (delete tag, revert release commit) before terminating at `close-needs-attention`, leaving the repo clean for a retry. Idiomatic "on failure, undo, then escalate" within the sequential v1 dialect — rollback is a routed node, not a parallel try/finally compensator. Subsumes the simpler `release-readiness` topology (where publish-fail goes straight to `close-needs-attention` without rollback). This is SDLC corpus workflow #17 (SOON — depends on the tool/shell node handler).
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `docs/sdlc-workflow-corpus.md §17` (release-with-rollback topology) and the corpus dialect contract (§"Dialect contract").
+- Uses `type="non-agentic"` with `handler_ref="shell"` and `tool_command=` for `build_artifacts`, `publish`, and `rollback` — per `specs/workflow-graph.md §4 WG-039` (tool_command / shell handler). The shell handler maps exit codes to Outcomes per `specs/execution-model.md §II.7 EM-057 item 7` (exit 0 → SUCCESS; non-zero → FAIL+deterministic) and `§II.8 EM-058` (non-agentic row). In-process handler contract: `specs/handler-contract.md §III.1 HC-063`.
+- Uses `type="agentic"` with `agent_type="implementer"` and `handler_ref="claude-implementer"` for `cut_release` — per `specs/workflow-graph.md §4 WG-001/WG-002` (closed node-type enum) and `specs/handler-contract.md §4.1 HC-001` (handler_ref required).
+- Uses `type="non-agentic"` with `handler_ref="noop"` for `start`, `close`, and `close-needs-attention` — per WG-001/WG-002.
+- Uses `outcome.status` as the edge-condition LHS on the `build_artifacts→publish` (`== 'SUCCESS'`), `publish→close` (`== 'SUCCESS'`), and `publish→rollback` (`== 'FAIL'`) edges — per the D4 LHS whitelist (row 1, `outcome.status`).
+- Uses `start_node="start"` — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `handler_ref` on every node — per `specs/handler-contract.md §4.1 HC-001`.
+- Uses `terminal_node_ids="close,close-needs-attention"` — per `specs/workflow-graph.md §8 WG-021..WG-023`.
+- Every branching node (`build_artifacts`, `publish`) carries a final unconditional fallback edge satisfying the D-edge-cascade-invariant — per `specs/workflow-graph.md §5 WG-011`.
+- `publish` carries both an explicit `== 'FAIL'` condition AND an unconditional fallback, both routing to `rollback`: the explicit condition handles the deterministic non-zero exit, while the fallback handles any other non-SUCCESS state (RETRY, infra error, budget_exhausted). Together they guarantee that any non-SUCCESS publish triggers the compensating action.
+- `rollback` is idempotent (deleting a non-existent tag or reverting a clean tree is a no-op) and routes unconditionally to `close-needs-attention` — a successful rollback still means the release did not land.
+- No `traversal_cap` anywhere: the graph is a DAG with no back-edges. Retries are operator-driven by re-submitting from the top.
+
+**Gap coverage.** Demonstrates the compensating-action pattern: a dedicated rollback node that fires on any publish failure, leaving the repo in a clean state before escalating. Extends the tool-node pattern of `tool-node.dot` with a multi-tool sequential chain (`build_artifacts → publish → rollback`) and shows that an explicit conditional edge and an unconditional fallback can coexist on the same source node when both route to the same target (covering disjoint failure modes).
+
+**Test surface.**
+
+- Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
+- Scenario harness: `internal/workflow/scenario/release_with_rollback_test.go` (drives mock handler responses against five scenarios covering the S2 path obligations: happy-path full arc, build-failure fallback, build-infra fallback, publish-failure rollback via explicit FAIL condition, and publish-fallback rollback via unconditional fallback).
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

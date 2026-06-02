@@ -1,0 +1,164 @@
+// release-with-rollback.dot — release pipeline with compensating rollback (v1)
+//
+// A release pipeline with a compensating-action node: a failed publish routes to a
+// rollback shell node (delete tag, revert release commit) before terminating at
+// close-needs-attention, leaving the repo clean for a retry. Idiomatic
+// "on failure, undo, then escalate" within the sequential v1 dialect (rollback is a
+// routed node, not a parallel try/finally compensator).
+//
+// Topology:
+//   start
+//   → cut_release (agent: implementer; commit required — version bump + release notes)
+//   → build_artifacts (tool: make release-build, timeout=900s)
+//     SUCCESS              → publish
+//     fallback             → close-needs-attention  (build failed; nothing published yet, no rollback needed)
+//   → publish (tool: make publish, timeout=300s)
+//     SUCCESS              → close                  (artifacts published, tag pushed)
+//     FAIL                 → rollback               (explicit failure — compensating action)
+//     fallback             → rollback               (any other non-success state rolls back)
+//   → rollback (tool: make release-rollback)
+//     (unconditional)      → close-needs-attention  (after undo, escalate for clean retry)
+//
+// Key design notes:
+//   - publish carries both an explicit FAIL condition and an unconditional fallback,
+//     both routing to rollback — any non-SUCCESS publish triggers the compensating action.
+//   - build_artifacts failure routes directly to close-needs-attention (nothing to
+//     roll back yet: no tag was pushed, no artifacts were published).
+//   - rollback is idempotent: deleting a non-existent tag or reverting an already-clean
+//     tree is a no-op. It always routes unconditionally to close-needs-attention because
+//     a successful rollback still means the release failed and needs a fresh attempt.
+//   - The graph is a DAG (no back-edges, no traversal_cap): the operator retries by
+//     re-submitting the workflow from the top rather than looping internally.
+//   - This is SDLC corpus workflow #17 (SOON — build_artifacts, publish, rollback use
+//     type="non-agentic" + handler_ref="shell" as v1 proxies pending hk-l8rpd).
+//   - Subsumes the simpler `release-readiness` topology (drop the rollback node;
+//     publish-fail goes straight to close-needs-attention) — that degenerate form is
+//     not a separate example because it adds no new topology primitives.
+//
+// Spec refs:
+//   - docs/sdlc-workflow-corpus.md §17 (release-with-rollback topology)
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
+//   - specs/execution-model.md §II.7 EM-057 item 7 — exit-code → outcome
+//   - specs/execution-model.md §II.8 EM-058 — non-agentic row + sub-note
+//   - specs/handler-contract.md §III.1 HC-063 — in-process shell handler
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+
+digraph "release-with-rollback" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="release-with-rollback";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+
+    // ─── Nodes ────────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // cut_release: agent bumps version, writes release notes, commits the release prep.
+    // HEAD must advance (a release commit is required before artifacts are built).
+    cut_release [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="bump version, write notes, commit the release prep"
+    ];
+
+    // build_artifacts: compile and package the release artifacts.
+    // Exit 0 (SUCCESS) → publish. Non-zero → fallback → close-needs-attention
+    // (nothing was published yet so no rollback is needed).
+    build_artifacts [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="make release-build",
+        timeout="900",
+        role="build release artifacts; exit 0 = ready to publish"
+    ];
+
+    // publish: push artifacts and tag to the remote registry.
+    // Exit 0 (SUCCESS) → close. Non-zero → rollback (explicit FAIL condition +
+    // unconditional fallback — any non-success state triggers the compensating action).
+    publish [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="non-idempotent",
+        tool_command="make publish",
+        timeout="300",
+        role="publish artifacts + push tag; exit 0 = released cleanly"
+    ];
+
+    // rollback: compensating action after a publish failure.
+    // Deletes the remote tag (if any), reverts the release commit, and restores clean
+    // repo state so the operator can retry with a fresh cut_release.
+    // Routes unconditionally to close-needs-attention: a successful rollback still means
+    // the release failed and the operator must decide the next step.
+    rollback [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="make release-rollback",
+        timeout="300",
+        role="delete tag, revert release commit, restore clean state for retry"
+    ];
+
+    // close: artifacts published and tag pushed cleanly.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="released cleanly"
+    ];
+
+    // close-needs-attention: build failed / publish rolled back — operator action required.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="build failed / rolled back — operator attention required"
+    ];
+
+    // ─── Edges ────────────────────────────────────────────────────────────────
+
+    start -> cut_release;
+
+    // cut_release always advances to build_artifacts after committing the release prep.
+    cut_release -> build_artifacts;
+
+    // build_artifacts: exit 0 → artifacts ready → publish.
+    build_artifacts -> publish [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Unconditional fallback (WG-011): build failed (non-zero exit, infra error, etc.)
+    // → nothing was published yet, so no rollback needed → escalate to operator.
+    build_artifacts -> "close-needs-attention";
+
+    // publish: exit 0 → released cleanly → close.
+    publish -> close [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // Explicit FAIL condition: non-zero exit from publish → compensating rollback.
+    publish -> rollback [
+        condition="outcome.status == 'FAIL'"
+    ];
+    // Unconditional fallback (WG-011): any other non-success state (RETRY, infra error,
+    // budget_exhausted, etc.) also routes to rollback — any non-SUCCESS publish leaves
+    // the repo in a potentially partially-published state that must be undone.
+    publish -> rollback;
+
+    // rollback: after compensating action completes, always escalate to operator.
+    // A clean rollback exit means the repo is clean again but the release did not land;
+    // the operator must decide whether to retry or abandon the release.
+    rollback -> "close-needs-attention";
+}

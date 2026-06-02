@@ -119,7 +119,7 @@ harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartb
 
 `subscribe` attaches to the running daemon, so one Monitor sees every bead the daemon dispatches regardless of which agent submitted it. Re-arm if it hits the Monitor timeout.
 
-**Events-tail fallback** (use only if `harmonik subscribe` is unavailable): tail the daemon's typed event log directly. There is no `daemon.log` file and no per-run output file to tail — `--notify-stream` belonged to the foreground `harmonik run` path, which the persistent daemon does not use.
+**DEPRECATED — Events-tail fallback** (use only if `harmonik subscribe` is unavailable): tail the daemon's typed event log directly. There is no `daemon.log` file and no per-run output file to tail — `--notify-stream` belonged to the foreground `harmonik run` path, which the persistent daemon does not use.
 
 ```bash
 # In a Monitor tool call (timeout_ms = 3600000, persistent = false):

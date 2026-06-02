@@ -52,8 +52,8 @@ done
 1. Rebuild harmonik (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
 2. Pre-screen the batch; drop already-landed beads.
 3. Choose `--max-concurrent`; prefer `--wave` for N>1.
-4. Dispatch in background with `--notify-stream`.
-5. Arm a Monitor tailing the bash stdout file AND `.harmonik/events/events.jsonl`.
+4. Submit via `harmonik queue submit <file>`.
+5. Arm a Monitor running `harmonik subscribe` (see Monitor pattern below).
 
 ---
 
@@ -123,21 +123,23 @@ done
 
 ---
 
-## Monitor pattern (until `harmonik subscribe` lands — hk-6ynv4)
+## Monitor pattern
 
-Three pieces, always together:
+Use `harmonik subscribe` — one process, NDJSON to stdout, server-side heartbeat so the agent wakes periodically even if the daemon goes quiet:
 
-1. **Dispatch in background:** `Bash(run_in_background=true)` with `harmonik run --beads id1,id2,... --notify-stream`.
-2. **Monitor the bash task's stdout** — that's where `--notify-stream` writes per-bead `[hk-XXX] success|failed` lines.
-3. **Monitor `.harmonik/events/events.jsonl`** — typed events (`run_started`, `run_completed`, `run_failed`, `reviewer_verdict`, etc.).
+```bash
+# In a Monitor tool call:
+harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
+```
+
+`subscribe` attaches to the running daemon, so one Monitor sees every bead the daemon dispatches regardless of which agent submitted it. Re-arm if it hits the Monitor timeout.
+
+**DEPRECATED — Events-tail fallback** (use only if `harmonik subscribe` is unavailable):
 
 ```bash
 # In a Monitor tool call (timeout_ms = 3600000, persistent = false):
-( tail -F /private/tmp/claude-XXX/.../tasks/<bash-task-id>.output 2>/dev/null \
-    | grep --line-buffered -E "\[hk-[a-z0-9]+\] (success|failed)|ERROR|panic|fatal|FATAL" ) &
-( tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
-    | grep --line-buffered -E "run_completed|run_failed|merge_conflict|reviewer_verdict" ) &
-wait
+tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
+  | grep --line-buffered -E "run_completed|run_failed|run_stale|merge_conflict|reviewer_verdict"
 ```
 
-NOTE: there is no `daemon.log` file; ignore older guidance that says to grep one.
+NOTE: there is no `daemon.log` file and no per-run output file to tail; `--notify-stream` belonged to the foreground `harmonik run` path, which the persistent daemon does not use.

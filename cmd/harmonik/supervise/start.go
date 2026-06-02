@@ -41,6 +41,7 @@ const ExitCodeFlywheelSessionExists = 24
 func RunStart(args []string, stdout, stderr io.Writer) int {
 	var projectDir string
 	var watchRestart bool
+	var requireAPIKey bool
 	var command []string // supervisee argv; populated from --command or -- args
 
 	for i := 0; i < len(args); i++ {
@@ -50,6 +51,8 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 			return 0
 		case args[i] == "--watch-restart":
 			watchRestart = true
+		case args[i] == "--require-api-key":
+			requireAPIKey = true
 		case args[i] == "--project" && i+1 < len(args):
 			i++
 			projectDir = args[i]
@@ -154,6 +157,14 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// Resolve the API key before writing config — fail-closed when required (CI-006).
+	apiKey, err := resolveAPIKey(projectDir, requireAPIKey)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise start: %v\n", err)
+		_ = RemoveSentinel(projectDir)
+		return 1
+	}
+
 	// Atomically write config.json snapshot (PL-019e).
 	now := time.Now().UTC().Format(time.RFC3339)
 	cfg := Config{
@@ -165,7 +176,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		StartedAt:        now,
 		DaemonInstanceID: instanceID,
 		Command:          command, // may be nil; shim will error if Command is empty
-		APIKey:           resolveAPIKey(projectDir),
+		APIKey:           apiKey,
 	}
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err)
@@ -243,30 +254,36 @@ func probeDaemonSocket(ctx context.Context, sockPath string, stderr io.Writer) i
 // Precedence:
 //  1. ANTHROPIC_API_KEY already exported by the operator in the current env.
 //  2. A gitignored repo-root .env file (KEY=VALUE lines; comments ignored).
-//  3. Empty string — Pi may authenticate via a different mechanism (e.g. OAuth).
+//  3. If require is true: fail-closed error (CI-006).
+//     If require is false: empty string — Pi may authenticate via OAuth.
+//
+// Pass require=true (via --require-api-key) when the operator intends API-key
+// auth and a silent empty string would cause an opaque auth failure at Pi boot.
 //
 // The value is stored in config.json (inside .harmonik/cognition/, which is
 // gitignored) and injected into Pi's env by the shim at exec time. The daemon
 // process MUST NOT read config.APIKey (CI-006).
-func resolveAPIKey(projectDir string) string {
+func resolveAPIKey(projectDir string, require bool) (string, error) {
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
-		return v
+		return v, nil
 	}
 	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(filepath.Join(projectDir, ".env"))
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
+				return strings.TrimPrefix(line, "ANTHROPIC_API_KEY="), nil
+			}
 		}
-		if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
-			return strings.TrimPrefix(line, "ANTHROPIC_API_KEY=")
-		}
 	}
-	return ""
+	if require {
+		return "", fmt.Errorf("no ANTHROPIC_API_KEY source resolved: neither operator env nor .env file contains the key; set the key or omit --require-api-key for OAuth auth")
+	}
+	return "", nil
 }
 
 func isSocketAbsent(err error) bool {
@@ -291,12 +308,15 @@ func isWouldBlock(err error) bool {
 const startUsage = `harmonik supervise start — launch the supervisor (cognition/flywheel) process
 
 USAGE
-  harmonik supervise start [--project DIR] [--watch-restart] [--command CMD [ARGS...]]
-  harmonik supervise start [--project DIR] [--watch-restart] -- CMD [ARGS...]
+  harmonik supervise start [--project DIR] [--watch-restart] [--require-api-key] [--command CMD [ARGS...]]
+  harmonik supervise start [--project DIR] [--watch-restart] [--require-api-key] -- CMD [ARGS...]
 
 FLAGS
   --project DIR          Project directory (default: current working directory)
   --watch-restart        Interpose a restart-shim: supervisor restarts on crash
+  --require-api-key      Fail-closed (exit 1) when no ANTHROPIC_API_KEY source resolves
+                         (operator env or .env file). Without this flag an empty key
+                         is allowed so the holder process may authenticate via OAuth.
   --command CMD [ARGS]   Supervisee argv; all tokens after CMD are sub-args
   -- CMD [ARGS...]       Alternative: supervisee argv after the separator
 
@@ -311,8 +331,10 @@ NOTES
   Reads daemon_instance_id from .harmonik/daemon.pid for config.json.
   The supervisor.lock is held until the tmux session is created, preventing
   concurrent 'start' invocations from writing conflicting config/sentinel files.
+  Credential source precedence: operator env > .env file > fail-closed (CI-006).
 
 EXAMPLES
   harmonik supervise start --watch-restart --command claude --pi
   harmonik supervise start --watch-restart -- claude --pi --project /path/to/project
+  harmonik supervise start --require-api-key --watch-restart -- claude --pi
 `

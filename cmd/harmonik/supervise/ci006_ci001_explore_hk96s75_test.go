@@ -46,7 +46,10 @@ func TestCI006_CI001_Explore(t *testing.T) {
 		}
 
 		// CI-006: resolveAPIKey must fall back to the .env file when the env var is absent.
-		resolved := resolveAPIKey(dir)
+		resolved, err := resolveAPIKey(dir, false)
+		if err != nil {
+			t.Fatalf("CI-006: resolveAPIKey from .env: unexpected error: %v", err)
+		}
 		if resolved != sentinel {
 			t.Fatalf("CI-006: resolveAPIKey from .env: got %q, want sentinel", resolved)
 		}

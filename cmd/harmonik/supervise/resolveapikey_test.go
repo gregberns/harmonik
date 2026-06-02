@@ -36,7 +36,10 @@ func TestResolveAPIKey_EnvVar(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-env-var-key")
 
 	dir := t.TempDir()
-	got := resolveAPIKey(dir)
+	got, err := resolveAPIKey(dir, false)
+	if err != nil {
+		t.Fatalf("resolveAPIKey from env: unexpected error: %v", err)
+	}
 	if got != "sk-ant-env-var-key" {
 		t.Errorf("resolveAPIKey from env: got %q, want %q", got, "sk-ant-env-var-key")
 	}
@@ -53,7 +56,10 @@ func TestResolveAPIKey_DotEnvFile(t *testing.T) {
 		t.Fatalf("write .env: %v", err)
 	}
 
-	got := resolveAPIKey(dir)
+	got, err := resolveAPIKey(dir, false)
+	if err != nil {
+		t.Fatalf("resolveAPIKey from .env: unexpected error: %v", err)
+	}
 	if got != "sk-ant-dotenv-key" {
 		t.Errorf("resolveAPIKey from .env: got %q, want %q", got, "sk-ant-dotenv-key")
 	}
@@ -69,25 +75,79 @@ func TestResolveAPIKey_EnvVarTakesPrecedenceOverDotEnv(t *testing.T) {
 		t.Fatalf("write .env: %v", err)
 	}
 
-	got := resolveAPIKey(dir)
+	got, err := resolveAPIKey(dir, false)
+	if err != nil {
+		t.Fatalf("resolveAPIKey precedence: unexpected error: %v", err)
+	}
 	if got != "sk-ant-from-env" {
 		t.Errorf("resolveAPIKey precedence: got %q, want env-var value %q", got, "sk-ant-from-env")
 	}
 }
 
 // TestResolveAPIKey_EmptyWhenNeitherPresent verifies that resolveAPIKey returns ""
-// when neither the env var nor a .env file is present.
-//
-// NOTE: returning "" is the current behaviour, not a design endorsement. CI-006
-// requires fail-closed error on no-source; the gap (empty string permits silent
-// auth failure on a fresh Pi boot) is tracked in hk-0ziuw.
+// without error when neither the env var nor a .env file is present and require=false.
+// OAuth-authed deployments that don't pass --require-api-key must not be broken.
 func TestResolveAPIKey_EmptyWhenNeitherPresent(t *testing.T) {
 	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
 
 	dir := t.TempDir() // no .env file
-	got := resolveAPIKey(dir)
+	got, err := resolveAPIKey(dir, false)
+	if err != nil {
+		t.Fatalf("resolveAPIKey no source, require=false: unexpected error: %v", err)
+	}
 	if got != "" {
 		t.Errorf("resolveAPIKey no source: got %q, want empty string", got)
+	}
+}
+
+// TestResolveAPIKey_RequireAPIKeyErrorWhenNeitherPresent verifies the CI-006
+// fail-closed contract: when require=true and no source resolves, resolveAPIKey
+// must return a non-nil error so that RunStart exits 1 instead of booting Pi
+// with an empty key (hk-0ziuw).
+func TestResolveAPIKey_RequireAPIKeyErrorWhenNeitherPresent(t *testing.T) {
+	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
+
+	dir := t.TempDir() // no .env file
+	got, err := resolveAPIKey(dir, true)
+	if err == nil {
+		t.Fatalf("resolveAPIKey no source, require=true: expected error, got nil (key=%q)", got)
+	}
+	if got != "" {
+		t.Errorf("resolveAPIKey error path: got non-empty key %q, want empty", got)
+	}
+}
+
+// TestResolveAPIKey_RequireAPIKeySucceedsWithEnvVar verifies that --require-api-key
+// does not block resolution when the env var is set.
+func TestResolveAPIKey_RequireAPIKeySucceedsWithEnvVar(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-required-env")
+
+	dir := t.TempDir()
+	got, err := resolveAPIKey(dir, true)
+	if err != nil {
+		t.Fatalf("resolveAPIKey env var, require=true: unexpected error: %v", err)
+	}
+	if got != "sk-ant-required-env" {
+		t.Errorf("resolveAPIKey require=true env var: got %q, want %q", got, "sk-ant-required-env")
+	}
+}
+
+// TestResolveAPIKey_RequireAPIKeySucceedsWithDotEnv verifies that --require-api-key
+// does not block resolution when the .env file supplies the key.
+func TestResolveAPIKey_RequireAPIKeySucceedsWithDotEnv(t *testing.T) {
+	unsetenvWithRestore(t, "ANTHROPIC_API_KEY")
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("ANTHROPIC_API_KEY=sk-ant-required-dotenv\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	got, err := resolveAPIKey(dir, true)
+	if err != nil {
+		t.Fatalf("resolveAPIKey .env, require=true: unexpected error: %v", err)
+	}
+	if got != "sk-ant-required-dotenv" {
+		t.Errorf("resolveAPIKey require=true .env: got %q, want %q", got, "sk-ant-required-dotenv")
 	}
 }
 
@@ -102,7 +162,10 @@ func TestResolveAPIKey_DotEnvSkipsCommentAndBlankLines(t *testing.T) {
 		t.Fatalf("write .env: %v", err)
 	}
 
-	got := resolveAPIKey(dir)
+	got, err := resolveAPIKey(dir, false)
+	if err != nil {
+		t.Fatalf("resolveAPIKey .env parse: unexpected error: %v", err)
+	}
 	if got != "sk-ant-parse-key" {
 		t.Errorf("resolveAPIKey .env parse: got %q, want %q", got, "sk-ant-parse-key")
 	}

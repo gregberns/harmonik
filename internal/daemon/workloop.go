@@ -3922,8 +3922,10 @@ func isHarmonikChurn(path string) bool {
 		return true
 	case path == ".beads/issues.jsonl":
 		return true
-	// hk-77q8e: agent-comms scratch files dropped mid-run by concurrent
-	// orchestrator agents are not implementer escapes.
+	// hk-77q8e: AGENT_COMMS.md was the v0 file-outbox comms channel (retired by
+	// hk-8sm4f — use `harmonik comms send/recv` instead). The exemption is kept
+	// for the live-transition period: any session still tailing the old file must
+	// not cause a false implementer_escape on in-flight beads.
 	case path == "AGENT_COMMS.md":
 		return true
 	}

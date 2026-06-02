@@ -211,8 +211,10 @@ func TestEscapeDetect_HarmonikChurnNotFlagged(t *testing.T) {
 }
 
 // TestEscapeDetect_AgentCommsNotFlagged is the regression for hk-77q8e case 2:
-// AGENT_COMMS.md dropped at the repo root by a concurrent orchestrator agent
-// mid-run must NOT be flagged as an implementer escape (it is known churn).
+// AGENT_COMMS.md was the v0 file-outbox comms channel (retired by hk-8sm4f;
+// use `harmonik comms send/recv` instead). The exemption and test are kept for
+// the live-transition period — any session still using the old channel must not
+// cause a false implementer_escape on in-flight beads.
 func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 

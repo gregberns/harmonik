@@ -188,6 +188,55 @@ For other hangs:
 3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired? Which expected ones did not?
 4. If implementer claude has already exited but the daemon is hung: kill the harmonik daemon PID (`pkill -f "harmonik --project"`, or `harmonik run` if you bootstrapped via the legacy path), ff-merge the worktree branch by hand, push, close bead. File a friction bead with the missing-event signature. After killing, re-start the daemon per "Start the daemon once".
 
+## Multi-agent comms
+
+When multiple orchestrator sessions run concurrently, use **`harmonik comms`** (the bus) to coordinate — NOT file appends. The file-outbox convention (`AGENT_COMMS.md` at the repo root, `.harmonik/comms/<me>.md`) is **RETIRED** as of hk-8sm4f (2026-06-01).
+
+### Send a message to another agent
+
+```bash
+harmonik comms send --to <agent-name> -- <body>
+harmonik comms send --broadcast -- <body>        # to all online agents
+```
+
+`<body>` may be a status announcement, a resource-lock warning (daemon restart, `git reset --hard`, binary rebuild), or a handoff note. Use `--topic` to categorize.
+
+### Receive messages
+
+```bash
+harmonik comms recv --follow                     # drain backlog then stream live
+harmonik comms recv --follow --from orchestrator # filter by sender
+harmonik comms recv --follow --json              # NDJSON output (safe to parse)
+```
+
+`recv --follow` replaces tailing `.harmonik/comms/<me>.md`. **Dedupe on `event_id`** — delivery is at-least-once (N3). See `.claude/skills/agent-comms/SKILL.md` for the full CLI surface and the dedup requirement.
+
+### See who is online
+
+```bash
+harmonik comms who        # agents online within the last ~120s
+harmonik comms who --json
+```
+
+### Pre-coordination (shared resources)
+
+Before touching shared resources (daemon restart, `git reset --hard`, binary rebuild, others' beads/worktrees), announce via `comms send` and check `comms who`. Read `comms recv` tail to ensure no peer has claimed the resource first.
+
+### Operator log view (no daemon needed)
+
+```bash
+harmonik comms log --since 30m               # all agent_message events last 30m
+harmonik comms log --from orchestrator --json
+```
+
+`comms log` does NOT advance any agent cursor — it is the human/operator "read the conversation" view.
+
+### Why the file outbox is retired
+
+The old `AGENT_COMMS.md` / `.harmonik/comms/<me>.md` approach had concurrent-append races (garbled lines) and tripped the daemon's escape-detector on in-flight beads (false `implementer_escape` signals). Bus-routed `comms send` writes events under gitignored `.harmonik/`, so `git status` is always clean (success-criterion 3 from the agent-comms spec §6).
+
+**Do NOT**: append to `AGENT_COMMS.md` or any `.harmonik/comms/*.md` file from an orchestrator session. The physical files may still exist on disk during the live transition — do not delete them; just stop writing to them.
+
 ## Planning with kerf
 
 This project uses [kerf](docs/components/internal/kerf.md) for structured planning. The project is **spec-first**: the spec describes how the system operates, and code is updated to match the spec. The `spec` jig is the default.

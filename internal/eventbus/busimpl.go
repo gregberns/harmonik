@@ -600,6 +600,95 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	return eventID, nil
 }
 
+// EmitAgentPresence emits an agent_presence event and returns the minted event_id.
+//
+// This satisfies [CommsPresenceEmitter] for the comms-presence socket op (agent-comms
+// spec §2.5 C6, bead hk-7t27s). It mirrors [EmitAgentMessage] but emits O-class
+// (ordinary durability) — agent_presence is NOT in fsyncBoundaryEventTypes because
+// losing a refresh beat on crash is harmless; the TTL projection reconciles it
+// (spec §4 / Q2 / §1.2).
+func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPresencePayload) (core.EventID, error) {
+	payloadBytes, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal payload: %w", marshalErr)
+	}
+
+	// Redaction pipeline (EV-035) — same as EmitAgentMessage.
+	var rawPayload map[string]any
+	if err := json.Unmarshal(payloadBytes, &rawPayload); err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: payload unmarshal for redaction: %w", err)
+	}
+	redacted := b.registry.RedactionMiddleware(rawPayload)
+	redactedBytes, err := json.Marshal(redacted)
+	if err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: re-encoding redacted payload: %w", err)
+	}
+
+	// Generate event_id before building the envelope so we can return it.
+	eventID, idErr := b.idGen.Next()
+	if idErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: generate event_id: %w", idErr)
+	}
+	const agentPresenceType = "agent_presence"
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(agentPresenceType)
+	if !knownType {
+		typeSchemaVersion = 1
+	}
+	evt := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   typeSchemaVersion,
+		Type:            agentPresenceType,
+		TimestampWall:   time.Now(),
+		SourceSubsystem: "eventbus",
+		Payload:         redactedBytes,
+	}
+
+	// JSONL append — O-class: fsync=false (agent_presence is not fsync-boundary).
+	envelopeBytes, marshalEnvErr := json.Marshal(evt)
+	if marshalEnvErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal envelope: %w", marshalEnvErr)
+	}
+	if appendErr := b.jsonlWriter.Append(envelopeBytes, false /* O-class: no fsync */); appendErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: JSONL append: %w", appendErr)
+	}
+
+	// Fan-out to subscribers.
+	b.mu.Lock()
+	subs := make([]core.Subscription, len(b.subscriptions))
+	copy(subs, b.subscriptions)
+	b.mu.Unlock()
+
+	for _, sub := range subs {
+		if !sub.EventPattern.MatchesType(agentPresenceType) {
+			continue
+		}
+		if sub.Handler == nil {
+			continue
+		}
+		switch sub.ConsumerClass {
+		case core.ConsumerClassSynchronous:
+			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+				return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: synchronous consumer %q: %w", sub.ConsumerID, handlerErr)
+			}
+		default:
+			sub := sub
+			b.wg.Add(1)
+			go func() {
+				defer b.wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+					}
+				}()
+				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+				}
+			}()
+		}
+	}
+	return eventID, nil
+}
+
 // ErrDuplicateSynchronousConsumer is the typed configuration error returned
 // by Subscribe when a second synchronous consumer registers for an event type
 // that already has one. At most one synchronous consumer per event type is

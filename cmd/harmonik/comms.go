@@ -1,12 +1,14 @@
 package main
 
-// comms.go — `harmonik comms` CLI subcommand block (agent-comms spec §2.1 C2/C3).
+// comms.go — `harmonik comms` CLI subcommand block (agent-comms spec §2.1 C2/C3/C6).
 //
 // Routes `harmonik comms <verb>` to the appropriate handler. Currently implements:
 //   - send  (C2 CLI half; bead hk-cnjhx T3)
 //   - log   (C3 read-only operator view; bead hk-onn1x T5)
+//   - join  (C6 presence join; bead hk-7t27s T10)
+//   - leave (C6 presence leave; bead hk-7t27s T10)
 //
-// Further verbs (recv, who, join, leave) land in subsequent tasks (T8–T11).
+// Further verbs (recv, who) land in subsequent tasks (T8–T11).
 //
 // Flag reference for `harmonik comms send`:
 //
@@ -28,14 +30,20 @@ package main
 //	--json                     Emit one JSON object per matched event (NDJSON).
 //	--project DIR              Project directory (default: cwd).
 //
+// Flag reference for `harmonik comms join` and `harmonik comms leave`:
+//
+//	--name NAME                Agent identity (default: $HARMONIK_AGENT env var).
+//	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
+//	--project DIR              Project directory (default: cwd).
+//
 // Exit codes:
 //
 //	0   Success
 //	1   Argument error or read failure
-//	17  Daemon not running (send only — socket missing or ECONNREFUSED)
+//	17  Daemon not running (send/join/leave only — socket missing or ECONNREFUSED)
 //
-// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.4.
-// Bead ref: hk-cnjhx (T3), hk-onn1x (T5).
+// Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.1, §2.4, §2.5, §4.
+// Bead ref: hk-cnjhx (T3), hk-onn1x (T5), hk-7t27s (T10).
 
 import (
 	"context"
@@ -70,8 +78,12 @@ func runCommsSubcommand(subArgs []string) int {
 		return runCommsSendSubcommand(subArgs[1:])
 	case "log":
 		return runCommsLogSubcommand(subArgs[1:])
+	case "join":
+		return runCommsPresenceSubcommand(subArgs[1:], "join")
+	case "leave":
+		return runCommsPresenceSubcommand(subArgs[1:], "leave")
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik comms: unrecognised verb %q; verbs are: send, log, join, leave\n", verb)
 		return 2
 	}
 }
@@ -308,18 +320,22 @@ USAGE
 VERBS
   send    Send an agent_message to a named agent or broadcast to all
   log     Read-only operator view of recent agent_message events (no daemon needed)
+  join    Emit an agent_presence{online, reason:"join"} beat (presence registry)
+  leave   Emit an agent_presence{offline, reason:"leave"} beat (presence registry)
 
 EXIT CODES
   0   Success
   1   Argument error or op rejected
   2   Unrecognised verb
-  17  Daemon not running (send only)
+  17  Daemon not running (send/join/leave only)
 
 EXAMPLES
   harmonik comms send --to other-agent -- Hello
   harmonik comms send --broadcast --from myagent -- Status update
   harmonik comms log --since 30m
   harmonik comms log --since 30m --to myagent --json
+  harmonik comms join --name myagent
+  harmonik comms leave --name myagent
 `)
 }
 
@@ -538,4 +554,242 @@ EXAMPLES
   harmonik comms log --from orchestrator      # all messages from orchestrator
   harmonik comms log --json                   # machine-readable NDJSON
 `)
+}
+
+// presenceTTL is the staleness window for the presence projection (agent-comms
+// spec §4 / Q2 — APPROVED → C = 60s refresh cadence, TTL = ~2× = 120s).
+const presenceTTL = 120 * time.Second
+
+// PresenceRecord is one entry in the presence registry projection.
+// Used by comms join/leave (T10) and consumed by comms who (T11).
+type PresenceRecord struct {
+	Agent    string
+	Status   string // "online" or "offline"
+	LastSeen time.Time
+}
+
+// ComputePresenceRegistry returns the current presence projection over events.jsonl.
+// The projection is: for each agent, take the latest agent_presence beat; report
+// the agent as online if status=="online" AND now-LastSeen < presenceTTL (120s).
+//
+// Scans events.jsonl forward (file order = chronological order for UUIDv7 events),
+// keeping the latest beat per agent. A missing or empty file returns an empty map.
+//
+// Spec ref: agent-comms spec §4 (presence registry projection).
+// Bead ref: hk-7t27s (T10); consumed by T11 (comms who).
+func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
+	var zeroID core.EventID
+	byAgent := make(map[string]PresenceRecord)
+	now := time.Now()
+	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
+		if ev.Type != "agent_presence" {
+			continue
+		}
+		var p core.AgentPresencePayload
+		if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
+			continue
+		}
+		if p.Agent == "" {
+			continue
+		}
+		lastSeen, parseErr := time.Parse(time.RFC3339, p.LastSeen)
+		if parseErr != nil {
+			continue
+		}
+		// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
+		byAgent[p.Agent] = PresenceRecord{
+			Agent:    p.Agent,
+			Status:   string(p.Status),
+			LastSeen: lastSeen,
+		}
+	}
+	// Apply TTL: promote Status from the payload, but mark stale-online as effectively
+	// offline. We keep the raw record and let callers decide; callers typically filter
+	// on IsOnline() helper below.
+	_ = now // used in IsOnline; ComputePresenceRegistry itself is a pure projection.
+	return byAgent
+}
+
+// IsOnline reports whether r represents an agent that is currently online:
+// status=="online" AND now-LastSeen < presenceTTL (120s).
+func IsOnline(r PresenceRecord) bool {
+	return r.Status == "online" && time.Since(r.LastSeen) < presenceTTL
+}
+
+// runCommsPresenceSubcommand implements `harmonik comms join` and `harmonik comms leave`.
+// verb is "join" or "leave". subArgs is os.Args[3:].
+func runCommsPresenceSubcommand(subArgs []string, verb string) int {
+	nameFlag := ""
+	socketFlag := ""
+	projectFlag := ""
+
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			commsPresenceUsage(verb)
+			return 0
+		case arg == "--name" && i+1 < len(subArgs):
+			i++
+			nameFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--name="):
+			nameFlag = strings.TrimPrefix(arg, "--name=")
+		case arg == "--socket" && i+1 < len(subArgs):
+			i++
+			socketFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--socket="):
+			socketFlag = strings.TrimPrefix(arg, "--socket=")
+		case arg == "--project" && i+1 < len(subArgs):
+			i++
+			projectFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "harmonik comms %s: unknown flag %q\n", verb, arg)
+			return 1
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik comms %s: unexpected argument %q\n", verb, arg)
+			return 1
+		}
+	}
+
+	// Resolve agent name: --name > $HARMONIK_AGENT.
+	name := nameFlag
+	if name == "" {
+		name = os.Getenv("HARMONIK_AGENT")
+	}
+	if name == "" {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: --name is required (or set $HARMONIK_AGENT)\n", verb)
+		return 1
+	}
+
+	// Map verb → (status, reason).
+	status := "online"
+	reason := "join"
+	if verb == "leave" {
+		status = "offline"
+		reason = "leave"
+	}
+
+	// Resolve socket path.
+	sockPath := socketFlag
+	if sockPath == "" {
+		projectDir := projectFlag
+		if projectDir == "" {
+			wd, err := os.Getwd()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot determine cwd: %v\n", verb, err)
+				return 1
+			}
+			projectDir = wd
+		}
+		absProject, err := filepath.Abs(projectDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot resolve project path: %v\n", verb, err)
+			return 1
+		}
+		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
+	}
+
+	// Build the comms-presence request payload.
+	presencePayload := map[string]any{
+		"agent":  name,
+		"status": status,
+		"reason": reason,
+	}
+
+	payloadBytes, err := json.Marshal(presencePayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: marshal payload: %v\n", verb, err)
+		return 1
+	}
+
+	// Wrap in a SocketRequest envelope.
+	reqBytes, err := json.Marshal(map[string]any{
+		"op":      "comms-presence",
+		"payload": json.RawMessage(payloadBytes),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: marshal request: %v\n", verb, err)
+		return 1
+	}
+
+	// Dial, send, read response.
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancelDial()
+	if dialErr != nil {
+		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+			fmt.Fprintf(os.Stderr, "harmonik comms %s: daemon not running (socket %s missing or refused)\n", verb, sockPath)
+			return 17
+		}
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: dial %s: %v\n", verb, sockPath, dialErr)
+		return 1
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: write request: %v\n", verb, writeErr)
+		return 1
+	}
+	if uw, ok := conn.(*net.UnixConn); ok {
+		_ = uw.CloseWrite()
+	}
+
+	var resp struct {
+		Ok     bool            `json:"ok"`
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  string          `json:"error,omitempty"`
+	}
+	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: decode response: %v\n", verb, decErr)
+		return 1
+	}
+
+	if !resp.Ok {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: %s\n", verb, resp.Error)
+		return 1
+	}
+
+	// Extract event_id from the CommsPresenceResult.
+	var result struct {
+		EventID string `json:"event_id"`
+	}
+	if unmarshalErr := json.Unmarshal(resp.Result, &result); unmarshalErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: decode result: %v\n", verb, unmarshalErr)
+		return 1
+	}
+
+	fmt.Println(result.EventID)
+	return 0
+}
+
+func commsPresenceUsage(verb string) {
+	fmt.Printf(`harmonik comms %s — emit an agent_presence beat (presence registry)
+
+USAGE
+  harmonik comms %s [--name NAME] [--socket PATH] [--project DIR]
+
+Sends a comms-presence op to the daemon, which emits an agent_presence event
+with status="%s" and reason="%s". The minted event_id is printed to stdout.
+
+FLAGS
+  --name NAME     Agent identity (default: $HARMONIK_AGENT env var). Required.
+  --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
+  --project DIR   Project directory (default: cwd).
+
+EXIT CODES
+  0   Success (event_id printed to stdout)
+  1   Argument error or daemon rejected the op
+  17  Daemon not running (socket missing or ECONNREFUSED)
+
+EXAMPLES
+  harmonik comms %s --name myagent
+  harmonik comms %s                    # uses $HARMONIK_AGENT
+`, verb, verb, func() string {
+		if verb == "join" {
+			return "online"
+		}
+		return "offline"
+	}(), verb, verb, verb)
 }

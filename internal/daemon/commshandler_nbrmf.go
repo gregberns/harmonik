@@ -61,23 +61,35 @@ type CommsSendResult struct {
 	EventID string `json:"event_id"`
 }
 
-// commsSendHandlerImpl is the concrete CommsSendHandler backed by a CommsMessageEmitter.
+// commsSendHandlerImpl is the concrete CommsSendHandler (and CommsPresenceHandler)
+// backed by a CommsMessageEmitter and an optional CommsPresenceEmitter.
+// Both interfaces are implemented on this single struct so the daemon can pass one
+// handler value to RunSocketListenerFull and the socket op switch can type-assert
+// to CommsPresenceHandler when processing comms-presence ops (hk-7t27s T10).
 type commsSendHandlerImpl struct {
-	emitter eventbus.CommsMessageEmitter
+	emitter     eventbus.CommsMessageEmitter
+	presEmitter eventbus.CommsPresenceEmitter // nil when bus does not support presence
 }
 
 // NewCommsSendHandler constructs a CommsSendHandler that emits agent_message
 // events via bus. Returns nil if bus does not implement CommsMessageEmitter
 // (e.g. a test stub that only implements the base EventBus interface).
 //
-// In production, the daemon passes the real *busImpl which satisfies
-// CommsMessageEmitter via EmitAgentMessage.
+// When bus also implements CommsPresenceEmitter (as busImpl does), the returned
+// handler additionally satisfies CommsPresenceHandler for comms-presence ops (T10).
+//
+// In production, the daemon passes the real *busImpl which satisfies both
+// CommsMessageEmitter (via EmitAgentMessage) and CommsPresenceEmitter (via EmitAgentPresence).
 func NewCommsSendHandler(bus eventbus.EventBus) CommsSendHandler {
 	ce, ok := bus.(eventbus.CommsMessageEmitter)
 	if !ok {
 		return nil
 	}
-	return &commsSendHandlerImpl{emitter: ce}
+	h := &commsSendHandlerImpl{emitter: ce}
+	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
+		h.presEmitter = pe
+	}
+	return h
 }
 
 // HandleCommsSend validates the request, emits an agent_message event, and

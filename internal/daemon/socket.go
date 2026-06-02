@@ -475,6 +475,21 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: true, Result: result}
 		}
 
+	case "comms-presence":
+		// Type-assert ch to CommsPresenceHandler. In production, *commsSendHandlerImpl
+		// implements both CommsSendHandler and CommsPresenceHandler (hk-7t27s T10).
+		cp, ok := ch.(CommsPresenceHandler)
+		if !ok || cp == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: CommsPresenceHandler not registered"}
+			break
+		}
+		result, err := cp.HandleCommsPresence(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
 	// -----------------------------------------------------------------------
 	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
 	// -----------------------------------------------------------------------

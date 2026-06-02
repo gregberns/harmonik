@@ -57,6 +57,29 @@ type CommsMessageEmitter interface {
 	EmitAgentMessage(ctx context.Context, payload core.AgentMessagePayload) (core.EventID, error)
 }
 
+// CommsPresenceEmitter is an optional capability implemented by bus implementations
+// that support emitting agent_presence events and returning the minted event_id.
+//
+// busImpl satisfies this interface via [busImpl.EmitAgentPresence]. Callers that
+// need to emit an agent_presence beat (e.g. the comms-presence socket op at
+// agent-comms spec §2.5 C6) should type-assert the EventBus value:
+//
+//	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
+//	    eventID, err := pe.EmitAgentPresence(ctx, payload)
+//	}
+//
+// This is a separate interface (not on [EventBus]) so the core EventBus contract
+// is unchanged. The pattern follows [RunDrainer] and [CommsMessageEmitter].
+//
+// Bead: hk-7t27s (presence registry T10).
+type CommsPresenceEmitter interface {
+	// EmitAgentPresence emits an agent_presence event (O-class, ordinary durability
+	// per agent-comms spec §1.2) and returns the minted event_id. The event_id is
+	// UUIDv7-ordered. agent_presence is NOT fsync-boundary (losing a refresh beat
+	// on crash is harmless; the TTL projection reconciles it per spec §4 / Q2).
+	EmitAgentPresence(ctx context.Context, payload core.AgentPresencePayload) (core.EventID, error)
+}
+
 // TailTruncationCallback is the optional consumer-supplied callback the bus
 // invokes immediately after restart replay completes when the JSONL tail was
 // truncated by the read-recovery rule (specs/event-model.md §6.2).

@@ -1515,9 +1515,16 @@ func ExportedSnapshotUntrackedFiles(ctx context.Context, mainPath string) (map[s
 	return snapshotUntrackedFiles(ctx, mainPath)
 }
 
+// ExportedSnapshotMainHEAD exposes snapshotMainHEAD for the escape-detector
+// sibling-merge regression test (hk-77q8e).
+func ExportedSnapshotMainHEAD(ctx context.Context, mainPath string) string {
+	return snapshotMainHEAD(ctx, mainPath)
+}
+
 // ExportedCheckMainWorkingTreeDirty exposes checkMainWorkingTreeDirty for the
-// escape-detector regression test (hk-ooexj). baseline is the set of
-// pre-existing untracked paths captured at run-start.
-func ExportedCheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
-	return checkMainWorkingTreeDirty(ctx, mainPath, baseline)
+// escape-detector regression tests (hk-ooexj, hk-77q8e). baseline is the set
+// of pre-existing untracked paths captured at run-start; preRunMainSHA is the
+// refs/heads/main SHA captured at run-start for sibling-merge exclusion.
+func ExportedCheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}, preRunMainSHA string) (bool, []string, error) {
+	return checkMainWorkingTreeDirty(ctx, mainPath, baseline, preRunMainSHA)
 }

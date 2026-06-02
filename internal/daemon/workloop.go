@@ -1527,6 +1527,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if snapErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: snapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
 	}
+	// hk-77q8e: snapshot main HEAD SHA so the escape check can exclude files
+	// that appear dirty only because a sibling bead's update-ref raced with the
+	// reset-hard (the working tree didn't update yet when we ran git status).
+	preRunMainSHA := snapshotMainHEAD(ctx, deps.projectDir)
 
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
@@ -2153,7 +2157,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// /tmp/escape-recovery.patch pattern.
 	//
 	// Bead: hk-6zylj.
-	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked); escapeErr == nil && mainDirty {
+	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked, preRunMainSHA); escapeErr == nil && mainDirty {
 		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
@@ -3587,6 +3591,23 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
 }
 
+// snapshotMainHEAD (hk-77q8e) captures the SHA of refs/heads/main at run-start.
+// It is passed to checkMainWorkingTreeDirty so the escape check can exclude
+// files that changed between run-start and check-time due to concurrent sibling
+// merges (the update-ref/reset-hard race window). Returns "" on error; the
+// caller treats a missing SHA as "no sibling-merge exclusion" (fail-open).
+func snapshotMainHEAD(ctx context.Context, mainPath string) string {
+	if mainPath == "" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", mainPath, "rev-parse", "refs/heads/main")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(out), "\n")
+}
+
 // snapshotUntrackedFiles (hk-ooexj) captures the set of paths the main repo's
 // working tree reports as dirty/untracked at run-start, BEFORE the implementer
 // launches. The returned set is fed to checkMainWorkingTreeDirty after the run
@@ -3652,19 +3673,28 @@ func parsePorcelainPaths(out string) []string {
 //   - `.harmonik/...`           — daemon state (expected churn)
 //   - `.claude/...`             — orchestrator/Claude state (expected churn)
 //   - `.beads/issues.jsonl`     — bead ledger (expected churn from br sync)
+//   - `AGENT_COMMS.md`          — orchestrator scratch (expected churn, hk-77q8e)
 //   - paths in `baseline`       — pre-existing untracked files (hk-ooexj)
 //   - gitignored paths          — never the implementer's escape (hk-ooexj)
+//   - paths changed by sibling  — update-ref race window exclusion (hk-77q8e)
+//     merges since run-start
 //
 // `git status --porcelain` already omits gitignored paths by default; the
 // explicit check-ignore pass is defense-in-depth against a parent-repo
 // `.gitignore` or core.excludesFile that surfaces an ignored path here.
+//
+// preRunMainSHA (hk-77q8e) is the refs/heads/main SHA captured before the
+// implementer launched. When non-empty and main has advanced (sibling merged),
+// files in the sibling diff are excluded from escape candidates — they appear
+// dirty only because update-ref moved HEAD without reset-hard updating the
+// working tree yet, not because the implementer escaped.
 //
 // Anything else dirty is treated as an escape. The returned list contains the
 // destination path of each surviving porcelain status line.
 //
 // Errors (e.g. git not in PATH) return (false, nil, err) so the caller can
 // treat the check as informational and skip without failing the run.
-func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
+func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}, preRunMainSHA string) (bool, []string, error) {
 	if mainPath == "" {
 		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: empty mainPath")
 	}
@@ -3673,6 +3703,14 @@ func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline ma
 	if err != nil {
 		return false, nil, fmt.Errorf("checkMainWorkingTreeDirty: git status: %w", err)
 	}
+
+	// hk-77q8e: build the sibling-merge exclusion set. If main advanced since
+	// run-start (concurrent sibling bead merged), collect the paths that changed
+	// so they can be excluded from escape candidates. These files appear dirty
+	// during the update-ref/reset-hard race window but are not implementer
+	// escapes — they will be clean again once reset-hard finishes.
+	siblingChanged := siblingMergeChangedPaths(ctx, mainPath, preRunMainSHA)
+
 	var candidates []string
 	for _, path := range parsePorcelainPaths(string(out)) {
 		if isHarmonikChurn(path) {
@@ -3683,12 +3721,50 @@ func checkMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline ma
 		if _, preexisting := baseline[path]; preexisting {
 			continue
 		}
+		// hk-77q8e: changed by a sibling bead merge (update-ref race window).
+		if _, fromSibling := siblingChanged[path]; fromSibling {
+			continue
+		}
 		candidates = append(candidates, path)
 	}
 	// hk-ooexj: drop any gitignored paths (defense-in-depth — git status already
 	// omits these by default, but a parent gitignore could surface them).
 	dirty := filterIgnoredPaths(ctx, mainPath, candidates)
 	return len(dirty) > 0, dirty, nil
+}
+
+// siblingMergeChangedPaths (hk-77q8e) returns the set of paths that changed
+// between preRunMainSHA and the current refs/heads/main tip. When preRunMainSHA
+// is empty or equals the current tip (no merge happened), the set is empty.
+// On any error the function returns an empty set (fail-open: genuine escapes
+// remain visible at the cost of a possible false-positive during a race window).
+func siblingMergeChangedPaths(ctx context.Context, mainPath, preRunMainSHA string) map[string]struct{} {
+	if preRunMainSHA == "" || mainPath == "" {
+		return nil
+	}
+	// Resolve current main tip.
+	tipCmd := exec.CommandContext(ctx, "git", "-C", mainPath, "rev-parse", "refs/heads/main")
+	tipOut, err := tipCmd.Output()
+	if err != nil {
+		return nil
+	}
+	currentTip := strings.TrimRight(string(tipOut), "\n")
+	if currentTip == preRunMainSHA {
+		return nil // main did not advance; no sibling merge
+	}
+	// Collect files that changed between run-start and now.
+	diffCmd := exec.CommandContext(ctx, "git", "-C", mainPath, "diff", "--name-only", preRunMainSHA, currentTip)
+	diffOut, err := diffCmd.Output()
+	if err != nil {
+		return nil // fail-open
+	}
+	changed := make(map[string]struct{})
+	for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
+		if p != "" {
+			changed[p] = struct{}{}
+		}
+	}
+	return changed
 }
 
 // filterIgnoredPaths returns paths minus those git considers ignored under
@@ -3737,6 +3813,10 @@ func isHarmonikChurn(path string) bool {
 	case strings.HasPrefix(path, ".claude/"), path == ".claude":
 		return true
 	case path == ".beads/issues.jsonl":
+		return true
+	// hk-77q8e: agent-comms scratch files dropped mid-run by concurrent
+	// orchestrator agents are not implementer escapes.
+	case path == "AGENT_COMMS.md":
 		return true
 	}
 	return false

@@ -95,7 +95,7 @@ func TestEscapeDetect_GitignoredPreExistingNotFlagged(t *testing.T) {
 
 	// After the run, with the implementer having touched nothing in main, the
 	// escape check must report clean.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -113,7 +113,7 @@ func TestEscapeDetect_GitignoredNotFlaggedEvenWithoutBaseline(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 	escapeFixtureWrite(t, dir, "HANDOFF-flywheel.md", "scratch handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil, "")
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -141,7 +141,7 @@ func TestEscapeDetect_NetNewUntrackedStillFlagged(t *testing.T) {
 	// filename rather than collapsing a new directory to "dir/".
 	escapeFixtureWrite(t, dir, "leaked.go", "package main\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -179,7 +179,7 @@ func TestEscapeDetect_NetNewGitignoredNotFlagged(t *testing.T) {
 	// Implementer writes a NEW gitignored file during the run.
 	escapeFixtureWrite(t, dir, "HANDOFF-newthread.md", "new handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -201,11 +201,155 @@ func TestEscapeDetect_HarmonikChurnNotFlagged(t *testing.T) {
 	escapeFixtureWrite(t, dir, ".harmonik/queue.json", "{}\n")
 	escapeFixtureWrite(t, dir, ".claude/scratch.json", "{}\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil, "")
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
 	if dirty {
 		t.Fatalf("expected harmonik churn to be excluded, got dirty=%v files=%v", dirty, files)
+	}
+}
+
+// TestEscapeDetect_AgentCommsNotFlagged is the regression for hk-77q8e case 2:
+// AGENT_COMMS.md dropped at the repo root by a concurrent orchestrator agent
+// mid-run must NOT be flagged as an implementer escape (it is known churn).
+func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
+	dir := escapeFixtureGitRepo(t)
+
+	// Baseline is empty — AGENT_COMMS.md did not exist at run-start.
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+
+	// Concurrent agent creates AGENT_COMMS.md during the run.
+	escapeFixtureWrite(t, dir, "AGENT_COMMS.md", "## ts · orchestrator\nhello\n")
+
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
+	if checkErr != nil {
+		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
+	}
+	if dirty {
+		t.Fatalf("expected AGENT_COMMS.md to be excluded as churn, got dirty=%v files=%v", dirty, files)
+	}
+}
+
+// TestEscapeDetect_SiblingMergeRaceNotFlagged is the regression for hk-77q8e
+// case 1: files modified in main by a sibling bead's update-ref (before
+// reset-hard runs) must not be flagged as implementer escapes.
+//
+// The scenario simulates the update-ref / reset-hard race window:
+//  1. Record preRunMainSHA (main at run-start = commit A).
+//  2. A sibling bead advances main to commit B via update-ref, updating HEAD
+//     without touching the working tree (reset-hard hasn't run yet).
+//  3. The escape check fires: git status sees sibling.go as "M" (HEAD=B says
+//     one thing, working tree from A says another).
+//  4. With hk-77q8e fix, sibling.go is excluded from escape candidates.
+func TestEscapeDetect_SiblingMergeRaceNotFlagged(t *testing.T) {
+	dir := escapeFixtureGitRepo(t)
+
+	// Capture baseline and main HEAD at run-start (commit A).
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
+	if preRunMainSHA == "" {
+		t.Fatal("snapshotMainHEAD returned empty")
+	}
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+
+	// Simulate a sibling bead: create a new file in a branch, then advance
+	// refs/heads/main to that branch tip using update-ref (skipping reset-hard
+	// to reproduce the race window).
+	run("checkout", "-b", "sibling-run")
+	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
+	run("add", "sibling.go")
+	run("commit", "-m", "sibling bead lands sibling.go")
+	siblingTip := run("rev-parse", "HEAD")
+	run("checkout", "main")
+
+	// update-ref advances main to sibling tip WITHOUT updating the working tree
+	// (no reset-hard). This is the race window: HEAD is at siblingTip but the
+	// working tree still lacks sibling.go, so git status reports it as deleted
+	// (or the reverse for a newly-added file) and escape check would false-flag.
+	run("update-ref", "refs/heads/main", siblingTip)
+
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
+	if checkErr != nil {
+		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
+	}
+	if dirty {
+		t.Fatalf("expected sibling merge files to be excluded from escape check, got dirty=%v files=%v", dirty, files)
+	}
+}
+
+// TestEscapeDetect_SiblingMergeRaceRealEscapeStillFlagged confirms that when an
+// implementer writes a DIFFERENT file (not in the sibling diff) to the main
+// working tree during the same window, that escape is still detected.
+func TestEscapeDetect_SiblingMergeRaceRealEscapeStillFlagged(t *testing.T) {
+	dir := escapeFixtureGitRepo(t)
+
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+
+	// Sibling bead lands sibling.go.
+	run("checkout", "-b", "sibling-run2")
+	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
+	run("add", "sibling.go")
+	run("commit", "-m", "sibling lands")
+	siblingTip := run("rev-parse", "HEAD")
+	run("checkout", "main")
+	run("update-ref", "refs/heads/main", siblingTip)
+
+	// Implementer ALSO escapes its worktree and writes escaped.go (NOT in the
+	// sibling diff) directly into the main working tree.
+	escapeFixtureWrite(t, dir, "escaped.go", "package main\n")
+
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
+	if checkErr != nil {
+		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
+	}
+	if !dirty {
+		t.Fatalf("expected real escape (escaped.go) to be flagged even with sibling merge, got dirty=%v files=%v", dirty, files)
+	}
+	found := false
+	for _, f := range files {
+		if f == "escaped.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("escaped.go not in dirty list, got %v", files)
+	}
+	// sibling.go must NOT appear in the escape list.
+	for _, f := range files {
+		if f == "sibling.go" {
+			t.Fatalf("sibling.go incorrectly flagged as escape, got %v", files)
+		}
 	}
 }

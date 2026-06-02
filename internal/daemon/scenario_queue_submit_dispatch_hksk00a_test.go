@@ -73,7 +73,10 @@ func queueSubmitDispatchProjectDir(t *testing.T) (string, string) {
 	return dir, filepath.Join(dir, ".harmonik", "events", "events.jsonl")
 }
 
-// queueSubmitDispatchGitRepo initialises a git repository with one commit in dir.
+// queueSubmitDispatchGitRepo initialises a git repository with one commit in
+// dir, and wires a bare-repo "origin" remote so that mergeRunBranchToMain's
+// git-push step succeeds (avoiding push_failed run_failed events in scenario
+// tests that make actual commits in the worktree).
 func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -91,6 +94,18 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 		"queueSubmitDispatchGitRepo: WriteFile README")
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+
+	// Add a bare-repo origin so mergeRunBranchToMain's push step succeeds.
+	// Without a remote the push fails with "fatal: 'origin' does not appear to
+	// be a git repository" and the run is reopened as push_failed (run_failed).
+	raw := t.TempDir()
+	originDir, err := filepath.EvalSymlinks(raw)
+	require.NoError(t, err, "queueSubmitDispatchGitRepo: EvalSymlinks originDir")
+	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
+	out, err := initBareCmd.CombinedOutput()
+	require.NoError(t, err, "queueSubmitDispatchGitRepo: git init --bare\n%s", out)
+	run("remote", "add", "origin", originDir)
+	run("push", "origin", "main")
 }
 
 // queueSubmitDispatchBrPath returns the path to the real br binary. Skips if absent.
@@ -116,13 +131,24 @@ func queueSubmitDispatchBrWrapper(t *testing.T, brPath, dbPath string) string {
 	return path
 }
 
-// queueSubmitDispatchTwinWrapper writes a /bin/sh wrapper that invokes twinPath
-// with --scenario single-happy-path, ignoring all args from the daemon.
+// queueSubmitDispatchTwinWrapper writes a /bin/sh wrapper that invokes the
+// twin binary with --scenario commit-on-cue-startup-delay and
+// --worktree-path $PWD.
+//
+// The commit-on-cue-startup-delay scenario includes a commit_on_cue step that
+// writes a timestamped sentinel file and git-commits it in the worktree —
+// satisfying the no-commit guard (hk-mmh8f) — then emits outcome_emitted and
+// agent_completed.  Each commit uses a unique timestamp so concurrent beads
+// do not conflict.
+//
+// --worktree-path $PWD works because the daemon sets cmd.Dir = workspacePath
+// (handler.go line ~211), making $PWD equal to the worktree path at script
+// execution time.
 func queueSubmitDispatchTwinWrapper(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-wrapper.sh")
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario single-happy-path\n"
+	content := "#!/bin/sh\nexec " + twinPath + " --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
 	//nolint:gosec // G306: script is test-only; 0755 required for execution
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755),
 		"queueSubmitDispatchTwinWrapper: WriteFile")
@@ -375,7 +401,7 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		JSONLLogPath:          jsonlPath,
 		BrPath:                brWrapper,
 		HandlerBinary:         twinWrapper,
-		HandlerEnv:            nil,
+		HandlerEnv:            os.Environ(), // commit-on-cue-startup-delay needs PATH to run git
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
 		AgentReadyTimeout:     5 * time.Second,
@@ -521,7 +547,7 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		JSONLLogPath:          jsonlPath,
 		BrPath:                brWrapper,
 		HandlerBinary:         twinWrapper,
-		HandlerEnv:            nil,
+		HandlerEnv:            os.Environ(), // commit-on-cue-startup-delay needs PATH to run git
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
 		AgentReadyTimeout:     5 * time.Second,

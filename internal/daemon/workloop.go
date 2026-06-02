@@ -218,6 +218,24 @@ type workLoopDeps struct {
 	// Bead ref: hk-kqdpf.1.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
+	// mergeMu, when non-nil, is acquired before every mergeRunBranchToMain call
+	// and released after it returns. This serialises the rebase → update-ref →
+	// push sequence so that concurrent bead goroutines do not race on
+	// refs/heads/main: without serialisation, two goroutines can both
+	// successfully rebase onto the same mainTip and then one's push arrives
+	// on the remote AFTER the other has already advanced it, producing a
+	// "non-fast-forward" rejection.
+	//
+	// When nil (the production default and most tests) merges run unserialized
+	// — the daemon relies on the git rebase step to handle concurrency, which
+	// narrows the race window but does not eliminate it. Tests that exercise
+	// concurrent dispatch from two queues (TestScenario_ConcurrentMultiQueue_*)
+	// inject a mutex here via WithMergeMutex / daemonTestHooks.mergeMu so the
+	// race is eliminated in the test environment.
+	//
+	// Bead ref: hk-bnm89 (scenario-test harness hardening).
+	mergeMu *sync.Mutex
+
 	// cpRegistry is the daemon's ControlPoint registry, populated from policy
 	// YAML during daemon startup per specs/control-points.md §4.9.CP-043.
 	//
@@ -1669,7 +1687,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if rlResult.success {
 			// §4.12.EM-052: merge run-branch to main before CloseBead.
 			// Mirrors the single-mode merge path (hk-ftyvo).
-			mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -1811,7 +1829,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if dotResult.success {
 			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
 			// single-mode and review-loop merge path).
-			mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -2320,7 +2338,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -2347,7 +2365,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := mergeRunBranchToMain(ctx, deps.projectDir, runID, deps.bus, beadID, headSHA)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -3198,6 +3216,22 @@ type workingTreeRefreshFailedPayload struct {
 	RunID  string `json:"run_id"`
 	BeadID string `json:"bead_id,omitempty"`
 	Error  string `json:"error"`
+}
+
+// lockedMergeRunBranchToMain wraps mergeRunBranchToMain with an optional mutex
+// held across the entire rebase → update-ref → push sequence.  When mu is nil
+// (the production default) the call is unguarded — the rebase step narrows but
+// does not eliminate the concurrent-push race.  Test suites that exercise
+// concurrent dispatch inject a non-nil mutex via workLoopDeps.mergeMu to
+// prevent non-fast-forward push failures.
+//
+// Bead ref: hk-bnm89.
+func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string) mergeOutcome {
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA)
 }
 
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:

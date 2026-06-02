@@ -20,10 +20,35 @@ package daemon
 
 import (
 	"context"
+	"sync"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
+
+// WithWorktreeFactory returns a TestOption that replaces productionWorktreeFactory
+// in beadRunOne with factory. Use this to inject a pre-committing factory that
+// satisfies the no-commit guard (hk-mmh8f) without requiring the handler binary
+// to make git commits.
+//
+// Bead ref: hk-bnm89.
+func WithWorktreeFactory(factory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)) TestOption {
+	return func(h *daemonTestHooks) {
+		h.worktreeFactory = factory
+	}
+}
+
+// WithMergeMutex returns a TestOption that injects mu as the merge serialization
+// mutex.  Every call to mergeRunBranchToMain will hold mu across the full
+// rebase → update-ref → push sequence, preventing concurrent-push races in
+// tests that exercise concurrent dispatch.
+//
+// Bead ref: hk-bnm89.
+func WithMergeMutex(mu *sync.Mutex) TestOption {
+	return func(h *daemonTestHooks) {
+		h.mergeMu = mu
+	}
+}
 
 // TestOption is a functional option for StartForTesting.
 //

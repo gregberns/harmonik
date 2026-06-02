@@ -67,6 +67,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,7 +114,9 @@ func cmqProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// cmqGitRepo initialises a bare git repository with one commit in dir.
+// cmqGitRepo initialises a git repository with one commit in dir, and wires a
+// bare-repo "origin" remote so that mergeRunBranchToMain's git-push step
+// succeeds (avoiding push_failed run_failed events when the twin makes commits).
 func cmqGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {
@@ -130,6 +133,18 @@ func cmqGitRepo(t *testing.T, dir string) {
 	require.NoError(t, os.WriteFile(readmePath, []byte("cmq scenario test\n"), 0o644), "cmqGitRepo: write README")
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+
+	// Add a bare-repo origin so mergeRunBranchToMain's push step succeeds.
+	// Without a remote the push fails with "fatal: 'origin' does not appear to
+	// be a git repository" and the run is reopened as push_failed (run_failed).
+	raw := t.TempDir()
+	originDir, err := filepath.EvalSymlinks(raw)
+	require.NoError(t, err, "cmqGitRepo: EvalSymlinks originDir")
+	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
+	out, err := initBareCmd.CombinedOutput()
+	require.NoError(t, err, "cmqGitRepo: git init --bare\n%s", out)
+	run("remote", "add", "origin", originDir)
+	run("push", "origin", "main")
 }
 
 // cmqBrPath returns the path to the real `br` binary, skipping the test when
@@ -222,6 +237,13 @@ func cmqBuildActiveWaveQueue(name, queueID string, beadIDs ...core.BeadID) *queu
 // cmqTwinWrapperScript writes a /bin/sh wrapper that invokes the twin binary
 // with --scenario single-happy-path, ignoring Claude-specific flags from
 // buildClaudeLaunchSpec (e.g. --session-id, --print).
+//
+// The twin's single-happy-path scenario emits the agent protocol events without
+// making any git commits; the no-commit guard (hk-mmh8f) is satisfied by the
+// emptyCommitWorktreeFactory injected via WithWorktreeFactory, which pre-commits
+// before the handler binary starts, serialising the commits and eliminating the
+// concurrent-merge race that would arise if the handler binary committed while
+// running concurrently with another bead's handler.
 func cmqTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -506,10 +528,22 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		LogWriter:             testLogWriter{t: t},
 	}
 
-	// Launch daemon.Start in a goroutine.
+	// Launch daemon.StartForTesting with:
+	//  - emptyCommitWorktreeFactory: satisfies the no-commit guard (hk-mmh8f)
+	//    by pre-committing an --allow-empty commit in the worktree BEFORE the
+	//    handler binary starts, without requiring the handler to run git.
+	//  - WithMergeMutex: serialises the full rebase → update-ref → push sequence
+	//    across all concurrent bead goroutines so that concurrent merges from
+	//    dupBead and betaB do not race on refs/heads/main (non-fast-forward push
+	//    failures observed without the mutex when both goroutines push at the same
+	//    time to the shared bare-repo origin).
+	var mergeMu sync.Mutex
 	startDone := make(chan error, 1)
 	go func() {
-		startDone <- daemon.Start(loopCtx, cfg)
+		startDone <- daemon.StartForTesting(loopCtx, cfg,
+			daemon.WithWorktreeFactory(emptyCommitWorktreeFactory),
+			daemon.WithMergeMutex(&mergeMu),
+		)
 	}()
 
 	// ── Phase 1: wait for all expected terminal events ────────────────────────

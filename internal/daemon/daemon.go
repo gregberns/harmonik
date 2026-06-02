@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -434,6 +435,22 @@ type daemonTestHooks struct {
 	//
 	// Bead ref: hk-c7lxc.
 	spendMeterObserver func(*DaemonSpendMeter)
+
+	// worktreeFactory, when non-nil, replaces productionWorktreeFactory in
+	// beadRunOne.  Tests use this to inject a pre-committing factory that
+	// satisfies the no-commit guard (hk-mmh8f) without requiring the handler
+	// binary to make git commits, avoiding concurrent-merge races in tests
+	// that exercise concurrent dispatch (TestScenario_ConcurrentMultiQueue_*).
+	//
+	// The zero value (nil) falls back to productionWorktreeFactory.
+	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
+
+	// mergeMu, when non-nil, is held across the full rebase → update-ref →
+	// push sequence of every mergeRunBranchToMain call, serialising concurrent
+	// merges.  Tests that exercise concurrent dispatch inject a mutex here via
+	// WithMergeMutex to prevent non-fast-forward push failures.  The zero
+	// value (nil) leaves merges unserialized (production default).
+	mergeMu *sync.Mutex
 }
 
 // newBrAdapter constructs a *brcli.Adapter using hooks.brAdapterFactory when set
@@ -1239,6 +1256,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// Bead ref: hk-37zy8.
 		deps.runRegistry = sharedRunRegistry
+
+		// Inject the test-only worktree factory when set via WithWorktreeFactory.
+		// Nil (the default) falls back to productionWorktreeFactory inside beadRunOne.
+		if hooks.worktreeFactory != nil {
+			deps.worktreeFactory = hooks.worktreeFactory
+		}
+
+		// Inject the test-only merge mutex when set via WithMergeMutex.
+		// Nil (the default) leaves merges unserialized (production default).
+		if hooks.mergeMu != nil {
+			deps.mergeMu = hooks.mergeMu
+		}
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
 		// is set in the operator environment.  All 31 wiring points have been

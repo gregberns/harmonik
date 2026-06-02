@@ -202,6 +202,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-ry8q1.
 	OperatorPauseCtrl *OperatorPauseController
+
+	// NoAutoPull, when true, disables the br-ready fallback poll path so the
+	// work loop only dispatches via the queue surface (EM-066). The zero value
+	// (false) preserves the existing test default: br-ready fallback enabled.
+	// Set to true to test the quiet-daemon (queue-only) topology.
+	//
+	// Bead ref: hk-h5lv2 (EM-066 scenario test).
+	NoAutoPull bool
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -298,6 +306,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		handlerPauseController: p.HandlerPauseController,
 		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
 		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
+		noAutoPull:             p.NoAutoPull,          // hk-h5lv2 / EM-066
 	}
 }
 

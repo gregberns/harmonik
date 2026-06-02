@@ -45,6 +45,26 @@ import (
 var _ queue.HandlerPauseChecker = (*HandlerPauseController)(nil)
 
 // ---------------------------------------------------------------------------
+// AccountID — per-account identifier within a handler type
+// ---------------------------------------------------------------------------
+
+// AccountID identifies an individual account within a handler type's account
+// pool (e.g., one API key in a Claude account pool).
+//
+// AnonymousAccountID ("") is the sentinel used when loading a v1
+// handler-state.json that recorded only a whole-type pause with no account
+// sub-slot (§9.3 / HP-072 backwards compat).
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+type AccountID string
+
+// AnonymousAccountID is the AccountID used when migrating a v1 on-disk
+// handler-state.json that has no per-account map.  A v1 whole-type pause is
+// represented in memory as a single account with this ID.
+const AnonymousAccountID AccountID = ""
+
+// ---------------------------------------------------------------------------
 // InFlightBeadRecord — one entry in the freeze-list snapshot
 // ---------------------------------------------------------------------------
 
@@ -80,6 +100,31 @@ const (
 	pauseStatusPaused pauseStatus = 1 // handler is paused
 )
 
+// accountEntry holds the mutable pause state for one account within a handler
+// type.  It mirrors the per-type fields of handlerEntry but without the
+// auto-resume machinery (auto-resume is a per-handler-type policy, not
+// per-account).
+//
+// All reads and writes MUST be performed while the controller's mu lock is held.
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+type accountEntry struct {
+	// status is the current pause status for this account.
+	status pauseStatus
+
+	// cause is the structured pause cause from the most recent PauseAccount call.
+	// nil when status == pauseStatusLive.
+	cause *core.HandlerPauseCause
+
+	// inFlightAtPause is the freeze-list snapshot taken at the most recent
+	// PauseAccount call.  Empty when status == pauseStatusLive.
+	inFlightAtPause []InFlightBeadRecord
+
+	// pausedEpoch is the monotonic pause→resume cycle counter for this account.
+	pausedEpoch int
+}
+
 // handlerEntry holds the mutable state for one agent type.
 // All reads and writes MUST be performed while the controller's mu lock is held.
 type handlerEntry struct {
@@ -99,6 +144,10 @@ type handlerEntry struct {
 	// to 2 on the second Pause after a Resume, and so on.
 	// Matches the PausedEpoch field on HandlerPausedPayload / HandlerResumedPayload.
 	pausedEpoch int
+
+	// accounts holds per-account pause state (HP-072).  Nil until the first
+	// PauseAccount call for this handler type.  Key is the AccountID string.
+	accounts map[AccountID]*accountEntry
 
 	// --- auto-resume state (hk-0otqs) ---
 
@@ -123,6 +172,29 @@ type handlerEntry struct {
 // HandlerPauseStatusSnapshot — operator-visible snapshot
 // ---------------------------------------------------------------------------
 
+// AccountPauseStatusSnapshot is the point-in-time view of one account's pause
+// state within a handler type.
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+type AccountPauseStatusSnapshot struct {
+	// AccountID is the account this snapshot describes.
+	AccountID AccountID `json:"account_id"`
+
+	// Paused is true when this account is currently paused.
+	Paused bool `json:"paused"`
+
+	// Cause is the structured pause cause.  nil / absent when Paused is false.
+	Cause *core.HandlerPauseCause `json:"cause,omitempty"`
+
+	// InFlightAtPause is the freeze-list captured when this account was last
+	// paused.  Empty when Paused is false.
+	InFlightAtPause []InFlightBeadRecord `json:"in_flight_at_pause,omitempty"`
+
+	// PausedEpoch is the monotonic pause→resume counter for this account.
+	PausedEpoch int `json:"paused_epoch"`
+}
+
 // HandlerPauseStatusSnapshot is the point-in-time view of one handler type's
 // pause state returned by HandlerPauseController.Status.
 //
@@ -145,6 +217,10 @@ type HandlerPauseStatusSnapshot struct {
 	// PausedEpoch is the monotonic pause→resume counter.  0 means the handler
 	// has never been paused in this daemon session.
 	PausedEpoch int `json:"paused_epoch"`
+
+	// Accounts is the per-account pause state map (HP-072).  Key is the
+	// AccountID string.  Absent / nil when no per-account pauses are recorded.
+	Accounts map[AccountID]AccountPauseStatusSnapshot `json:"accounts,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +591,142 @@ func (c *HandlerPauseController) Resume(
 }
 
 // ---------------------------------------------------------------------------
+// PauseAccount / ResumeAccount / IsAccountPaused — per-account pause (HP-072)
+// ---------------------------------------------------------------------------
+
+// PauseAccount records a pause for a specific account within agentType and
+// persists the updated state.
+//
+// If the account is already paused, PauseAccount is a no-op (returns nil).
+// This mirrors the handler-level Pause idempotency contract (HP-031).
+//
+// accountID == AnonymousAccountID ("") is valid; it is the sentinel used when
+// migrating a v1 handler-state.json that had no per-account sub-map.
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+func (c *HandlerPauseController) PauseAccount(
+	ctx context.Context,
+	agentType core.AgentType,
+	accountID AccountID,
+	cause core.HandlerPauseCause,
+	inFlight []InFlightBeadRecord,
+) error {
+	if !agentType.Valid() {
+		return fmt.Errorf("HandlerPauseController.PauseAccount: invalid agent_type %q", string(agentType))
+	}
+	if !cause.Valid() {
+		return fmt.Errorf("HandlerPauseController.PauseAccount: invalid cause for agent_type %q account %q", string(agentType), string(accountID))
+	}
+
+	c.mu.Lock()
+
+	entry := c.getOrCreate(agentType)
+	if entry.accounts == nil {
+		entry.accounts = make(map[AccountID]*accountEntry)
+	}
+	acct, exists := entry.accounts[accountID]
+	if !exists {
+		acct = &accountEntry{}
+		entry.accounts[accountID] = acct
+	}
+	if acct.status == pauseStatusPaused {
+		// Already paused — idempotent no-op.
+		c.mu.Unlock()
+		return nil
+	}
+
+	causeCopy := cause
+	acct.status = pauseStatusPaused
+	acct.cause = &causeCopy
+	acct.pausedEpoch++
+	if len(inFlight) > 0 {
+		acct.inFlightAtPause = make([]InFlightBeadRecord, len(inFlight))
+		copy(acct.inFlightAtPause, inFlight)
+	} else {
+		acct.inFlightAtPause = nil
+	}
+
+	if c.persistFn != nil {
+		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("HandlerPauseController.PauseAccount: persist: %w", persistErr)
+		}
+	}
+
+	c.mu.Unlock()
+	return nil
+}
+
+// ResumeAccount clears the pause for a specific account within agentType.
+//
+// Returns ErrHandlerNotPaused if the account is not currently paused.
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+func (c *HandlerPauseController) ResumeAccount(
+	ctx context.Context,
+	agentType core.AgentType,
+	accountID AccountID,
+	resumedBy core.HandlerResumedBy,
+) error {
+	if !agentType.Valid() {
+		return fmt.Errorf("HandlerPauseController.ResumeAccount: invalid agent_type %q", string(agentType))
+	}
+	if !resumedBy.Valid() {
+		return fmt.Errorf("HandlerPauseController.ResumeAccount: invalid resumedBy %q", string(resumedBy))
+	}
+
+	c.mu.Lock()
+
+	entry, exists := c.handlers[agentType]
+	if !exists || entry.accounts == nil {
+		c.mu.Unlock()
+		return &ErrHandlerNotPaused{AgentType: agentType}
+	}
+	acct, exists := entry.accounts[accountID]
+	if !exists || acct.status != pauseStatusPaused {
+		c.mu.Unlock()
+		return &ErrHandlerNotPaused{AgentType: agentType}
+	}
+
+	acct.status = pauseStatusLive
+	acct.cause = nil
+	acct.inFlightAtPause = nil
+	// pausedEpoch is NOT reset (monotonic, used for dedup).
+
+	if c.persistFn != nil {
+		if persistErr := c.persistFn(ctx, c.snapshotAllLocked()); persistErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("HandlerPauseController.ResumeAccount: persist: %w", persistErr)
+		}
+	}
+
+	c.mu.Unlock()
+	return nil
+}
+
+// IsAccountPaused reports whether the specific account within agentType is
+// currently paused.  Returns false when the handler type or account is unknown.
+//
+// Safe for concurrent use (read lock only).
+//
+// Spec ref: specs/handler-pause.md §12.3 HP-072.
+// Bead ref: hk-lhxzc.
+func (c *HandlerPauseController) IsAccountPaused(agentType core.AgentType, accountID AccountID) bool {
+	c.mu.RLock()
+	entry, exists := c.handlers[agentType]
+	if !exists || entry.accounts == nil {
+		c.mu.RUnlock()
+		return false
+	}
+	acct, exists := entry.accounts[accountID]
+	paused := exists && acct.status == pauseStatusPaused
+	c.mu.RUnlock()
+	return paused
+}
+
+// ---------------------------------------------------------------------------
 // IsPaused — query pause status
 // ---------------------------------------------------------------------------
 
@@ -628,6 +840,25 @@ func (c *HandlerPauseController) snapshotEntryLocked(at core.AgentType, entry *h
 	if len(entry.inFlightAtPause) > 0 {
 		snap.InFlightAtPause = make([]InFlightBeadRecord, len(entry.inFlightAtPause))
 		copy(snap.InFlightAtPause, entry.inFlightAtPause)
+	}
+	if len(entry.accounts) > 0 {
+		snap.Accounts = make(map[AccountID]AccountPauseStatusSnapshot, len(entry.accounts))
+		for aid, acct := range entry.accounts {
+			as := AccountPauseStatusSnapshot{
+				AccountID:   aid,
+				Paused:      acct.status == pauseStatusPaused,
+				PausedEpoch: acct.pausedEpoch,
+			}
+			if acct.cause != nil {
+				causeCopy := *acct.cause
+				as.Cause = &causeCopy
+			}
+			if len(acct.inFlightAtPause) > 0 {
+				as.InFlightAtPause = make([]InFlightBeadRecord, len(acct.inFlightAtPause))
+				copy(as.InFlightAtPause, acct.inFlightAtPause)
+			}
+			snap.Accounts[aid] = as
+		}
 	}
 	return snap
 }

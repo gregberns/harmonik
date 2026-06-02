@@ -57,8 +57,12 @@ import (
 // handlerStateSchemaVersionDaemon) cause LoadHandlerPauseState to return
 // ErrHandlerStateSchemaUnsupported, which the caller maps to exit code 2.
 //
+// v2 introduces the per-account sub-map (HP-072 / hk-lhxzc).  A v2 daemon
+// reads v1 files via backwards-compat migration: a v1 paused handler is loaded
+// as an anonymous account (AnonymousAccountID) within that handler type.
+//
 // Matches handlerStateSchemaVersion in cmd/harmonik/handler.go.
-const handlerStateSchemaVersionDaemon = 1
+const handlerStateSchemaVersionDaemon = 2
 
 // handlerStateFileName is the on-disk filename.
 // Sibling to queue.json inside <ProjectDir>/.harmonik/.
@@ -76,6 +80,16 @@ type handlerStateDiskDaemon struct {
 
 // handlerEntryDiskDaemon is one handler-type entry in handler-state.json.
 type handlerEntryDiskDaemon struct {
+	Status          string                           `json:"status"`
+	Cause           *handlerCauseDiskDaemon          `json:"cause"`
+	InFlightAtPause []inFlightRunDiskDaemon          `json:"in_flight_at_pause"`
+	PausedEpoch     int                              `json:"paused_epoch"`
+	Accounts        map[string]handlerAccountDiskDaemon `json:"accounts,omitempty"` // v2+
+}
+
+// handlerAccountDiskDaemon is a per-account entry inside handlers.<type>.accounts
+// introduced in schema v2 (HP-072 / hk-lhxzc).
+type handlerAccountDiskDaemon struct {
 	Status          string                  `json:"status"`
 	Cause           *handlerCauseDiskDaemon `json:"cause"`
 	InFlightAtPause []inFlightRunDiskDaemon `json:"in_flight_at_pause"`
@@ -264,49 +278,55 @@ func LoadHandlerPauseState(ctx context.Context, stateDir string, ctrl *HandlerPa
 
 	// Seed the controller with persisted paused handlers.
 	for agentTypeStr, entry := range disk.Handlers {
-		if entry.Status != "paused" {
-			// Live handlers need not be seeded; absent entry = live.
-			continue
-		}
-		if entry.Cause == nil {
-			// Corrupt entry: paused without cause; skip (controller defaults to live).
-			continue
-		}
-
 		agentType := core.AgentType(agentTypeStr)
 		if !agentType.Valid() {
 			// Unknown agent type in file; skip silently.
 			continue
 		}
 
-		cause := diskCauseToCore(entry.Cause)
-		if !cause.Valid() {
-			// Malformed cause; skip silently.
-			continue
+		// Restore handler-level pause (present in both v1 and v2).
+		if entry.Status == "paused" && entry.Cause != nil {
+			cause := diskCauseToCore(entry.Cause)
+			if cause.Valid() {
+				inFlight := diskInFlightToCore(entry.InFlightAtPause)
+				// Call Pause to restore persisted handler-level state.
+				if pauseErr := ctrl.Pause(ctx, agentType, cause, inFlight); pauseErr != nil {
+					return fmt.Errorf("LoadHandlerPauseState: restore pause for %q: %w", agentTypeStr, pauseErr)
+				}
+				// NOTE on paused_epoch: same as before — restores epoch=1, not the exact value.
+				_ = entry.PausedEpoch
+			}
 		}
 
-		inFlight := make([]InFlightBeadRecord, 0, len(entry.InFlightAtPause))
-		for _, r := range entry.InFlightAtPause {
-			inFlight = append(inFlight, InFlightBeadRecord{
-				RunID:        r.RunID,
-				BeadID:       r.BeadID,
-				DispatchedAt: r.DispatchedAt,
-			})
+		// v1 backwards compat (HP-072): if schema_version == 1 and the handler is
+		// paused, also restore the state as the anonymous account so callers using
+		// IsAccountPaused("", ...) observe the same pause.
+		if disk.SchemaVersion == 1 && entry.Status == "paused" && entry.Cause != nil {
+			cause := diskCauseToCore(entry.Cause)
+			if cause.Valid() {
+				inFlight := diskInFlightToCore(entry.InFlightAtPause)
+				if pauseErr := ctrl.PauseAccount(ctx, agentType, AnonymousAccountID, cause, inFlight); pauseErr != nil {
+					return fmt.Errorf("LoadHandlerPauseState: restore anonymous account pause for %q: %w", agentTypeStr, pauseErr)
+				}
+			}
 		}
 
-		// Call Pause to restore persisted state.  This triggers persistFn which
-		// re-writes the same file — that is fine; the content is identical.
-		if pauseErr := ctrl.Pause(ctx, agentType, cause, inFlight); pauseErr != nil {
-			return fmt.Errorf("LoadHandlerPauseState: restore pause for %q: %w", agentTypeStr, pauseErr)
+		// Restore per-account pauses (schema v2+).
+		for accountIDStr, acct := range entry.Accounts {
+			if acct.Status != "paused" || acct.Cause == nil {
+				continue
+			}
+			cause := diskCauseToCore(acct.Cause)
+			if !cause.Valid() {
+				continue
+			}
+			inFlight := diskInFlightToCore(acct.InFlightAtPause)
+			accountID := AccountID(accountIDStr)
+			if pauseErr := ctrl.PauseAccount(ctx, agentType, accountID, cause, inFlight); pauseErr != nil {
+				return fmt.Errorf("LoadHandlerPauseState: restore account %q pause for handler %q: %w", accountIDStr, agentTypeStr, pauseErr)
+			}
+			_ = acct.PausedEpoch // not restored exactly; see NOTE above
 		}
-
-		// NOTE on paused_epoch: Pause increments epoch from 0 to 1 on first call.
-		// If the persisted epoch is higher (e.g. 3 from multiple prior cycles),
-		// the controller restores epoch=1 rather than the exact value.  This is
-		// safe at MVH because epoch is only used for deduplication of
-		// queue_item_held_for_handler_pause events, and a daemon restart resets
-		// the in-flight dedup sets anyway.  Post-MVH: add a direct seed accessor.
-		_ = entry.PausedEpoch // acknowledged; not restored exactly at MVH
 	}
 
 	return nil
@@ -352,6 +372,42 @@ func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDa
 		} else {
 			entry.InFlightAtPause = []inFlightRunDiskDaemon{}
 		}
+		// Write per-account state (v2+ schema).
+		if len(s.Accounts) > 0 {
+			entry.Accounts = make(map[string]handlerAccountDiskDaemon, len(s.Accounts))
+			for aid, as := range s.Accounts {
+				acctStatus := "live"
+				if as.Paused {
+					acctStatus = "paused"
+				}
+				adisk := handlerAccountDiskDaemon{
+					Status:      acctStatus,
+					PausedEpoch: as.PausedEpoch,
+				}
+				if as.Cause != nil {
+					adisk.Cause = &handlerCauseDiskDaemon{
+						FailureClass: string(as.Cause.FailureClass),
+						SubReason:    as.Cause.SubReason,
+						SourceRunID:  as.Cause.SourceRunID,
+						SourceBeadID: as.Cause.SourceBeadID,
+						TrippedAt:    as.Cause.TrippedAt,
+					}
+				}
+				if len(as.InFlightAtPause) > 0 {
+					adisk.InFlightAtPause = make([]inFlightRunDiskDaemon, len(as.InFlightAtPause))
+					for i, r := range as.InFlightAtPause {
+						adisk.InFlightAtPause[i] = inFlightRunDiskDaemon{
+							RunID:        r.RunID,
+							BeadID:       r.BeadID,
+							DispatchedAt: r.DispatchedAt,
+						}
+					}
+				} else {
+					adisk.InFlightAtPause = []inFlightRunDiskDaemon{}
+				}
+				entry.Accounts[string(aid)] = adisk
+			}
+		}
 		disk.Handlers[string(s.AgentType)] = entry
 	}
 	return disk
@@ -366,4 +422,17 @@ func diskCauseToCore(d *handlerCauseDiskDaemon) core.HandlerPauseCause {
 		SourceBeadID: d.SourceBeadID,
 		TrippedAt:    d.TrippedAt,
 	}
+}
+
+// diskInFlightToCore converts []inFlightRunDiskDaemon to []InFlightBeadRecord.
+func diskInFlightToCore(rs []inFlightRunDiskDaemon) []InFlightBeadRecord {
+	out := make([]InFlightBeadRecord, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, InFlightBeadRecord{
+			RunID:        r.RunID,
+			BeadID:       r.BeadID,
+			DispatchedAt: r.DispatchedAt,
+		})
+	}
+	return out
 }

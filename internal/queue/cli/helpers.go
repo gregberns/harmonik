@@ -118,6 +118,49 @@ func marshalJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// normalizeQueueDocGroups defaults any group with a missing or empty "kind"
+// field to "stream" and prints a warning on errOut for any group with
+// kind "wave". Mutates the "groups" entry of doc in place.
+//
+// This is an interim guard (hk-c6grw) until named-queues (hk-tigaf) lands:
+// the file-based submit path passed raw JSON straight through, so agents who
+// omitted "kind" silently got an empty string that the daemon rejected, and
+// agents who wrote kind:"wave" hit QM-027 single-active lockout on a shared
+// daemon.
+//
+// Bead ref: hk-c6grw.
+func normalizeQueueDocGroups(doc map[string]json.RawMessage, errOut io.Writer) error {
+	groupsRaw, ok := doc["groups"]
+	if !ok {
+		return nil
+	}
+	var groups []map[string]json.RawMessage
+	if err := json.Unmarshal(groupsRaw, &groups); err != nil {
+		return err
+	}
+	waved := false
+	for i, g := range groups {
+		kindRaw, hasKind := g["kind"]
+		kindStr := strings.Trim(string(kindRaw), `"`)
+		if !hasKind || kindStr == "" || string(kindRaw) == "null" {
+			g["kind"] = json.RawMessage(`"stream"`)
+			groups[i] = g
+		} else if kindStr == "wave" {
+			waved = true
+		}
+	}
+	if waved {
+		fmt.Fprintln(errOut, "harmonik queue submit: warning: wave group(s) detected — waves are immutable "+
+			"and trigger single-active lockout (QM-027) on a shared daemon; use kind:stream for the daily loop")
+	}
+	normalized, err := json.Marshal(groups)
+	if err != nil {
+		return err
+	}
+	doc["groups"] = normalized
+	return nil
+}
+
 // beadsToQueueDoc builds a minimal QueueSubmitRequest JSON map from a list of
 // bead IDs. Produces a single stream group (kind=stream, status=pending,
 // group_index=0) containing one item per bead ID.

@@ -88,6 +88,11 @@ func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut
 			fmt.Fprintf(errOut, "harmonik queue submit: invalid JSON in %q: %v\n", queueFile, jsonErr)
 			return exitTransportError
 		}
+		// Default omitted/empty group kind to stream; warn on wave groups (hk-c6grw).
+		if normErr := normalizeQueueDocGroups(queueDoc, errOut); normErr != nil {
+			fmt.Fprintf(errOut, "harmonik queue submit: cannot normalize group kinds: %v\n", normErr)
+			return exitTransportError
+		}
 		// Inject --queue name into file-based doc when provided.
 		if queueName != "" {
 			nameBytes, _ := json.Marshal(queueName) //nolint:errcheck // string; cannot fail

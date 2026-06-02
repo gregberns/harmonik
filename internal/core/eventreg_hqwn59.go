@@ -119,7 +119,8 @@ func registerControlPoints() {
 	mustRegister("policy_expression_exceeded_cost", func() EventPayload { return &PolicyExpressionExceededCostPayload{} })
 }
 
-// registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors.
+// registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors,
+// plus the agent-comms typed events (agent-comms spec §1, hk-djqc9).
 //
 // Durability classes per §8.3 table:
 //   - agent_ready (§8.3.1):                 O (ordinary — handler lifecycle observability)
@@ -137,6 +138,8 @@ func registerControlPoints() {
 //   - agent_hard_terminating (§8.3.13):     O (ordinary — termination lifecycle audit)
 //   - agent_heartbeat (HC-026a):            O (ordinary — silent-hang timer reset)
 //   - launch_initiated:                     O (ordinary — pre-exec lifecycle observability)
+//   - agent_message (agent-comms §1.1):     F (fsync-boundary — durable directed/broadcast messaging; no silent drops G2)
+//   - agent_presence (agent-comms §1.2):    O (ordinary — presence beat; TTL projection handles crash gaps)
 func registerAgentEvents() {
 	mustRegister("agent_started", func() EventPayload { return &AgentStartedPayload{} })
 	mustRegister("agent_ready", func() EventPayload { return &AgentReadyPayload{} })
@@ -166,6 +169,12 @@ func registerAgentEvents() {
 	// launch_stall_detected (hk-fra5l): emitted by the stale watcher when
 	// run_started fires but launch_initiated is absent for >30 s. Durability class: O.
 	mustRegister("launch_stall_detected", func() EventPayload { return &LaunchStallDetectedPayload{} })
+	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
+	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
+	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })
+	// agent_presence (hk-djqc9, agent-comms spec §1.2): join/refresh/leave presence
+	// beat. Durability class: O (ordinary — TTL projection reconciles crash gaps).
+	mustRegister("agent_presence", func() EventPayload { return &AgentPresencePayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

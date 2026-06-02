@@ -126,6 +126,9 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	core.EventType("daemon_shutdown"):            {},
 	core.EventType("daemon_startup_failed"):      {},
 	core.EventType("operator_upgrade_completed"): {},
+	// agent-comms §1.1 (hk-djqc9): agent_message is F-class so comms-send is
+	// durable before returning OK ("no silent drops" goal G2).
+	core.EventType("agent_message"): {},
 }
 
 // isFsyncBoundaryEvent reports whether eventType is an F-class (fsync-boundary)

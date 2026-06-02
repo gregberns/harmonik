@@ -10,4 +10,9 @@ require (
 	pgregory.net/rapid v1.3.0
 )
 
-require go.uber.org/goleak v1.3.0 // indirect
+require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
+	go.uber.org/goleak v1.3.0 // indirect
+)

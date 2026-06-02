@@ -101,6 +101,13 @@ type SubscribeRequest struct {
 	// HeartbeatSeconds is the idle heartbeat cadence. Clamped to [10, 600];
 	// zero or negative defaults to 60.
 	HeartbeatSeconds int `json:"heartbeat_seconds,omitempty"`
+
+	// Agent-message addressing filters (agent-comms spec §3 / N1). Applied via
+	// MatchAgentMessage on BOTH the replay path and the live offer path. Empty
+	// values are wildcards — non-agent_message events always bypass these.
+	To    string `json:"to,omitempty"`
+	From  string `json:"from,omitempty"`
+	Topic string `json:"topic,omitempty"`
 }
 
 // subscribeHeartbeatMin / Max / Default define the heartbeat-clamp range.
@@ -297,6 +304,9 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		ch:         make(chan core.Event, subscribeChannelCapacity),
 		typeFilter: typeFilter,
 		wildcard:   wildcard,
+		to:         req.To,
+		from:       req.From,
+		topic:      req.Topic,
 	}
 
 	// Register BEFORE replay so live events are buffered while we replay from
@@ -339,6 +349,14 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				}
 				if !wildcard {
 					if _, ok := typeFilter[evt.Type]; !ok {
+						continue
+					}
+				}
+				// Agent-message addressing filter (N1). Applies on agent_message
+				// events only; other event types bypass this block.
+				if evt.Type == "agent_message" && (req.To != "" || req.From != "" || req.Topic != "") {
+					var p AgentMessagePayload
+					if unmarshalErr := json.Unmarshal(evt.Payload, &p); unmarshalErr != nil || !MatchAgentMessage(p, req.To, req.From, req.Topic) {
 						continue
 					}
 				}
@@ -439,16 +457,29 @@ type subscriptionStream struct {
 	ch         chan core.Event
 	typeFilter map[string]struct{}
 	wildcard   bool
+	// Agent-message addressing filters, mirrored from SubscribeRequest (N1).
+	to    string
+	from  string
+	topic string
 
 	dropped atomic.Int64
 }
 
 // offer attempts a non-blocking send. On full channel: drops OLDEST, counts.
 // Filters by type before queuing to avoid burning channel slots on
-// uninteresting events.
+// uninteresting events. For agent_message events, also applies the
+// addressing filter (N1) via MatchAgentMessage.
 func (s *subscriptionStream) offer(evt core.Event) {
 	if !s.wildcard {
 		if _, ok := s.typeFilter[evt.Type]; !ok {
+			return
+		}
+	}
+	// Agent-message addressing filter (N1). Applies on agent_message events
+	// only; other event types bypass this block.
+	if evt.Type == "agent_message" && (s.to != "" || s.from != "" || s.topic != "") {
+		var p AgentMessagePayload
+		if err := json.Unmarshal(evt.Payload, &p); err != nil || !MatchAgentMessage(p, s.to, s.from, s.topic) {
 			return
 		}
 	}

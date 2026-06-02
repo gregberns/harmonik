@@ -1053,6 +1053,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Bead ref: hk-ry8q1.
 	var opPauseCtrl *OperatorPauseController
 
+	// concurrencyCtrl is the daemon-singleton ConcurrencyController. Initialised
+	// inside the ProjectDir block and injected into both the HandlerAdapter (so
+	// queue-set-concurrency RPCs can update the ceiling) and the workloop deps (so
+	// the dispatch gate reads the live value on every tick). Declared here so
+	// both blocks share the same variable scope.
+	//
+	// Bead ref: hk-ohiaf.
+	var concurrencyCtrl *ConcurrencyController
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -1107,6 +1116,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// Bead ref: hk-ry8q1.
 		opPauseCtrl = NewOperatorPauseController(bus)
+
+		// Create the ConcurrencyController and wire it into the HandlerAdapter so
+		// queue-set-concurrency RPCs can update the ceiling at runtime (hk-ohiaf).
+		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
+		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
+			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
+		}
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
@@ -1163,6 +1179,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// dispatch when an operator pause is active (hk-ry8q1). nil when
 		// ProjectDir was not set (unit-test mode without a socket).
 		deps.operatorPauseCtrl = opPauseCtrl
+
+		// Inject the ConcurrencyController so the dispatch gate reads the live
+		// ceiling on every tick (hk-ohiaf). nil falls back to the static
+		// maxConcurrent field (unit-test mode / legacy callers).
+		deps.concurrencyCtrl = concurrencyCtrl
 
 		// Inject the shared RunRegistry so the work loop and the
 		// HandlerPausePolicyGoroutine operate on the same in-flight snapshot.

@@ -311,8 +311,10 @@ EXAMPLES
 			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
 		case "cancel":
 			return queuecli.RunQueueCancel(ctx, subArgs, os.Stdout, os.Stderr)
+		case "set-concurrency":
+			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel\n", verb)
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel, set-concurrency\n", verb)
 			return 2
 		}
 	}

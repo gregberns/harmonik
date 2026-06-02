@@ -165,9 +165,21 @@ type workLoopDeps struct {
 	// POST_MVH_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
 	// or adapter.
 	//
+	// When concurrencyCtrl is non-nil, the dispatch gate reads the ceiling from
+	// the controller atomically each tick instead of this static field, enabling
+	// runtime adjustment via queue-set-concurrency RPC (hk-ohiaf).
+	//
 	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent configuration).
 	// Bead ref: hk-e61c3.2.
 	maxConcurrent int
+
+	// concurrencyCtrl is the optional runtime-mutable ceiling controller.
+	// When non-nil the dispatch gate reads from it each tick, superseding the
+	// static maxConcurrent field. Set by daemon.Start (hk-ohiaf); nil in tests
+	// that do not need live adjustment.
+	//
+	// Bead ref: hk-ohiaf.
+	concurrencyCtrl *ConcurrencyController
 
 	// hookStore is the daemon-wide hook-session registry. It implements
 	// HookRelayHandler and is passed to RunSocketListener as the hr argument so
@@ -793,8 +805,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
+		// Read from the controller on every tick when set (hk-ohiaf), so that
+		// queue-set-concurrency adjustments take effect without a restart.
+		// Raising n lets the gate admit up to n; lowering lets in-flight runs
+		// drain naturally and only stops new dispatch once running < n.
 		// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
-		if deps.runRegistry.Len() >= effectiveMax {
+		gateMax := effectiveMax
+		if deps.concurrencyCtrl != nil {
+			gateMax = deps.concurrencyCtrl.Get()
+		}
+		if deps.runRegistry.Len() >= gateMax {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}

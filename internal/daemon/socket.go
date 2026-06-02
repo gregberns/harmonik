@@ -149,6 +149,13 @@ type QueueHandler interface {
 	//
 	// Bead ref: hk-tigaf.8.
 	HandleQueueList(ctx context.Context) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueSetConcurrency dispatches a queue-set-concurrency request.
+	// Validates n >= 1 and updates the runtime ceiling atomically. Returns the
+	// old and new ceiling values.
+	//
+	// Bead ref: hk-ohiaf.
+	HandleQueueSetConcurrency(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 }
 
 // noopRequestHandler is a minimal RequestHandler that rejects every request
@@ -411,6 +418,11 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 	case "queue-list":
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueList(ctx)
+		})
+
+	case "queue-set-concurrency":
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueSetConcurrency(ctx, reEncoded)
 		})
 
 	case "subscribe":

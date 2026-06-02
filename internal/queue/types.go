@@ -396,6 +396,12 @@ type QueueAppendResponse struct {
 type QueueStatusResponse struct {
 	// Queue is the full Queue envelope, or nil when no queue is active.
 	Queue *Queue `json:"queue"`
+
+	// MaxConcurrent is the current daemon-wide dispatch ceiling. Zero when
+	// the daemon did not wire a ConcurrencyController (legacy/test callers).
+	//
+	// Bead ref: hk-ohiaf.
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
 }
 
 // QueueSummary is a single-queue row in a QueueListResponse.
@@ -433,6 +439,31 @@ type QueueListResponse struct {
 	// Queues is the list of queue summaries, one per active queue file.
 	// Empty when no queues are present in .harmonik/queues/.
 	Queues []QueueSummary `json:"queues"`
+
+	// MaxConcurrent is the current daemon-wide dispatch ceiling. Zero when
+	// the daemon did not wire a ConcurrencyController (legacy/test callers).
+	//
+	// Bead ref: hk-ohiaf.
+	MaxConcurrent int `json:"max_concurrent,omitempty"`
+}
+
+// QueueSetConcurrencyRequest is the payload for the queue-set-concurrency
+// JSON-RPC method. N must be >= 1.
+//
+// Bead ref: hk-ohiaf.
+type QueueSetConcurrencyRequest struct {
+	// N is the new concurrency ceiling (must be >= 1).
+	N int `json:"n"`
+}
+
+// QueueSetConcurrencyResponse is the response for queue-set-concurrency.
+//
+// Bead ref: hk-ohiaf.
+type QueueSetConcurrencyResponse struct {
+	// OldN is the previous concurrency ceiling.
+	OldN int `json:"old_n"`
+	// NewN is the new concurrency ceiling (echoes the request N).
+	NewN int `json:"new_n"`
 }
 
 // QueueDryRunRequest is the payload for the queue-dry-run JSON-RPC method

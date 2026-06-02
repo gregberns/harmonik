@@ -210,6 +210,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-h5lv2 (EM-066 scenario test).
 	NoAutoPull bool
+
+	// ConcurrencyCtrl, when non-nil, replaces the static MaxConcurrent with a
+	// runtime-mutable controller that tests can adjust mid-run (hk-ohiaf). When
+	// nil the static MaxConcurrent field is used (backward-compat).
+	//
+	// Bead ref: hk-ohiaf.
+	ConcurrencyCtrl *ConcurrencyController
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -307,6 +314,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
 		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
 		noAutoPull:             p.NoAutoPull,          // hk-h5lv2 / EM-066
+		concurrencyCtrl:        p.ConcurrencyCtrl,     // hk-ohiaf
 	}
 }
 

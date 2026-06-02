@@ -566,6 +566,18 @@ type HandlerAdapter struct {
 	//
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	globalMaxConcurrent int
+
+	// concurrencyGet reads the live dispatch ceiling from the daemon's
+	// ConcurrencyController (hk-ohiaf). Used by HandleQueueStatus and
+	// HandleQueueList to surface the current effective ceiling. Nil when the
+	// controller was not wired (unit-test / legacy callers); falls back to
+	// globalMaxConcurrent.
+	concurrencyGet func() int
+
+	// concurrencySet updates the live dispatch ceiling (hk-ohiaf). Nil when the
+	// controller was not wired; HandleQueueSetConcurrency returns -32099 in that
+	// case.
+	concurrencySet func(n int) (old int, err error)
 }
 
 // SetGlobalMaxConcurrent records the daemon-wide --max-concurrent ceiling so
@@ -576,6 +588,17 @@ type HandlerAdapter struct {
 // Bead ref: hk-tigaf.4 (NQ-B1).
 func (a *HandlerAdapter) SetGlobalMaxConcurrent(n int) {
 	a.globalMaxConcurrent = n
+}
+
+// SetConcurrencyFuncs wires the live-ceiling getter and setter from the
+// daemon's ConcurrencyController (hk-ohiaf). Called by daemon.Start after
+// the controller is created. When not called the adapter falls back to
+// globalMaxConcurrent for reads and returns an error for writes.
+//
+// Bead ref: hk-ohiaf.
+func (a *HandlerAdapter) SetConcurrencyFuncs(get func() int, set func(int) (int, error)) {
+	a.concurrencyGet = get
+	a.concurrencySet = set
 }
 
 // DefaultWorkers resolves the effective per-queue worker count for a queue
@@ -743,6 +766,15 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context) (json.RawMessage
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	// Surface the current effective ceiling (hk-ohiaf).
+	if a.concurrencyGet != nil {
+		resp.MaxConcurrent = a.concurrencyGet()
+	} else {
+		resp.MaxConcurrent = a.globalMaxConcurrent
+		if resp.MaxConcurrent < 1 {
+			resp.MaxConcurrent = 1
+		}
+	}
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
@@ -780,10 +812,51 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	// Surface the current effective ceiling (hk-ohiaf).
+	if a.concurrencyGet != nil {
+		resp.MaxConcurrent = a.concurrencyGet()
+	} else {
+		resp.MaxConcurrent = a.globalMaxConcurrent
+		if resp.MaxConcurrent < 1 {
+			resp.MaxConcurrent = 1
+		}
+	}
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return nil, &RPCError{Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("encode queue-list response: %v", err)}}
+	}
+	return data, nil
+}
+
+// HandleQueueSetConcurrency updates the daemon's runtime dispatch ceiling.
+// Satisfies daemon.QueueHandler.
+//
+// Decodes the N field from params, validates N >= 1, calls the wired setter,
+// and returns the old and new ceiling values. Returns -32099 when the setter
+// is not wired (daemon started without a ConcurrencyController).
+//
+// Bead ref: hk-ohiaf.
+func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
+	var req QueueSetConcurrencyRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, &RPCError{Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)}}
+	}
+	if a.concurrencySet == nil {
+		return nil, &RPCError{Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"}}
+	}
+	oldN, err := a.concurrencySet(req.N)
+	if err != nil {
+		return nil, &RPCError{Code: -32099, Message: "invalid_concurrency",
+			Detail: map[string]any{"error": err.Error()}}
+	}
+	resp := QueueSetConcurrencyResponse{OldN: oldN, NewN: req.N}
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		return nil, &RPCError{Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-set-concurrency response: %v", marshalErr)}}
 	}
 	return data, nil
 }

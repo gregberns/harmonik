@@ -226,14 +226,14 @@ type workLoopDeps struct {
 	// on the remote AFTER the other has already advanced it, producing a
 	// "non-fast-forward" rejection.
 	//
-	// When nil (the production default and most tests) merges run unserialized
-	// — the daemon relies on the git rebase step to handle concurrency, which
-	// narrows the race window but does not eliminate it. Tests that exercise
-	// concurrent dispatch from two queues (TestScenario_ConcurrentMultiQueue_*)
-	// inject a mutex here via WithMergeMutex / daemonTestHooks.mergeMu so the
-	// race is eliminated in the test environment.
+	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{} so
+	// that merges are serialised globally across ALL queues. With named queues,
+	// two beads from different queues can complete simultaneously and both enter
+	// mergeRunBranchToMain concurrently — the rebase step narrows the window but
+	// does not eliminate the non-FF race (hk-yyso7). Tests that need to inject
+	// their own mutex may override via WithMergeMutex / daemonTestHooks.mergeMu.
 	//
-	// Bead ref: hk-bnm89 (scenario-test harness hardening).
+	// Bead ref: hk-bnm89 (scenario-test harness hardening), hk-yyso7 (race fix).
 	mergeMu *sync.Mutex
 
 	// cpRegistry is the daemon's ControlPoint registry, populated from policy
@@ -546,6 +546,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		queueLedger:         newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:  adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
 		noAutoPull:          cfg.NoAutoPull,            // hk-exd7m: queue-only mode for flywheel topology
+		mergeMu:             &sync.Mutex{},             // hk-yyso7: global merge-serialisation across all queues
 	}, nil
 }
 
@@ -3251,13 +3252,12 @@ type workingTreeRefreshFailedPayload struct {
 }
 
 // lockedMergeRunBranchToMain wraps mergeRunBranchToMain with an optional mutex
-// held across the entire rebase → update-ref → push sequence.  When mu is nil
-// (the production default) the call is unguarded — the rebase step narrows but
-// does not eliminate the concurrent-push race.  Test suites that exercise
-// concurrent dispatch inject a non-nil mutex via workLoopDeps.mergeMu to
-// prevent non-fast-forward push failures.
+// held across the entire rebase → update-ref → push sequence. Production always
+// passes a non-nil mu (set in newWorkLoopDeps per hk-yyso7) so that merges are
+// serialised globally across all queues. When mu is nil (unit tests that do not
+// need real merge serialisation), the call runs unguarded.
 //
-// Bead ref: hk-bnm89.
+// Bead ref: hk-bnm89, hk-yyso7.
 func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string) mergeOutcome {
 	if mu != nil {
 		mu.Lock()

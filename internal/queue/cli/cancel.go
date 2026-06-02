@@ -42,7 +42,7 @@ import (
 func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
 	forceFlag := false
 
-	projectDir, _, _, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
+	projectDir, positional, _, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--force":
 			forceFlag = true
@@ -56,7 +56,14 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return 1
 	}
 
-	existingQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
+	// If the caller supplied a queue name as a positional argument, use it.
+	// Otherwise default to "main" so the no-arg form stays backward-compatible.
+	queueName := queue.QueueNameMain
+	if len(positional) > 0 {
+		queueName = queue.NormaliseQueueName(positional[0])
+	}
+
+	existingQueue, loadErr := queue.Load(ctx, projectDir, queueName)
 	if loadErr != nil {
 		fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue file: %v\n", loadErr)
 		return 1
@@ -71,7 +78,7 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return 1
 	}
 
-	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queue.NormaliseQueueName(existingQueue.Name), time.Now())
+	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queueName, time.Now())
 	if archiveErr != nil {
 		fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive queue.json: %v\n", archiveErr)
 		return 1

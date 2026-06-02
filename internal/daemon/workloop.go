@@ -1017,6 +1017,67 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 						continue
 					}
+					// Cross-queue bead dedup guard (hk-a11re): under the write lock
+					// check every OTHER active queue for an in-flight item carrying the
+					// same bead_id. If found, the bead is already being executed from
+					// another queue — fail this item immediately to prevent two concurrent
+					// implementers. The check must happen while the lock is held so that
+					// the "dispatched" stamp in the winning queue is visible here; no race
+					// is possible between the two queues' Phase 3 blocks because LockForMutation
+					// serializes them.
+					{
+						var crossQueueConflict string
+						for _, otherName := range lq.LockedAllQueueNames() {
+							if otherName == snapQueueName {
+								continue
+							}
+							otherQ := lq.LockedQueueByName(otherName)
+							if otherQ == nil || otherQ.Status != queue.QueueStatusActive {
+								continue
+							}
+							for _, g := range otherQ.Groups {
+								for _, item := range g.Items {
+									if item.BeadID == snapItemBeadID && item.Status == queue.ItemStatusDispatched {
+										crossQueueConflict = otherName
+										break
+									}
+								}
+								if crossQueueConflict != "" {
+									break
+								}
+							}
+							if crossQueueConflict != "" {
+								break
+							}
+						}
+						if crossQueueConflict != "" {
+							// Fail the duplicate item so the group can advance rather than stall.
+							for gi := range liveQ.Groups {
+								if liveQ.Groups[gi].Status != queue.GroupStatusActive {
+									continue
+								}
+								if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
+									continue
+								}
+								if snapItemIdx < len(liveQ.Groups[gi].Items) &&
+									liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID {
+									liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusFailed
+									liveQ.Groups[gi].Items[snapItemIdx].LastFailureReason = "cross_queue_duplicate"
+								}
+							}
+							lq.LockedSetQueueByName(snapQueueName, liveQ)
+							if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+								fmt.Fprintf(os.Stderr, "daemon: workloop: Persist cross-queue-duplicate queueID=%s: %v\n",
+									liveQ.QueueID, persistErr)
+							}
+							lq.Done()
+							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched from queue %q — failing cross-queue duplicate item (hk-a11re)\n",
+								snapItemBeadID, crossQueueConflict)
+							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							continue
+						}
+					}
+
 					// Locate the same group and item in the live snapshot.
 					foundItem := false
 					maxAttemptsHit := false

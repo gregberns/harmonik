@@ -199,6 +199,9 @@ func (seamFixtureNoHandlerImportStub) CleanExitSequence(_ context.Context, _ han
 	return nil
 }
 func (seamFixtureNoHandlerImportStub) RotateAccount(_ context.Context) error { return nil }
+func (seamFixtureNoHandlerImportStub) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // compile-time assertion: seamFixtureNoHandlerImportStub satisfies Adapter.
 var _ handlercontract.Adapter = seamFixtureNoHandlerImportStub{}

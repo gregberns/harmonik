@@ -152,3 +152,25 @@ func (ClaudeCodeAdapter) CleanExitSequence(ctx context.Context, session handlerc
 func (ClaudeCodeAdapter) RotateAccount(_ context.Context) error {
 	return ErrSingleAccountOnly
 }
+
+// Diagnose returns a minimal DiagnosticReport for the claude-code handler
+// (handler-contract.md §4.3a HC-014a).
+//
+// At MVH no real-time account or rate-limit status check is available; the
+// report records that the condition is unknown and assumed unresolved (Healthy
+// = false).  Post-MVH this method MAY probe the Anthropic API or the local
+// session-token state to determine whether the triggering condition has cleared.
+//
+// The handler-pause controller calls Diagnose on pause-trip (to enrich the
+// cause record) and on Resume (to note whether the condition appears resolved).
+// At MVH the controller logs the report at INFO and does not gate Resume on
+// Healthy.
+//
+// Spec: specs/handler-contract.md §4.3a HC-014a.
+// Bead: hk-tvsl7.
+func (ClaudeCodeAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{
+		Message: "claude-code: rate-limit pause; no real-time rate-limit status check available at MVH",
+		Healthy: false,
+	}, nil
+}

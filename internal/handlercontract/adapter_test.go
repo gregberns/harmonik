@@ -24,17 +24,20 @@ func (adapterFixtureStub) CleanExitSequence(_ context.Context, _ handlercontract
 	return nil
 }
 func (adapterFixtureStub) RotateAccount(_ context.Context) error { return nil }
+func (adapterFixtureStub) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // adapterFixtureAssertImplements is a compile-time assertion that
 // adapterFixtureStub satisfies the Adapter interface.
 var adapterFixtureAssertImplements handlercontract.Adapter = adapterFixtureStub{}
 
 // TestAdapter_MethodSetConformance verifies that the Adapter interface is
-// declared with the expected 4-method surface
-// (specs/handler-contract.md §6.1, §4.3.HC-013, bead hk-8i31.73).
+// declared with the expected 5-method surface
+// (specs/handler-contract.md §6.1, §4.3.HC-013, §4.3a.HC-014a, bead hk-8i31.73).
 //
 // The test compiles only if adapterFixtureStub satisfies the interface, which
-// means the interface shape is exactly the 4-method set below.
+// means the interface shape is exactly the 5-method set below.
 func TestAdapter_MethodSetConformance(t *testing.T) {
 	var a handlercontract.Adapter = adapterFixtureStub{}
 
@@ -53,6 +56,11 @@ func TestAdapter_MethodSetConformance(t *testing.T) {
 
 	// RotateAccount(ctx) -> error
 	err = a.RotateAccount(context.Background())
+	_ = err
+
+	// Diagnose(ctx) -> (DiagnosticReport, error)
+	report, err := a.Diagnose(context.Background())
+	_ = report
 	_ = err
 }
 

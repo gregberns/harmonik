@@ -29,6 +29,9 @@ func (cancelBoundFixtureBlockingAdapter) CleanExitSequence(ctx context.Context, 
 	return cancelBoundFixtureWrapCanceled(ctx.Err())
 }
 func (cancelBoundFixtureBlockingAdapter) RotateAccount(_ context.Context) error { return nil }
+func (cancelBoundFixtureBlockingAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // cancelBoundFixtureAssertImplements is a compile-time check that
 // cancelBoundFixtureBlockingAdapter satisfies the Adapter interface.

@@ -61,6 +61,9 @@ func (a *hc056ReopenAdapter) CleanExitSequence(_ context.Context, _ handlercontr
 	return nil
 }
 func (a *hc056ReopenAdapter) RotateAccount(_ context.Context) error { return nil }
+func (a *hc056ReopenAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // hc056ReopenMakeRegistry constructs a sealed AdapterRegistry with the given
 // adapter registered for claude-code.

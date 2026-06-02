@@ -35,6 +35,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -174,6 +175,12 @@ type HandlerPauseController struct {
 	// At MVH persistFn is always nil (no-op).  hk-m0k0a will inject this
 	// at daemon.Start alongside the load-on-startup path.
 	persistFn func(ctx context.Context, snapshots []HandlerPauseStatusSnapshot) error
+
+	// adapter is the Adapter used to call Diagnose on pause-trip and resume
+	// (HC-014a diagnostic seam).  When nil, Diagnose is skipped.
+	// Injected via SetAdapter after construction; nil until wired.
+	// Spec: specs/handler-contract.md §4.3a HC-014a.  Bead: hk-tvsl7.
+	adapter handlercontract.Adapter
 }
 
 // NewHandlerPauseController returns a ready-to-use HandlerPauseController.
@@ -215,6 +222,40 @@ func (c *HandlerPauseController) SetPersistFn(fn func(ctx context.Context, snaps
 	c.mu.Unlock()
 }
 
+// SetAdapter injects the Adapter whose Diagnose method the controller calls on
+// pause-trip and Resume (HC-014a diagnostic seam).
+//
+// Must be called before the first Pause or Resume call.  Uses mu for safety
+// even though callers typically call this before any events fire.
+//
+// Spec: specs/handler-contract.md §4.3a HC-014a.
+// Bead: hk-tvsl7.
+func (c *HandlerPauseController) SetAdapter(adapter handlercontract.Adapter) {
+	c.mu.Lock()
+	c.adapter = adapter
+	c.mu.Unlock()
+}
+
+// runDiagnose calls adapter.Diagnose (HC-014a) and returns the result.
+//
+// Returns (report, true) on success.  Returns (zero, false) when the adapter
+// is nil, returns ErrDeterministic (not supported), or returns any other error.
+// Must NOT be called while mu is held (Diagnose may block on I/O).
+func (c *HandlerPauseController) runDiagnose(ctx context.Context) (handlercontract.DiagnosticReport, bool) {
+	c.mu.RLock()
+	adapter := c.adapter
+	c.mu.RUnlock()
+
+	if adapter == nil {
+		return handlercontract.DiagnosticReport{}, false
+	}
+	report, err := adapter.Diagnose(ctx)
+	if err != nil {
+		return handlercontract.DiagnosticReport{}, false
+	}
+	return report, true
+}
+
 // ---------------------------------------------------------------------------
 // Pause — trip the handler-type pause state
 // ---------------------------------------------------------------------------
@@ -248,6 +289,13 @@ func (c *HandlerPauseController) Pause(
 	}
 	if !cause.Valid() {
 		return fmt.Errorf("HandlerPauseController.Pause: invalid cause for agent_type %q", string(agentType))
+	}
+
+	// HC-014a: invoke Diagnose seam before acquiring the lock (Diagnose may
+	// block on I/O; lock should not be held across I/O).  If the adapter is
+	// not wired or returns ErrDeterministic, ok=false and we skip enrichment.
+	if report, ok := c.runDiagnose(ctx); ok {
+		cause.DiagnosticMessage = report.Message
 	}
 
 	c.mu.Lock()
@@ -363,6 +411,12 @@ func (c *HandlerPauseController) Resume(
 	}
 
 	c.mu.Unlock()
+
+	// HC-014a: invoke Diagnose on Resume to verify the triggering condition has
+	// cleared.  At MVH the result is informational only; Resume proceeds
+	// regardless of Healthy.  Post-MVH the controller MAY gate Resume on
+	// Healthy=true (spec §4.3a HC-014a).
+	_, _ = c.runDiagnose(ctx) // result is logged post-MVH; ignored at MVH
 
 	// Emit handler_resumed event (outside the lock).
 	payload := core.HandlerResumedPayload{

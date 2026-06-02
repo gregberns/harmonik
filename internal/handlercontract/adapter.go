@@ -52,4 +52,20 @@ type Adapter interface {
 	// observed within the configurable window, implementations MUST return
 	// ErrTransient.
 	RotateAccount(ctx context.Context) error
+
+	// Diagnose runs an adapter-specific health check and returns a
+	// DiagnosticReport (specs/handler-contract.md §4.3a HC-014a).
+	//
+	// The handler-pause controller calls Diagnose (a) on pause-trip to enrich
+	// the pause cause record, and (b) on Resume to verify the triggering
+	// condition has cleared.
+	//
+	// Adapters that do not support diagnostics MUST return ErrDeterministic;
+	// the controller skips enrichment and proceeds normally.  Adapters that
+	// support diagnostics MUST return a non-nil DiagnosticReport and a nil
+	// error on success.
+	//
+	// Adding this method to the surface required a foundation amendment per
+	// §4.3.HC-013.  Spec: §4.3a HC-014a.  Bead: hk-tvsl7.
+	Diagnose(ctx context.Context) (DiagnosticReport, error)
 }

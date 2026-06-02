@@ -131,6 +131,9 @@ func (a *rlReadyTimeoutAdapter) CleanExitSequence(_ context.Context, _ handlerco
 	return nil
 }
 func (a *rlReadyTimeoutAdapter) RotateAccount(_ context.Context) error { return nil }
+func (a *rlReadyTimeoutAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // rlReadyTimeoutMakeRegistry constructs a sealed AdapterRegistry with the given
 // adapter registered for claude-code.

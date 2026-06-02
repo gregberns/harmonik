@@ -40,6 +40,12 @@ type HandlerPauseCause struct {
 	// TrippedAt is the RFC 3339 wall-clock timestamp at which the pause was triggered.
 	// Required (non-empty).
 	TrippedAt string `json:"tripped_at"`
+
+	// DiagnosticMessage is the human-readable summary from Adapter.Diagnose
+	// (specs/handler-contract.md §4.3a HC-014a).  Optional (omitempty); absent
+	// when the adapter does not support diagnostics or the probe failed.
+	// At MVH the field is informational only; no policy decision is gated on it.
+	DiagnosticMessage string `json:"diagnostic_message,omitempty"`
 }
 
 // Valid reports whether c is a well-formed HandlerPauseCause.

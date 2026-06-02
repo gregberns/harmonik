@@ -29,6 +29,9 @@ func (adapterRegistryFixtureAdapter) CleanExitSequence(_ context.Context, _ hand
 	return nil
 }
 func (adapterRegistryFixtureAdapter) RotateAccount(_ context.Context) error { return nil }
+func (adapterRegistryFixtureAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // adapterRegistryFixtureNewAdapter returns a fresh no-op adapter value.
 func adapterRegistryFixtureNewAdapter() handlercontract.Adapter {

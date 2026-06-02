@@ -951,11 +951,21 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Seal the registry immediately: no further adapters at MVH.
 	// The first ForAgent call would seal it anyway; explicit seal here makes the
 	// ordering contract observable.
-	if _, forAgentErr := adapterReg.ForAgent(core.AgentTypeClaudeCode); forAgentErr != nil {
+	claudeCodeAdapter, forAgentErr := adapterReg.ForAgent(core.AgentTypeClaudeCode)
+	if forAgentErr != nil {
 		// ForAgent only fails if no adapter is registered — that would be a bug
 		// in the Register call above; treat as fatal.
 		return fmt.Errorf("daemon.Start: seal adapter registry: %w", forAgentErr)
 	}
+
+	// HC-014a: inject the ClaudeCode adapter into the handler-pause controller
+	// so it can call Diagnose on pause-trip and Resume.
+	//
+	// SetAdapter is called after the registry is sealed and before any event
+	// consumers fire (bus is not yet sealed at this point).
+	//
+	// Spec: specs/handler-contract.md §4.3a HC-014a.  Bead: hk-tvsl7.
+	handlerPauseCtrl.SetAdapter(claudeCodeAdapter)
 
 	// Construct the hook-session store once at the composition root (hk-gql20.21).
 	// The same instance is forwarded to RunSocketListener (as HookRelayHandler)

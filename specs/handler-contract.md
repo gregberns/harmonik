@@ -340,6 +340,31 @@ Tags: mechanism
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+### 4.3a Diagnostic seam (HC-014a)
+
+#### HC-014a — Adapter.Diagnose: optional diagnostic probe
+
+An Adapter MAY implement `Diagnose(ctx) -> (DiagnosticReport, error)` as a forward-looking seam for per-handler diagnostic tooling (§9.1 of [docs/components/internal/handler-pause-and-resume.md]).
+
+Rules:
+
+1. **Adapters that do not support diagnostics MUST return `ErrDeterministic`** (not a nil report); the handler-pause controller MUST skip enrichment when it receives `ErrDeterministic`.
+2. **Adapters that support diagnostics MUST return a non-nil `DiagnosticReport` and a nil error** on success.
+3. The **handler-pause controller** (internal/daemon/handlerpause_9hwbw.go) MUST call `Diagnose` (a) on pause-trip, before persisting the pause cause, to enrich the cause's `diagnostic_message` field, and (b) on Resume, outside the state lock, to verify whether the triggering condition has cleared.
+4. At MVH, `DiagnosticReport.Healthy` is **informational only**; the controller MUST NOT gate Resume on `Healthy=true`.  Post-MVH the controller MAY enforce `Healthy=true` as a precondition.
+5. `Diagnose` MUST NOT be invoked while the controller's state lock is held; it may block on I/O.
+6. `DiagnosticReport` shape is reserved for post-MVH; at MVH only `Message string` and `Healthy bool` are defined.
+
+Go implementation:
+
+- `handlercontract.DiagnosticReport` (internal/handlercontract/diagnostic_hc014a.go).
+- `ClaudeCodeAdapter.Diagnose` returns a minimal report at MVH (no real-time probe; Healthy=false).
+- `HandlerPauseController.SetAdapter` / `runDiagnose` (internal/daemon/handlerpause_9hwbw.go).
+- `core.HandlerPauseCause.DiagnosticMessage` (optional, omitempty) carries the enriched message.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 #### HC-014 — Channel closure rule
 
 An emitter of a Go channel used across subsystem boundaries MUST close the channel on end-of-stream. Consumers MUST treat a closed channel as end-of-stream, NOT as error. This rule applies to the watcher-to-event-bus publication channel and to any future cross-subsystem channel.

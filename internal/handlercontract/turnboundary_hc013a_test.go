@@ -40,6 +40,10 @@ func (a *turnBoundaryFixtureAdapter) RotateAccount(_ context.Context) error {
 	return a.returnErr
 }
 
+func (a *turnBoundaryFixtureAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
+
 func (a *turnBoundaryFixtureAdapter) callCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

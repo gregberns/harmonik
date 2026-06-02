@@ -117,6 +117,9 @@ func (a *agentReadyFixtureAdapter) CleanExitSequence(_ context.Context, _ handle
 func (a *agentReadyFixtureAdapter) RotateAccount(_ context.Context) error {
 	return nil
 }
+func (a *agentReadyFixtureAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
+	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test 1: DetectReady=true on a seeded event → waitAgentReady returns nil

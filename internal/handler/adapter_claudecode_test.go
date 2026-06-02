@@ -323,6 +323,46 @@ func TestClaudeCodeAdapter_Register_DuplicateReturnsError(t *testing.T) {
 	}
 }
 
+// TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport verifies that
+// ClaudeCodeAdapter.Diagnose returns a non-error DiagnosticReport with a
+// non-empty Message and Healthy=false on a rate-limit pause at MVH.
+//
+// Acceptance criterion: "Test: claude-code adapter Diagnose run on rate-limit
+// pause returns minimal report" (specs/handler-contract.md §4.3a HC-014a,
+// bead hk-tvsl7).
+func TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport(t *testing.T) {
+	t.Parallel()
+
+	adapter := handler.NewClaudeCodeAdapter()
+	report, err := adapter.Diagnose(context.Background())
+
+	if err != nil {
+		t.Fatalf("Diagnose returned unexpected error: %v (want nil)", err)
+	}
+	if report.Message == "" {
+		t.Error("Diagnose returned empty Message; want non-empty diagnostic string")
+	}
+	if report.Healthy {
+		t.Error("Diagnose returned Healthy=true; want false at MVH (no real-time probe)")
+	}
+}
+
+// TestClaudeCodeAdapter_Diagnose_DoesNotReturnErrDeterministic verifies that
+// ClaudeCodeAdapter.Diagnose does NOT return ErrDeterministic — the claude-code
+// adapter supports the diagnostic seam (HC-014a).  Adapters that don't support
+// it must return ErrDeterministic; claude-code must not.
+func TestClaudeCodeAdapter_Diagnose_DoesNotReturnErrDeterministic(t *testing.T) {
+	t.Parallel()
+
+	adapter := handler.NewClaudeCodeAdapter()
+	_, err := adapter.Diagnose(context.Background())
+
+	if errors.Is(err, handlercontract.ErrDeterministic) {
+		t.Error("ClaudeCodeAdapter.Diagnose returned ErrDeterministic; " +
+			"the claude-code adapter supports diagnostics and must not return ErrDeterministic")
+	}
+}
+
 // TestClaudeCodeAdapter_Register_ForAgentReturnsAdapter verifies that
 // ForAgent returns the adapter after Register.
 func TestClaudeCodeAdapter_Register_ForAgentReturnsAdapter(t *testing.T) {

@@ -32,6 +32,23 @@ Resolution: Rebase the worktree branch onto current main before reading code.
 
 ---
 
+## Daemon keep-alive
+
+**DAEMON CRASH-LOOP / EXIT-17 (first seen v54, ongoing).**
+Symptom: harmonik daemon exits unexpectedly; queue stalls; `harmonik queue status` returns exit 17.
+Resolution: Use `scripts/hk-keeper.sh` (checked in, canonical) to keep the daemon alive:
+
+```bash
+# From the repo root (parameterized — defaults to CWD, concurrency=6):
+./scripts/hk-keeper.sh [/path/to/project] [max-concurrent]
+# Or via env vars:
+HK_PROJECT=/path/to/project HK_CONCURRENCY=4 ./scripts/hk-keeper.sh
+```
+
+The script runs *outside* tmux, launches the daemon in a `hkdkeeper` tmux session (not `harmonik-*` prefixed so orphan sweeps can't kill it), strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (subscription-billed), and revives on process absence. Do NOT `rm` the socket while the daemon is live — only the keeper does that after confirming the process is gone.
+
+---
+
 ## Harness issues
 
 **HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (first seen v47).**

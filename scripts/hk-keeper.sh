@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# hk-keeper.sh — Robust harmonik daemon keeper.
+#
+# Runs OUTSIDE tmux so it survives tmux-session kills. Launches the daemon
+# inside a non-"harmonik"-prefixed tmux session ("hkdkeeper") so an over-broad
+# `harmonik-*` orphan sweep can't kill it.
+#
+# Strips ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN so the daemon bills the
+# subscription, not the API credit pool (see codename:credfence).
+#
+# Usage:
+#   ./scripts/hk-keeper.sh [/path/to/project] [max-concurrent]
+#
+# Or via env vars:
+#   HK_PROJECT=/path/to/project HK_CONCURRENCY=6 ./scripts/hk-keeper.sh
+#
+# Defaults:
+#   HK_PROJECT     — first positional arg, or $HK_PROJECT, or CWD
+#   HK_CONCURRENCY — second positional arg, or $HK_CONCURRENCY, or 6
+#   HK_LOG         — $HK_LOG, or /tmp/hk-daemon.log
+#   HK_SESS        — $HK_SESS, or hkdkeeper
+
+set -euo pipefail
+
+PROJ="${1:-${HK_PROJECT:-$(pwd)}}"
+CONCURRENCY="${2:-${HK_CONCURRENCY:-6}}"
+LOG="${HK_LOG:-/tmp/hk-daemon.log}"
+SESS="${HK_SESS:-hkdkeeper}"
+
+echo "hk-keeper: project=$PROJ concurrency=$CONCURRENCY log=$LOG sess=$SESS"
+
+while true; do
+  # Liveness check = a harmonik daemon PROCESS exists. This covers the
+  # restart-backoff window where the process is alive but the socket is not
+  # yet open — don't relaunch during that window.
+  if pgrep -f "harmonik --project $PROJ" >/dev/null 2>&1; then
+    sleep 15
+    continue
+  fi
+
+  echo "===KEEPER relaunch (no daemon proc) $(date '+%F %T')===" >> "$LOG"
+  tmux kill-session -t "$SESS" 2>/dev/null || true
+  # Remove stale socket only after confirming the daemon process is gone.
+  rm -f "$PROJ/.harmonik/daemon.sock"
+  tmux new-session -d -s "$SESS" \
+    "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+      harmonik --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY \
+      2>&1 | tee -a $LOG"
+  sleep 25
+done

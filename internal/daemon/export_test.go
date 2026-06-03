@@ -225,6 +225,18 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-ohiaf.
 	ConcurrencyCtrl *ConcurrencyController
+
+	// TargetBranch is the branch merged into by lockedMergeRunBranchToMain.
+	// Empty string is normalised to "main" (same as newWorkLoopDeps).
+	//
+	// Bead ref: hk-6r6xv.
+	TargetBranch string
+
+	// ProtectBranches is the set of branches the merge guard refuses to target.
+	// Nil/empty disables the guard (no branch is protected).
+	//
+	// Bead ref: hk-6r6xv.
+	ProtectBranches []string
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -324,6 +336,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
 		noAutoPull:             p.NoAutoPull,          // hk-h5lv2 / EM-066
 		concurrencyCtrl:        p.ConcurrencyCtrl,     // hk-ohiaf
+		targetBranch:           resolveTargetBranch(p.TargetBranch),
+		protectBranches:        p.ProtectBranches,
 	}
 }
 

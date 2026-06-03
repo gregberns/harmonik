@@ -416,6 +416,23 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-exd7m.
 	noAutoPull bool
+
+	// targetBranch is the git branch that completed bead branches are merged
+	// into.  Sourced from Config.TargetBranch; normalised to "main" when the
+	// config field is empty.  Threaded into lockedMergeRunBranchToMain so the
+	// merge sequence targets the configured branch instead of a hard-coded
+	// "main" literal.
+	//
+	// Bead ref: hk-6r6xv.
+	targetBranch string
+
+	// protectBranches is the set of branch names the daemon must never merge
+	// into.  Sourced from Config.ProtectBranches.  lockedMergeRunBranchToMain
+	// fails closed (before any update-ref/push) when targetBranch matches any
+	// entry in this set.
+	//
+	// Bead ref: hk-6r6xv.
+	protectBranches []string
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -555,7 +572,19 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		staleBlockerCloser:  adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
 		noAutoPull:          cfg.NoAutoPull,            // hk-exd7m: queue-only mode for flywheel topology
 		mergeMu:             &sync.Mutex{},             // hk-yyso7: global merge-serialisation across all queues
+		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
+		protectBranches:     cfg.ProtectBranches,
 	}, nil
+}
+
+// resolveTargetBranch returns branch when non-empty, otherwise the production
+// default "main". This mirrors the convention used by the reconciliation
+// scanner (daemon.go comment: "defaults to 'main' inside the scanner").
+func resolveTargetBranch(branch string) string {
+	if branch == "" {
+		return "main"
+	}
+	return branch
 }
 
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled
@@ -1709,7 +1738,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 			// §4.12.EM-052: merge run-branch to main before CloseBead.
 			// Mirrors the single-mode merge path (hk-ftyvo).
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -1859,7 +1888,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
 			// single-mode and review-loop merge path).
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -2391,7 +2420,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -2426,7 +2455,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -3286,12 +3315,12 @@ type workingTreeRefreshFailedPayload struct {
 // need real merge serialisation), the call runs unguarded.
 //
 // Bead ref: hk-bnm89, hk-yyso7.
-func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string) mergeOutcome {
+func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string) mergeOutcome {
 	if mu != nil {
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA)
+	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches)
 }
 
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
@@ -3311,8 +3340,25 @@ func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir 
 // emitted and the function still returns success=true (the merge succeeded).
 //
 // Spec ref: specs/execution-model.md §4.12 EM-052, EM-053, EM-054.
-// Bead: hk-ftyvo, hk-4goy3.
-func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string) mergeOutcome {
+// Bead: hk-ftyvo, hk-4goy3, hk-6r6xv.
+func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string) mergeOutcome {
+	// Fail-closed guard (hk-6r6xv): refuse before any update-ref/push when
+	// targetBranch is empty or appears in the protect-set.
+	if targetBranch == "" {
+		return mergeOutcome{
+			success: false,
+			reason:  "merge_target_empty: targetBranch must not be empty",
+		}
+	}
+	for _, protected := range protectBranches {
+		if targetBranch == protected {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("merge_target_protected: %q is in ProtectBranches", targetBranch),
+			}
+		}
+	}
+
 	runBranch := workspace.TaskBranchName(runID.String())
 
 	// Step 1: resolve run-branch tip.
@@ -3326,39 +3372,40 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	runTip := strings.TrimRight(string(runTipOut), "\n")
 
 	// Step 1b: check whether the run-branch has commits beyond its fork point
-	// from main.  If mainSHA == runTip the agent made no commits; treat as no-change.
-	mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
+	// from the target branch.  If targetTip == runTip the agent made no commits;
+	// treat as no-change.
+	mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
 	mainTipCmd.Dir = projectDir
 	mainTipOut, err := mainTipCmd.Output()
 	if err != nil {
 		return mergeOutcome{
 			success: false,
-			reason:  fmt.Sprintf("git rev-parse main: %v", err),
+			reason:  fmt.Sprintf("git rev-parse %s: %v", targetBranch, err),
 		}
 	}
 	mainTip := strings.TrimRight(string(mainTipOut), "\n")
 
 	if mainTip == runTip {
-		// Run-branch tip == main tip: no commits were made by the agent.
+		// Run-branch tip == target tip: no commits were made by the agent.
 		return mergeOutcome{noChange: true}
 	}
 
 	// hk-cwxow: false-positive guard. If runTip equals the fork-point SHA
-	// (headSHA), the agent made no commits regardless of where main now points.
-	// Without this check, when main has advanced past headSHA the is-ancestor
-	// test correctly fails and the daemon misreports "non_ff_merge" even though
-	// the agent did nothing.
+	// (headSHA), the agent made no commits regardless of where the target branch
+	// now points.  Without this check, when the target has advanced past headSHA
+	// the is-ancestor test correctly fails and the daemon misreports
+	// "non_ff_merge" even though the agent did nothing.
 	if headSHA != "" && runTip == headSHA {
 		return mergeOutcome{noChange: true}
 	}
 
-	// Step 2: rebase run-branch onto current main (hk-j1aq5).
+	// Step 2: rebase run-branch onto current target branch (hk-j1aq5).
 	//
-	// If main has advanced since the worktree was cut (parallel agents landing
-	// concurrently), rebase the run-branch onto main before the FF check.  This
-	// turns what would be a non_ff_merge failure into a successful merge as long
-	// as there are no conflicts.  On conflict: abort and return rebase_conflict
-	// so the bead is reopened (EM-053).
+	// If the target has advanced since the worktree was cut (parallel agents
+	// landing concurrently), rebase the run-branch onto it before the FF check.
+	// This turns what would be a non_ff_merge failure into a successful merge as
+	// long as there are no conflicts.  On conflict: abort and return
+	// rebase_conflict so the bead is reopened (EM-053).
 	//
 	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
@@ -3381,19 +3428,19 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		// hk-rljho class: a review-loop iteration can leave a TRACKED but
 		// UNCOMMITTED change in the worktree (e.g. a staged deletion of a test
 		// file). discardDirtyChurn deliberately preserves it (hk-i1n7j: don't
-		// silently reset real work), so it would survive to `git rebase main`
+		// silently reset real work), so it would survive to `git rebase <target>`
 		// and abort with "cannot rebase: You have unstaged changes". Commit the
 		// residual tracked delta onto the run-branch — it IS the bead's own work
 		// — so the rebase proceeds with the work intact instead of failing.
 		commitResidualDelta(ctx, wtPath, runID)
 
-		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", "main")
+		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
 			// hk-pphof: auto-resolve if ONLY .beads/issues.jsonl is conflicting.
 			// The beads ledger file is a JSONL append-only log whose canonical
-			// source of truth is main; taking --theirs (main's version) is safe
-			// because the daemon owns all terminal bead transitions.
+			// source of truth is the target branch; taking --theirs (target's
+			// version) is safe because the daemon owns all terminal bead transitions.
 			if conflictOut, autoResolved := mergeRebaseAutoResolveBeadsLedger(ctx, wtPath, out, rebaseErr); autoResolved {
 				out = conflictOut // replace output so re-resolve block below runs
 			} else {
@@ -3406,50 +3453,51 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 				}
 			}
 		}
-		// Rebase succeeded — re-resolve runTip and mainTip (both may have changed).
+		// Rebase succeeded — re-resolve runTip and targetTip (both may have changed).
 		rebasedTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
 		rebasedTipCmd.Dir = projectDir
 		if rebasedOut, rebasedErr := rebasedTipCmd.Output(); rebasedErr == nil {
 			runTip = strings.TrimRight(string(rebasedOut), "\n")
 		}
-		rebasedMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/main")
+		rebasedMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
 		rebasedMainCmd.Dir = projectDir
 		if rebasedMainOut, rebasedMainErr := rebasedMainCmd.Output(); rebasedMainErr == nil {
 			mainTip = strings.TrimRight(string(rebasedMainOut), "\n")
 		}
 	}
 
-	// Step 3: fast-forward check.  main MUST be an ancestor of runTip.
-	// git merge-base --is-ancestor <main> <runTip> exits 0 iff main ⊆ runTip.
+	// Step 3: fast-forward check.  The target branch MUST be an ancestor of
+	// runTip.  git merge-base --is-ancestor <target> <runTip> exits 0 iff
+	// target ⊆ runTip.
 	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
 	isAncCmd.Dir = projectDir
 	if err := isAncCmd.Run(); err != nil {
-		// Non-FF: main has diverged from the run-branch.
+		// Non-FF: target branch has diverged from the run-branch.
 		return mergeOutcome{
 			success: false,
-			reason:  "non_ff_merge: main advanced concurrently",
+			reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
 		}
 	}
 
-	// Step 3: fast-forward main to runTip.
-	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/main", runTip)
+	// Step 3: fast-forward target branch to runTip.
+	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip)
 	updateRefCmd.Dir = projectDir
 	if out, err := updateRefCmd.CombinedOutput(); err != nil {
 		return mergeOutcome{
 			success: false,
-			reason:  fmt.Sprintf("git update-ref main: %v\n%s", err, out),
+			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
 		}
 	}
 
-	// Step 4: push origin main.
-	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", "main")
+	// Step 4: push origin <targetBranch>.
+	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
 	pushCmd.Dir = projectDir
 	if out, err := pushCmd.CombinedOutput(); err != nil {
 		// Push failed — roll back the local update-ref so the repo is consistent.
-		// Best-effort rollback: if it fails the operator will see main pointing to
-		// runTip without a matching remote; reconciliation (Cat 3 / EM-INV-005) will
-		// catch this on the next startup.
-		rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/main", mainTip)
+		// Best-effort rollback: if it fails the operator will see the target branch
+		// pointing to runTip without a matching remote; reconciliation (Cat 3 /
+		// EM-INV-005) will catch this on the next startup.
+		rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
 		rollbackCmd.Dir = projectDir
 		_ = rollbackCmd.Run()
 		return mergeOutcome{

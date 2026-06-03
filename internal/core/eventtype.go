@@ -647,6 +647,28 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// §8.13 Session-keeper event types (codename:session-keeper, hk-ekap1)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeSessionKeeperWarn is the session_keeper_warn event type.
+	// Emitted by the keeper watcher on the first upward crossing of the warn
+	// threshold (default 80 %). Not re-emitted until pct drops below the
+	// threshold and rises again.
+	// Durability class: O (ordinary — observability; crossing is recoverable).
+	// Refs: hk-8vzek.
+	EventTypeSessionKeeperWarn EventType = "session_keeper_warn"
+
+	// EventTypeSessionKeeperNoGauge is the session_keeper_no_gauge event type.
+	// Emitted at keeper startup when the gauge file is absent or stale, and
+	// re-emitted every staleness interval thereafter until a fresh gauge file
+	// appears. A missing statusLine must be visible, not silent.
+	// Durability class: O (ordinary — configuration-gap signal).
+	// Refs: hk-8vzek.
+	EventTypeSessionKeeperNoGauge EventType = "session_keeper_no_gauge"
+)
+
+// ---------------------------------------------------------------------------
 // §8.9 Cognition loop event types (cognition-loop.md)
 // ---------------------------------------------------------------------------
 

@@ -228,6 +228,10 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 
 	// ── §8.12 Staleness-detection ───────────────────────────────────────────
 	{TypeName: "run_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.13 Session-keeper (codename:session-keeper, hk-ekap1) ───────────
+	{TypeName: "session_keeper_warn", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_no_gauge", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

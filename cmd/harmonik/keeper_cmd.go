@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,14 +17,17 @@ import (
 // Flags:
 //
 //	--agent <name>   agent name (required); identifies the lockfile and .managed marker
-//	--tmux <target>  tmux pane target (optional; reserved for future watcher logic)
+//	--tmux <target>  tmux pane target (optional; injected into on warn crossing)
 //	--warn-pct N     context-use percentage that triggers a warning (default 80)
-//	--act-pct N      context-use percentage that triggers handoff action (default 90)
+//	--act-pct N      context-use percentage that triggers handoff action (default 90; reserved Phase-2)
 //
-// Behaviour (Phase-1 scaffold — no watcher/statusLine/injector logic):
+// Behaviour (Phase-1 warn-mode):
 //  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
 //  2. Check .harmonik/keeper/<agent>.managed; if absent, log no-op message and exit 0.
-//  3. If present: log started, block awaiting SIGINT/SIGTERM, release lock on exit.
+//  3. If present: start the watcher loop. On the first upward crossing of warn-pct,
+//     inject a wrap-up-warning prompt into the managed pane (via --tmux or derived target)
+//     and emit session_keeper_warn. Emit session_keeper_no_gauge when the gauge file
+//     is absent or stale. Block until SIGINT/SIGTERM.
 //
 // Exit codes:
 //
@@ -31,7 +35,7 @@ import (
 //	1  — argument or I/O error
 //	2  — lock already held by another keeper
 //
-// Spec ref: codename:session-keeper (hk-ekap1); bead hk-fzzc6.
+// Spec ref: codename:session-keeper (hk-ekap1); bead hk-8vzek.
 func runKeeperSubcommand(args []string) int {
 	fs := flag.NewFlagSet("keeper", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -44,9 +48,9 @@ func runKeeperSubcommand(args []string) int {
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
-	fs.StringVar(&tmuxFlag, "tmux", "", "tmux pane target (optional; reserved for future watcher logic)")
+	fs.StringVar(&tmuxFlag, "tmux", "", "tmux pane target (optional; injected into on warn crossing)")
 	fs.IntVar(&warnPctFlag, "warn-pct", 80, "context-use percentage that triggers a warning")
-	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action")
+	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action (Phase-2; reserved)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -57,9 +61,7 @@ func runKeeperSubcommand(args []string) int {
 		return 1
 	}
 
-	// Reserved for future phases; suppress "assigned but not used" until wired.
-	_ = tmuxFlag
-	_ = warnPctFlag
+	// Phase-2 handoff action is reserved; suppress "assigned but not used".
 	_ = actPctFlag
 
 	projectDir, err := os.Getwd()
@@ -86,12 +88,23 @@ func runKeeperSubcommand(args []string) int {
 		return 0
 	}
 
-	// Step 3: agent is managed — block until signal.
-	fmt.Fprintf(os.Stderr, "keeper started for %s\n", agentFlag)
+	// Step 3: agent is managed — start the watcher and block until signal.
+	fmt.Fprintf(os.Stderr, "keeper started for %s (warn-pct=%d, tmux=%q)\n", agentFlag, warnPctFlag, tmuxFlag)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg := keeper.WatcherConfig{
+		AgentName:  agentFlag,
+		ProjectDir: projectDir,
+		WarnPct:    float64(warnPctFlag),
+		TmuxTarget: tmuxFlag,
+	}
+	w := keeper.NewWatcher(cfg, keeper.NoopEmitter{})
+	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
+		fmt.Fprintf(os.Stderr, "harmonik keeper: watcher: %v\n", runErr)
+		return 1
+	}
 
 	return 0
 }
@@ -103,14 +116,24 @@ USAGE
 
 FLAGS
   --agent <name>    Agent name (required); identifies the lockfile and .managed marker
-  --tmux <target>   tmux pane target (optional; reserved for future watcher logic)
+  --tmux <target>   tmux pane target (optional; injected into on warn-pct crossing)
   --warn-pct N      Context-use percentage that triggers a warning (default 80)
-  --act-pct N       Context-use percentage that triggers handoff action (default 90)
+  --act-pct N       Context-use percentage that triggers handoff action (default 90; Phase-2 reserved)
 
-BEHAVIOUR (Phase-1 scaffold)
+BEHAVIOUR (Phase-1 warn-mode)
   1. Acquires .harmonik/keeper/<agent>.lock; exits 2 if another keeper is live.
   2. Checks .harmonik/keeper/<agent>.managed; exits 0 (no-op) if absent.
-  3. If managed: logs "keeper started for <agent>" and blocks awaiting SIGINT/SIGTERM.
+  3. If managed: starts the watcher loop — polls .harmonik/keeper/<agent>.ctx every 5s.
+     On the first upward crossing of --warn-pct, injects a wrap-up-warning into the
+     tmux pane (if --tmux is set) and emits session_keeper_warn.
+     Emits session_keeper_no_gauge at boot and every 120s when the gauge file is absent
+     or stale (a missing statusLine.command is visible, not silent).
+
+GAUGE SETUP
+  Add to ~/.claude/settings.json:
+    "statusLine": {
+      "command": "HARMONIK_PROJECT=/path/to/project HARMONIK_AGENT=<agent> /path/to/scripts/keeper-statusline.sh"
+    }
 
 EXIT CODES
   0  Success (no-op or clean signal shutdown)
@@ -119,5 +142,5 @@ EXIT CODES
 
 EXAMPLES
   harmonik keeper --agent orchestrator
-  harmonik keeper --agent flywheel --tmux harmonik:0
+  harmonik keeper --agent flywheel --tmux harmonik:0 --warn-pct 80
 `

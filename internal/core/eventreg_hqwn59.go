@@ -39,6 +39,7 @@ func init() {
 	registerHandlerPauseEvents()
 	registerGateDispatchEvents()
 	registerWorkflowLoaderEvents()
+	registerKeeperEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -380,6 +381,17 @@ func registerGateDispatchEvents() {
 // constructors (hk-zqr6f, CP-057 skills_ref resolution).
 func registerWorkflowLoaderEvents() {
 	mustRegister("skills_resolved", func() EventPayload { return &SkillsResolvedPayload{} })
+}
+
+// registerKeeperEvents registers §8.13 session-keeper event payload constructors
+// (codename:session-keeper, hk-ekap1; bead hk-8vzek).
+//
+// Durability classes per §8.13:
+//   - session_keeper_warn     (§8.13.1): O (ordinary — observability)
+//   - session_keeper_no_gauge (§8.13.2): O (ordinary — configuration-gap signal)
+func registerKeeperEvents() {
+	mustRegister("session_keeper_warn", func() EventPayload { return &SessionKeeperWarnPayload{} })
+	mustRegister("session_keeper_no_gauge", func() EventPayload { return &SessionKeeperNoGaugePayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

@@ -56,9 +56,11 @@ func (b *bandwidthTunerBackstop) SetTuner(t *BandwidthTuner) {
 	b.tuner.Store(t)
 }
 
-// Subscribe registers an asynchronous consumer for agent_rate_limited bus
-// events.  When the tuner is set and a rate-limit event arrives, it calls
-// tuner.NotifyRateLimit with the parsed retry_after duration.
+// Subscribe registers an asynchronous consumer for agent_rate_limit_status bus
+// events.  When the tuner is set and a status=active event arrives (emitted by
+// dispatchHookRelayEnvelope in hookrelay_chb025.go when agent_rate_limited
+// arrives on the socket), it calls tuner.NotifyRateLimit with the parsed
+// retry_after duration.
 // Must be called before bus.Seal (EV-009).
 func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
 	sub := core.Subscription{
@@ -66,7 +68,7 @@ func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
 			Types: map[string]struct{}{
-				"agent_rate_limited": {}, // progress-stream event forwarded by the watcher
+				string(core.EventTypeAgentRateLimitStatus): {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -78,16 +80,20 @@ func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
 	return nil
 }
 
-// handle is the bus event handler for agent_rate_limited events.
+// handle is the bus event handler for agent_rate_limit_status events.
+// Only status=active events trigger NotifyRateLimit; cleared events are ignored.
 func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error {
 	t := b.tuner.Load()
 	if t == nil {
 		return nil // tuner not running (--subscription-token-ceiling not set)
 	}
-	var pl struct {
-		RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
+	var pl core.AgentRateLimitStatusPayload
+	if err := json.Unmarshal(evt.Payload, &pl); err != nil {
+		return nil // malformed payload — skip
 	}
-	_ = json.Unmarshal(evt.Payload, &pl)
+	if pl.Status != core.AgentRateLimitStatusActive {
+		return nil // only act on the active (rate-limited) transition
+	}
 	var d time.Duration
 	if pl.RetryAfterSeconds != nil && *pl.RetryAfterSeconds > 0 {
 		d = time.Duration(*pl.RetryAfterSeconds) * time.Second

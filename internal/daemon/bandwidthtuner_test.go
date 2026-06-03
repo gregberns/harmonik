@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
 // writeTestJSONL writes a JSONL file with usage records at specified token counts
@@ -158,21 +161,41 @@ func TestBandwidthTuner_tick_CeilingExhausted(t *testing.T) {
 	}
 }
 
+// backstopActivePayload builds a serialised AgentRateLimitStatusPayload with
+// status=active for use in backstop unit tests.
+func backstopActivePayload(t *testing.T, retryAfterSec *int) json.RawMessage {
+	t.Helper()
+	runID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001"))
+	pl := core.AgentRateLimitStatusPayload{
+		RunID:             runID,
+		SessionID:         "test-session",
+		Status:            core.AgentRateLimitStatusActive,
+		RetryAfterSeconds: retryAfterSec,
+		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return b
+}
+
 // TestBandwidthTunerBackstop_NilTuner verifies that the backstop handler is a
 // no-op when no tuner has been wired (SetTuner not called).
 func TestBandwidthTunerBackstop_NilTuner(t *testing.T) {
 	t.Parallel()
 	b := &bandwidthTunerBackstop{}
-	// Should not panic; returns nil.
-	evt := core.Event{Payload: json.RawMessage(`{"retry_after_seconds": 60}`)}
+	// Should not panic; returns nil even with a well-formed status=active payload.
+	retry := 60
+	evt := core.Event{Payload: backstopActivePayload(t, &retry)}
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Errorf("handle with nil tuner: unexpected error %v", err)
 	}
 }
 
 // TestBandwidthTunerBackstop_ForwardsNotify verifies that the backstop calls
-// tuner.NotifyRateLimit when a tuner is wired and an agent_rate_limited event
-// carries a retry_after_seconds field.
+// tuner.NotifyRateLimit when a tuner is wired and an agent_rate_limit_status
+// active event carries a retry_after_seconds field.
 func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -186,8 +209,8 @@ func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
 
-	payload, _ := json.Marshal(map[string]int{"retry_after_seconds": 120})
-	evt := core.Event{Payload: json.RawMessage(payload)}
+	retry := 120
+	evt := core.Event{Payload: backstopActivePayload(t, &retry)}
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
@@ -202,9 +225,41 @@ func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
 	}
 }
 
-// TestBandwidthTunerBackstop_ZeroRetryAfter verifies that a missing or zero
-// retry_after_seconds in the event payload still calls NotifyRateLimit
-// (which applies a conservative 5-minute default).
+// TestBandwidthTunerBackstop_ClearedIgnored verifies that a status=cleared event
+// does NOT call NotifyRateLimit (only the active transition triggers the backstop).
+func TestBandwidthTunerBackstop_ClearedIgnored(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+
+	b := &bandwidthTunerBackstop{}
+	b.SetTuner(tuner)
+
+	runID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000002"))
+	pl := core.AgentRateLimitStatusPayload{
+		RunID:     runID,
+		SessionID: "test-session",
+		Status:    core.AgentRateLimitStatusCleared,
+		ChangedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+	plBytes, _ := json.Marshal(pl)
+	evt := core.Event{Payload: plBytes}
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	// Concurrency must NOT have been snapped to 1 — cleared events are ignored.
+	if got := ctrl.Get(); got != 4 {
+		t.Errorf("concurrency after cleared event = %d, want 4 (unchanged)", got)
+	}
+}
+
+// TestBandwidthTunerBackstop_ZeroRetryAfter verifies that a status=active event
+// with no retry_after_seconds still calls NotifyRateLimit (conservative default).
 func TestBandwidthTunerBackstop_ZeroRetryAfter(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -218,14 +273,79 @@ func TestBandwidthTunerBackstop_ZeroRetryAfter(t *testing.T) {
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
 
-	// No retry_after_seconds field.
-	evt := core.Event{Payload: json.RawMessage(`{}`)}
+	// No retry_after_seconds field — passes nil.
+	evt := core.Event{Payload: backstopActivePayload(t, nil)}
 	if err := b.handle(context.Background(), evt); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	// NotifyRateLimit uses conservative default → should still snap to 1.
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("concurrency after backstop notify (no retry hint) = %d, want 1", got)
+	}
+}
+
+// TestBandwidthTunerBackstop_EndToEndBusDelivery verifies the full path:
+//
+//	dispatchHookRelayEnvelope(agent_rate_limited)
+//	  → emitRateLimitStatus → bus.Emit(agent_rate_limit_status{active})
+//	  → backstop handler → tuner.NotifyRateLimit
+//
+// This catches the iter-1 wrong-subscription bug where the backstop was
+// subscribed to "agent_rate_limited" (a progress-stream type never on the bus)
+// rather than "agent_rate_limit_status" (the bus event type).
+func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build and seal a real event bus.
+	bus := eventbus.NewBusImpl()
+
+	b := &bandwidthTunerBackstop{}
+	if err := b.Subscribe(bus); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// Construct the tuner and arm the backstop AFTER sealing (matching daemon init order).
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	b.SetTuner(tuner)
+
+	// Build a hook store with the bus wired in.
+	store := newHookSessionStore()
+	store.SetEmitter(bus)
+
+	// Simulate a StopFailure{rate_limit} arriving on the socket.
+	runID := uuid.New()
+	retry := 90
+	relayPayload, _ := json.Marshal(map[string]int{"retry_after_seconds": retry})
+	env := hookRelayEnvelope{
+		Type:             "agent_rate_limited",
+		RunID:            runID.String(),
+		ClaudeSessionID:  "claude-sess-1",
+		HandlerSessionID: "handler-sess-1",
+		Payload:          relayPayload,
+	}
+	ack := store.dispatchHookRelayEnvelope(env)
+	if ack.Status != "ok" {
+		t.Fatalf("dispatchHookRelayEnvelope: want ok, got %q (%s)", ack.Status, ack.Reason)
+	}
+
+	// Allow the asynchronous bus worker pool to deliver the event.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ctrl.Get() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := ctrl.Get(); got != 1 {
+		t.Errorf("end-to-end: concurrency = %d after 2s, want 1 (NotifyRateLimit not called)", got)
 	}
 }
 

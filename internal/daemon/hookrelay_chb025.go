@@ -32,6 +32,12 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // hookRelayEnvelope is the NDJSON envelope sent by the harmonik hook-relay
@@ -135,6 +141,11 @@ type hookSessionStore struct {
 	mu          sync.Mutex
 	sessions    map[hookSessionKey]*hookSession
 	notifyChans map[hookSessionKey][]chan struct{}
+
+	// emitter is optional; when non-nil, dispatchHookRelayEnvelope emits
+	// agent_rate_limit_status bus events for agent_rate_limited /
+	// agent_rate_limit_cleared relay messages (hk-lqtzq).
+	emitter handlercontract.EventEmitter
 }
 
 // newHookSessionStore constructs an empty hookSessionStore.
@@ -143,6 +154,12 @@ func newHookSessionStore() *hookSessionStore {
 		sessions:    make(map[hookSessionKey]*hookSession),
 		notifyChans: make(map[hookSessionKey][]chan struct{}),
 	}
+}
+
+// SetEmitter wires the daemon bus emitter so the store can forward
+// agent_rate_limit_status events.  Must be called before beads are dispatched.
+func (s *hookSessionStore) SetEmitter(e handlercontract.EventEmitter) {
+	s.emitter = e
 }
 
 // RegisterHookSession opens the session window for (runID, claudeSessionID).
@@ -369,8 +386,53 @@ func (s *hookSessionStore) dispatchHookRelayEnvelope(env hookRelayEnvelope) hook
 		s.notifyAgentReady(env.RunID, env.ClaudeSessionID)
 		return hookRelayAckMsg{Status: "ok"}
 
+	case "agent_rate_limited":
+		// hk-lqtzq: StopFailure{error_type: "rate_limit"} arrives here as
+		// agent_rate_limited.  Forward to the bus as agent_rate_limit_status{active}
+		// so HandlerPausePolicyGoroutine and bandwidthTunerBackstop can react.
+		s.emitRateLimitStatus(env, core.AgentRateLimitStatusActive)
+		return hookRelayAckMsg{Status: "ok"}
+
+	case "agent_rate_limit_cleared":
+		// hk-lqtzq: paired clearance event.  Forward as agent_rate_limit_status{cleared}.
+		s.emitRateLimitStatus(env, core.AgentRateLimitStatusCleared)
+		return hookRelayAckMsg{Status: "ok"}
+
 	default:
 		// Any other known or future message type is accepted without state update.
 		return hookRelayAckMsg{Status: "ok"}
 	}
+}
+
+// emitRateLimitStatus emits an agent_rate_limit_status bus event.
+// No-op when emitter is nil (unit-test callers that don't wire the bus)
+// or when env.RunID is not a valid UUID (payload would be invalid per spec).
+func (s *hookSessionStore) emitRateLimitStatus(env hookRelayEnvelope, status core.AgentRateLimitStatus) {
+	if s.emitter == nil {
+		return
+	}
+	runUUID, parseErr := uuid.Parse(env.RunID)
+	if parseErr != nil {
+		return // RunID is required and must be a valid UUID per AgentRateLimitStatusPayload.Valid()
+	}
+
+	// Parse retry_after_seconds from the relay payload (present only on active).
+	var relayPl struct {
+		RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
+	}
+	_ = json.Unmarshal(env.Payload, &relayPl)
+
+	pl := core.AgentRateLimitStatusPayload{
+		RunID:             core.RunID(runUUID),
+		SessionID:         core.SessionID(env.HandlerSessionID),
+		Status:            status,
+		RetryAfterSeconds: relayPl.RetryAfterSeconds,
+		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+
+	plBytes, marshalErr := json.Marshal(pl)
+	if marshalErr != nil {
+		return // non-fatal
+	}
+	_ = s.emitter.EmitWithRunID(context.Background(), core.RunID(runUUID), core.EventTypeAgentRateLimitStatus, plBytes)
 }

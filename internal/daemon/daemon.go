@@ -1056,6 +1056,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
 	hookStore := newHookSessionStore()
+	// Wire the bus emitter so dispatchHookRelayEnvelope can forward
+	// agent_rate_limited → agent_rate_limit_status events (hk-lqtzq).
+	// bus.Seal has already been called at this point; the emitter is used
+	// for Emit calls (delivery, not subscription), which are valid post-Seal.
+	hookStore.SetEmitter(bus)
 
 	// PL-005 step 8a (QM-002 / QM-002a): load per-queue files at startup BEFORE
 	// the socket listener or work loop start.  LoadQueueAtStartup first runs the

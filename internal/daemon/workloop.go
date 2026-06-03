@@ -1663,7 +1663,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// when the section is absent or start_from is not set. If start_from is
 	// present but names a ref that does not exist locally, the error is
 	// surfaced as a typed StartFromRefError and the bead is reopened.
-	headSHA, headErr := resolveParentCommit(ctx, deps.projectDir, string(beadID), beadRecord.Description)
+	headSHA, headErr := resolveParentCommit(ctx, deps.projectDir, string(beadID), beadRecord.Description, deps.targetBranch)
 	if headErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
 		reopenTID, _ := deps.tidGen.Next()
@@ -1678,9 +1678,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// resolveParentCommit's return type. The call is cheap (YAML parse + stat).
 	// Non-fatal: if resolveBranching fails here, baseBranch is left empty and
 	// the agent-task header omits the base_branch line.
+	//
+	// Protection gate (hk-ncwb3): if the resolved lands_on is in ProtectBranches,
+	// the bead must be refused — it would try to merge directly into a branch the
+	// operator has declared off-limits for direct pushes. The bead is reopened
+	// with a LandsOnProtectedError so the operator can correct the bead body or
+	// the project branching config.
 	var baseBranch string
-	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, deps.projectDir); brErr == nil {
+	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, deps.projectDir, deps.targetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
+		for _, protected := range deps.protectBranches {
+			if baseBranch == protected {
+				protErr := &LandsOnProtectedError{LandsOn: baseBranch}
+				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					protErr.Error())
+				return
+			}
+		}
 	}
 
 	wtFactory := deps.worktreeFactory

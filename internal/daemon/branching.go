@@ -97,7 +97,10 @@ func (e *ErrProjectBranchingConfig) Unwrap() error { return e.Cause }
 //
 //  1. Bead body (parseBranchingSection) — highest precedence.
 //  2. Project defaults (.harmonik/branching.yaml via branching.LoadCached).
-//  3. Spec defaults (start_from=main, lands_on=main, landing_strategy=squash).
+//  3. Spec defaults (start_from=targetBranch, lands_on=targetBranch,
+//     landing_strategy=squash). targetBranch replaces the literal "main"
+//     so that worktrees are cut from — and default to landing on — the
+//     configured integration branch (hk-ncwb3).
 //
 // Tier-1 parse errors: if the ## Branching section is present but malformed,
 // the bead-body fields are treated as absent per BI-009b §Error handling and a
@@ -114,8 +117,8 @@ func (e *ErrProjectBranchingConfig) Unwrap() error { return e.Cause }
 // set by tier-1.
 //
 // Spec ref: specs/workspace-model.md §4.2 WM-005b.
-// Bead: hk-umxx4.
-func resolveBranching(ctx context.Context, beadBody, projectRoot string) (BranchingConfig, error) {
+// Bead: hk-umxx4, hk-ncwb3.
+func resolveBranching(ctx context.Context, beadBody, projectRoot, targetBranch string) (BranchingConfig, error) {
 	// Tier 1: bead body.
 	beadCfg, parseErr := parseBranchingSection(beadBody)
 	if parseErr != nil {
@@ -135,11 +138,25 @@ func resolveBranching(ctx context.Context, beadBody, projectRoot string) (Branch
 		return BranchingConfig{}, &ErrProjectBranchingConfig{Cause: loadErr}
 	}
 
+	// Derive effective spec-level defaults for start_from and lands_on.
+	// When targetBranch is configured (non-empty), it replaces the literal
+	// "main" constant so worktrees are cut from — and land on — the integration
+	// branch rather than a hardcoded default (hk-ncwb3). The landing_strategy
+	// spec default is not branch-specific and always remains "squash".
+	specStartFrom := targetBranch
+	if specStartFrom == "" {
+		specStartFrom = specDefaultStartFrom
+	}
+	specLandsOn := targetBranch
+	if specLandsOn == "" {
+		specLandsOn = specDefaultLandsOn
+	}
+
 	// Merge: bead-body fields win; project defaults fill unset slots; spec
 	// defaults fill anything still unset.
 	merged := BranchingConfig{
-		StartFrom:       firstNonEmpty(beadCfg.StartFrom, projDefaults.StartFrom, specDefaultStartFrom),
-		LandsOn:         firstNonEmpty(beadCfg.LandsOn, projDefaults.LandsOn, specDefaultLandsOn),
+		StartFrom:       firstNonEmpty(beadCfg.StartFrom, projDefaults.StartFrom, specStartFrom),
+		LandsOn:         firstNonEmpty(beadCfg.LandsOn, projDefaults.LandsOn, specLandsOn),
 		LandingStrategy: firstNonEmpty(beadCfg.LandingStrategy, string(projDefaults.LandingStrategy), specDefaultLandingStrategy),
 	}
 	return merged, nil
@@ -350,12 +367,14 @@ func gitRevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 // Precedence via resolveBranching (highest → lowest):
 //  1. Per-bead start_from from the `## Branching` section (BI-009b).
 //  2. Project-level default from .harmonik/branching.yaml (WM-005b tier 2).
-//  3. Spec-level default: "main" (WM-005b).
+//  3. Spec-level default: targetBranch (falls back to "main" when empty).
+//     This ensures worktrees are cut from the configured integration branch,
+//     not a hardcoded "main" literal (hk-ncwb3).
 //
-// When start_from resolves to "main" (from any tier) and "main" exists locally,
-// the returned SHA is the tip of refs/heads/main. When start_from is not
-// resolvable, a *StartFromRefError is returned — the bead is reopened by the
-// caller (fail-fast; no silent fallback per WM-005b).
+// When start_from resolves to targetBranch (from any tier) and that branch
+// exists locally, the returned SHA is the tip of refs/heads/<targetBranch>.
+// When start_from is not resolvable, a *StartFromRefError is returned — the
+// bead is reopened by the caller (fail-fast; no silent fallback per WM-005b).
 //
 // When .harmonik/branching.yaml is present but malformed, resolveBranching
 // returns an *ErrProjectBranchingConfig — the bead is reopened (fail-fast;
@@ -364,14 +383,14 @@ func gitRevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 // When the ## Branching section is present but malformed, resolveBranching
 // emits a structured-log warning and treats bead-body fields as absent; it
 // falls through to project and spec defaults (BI-009b §Error handling).
-func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody string) (string, error) {
-	cfg, resolveErr := resolveBranching(ctx, beadBody, repoRoot)
+func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody, targetBranch string) (string, error) {
+	cfg, resolveErr := resolveBranching(ctx, beadBody, repoRoot, targetBranch)
 	if resolveErr != nil {
 		// Fail-fast: project config malformed → surface to caller for bead reopen.
 		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
 	}
 
-	// cfg.StartFrom is always non-empty after resolveBranching (spec default "main"
+	// cfg.StartFrom is always non-empty after resolveBranching (spec default
 	// fills any unset tier). Resolve the ref to a commit SHA.
 	sha, err := resolveStartFrom(ctx, repoRoot, cfg.StartFrom)
 	if err != nil {
@@ -379,6 +398,19 @@ func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody string)
 		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
 	}
 	return sha, nil
+}
+
+// LandsOnProtectedError is the typed error returned when a bead's resolved
+// lands_on branch is in the daemon's ProtectBranches set. A bead may NARROW
+// its landing target (e.g. target=integration, bead says integration/sub)
+// but must NEVER widen it to a protected branch (hk-ncwb3).
+type LandsOnProtectedError struct {
+	// LandsOn is the resolved lands_on value from the three-tier chain.
+	LandsOn string
+}
+
+func (e *LandsOnProtectedError) Error() string {
+	return fmt.Sprintf("daemon: bead lands_on %q is a protected branch; refusing dispatch (hk-ncwb3)", e.LandsOn)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

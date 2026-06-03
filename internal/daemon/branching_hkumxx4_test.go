@@ -77,7 +77,7 @@ func TestResolveBranching_BeadSetsStartFromOnly(t *testing.T) {
 
 	body := resolvingFixtureBeadBody(t, "start_from: feature/foo")
 
-	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err != nil {
 		t.Fatalf("resolveBranching: unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestResolveBranching_BeadSetsAllThree(t *testing.T) {
 		"start_from: main\ntarget_branch: release\nlanding_strategy: squash",
 	)
 
-	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err != nil {
 		t.Fatalf("resolveBranching: unexpected error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestResolveBranching_EmptyBeadAndNoYAML(t *testing.T) {
 
 	body := resolvingFixtureEmptyBody(t)
 
-	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err != nil {
 		t.Fatalf("resolveBranching: unexpected error for absent section+file: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestResolveBranching_MalformedProjectYAML(t *testing.T) {
 
 	body := resolvingFixtureEmptyBody(t)
 
-	_, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	_, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err == nil {
 		t.Fatal("resolveBranching: expected error for malformed project YAML; got nil")
 	}
@@ -180,7 +180,7 @@ func TestResolveBranching_FileAbsentSpecDefaultsApplied(t *testing.T) {
 
 	body := resolvingFixtureBeadBody(t, "start_from: feature/bar")
 
-	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err != nil {
 		t.Fatalf("resolveBranching: unexpected error when file absent: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestResolveBranching_ProjectYAMLPartialFillsGaps(t *testing.T) {
 
 	body := resolvingFixtureEmptyBody(t) // no bead body fields
 
-	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root)
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "")
 	if err != nil {
 		t.Fatalf("resolveBranching: unexpected error: %v", err)
 	}
@@ -222,5 +222,82 @@ func TestResolveBranching_ProjectYAMLPartialFillsGaps(t *testing.T) {
 	}
 	if cfg.LandingStrategy != "squash" {
 		t.Errorf("LandingStrategy = %q; want spec default %q", cfg.LandingStrategy, "squash")
+	}
+}
+
+// TestResolveBranching_TargetBranchUsedAsSpecDefault verifies that when
+// targetBranch is set and neither the bead body nor the project YAML provide
+// start_from / lands_on, the spec-level default resolves to targetBranch
+// rather than the literal "main" (hk-ncwb3).
+func TestResolveBranching_TargetBranchUsedAsSpecDefault(t *testing.T) {
+	t.Parallel()
+	root := resolvingFixtureTmpDir(t) // no branching.yaml
+
+	body := resolvingFixtureEmptyBody(t) // no ## Branching section
+
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "harmonik/integration")
+	if err != nil {
+		t.Fatalf("resolveBranching: unexpected error: %v", err)
+	}
+	if cfg.StartFrom != "harmonik/integration" {
+		t.Errorf("StartFrom = %q; want %q (targetBranch spec default)", cfg.StartFrom, "harmonik/integration")
+	}
+	if cfg.LandsOn != "harmonik/integration" {
+		t.Errorf("LandsOn = %q; want %q (targetBranch spec default)", cfg.LandsOn, "harmonik/integration")
+	}
+	if cfg.LandingStrategy != "squash" {
+		t.Errorf("LandingStrategy = %q; want spec default %q", cfg.LandingStrategy, "squash")
+	}
+}
+
+// TestResolveBranching_BeadBodyWinsOverTargetBranch verifies that an explicit
+// bead-body start_from overrides the targetBranch spec default (hk-ncwb3:
+// bead body is still the highest precedence tier).
+func TestResolveBranching_BeadBodyWinsOverTargetBranch(t *testing.T) {
+	t.Parallel()
+	root := resolvingFixtureTmpDir(t) // no branching.yaml
+
+	body := resolvingFixtureBeadBody(t, "start_from: feature/xyz\ntarget_branch: some/branch")
+
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "harmonik/integration")
+	if err != nil {
+		t.Fatalf("resolveBranching: unexpected error: %v", err)
+	}
+	// Bead body wins over targetBranch spec default.
+	if cfg.StartFrom != "feature/xyz" {
+		t.Errorf("StartFrom = %q; want %q (bead body wins)", cfg.StartFrom, "feature/xyz")
+	}
+	if cfg.LandsOn != "some/branch" {
+		t.Errorf("LandsOn = %q; want %q (bead body wins)", cfg.LandsOn, "some/branch")
+	}
+}
+
+// TestResolveBranching_ProjectYAMLWinsOverTargetBranchForUnsetBeadFields
+// verifies that a project YAML value takes precedence over the targetBranch
+// spec default when the bead body does not set the field (hk-ncwb3: tier-2
+// project YAML still outranks the tier-3 spec default even when targetBranch
+// is set).
+func TestResolveBranching_ProjectYAMLWinsOverTargetBranchForUnsetBeadFields(t *testing.T) {
+	t.Parallel()
+	root := resolvingFixtureTmpDir(t)
+
+	// Project YAML sets lands_on; bead body is empty.
+	resolvingFixtureWriteBranchingYAML(t, root,
+		"version: 1\ndefaults:\n  lands_on: project/custom\n",
+	)
+
+	body := resolvingFixtureEmptyBody(t) // no bead body overrides
+
+	cfg, err := daemon.ExportedResolveBranching(t.Context(), body, root, "harmonik/integration")
+	if err != nil {
+		t.Fatalf("resolveBranching: unexpected error: %v", err)
+	}
+	// Project YAML wins for lands_on (tier 2 > tier 3).
+	if cfg.LandsOn != "project/custom" {
+		t.Errorf("LandsOn = %q; want %q (project YAML wins over targetBranch default)", cfg.LandsOn, "project/custom")
+	}
+	// start_from was not set by project YAML, so targetBranch kicks in as spec default.
+	if cfg.StartFrom != "harmonik/integration" {
+		t.Errorf("StartFrom = %q; want %q (targetBranch spec default)", cfg.StartFrom, "harmonik/integration")
 	}
 }

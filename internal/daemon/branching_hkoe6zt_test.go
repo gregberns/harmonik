@@ -225,7 +225,7 @@ func TestResolveParentCommit_NoSection(t *testing.T) {
 	wantSHA := branchingFixtureHEAD(t, dir)
 
 	body := branchingFixtureBodyNoSection(t)
-	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-001", body)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-001", body, "")
 	if err != nil {
 		t.Fatalf("resolveParentCommit: unexpected error for absent section: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestResolveParentCommit_StartFromMain(t *testing.T) {
 	wantSHA := branchingFixtureHEAD(t, dir) // main and HEAD are the same after fixture init
 
 	body := branchingFixtureBody(t, "start_from: main")
-	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-002", body)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-002", body, "")
 	if err != nil {
 		t.Fatalf("resolveParentCommit: unexpected error for start_from=main: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestResolveParentCommit_StartFromBranch(t *testing.T) {
 	wantSHA := branchingFixtureHEAD(t, dir)
 
 	body := branchingFixtureBody(t, "start_from: feature/foo")
-	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-003", body)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-003", body, "")
 	if err != nil {
 		t.Fatalf("resolveParentCommit: unexpected error for start_from=feature/foo: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestResolveParentCommit_StartFromSHA(t *testing.T) {
 	headSHA := branchingFixtureHEAD(t, dir)
 
 	body := branchingFixtureBody(t, "start_from: "+headSHA)
-	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-004", body)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-004", body, "")
 	if err != nil {
 		t.Fatalf("resolveParentCommit: unexpected error for explicit SHA: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestResolveParentCommit_MissingRef(t *testing.T) {
 	dir := branchingFixtureGitRepo(t)
 
 	body := branchingFixtureBody(t, "start_from: nonexistent-branch-xyz")
-	_, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-005", body)
+	_, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-005", body, "")
 	if err == nil {
 		t.Fatal("resolveParentCommit: expected error for missing ref; got nil")
 	}
@@ -320,11 +320,45 @@ func TestResolveParentCommit_MalformedSection(t *testing.T) {
 
 	// Malformed YAML — section present but unparseable.
 	body := "## Branching\n\n```yaml\n: broken: yaml: [\n```\n"
-	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-006", body)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-006", body, "")
 	if err != nil {
 		t.Fatalf("resolveParentCommit: unexpected error for malformed section (should fall back): %v", err)
 	}
 	if gotSHA != wantSHA {
 		t.Errorf("resolveParentCommit: got SHA %q; want HEAD SHA %q (fallback)", gotSHA, wantSHA)
+	}
+}
+
+// TestResolveParentCommit_TargetBranchUsedAsDefault verifies that when
+// targetBranch is set and the bead body has no ## Branching section,
+// resolveParentCommit resolves the tip of targetBranch rather than "main"
+// (hk-ncwb3: worktrees must cut from the configured integration branch).
+func TestResolveParentCommit_TargetBranchUsedAsDefault(t *testing.T) {
+	t.Parallel()
+	dir := branchingFixtureGitRepo(t)
+
+	// "feature/foo" was created from main in the fixture and points to the same SHA.
+	wantSHA := branchingFixtureHEAD(t, dir)
+
+	body := branchingFixtureBodyNoSection(t)
+	gotSHA, err := daemon.ExportedResolveParentCommit(t.Context(), dir, "test-bead-007", body, "feature/foo")
+	if err != nil {
+		t.Fatalf("resolveParentCommit: unexpected error for targetBranch default: %v", err)
+	}
+	if gotSHA != wantSHA {
+		t.Errorf("resolveParentCommit: got SHA %q; want feature/foo SHA %q", gotSHA, wantSHA)
+	}
+}
+
+// TestLandsOnProtectedError_Error verifies the error message format.
+func TestLandsOnProtectedError_Error(t *testing.T) {
+	t.Parallel()
+	err := &daemon.ExportedLandsOnProtectedError{LandsOn: "main"}
+	msg := err.Error()
+	if !strings.Contains(msg, "main") {
+		t.Errorf("LandsOnProtectedError.Error() = %q; expected to contain branch name %q", msg, "main")
+	}
+	if !strings.Contains(msg, "protected") {
+		t.Errorf("LandsOnProtectedError.Error() = %q; expected to contain 'protected'", msg)
 	}
 }

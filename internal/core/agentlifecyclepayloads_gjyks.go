@@ -458,3 +458,48 @@ func (p WorkingTreeRefreshFailedPayload) Valid() bool {
 	}
 	return true
 }
+
+// MergeBuildFailedPayload is the typed event payload for the
+// merge_build_failed event (hk-o68j3).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+// Durability class: F (terminal-state landmark — the bead is about to be
+// reopened; loss would silently leave the bead in a bad state).
+//
+// Emitted inside lockedMergeRunBranchToMain when go build or go vet fails
+// on the freshly fast-forwarded merged tree. The update-ref is rolled back
+// and the push is skipped before this event fires.
+//
+// # Payload fields
+//
+//   - run_id  — the run whose merged tree failed the build gate
+//   - bead_id — the bead associated with the run
+//   - error   — combined output from the failed go build/vet invocation
+type MergeBuildFailedPayload struct {
+	// RunID is the run whose merged tree failed the build gate.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// BeadID is the identifier of the bead associated with the run.
+	// Required (non-empty).
+	BeadID BeadID `json:"bead_id"`
+
+	// Error is the combined output from the failed go build or go vet command.
+	// Required (non-empty).
+	Error string `json:"error"`
+}
+
+// Valid reports whether p is a well-formed MergeBuildFailedPayload.
+func (p MergeBuildFailedPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.BeadID == "" {
+		return false
+	}
+	if p.Error == "" {
+		return false
+	}
+	return true
+}

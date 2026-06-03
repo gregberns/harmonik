@@ -23,11 +23,11 @@ import "testing"
 // taxonomy per EV-027. Changing wantCount requires a foundation amendment per
 // event-model.md §4.6 EV-027 and architecture.md §4.6.
 //
-// Current taxonomy breakdown (108 types total):
+// Current taxonomy breakdown (109 types total):
 //
-//	§8.1  Run lifecycle (16 types including bead_closed, working_tree_refresh_failed,
+//	§8.1  Run lifecycle (17 types including bead_closed, working_tree_refresh_failed,
 //	      implementer_escaped_worktree, implementer_phase_complete,
-//	      node_dispatch_decided [hk-bf85t T-IMPL-008])
+//	      node_dispatch_decided [hk-bf85t T-IMPL-008], merge_build_failed [hk-o68j3])
 //	§8.1a Review-loop cycle (6 types)
 //	§8.2  Control-point lifecycle (12 types)
 //	§8.2a Gate-node dispatch (1 type: gate_decision_recorded [hk-jtxnr T-IMPL-010])
@@ -41,10 +41,10 @@ import "testing"
 //	§8.11 Handler-pause lifecycle (3 types)
 //	§8.12 Staleness-detection (1 type: run_stale)
 //
-// Total: 108 EventType constants registered in allEventTypeCohort.
-// Amendment: gate_decision_recorded added for gate-node dispatch (hk-jtxnr T-IMPL-010;
-// EV-027 foundation amendment — new O-class event emitted when gate node evaluates
-// a gate ref per specs/execution-model.md gate-node dispatch).
+// Total: 109 EventType constants registered in allEventTypeCohort.
+// Amendment: merge_build_failed added for post-merge build gate (hk-o68j3;
+// EV-027 foundation amendment — new F-class event emitted when go build+vet
+// fails on the freshly fast-forwarded merged tree before push).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -61,7 +61,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 108
+	const wantCount = 109
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

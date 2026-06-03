@@ -106,6 +106,15 @@ const (
 	// no event. Durability class: F.
 	// Refs: hk-cd8yu.
 	EventTypeImplementerPhaseComplete EventType = "implementer_phase_complete"
+
+	// EventTypeMergeBuildFailed is the merge_build_failed event type.
+	// Emitted inside lockedMergeRunBranchToMain when go build+vet fails on
+	// the freshly fast-forwarded merged tree, before the push. The update-ref
+	// is rolled back and the push is skipped; the caller reopens the bead.
+	// Durability class: F (terminal-state landmark; the bead is about to be
+	// reopened so loss would leave it closed when it should be open).
+	// Refs: hk-o68j3.
+	EventTypeMergeBuildFailed EventType = "merge_build_failed"
 )
 
 // ---------------------------------------------------------------------------

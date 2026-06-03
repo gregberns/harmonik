@@ -87,6 +87,11 @@ func registerRunLifecycle() {
 	// cancellation) and before any reviewer phase begins. Closes the diagnostic
 	// gap between run_started and reviewer_launched. Durability class: F.
 	mustRegister("implementer_phase_complete", func() EventPayload { return &ImplementerPhaseCompletePayload{} })
+	// merge_build_failed (hk-o68j3): emitted when go build+vet fails on the
+	// freshly fast-forwarded merged tree inside lockedMergeRunBranchToMain,
+	// before the push. update-ref is rolled back; caller reopens the bead.
+	// Durability class: F.
+	mustRegister("merge_build_failed", func() EventPayload { return &MergeBuildFailedPayload{} })
 }
 
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.

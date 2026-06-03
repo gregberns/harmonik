@@ -3324,6 +3324,14 @@ type workingTreeRefreshFailedPayload struct {
 	Error  string `json:"error"`
 }
 
+// mergeBuildFailedPayload is the JSON payload for the merge_build_failed event
+// (hk-o68j3).
+type mergeBuildFailedPayload struct {
+	RunID  string `json:"run_id"`
+	BeadID string `json:"bead_id"`
+	Error  string `json:"error"`
+}
+
 // lockedMergeRunBranchToMain wraps mergeRunBranchToMain with an optional mutex
 // held across the entire rebase → update-ref → push sequence. Production always
 // passes a non-nil mu (set in newWorkLoopDeps per hk-yyso7) so that merges are
@@ -3502,6 +3510,35 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		return mergeOutcome{
 			success: false,
 			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
+		}
+	}
+
+	// Step 3b: post-merge build gate (hk-o68j3).
+	//
+	// Run go build+vet on the freshly fast-forwarded tree to catch compile
+	// errors introduced by the merged commit before the push makes them
+	// visible to other agents.  Only runs when a go.mod is present so
+	// non-Go projects and bare-repo test fixtures are unaffected.
+	// On failure, roll back the update-ref (same rollback pattern as the
+	// push-failed path below), skip the push, emit merge_build_failed, and
+	// return failure so the caller reopens the bead.
+	if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
+		for _, buildArgs := range [][]string{
+			{"build", "./..."},
+			{"vet", "./..."},
+		} {
+			buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
+			buildCmd.Dir = projectDir
+			if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+				rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
+				rollbackCmd.Dir = projectDir
+				_ = rollbackCmd.Run()
+				emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
+				return mergeOutcome{
+					success: false,
+					reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
+				}
+			}
 		}
 	}
 
@@ -3847,6 +3884,28 @@ func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.Event
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
+}
+
+// emitMergeBuildFailed emits a merge_build_failed event when go build or go
+// vet fails on the freshly fast-forwarded merged tree (hk-o68j3). The
+// update-ref has already been rolled back before this is called.
+//
+// Bead: hk-o68j3.
+func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, buildErr error, output []byte) {
+	errMsg := buildErr.Error()
+	if len(output) > 0 {
+		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(output), "\n"))
+	}
+	pl := mergeBuildFailedPayload{
+		RunID:  runID.String(),
+		BeadID: string(beadID),
+		Error:  errMsg,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
 }
 
 // emitBeadClosed emits a bead_closed event after a successful CloseBead call.

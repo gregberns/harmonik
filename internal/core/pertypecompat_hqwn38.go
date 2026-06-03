@@ -101,6 +101,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "working_tree_refresh_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_escaped_worktree", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "implementer_phase_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-o68j3: post-merge build gate event.
+	{TypeName: "merge_build_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.1a Review-loop cycle ─────────────────────────────────────────────
 	{TypeName: "implementer_resumed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

@@ -51,6 +51,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeWorkingTreeRefreshFailed, func() EventPayload { return &WorkingTreeRefreshFailedPayload{} }},
 	{EventTypeImplementerEscapedWorktree, func() EventPayload { return &ImplementerEscapedWorktreePayload{} }},
 	{EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} }},
+	{EventTypeMergeBuildFailed, func() EventPayload { return &MergeBuildFailedPayload{} }},
 
 	// §8.2 Control-point lifecycle
 	{EventTypeHookFired, func() EventPayload { return &HookFiredPayload{} }},

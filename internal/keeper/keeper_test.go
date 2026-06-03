@@ -95,6 +95,39 @@ func TestAcquireLock_DifferentAgents(t *testing.T) {
 	_ = lock2.Release() //nolint:errcheck // test cleanup; explicit call (not defer) avoids unnecessaryDefer lint
 }
 
+// TestAcquireLock_RejectsPathTraversal verifies that agent names containing
+// path-traversal sequences are rejected before any filesystem access.
+func TestAcquireLock_RejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	cases := []string{"../daemon", "foo/bar", "../../etc/passwd", "a..b/c"}
+	for _, agent := range cases {
+		_, err := keeper.AcquireLock(projectDir, agent)
+		if err == nil {
+			t.Errorf("AcquireLock(%q): expected error, got nil", agent)
+			continue
+		}
+		if !errors.Is(err, keeper.ErrInvalidAgent) {
+			t.Errorf("AcquireLock(%q): got %v; want ErrInvalidAgent", agent, err)
+		}
+	}
+}
+
+// TestIsManaged_RejectsPathTraversal verifies that agent names with traversal
+// sequences return false rather than resolving outside the keeper directory.
+func TestIsManaged_RejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	cases := []string{"../daemon", "foo/bar", "../../etc/passwd"}
+	for _, agent := range cases {
+		if keeper.IsManaged(projectDir, agent) {
+			t.Errorf("IsManaged(%q): expected false for traversal agent name", agent)
+		}
+	}
+}
+
 // TestIsManaged_AbsentReturnsFalse verifies the fail-safe: absent .managed
 // marker returns false.
 func TestIsManaged_AbsentReturnsFalse(t *testing.T) {

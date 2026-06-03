@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -36,6 +37,19 @@ func (l *Lock) Release() error {
 	return fd.Close()
 }
 
+// ErrInvalidAgent is returned by AcquireLock when the agent name contains
+// path-traversal sequences that could escape the keeper directory.
+var ErrInvalidAgent = errors.New("keeper: agent name must not contain '/' or '..'")
+
+// validateAgent rejects names that could escape the keeper directory via path
+// traversal. Operator-controlled but still worth enforcing defensively.
+func validateAgent(agent string) error {
+	if strings.Contains(agent, "/") || strings.Contains(agent, "..") {
+		return ErrInvalidAgent
+	}
+	return nil
+}
+
 // AcquireLock acquires an exclusive non-blocking flock on
 // <projectDir>/.harmonik/keeper/<agent>.lock and writes the caller's PID to
 // the file. Returns ErrLockHeld if another live process holds the lock.
@@ -43,6 +57,10 @@ func (l *Lock) Release() error {
 //
 // The caller MUST call Lock.Release when the keeper exits.
 func AcquireLock(projectDir, agent string) (*Lock, error) {
+	if err := validateAgent(agent); err != nil {
+		return nil, err
+	}
+
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
@@ -50,7 +68,7 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	}
 
 	lockPath := filepath.Join(keeperDir, agent+".lock")
-	//nolint:gosec // G304: lockPath derived from operator-controlled projectDir and validated agent name
+	//nolint:gosec // G304: lockPath derived from operator-controlled projectDir and agent name validated by validateAgent
 	fd, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("keeper: open lockfile %q: %w", lockPath, err)
@@ -84,7 +102,11 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 // IsManaged reports whether the opt-in marker
 // <projectDir>/.harmonik/keeper/<agent>.managed exists. Keepers MUST NOT act
 // on a non-managed pane; the absent-marker case is the fail-safe default.
+// Returns false for any agent name that fails validateAgent.
 func IsManaged(projectDir, agent string) bool {
+	if validateAgent(agent) != nil {
+		return false
+	}
 	markerPath := filepath.Join(projectDir, ".harmonik", "keeper", agent+".managed")
 	_, err := os.Stat(markerPath)
 	return err == nil

@@ -2,7 +2,8 @@ package daemon_test
 
 // escapedetect_hkooexj_test.go — regression tests for the implementer-escaped-
 // worktree detector's false-positive on pre-existing / gitignored untracked
-// files in the main repo tree.
+// files in the main repo tree, and the false-negative on same-file escapes
+// masked by sibling-merge path exclusion.
 //
 // Bug (hk-ooexj): checkMainWorkingTreeDirty flagged ANY untracked path outside
 // the harmonik churn allowlist as an "escape", even when (a) the file was
@@ -14,6 +15,14 @@ package daemon_test
 //   - snapshotUntrackedFiles captures pre-existing untracked paths at run-start.
 //   - checkMainWorkingTreeDirty excludes baselined paths AND gitignored paths,
 //     so only NET-NEW, non-ignored files outside the worktree flag as escapes.
+//
+// Bug (hk-xux36): the former siblingMergeChangedPaths exclusion (hk-77q8e)
+// suppressed any file touched by a sibling merge from escape candidates,
+// regardless of whether the implementer also wrote that same file — a false
+// negative. The fix removes siblingMergeChangedPaths entirely: the caller
+// (runAgentImplementer) holds mergeMu across the escape check (hk-zguy6), so
+// the update-ref/reset-hard race window that motivated the exclusion can never
+// occur in production.
 //
 // Helper prefix: escapeFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-ooexj).
@@ -95,7 +104,7 @@ func TestEscapeDetect_GitignoredPreExistingNotFlagged(t *testing.T) {
 
 	// After the run, with the implementer having touched nothing in main, the
 	// escape check must report clean.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -113,7 +122,7 @@ func TestEscapeDetect_GitignoredNotFlaggedEvenWithoutBaseline(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 	escapeFixtureWrite(t, dir, "HANDOFF-flywheel.md", "scratch handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -141,7 +150,7 @@ func TestEscapeDetect_NetNewUntrackedStillFlagged(t *testing.T) {
 	// filename rather than collapsing a new directory to "dir/".
 	escapeFixtureWrite(t, dir, "leaked.go", "package main\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -179,7 +188,7 @@ func TestEscapeDetect_NetNewGitignoredNotFlagged(t *testing.T) {
 	// Implementer writes a NEW gitignored file during the run.
 	escapeFixtureWrite(t, dir, "HANDOFF-newthread.md", "new handoff\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -201,7 +210,7 @@ func TestEscapeDetect_HarmonikChurnNotFlagged(t *testing.T) {
 	escapeFixtureWrite(t, dir, ".harmonik/queue.json", "{}\n")
 	escapeFixtureWrite(t, dir, ".claude/scratch.json", "{}\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, nil)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -227,7 +236,7 @@ func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 	// Concurrent agent creates AGENT_COMMS.md during the run.
 	escapeFixtureWrite(t, dir, "AGENT_COMMS.md", "## ts · orchestrator\nhello\n")
 
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, "")
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
@@ -236,28 +245,20 @@ func TestEscapeDetect_AgentCommsNotFlagged(t *testing.T) {
 	}
 }
 
-// TestEscapeDetect_SiblingMergeRaceNotFlagged is the regression for hk-77q8e
-// case 1: files modified in main by a sibling bead's update-ref (before
-// reset-hard runs) must not be flagged as implementer escapes.
+// TestEscapeDetect_SiblingMergeRaceWindow documents that checkMainWorkingTreeDirty
+// called directly (without mergeMu) can observe the update-ref/reset-hard race
+// window and report dirty=true for sibling-changed files. In production this
+// scenario is prevented: runAgentImplementer holds mergeMu across the check
+// (hk-zguy6), so no sibling can be mid-flight when the check fires.
 //
-// The scenario simulates the update-ref / reset-hard race window:
-//  1. Record preRunMainSHA (main at run-start = commit A).
-//  2. A sibling bead advances main to commit B via update-ref, updating HEAD
-//     without touching the working tree (reset-hard hasn't run yet).
-//  3. The escape check fires: git status sees sibling.go as "M" (HEAD=B says
-//     one thing, working tree from A says another).
-//  4. With hk-77q8e fix, sibling.go is excluded from escape candidates.
-func TestEscapeDetect_SiblingMergeRaceNotFlagged(t *testing.T) {
+// The test is retained as documentation of the race-window mechanics; it does
+// NOT test a code path reachable in production.
+func TestEscapeDetect_SiblingMergeRaceWindow(t *testing.T) {
 	dir := escapeFixtureGitRepo(t)
 
-	// Capture baseline and main HEAD at run-start (commit A).
 	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("snapshotUntrackedFiles: %v", err)
-	}
-	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
-	if preRunMainSHA == "" {
-		t.Fatal("snapshotMainHEAD returned empty")
 	}
 
 	run := func(args ...string) string {
@@ -271,163 +272,24 @@ func TestEscapeDetect_SiblingMergeRaceNotFlagged(t *testing.T) {
 		return strings.TrimRight(string(out), "\n")
 	}
 
-	// Simulate a sibling bead: create a new file in a branch, then advance
-	// refs/heads/main to that branch tip using update-ref (skipping reset-hard
-	// to reproduce the race window).
-	run("checkout", "-b", "sibling-run")
+	// Sibling bead: commit sibling.go on a branch, advance main via update-ref
+	// only (no reset-hard). The working tree is now inconsistent: HEAD points to
+	// the commit that has sibling.go, but the working tree / index do not.
+	run("checkout", "-b", "sibling-race")
 	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
 	run("add", "sibling.go")
-	run("commit", "-m", "sibling bead lands sibling.go")
-	siblingTip := run("rev-parse", "HEAD")
-	run("checkout", "main")
-
-	// update-ref advances main to sibling tip WITHOUT updating the working tree
-	// (no reset-hard). This is the race window: HEAD is at siblingTip but the
-	// working tree still lacks sibling.go, so git status reports it as deleted
-	// (or the reverse for a newly-added file) and escape check would false-flag.
-	run("update-ref", "refs/heads/main", siblingTip)
-
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
-	if checkErr != nil {
-		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
-	}
-	if dirty {
-		t.Fatalf("expected sibling merge files to be excluded from escape check, got dirty=%v files=%v", dirty, files)
-	}
-}
-
-// TestEscapeDetect_SiblingMergeRaceRealEscapeStillFlagged confirms that when an
-// implementer writes a DIFFERENT file (not in the sibling diff) to the main
-// working tree during the same window, that escape is still detected.
-func TestEscapeDetect_SiblingMergeRaceRealEscapeStillFlagged(t *testing.T) {
-	dir := escapeFixtureGitRepo(t)
-
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
-	if err != nil {
-		t.Fatalf("snapshotUntrackedFiles: %v", err)
-	}
-	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
-
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-		return strings.TrimRight(string(out), "\n")
-	}
-
-	// Sibling bead lands sibling.go.
-	run("checkout", "-b", "sibling-run2")
-	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
-	run("add", "sibling.go")
-	run("commit", "-m", "sibling lands")
+	run("commit", "-m", "sibling bead")
 	siblingTip := run("rev-parse", "HEAD")
 	run("checkout", "main")
 	run("update-ref", "refs/heads/main", siblingTip)
 
-	// Implementer ALSO escapes its worktree and writes escaped.go (NOT in the
-	// sibling diff) directly into the main working tree.
-	escapeFixtureWrite(t, dir, "escaped.go", "package main\n")
-
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
+	// Without mergeMu, the race window is observable: sibling.go appears dirty.
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
 	if checkErr != nil {
 		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
 	}
 	if !dirty {
-		t.Fatalf("expected real escape (escaped.go) to be flagged even with sibling merge, got dirty=%v files=%v", dirty, files)
-	}
-	found := false
-	for _, f := range files {
-		if f == "escaped.go" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("escaped.go not in dirty list, got %v", files)
-	}
-	// sibling.go must NOT appear in the escape list.
-	for _, f := range files {
-		if f == "sibling.go" {
-			t.Fatalf("sibling.go incorrectly flagged as escape, got %v", files)
-		}
-	}
-}
-
-// TestEscapeDetect_SiblingCommitPredatesBaselineTransientDirty is the
-// regression for hk-zguy6: when a sibling bead's update-ref runs AFTER this
-// run's baseline is captured but the resulting preRunMainSHA equals the
-// sibling's tip (i.e., currentTip == preRunMainSHA at escape-check time),
-// siblingMergeChangedPaths returns an empty exclusion set. If the sibling's
-// reset-hard has not yet run, the working tree is transiently dirty and
-// checkMainWorkingTreeDirty returns dirty=true — a false-positive escape.
-//
-// Concretely: the BASELINE is captured at run-start (state A), then the sibling
-// does update-ref A→B, and then THIS run's escape check fires with preRunMainSHA=B
-// and currentTip=B. siblingMergeChangedPaths sees no advance → empty exclusion
-// set → sibling's files are not excluded → false positive.
-//
-// This test documents that gap. In production runAgentImplementer holds mergeMu
-// during checkMainWorkingTreeDirty (hk-zguy6 fix), so this scenario is
-// unreachable: the escape check cannot fire while any sibling's
-// update-ref → reset-hard is in flight.
-func TestEscapeDetect_SiblingCommitPredatesBaselineTransientDirty(t *testing.T) {
-	dir := escapeFixtureGitRepo(t)
-
-	run := func(args ...string) string {
-		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-		return strings.TrimRight(string(out), "\n")
-	}
-
-	// Step 1: capture baseline at run-start (state A — tree is clean).
-	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
-	if err != nil {
-		t.Fatalf("snapshotUntrackedFiles: %v", err)
-	}
-
-	// Step 2: sibling bead's update-ref advances main A→B WITHOUT reset-hard.
-	// This simulates the race window: sibling.go is now in HEAD (B) but the
-	// working tree / index still reflect A (no sibling.go).
-	run("checkout", "-b", "sibling-run-predates")
-	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
-	run("add", "sibling.go")
-	run("commit", "-m", "sibling bead predates baseline capture")
-	siblingTip := run("rev-parse", "HEAD")
-	run("checkout", "main") // working tree = A (no sibling.go); index = A
-
-	// Advance main to siblingTip WITHOUT reset-hard: HEAD → B, tree/index still A.
-	run("update-ref", "refs/heads/main", siblingTip)
-
-	// Step 3: capture preRunMainSHA AFTER the sibling's update-ref.
-	// preRunMainSHA = B = siblingTip → currentTip == preRunMainSHA.
-	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
-	if preRunMainSHA == "" {
-		t.Fatal("snapshotMainHEAD returned empty")
-	}
-	if preRunMainSHA != siblingTip {
-		t.Fatalf("expected preRunMainSHA == siblingTip, got %q vs %q", preRunMainSHA, siblingTip)
-	}
-
-	// Step 4: escape check fires while reset-hard is still pending.
-	// siblingMergeChangedPaths(preRunMainSHA=B): currentTip=B == preRunMainSHA=B
-	// → no advance detected → empty exclusion set → sibling.go not excluded.
-	// git status --porcelain sees sibling.go as staged-deleted (in HEAD B, absent
-	// from index/worktree which are still at A) → dirty=true.
-	// This is the false-positive scenario that mergeMu prevents in production.
-	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
-	if checkErr != nil {
-		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
-	}
-	if !dirty {
-		t.Fatalf("hk-zguy6 scenario: expected dirty=true (sibling transient not excluded when currentTip==preRunMainSHA), got dirty=%v files=%v", dirty, files)
+		t.Fatalf("expected race-window dirty=true without mergeMu, got dirty=%v files=%v", dirty, files)
 	}
 	found := false
 	for _, f := range files {
@@ -436,6 +298,71 @@ func TestEscapeDetect_SiblingCommitPredatesBaselineTransientDirty(t *testing.T) 
 		}
 	}
 	if !found {
-		t.Fatalf("expected sibling.go in dirty list (transient false-positive scenario), got %v", files)
+		t.Fatalf("expected sibling.go in dirty list (race window), got %v", files)
+	}
+}
+
+// TestEscapeDetect_SiblingMergeSameFileEscapeDetected is the regression for
+// hk-xux36: when a sibling bead fully merges foo.go (update-ref + reset-hard)
+// and the implementer ALSO escapes into foo.go, the escape must be detected.
+//
+// The former siblingMergeChangedPaths exclusion (hk-77q8e) masked this: foo.go
+// appeared in the sibling diff, so it was dropped from escape candidates even
+// when the implementer had also written it — a false negative. Removing the
+// exclusion (hk-xux36) and relying on mergeMu (hk-zguy6) to prevent
+// false-positives restores correct detection.
+func TestEscapeDetect_SiblingMergeSameFileEscapeDetected(t *testing.T) {
+	dir := escapeFixtureGitRepo(t)
+
+	// Baseline at run-start: tree is clean.
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+
+	// Sibling bead FULLY merges foo.go: update-ref + reset-hard.
+	// After this, foo.go is committed and the working tree is clean.
+	run("checkout", "-b", "sibling-full-merge")
+	escapeFixtureWrite(t, dir, "foo.go", "package daemon // sibling version\n")
+	run("add", "foo.go")
+	run("commit", "-m", "sibling merges foo.go")
+	siblingTip := run("rev-parse", "HEAD")
+	run("checkout", "main")
+	run("update-ref", "refs/heads/main", siblingTip)
+	run("reset", "--hard", "HEAD") // working tree now reflects sibling's foo.go
+
+	// Implementer escapes: overwrites foo.go in the main working tree.
+	// (In production this would mean the implementer wrote outside its worktree
+	// to a file that a sibling bead had just landed.)
+	escapeFixtureWrite(t, dir, "foo.go", "package daemon // implementer escape\n")
+
+	// The escape MUST be detected. Without siblingMergeChangedPaths exclusion,
+	// foo.go is correctly reported as dirty.
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+	if checkErr != nil {
+		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
+	}
+	if !dirty {
+		t.Fatalf("hk-xux36 false-negative: expected foo.go escape to be detected, got dirty=%v files=%v", dirty, files)
+	}
+	found := false
+	for _, f := range files {
+		if f == "foo.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected foo.go in escape list, got %v", files)
 	}
 }

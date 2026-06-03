@@ -16,6 +16,7 @@ USAGE
   harmonik <subcommand> [flags]
 
 SUBCOMMANDS
+  init             Bootstrap a new project: create .harmonik/, init beads DB, write configs, render AGENTS.md
   run              Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
   handler          Inspect or resume a paused handler
   queue            Submit or inspect the bead queue (daemon must be running)

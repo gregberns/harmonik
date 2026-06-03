@@ -176,6 +176,21 @@ EXAMPLES
 	// Spec ref: specs/process-lifecycle.md §4.4 PL-028 + PL-028c.
 	// Bead ref: hk-eblue.
 
+	// harmonik init [--project DIR] [--target-branch BRANCH] [--prefix PREFIX]
+	// [--doctor] [--force] [--smoke] [--no-supervise]
+	//
+	// Bootstrap a new project for harmonik: create .harmonik/ structure, init
+	// beads database, write config files, render AGENTS.md, symlink CLAUDE.md.
+	//
+	// Bead ref: hk-y171w.
+	if len(os.Args) >= 2 && os.Args[1] == "init" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runInitSubcommand(subArgs)
+	}
+
 	// harmonik reconcile [--project DIR] [--target-branch BRANCH]
 	// Cat 3c auto-reconciler: detect and close IN_PROGRESS beads whose
 	// implementation has already merged to the target branch.

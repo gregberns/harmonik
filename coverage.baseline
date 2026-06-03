@@ -23,7 +23,7 @@
 # omitted. Per-package floors and regression gate (<0.3pp drop) now active.
 github.com/gregberns/harmonik/internal/branching 83.0
 github.com/gregberns/harmonik/internal/brcli 85.7
-github.com/gregberns/harmonik/internal/core 73.0
+github.com/gregberns/harmonik/internal/core 95.8
 github.com/gregberns/harmonik/internal/daemon 52.2
 github.com/gregberns/harmonik/internal/eventbus 83.6
 github.com/gregberns/harmonik/internal/handler 86.8

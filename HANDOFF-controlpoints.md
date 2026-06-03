@@ -1,33 +1,34 @@
-<!-- PP-TRIAL:v2 2026-05-30 main — CONTROL-POINTS + daemon-hardening thread. NOTE: the main HANDOFF.md is a DIFFERENT concurrent thread (flywheel, awaiting user path-2 decision) — do NOT clobber it. This file = the thread that ran 10 harmonik waves, hardened the daemon (6 bugs fixed), and is mid-build on the control-points subsystem (hk-a8bg.*). -->
+<!-- PP-TRIAL:v2 2026-06-03 main — controlpoints thread. The control-points epic (hk-a8bg) is long DONE; this thread now runs general orchestration. The shared HANDOFF.md and the flywheel/named-queues threads are SEPARATE concurrent work — do NOT clobber them. -->
 
-ROLE: orchestrator. Delegate. Keep main thread minimal. Route work through `harmonik run` per skill `harmonik-dispatch`.
+ROLE: orchestrator. Delegate. Dispatch through the persistent daemon's queue per skill `harmonik-dispatch`. Do NOT edit files in main's working tree while a queue is active (trips the escape-detector).
 
-# Where we are (2026-05-30) — control-points thread
+# State: CLEAN. Everything committed + pushed; nothing of mine in flight.
 
-Main clean, `0/0` origin. This thread's work is all merged+pushed; nothing unsaved. **Work is CLEAN but PARTIALLY BLOCKED** by the iter-2 bug below.
+Daemon queue was **active** at handoff (likely flywheel's session-keeper) — leave it alone. Peer `named-queues` parked clean (their note: "branch-safety P0 done, beads committed 57bf892b, nothing in flight").
 
-The earlier session ran 10 `harmonik run --wave` batches: it (a) hardened the daemon — found & fixed 6 concurrency/UX bugs (`hk-lckbv`, `hk-cw4sx`, `hk-i6hhn`, `hk-w92me`, `hk-dut6b`, `hk-7x7ea`/`hk-poy7k`), and (b) began building the **control-points subsystem** (`hk-a8bg.*`), landing ~18 child beads (gate/hook/guard/budget/policy/freedom-profile/cognition/registry behaviors).
+## What this session did (all merged+pushed)
+- Confirmed **control-points epic `hk-a8bg` DONE**; closed a dangling scenario-test bead (`hk-bnm89`).
+- **Friction batch** landed: `hk-i2ie5` (scenario commit-gate), `hk-yyso7` (always-on merge mutex), `hk-1k5as` (queue CLI), `hk-x6j6r` (eventbus layering).
+- **Core-coverage epic `hk-j3hrn`**: decomposed → 7 property/unit beads → `internal/core` **80.7%→95.8%**, epic closed, `coverage.baseline` ratcheted.
+- **Independent review** of the ~117 commits that landed UNREVIEWED while the review-loop was off (06-01→06-02): filed `hk-ur428` (scenario-gate false-block), `hk-xux36` (escape-detector false-NEGATIVE), `hk-dorz9` (cross-queue dedup completed-gap), plus earlier `hk-ycp62` (merged-tree gate) + `hk-27tp3` (BI-003 sensor).
+- **Productization initiative** (`codename:productization`): 9-agent design workflow → **22 beads**; added a README safety banner.
 
-## The one real blocker — iter-2 (shared with flywheel)
-`harmonik` review-loop works for beads that pass review on iteration 1 (most), but **any bead drawing REQUEST_CHANGES fails** `no-progress detected at iteration 2`. ROOT CAUSE now FOUND (memory `project-harmonik-reviewloop-iter2-broken`): under tmux the stdout `SessionIDInterceptor` never fires (`handler.go:303` early-return), so iter-1 uses a SYNTHETIC session id and iter-2 does `claude --resume <synthetic>` against a session that never existed. Fix = capture real `session_id` from the hook-relay payload. **Bead `hk-za5mz` (P1) — repair already dispatched 2026-05-30.** Until it lands, expect ~1–2 iter-2 casualties per wave.
+## Biggest thing that changed under us
+**The productization P0 gate is DONE** (named-queues, 2026-06-03): integration-branch enforcement landed — `hk-6r6xv` (target-branch threaded through the merge path + fail-closed guard), `hk-mkxw1` (`--target-branch`/`--protect-branch`/`--forbid-default-main`), `hk-sul12` (boot validation), `hk-eun55` (branchguard_test) — AND `hk-81n9r` killed the `daemon.go:576` empty→Single review-bypass. **harmonik can now target an integration branch and refuse main.** This was the gate for the user's work-project deploys.
 
-## Next step (control-points thread)
-Keep dispatching `hk-a8bg.*` child beads via `harmonik run --wave --max-concurrent 4-5` (one bead per subsystem-area to avoid merge collisions; `br ready | grep hk-a8bg`). After `hk-za5mz` lands + rebuild, re-dispatch the two casualties: **`hk-a8bg.26`** (failed reviewer BLOCK — needs rework) and **`hk-a8bg.35`** (iter-2 casualty). `hk-a8bg.5` is refs=5 — verify/close as subsumed.
-
-## CRITICAL coordination (concurrent agent + flywheel)
-harmonik allows only ONE daemon + ONE active queue per project. The flywheel thread and another agent share this repo/daemon. **Before dispatching: `pgrep -f "harmonik run"` (must be empty) and check no `.harmonik/queue.json` is active.** Don't `git reset --hard` while any daemon runs. Don't touch the flywheel thread's untracked `internal/supervise/`.
+## Next step
+1. **Validate the integration-branch path end-to-end** before any work-repo deploy (run a bead with `--target-branch X --protect-branch main`, confirm main untouched).
+2. Build the remaining `codename:productization` tiers (`br list --label codename:productization`). controlpoints lane = onboarding templates + `harmonik init` (`hk-rqx5o`, `hk-y171w` — now unblocked); flywheel = README/manual docs; named-queues = standard-bead.dot review process (`hk-p0kum`/`hk-30vlb`) + merged-tree gate (`hk-o68j3`).
+3. Open risks (see memory `project_productization_initiative`): br/kerf install cmds undocumented (blocks a runnable README); API-key users hit the credit-burn class; keep review-loop as the DOT floor-fallback.
 
 ## Files to open first
-1. `~/.claude/projects/-Users-gb-github-harmonik/memory/reference_harmonik_wide_waves_disk.md` — operational rules (CPU knee=4-5 wide on 10 cores; `reset --hard origin/main` before every `go install`; `run_stale` triage; disk).
-2. `~/.claude/projects/-Users-gb-github-harmonik/memory/project_harmonik_reviewloop_iter2_broken.md` — the iter-2 root cause + fix path.
-3. `HANDOFF.md` — the concurrent flywheel thread (read so you don't collide).
+1. Memory `project_productization_initiative.md` — the plan, P0-done state, secret-sauce, risks.
+2. `br list --label codename:productization` — the 22-bead backlog.
+3. Memory `feedback_daemon_main_edits_and_parallel_helpers.md` + `reference_harmonik_daemon_supervisor.md` — the escape-detector + deploy/restart-backoff gotchas this session learned the hard way.
 
 ## Translations glossary
-- **control-points / `hk-a8bg.*`** = the Control-Points spec subsystem (gates/hooks/guards/budgets/policy/registry); epic `hk-a8bg`, many child behaviors.
-- **iter-2 / hk-za5mz class** = `claude --resume` resumes a synthetic (never-real) session id → no new work → no-progress fail. Root-caused; fix dispatched.
-- **iter-1 APPROVE** = bead passes review first try (works fine today).
-- **wave** = one `harmonik run --beads ... --wave` batch.
-
-## Notes
-- Pre-screen every bead (`git log --grep "Refs: <id>"` AND check the actual artifact) — many impls land without `Refs:` trailers.
-- Daemon must run inside tmux: `tmux new-session -d -s hkwaveN -c <repo> "harmonik run ... --notify-stream 2>&1 | tee /tmp/harmonik-waveN.log; echo HARMONIK_RUN_EXITED_${PIPESTATUS[0]} >> ..."`, then Monitor the tee'd log + `.harmonik/events/events.jsonl`.
+- **codename:productization** = the initiative to make harmonik deployable on new/work projects (onboarding, README, integration-branch enforcement, review-embedding DOT process).
+- **integration-branch gate / P0** = making the daemon merge to a configured branch and fail-closed refuse main (was hardcoded to main; now done).
+- **review-loop-off (06-01→06-02)** = `--beads` dispatch minted empty workflow_mode → no review; ~117 commits landed unreviewed; mechanism fixed (`hk-rssrg`) + root cause closed (`hk-81n9r`).
+- **standard-bead.dot** = the proposed DOT process where review is a non-bypassable node (implement→gate→review→merge).
+- **escape-detector** = daemon guard that fails a bead if main's working tree is dirty (don't hand-edit main while a queue runs).

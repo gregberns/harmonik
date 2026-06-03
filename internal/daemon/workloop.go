@@ -1157,7 +1157,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							}
 							for _, g := range otherQ.Groups {
 								for _, item := range g.Items {
-									if item.BeadID == snapItemBeadID && item.Status == queue.ItemStatusDispatched {
+									if item.BeadID == snapItemBeadID &&
+										(item.Status == queue.ItemStatusDispatched || item.Status == queue.ItemStatusCompleted) {
 										crossQueueConflict = otherName
 										break
 									}
@@ -1191,7 +1192,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 									liveQ.QueueID, persistErr)
 							}
 							lq.Done()
-							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched from queue %q — failing cross-queue duplicate item (hk-a11re)\n",
+							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched/completed from queue %q — failing cross-queue duplicate item (hk-a11re, hk-dorz9)\n",
 								snapItemBeadID, crossQueueConflict)
 							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 							continue

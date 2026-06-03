@@ -24,6 +24,7 @@ SUBCOMMANDS
   veto-verdict     Veto a pending reconciliation verdict (daemon must be running)
   graph            Workflow graph utilities (validate, etc.)
   supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
+  keeper           Context watcher for a managed agent pane (session-keeper Phase-1)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   tmux-start       Bootstrap a tmux session and start the daemon inside it
   hook-relay       Forward a Claude hook event to the daemon (internal use)

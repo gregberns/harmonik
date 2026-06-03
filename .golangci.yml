@@ -101,6 +101,20 @@ linters:
             - { pkg: "github.com/sashabaranov/go-openai", desc: "PL-INV-002: daemon must not import any LLM SDK" }
             - { pkg: "github.com/liushuangls/go-anthropic", desc: "PL-INV-002: daemon must not import any LLM SDK" }
   
+        # keeper: stdlib + core + eventbus + self-import (external test pattern);
+        # MUST NOT import daemon or workloop.
+        # Rationale: codename:session-keeper (hk-ekap1); bead hk-fzzc6.
+        keeper:
+          files: ["**/internal/keeper/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/keeper"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keeper MUST NOT import daemon (session-keeper spec hk-ekap1)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/workloop", desc: "keeper MUST NOT import workloop (session-keeper spec hk-ekap1)" }
+
         # Leaf: internal/core must not import any sibling subsystem.
         # In depguard v2 a deny-only rule defaults to stdlib-only; we must list
         # the narrow set of external deps core is permitted to use.

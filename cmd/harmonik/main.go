@@ -349,6 +349,28 @@ EXAMPLES
 		return runBeadSubcommand(os.Args[2:])
 	}
 
+	// harmonik keeper --agent <name> [flags] — context watcher for a managed
+	// agent pane (session-keeper Phase-1, codename:session-keeper, hk-ekap1).
+	// Dispatched before flag.Parse so that the global flag set does not reject
+	// the subcommand-specific flags (--agent, --tmux, --warn-pct, --act-pct).
+	//
+	// Exit-code contract: 0 success/no-op, 1 arg/IO error, 2 lock held.
+	//
+	// Spec ref: codename:session-keeper (hk-ekap1); bead hk-fzzc6.
+	if len(os.Args) >= 2 && os.Args[1] == "keeper" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		for _, arg := range subArgs {
+			if arg == "--help" || arg == "-h" {
+				fmt.Print(keeperTopUsage) //nolint:forbidigo // help output to stdout is intentional (hk-fzzc6)
+				return 0
+			}
+		}
+		return runKeeperSubcommand(subArgs)
+	}
+
 	// harmonik supervise {start,stop,status,attach,restart,logs} — manage the
 	// supervisor/cognition process per §PL-019. Dispatched before flag.Parse so
 	// that the global flag set does not reject subcommand-specific flags.

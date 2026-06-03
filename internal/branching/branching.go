@@ -71,6 +71,11 @@ type Defaults struct {
 	// LandingStrategy selects squash or cherry-pick merge behaviour.
 	// Corresponds to the YAML key defaults.landing_strategy. Spec default: "squash".
 	LandingStrategy LandingStrategy
+
+	// ProtectBranches is the set of branch names the daemon must never use as
+	// a merge target. Corresponds to the YAML key defaults.protect_branches.
+	// The zero value (nil) means no project-level protection list.
+	ProtectBranches []string
 }
 
 // rawFile is the top-level shape decoded from the YAML file.
@@ -160,6 +165,7 @@ func parse(path string, data []byte) (Defaults, error) {
 		"start_from":       true,
 		"lands_on":         true,
 		"landing_strategy": true,
+		"protect_branches": true,
 	}
 
 	for k, v := range raw.Defaults {
@@ -170,24 +176,46 @@ func parse(path string, data []byte) (Defaults, error) {
 			)
 			continue
 		}
-		str, ok := v.(string)
-		if !ok {
-			return Defaults{}, &ErrMalformedYAML{
-				Path:  path,
-				Cause: fmt.Errorf("key %q: expected string, got %T", k, v),
-			}
-		}
 		switch k {
-		case "start_from":
-			out.StartFrom = str
-		case "lands_on":
-			out.LandsOn = str
-		case "landing_strategy":
-			switch LandingStrategy(str) {
-			case LandingStrategySquash, LandingStrategyCherryPick:
-				out.LandingStrategy = LandingStrategy(str)
-			default:
-				return Defaults{}, &ErrInvalidLandingStrategy{Path: path, Value: str}
+		case "protect_branches":
+			list, ok := v.([]interface{})
+			if !ok {
+				return Defaults{}, &ErrMalformedYAML{
+					Path:  path,
+					Cause: fmt.Errorf("key %q: expected list of strings, got %T", k, v),
+				}
+			}
+			out.ProtectBranches = make([]string, 0, len(list))
+			for i, item := range list {
+				s, ok := item.(string)
+				if !ok {
+					return Defaults{}, &ErrMalformedYAML{
+						Path:  path,
+						Cause: fmt.Errorf("key %q: item %d: expected string, got %T", k, i, item),
+					}
+				}
+				out.ProtectBranches = append(out.ProtectBranches, s)
+			}
+		default:
+			str, ok := v.(string)
+			if !ok {
+				return Defaults{}, &ErrMalformedYAML{
+					Path:  path,
+					Cause: fmt.Errorf("key %q: expected string, got %T", k, v),
+				}
+			}
+			switch k {
+			case "start_from":
+				out.StartFrom = str
+			case "lands_on":
+				out.LandsOn = str
+			case "landing_strategy":
+				switch LandingStrategy(str) {
+				case LandingStrategySquash, LandingStrategyCherryPick:
+					out.LandingStrategy = LandingStrategy(str)
+				default:
+					return Defaults{}, &ErrInvalidLandingStrategy{Path: path, Value: str}
+				}
 			}
 		}
 	}

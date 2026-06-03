@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -614,6 +615,29 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeReviewLoop for the review-loop default")
 	} else if !workflowModeDefault.Valid() {
 		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
+	}
+
+	// WM-005b: apply project-level branching defaults from .harmonik/branching.yaml.
+	//
+	// Precedence: CLI flag > branching.yaml > built-in daemon default.
+	// Only fields left at their zero value (empty string / nil slice) are filled
+	// from the file; a flag-supplied value is never overwritten.
+	//
+	// This block MUST run before resolveTargetBranch and the hk-sul12 guard so
+	// that both operate on the fully-resolved cfg (flag or YAML, not zero value).
+	//
+	// Bead ref: hk-zl4sl.
+	if cfg.ProjectDir != "" {
+		branchingDefaults, branchingErr := branching.Load(cfg.ProjectDir)
+		if branchingErr != nil {
+			return fmt.Errorf("daemon.Start: load .harmonik/branching.yaml: %w", branchingErr)
+		}
+		if cfg.TargetBranch == "" && branchingDefaults.LandsOn != "" {
+			cfg.TargetBranch = branchingDefaults.LandsOn
+		}
+		if len(cfg.ProtectBranches) == 0 && len(branchingDefaults.ProtectBranches) > 0 {
+			cfg.ProtectBranches = branchingDefaults.ProtectBranches
+		}
 	}
 
 	// hk-sul12: fail-closed branch-protection validation.

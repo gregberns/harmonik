@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestLoad_FileAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load with absent file: unexpected error: %v", err)
 	}
-	if got != (branching.Defaults{}) {
+	if !reflect.DeepEqual(got, branching.Defaults{}) {
 		t.Fatalf("Load with absent file: expected zero Defaults, got %+v", got)
 	}
 }
@@ -46,7 +47,7 @@ func TestLoad_FileEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load with empty file: unexpected error: %v", err)
 	}
-	if got != (branching.Defaults{}) {
+	if !reflect.DeepEqual(got, branching.Defaults{}) {
 		t.Fatalf("Load with empty file: expected zero Defaults, got %+v", got)
 	}
 }
@@ -71,7 +72,7 @@ defaults:
 		LandsOn:         "main",
 		LandingStrategy: branching.LandingStrategySquash,
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load with valid file:\n  got  %+v\n  want %+v", got, want)
 	}
 }
@@ -159,6 +160,75 @@ defaults:
 	}
 }
 
+// TestLoad_ProtectBranches verifies that protect_branches is parsed as a list.
+func TestLoad_ProtectBranches(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, `
+version: 1
+defaults:
+  lands_on: harmonik/integration
+  protect_branches:
+    - main
+    - master
+`)
+	got, err := branching.Load(dir)
+	if err != nil {
+		t.Fatalf("Load (protect_branches): unexpected error: %v", err)
+	}
+	want := branching.Defaults{
+		Version:         1,
+		LandsOn:         "harmonik/integration",
+		ProtectBranches: []string{"main", "master"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Load (protect_branches):\n  got  %+v\n  want %+v", got, want)
+	}
+}
+
+// TestLoad_ProtectBranchesEmpty verifies that an empty protect_branches list
+// is accepted (results in a non-nil, empty slice).
+func TestLoad_ProtectBranchesEmpty(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, `
+version: 1
+defaults:
+  lands_on: main
+  protect_branches: []
+`)
+	got, err := branching.Load(dir)
+	if err != nil {
+		t.Fatalf("Load (protect_branches empty): unexpected error: %v", err)
+	}
+	if got.LandsOn != "main" {
+		t.Fatalf("LandsOn: got %q, want %q", got.LandsOn, "main")
+	}
+	if got.ProtectBranches == nil {
+		t.Fatal("ProtectBranches: expected non-nil empty slice, got nil")
+	}
+	if len(got.ProtectBranches) != 0 {
+		t.Fatalf("ProtectBranches: expected empty, got %v", got.ProtectBranches)
+	}
+}
+
+// TestLoad_ProtectBranchesBadType verifies that a non-list protect_branches
+// returns *ErrMalformedYAML.
+func TestLoad_ProtectBranchesBadType(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, `
+version: 1
+defaults:
+  protect_branches: main
+`)
+	_, err := branching.Load(dir)
+	if err == nil {
+		t.Fatal("Load (protect_branches bad type): expected error, got nil")
+	}
+	var target *branching.ErrMalformedYAML
+	if !errors.As(err, &target) {
+		t.Fatalf("Load (protect_branches bad type): expected *ErrMalformedYAML, got %T: %v", err, err)
+	}
+}
+
 // TestLoad_WrongVersion verifies that a version field other than 1 returns
 // *ErrUnsupportedVersion.
 func TestLoad_WrongVersion(t *testing.T) {
@@ -239,7 +309,7 @@ func TestLoadCached_AbsentThenPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCached absent: %v", err)
 	}
-	if got1 != (branching.Defaults{}) {
+	if !reflect.DeepEqual(got1, branching.Defaults{}) {
 		t.Fatalf("LoadCached absent: expected zero Defaults, got %+v", got1)
 	}
 

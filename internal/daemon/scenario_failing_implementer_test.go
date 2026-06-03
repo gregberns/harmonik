@@ -349,8 +349,9 @@ func TestScenario_FailingImplementer_RunFailed(t *testing.T) {
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
 		// Short timeout for scenario tests — the twin exits quickly on handler-fatal.
-		AgentReadyTimeout: 5 * time.Second,
-		LogWriter:         testLogWriter{t: t},
+		AgentReadyTimeout:   5 * time.Second,
+		LogWriter:           testLogWriter{t: t},
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.

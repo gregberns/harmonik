@@ -26,14 +26,14 @@ import (
 func TestDaemonStartCompiles(t *testing.T) {
 	t.Parallel()
 
-	t.Run("start-with-zero-config-returns-nil", func(t *testing.T) {
+	t.Run("start-with-minimal-config-returns-nil", func(t *testing.T) {
 		t.Parallel()
 
-		cfg := daemon.Config{}
+		cfg := daemon.Config{WorkflowModeDefault: core.WorkflowModeReviewLoop}
 		err := daemon.Start(context.Background(), cfg)
 		if err != nil {
-			t.Errorf("daemon.Start(Config{}) returned non-nil error: %v; "+
-				"stub Start must return nil until subsystem wiring is added", err)
+			t.Errorf("daemon.Start(minimal Config) returned non-nil error: %v; "+
+				"Start must return nil for a valid minimal config", err)
 		}
 	})
 
@@ -41,7 +41,7 @@ func TestDaemonStartCompiles(t *testing.T) {
 		t.Parallel()
 
 		// Config.LogWriter is nil → silences log output; must not panic.
-		cfg := daemon.Config{LogWriter: nil}
+		cfg := daemon.Config{LogWriter: nil, WorkflowModeDefault: core.WorkflowModeReviewLoop}
 		if err := daemon.Start(context.Background(), cfg); err != nil {
 			t.Errorf("daemon.Start with nil LogWriter returned error: %v", err)
 		}
@@ -112,8 +112,9 @@ func TestDaemonStart_PidfileBlocksSecondInvocation(t *testing.T) {
 
 	// Start with the same ProjectDir must fail because the lock is held.
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	startErr := daemon.Start(context.Background(), cfg)
 	if startErr == nil {
@@ -139,8 +140,9 @@ func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
@@ -194,8 +196,9 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 	}
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v", err)
@@ -241,8 +244,9 @@ func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	if err := daemon.Start(context.Background(), cfg); err != nil {
 		t.Fatalf("daemon.Start: %v; want nil (orphan sweep errors must not abort Start)", err)
@@ -282,8 +286,9 @@ func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	// Start MUST succeed even in a fresh directory with no orphans.
 	if err := daemon.Start(context.Background(), cfg); err != nil {
@@ -304,14 +309,14 @@ func wmdFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return pidfileFixtureProjectDir(t)
 }
 
-// TestWorkflowModeDefault_ZeroValueDefaultsToSingle asserts that when
+// TestWorkflowModeDefault_ZeroValueIsStartupError asserts that when
 // Config.WorkflowModeDefault is the zero value (empty string), daemon.Start
-// treats it as core.WorkflowModeSingle per §PL-004a ("When the field is
-// absent, the daemon's default workflow mode MUST be `single`").
+// returns a startup error (fail-closed per hk-81n9r / PL-004a). Callers must
+// set an explicit mode; the daemon no longer silently defaults to single.
 //
 // Spec ref: specs/process-lifecycle.md §4.1 PL-004a; §4.2 PL-005 step 0.
-// Bead ref: hk-7om2q.8.
-func TestWorkflowModeDefault_ZeroValueDefaultsToSingle(t *testing.T) {
+// Bead ref: hk-7om2q.8, hk-81n9r.
+func TestWorkflowModeDefault_ZeroValueIsStartupError(t *testing.T) {
 	t.Parallel()
 
 	projectDir, jsonlPath := wmdFixtureProjectDir(t)
@@ -319,10 +324,10 @@ func TestWorkflowModeDefault_ZeroValueDefaultsToSingle(t *testing.T) {
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
 		JSONLLogPath:        jsonlPath,
-		WorkflowModeDefault: "", // zero value — must be normalised to "single"
+		WorkflowModeDefault: "", // zero value — must be rejected (fail-closed per hk-81n9r)
 	}
-	if err := daemon.Start(context.Background(), cfg); err != nil {
-		t.Fatalf("daemon.Start with zero WorkflowModeDefault returned error: %v", err)
+	if err := daemon.Start(context.Background(), cfg); err == nil {
+		t.Fatal("daemon.Start with zero WorkflowModeDefault returned nil; want startup error (PL-004a fail-closed)")
 	}
 }
 
@@ -458,8 +463,9 @@ func TestDaemonStart_BindsSocket(t *testing.T) {
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.Start(ctx, daemon.Config{
-			ProjectDir:   projectDir,
-			JSONLLogPath: jsonlPath,
+			ProjectDir:          projectDir,
+			JSONLLogPath:        jsonlPath,
+			WorkflowModeDefault: core.WorkflowModeReviewLoop,
 		})
 	}()
 

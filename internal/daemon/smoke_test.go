@@ -279,11 +279,12 @@ func TestMVHSmoke(t *testing.T) {
 	t.Logf("smoke: seeded bead ID = %s", beadID)
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		JSONLLogPath:  jsonlPath,
-		BrPath:        brWrapper,
-		HandlerBinary: handlerScript,
-		HandlerEnv:    nil,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       handlerScript,
+		HandlerEnv:          nil,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// MVH gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a

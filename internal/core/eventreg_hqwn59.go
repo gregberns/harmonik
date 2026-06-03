@@ -317,6 +317,7 @@ func registerBusEvents() {
 //   - no_progress_detected       (§8.1a.5): O (ordinary — improvement-loop early-exit signal)
 //   - review_loop_cycle_complete (§8.1a.6): F (fsync-boundary — terminal routing landmark)
 //   - bead_label_conflict        (§8.8.6):  O (ordinary — claim-path observational evidence)
+//   - review_bypassed            (hk-81n9r): O (ordinary — audit event when workflow:single gates single mode)
 func registerReviewLoopEvents() {
 	mustRegister("implementer_resumed", func() EventPayload { return &ImplementerResumedPayload{} })
 	mustRegister("reviewer_launched", func() EventPayload { return &ReviewerLaunchedPayload{} })
@@ -325,6 +326,10 @@ func registerReviewLoopEvents() {
 	mustRegister("no_progress_detected", func() EventPayload { return &NoProgressDetectedPayload{} })
 	mustRegister("review_loop_cycle_complete", func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
 	mustRegister("bead_label_conflict", func() EventPayload { return &BeadLabelConflictPayload{} })
+	// review_bypassed (hk-81n9r): emitted when a bead's workflow:single label
+	// resolves at tier-1, gating single-mode dispatch behind an observable audit event.
+	// Durability class: O.
+	mustRegister("review_bypassed", func() EventPayload { return &ReviewBypassedPayload{} })
 }
 
 // registerQueueEvents registers all §8.10 queue lifecycle event payload

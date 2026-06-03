@@ -526,6 +526,7 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     5 * time.Second,
 		LogWriter:             testLogWriter{t: t},
+		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.StartForTesting with:
@@ -775,6 +776,7 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 		SkipRestartBackoff:    true,
 		AgentReadyTimeout:     10 * time.Second,
 		LogWriter:             testLogWriter{t: t},
+		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.

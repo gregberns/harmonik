@@ -229,10 +229,11 @@ func TestT3_DoubleInvocation(t *testing.T) {
 	t.Logf("T3-01: seeded bead %s", beadID)
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		JSONLLogPath:  jsonlPath,
-		BrPath:        brWrapper,
-		HandlerBinary: slowHandler,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       slowHandler,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// Start daemon 1 in background — it will pick up the bead and block on slow handler.
@@ -298,10 +299,11 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 	t.Logf("T3-02: seeded bead %s", beadID)
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		JSONLLogPath:  jsonlPath,
-		BrPath:        brWrapper,
-		HandlerBinary: slowHandler,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       slowHandler,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq). Testing ctx
@@ -415,10 +417,11 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 	t.Logf("T3-03: seeded bead %s", beadID)
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		JSONLLogPath:  jsonlPath,
-		BrPath:        brWrapper,
-		HandlerBinary: slowHandler,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       slowHandler,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// ctx cancellation replaces syscall.Kill self-signal (hk-i4mtq).
@@ -526,9 +529,10 @@ func TestT3_StalePidfile(t *testing.T) {
 
 	// Now call daemon.Start with no BrPath so it acquires pidfile and returns immediately.
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
-		BrPath:       "", // no work loop; just test pidfile acquisition
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              "", // no work loop; just test pidfile acquisition
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -578,9 +582,10 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 	t.Logf("T3-05: seeded stale lease-lock at %s", lockPath)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
-		BrPath:       "", // no work loop; just orphan sweep on startup
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              "", // no work loop; just orphan sweep on startup
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

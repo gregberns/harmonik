@@ -65,6 +65,12 @@ func resolveWorkflowMode(
 		modePart := strings.TrimPrefix(workflowLabels[0], workflowLabelPrefix)
 		mode := core.WorkflowMode(modePart)
 		if mode.Valid() {
+			if mode == core.WorkflowModeSingle {
+				// Emit review_bypassed audit event (hk-81n9r): single mode is only
+				// reachable via an explicit per-bead label; the daemon default and
+				// tier-4 fallback both resolve to review-loop.
+				emitReviewBypassed(ctx, bus, bead, workflowLabels[0])
+			}
 			return mode
 		}
 		// Unknown mode value — treat tier 1 as absent and emit conflict event.
@@ -91,6 +97,27 @@ func resolveWorkflowMode(
 	// hk-g0ckv: review-loop is the system default; single is available via
 	// per-bead label or the --no-review-loop CLI flag.
 	return core.WorkflowModeReviewLoop
+}
+
+// emitReviewBypassed emits a review_bypassed event (hk-81n9r) when a bead's
+// explicit workflow:single label resolves at tier-1. Best-effort: emit errors
+// are silently discarded (the resolution path continues regardless).
+func emitReviewBypassed(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	bead core.BeadRecord,
+	label string,
+) {
+	pl := core.ReviewBypassedPayload{
+		BeadID:     string(bead.BeadID),
+		Label:      label,
+		BypassedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeReviewBypassed, b)
 }
 
 // emitBeadLabelConflict emits a bead_label_conflict event per

@@ -55,6 +55,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
@@ -106,8 +107,9 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 	// timeout guard so a regression that introduces a blocking flock would not
 	// hang the test suite indefinitely.
 	cfg := daemon.Config{
-		ProjectDir:   proj.projectDir,
-		JSONLLogPath: proj.jsonlPath,
+		ProjectDir:          proj.projectDir,
+		JSONLLogPath:        proj.jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	type startResult struct{ err error }
@@ -183,8 +185,9 @@ func TestScenario_PL002_StalePidfileRecovery(t *testing.T) {
 
 	// daemon.Start with BrPath="" skips the work loop and returns promptly.
 	cfg := daemon.Config{
-		ProjectDir:   proj.projectDir,
-		JSONLLogPath: proj.jsonlPath,
+		ProjectDir:          proj.projectDir,
+		JSONLLogPath:        proj.jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	startErr := daemon.Start(t.Context(), cfg)
 

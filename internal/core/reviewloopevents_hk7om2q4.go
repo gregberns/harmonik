@@ -643,3 +643,39 @@ func (p BeadLabelConflictPayload) Valid() bool {
 	}
 	return true
 }
+
+// ReviewBypassedPayload is the typed event payload for the review_bypassed event.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — informational audit event; the resolved mode
+// is authoritative in the run record, not in this event).
+//
+// Emitted during workflow-mode resolution (EM-012a §4.3) when a bead carries an
+// explicit workflow:single label that resolves at tier-1. The event gates the
+// single mode behind an observable audit trail so that review bypass is never
+// silent (hk-81n9r).
+//
+// # Payload fields
+//
+//   - bead_id    — opaque bead identifier per beads-integration.md §4.3 BI-008
+//   - label      — the workflow:<mode> label that triggered the bypass (e.g. "workflow:single")
+//   - bypassed_at — RFC 3339 wall-clock timestamp at resolution time
+type ReviewBypassedPayload struct {
+	// BeadID is the opaque bead identifier per beads-integration.md §4.3 BI-008.
+	// Required (non-empty).
+	BeadID string `json:"bead_id"`
+
+	// Label is the workflow:<mode> label that resolved at tier-1 to single mode,
+	// causing review to be bypassed. Required (non-empty).
+	Label string `json:"label"`
+
+	// BypassedAt is the RFC 3339 wall-clock timestamp at resolution time.
+	// Required (non-empty).
+	BypassedAt string `json:"bypassed_at"`
+}
+
+// Valid reports whether p is a well-formed ReviewBypassedPayload.
+func (p ReviewBypassedPayload) Valid() bool {
+	return p.BeadID != "" && p.Label != "" && p.BypassedAt != ""
+}

@@ -245,9 +245,10 @@ func TestDaemonStart_WorkLoopSkippedWithNoBrPath(t *testing.T) {
 	workloopFixtureGitRepo(t, projectDir)
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
-		BrPath:       "", // skip work loop
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              "", // skip work loop
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// daemon.Start should return promptly (no blocking work loop).

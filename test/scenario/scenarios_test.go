@@ -59,6 +59,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -194,9 +195,10 @@ func TestScenario_Fix2_SocketBoundBeforeTwin(t *testing.T) {
 	proj := scenarioFixtureProjectDir(t)
 
 	cfg := daemon.Config{
-		ProjectDir:   proj.projectDir,
-		JSONLLogPath: proj.jsonlPath,
-		BrPath:       "", // no work loop — we only test socket binding
+		ProjectDir:          proj.projectDir,
+		JSONLLogPath:        proj.jsonlPath,
+		BrPath:              "", // no work loop — we only test socket binding
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	cancel, done := scenarioFixtureStartDaemon(t, cfg)

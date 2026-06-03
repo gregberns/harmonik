@@ -408,6 +408,7 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 		NoAutoPull:            true, // queue-only dispatch; prevents br-ready pre-emption (hk-24xn1)
 		QueueStore:            qs,
 		LogWriter:             testLogWriter{t: t},
+		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
 	startDone := make(chan error, 1)
@@ -554,6 +555,7 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 		NoAutoPull:            true, // queue-only; prevents br-ready from racing the submit
 		QueueStore:            qs,
 		LogWriter:             testLogWriter{t: t},
+		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
 	startDone := make(chan error, 1)

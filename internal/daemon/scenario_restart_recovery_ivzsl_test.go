@@ -65,6 +65,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/queue"
@@ -429,6 +430,7 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		SkipBrHistoryRotation: true,
 		SkipRestartBackoff:    true,
 		LogWriter:             testLogWriter{t: t},
+		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.

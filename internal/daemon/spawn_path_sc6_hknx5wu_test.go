@@ -40,6 +40,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -70,6 +71,7 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 			// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 			// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 			// The bus + subscription wiring path runs in full.
+			WorkflowModeDefault: core.WorkflowModeReviewLoop,
 		}
 
 		if err := daemon.StartForTesting(context.Background(), cfg,
@@ -107,7 +109,8 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 
 		var notifyBuf bytes.Buffer
 		cfg := daemon.Config{
-			NotifyStream: &notifyBuf,
+			NotifyStream:        &notifyBuf,
+			WorkflowModeDefault: core.WorkflowModeReviewLoop,
 		}
 
 		if err := daemon.StartForTesting(context.Background(), cfg,
@@ -143,7 +146,7 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 
 		var capturedIDs []string
 
-		if err := daemon.StartForTesting(context.Background(), daemon.Config{},
+		if err := daemon.StartForTesting(context.Background(), daemon.Config{WorkflowModeDefault: core.WorkflowModeReviewLoop},
 			daemon.WithBusObserver(func(bus eventbus.EventBus) {
 				capturedIDs = eventbus.BusSubscribedConsumerIDs(bus)
 			}),
@@ -162,7 +165,7 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 		var capturedIDs []string
 		var notifyBuf bytes.Buffer
 
-		if err := daemon.StartForTesting(context.Background(), daemon.Config{NotifyStream: &notifyBuf},
+		if err := daemon.StartForTesting(context.Background(), daemon.Config{NotifyStream: &notifyBuf, WorkflowModeDefault: core.WorkflowModeReviewLoop},
 			daemon.WithBusObserver(func(bus eventbus.EventBus) {
 				capturedIDs = eventbus.BusSubscribedConsumerIDs(bus)
 			}),

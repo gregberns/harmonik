@@ -183,8 +183,9 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 	}
 
 	cfg := daemon.Config{
-		BrPath:     "", // no work loop; no bead ledger required
-		ProjectDir: "", // no filesystem-dependent paths (pidfile, socket, WAL)
+		BrPath:              "", // no work loop; no bead ledger required
+		ProjectDir:          "", // no filesystem-dependent paths (pidfile, socket, WAL)
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	startDone := make(chan error, 1)

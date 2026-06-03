@@ -11,6 +11,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -38,6 +39,7 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 		// Unit-test mode: no ProjectDir, no BrPath, no JSONL log.
 		// daemon.Start skips pidfile, orphan sweep, socket, and work loop.
 		// The bus + subscription path still runs in full.
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	if err := daemon.StartForTesting(context.Background(), cfg,
@@ -62,9 +64,10 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 	//   6. operator_resuming       — QueueOperatorEventConsumer resume → active (hk-7urls)
 	//   7. * (wildcard)            — SubscribeHub fans events to socket subscribers (hk-6ynv4)
 	//   8. * (wildcard)            — StaleWatcher per-run silence monitor (hk-wkzlc)
+	//   9. agent_rate_limit_status  — bandwidthTunerBackstop emergency backstop
 	//
 	// Any deviation indicates a composition-root wiring regression.
-	const wantSubscriptions = 8
+	const wantSubscriptions = 9
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"QueueOperatorEventConsumer.Subscribe must be called pre-Seal in daemon.Start (hk-7urls)",

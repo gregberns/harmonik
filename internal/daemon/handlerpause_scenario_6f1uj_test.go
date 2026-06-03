@@ -160,8 +160,9 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 	// This exercises the composition root's bus setup and subscription wiring
 	// without requiring a real br binary or project directory.
 	cfg := daemon.Config{
-		BrPath:     "", // no work loop; no bead ledger required
-		ProjectDir: "", // no filesystem-dependent paths
+		BrPath:              "", // no work loop; no bead ledger required
+		ProjectDir:          "", // no filesystem-dependent paths
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	startDone := make(chan error, 1)

@@ -324,20 +324,22 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 	parBeadIDs := throughputFixtureCreateBeads(t, parBrWrapper, beadCount)
 
 	seqCfg := daemon.Config{
-		ProjectDir:    seqProjectDir,
-		JSONLLogPath:  seqJSONLPath,
-		BrPath:        seqBrWrapper,
-		HandlerBinary: handlerScript,
-		HandlerEnv:    nil,
-		MaxConcurrent: 1,
+		ProjectDir:          seqProjectDir,
+		JSONLLogPath:        seqJSONLPath,
+		BrPath:              seqBrWrapper,
+		HandlerBinary:       handlerScript,
+		HandlerEnv:          nil,
+		MaxConcurrent:       1,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 	parCfg := daemon.Config{
-		ProjectDir:    parProjectDir,
-		JSONLLogPath:  parJSONLPath,
-		BrPath:        parBrWrapper,
-		HandlerBinary: handlerScript,
-		HandlerEnv:    nil,
-		MaxConcurrent: 4,
+		ProjectDir:          parProjectDir,
+		JSONLLogPath:        parJSONLPath,
+		BrPath:              parBrWrapper,
+		HandlerBinary:       handlerScript,
+		HandlerEnv:          nil,
+		MaxConcurrent:       4,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// ── Run sequential baseline and parallel run concurrently ─────────────────

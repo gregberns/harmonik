@@ -511,6 +511,14 @@ const (
 	// EventTypeReviewLoopCycleComplete is the review_loop_cycle_complete event type (§8.1a.6).
 	// Durability class: F. Emitted exactly once per cycle before run_completed/run_failed.
 	EventTypeReviewLoopCycleComplete EventType = "review_loop_cycle_complete"
+
+	// EventTypeReviewBypassed is the review_bypassed event type.
+	// Emitted during workflow-mode resolution (EM-012a) when a bead carries an
+	// explicit workflow:single label, gating the single mode behind an observable
+	// audit event. Durability class: O (ordinary — informational; the resolution
+	// outcome is recorded in the run record).
+	// Bead ref: hk-81n9r.
+	EventTypeReviewBypassed EventType = "review_bypassed"
 )
 
 // ---------------------------------------------------------------------------

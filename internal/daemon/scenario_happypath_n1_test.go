@@ -340,7 +340,8 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		// is the OS scheduler quantum) while keeping the test under 10 s in CI.
 		AgentReadyTimeout: 5 * time.Second,
 		// LogWriter: direct daemon logs to test output for debugging.
-		LogWriter: testLogWriter{t: t},
+		LogWriter:           testLogWriter{t: t},
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.

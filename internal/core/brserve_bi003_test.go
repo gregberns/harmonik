@@ -63,6 +63,10 @@ var brServeSkippedDirPrefixes = []string{
 	"vendor",
 	".claude",
 	".kerf",
+	// .harmonik/ contains active worktrees which are repo copies; each worktree
+	// has its own brserve_bi003_test.go (legitimately containing "br serve"),
+	// causing false positives when the daemon has in-flight beads.
+	".harmonik",
 }
 
 // brServeTargetExtensions lists the file extensions (and exact basenames) that

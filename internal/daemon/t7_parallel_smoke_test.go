@@ -299,12 +299,13 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 	handlerScript := parallelSmokeFixtureSleepHandlerScript(t)
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		JSONLLogPath:  jsonlPath,
-		BrPath:        brWrapper,
-		HandlerBinary: handlerScript,
-		HandlerEnv:    nil,
-		MaxConcurrent: 2,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       handlerScript,
+		HandlerEnv:          nil,
+		MaxConcurrent:       2,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.

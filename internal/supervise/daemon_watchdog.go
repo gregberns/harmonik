@@ -24,12 +24,19 @@ type DaemonWatchdogSpec struct {
 	CheckInterval time.Duration
 	// DialTimeout caps the per-probe connection attempt. Default: 3s.
 	DialTimeout time.Duration
-	// MaxRevives is the maximum number of revival attempts before the watchdog
-	// gives up. -1 = unlimited. Default: 3.
+	// MaxRevives is the maximum number of consecutive failed revival attempts
+	// before the watchdog gives up. The counter resets to 0 whenever the daemon
+	// is confirmed alive after a revival, so isolated clean revivals spread over
+	// days do not accumulate toward this cap. -1 = unlimited. Default: 3.
 	MaxRevives int
-	// ReviveBackoff is the grace period after spawning before the next liveness
-	// probe, giving the daemon time to bind its socket. Default: 10s.
+	// ReviveBackoff is the polling interval used while waiting for a just-revived
+	// daemon to bind its socket. Default: 10s.
 	ReviveBackoff time.Duration
+	// ReviveWindow is the maximum time the watchdog waits for a revived daemon to
+	// bind its socket before counting the revival as failed. Must cover the
+	// daemon's maximum possible boot-backoff delay (restartBackoffCap = 10m).
+	// Default: 15m.
+	ReviveWindow time.Duration
 }
 
 func (s *DaemonWatchdogSpec) applyDefaults() {
@@ -44,6 +51,10 @@ func (s *DaemonWatchdogSpec) applyDefaults() {
 	}
 	if s.ReviveBackoff == 0 {
 		s.ReviveBackoff = 10 * time.Second
+	}
+	if s.ReviveWindow == 0 {
+		// 15m covers restartBackoffCap (10m) plus margin for socket-bind latency.
+		s.ReviveWindow = 15 * time.Minute
 	}
 }
 
@@ -104,20 +115,27 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			revives++
 			dw.log.Warn("daemon-watchdog: spawning daemon",
 				"attempt", revives, "cmd", dw.spec.Command)
-			if err := dw.revive(); err != nil {
+			spawnErr := dw.revive()
+			if spawnErr != nil {
 				dw.log.Error("daemon-watchdog: spawn failed",
-					"attempt", revives, "err", err)
-			} else {
-				dw.log.Info("daemon-watchdog: daemon spawned — waiting for socket bind",
-					"backoff", dw.spec.ReviveBackoff)
+					"attempt", revives, "err", spawnErr)
+				// Spawn failed — skip the revival window poll; the daemon
+				// process was never started so it cannot bind the socket.
+				continue
 			}
+			dw.log.Info("daemon-watchdog: daemon spawned — waiting for socket bind",
+				"window", dw.spec.ReviveWindow, "poll_interval", dw.spec.ReviveBackoff)
 
-			// Grace period: let the daemon bind its socket before the next probe.
-			select {
-			case <-ctx.Done():
-				dw.log.Info("daemon-watchdog: stopped during revival backoff")
-				return ctx.Err()
-			case <-time.After(dw.spec.ReviveBackoff):
+			// Poll until the daemon binds its socket or ReviveWindow expires.
+			// ReviveWindow must be >= restartBackoffCap (10m) so that a daemon
+			// sleeping through its boot-backoff delay does not consume a phantom
+			// revive slot before it has had a chance to bind.
+			// If the daemon comes alive within the window, reset the windowed
+			// counter so isolated clean revivals spread over days do not accumulate
+			// toward the lifetime cap.
+			if dw.pollUntilAlive(ctx, dw.spec.ReviveWindow, dw.spec.ReviveBackoff) {
+				revives = 0
+				dw.log.Info("daemon-watchdog: daemon confirmed alive after revival — windowed counter reset")
 			}
 		}
 	}
@@ -134,6 +152,33 @@ func (dw *DaemonWatchdog) isDaemonAlive(ctx context.Context) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// pollUntilAlive probes isDaemonAlive at interval until the daemon is reachable
+// or window elapses. Returns true when the daemon becomes reachable, false when
+// the window expires or ctx is cancelled. The final sleep is capped at the
+// remaining window time so the function does not overshoot the deadline by a
+// full interval.
+func (dw *DaemonWatchdog) pollUntilAlive(ctx context.Context, window, interval time.Duration) bool {
+	deadline := time.Now().Add(window)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		sleep := interval
+		if remaining < sleep {
+			sleep = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(sleep):
+		}
+		if dw.isDaemonAlive(ctx) {
+			return true
+		}
+	}
 }
 
 // revive spawns the daemon as a detached process (setsid) so it can outlive

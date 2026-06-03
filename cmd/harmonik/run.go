@@ -119,6 +119,9 @@ func runBeadSubcommand(subArgs []string) int {
 	noNotifyStream := false // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
 	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
 	dryRun := false        // --dry-run / --plan-only: print plan without launching (hk-cebjc)
+	targetBranchFlag := ""   // --target-branch (hk-mkxw1)
+	var protectBranchesFlag []string // --protect-branch repeatable (hk-mkxw1)
+	forbidUnprotectedDefaultFlag := false // --forbid-default-main (hk-mkxw1)
 	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
 
@@ -225,6 +228,24 @@ func runBeadSubcommand(subArgs []string) int {
 			key := kv[:eqIdx]
 			val := kv[eqIdx+1:]
 			templateParams[key] = val
+
+		// --target-branch (hk-mkxw1)
+		case arg == "--target-branch" && i+1 < len(subArgs):
+			i++
+			targetBranchFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--target-branch="):
+			targetBranchFlag = strings.TrimPrefix(arg, "--target-branch=")
+
+		// --protect-branch (repeatable, hk-mkxw1)
+		case arg == "--protect-branch" && i+1 < len(subArgs):
+			i++
+			protectBranchesFlag = append(protectBranchesFlag, subArgs[i])
+		case strings.HasPrefix(arg, "--protect-branch="):
+			protectBranchesFlag = append(protectBranchesFlag, strings.TrimPrefix(arg, "--protect-branch="))
+
+		// --forbid-default-main (hk-mkxw1)
+		case arg == "--forbid-default-main":
+			forbidUnprotectedDefaultFlag = true
 
 		// --dry-run / --plan-only (hk-cebjc): print plan without launching
 		case arg == "--dry-run" || arg == "--plan-only":
@@ -657,18 +678,21 @@ func runBeadSubcommand(subArgs []string) int {
 	maxSessions := spawnCapFromEnv(maxConcurrent)
 
 	cfg := daemon.Config{
-		ProjectDir:         projectDir,
-		BrPath:             brPath,
-		JSONLLogPath:       jsonlLogPath,
-		MaxConcurrent:      maxConcurrent, // hk-w3cp1: user-controlled concurrency
-		Substrate:          daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
-		DaemonBinaryPath:   daemonBinaryPath,
-		BinaryCommitHash:   commitHash,
-		CancelOnQueueDrain: cancelStopDispatch, // stop dispatch on success (hk-icecw, hk-2o2i9)
-		CancelOnQueueExit:  cancelStopDispatch, // stop dispatch on failure (hk-8jh26, hk-2o2i9)
-		StopDispatchCtx:    stopDispatchCtx,    // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
-		QueueStore:         qs,                 // retained for post-Start status inspection (hk-8jh26 Fix 2)
-		NotifyStream:       notifyWriter,        // hk-ibilr: per-bead completion lines
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrent, // hk-w3cp1: user-controlled concurrency
+		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
+		DaemonBinaryPath:         daemonBinaryPath,
+		BinaryCommitHash:         commitHash,
+		CancelOnQueueDrain:       cancelStopDispatch,         // stop dispatch on success (hk-icecw, hk-2o2i9)
+		CancelOnQueueExit:        cancelStopDispatch,         // stop dispatch on failure (hk-8jh26, hk-2o2i9)
+		StopDispatchCtx:          stopDispatchCtx,            // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
+		QueueStore:               qs,                         // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:             notifyWriter,               // hk-ibilr: per-bead completion lines
+		TargetBranch:             targetBranchFlag,           // hk-mkxw1: merge target branch
+		ProtectBranches:          protectBranchesFlag,        // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
 	}
 
 	// hk-qd3f4: hard-exit watchdog — independent of dispatch state.

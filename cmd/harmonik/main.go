@@ -492,6 +492,23 @@ EXAMPLES
 	flag.BoolVar(&autoPullFlag, "auto-pull", false, "enable br-ready fallback poll (historical single-daemon topology; opt-in)")
 	flag.BoolVar(new(bool), "no-auto-pull", false, "no-op alias; queue-only is now the default (back-compat)")
 
+	// --target-branch: branch the daemon merges completed bead branches into
+	// (default "main").  Threaded into mergeRunBranchToMain by codename:productization
+	// beads (hk-mkxw1).
+	var targetBranchFlag string
+	flag.StringVar(&targetBranchFlag, "target-branch", "", "branch to merge completed bead branches into (default: main)")
+
+	// --protect-branch: repeatable; names a branch the daemon must never merge
+	// into or overwrite (hk-mkxw1).
+	var protectBranchesFlag stringSliceFlag
+	flag.Var(&protectBranchesFlag, "protect-branch", "branch name to protect from daemon merges (repeatable)")
+
+	// --forbid-default-main: refuse to start when the repository default branch
+	// is not in the protected set (hk-mkxw1).
+	var forbidUnprotectedDefaultFlag bool
+	flag.BoolVar(&forbidUnprotectedDefaultFlag, "forbid-default-main", false,
+		"refuse to start if the default branch (main/master) is not in --protect-branch")
+
 	flag.Usage = harmonikUsage
 	flag.Parse()
 
@@ -610,6 +627,9 @@ EXAMPLES
 		BinaryCommitHash:         commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag, // hk-ymav1: bandwidth auto-tuner
 		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-rssrg: default to review-loop
+		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
+		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.
@@ -623,6 +643,19 @@ EXAMPLES
 	}
 
 	return 0
+}
+
+// stringSliceFlag is a flag.Value implementation for repeatable string flags
+// such as --protect-branch.  Each invocation of Set appends one value; the
+// zero value (nil slice) is safe and means "no values provided".
+//
+// Bead ref: hk-mkxw1.
+type stringSliceFlag []string
+
+func (f *stringSliceFlag) String() string { return strings.Join(*f, ",") }
+func (f *stringSliceFlag) Set(v string) error {
+	*f = append(*f, v)
+	return nil
 }
 
 // spawnCapFromEnv resolves the concurrent-session spawn ceiling (hk-xb5yi).

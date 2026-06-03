@@ -422,6 +422,44 @@ type Config struct {
 	//
 	// Bead ref: hk-ymav1.
 	SubscriptionTokenCeiling int64
+
+	// TargetBranch is the branch that the daemon merges completed bead branches
+	// into.  When empty the daemon defaults to "main".
+	//
+	// The composition root exposes this as --target-branch.  The three beads that
+	// thread this value into mergeRunBranchToMain (target-branch threading,
+	// start_from retarget, post-merge build gate) must be dispatched serially and
+	// are tracked under codename:productization.
+	//
+	// Bead ref: hk-mkxw1.
+	TargetBranch string
+
+	// ProtectBranches is the set of branch names the daemon must never merge
+	// into or overwrite.  Branches named here are silently excluded from any
+	// merge target consideration; an attempt to set TargetBranch to a protected
+	// branch is rejected at startup with an error.
+	//
+	// The composition root exposes this as --protect-branch (repeatable).
+	//
+	// The zero value (nil) means no additional protection beyond the daemon's
+	// built-in safeguards.
+	//
+	// Bead ref: hk-mkxw1.
+	ProtectBranches []string
+
+	// ForbidUnprotectedDefault, when true, causes the daemon to refuse to start
+	// if the repository's default branch (typically "main" or "master") is not
+	// listed in ProtectBranches.  This is a safety guard for multi-project
+	// deployments where accidental merges to the default branch must be
+	// prevented.
+	//
+	// When false (the default) the daemon starts normally regardless of whether
+	// the default branch appears in ProtectBranches.
+	//
+	// The composition root exposes this as --forbid-default-main.
+	//
+	// Bead ref: hk-mkxw1.
+	ForbidUnprotectedDefault bool
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the

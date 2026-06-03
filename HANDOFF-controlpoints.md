@@ -1,34 +1,40 @@
-<!-- PP-TRIAL:v2 2026-06-03 main — controlpoints thread. The control-points epic (hk-a8bg) is long DONE; this thread now runs general orchestration. The shared HANDOFF.md and the flywheel/named-queues threads are SEPARATE concurrent work — do NOT clobber them. -->
+<!-- PP-TRIAL:v2 2026-06-03 (evening) main — controlpoints thread. Productization-build session. Landed 4 reviewed beads + verified the integration-branch P0 gate end-to-end. ACTIVE INCIDENT: hk-4l7zs spawn-semaphore slot-leak (daemon at -c4, intermittent launch wedges) — named-queues OWNS the fix (authoring in a worktree, offline mid-fix), will broadcast at redeploy. The shared HANDOFF.md + flywheel/named-queues threads are SEPARATE concurrent work — do NOT clobber. -->
 
-ROLE: orchestrator. Delegate. Dispatch through the persistent daemon's queue per skill `harmonik-dispatch`. Do NOT edit files in main's working tree while a queue is active (trips the escape-detector).
+ROLE: orchestrator. Delegate via the persistent daemon's queue (skill `harmonik-dispatch`). Use your OWN `--queue controlpoints` (isolated from `main` churn). Do NOT edit main's working tree while a queue is ACTIVE (escape-detector). Failed-twice → investigator, never a 3rd blind re-dispatch.
 
-# State: CLEAN. Everything committed + pushed; nothing of mine in flight.
+# State: CLEAN. Daemon idle (no active queues). main tree clean after this commit.
+- `main` queue is `paused-by-failure` holding the peer's `hk-mgoo7` (wedged on hk-4l7zs) — LEAVE IT; named-queues re-dispatches post-fix.
+- ~9 stale `paused-by-failure` cruft queues from peers (agc*, fw*, nqfix, nqops, gatefix, followups) clutter `queue list` — not mine to cancel.
 
-Daemon queue was **active** at handoff (likely flywheel's session-keeper) — leave it alone. Peer `named-queues` parked clean (their note: "branch-safety P0 done, beads committed 57bf892b, nothing in flight").
+## What this session landed (all merged+closed, all reviewed clean)
+- **hk-rqx5o** (P1) — `docs/templates/AGENTS.template.md` + `docs/setup-agent-prompt.md` (onboarding, parameterized by $PROJECT_DIR/$TARGET_BRANCH). Commit 12c9accb.
+- **hk-y171w** (P2) — `harmonik init` bootstrap subcommand (11 init steps: doctor, .harmonik dirs, br init, config/branching.yaml, template render, supervise). Commit 9b3ab859.
+- **hk-zl4sl** (P1) — `branching.yaml` `protect_branches` + daemon lands_on/deny-list fallback. Commit 0f48f44a. **BLOCKED on attempt 1** (review gate caught a real safety-bypass: wiring block placed after resolveTargetBranch+the hk-sul12 guard → lands_on DOA + YAML protect_branches bypassed the deny-list). Re-dispatched with the reviewer's precise fix embedded in `br update --design` → clean APPROVE. Pattern worth reusing.
+- **hk-gwkgr** (P2) — checked `scripts/hk-keeper.sh` into the repo (parameterized project-path + concurrency). Commit ef291043.
 
-## What this session did (all merged+pushed)
-- Confirmed **control-points epic `hk-a8bg` DONE**; closed a dangling scenario-test bead (`hk-bnm89`).
-- **Friction batch** landed: `hk-i2ie5` (scenario commit-gate), `hk-yyso7` (always-on merge mutex), `hk-1k5as` (queue CLI), `hk-x6j6r` (eventbus layering).
-- **Core-coverage epic `hk-j3hrn`**: decomposed → 7 property/unit beads → `internal/core` **80.7%→95.8%**, epic closed, `coverage.baseline` ratcheted.
-- **Independent review** of the ~117 commits that landed UNREVIEWED while the review-loop was off (06-01→06-02): filed `hk-ur428` (scenario-gate false-block), `hk-xux36` (escape-detector false-NEGATIVE), `hk-dorz9` (cross-queue dedup completed-gap), plus earlier `hk-ycp62` (merged-tree gate) + `hk-27tp3` (BI-003 sensor).
-- **Productization initiative** (`codename:productization`): 9-agent design workflow → **22 beads**; added a README safety banner.
+## Verified, not built: the P0 integration-branch gate
+Read-only end-to-end audit (commits hk-6r6xv/mkxw1/sul12/eun55): fail-closed enforced at **3 layers** — boot validation (`daemon.go:633-641`), dispatch `lands_on` guard (`workloop.go:1691`), in-merge guard (`workloop.go:3370-3385`); merge ops parameterized; unit + 4 scenario tests PASS incl. `TestBranchGuard_TargetBranchMergeIsolation` (main reflog pinned). **Code-level deploy-to-a-work-repo gate is CLEARED.** Remaining gate is ONBOARDING (see below), not the merge path.
 
-## Biggest thing that changed under us
-**The productization P0 gate is DONE** (named-queues, 2026-06-03): integration-branch enforcement landed — `hk-6r6xv` (target-branch threaded through the merge path + fail-closed guard), `hk-mkxw1` (`--target-branch`/`--protect-branch`/`--forbid-default-main`), `hk-sul12` (boot validation), `hk-eun55` (branchguard_test) — AND `hk-81n9r` killed the `daemon.go:576` empty→Single review-bypass. **harmonik can now target an integration branch and refuse main.** This was the gate for the user's work-project deploys.
+## Two incidents handled
+1. **Disk 100% / 1.2GiB free** (wide-waves no-space class) → `go clean -cache` reclaimed 6.8GiB. Caused hk-rqx5o's first failure (transient socket drop).
+2. **hk-4l7zs spawn-semaphore SLOT-LEAK** (`tmuxsubstrate.go:216`) — multiple beads wedge at `launch_initiated` (no implementer spawn) → `no_commit` fail at 30min, intermittent under contention. named-queues OWNS it; daemon now at `--max-concurrent 4`; they are authoring the code fix in a worktree off the daemon and will broadcast at redeploy. Signature + workaround recorded in memory `reference_spawn_semaphore_wedge`.
 
 ## Next step
-1. **Validate the integration-branch path end-to-end** before any work-repo deploy (run a bead with `--target-branch X --protect-branch main`, confirm main untouched).
-2. Build the remaining `codename:productization` tiers (`br list --label codename:productization`). controlpoints lane = onboarding templates + `harmonik init` (`hk-rqx5o`, `hk-y171w` — now unblocked); flywheel = README/manual docs; named-queues = standard-bead.dot review process (`hk-p0kum`/`hk-30vlb`) + merged-tree gate (`hk-o68j3`).
-3. Open risks (see memory `project_productization_initiative`): br/kerf install cmds undocumented (blocks a runnable README); API-key users hit the credit-burn class; keep review-loop as the DOT floor-fallback.
+1. **Watch the bus** (`harmonik comms recv --agent controlpoints --follow`) for named-queues' hk-4l7zs **fix-redeploy** broadcast. After redeploy, concurrency may go back up; `hk-mgoo7` gets re-dispatched by them.
+2. **Remaining `codename:productization` beads I did NOT take** (`br list --label codename:productization --status open`), with WHY:
+   - **Content-gated (need context a worktree agent lacks):** `hk-q75ej` (README rewrite — blocked on pinned br/kerf install commands), `hk-3nabd` (AGENT_OPERATING_MANUAL — distills 5 PRIVATE memories not in the repo). To dispatch these well, first pin install cmds / inject the memory content into the bead `--design`.
+   - **named-queues conflict zone (daemon/DOT code):** `hk-tldws` (queue-submit workflow_mode stamp bug), `hk-p0kum`/`hk-30vlb`/`hk-n7fw3` (standard-bead.dot process), `hk-tnmjy` (review_gate_anomaly alarm), `hk-4rkrg` (smoke-bead verification). Leave until named-queues' hk-4l7zs work merges to avoid merge races.
+   - **Then-unblocked docs:** `hk-y5ke5` (AGENT_INDEX bridge links) needs README + operating-manual to exist first; `hk-704db`/`hk-nmni6`/`hk-gax8v` are P3.
+3. Open risks (memory `project_productization_initiative`): pin br/kerf install cmds (blocks runnable README); API-key credit-burn warning in onboarding; keep review-loop as the DOT floor-fallback.
 
 ## Files to open first
-1. Memory `project_productization_initiative.md` — the plan, P0-done state, secret-sauce, risks.
-2. `br list --label codename:productization` — the 22-bead backlog.
-3. Memory `feedback_daemon_main_edits_and_parallel_helpers.md` + `reference_harmonik_daemon_supervisor.md` — the escape-detector + deploy/restart-backoff gotchas this session learned the hard way.
+1. Memory `project_productization_initiative.md` (plan, P0-DONE+VERIFIED, risks) + `reference_spawn_semaphore_wedge.md` (the incident).
+2. `br list --label codename:productization --status open` — the remaining backlog.
+3. skill `harmonik-dispatch` + `docs/known-workarounds.md`.
 
 ## Translations glossary
-- **codename:productization** = the initiative to make harmonik deployable on new/work projects (onboarding, README, integration-branch enforcement, review-embedding DOT process).
-- **integration-branch gate / P0** = making the daemon merge to a configured branch and fail-closed refuse main (was hardcoded to main; now done).
-- **review-loop-off (06-01→06-02)** = `--beads` dispatch minted empty workflow_mode → no review; ~117 commits landed unreviewed; mechanism fixed (`hk-rssrg`) + root cause closed (`hk-81n9r`).
-- **standard-bead.dot** = the proposed DOT process where review is a non-bypassable node (implement→gate→review→merge).
-- **escape-detector** = daemon guard that fails a bead if main's working tree is dirty (don't hand-edit main while a queue runs).
+- **codename:productization** — make harmonik deployable on new/work repos (onboarding docs, README, integration-branch enforcement, review-embedding DOT).
+- **hk-4l7zs** — spawn-semaphore slot-leak: daemon wedges new launches under concurrency contention; interim workaround = run at `-c4`. named-queues owns the fix.
+- **integration-branch P0 gate** — daemon merges to a configured branch and fail-closed refuses main; VERIFIED safe this session.
+- **BLOCK→enrich→re-dispatch** — when the review gate BLOCKs a bead, put the reviewer's precise fix into `br update <id> --design` and re-submit; got hk-zl4sl to a clean APPROVE on attempt 2.
+- **controlpoints queue** — my isolated `--queue controlpoints`; completes+clears on success, goes `paused-by-failure` on a BLOCK (clear with `harmonik queue cancel controlpoints`, which archives it).

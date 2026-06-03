@@ -144,6 +144,15 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-recv: agent is required")
 	}
 
+	// Serialize the Get→scan→Advance critical section per agent (hk-fww4e).
+	// Two concurrent "comms recv --agent X" calls on separate connections would
+	// otherwise both Get the same cursor, scan the same backlog, and both Advance —
+	// causing bounded duplicate delivery. The per-agent mutex in CursorStore
+	// prevents this without blocking concurrent ops for different agents.
+	agentMu := h.cursorStore.AgentMu(req.Agent)
+	agentMu.Lock()
+	defer agentMu.Unlock()
+
 	// Read the durable cursor; "" means start of log (deliver all matching events).
 	cursorStr, err := h.cursorStore.Get(req.Agent)
 	if err != nil {

@@ -19,8 +19,14 @@ package daemon
 //     beginning of events.jsonl, i.e. deliver all matching events).
 //   - advance: atomically overwrites the cursor using temp+rename+fsync so that a
 //     crash mid-write cannot corrupt the previous cursor value.
-//   - single-writer: the daemon is the sole writer (socket-op serialisation
-//     enforces this); no concurrent writes.
+//   - per-agent serialization: CursorStore.AgentMu(name) returns a per-agent
+//     mutex that callers MUST hold across the Get→scan→Advance critical section.
+//     This prevents concurrent recv ops for the same agent from delivering
+//     duplicate messages. Concurrent ops for different agents are independent.
+//     Without the lock, concurrent ops would both Get the same cursor, scan the
+//     same backlog, and both Advance — causing bounded duplicate delivery
+//     (at-least-once still holds; app-layer dedup on event_id absorbs it, but
+//     the false "single-writer" invariant would silently break future callers).
 //
 // # Name validation
 //
@@ -37,12 +43,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // CursorStore is a daemon-owned, file-backed store of per-agent cursors.
 // The zero value is not usable; construct with NewCursorStore.
 type CursorStore struct {
-	dir string // base directory, e.g. <ProjectDir>/.harmonik/comms/cursors
+	dir string   // base directory, e.g. <ProjectDir>/.harmonik/comms/cursors
+	mus sync.Map // per-agent mutexes (agent name → *sync.Mutex), created lazily
 }
 
 // NewCursorStore returns a CursorStore rooted at dir.
@@ -122,6 +130,14 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	}
 	ok = true
 	return nil
+}
+
+// AgentMu returns the per-agent mutex for name, creating it lazily.
+// Callers must hold this mutex across the Get→scan→Advance critical section to
+// prevent concurrent recv ops for the same agent from delivering duplicates.
+func (s *CursorStore) AgentMu(name string) *sync.Mutex {
+	v, _ := s.mus.LoadOrStore(name, &sync.Mutex{})
+	return v.(*sync.Mutex) //nolint:forcetypeassert // we always store *sync.Mutex
 }
 
 // path returns the file path for the given agent name.

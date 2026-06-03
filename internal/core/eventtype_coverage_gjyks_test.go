@@ -132,6 +132,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeInfrastructureUnavailable, func() EventPayload { return &InfrastructureUnavailablePayload{} }},
 	{EventTypeOperatorCommandFailed, func() EventPayload { return &OperatorCommandFailedPayload{} }},
 	{EventTypeOperatorEscalationCleared, func() EventPayload { return &OperatorEscalationClearedPayload{} }},
+	{EventTypeDaemonConfig, func() EventPayload { return &DaemonConfigPayload{} }},
 
 	// §8.1a Review-loop cycle + §8.8.6 bead label conflict
 	{EventTypeImplementerResumed, func() EventPayload { return &ImplementerResumedPayload{} }},
@@ -141,6 +142,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeNoProgressDetected, func() EventPayload { return &NoProgressDetectedPayload{} }},
 	{EventTypeReviewLoopCycleComplete, func() EventPayload { return &ReviewLoopCycleCompletePayload{} }},
 	{EventTypeBeadLabelConflict, func() EventPayload { return &BeadLabelConflictPayload{} }},
+	{EventTypeReviewBypassed, func() EventPayload { return &ReviewBypassedPayload{} }},
 
 	// §8.8 Observability and bus-internal
 	{EventTypeMetric, func() EventPayload { return &MetricPayload{} }},

@@ -1009,3 +1009,46 @@ func (p OperatorEscalationClearedPayload) Valid() bool {
 	}
 	return true
 }
+
+// DaemonConfigPayload is the typed event payload for the daemon_config event
+// (event-model.md §8.7.18).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — operator-observability; states the resolved
+// merge-target and active branch-protection policy at startup).
+//
+// Emitted by daemon-core after boot-time config validation passes and before the
+// socket is bound. Records the effective runtime configuration so operators can
+// confirm what the daemon resolved from flags.
+//
+// # Payload fields (event-model.md §8.7.18)
+//
+//   - target_branch      — resolved merge target branch (never empty)
+//   - protect_branches   — list of branch names the daemon must never merge into
+//   - forbid_unprotected_default — whether --forbid-default-main is active
+//
+// Bead ref: hk-sul12.
+type DaemonConfigPayload struct {
+	// TargetBranch is the resolved merge target branch. Required (non-empty).
+	// This is the value after resolveTargetBranch() normalisation: when the
+	// operator passed no --target-branch flag, this is "main".
+	TargetBranch string `json:"target_branch"`
+
+	// ProtectBranches is the operator-supplied list of protected branch names.
+	// May be nil or empty when no branches are protected.
+	ProtectBranches []string `json:"protect_branches,omitempty"`
+
+	// ForbidUnprotectedDefault mirrors Config.ForbidUnprotectedDefault: when
+	// true the daemon rejected any configuration where TargetBranch was empty
+	// (i.e., would have defaulted to "main" without an explicit --target-branch).
+	ForbidUnprotectedDefault bool `json:"forbid_unprotected_default"`
+}
+
+// Valid reports whether p is a well-formed DaemonConfigPayload.
+//
+// Rules per event-model.md §8.7.18:
+//   - TargetBranch must be non-empty.
+func (p DaemonConfigPayload) Valid() bool {
+	return p.TargetBranch != ""
+}

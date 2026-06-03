@@ -286,6 +286,7 @@ func registerDaemonLifecycleEvents() {
 	mustRegister("infrastructure_unavailable", func() EventPayload { return &InfrastructureUnavailablePayload{} })
 	mustRegister("operator_command_failed", func() EventPayload { return &OperatorCommandFailedPayload{} })
 	mustRegister("operator_escalation_cleared", func() EventPayload { return &OperatorEscalationClearedPayload{} })
+	mustRegister("daemon_config", func() EventPayload { return &DaemonConfigPayload{} })
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event

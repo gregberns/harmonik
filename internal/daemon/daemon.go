@@ -616,6 +616,30 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
 	}
 
+	// hk-sul12: fail-closed branch-protection validation.
+	//
+	// Two hard-error cases, checked before any socket bind:
+	//
+	//   (1) ForbidUnprotectedDefault && TargetBranch == "": the operator set
+	//       --forbid-default-main but did not provide --target-branch. The daemon
+	//       would silently merge into the default branch ("main"), which the flag
+	//       was explicitly designed to prevent.
+	//
+	//   (2) resolved TargetBranch is in ProtectBranches: the daemon would merge
+	//       completed bead branches into a protected branch, violating the
+	//       operator's explicit protection policy.
+	//
+	// resolveTargetBranch("") returns "main"; use that resolved value for (2).
+	resolvedTargetBranch := resolveTargetBranch(cfg.TargetBranch)
+	if cfg.ForbidUnprotectedDefault && cfg.TargetBranch == "" {
+		return fmt.Errorf("daemon.Start: --forbid-default-main is set but --target-branch is empty; provide an explicit --target-branch to proceed (hk-sul12)")
+	}
+	for _, protected := range cfg.ProtectBranches {
+		if resolvedTargetBranch == protected {
+			return fmt.Errorf("daemon.Start: target branch %q is in ProtectBranches; choose a different --target-branch (hk-sul12)", resolvedTargetBranch)
+		}
+	}
+
 	// WM-024: validate ConflictResolutionAttemptCap at startup.
 	//
 	// The zero value is treated as the built-in default (3) — operators who do
@@ -885,6 +909,20 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	}
 	if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, payloadBytes); emitErr != nil {
 		return fmt.Errorf("daemon.Start: emit daemon_started: %w", emitErr)
+	}
+
+	// hk-sul12: emit daemon_config stating the resolved merge-target and active
+	// branch-protection policy. Emitted immediately after daemon_started so the
+	// resolved config is observable before any dispatch work begins.
+	// Non-fatal: a marshal or emit failure does not block startup.
+	if cfgPayload := (core.DaemonConfigPayload{
+		TargetBranch:             resolvedTargetBranch,
+		ProtectBranches:          cfg.ProtectBranches,
+		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
+	}); cfgPayload.Valid() {
+		if cfgBytes, cfgMarshalErr := json.Marshal(cfgPayload); cfgMarshalErr == nil {
+			_ = bus.Emit(context.Background(), core.EventTypeDaemonConfig, cfgBytes)
+		}
 	}
 
 	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep — BEFORE any socket

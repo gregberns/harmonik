@@ -111,6 +111,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "iteration_cap_hit", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "no_progress_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "review_loop_cycle_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "review_bypassed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.2 Control-point lifecycle ───────────────────────────────────────
 	{TypeName: "hook_fired", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
@@ -199,6 +200,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "operator_command_rejected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "operator_escalation_cleared", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "infrastructure_unavailable", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "daemon_config", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "merge_conflict_escalation", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "dispatch_deferred", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 

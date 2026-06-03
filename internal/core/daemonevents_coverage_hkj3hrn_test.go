@@ -562,6 +562,32 @@ func TestOperatorCommandFailedPayload_Valid(t *testing.T) {
 	}
 }
 
+// ─── DaemonConfigPayload.Valid ────────────────────────────────────────────────
+
+func TestDaemonConfigPayload_Valid(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		p     core.DaemonConfigPayload
+		valid bool
+	}{
+		{"valid-minimal", core.DaemonConfigPayload{TargetBranch: "main"}, true},
+		{"valid-with-protect", core.DaemonConfigPayload{TargetBranch: "release", ProtectBranches: []string{"main"}, ForbidUnprotectedDefault: true}, true},
+		{"zero-value", core.DaemonConfigPayload{}, false},
+		{"empty-target-branch", core.DaemonConfigPayload{TargetBranch: ""}, false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.p.Valid(); got != tc.valid {
+				t.Errorf("DaemonConfigPayload.Valid() = %v, want %v (case %s)", got, tc.valid, tc.name)
+			}
+		})
+	}
+}
+
 // ─── OperatorEscalationClearedPayload.Valid ──────────────────────────────────
 
 func TestOperatorEscalationClearedPayload_Valid(t *testing.T) {

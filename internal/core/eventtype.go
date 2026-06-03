@@ -481,6 +481,13 @@ const (
 	// EventTypeOperatorEscalationCleared is the operator_escalation_cleared
 	// event type (§8.7.17). Durability class: O.
 	EventTypeOperatorEscalationCleared EventType = "operator_escalation_cleared"
+
+	// EventTypeDaemonConfig is the daemon_config event type (§8.7.18).
+	// Emitted at startup after validation passes, stating the resolved merge
+	// target and active branch-protection policy.
+	// Durability class: O.
+	// Bead ref: hk-sul12.
+	EventTypeDaemonConfig EventType = "daemon_config"
 )
 
 // ---------------------------------------------------------------------------

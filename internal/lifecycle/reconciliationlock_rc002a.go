@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -78,6 +79,11 @@ func (l *ReconciliationLock) WriteVerdictExecuted() error {
 
 	if l.fd == nil {
 		return fmt.Errorf("lifecycle: WriteVerdictExecuted: lock already released")
+	}
+	// Seek to end before writing so the trailer is always appended regardless
+	// of where the fd offset was left after the last read (latent-corruption fix).
+	if _, err := l.fd.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("lifecycle: WriteVerdictExecuted: seek: %w", err)
 	}
 	const line = "Harmonik-Verdict-Executed: true\n"
 	if _, err := fmt.Fprint(l.fd, line); err != nil {

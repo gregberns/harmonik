@@ -282,6 +282,17 @@ const (
 	// Durability class: O.
 	// Refs: hk-fra5l.
 	EventTypeLaunchStallDetected EventType = "launch_stall_detected"
+
+	// EventTypeSpawnCapBlocked is the spawn_cap_blocked event type.
+	// Emitted by the daemon when tmuxSubstrate.SpawnWindow cannot acquire a
+	// spawn-semaphore slot within the bounded acquire timeout — the symptom of a
+	// slot leak (a session that acquired a slot and never released it). Before
+	// this diagnostic, such a wedge surfaced only as an indefinite
+	// launch_initiated stall ending in a 30-min no_commit failure.
+	// Payload: run_id, waited_ms, slots_in_use, cap_size.
+	// Durability class: O.
+	// Refs: hk-4l7zs.
+	EventTypeSpawnCapBlocked EventType = "spawn_cap_blocked"
 )
 
 // ---------------------------------------------------------------------------

@@ -2030,9 +2030,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Step 3: emit pre-exec messages on the bus BEFORE Launch (CHB-018 ordering).
 	// Each message carries a "type" field that maps directly to a core.EventType.
 	// Parse it from the raw JSON and use it as the envelope type.
-	for _, msg := range artifacts.preExecMsgs {
-		emitPreExecMessage(ctx, deps.bus, runID, msg)
-	}
+	//
+	// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns —
+	// it must signal that a tmux window actually spawned, not merely that the
+	// daemon is about to try (which would mislead operators when SpawnWindow is
+	// wedged on a leaked spawn slot).
+	implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
 
 	// Step 4: create a per-run tapping emitter so waitAgentReady can observe
 	// watcher events without a post-seal bus subscription (EV-009).
@@ -2046,12 +2049,28 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if launchErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
 			beadID, runID.String(), launchErr)
+		// hk-4l7zs: a spawn-cap-timeout launch failure is the slot-leak signature.
+		// Emit spawn_cap_blocked so operators see WHY the launch failed (pool
+		// saturated) instead of an opaque launch-error reopen.
+		if errors.Is(launchErr, ErrSpawnCapTimeout) {
+			inUse, capSize := substrateSpawnStats(deps.substrate)
+			emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implementerLaunchedAt), inUse, capSize)
+		}
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("launch error: %v", launchErr))
 		emitDone(false, fmt.Sprintf("launch error: %v", launchErr))
 		return
 	}
+	// hk-4l7zs: now that the tmux window has actually spawned (Launch returned a
+	// live session), emit the held-back launch_initiated. Emitting it here — not
+	// before SpawnWindow — keeps the event truthful when the spawn semaphore is
+	// wedged on a leaked slot (in that case Launch returns an error above and
+	// launch_initiated is never emitted).
+	if implLaunchInitiatedMsg != nil {
+		emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
+	}
+
 	// Store the session's lifecycle Machine in the RunHandle so the stale watcher
 	// can read the current state and drive Ready→Failed(silent_hang) before
 	// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
@@ -2864,6 +2883,40 @@ func emitPreExecMessage(ctx context.Context, bus handlercontract.EventEmitter, r
 		eventType = core.EventType(envelope.Type)
 	}
 	_ = bus.EmitWithRunID(ctx, runID, eventType, msg)
+}
+
+// preExecMsgType extracts the "type" field of a pre-exec message, or "" on
+// parse failure.
+func preExecMsgType(msg json.RawMessage) string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err == nil {
+		return envelope.Type
+	}
+	return ""
+}
+
+// emitPreExecBeforeLaunch emits every pre-exec message EXCEPT launch_initiated
+// and returns the launch_initiated message (if any) for the caller to emit
+// AFTER SpawnWindow/Launch returns.
+//
+// hk-4l7zs: launch_initiated previously fired BEFORE SpawnWindow. When the spawn
+// semaphore was wedged (a leaked slot), SpawnWindow blocked indefinitely yet the
+// daemon had already emitted launch_initiated — so operators (and the stale
+// watcher) saw a "launched" run that had, in fact, never spawned a tmux window.
+// Deferring launch_initiated until the window is actually live makes the event
+// mean what it says and lets launch_stall_detected fire correctly when the spawn
+// is wedged. Ordering of the other pre-exec messages is preserved.
+func emitPreExecBeforeLaunch(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, msgs []json.RawMessage) (launchInitiated json.RawMessage) {
+	for _, msg := range msgs {
+		if preExecMsgType(msg) == string(core.EventTypeLaunchInitiated) {
+			launchInitiated = msg
+			continue
+		}
+		emitPreExecMessage(ctx, bus, runID, msg)
+	}
+	return launchInitiated
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4123,6 +4176,38 @@ func emitImplementerPhaseComplete(ctx context.Context, bus handlercontract.Event
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerPhaseComplete, b)
+}
+
+// emitSpawnCapBlocked emits a spawn_cap_blocked event (hk-4l7zs) when a launch's
+// SpawnWindow times out waiting for a spawn-semaphore slot — the observable
+// signature of a slot leak (every slot held by an acquired-but-never-released
+// session). Non-fatal: emit-marshal errors are silently discarded; the launch
+// failure is already surfaced via the reopen/done path.
+//
+// capSize/slotsInUse describe the saturated pool; when unknown (0) the payload
+// still validates via a minimum capSize of 1 so the event is never dropped.
+func emitSpawnCapBlocked(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration, slotsInUse, capSize int) {
+	if bus == nil {
+		return
+	}
+	if capSize <= 0 {
+		capSize = 1
+	}
+	waitedMS := waited.Milliseconds()
+	if waitedMS <= 0 {
+		waitedMS = 1
+	}
+	pl := core.SpawnCapBlockedPayload{
+		RunID:      runID.String(),
+		WaitedMS:   waitedMS,
+		SlotsInUse: slotsInUse,
+		CapSize:    capSize,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeSpawnCapBlocked, b)
 }
 
 // emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when

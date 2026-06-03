@@ -597,6 +597,16 @@ func ExportedForceTeardownSession(sess handler.Session) {
 	forceTeardownSession(sess)
 }
 
+// ExportedSpawnSlotsInUse exposes the spawn-semaphore slots-in-use count of a
+// substrate returned by NewTmuxSubstrate, for the hk-4l7zs slot-leak tests.
+// Returns 0 when sub is not a *tmuxSubstrate or has no cap configured.
+func ExportedSpawnSlotsInUse(sub handler.Substrate) int {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		return ts.SpawnSlotsInUse()
+	}
+	return 0
+}
+
 // ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the
 // single-mode no-commit guard regression test (hk-4ie1z).
 func ExportedNoCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {

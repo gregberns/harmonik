@@ -115,6 +115,24 @@ type tmuxSubstrate struct {
 	//
 	// Bead ref: hk-xb5yi (concurrent-spawn cap).
 	spawnSem chan struct{}
+
+	// spawnAcquireTimeout bounds how long SpawnWindow waits for a free spawn
+	// slot before treating the launch as failed (hk-4l7zs). A run sitting at
+	// launch_initiated forever (no tmux session, no implementer_phase_complete)
+	// then failing no_commit at the 30-min timeout was traced to SpawnWindow
+	// blocking indefinitely on a leaked semaphore. Bounding the wait converts an
+	// indefinite hang into a prompt, observable launch failure.
+	//
+	// Zero or negative disables the timeout (blocks until ctx is cancelled, the
+	// pre-hk-4l7zs behaviour). Set via WithSpawnAcquireTimeout.
+	spawnAcquireTimeout time.Duration
+
+	// spawnCapBlocked, when non-nil, is invoked once when SpawnWindow cannot
+	// acquire a slot within spawnAcquireTimeout. It is a diagnostic hook the
+	// daemon wires to emit a spawn_cap_blocked event (hk-4l7zs). waited is the
+	// duration spent blocked; inUse / capSize describe the semaphore at the
+	// moment of the timeout. Nil in tests that do not need the hook.
+	spawnCapBlocked func(waited time.Duration, inUse, capSize int)
 }
 
 // TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
@@ -139,6 +157,41 @@ func WithSpawnCap(n int) TmuxSubstrateOption {
 		if n > 0 {
 			s.spawnSem = make(chan struct{}, n)
 		}
+	}
+}
+
+// ErrSpawnCapTimeout is the sentinel wrapped by SpawnWindow when it cannot
+// acquire a spawn-semaphore slot within spawnAcquireTimeout (hk-4l7zs). The
+// daemon launch paths detect it via errors.Is to emit a spawn_cap_blocked event
+// with run context. It is also wrapped with handler.ErrStructural so existing
+// structural-error handling continues to apply.
+var ErrSpawnCapTimeout = errors.New("daemon: spawn cap acquire timed out (possible slot leak)")
+
+// defaultSpawnAcquireTimeout is the default bound on how long SpawnWindow waits
+// for a free spawn slot before failing the launch (hk-4l7zs). Generous enough to
+// absorb a normal in-flight session finishing and releasing its slot, but far
+// below the 30-min implementer commit budget so a leaked-slot wedge surfaces as
+// a prompt launch failure rather than a 30-min no_commit timeout.
+const defaultSpawnAcquireTimeout = 2 * time.Minute
+
+// WithSpawnAcquireTimeout sets the bound on how long SpawnWindow blocks waiting
+// for a free spawn slot before treating the launch as failed (hk-4l7zs).
+//
+// A value <= 0 disables the timeout (blocks until ctx is cancelled — the
+// pre-hk-4l7zs behaviour). When unset, NewTmuxSubstrate applies
+// defaultSpawnAcquireTimeout whenever a spawn cap is configured.
+func WithSpawnAcquireTimeout(d time.Duration) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.spawnAcquireTimeout = d
+	}
+}
+
+// WithSpawnCapBlockedHook installs a diagnostic callback invoked when
+// SpawnWindow times out waiting for a spawn slot (hk-4l7zs). The daemon wires
+// this to emit a spawn_cap_blocked event.
+func WithSpawnCapBlockedHook(fn func(waited time.Duration, inUse, capSize int)) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.spawnCapBlocked = fn
 	}
 }
 
@@ -174,7 +227,51 @@ func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string, opts ...TmuxSubs
 	for _, opt := range opts {
 		opt(sub)
 	}
+	// hk-4l7zs: when a spawn cap is configured but no explicit acquire timeout
+	// was supplied, apply the default bound so a leaked slot surfaces as a prompt
+	// launch failure instead of an indefinite SpawnWindow hang.
+	if sub.spawnSem != nil && sub.spawnAcquireTimeout == 0 {
+		sub.spawnAcquireTimeout = defaultSpawnAcquireTimeout
+	}
 	return sub
+}
+
+// SpawnSlotsInUse reports the number of spawn-semaphore slots currently held.
+//
+// Returns 0 when no cap is configured (spawnSem is nil). This is an
+// observability/diagnostic accessor (hk-4l7zs): the daemon and tests use it to
+// detect slot leaks — a slot acquired by SpawnWindow that is never returned by
+// Kill. len(chan) on a buffered channel is the count of buffered (held) slots
+// and is safe to read concurrently.
+func (s *tmuxSubstrate) SpawnSlotsInUse() int {
+	if s.spawnSem == nil {
+		return 0
+	}
+	return len(s.spawnSem)
+}
+
+// SpawnCapSize reports the configured spawn-cap ceiling (the channel capacity).
+// Returns 0 when no cap is configured. Diagnostic accessor (hk-4l7zs).
+func (s *tmuxSubstrate) SpawnCapSize() int {
+	if s.spawnSem == nil {
+		return 0
+	}
+	return cap(s.spawnSem)
+}
+
+// substrateSpawnStats reports (slotsInUse, capSize) for a substrate that is, or
+// wraps, a *tmuxSubstrate (hk-4l7zs). Returns (0, 0) for other substrates.
+// Used by the daemon launch paths to enrich the spawn_cap_blocked event.
+func substrateSpawnStats(sub handler.Substrate) (slotsInUse, capSize int) {
+	switch t := sub.(type) {
+	case *tmuxSubstrate:
+		return t.SpawnSlotsInUse(), t.SpawnCapSize()
+	case *perRunSubstrate:
+		if t != nil && t.inner != nil {
+			return t.inner.SpawnSlotsInUse(), t.inner.SpawnCapSize()
+		}
+	}
+	return 0, 0
 }
 
 // releaseSpawnSlot returns a slot to the spawn semaphore. Called exactly once
@@ -213,13 +310,41 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// Acquire a spawn semaphore slot before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
 	// (spawnSem is nil) this block is a no-op.
+	//
+	// hk-4l7zs: the acquire is bounded by spawnAcquireTimeout. Before the fix,
+	// SpawnWindow blocked here forever when every slot was held by a leaked
+	// (acquired-but-never-released) session — the run sat at launch_initiated
+	// with no tmux window until the 30-min implementer budget expired and it
+	// failed no_commit. A bounded wait turns that indefinite wedge into a prompt,
+	// observable launch failure (spawn_cap_blocked diagnostic + ErrStructural).
 	if s.spawnSem != nil {
+		// Fast path: slot immediately available.
 		select {
 		case s.spawnSem <- struct{}{}:
 			// Slot acquired; proceed.
-		case <-ctx.Done():
-			return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
-				ctx.Err(), handler.ErrStructural)
+		default:
+			// Slow path: wait, bounded by ctx and (when set) the acquire timeout.
+			var timeoutCh <-chan time.Time
+			if s.spawnAcquireTimeout > 0 {
+				t := time.NewTimer(s.spawnAcquireTimeout)
+				defer t.Stop()
+				timeoutCh = t.C
+			}
+			start := time.Now()
+			select {
+			case s.spawnSem <- struct{}{}:
+				// Slot acquired after waiting; proceed.
+			case <-ctx.Done():
+				return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+					ctx.Err(), handler.ErrStructural)
+			case <-timeoutCh:
+				waited := time.Since(start)
+				if s.spawnCapBlocked != nil {
+					s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
+				}
+				return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: no slot within %s (cap=%d in_use=%d): %w: %w",
+					s.spawnAcquireTimeout, s.SpawnCapSize(), s.SpawnSlotsInUse(), ErrSpawnCapTimeout, handler.ErrStructural)
+			}
 		}
 	}
 	windowName := in.WindowName

@@ -1,12 +1,13 @@
 package core
 
-// launchdiag_hkfra5l.go — payload types for the two launch-diagnostic event
-// types introduced by hk-fra5l:
+// launchdiag_hkfra5l.go — payload types for the launch-diagnostic event types:
 //
 //   - pasteinject_failed  — paste-inject delivery failure (file absent, WriteLastPane error)
 //   - launch_stall_detected — run_started seen but no launch_initiated within 30 s
+//   - spawn_cap_blocked — SpawnWindow could not acquire a spawn slot within the
+//     bounded acquire timeout (slot-leak signature; hk-4l7zs)
 //
-// Refs: hk-fra5l.
+// Refs: hk-fra5l (first two), hk-4l7zs (spawn_cap_blocked).
 
 // PasteInjectFailedPayload is the event-bus payload for the pasteinject_failed
 // event type.
@@ -69,4 +70,40 @@ type LaunchStallDetectedPayload struct {
 // Valid reports whether p is a well-formed LaunchStallDetectedPayload.
 func (p LaunchStallDetectedPayload) Valid() bool {
 	return p.RunID != "" && p.BeadID != "" && p.StallSeconds > 0
+}
+
+// SpawnCapBlockedPayload is the event-bus payload for the spawn_cap_blocked
+// event type (hk-4l7zs).
+//
+// Emitted by the daemon when tmuxSubstrate.SpawnWindow cannot acquire a
+// spawn-semaphore slot within the bounded acquire timeout. This is the
+// observable signature of a slot leak: every slot is held by a session that
+// acquired it and never released it, so a new launch cannot proceed. Carrying
+// the in-use / cap counts lets operators confirm the pool is saturated.
+//
+// # Payload fields
+//
+//   - run_id       — the run whose launch was blocked (required, non-empty)
+//   - waited_ms    — milliseconds spent blocked before timing out (> 0)
+//   - slots_in_use — spawn-semaphore slots held at the moment of the timeout
+//   - cap_size     — configured spawn-cap ceiling (> 0)
+type SpawnCapBlockedPayload struct {
+	// RunID is the run whose launch was blocked. Required (non-empty).
+	RunID string `json:"run_id"`
+
+	// WaitedMS is the number of milliseconds SpawnWindow blocked before the
+	// acquire timeout fired. Always positive.
+	WaitedMS int64 `json:"waited_ms"`
+
+	// SlotsInUse is the number of spawn-semaphore slots held when the timeout
+	// fired (expected == CapSize, i.e. the pool was saturated).
+	SlotsInUse int `json:"slots_in_use"`
+
+	// CapSize is the configured spawn-cap ceiling. Always positive.
+	CapSize int `json:"cap_size"`
+}
+
+// Valid reports whether p is a well-formed SpawnCapBlockedPayload.
+func (p SpawnCapBlockedPayload) Valid() bool {
+	return p.RunID != "" && p.WaitedMS > 0 && p.CapSize > 0
 }

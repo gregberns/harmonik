@@ -42,6 +42,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -322,14 +323,17 @@ func runReviewLoop(
 		}
 
 		// hk-fra5l: emit pre-exec messages (handler_capabilities →
-		// session_log_location → skills_provisioned → launch_initiated) on the
-		// bus BEFORE Launch, mirroring the single-mode path (workloop.go step 3,
-		// line 1799).  Without this the review-loop path emitted run_started but
-		// no launch_initiated, making the hk-j7o3i incident undetectable: operators
-		// saw only run_started and run_stale with no intervening lifecycle events.
-		for _, msg := range implArtifacts.preExecMsgs {
-			emitPreExecMessage(ctx, deps.bus, runID, msg)
-		}
+		// session_log_location → skills_provisioned) on the bus BEFORE Launch,
+		// mirroring the single-mode path (workloop.go step 3).  Without this the
+		// review-loop path emitted run_started but no pre-exec lifecycle events,
+		// making the hk-j7o3i incident undetectable: operators saw only
+		// run_started and run_stale with no intervening lifecycle events.
+		//
+		// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns
+		// so it signals a window actually spawned, not merely that the daemon is
+		// about to try (which misleads operators when SpawnWindow is wedged on a
+		// leaked spawn slot).
+		implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.preExecMsgs)
 
 		// Create a per-run tapping emitter so waitAgentReady can observe
 		// watcher events from the implementer launch without a post-seal bus
@@ -351,18 +355,40 @@ func runReviewLoop(
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
 			}
+			// hk-4l7zs: surface spawn-cap saturation (slot-leak signature) as a
+			// dedicated spawn_cap_blocked event when the implementer launch is
+			// wedged on the spawn semaphore.
+			if errors.Is(implLaunchErr, ErrSpawnCapTimeout) {
+				inUse, capSize := substrateSpawnStats(implSubstrate)
+				emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implLaunchedAt), inUse, capSize)
+			}
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		// hk-68pvl: backstop — force-tear-down this implementer session before
-		// runReviewLoop returns on ANY path (including the no-commit/error early
-		// returns below), so the caller's deferred wtCleanup (beadRunOne) never
-		// runs `git worktree remove` while a substrate-hosted claude is still
-		// live in the worktree mid-`go test`. Kill is idempotent; on the normal
-		// path the per-phase Kill (waitWithSocketGrace branch) has already torn
-		// the session down and this defer is a no-op. The defer accumulates per
-		// iteration (bounded by reviewLoopIterationCap) and all fire at return.
+		// hk-4l7zs: emit the held-back launch_initiated now that the implementer
+		// window has actually spawned (Launch returned a live session). On the
+		// wedged-spawn path Launch returns an error above and launch_initiated is
+		// never emitted, so the event stays truthful.
+		if implLaunchInitiatedMsg != nil {
+			emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
+		}
+		// hk-68pvl / hk-4l7zs: release this iteration's implementer session
+		// PROMPTLY at the end of the iteration rather than only at runReviewLoop
+		// return. The per-phase Kill (waitWithSocketGrace branch, ~line 533) is the
+		// normal release point; this is a backstop for early-return paths. Kill is
+		// idempotent, so registering it via a per-iteration LIFO defer (below) and
+		// also calling it eagerly at iteration end (release-before-reacquire for the
+		// next iteration's implementer) holds at most ONE spawn slot per phase.
+		//
+		// Why the defer alone over-holds (the original hk-4l7zs leak path): each
+		// iteration's `defer forceTeardownSession` fires only when runReviewLoop
+		// RETURNS, so a 3-iteration review loop accumulates up to 3 implementer +
+		// 3 reviewer deferred teardowns. While the per-phase Kills already release
+		// the slots on the tmux happy path, any error/early-return branch BETWEEN
+		// the impl Kill (line ~533) and the reviewer Kill (line ~970) would hold
+		// both this iteration's slots until function return. The explicit
+		// per-iteration release below bounds the worst case to one live session.
 		implSessForTeardown := implSess
 		defer forceTeardownSession(implSessForTeardown)
 
@@ -822,12 +848,12 @@ func runReviewLoop(
 		}
 
 		// hk-fra5l: emit reviewer pre-exec messages (handler_capabilities →
-		// session_log_location → skills_provisioned → launch_initiated) on the
-		// bus BEFORE Launch, mirroring the implementer path above and the
-		// single-mode path (workloop.go step 3).
-		for _, msg := range revArtifacts.preExecMsgs {
-			emitPreExecMessage(ctx, deps.bus, runID, msg)
-		}
+		// session_log_location → skills_provisioned) on the bus BEFORE Launch,
+		// mirroring the implementer path above and the single-mode path.
+		//
+		// hk-4l7zs: launch_initiated is held back and emitted AFTER Launch returns
+		// (see implementer phase) so it signals a live reviewer window.
+		revLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.preExecMsgs)
 
 		// Create a per-phase tapping emitter so waitAgentReady can observe watcher
 		// events from the reviewer launch without a post-seal bus subscription (EV-009).
@@ -845,9 +871,19 @@ func runReviewLoop(
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
 			}
+			// hk-4l7zs: spawn-cap saturation on the reviewer launch.
+			if errors.Is(revLaunchErr, ErrSpawnCapTimeout) {
+				inUse, capSize := substrateSpawnStats(revSubstrate)
+				emitSpawnCapBlocked(ctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
+			}
 			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
+		}
+		// hk-4l7zs: emit the held-back reviewer launch_initiated now the window
+		// is live.
+		if revLaunchInitiatedMsg != nil {
+			emitPreExecMessage(ctx, deps.bus, runID, revLaunchInitiatedMsg)
 		}
 		// hk-68pvl: backstop — force-tear-down this reviewer session before
 		// runReviewLoop returns on ANY path, mirroring the implementer guard

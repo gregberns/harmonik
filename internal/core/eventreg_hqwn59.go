@@ -175,6 +175,10 @@ func registerAgentEvents() {
 	// launch_stall_detected (hk-fra5l): emitted by the stale watcher when
 	// run_started fires but launch_initiated is absent for >30 s. Durability class: O.
 	mustRegister("launch_stall_detected", func() EventPayload { return &LaunchStallDetectedPayload{} })
+	// spawn_cap_blocked (hk-4l7zs): emitted by the daemon when SpawnWindow cannot
+	// acquire a spawn-semaphore slot within the bounded acquire timeout — the
+	// observable signature of a slot leak. Durability class: O.
+	mustRegister("spawn_cap_blocked", func() EventPayload { return &SpawnCapBlockedPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })

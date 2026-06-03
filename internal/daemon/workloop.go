@@ -458,6 +458,14 @@ type beadLedger interface {
 // the shared event bus, the pre-resolved workflowModeDefault, and the shared
 // hookSessionStore.
 //
+// newLocalRunRegistry creates the run registry owned by the work loop.
+// MUST NOT be the shared instance from daemon.go (sharedRunRegistry); using the
+// shared registry here would let the pause-policy goroutine snapshot a registry
+// that the work loop mutates, causing a silent desync.
+func newLocalRunRegistry() *RunRegistry {
+	return NewRunRegistry()
+}
+
 // workflowModeDefault MUST already be normalised by the caller (daemon.Start
 // step 0) — it must be a valid WorkflowMode; zero value is never passed in.
 //
@@ -533,7 +541,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		brTimeoutCfg:        brcli.TimeoutConfig{},
 		tidGen:              core.NewTransitionIDGenerator(),
 		workflowModeDefault: workflowModeDefault,
-		runRegistry:         NewRunRegistry(),
+		runRegistry:         newLocalRunRegistry(),
 		maxConcurrent:       maxConcurrent,
 		hookStore:           store,
 		cpRegistry:          cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch

@@ -442,6 +442,15 @@ EXAMPLES
 	var maxConcurrentFlag int
 	flag.IntVar(&maxConcurrentFlag, "max-concurrent", 1, "maximum number of beads dispatched concurrently")
 
+	// --subscription-token-ceiling: per-5h token budget for the shared Claude
+	// subscription.  When non-zero the bandwidth tuner (hk-ymav1) reads rolling
+	// token usage from ~/.claude/projects/*/*.jsonl and auto-scales --max-concurrent
+	// to stay within this ceiling.  Zero (the default) disables the tuner.
+	// Start conservative and raise empirically until a 429 is observed.
+	var subscriptionTokenCeilingFlag int64
+	flag.Int64Var(&subscriptionTokenCeilingFlag, "subscription-token-ceiling", 0,
+		"per-5h token ceiling for the Claude subscription; enables auto-tuning of --max-concurrent (0 = disabled)")
+
 	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
 	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready
 	// drain for non-queue-driven deployments. --no-auto-pull is kept as an
@@ -559,14 +568,15 @@ EXAMPLES
 	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
 
 	cfg := daemon.Config{
-		ProjectDir:       projectDir,
-		BrPath:           brPath,
-		JSONLLogPath:     jsonlLogPath,
-		MaxConcurrent:    maxConcurrentFlag,
-		NoAutoPull:       !autoPullFlag,    // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:        daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
-		DaemonBinaryPath: daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
-		BinaryCommitHash: commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrentFlag,
+		NoAutoPull:               !autoPullFlag,    // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
+		DaemonBinaryPath:         daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
+		BinaryCommitHash:         commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
+		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag, // hk-ymav1: bandwidth auto-tuner
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

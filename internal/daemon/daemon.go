@@ -401,6 +401,27 @@ type Config struct {
 	// Spec ref: specs/operator-nfr/config-inventory.md §2.18 reconciliation_scan_cadence.
 	// Bead ref: hk-63oh.21.
 	ReconciliationScanCadence time.Duration
+
+	// SubscriptionTokenCeiling is the operator-supplied per-5h token budget for
+	// the Claude subscription shared across all projects.  When non-zero the
+	// bandwidth tuner (hk-ymav1) reads rolling token usage from
+	// ~/.claude/projects/*/*.jsonl every 60 s and adjusts the runtime concurrency
+	// ceiling accordingly:
+	//
+	//   effectiveMax = clamp(round(N_max × (ceiling − used) / ceiling), 1, N_max)
+	//
+	// where N_max is MaxConcurrent and used is the sum of input + output +
+	// cache_creation tokens over the trailing 5 h window.
+	//
+	// Zero (the default) disables the tuner: MaxConcurrent is used as-is.
+	// Start with a conservative value and raise until a 429 fires; per-tier limits
+	// are not publicly documented so empirical tuning is required.
+	//
+	// The composition root (cmd/harmonik/main.go) exposes this as
+	// --subscription-token-ceiling.
+	//
+	// Bead ref: hk-ymav1.
+	SubscriptionTokenCeiling int64
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the
@@ -1174,6 +1195,23 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
 		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
 			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
+		}
+
+		// Start the bandwidth tuner when --subscription-token-ceiling is set
+		// (hk-ymav1).  The tuner reads rolling 5h token usage from Claude Code
+		// transcripts and adjusts concurrencyCtrl on every 60s tick.
+		// normalised MaxConcurrent (zero → 1) is used as the N_max ceiling so the
+		// tuner and the static gate share the same scale.
+		if cfg.SubscriptionTokenCeiling > 0 {
+			maxN := cfg.MaxConcurrent
+			if maxN <= 0 {
+				maxN = 1
+			}
+			homeDir, homeDirErr := os.UserHomeDir()
+			if homeDirErr == nil {
+				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
+				go tuner.Run(ctx)
+			}
 		}
 
 		// commsSendHandler emits agent_message events on behalf of CLI callers.

@@ -100,7 +100,7 @@ func runKeeperSubcommand(args []string) int {
 		WarnPct:    float64(warnPctFlag),
 		TmuxTarget: tmuxFlag,
 	}
-	w := keeper.NewWatcher(cfg, keeper.NoopEmitter{})
+	w := keeper.NewWatcher(cfg, keeper.NewFileEmitter(projectDir))
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
 		fmt.Fprintf(os.Stderr, "harmonik keeper: watcher: %v\n", runErr)
 		return 1

@@ -5,12 +5,32 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
 )
+
+// spyInjector records injection calls without spawning real tmux processes.
+type spyInjector struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *spyInjector) inject(_ context.Context, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return nil
+}
+
+func (s *spyInjector) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
 
 // writeCtxFile writes a .ctx gauge file for the given agent under projectDir.
 func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID string) {
@@ -210,6 +230,64 @@ func TestWatcher_NoWarnWhenBelowThreshold(t *testing.T) {
 
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn below threshold; got %d", len(warns))
+	}
+}
+
+// TestWatcher_InjectDeliveredAfterQuiescence is the regression test for BUG-1
+// (hk-g4ei7): the spy must receive EXACTLY ONE injection even when the gauge
+// file is freshly written (non-quiesced) on the crossing tick. The fix defers
+// inject via pendingInject and retries on a later quiesced tick.
+//
+// This test FAILS on old code (warnFired latched before inject, gaugeQuiesced
+// false on crossing tick → inject permanently skipped) and PASSES on the fix.
+func TestWatcher_InjectDeliveredAfterQuiescence(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "inject-quiesce-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	spy := &spyInjector{}
+
+	const (
+		pollInterval = 10 * time.Millisecond
+		idleQuiesce  = 25 * time.Millisecond // realistic: > 1 poll cycle
+	)
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: pollInterval,
+		WarnPct:      80.0,
+		IdleQuiesce:  idleQuiesce,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "fake-pane", // non-empty → injection enabled
+		InjectFn:     spy.inject,
+	}
+
+	// Write the gauge BEFORE the watcher starts so modTime is established.
+	// On tick 1: lastModTime is zero → gaugeQuiesced = false (crossing detected,
+	// pendingInject set). On tick 3+: file unchanged → gaugeQuiesced = true →
+	// inject delivered.
+	writeCtxFile(t, projectDir, agent, 85.0, "sess-inject")
+
+	// Run long enough for the crossing tick + ≥2 quiescence ticks.
+	runWatcherFor(context.Background(), cfg, em, 150*time.Millisecond)
+
+	// (a) Exactly one session_keeper_warn event emitted.
+	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
+	if len(warns) != 1 {
+		t.Errorf("want exactly 1 session_keeper_warn; got %d", len(warns))
+	}
+
+	// (b) Exactly one inject delivered (not zero, not more than one).
+	if n := spy.count(); n != 1 {
+		t.Errorf("want exactly 1 spy inject call; got %d (BUG-1 regression: crossing-tick non-quiescence must retry)", n)
 	}
 }
 

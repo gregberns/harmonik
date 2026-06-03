@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -20,12 +21,79 @@ type Emitter interface {
 	EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error
 }
 
-// NoopEmitter is an Emitter that silently discards all events. Used by the
-// standalone `harmonik keeper` process which has no in-process event bus.
+// NoopEmitter is an Emitter that silently discards all events.
 type NoopEmitter struct{}
 
 func (NoopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
+}
+
+// FileEmitter appends typed events to the harmonik events JSONL file at
+// <projectDir>/.harmonik/events/events.jsonl. It is used by the standalone
+// `harmonik keeper` process which runs outside the daemon and has no in-process
+// event bus. On write failure the event is also logged via slog so a missing
+// gauge is never fully silent.
+type FileEmitter struct {
+	path  string
+	idGen *core.EventIDGenerator
+	mu    sync.Mutex
+}
+
+// NewFileEmitter constructs a FileEmitter that appends to the harmonik events
+// log at projectDir/.harmonik/events/events.jsonl.
+func NewFileEmitter(projectDir string) *FileEmitter {
+	return &FileEmitter{
+		path:  filepath.Join(projectDir, ".harmonik", core.EventsJSONLPath),
+		idGen: core.NewEventIDGenerator(),
+	}
+}
+
+// EmitWithRunID appends a typed event line to the harmonik events JSONL file.
+// runID is embedded when non-zero. On write error the event is also logged via
+// slog so it is never fully silent.
+func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error {
+	eventID, genErr := f.idGen.Next()
+	if genErr != nil {
+		slog.WarnContext(ctx, "keeper: FileEmitter: generate event_id", "err", genErr)
+		return genErr
+	}
+
+	ev := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   1,
+		Type:            string(eventType),
+		TimestampWall:   time.Now().UTC(),
+		SourceSubsystem: "internal/keeper",
+		Payload:         json.RawMessage(payload),
+	}
+	var zeroRunID core.RunID
+	if runID != zeroRunID {
+		r := runID
+		ev.RunID = &r
+	}
+
+	raw, marshalErr := json.Marshal(ev)
+	if marshalErr != nil {
+		slog.WarnContext(ctx, "keeper: FileEmitter: marshal event", "err", marshalErr)
+		return marshalErr
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	//nolint:gosec // G304: path is daemon-startup-resolved; not user input.
+	file, openErr := os.OpenFile(f.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if openErr != nil {
+		slog.WarnContext(ctx, "keeper: FileEmitter: open events.jsonl", "err", openErr, "path", f.path)
+		return openErr
+	}
+	defer func() { _ = file.Close() }()
+
+	_, writeErr := file.Write(append(raw, '\n'))
+	if writeErr != nil {
+		slog.WarnContext(ctx, "keeper: FileEmitter: write event", "err", writeErr)
+	}
+	return writeErr
 }
 
 // RecordingEmitter records every EmitWithRunID call. Used in unit tests.
@@ -90,6 +158,11 @@ type WatcherConfig struct {
 	// skips actual injection (warn event is still emitted). This is the normal
 	// case for unit tests.
 	TmuxTarget string
+
+	// InjectFn is the function used to deliver the wrap-up-warning injection.
+	// When nil, InjectWrapUpWarning is used. Set to a spy function in unit tests
+	// to verify injection without spawning real tmux commands.
+	InjectFn func(ctx context.Context, target string) error
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -135,9 +208,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// when armed, an upward crossing arms the injection.
 		warnArmed = true
 
-		// warnFired tracks whether we've injected for the current crossing.
-		// Reset to false when pct drops below warnPct again.
+		// warnFired tracks whether we've emitted the warn event for the current
+		// crossing. Reset to false when pct drops below warnPct again.
 		warnFired = false
+
+		// pendingInject is true when a warn was emitted but the inject has not
+		// yet been delivered (pane was not quiesced on the crossing tick).
+		// Cleared when the inject succeeds or when pct resets below warnPct.
+		pendingInject = false
 
 		// lastModTime is the mod-time of the gauge file on the previous tick.
 		// Used for idle-gate (quiescence detection).
@@ -176,6 +254,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				noGaugeEmittedAtBoot = true
 				warnArmed = true
 				warnFired = false
+				pendingInject = false
 				continue
 			}
 			if err != nil {
@@ -183,6 +262,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
 				w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit)
 				noGaugeEmittedAtBoot = true
+				pendingInject = false
 				continue
 			}
 
@@ -192,6 +272,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				noGaugeEmittedAtBoot = true
 				warnArmed = true
 				warnFired = false
+				pendingInject = false
 				continue
 			}
 
@@ -215,21 +296,37 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// Below threshold: reset so the next upward crossing will warn.
 				warnArmed = true
 				warnFired = false
+				pendingInject = false
 				continue
 			}
 
 			// pct >= warnPct
 			if warnArmed && !warnFired {
-				// Upward crossing detected — warn once.
+				// Upward crossing detected — emit the warn event immediately.
+				// Inject delivery is deferred until the pane is quiesced; see
+				// the pendingInject block below. We must NOT latch warnFired
+				// before the inject lands or the retry path is permanently
+				// cut off (BUG-1: hk-g4ei7).
 				w.emitWarn(ctx, ctxFile)
 				warnFired = true
 				warnArmed = false
+				if w.cfg.TmuxTarget != "" {
+					pendingInject = true
+				}
+			}
 
-				// Inject only when the pane is quiesced.
-				if gaugeQuiesced && w.cfg.TmuxTarget != "" {
-					if injectErr := InjectWrapUpWarning(ctx, w.cfg.TmuxTarget); injectErr != nil {
-						slog.WarnContext(ctx, "keeper: inject wrap-up warning", "err", injectErr)
-					}
+			// Attempt inject delivery — on the crossing tick or any subsequent tick
+			// once the pane has quiesced. Retries on each tick until success so a
+			// non-quiesced crossing tick never permanently suppresses injection.
+			if pendingInject && gaugeQuiesced {
+				inject := w.cfg.InjectFn
+				if inject == nil {
+					inject = InjectWrapUpWarning
+				}
+				if injectErr := inject(ctx, w.cfg.TmuxTarget); injectErr != nil {
+					slog.WarnContext(ctx, "keeper: inject wrap-up warning", "err", injectErr)
+				} else {
+					pendingInject = false
 				}
 			}
 		}

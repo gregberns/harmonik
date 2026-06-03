@@ -24,6 +24,25 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// emitRefreshBeat emits an agent_presence{online, reason:"refresh"} beat for agent
+// via h.presEmitter. Used by HandleCommsSend and HandleCommsRecv to wire the
+// dead AgentPresenceReasonRefresh path (hk-6vwi3 fix #2): an agent stays visible
+// in "comms who" as long as it is actively sending or receiving messages even when
+// it does not emit explicit join/refresh beats.
+//
+// Errors are suppressed — a dropped refresh beat is harmless (O-class durability).
+func (h *commsSendHandlerImpl) emitRefreshBeat(ctx context.Context, agent string) {
+	if h.presEmitter == nil || agent == "" {
+		return
+	}
+	_, _ = h.presEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
+		Agent:    agent,
+		Status:   core.AgentPresenceStatusOnline,
+		LastSeen: time.Now().UTC().Format(time.RFC3339),
+		Reason:   core.AgentPresenceReasonRefresh,
+	})
+}
+
 // CommsPresenceHandler is the interface for processing comms-presence socket ops.
 // Implemented by *commsSendHandlerImpl (commshandler_nbrmf.go) which also
 // satisfies CommsSendHandler — both ride the same handler value in the daemon.

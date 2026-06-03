@@ -146,6 +146,10 @@ func (h *commsSendHandlerImpl) HandleCommsSend(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-send: emit agent_message: %w", err)
 	}
 
+	// Refresh presence for the sender so active agents stay visible in "comms who"
+	// without requiring explicit join/refresh beats (hk-6vwi3 fix #2).
+	h.emitRefreshBeat(ctx, req.From)
+
 	result := CommsSendResult{EventID: eventID.String()}
 	resultBytes, marshalErr := json.Marshal(result)
 	if marshalErr != nil {

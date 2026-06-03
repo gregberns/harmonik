@@ -826,11 +826,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Wire the SubscribeHub — long-lived wildcard observer that fans events
 	// out to "subscribe" socket-op connections (hk-6ynv4). Always registered;
 	// the hub is dormant until a subscribe op connects.
-	subscribeHub := NewSubscribeHub(SubscribeHubConfig{
+	subscribeHubCfg := SubscribeHubConfig{
 		Bus:             bus,
 		ActiveRuns:      sharedRunRegistry,
 		EventsJSONLPath: cfg.JSONLLogPath, // for since_event_id replay (hk-a5sil)
-	})
+	}
+	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
+		subscribeHubCfg.PresenceEmitter = pe
+	}
+	subscribeHub := NewSubscribeHub(subscribeHubCfg)
 	if subscribeErr := subscribeHub.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
 	}

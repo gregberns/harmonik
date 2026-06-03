@@ -128,7 +128,7 @@ func (h *commsSendHandlerImpl) SetRecvDeps(store *CursorStore, eventsJSONLPath s
 //  4. Collect matched messages.
 //  5. If any messages found, Advance cursor to last event_id (N3: after read).
 //  6. Return CommsRecvResult.
-func (h *commsSendHandlerImpl) HandleCommsRecv(_ context.Context, payload json.RawMessage) (json.RawMessage, error) {
+func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
 	if h.cursorStore == nil {
 		return nil, fmt.Errorf("comms-recv: CursorStore not configured")
 	}
@@ -196,6 +196,10 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(_ context.Context, payload json.R
 			return nil, fmt.Errorf("comms-recv: advance cursor for %q: %w", req.Agent, advErr)
 		}
 	}
+
+	// Refresh presence for the receiving agent so receive-only agents stay
+	// visible in "comms who" (hk-6vwi3 fix #2).
+	h.emitRefreshBeat(ctx, req.Agent)
 
 	if messages == nil {
 		messages = []CommsRecvMessage{}

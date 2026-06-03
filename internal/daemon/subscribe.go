@@ -167,6 +167,11 @@ type SubscribeHubConfig struct {
 	// Production wiring supplies cfg.JSONLLogPath from DaemonConfig.
 	EventsJSONLPath string
 
+	// PresenceEmitter, when non-nil, is used to emit refresh beats when an agent
+	// starts a subscribe session with a non-empty To field (hk-6vwi3 fix #2).
+	// Optional; without it subscribe connections do not refresh presence.
+	PresenceEmitter eventbus.CommsPresenceEmitter
+
 	// Now is the wall-clock function. Defaults to time.Now when nil.
 	// Tests override this; production wiring leaves it nil.
 	Now func() time.Time
@@ -319,6 +324,18 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		delete(h.subscribers, s)
 		h.mu.Unlock()
 	}()
+
+	// Emit a refresh beat for the subscribing agent (hk-6vwi3 fix #2): a receive-only
+	// agent that opens a subscribe session stays visible in "comms who" even if it
+	// never calls comms-send. Best-effort: errors are silently dropped (O-class).
+	if h.cfg.PresenceEmitter != nil && req.To != "" {
+		_, _ = h.cfg.PresenceEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
+			Agent:    req.To,
+			Status:   core.AgentPresenceStatusOnline,
+			LastSeen: h.cfg.Now().UTC().Format(time.RFC3339),
+			Reason:   core.AgentPresenceReasonRefresh,
+		})
+	}
 
 	// Detect client-side close: a goroutine reads from the conn and signals
 	// via cancellation. Any read error (EOF, RST, deadline) cancels.

@@ -583,65 +583,136 @@ EXAMPLES
 `)
 }
 
-// presenceTTL is the staleness window for the presence projection (agent-comms
+// presenceTTL is the online window for the presence projection (agent-comms
 // spec §4 / Q2 — APPROVED → C = 60s refresh cadence, TTL = ~2× = 120s).
 const presenceTTL = 120 * time.Second
+
+// presenceStaleCutoff is the outer window beyond which a stale agent is
+// considered fully offline. online=[0,presenceTTL), stale=[presenceTTL,presenceStaleCutoff),
+// offline=[presenceStaleCutoff,∞) — unless an explicit leave beat fires first.
+const presenceStaleCutoff = 10 * time.Minute
 
 // PresenceRecord is one entry in the presence registry projection.
 // Used by comms join/leave (T10) and consumed by comms who (T11).
 type PresenceRecord struct {
 	Agent    string
-	Status   string // "online" or "offline"
-	LastSeen time.Time
+	Status   string    // "online" or "offline" — from the latest agent_presence beat
+	LastSeen time.Time // wall time from the latest agent_presence beat
+	// EffectiveLastSeen is max(LastSeen, latest agent_message send timestamp for this agent).
+	// Incorporates activity-derived liveness so an agent sending messages stays online
+	// even when its explicit presence beat is stale (hk-6vwi3 fix #1).
+	EffectiveLastSeen time.Time
+}
+
+// PresenceState is the computed liveness state for a PresenceRecord.
+type PresenceState int
+
+const (
+	// PresenceStateOnline: effective_last_seen < presenceTTL (120s).
+	PresenceStateOnline PresenceState = iota
+	// PresenceStateStale: presenceTTL ≤ effective_last_seen < presenceStaleCutoff (10m).
+	PresenceStateStale
+	// PresenceStateOffline: explicit leave beat OR effective_last_seen ≥ presenceStaleCutoff.
+	PresenceStateOffline
+)
+
+// GetPresenceState returns the computed PresenceState for r.
+// A clean leave beat (Status=="offline") short-circuits to PresenceStateOffline
+// immediately, bypassing the TTL check — so a departing agent never reads as stale.
+func GetPresenceState(r PresenceRecord) PresenceState {
+	if r.Status == "offline" {
+		return PresenceStateOffline
+	}
+	age := time.Since(r.EffectiveLastSeen)
+	if age < presenceTTL {
+		return PresenceStateOnline
+	}
+	if age < presenceStaleCutoff {
+		return PresenceStateStale
+	}
+	return PresenceStateOffline
+}
+
+// IsOnline reports whether r represents an agent that is currently online
+// (effective_last_seen < presenceTTL and no leave beat).
+func IsOnline(r PresenceRecord) bool {
+	return GetPresenceState(r) == PresenceStateOnline
+}
+
+// IsStale reports whether r represents an agent in the stale window
+// (presenceTTL ≤ effective_last_seen < presenceStaleCutoff, no leave beat).
+func IsStale(r PresenceRecord) bool {
+	return GetPresenceState(r) == PresenceStateStale
 }
 
 // ComputePresenceRegistry returns the current presence projection over events.jsonl.
-// The projection is: for each agent, take the latest agent_presence beat; report
-// the agent as online if status=="online" AND now-LastSeen < presenceTTL (120s).
 //
-// Scans events.jsonl forward (file order = chronological order for UUIDv7 events),
-// keeping the latest beat per agent. A missing or empty file returns an empty map.
+// The projection folds two event types in a single forward scan (hk-6vwi3 fix #1):
+//   - agent_presence: latest beat per agent determines Status and LastSeen.
+//   - agent_message:  latest send timestamp per agent (from==agent) extends
+//     EffectiveLastSeen so active agents remain visible even without a recent beat.
+//
+// EffectiveLastSeen = max(LastSeen, latest agent_message.from timestamp).
+// A missing or empty file returns an empty map.
 //
 // Spec ref: agent-comms spec §4 (presence registry projection).
-// Bead ref: hk-7t27s (T10); consumed by T11 (comms who).
+// Bead ref: hk-7t27s (T10); consumed by T11 (comms who); hk-6vwi3 (fix #1).
 func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 	var zeroID core.EventID
 	byAgent := make(map[string]PresenceRecord)
-	now := time.Now()
+	// lastActivity tracks the most recent agent_message.from timestamp per agent.
+	lastActivity := make(map[string]time.Time)
+
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
-		if ev.Type != "agent_presence" {
-			continue
-		}
-		var p core.AgentPresencePayload
-		if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
-			continue
-		}
-		if p.Agent == "" {
-			continue
-		}
-		lastSeen, parseErr := time.Parse(time.RFC3339, p.LastSeen)
-		if parseErr != nil {
-			continue
-		}
-		// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
-		byAgent[p.Agent] = PresenceRecord{
-			Agent:    p.Agent,
-			Status:   string(p.Status),
-			LastSeen: lastSeen,
+		switch ev.Type {
+		case "agent_presence":
+			var p core.AgentPresencePayload
+			if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
+				continue
+			}
+			if p.Agent == "" {
+				continue
+			}
+			lastSeen, parseErr := time.Parse(time.RFC3339, p.LastSeen)
+			if parseErr != nil {
+				continue
+			}
+			// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
+			byAgent[p.Agent] = PresenceRecord{
+				Agent:    p.Agent,
+				Status:   string(p.Status),
+				LastSeen: lastSeen,
+				// EffectiveLastSeen filled in post-scan pass below.
+			}
+		case "agent_message":
+			var p core.AgentMessagePayload
+			if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
+				continue
+			}
+			if p.From == "" {
+				continue
+			}
+			if ev.TimestampWall.After(lastActivity[p.From]) {
+				lastActivity[p.From] = ev.TimestampWall
+			}
 		}
 	}
-	// Apply TTL: promote Status from the payload, but mark stale-online as effectively
-	// offline. We keep the raw record and let callers decide; callers typically filter
-	// on IsOnline() helper below.
-	_ = now // used in IsOnline; ComputePresenceRegistry itself is a pure projection.
+
+	// Post-scan: compute EffectiveLastSeen for each known agent.
+	// Only update agents already present in byAgent — agent_message alone does NOT
+	// create a registry entry (an agent must have emitted at least one presence beat).
+	for agent, rec := range byAgent {
+		effective := rec.LastSeen
+		if act := lastActivity[agent]; act.After(effective) {
+			effective = act
+		}
+		rec.EffectiveLastSeen = effective
+		byAgent[agent] = rec
+	}
+
 	return byAgent
 }
 
-// IsOnline reports whether r represents an agent that is currently online:
-// status=="online" AND now-LastSeen < presenceTTL (120s).
-func IsOnline(r PresenceRecord) bool {
-	return r.Status == "online" && time.Since(r.LastSeen) < presenceTTL
-}
 
 // runCommsPresenceSubcommand implements `harmonik comms join` and `harmonik comms leave`.
 // verb is "join" or "leave". subArgs is os.Args[3:].
@@ -842,32 +913,38 @@ func runCommsWhoSubcommand(subArgs []string) int {
 
 	registry := ComputePresenceRegistry(eventsPath)
 
-	// Collect online agents in a deterministic order (sorted by name).
-	type onlineEntry struct {
+	// Collect online and stale agents in deterministic order (sorted by name).
+	// Stale agents (presenceTTL..presenceStaleCutoff) are included with a
+	// degraded annotation; offline agents (>presenceStaleCutoff or leave beat) are omitted.
+	type whoEntry struct {
 		Agent    string    `json:"agent"`
 		LastSeen time.Time `json:"last_seen"`
+		Status   string    `json:"status"` // "online" or "stale"
 	}
-	var online []onlineEntry
+	var entries []whoEntry
 	for _, rec := range registry {
-		if IsOnline(rec) {
-			online = append(online, onlineEntry{Agent: rec.Agent, LastSeen: rec.LastSeen})
+		switch GetPresenceState(rec) {
+		case PresenceStateOnline:
+			entries = append(entries, whoEntry{Agent: rec.Agent, LastSeen: rec.EffectiveLastSeen, Status: "online"})
+		case PresenceStateStale:
+			entries = append(entries, whoEntry{Agent: rec.Agent, LastSeen: rec.EffectiveLastSeen, Status: "stale"})
 		}
 	}
 	// Sort by agent name for stable output.
-	for i := 1; i < len(online); i++ {
-		for j := i; j > 0 && online[j].Agent < online[j-1].Agent; j-- {
-			online[j], online[j-1] = online[j-1], online[j]
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].Agent < entries[j-1].Agent; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
 		}
 	}
 
-	if len(online) == 0 {
+	if len(entries) == 0 {
 		if !jsonFlag {
 			fmt.Fprintln(os.Stderr, "harmonik comms who: no agents currently online")
 		}
 		return 0
 	}
 
-	for _, e := range online {
+	for _, e := range entries {
 		if jsonFlag {
 			line, marshalErr := json.Marshal(e)
 			if marshalErr != nil {
@@ -876,7 +953,12 @@ func runCommsWhoSubcommand(subArgs []string) int {
 			}
 			fmt.Println(string(line))
 		} else {
-			fmt.Printf("%-30s  last_seen %s\n", e.Agent, e.LastSeen.UTC().Format(time.RFC3339))
+			if e.Status == "stale" {
+				age := time.Since(e.LastSeen)
+				fmt.Printf("%-30s  stale (last seen %dm ago)\n", e.Agent, int(age.Minutes()))
+			} else {
+				fmt.Printf("%-30s  last_seen %s\n", e.Agent, e.LastSeen.UTC().Format(time.RFC3339))
+			}
 		}
 	}
 	return 0

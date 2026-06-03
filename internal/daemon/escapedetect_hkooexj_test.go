@@ -355,3 +355,87 @@ func TestEscapeDetect_SiblingMergeRaceRealEscapeStillFlagged(t *testing.T) {
 		}
 	}
 }
+
+// TestEscapeDetect_SiblingCommitPredatesBaselineTransientDirty is the
+// regression for hk-zguy6: when a sibling bead's update-ref runs AFTER this
+// run's baseline is captured but the resulting preRunMainSHA equals the
+// sibling's tip (i.e., currentTip == preRunMainSHA at escape-check time),
+// siblingMergeChangedPaths returns an empty exclusion set. If the sibling's
+// reset-hard has not yet run, the working tree is transiently dirty and
+// checkMainWorkingTreeDirty returns dirty=true — a false-positive escape.
+//
+// Concretely: the BASELINE is captured at run-start (state A), then the sibling
+// does update-ref A→B, and then THIS run's escape check fires with preRunMainSHA=B
+// and currentTip=B. siblingMergeChangedPaths sees no advance → empty exclusion
+// set → sibling's files are not excluded → false positive.
+//
+// This test documents that gap. In production runAgentImplementer holds mergeMu
+// during checkMainWorkingTreeDirty (hk-zguy6 fix), so this scenario is
+// unreachable: the escape check cannot fire while any sibling's
+// update-ref → reset-hard is in flight.
+func TestEscapeDetect_SiblingCommitPredatesBaselineTransientDirty(t *testing.T) {
+	dir := escapeFixtureGitRepo(t)
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+
+	// Step 1: capture baseline at run-start (state A — tree is clean).
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+
+	// Step 2: sibling bead's update-ref advances main A→B WITHOUT reset-hard.
+	// This simulates the race window: sibling.go is now in HEAD (B) but the
+	// working tree / index still reflect A (no sibling.go).
+	run("checkout", "-b", "sibling-run-predates")
+	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
+	run("add", "sibling.go")
+	run("commit", "-m", "sibling bead predates baseline capture")
+	siblingTip := run("rev-parse", "HEAD")
+	run("checkout", "main") // working tree = A (no sibling.go); index = A
+
+	// Advance main to siblingTip WITHOUT reset-hard: HEAD → B, tree/index still A.
+	run("update-ref", "refs/heads/main", siblingTip)
+
+	// Step 3: capture preRunMainSHA AFTER the sibling's update-ref.
+	// preRunMainSHA = B = siblingTip → currentTip == preRunMainSHA.
+	preRunMainSHA := daemon.ExportedSnapshotMainHEAD(t.Context(), dir)
+	if preRunMainSHA == "" {
+		t.Fatal("snapshotMainHEAD returned empty")
+	}
+	if preRunMainSHA != siblingTip {
+		t.Fatalf("expected preRunMainSHA == siblingTip, got %q vs %q", preRunMainSHA, siblingTip)
+	}
+
+	// Step 4: escape check fires while reset-hard is still pending.
+	// siblingMergeChangedPaths(preRunMainSHA=B): currentTip=B == preRunMainSHA=B
+	// → no advance detected → empty exclusion set → sibling.go not excluded.
+	// git status --porcelain sees sibling.go as staged-deleted (in HEAD B, absent
+	// from index/worktree which are still at A) → dirty=true.
+	// This is the false-positive scenario that mergeMu prevents in production.
+	dirty, files, checkErr := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline, preRunMainSHA)
+	if checkErr != nil {
+		t.Fatalf("checkMainWorkingTreeDirty: %v", checkErr)
+	}
+	if !dirty {
+		t.Fatalf("hk-zguy6 scenario: expected dirty=true (sibling transient not excluded when currentTip==preRunMainSHA), got dirty=%v files=%v", dirty, files)
+	}
+	found := false
+	for _, f := range files {
+		if f == "sibling.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected sibling.go in dirty list (transient false-positive scenario), got %v", files)
+	}
+}

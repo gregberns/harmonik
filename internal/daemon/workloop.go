@@ -2315,8 +2315,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// `git -C <main> diff` + manual cherry-pick or via the
 	// /tmp/escape-recovery.patch pattern.
 	//
-	// Bead: hk-6zylj.
-	if mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked, preRunMainSHA); escapeErr == nil && mainDirty {
+	// Bead: hk-6zylj, hk-zguy6.
+	//
+	// hk-zguy6: hold mergeMu during the escape check so that a sibling's
+	// update-ref → reset-hard sequence cannot race with this check. Without
+	// the lock, a sibling whose commit predates our preRunMainSHA produces
+	// transient dirt that siblingMergeChangedPaths cannot exclude (because
+	// currentTip == preRunMainSHA → empty exclusion set), causing a false
+	// implementer_escaped_worktree. Wrapping the check in mergeMu makes it
+	// mutually exclusive with any concurrent merge flow.
+	if deps.mergeMu != nil {
+		deps.mergeMu.Lock()
+	}
+	mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked, preRunMainSHA)
+	if deps.mergeMu != nil {
+		deps.mergeMu.Unlock()
+	}
+	if escapeErr == nil && mainDirty {
 		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))

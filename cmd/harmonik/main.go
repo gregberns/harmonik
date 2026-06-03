@@ -451,6 +451,16 @@ EXAMPLES
 	flag.Int64Var(&subscriptionTokenCeilingFlag, "subscription-token-ceiling", 0,
 		"per-5h token ceiling for the Claude subscription; enables auto-tuning of --max-concurrent (0 = disabled)")
 
+	// --workflow-mode: daemon-level default workflow mode (hk-rssrg).
+	// Tier-3 of the four-tier resolution chain (execution-model.md §4.3 EM-012a):
+	// per-bead label → per-project → daemon-default (this flag) → built-in fallback.
+	// Defaults to "review-loop" so the persistent-daemon path mirrors hk-g0ckv
+	// ("review-loop is on by default"). Pass --workflow-mode single to opt out.
+	// Valid values: single, review-loop, dot.
+	var workflowModeFlag string
+	flag.StringVar(&workflowModeFlag, "workflow-mode", string(core.WorkflowModeReviewLoop),
+		"daemon-level default workflow mode: single, review-loop, dot (default: review-loop)")
+
 	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
 	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready
 	// drain for non-queue-driven deployments. --no-auto-pull is kept as an
@@ -577,6 +587,7 @@ EXAMPLES
 		DaemonBinaryPath:         daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag, // hk-ymav1: bandwidth auto-tuner
+		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-rssrg: default to review-loop
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

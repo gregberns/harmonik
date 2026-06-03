@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"iter"
 	"log"
 	"os"
@@ -320,26 +321,33 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 		defer func() { _ = f.Close() }()
 
 		since := [16]byte(sinceID)
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			lineBytes := scanner.Bytes()
-			var ev core.Event
-			if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
-				log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
-				continue
+		reader := bufio.NewReader(f)
+		for {
+			lineBytes, err := reader.ReadBytes('\n')
+			if len(lineBytes) > 0 {
+				// Trim the trailing newline before unmarshalling.
+				lineBytes = bytes.TrimRight(lineBytes, "\n")
+				var ev core.Event
+				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
+					log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
+				} else {
+					// bytes.Compare on raw UUID bytes: lexicographic order matches
+					// chronological order for UUIDv7 (EV-002). Skip events ≤ sinceID.
+					evUID := [16]byte(ev.EventID)
+					if bytes.Compare(evUID[:], since[:]) > 0 {
+						if !yield(ev) {
+							return
+						}
+					}
+				}
 			}
-			// bytes.Compare on raw UUID bytes: lexicographic order matches
-			// chronological order for UUIDv7 (EV-002). Skip events ≤ sinceID.
-			evUID := [16]byte(ev.EventID)
-			if bytes.Compare(evUID[:], since[:]) <= 0 {
-				continue
-			}
-			if !yield(ev) {
+			if err == io.EOF {
 				return
 			}
-		}
-		if scanErr := scanner.Err(); scanErr != nil {
-			log.Printf("eventbus.ScanAfter: scan %s: %v", path, scanErr)
+			if err != nil {
+				log.Printf("eventbus.ScanAfter: read %s: %v", path, err)
+				return
+			}
 		}
 	}
 }
@@ -378,24 +386,28 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 		}
 		defer func() { _ = f.Close() }()
 
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			lineBytes := scanner.Bytes()
-			// Decode just the envelope fields needed for matching.
-			var ev core.Event
-			if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
-				log.Printf("eventbus.Filter: malformed line in %s (skipping): %v", path, decodeErr)
-				continue
+		reader := bufio.NewReader(f)
+		for {
+			lineBytes, err := reader.ReadBytes('\n')
+			if len(lineBytes) > 0 {
+				lineBytes = bytes.TrimRight(lineBytes, "\n")
+				// Decode just the envelope fields needed for matching.
+				var ev core.Event
+				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
+					log.Printf("eventbus.Filter: malformed line in %s (skipping): %v", path, decodeErr)
+				} else if ev.RunID != nil && *ev.RunID == runID {
+					if !yield(ev) {
+						return
+					}
+				}
 			}
-			if ev.RunID == nil || *ev.RunID != runID {
-				continue
-			}
-			if !yield(ev) {
+			if err == io.EOF {
 				return
 			}
-		}
-		if scanErr := scanner.Err(); scanErr != nil {
-			log.Printf("eventbus.Filter: scan %s: %v", path, scanErr)
+			if err != nil {
+				log.Printf("eventbus.Filter: read %s: %v", path, err)
+				return
+			}
 		}
 	}
 }

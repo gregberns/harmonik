@@ -25,7 +25,7 @@ func TestProp_HookFiredPayload_AllValidAccepted(t *testing.T) {
 		p := HookFiredPayload{
 			HookName:             HookName(drawNonEmptyString(rt, "hook_name")),
 			TriggeringEventID:    EventID(drawNonNilUUID(rt, "triggering_event_id")),
-			SideEffectDescriptor: validSideEffect(),
+			SideEffectDescriptor: validSideEffect,
 		}
 		if !p.Valid() {
 			rt.Error("Valid() == false for well-formed HookFiredPayload")
@@ -40,7 +40,7 @@ func TestProp_HookFiredPayload_NilRunIDRejected(t *testing.T) {
 			RunID:                &nilID,
 			HookName:             HookName(drawNonEmptyString(rt, "hook_name")),
 			TriggeringEventID:    EventID(drawNonNilUUID(rt, "triggering_event_id")),
-			SideEffectDescriptor: validSideEffect(),
+			SideEffectDescriptor: validSideEffect,
 		}
 		if p.Valid() {
 			rt.Error("Valid() should be false when RunID points to uuid.Nil")
@@ -53,7 +53,7 @@ func TestProp_HookFiredPayload_EmptyHookNameRejected(t *testing.T) {
 		p := HookFiredPayload{
 			HookName:             "",
 			TriggeringEventID:    EventID(drawNonNilUUID(rt, "triggering_event_id")),
-			SideEffectDescriptor: validSideEffect(),
+			SideEffectDescriptor: validSideEffect,
 		}
 		if p.Valid() {
 			rt.Error("Valid() should be false with empty HookName")
@@ -66,7 +66,7 @@ func TestProp_HookFiredPayload_NilTriggeringEventIDRejected(t *testing.T) {
 		p := HookFiredPayload{
 			HookName:             HookName(drawNonEmptyString(rt, "hook_name")),
 			TriggeringEventID:    EventID(uuid.Nil),
-			SideEffectDescriptor: validSideEffect(),
+			SideEffectDescriptor: validSideEffect,
 		}
 		if p.Valid() {
 			rt.Error("Valid() should be false with nil TriggeringEventID")

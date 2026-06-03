@@ -9,34 +9,12 @@ package core
 // Refs: hk-qgzso (property-test coverage uplift).
 
 import (
-	"github.com/google/uuid"
 	"pgregory.net/rapid"
 )
-
-// drawNonNilUUID returns a random uuid.UUID that is never uuid.Nil.
-// Uses rapid to draw 16 bytes so the value is reproducible on shrinking.
-func drawNonNilUUID(rt *rapid.T, label string) uuid.UUID {
-	b := rapid.SliceOfN(rapid.Byte(), 16, 16).Draw(rt, label)
-	var u uuid.UUID
-	copy(u[:], b)
-	if u == uuid.Nil {
-		u[0] = 1
-	}
-	return u
-}
 
 // drawNonEmptyString returns a non-empty string drawn by rapid.
 func drawNonEmptyString(rt *rapid.T, label string) string {
 	return rapid.StringN(1, 64, -1).Draw(rt, label)
-}
-
-// validSideEffect returns a minimal SideEffect that passes SideEffect.Valid().
-func validSideEffect() SideEffect {
-	return SideEffect{
-		Kind:             SideEffectKindEmitEvent,
-		Target:           "ev",
-		IdempotencyClass: IdempotencyClassIdempotent,
-	}
 }
 
 // allReconciliationTriggers lists all declared ReconciliationTrigger constants.

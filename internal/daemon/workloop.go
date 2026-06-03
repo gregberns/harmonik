@@ -997,6 +997,15 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// caps. rrCursor is daemon state (declared before the loop) advanced on
 				// every successful selection so the start offset rotates — this is what
 				// prevents a lexicographically-earlier queue from starving a later one.
+				//
+				// Asymmetry: we pass effectiveMax (static startup value) rather than gateMax
+				// (bandwidth-tuner runtime value) for the per-queue Workers ceiling.  This is
+				// intentional: the global gate at Step 2 already blocks dispatch when the tuner
+				// reduces gateMax below deps.runRegistry.Len(), so per-queue candidates are never
+				// actually dispatched while the global ceiling is throttled.  Per-queue Workers
+				// reflects the queue-owner's permanent concurrency intent, not the current tuner
+				// state; scaling it with the tuner would under-count eligible queues in the
+				// round-robin even when the global gate is the binding constraint.
 				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor)
 				lq.Done()
 				if !ok {

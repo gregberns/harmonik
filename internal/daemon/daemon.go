@@ -789,6 +789,21 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)
 	}
 
+	// Wire the bandwidth-tuner rate-limit backstop (hk-lqtzq).
+	//
+	// bandwidthTunerBackstop subscribes to agent_rate_limited bus events
+	// (emitted by the watcher when the agent reports a 429).  When the tuner is
+	// running, it calls tuner.NotifyRateLimit so the tuner snaps concurrency to 1
+	// immediately — the emergency backstop that was wired but never reached.
+	//
+	// Two-phase wiring: Subscribe is called here (pre-Seal, required by EV-009);
+	// SetTuner is called below (post-Seal, where concurrencyCtrl is available).
+	// The atomic pointer inside the backstop makes the hand-off race-free.
+	tunerBackstop := &bandwidthTunerBackstop{}
+	if subscribeErr := tunerBackstop.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
+	}
+
 	// Notify the test-only observer (when set) so tests can inspect bus
 	// subscription state before Seal locks it.  Only reachable via
 	// StartForTesting; production Start always passes a zero-value daemonTestHooks.
@@ -1210,6 +1225,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			homeDir, homeDirErr := os.UserHomeDir()
 			if homeDirErr == nil {
 				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
+				tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
 				go tuner.Run(ctx)
 			}
 		}

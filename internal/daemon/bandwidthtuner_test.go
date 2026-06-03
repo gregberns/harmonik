@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // writeTestJSONL writes a JSONL file with usage records at specified token counts
@@ -152,6 +155,77 @@ func TestBandwidthTuner_tick_CeilingExhausted(t *testing.T) {
 	// headroom ≤ 0 → clamp to 1
 	if got := ctrl.Get(); got != 1 {
 		t.Errorf("expected ceiling=1 when exhausted, got %d", got)
+	}
+}
+
+// TestBandwidthTunerBackstop_NilTuner verifies that the backstop handler is a
+// no-op when no tuner has been wired (SetTuner not called).
+func TestBandwidthTunerBackstop_NilTuner(t *testing.T) {
+	t.Parallel()
+	b := &bandwidthTunerBackstop{}
+	// Should not panic; returns nil.
+	evt := core.Event{Payload: json.RawMessage(`{"retry_after_seconds": 60}`)}
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Errorf("handle with nil tuner: unexpected error %v", err)
+	}
+}
+
+// TestBandwidthTunerBackstop_ForwardsNotify verifies that the backstop calls
+// tuner.NotifyRateLimit when a tuner is wired and an agent_rate_limited event
+// carries a retry_after_seconds field.
+func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+
+	b := &bandwidthTunerBackstop{}
+	b.SetTuner(tuner)
+
+	payload, _ := json.Marshal(map[string]int{"retry_after_seconds": 120})
+	evt := core.Event{Payload: json.RawMessage(payload)}
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	// NotifyRateLimit should have snapped concurrency to 1.
+	if got := ctrl.Get(); got != 1 {
+		t.Errorf("concurrency after backstop notify = %d, want 1", got)
+	}
+	// tick should not raise the ceiling during backoff.
+	tuner.tick()
+	if got := ctrl.Get(); got != 1 {
+		t.Errorf("concurrency still expected 1 during backoff, got %d", got)
+	}
+}
+
+// TestBandwidthTunerBackstop_ZeroRetryAfter verifies that a missing or zero
+// retry_after_seconds in the event payload still calls NotifyRateLimit
+// (which applies a conservative 5-minute default).
+func TestBandwidthTunerBackstop_ZeroRetryAfter(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+
+	b := &bandwidthTunerBackstop{}
+	b.SetTuner(tuner)
+
+	// No retry_after_seconds field.
+	evt := core.Event{Payload: json.RawMessage(`{}`)}
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	// NotifyRateLimit uses conservative default → should still snap to 1.
+	if got := ctrl.Get(); got != 1 {
+		t.Errorf("concurrency after backstop notify (no retry hint) = %d, want 1", got)
 	}
 }
 

@@ -25,17 +25,76 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
 const (
 	bandwidthTunerWindow   = 5 * time.Hour
 	bandwidthTunerInterval = 60 * time.Second
 )
+
+// bandwidthTunerBackstop bridges the pre-Seal bus subscription to the
+// post-Seal BandwidthTuner construction.  Subscribe must be called before
+// bus.Seal (EV-009); SetTuner wires the live tuner after it is constructed.
+// This two-phase wiring avoids restructuring the daemon init order: the tuner
+// depends on concurrencyCtrl, which is built after Seal.
+type bandwidthTunerBackstop struct {
+	tuner atomic.Pointer[BandwidthTuner]
+}
+
+// SetTuner stores the running tuner so the bus handler can forward events.
+// Must be called after NewBandwidthTuner and before beads are dispatched.
+func (b *bandwidthTunerBackstop) SetTuner(t *BandwidthTuner) {
+	b.tuner.Store(t)
+}
+
+// Subscribe registers an asynchronous consumer for agent_rate_limited bus
+// events.  When the tuner is set and a rate-limit event arrives, it calls
+// tuner.NotifyRateLimit with the parsed retry_after duration.
+// Must be called before bus.Seal (EV-009).
+func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
+	sub := core.Subscription{
+		ConsumerID:    "bandwidth-tuner-rate-limit-backstop",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{
+				"agent_rate_limited": {}, // progress-stream event forwarded by the watcher
+			},
+		},
+		OnPanic: core.OnPanicRecoverAndLog,
+		Handler: b.handle,
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		return fmt.Errorf("bandwidthTunerBackstop.Subscribe: %w", err)
+	}
+	return nil
+}
+
+// handle is the bus event handler for agent_rate_limited events.
+func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error {
+	t := b.tuner.Load()
+	if t == nil {
+		return nil // tuner not running (--subscription-token-ceiling not set)
+	}
+	var pl struct {
+		RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
+	}
+	_ = json.Unmarshal(evt.Payload, &pl)
+	var d time.Duration
+	if pl.RetryAfterSeconds != nil && *pl.RetryAfterSeconds > 0 {
+		d = time.Duration(*pl.RetryAfterSeconds) * time.Second
+	}
+	t.NotifyRateLimit(d)
+	return nil
+}
 
 // transcriptRecord is a minimal parse target for a single line in a
 // ~/.claude/projects/*/*.jsonl transcript file.

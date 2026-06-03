@@ -281,9 +281,9 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 
 	// ── Level 1: unit test via ExportedBuildClaudeLaunchSpec ─────────────────
 	//
-	// Build a reviewer LaunchSpec with a non-nil priorClaudeSessID. Per CHB-009,
-	// MintClaudeSessionID must mint a NEW session ID (not reuse the prior), so
-	// the returned spec args must start with "--session-id" (not "--resume").
+	// Build a reviewer LaunchSpec with no priorClaudeSessID (CHB-009: caller must
+	// NOT pass a prior session ID to the reviewer). Verify the spec args start
+	// with "--session-id" (fresh mint, not "--resume").
 	t.Run("unit_mint_fresh_via_spec_builder", func(t *testing.T) {
 		t.Parallel()
 
@@ -300,16 +300,16 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 		}
 
 		rc := daemon.ExportedClaudeRunCtx{
-			RunID:             core.RunID(runUID),
-			BeadID:            "chb009-test-bead",
-			WorkspacePath:     workspacePath,
-			DaemonSocket:      "/tmp/harmonik-chb009-test.sock",
-			WorkflowMode:      core.WorkflowModeReviewLoop,
-			Phase:             "reviewer", // ReviewLoopPhaseReviewer
-			IterationCount:    1,
-			PriorClaudeSessID: &priorSessID, // CHB-009: reviewer ignores this
-			HandlerBinary:     "claude",
-			BaseEnv:           []string{"HARMONIK_PROJECT_HASH=deadbeef"},
+			RunID:         core.RunID(runUID),
+			BeadID:        "chb009-test-bead",
+			WorkspacePath: workspacePath,
+			DaemonSocket:  "/tmp/harmonik-chb009-test.sock",
+			WorkflowMode:  core.WorkflowModeReviewLoop,
+			Phase:         "reviewer", // ReviewLoopPhaseReviewer
+			IterationCount: 1,
+			// CHB-009: reviewer must NOT receive a prior session ID — omit PriorClaudeSessID.
+			HandlerBinary: "claude",
+			BaseEnv:       []string{"HARMONIK_PROJECT_HASH=deadbeef"},
 		}
 
 		spec, arts, buildErr := daemon.ExportedBuildClaudeLaunchSpec(t.Context(), rc)

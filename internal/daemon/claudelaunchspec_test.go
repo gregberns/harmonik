@@ -181,19 +181,13 @@ func TestBuildClaudeLaunchSpec_ImplementerResume(t *testing.T) {
 }
 
 // TestBuildClaudeLaunchSpec_Reviewer verifies the helper for the reviewer phase:
-// mints a fresh session ID even when priorClaudeSessID is provided (CHB-009).
+// mints a fresh session ID (CHB-009 — caller must NOT pass a prior session ID).
 func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 	t.Parallel()
 
 	ws := claudeLaunchSpecFixtureWorkspace(t)
-	// Supply a non-nil priorClaudeSessID — reviewer MUST ignore it (CHB-009).
-	priorUID, err := uuid.NewV7()
-	if err != nil {
-		t.Fatalf("mint priorUID: %v", err)
-	}
-	priorSessID := priorUID.String()
-
-	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, &priorSessID, 1)
+	// CHB-009: reviewer must always mint fresh; caller must NOT pass a prior session ID.
+	rc := claudeLaunchSpecFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
 
 	spec, arts, err := daemon.ExportedBuildClaudeLaunchSpec(context.Background(), rc)
 	if err != nil {
@@ -203,11 +197,6 @@ func TestBuildClaudeLaunchSpec_Reviewer(t *testing.T) {
 	// Reviewer uses --session-id (fresh session; CHB-009 — never --resume).
 	claudeLaunchSpecAssertSessionIDFlag(t, spec.Args, false)
 
-	// Reviewer mints a fresh session ID — must differ from priorSessID (CHB-009).
-	if arts.ClaudeSessionID == priorSessID {
-		t.Errorf("reviewer claudeSessionID = %q; must NOT reuse prior session %q (CHB-009)",
-			arts.ClaudeSessionID, priorSessID)
-	}
 	if arts.ClaudeSessionID == "" {
 		t.Error("reviewer claudeSessionID must be non-empty")
 	}

@@ -1,35 +1,32 @@
-<!-- PP-TRIAL:v2 2026-06-02 (afternoon) main @0d5cbf79 in-sync origin — CLEAN, nothing blocking. AFTERNOON SESSION (named-queues agent): (1) found+fixed a SILENT dispatch DEADLOCK — hk-z0pmi P1: a stuck-`dispatched` queue item wedged `main` active → QM-027 blocked ALL submits → both agents sat idle (fix f82c051e, QM-002b Class A'); also hk-febd6 + hk-40r9b. (2) SCENARIO-TEST COVERAGE UPLIFT (operator ask): 4-scout coverage-matrix → 6 new //go:build scenario tests across the daemon-reliability gaps, full tagged suite GREEN @6ecfb017 (1 false gap retired, hk-5mlvk). flywheel ran the ledger/kerf lane (33 stale closes incl epics hk-i0tw+hk-fgy9o, kerf baseline acked) then handed off. START HERE = deferred (hk-ymav1/ulp7v/x6j6r) or `kerf next`; my follow-ups hk-i2ie5 (daemon gate skips scenario tests) + hk-yyso7 (concurrent-push race). See HANDOFF-named-queues.md. Overnight summary below. -->
+<!-- PP-TRIAL:v2 2026-06-02 main @7049f53b 0/0 origin — CLEAN, nothing blocking. THREE concurrent agent threads share ONE daemon: named-queues (daemon/queues/scenario), flywheel (ledger/kerf), controlpoints (control-points/infra). Per-thread detail in HANDOFF-<role>.md. Today: overnight daemon-reliability cluster + agent-comms bus landed; afternoon dispatch-deadlock fix (hk-z0pmi) + scenario-test uplift (tagged suite GREEN @6ecfb017) + flywheel bead-reassessment (46→13 open). Daemon UP -c6 under a SINGLE supervisor. -->
 
-Read order (per CLAUDE.md): AGENT_INDEX.md → STATUS.md → TASKS.md. Cross-project rules: `~/.claude/CLAUDE.md`. Dispatch loop: skill `harmonik-dispatch`.
+Read order (per CLAUDE.md): AGENT_INDEX.md → STATUS.md → TASKS.md. Cross-project: `~/.claude/CLAUDE.md`. Dispatch loop: skill `harmonik-dispatch`.
 
-ROLE: orchestrator. Delegate via the daemon queue / sub-agents; keep the main thread minimal. Failed-twice → investigator, don't re-dispatch.
+ROLE: orchestrator. Delegate via the daemon queue / sub-agents; main thread stays minimal. Failed-twice → investigator, don't re-dispatch.
 
-# Where we are (2026-06-02) — CLEAN, nothing blocking
-Main `5c51df8f`, `0/0` origin, build green, daemon UP at `--max-concurrent 6` on the latest binary. This was an autonomous overnight run with a peer agent (`flywheel`) while the operator slept. All major work landed + deployed + validated.
+# Where we are (2026-06-02) — CLEAN. Main `7049f53b`, 0/0 origin, daemon UP `-c6`.
 
-## What shipped this session
-- **`set-concurrency` (operator ask, `hk-ohiaf`):** runtime-adjustable dispatch ceiling — `harmonik queue set-concurrency N` (no restart; lowering drains-down, never kills). Concurrency now 6.
-- **Daemon-reliability cluster (6 fixes, all deployed):** `hk-77q8e` escape-detector (no longer false-fails concurrent beads on a dirty main), `hk-5pg37` reconciler reaps cancel/restart orphans, `hk-4kuvj` `cancel` name-targeting, `hk-a11re` cross-queue dispatch dedup, `hk-6ri5k` deferred-status gating, + set-concurrency. The multi-agent model is materially more robust now.
-- **agent-comms event bus (kerf work `agent-comms`, epic `hk-uxm0j`, T1-T13 ALL landed):** `harmonik comms send/recv/who/log/join/leave` + `subscribe --to/--from/--topic`; `agent_message`+`agent_presence` events; durable per-agent cursor (at-least-once, dedupe on `event_id`); one shared `matchAgentMessage` predicate (live+replay). Validated end-to-end; flywheel + named-queues now coordinate THROUGH it.
-- **Backlog hygiene:** closed 3 stale beads (`hk-dgwf4` P0 + `hk-hlmup` + `hk-dv8qv` — exit-17 was a misdiagnosis; dv8qv already fixed).
+## DETERMINE YOUR IDENTITY BY LANE (a `/clear` can mis-ID you — it did today)
+Three threads share one daemon: **daemon+queues+scenario** = `named-queues`; **ledger+kerf hygiene** = `flywheel`; **control-points/infra** = `controlpoints`. Read YOUR `HANDOFF-<role>.md`, not just this file. Bus identity must match your lane.
 
-## What changes your plan (READ THIS)
-1. **Comms is the `harmonik comms` BUS now — the `.md` outboxes are RETIRED.** Monitor incoming with a persistent `harmonik comms recv --agent <you> --follow --json`. (See the `agent-comms` skill.)
-2. **Daemon deploy = `go install ./cmd/harmonik` then `pkill -f "harmonik --project"`.** A keeper (`/tmp/hk-keeper.sh`) auto-revives on the new binary in ~5s at `-c6`. Do NOT manually `tmux`-restart — it loses the pidfile race to the keeper. Change live ceiling via `set-concurrency`.
-3. **Named-queue lifecycle verbs are reliable for submit/append but `cancel <name>` is FIXED but verify; pause/resume were flaky pre-fix.** Route concurrent work to your OWN `--queue <name>`, not shared `main`.
+## What's done recently (all landed + on origin)
+- **Overnight:** `set-concurrency` (hk-ohiaf), 6-fix daemon-reliability cluster, **agent-comms BUS** (epic hk-uxm0j, T1–T13).
+- **Afternoon:** dispatch-deadlock fix (**hk-z0pmi**, QM-002b Class A' — a stuck-`dispatched` item wedged `main` and blocked ALL submits); **scenario-test coverage uplift** — 6 new `//go:build scenario` tests, full tagged suite **GREEN @6ecfb017**; friction-batch closes (hk-i2ie5/yyso7/1k5as/x6j6r).
+- **Flywheel:** full open-bead **REASSESSMENT** — 46→13 open, closed 33 stale/landed (10 spec-parent epics + 16 kerf-upstream routed + backlog) with commit+code proof; audit trail `docs/bead-reassessment-2026-06-02/`; kerf baseline acked.
 
-## Deferred for the operator (their call, not auto-dispatched)
-- `hk-ymav1` — auto-tune `--max-concurrent` from `~/.claude` token-rate (needs operator to calibrate the subscription-token ceiling; design in the bead).
-- `hk-ulp7v` (rename refactor), `hk-x6j6r` (eventbus layering move — may want operator input).
+## STANDING DIRECTIVES
+- Comms = the **`harmonik comms` BUS** (.md outboxes RETIRED). Monitor: `harmonik comms recv --agent <you> --follow --json`.
+- **ONE supervisor:** tmux `hk-daemon-supervise` (`/tmp/hk-daemon-supervise.sh`, `-c6`). Do NOT start a second — the old `/tmp/hk-keeper.sh` dueling it caused a pidfile crash-loop (resolved). **Ping over comms before any daemon restart.**
+- Deploy = `go install ./cmd/harmonik` then `pkill -f "harmonik --project"`; the supervisor auto-revives on the new binary. Don't manual-`tmux`-restart.
+- Route work to your OWN `--queue <name>`, not shared `main`. Don't write tracked files into `main` while peer beads RUN (escape-detector; hk-77q8e softened it for gitignored/untracked).
+
+## Open / next (13 open beads — small, honest backlog)
+Operator decisions (not auto-dispatch): **hk-12ke1** (spec-drift audit — validates the 33 closes; the one residual risk), **hk-ymav1** (auto-tune concurrency), **hk-ulp7v** (1-line rename). Otherwise: `kerf next`.
 
 ## Files to open first
-`.kerf/works/agent-comms/` (05-spec-draft.md, 07-tasks.md) · `internal/daemon/workloop.go` (dispatch gate) · `internal/queue/` (comms ops in socket.go) · the `agent-comms` skill.
+`HANDOFF-<your-role>.md` · `docs/bead-reassessment-2026-06-02/` · STATUS.md · `kerf next`.
 
-# Translations glossary
-- **named-queues / flywheel** — the two concurrent Claude orchestrator sessions (peers) sharing one daemon. A `/clear` can mis-ID which one you are (on 2026-06-02 flywheel mis-read this very line, thought it was named-queues, and aliased itself `nq-resume` before correcting). Determine your identity by LANE, not this line: daemon+queues+scenario-tests = named-queues; ledger+kerf hygiene = flywheel. Check which HANDOFF-<role>.md is yours.
-- **agent-comms bus** — the new `harmonik comms` inter-agent messaging feature (replaces the AGENT_COMMS.md file hack).
-- **keeper** — `/tmp/hk-keeper.sh`, the while-loop that auto-revives the daemon on death (at `-c6`).
-- **set-concurrency** — runtime daemon dispatch-ceiling RPC (`hk-ohiaf`).
-- **T1-T13** — the agent-comms build tasks (named-queues built T1/T2/T4/T6/T7/T8; flywheel T3/T5/T9/T10/T11/T12/T13).
+# Translations
+named-queues/flywheel/controlpoints = the 3 concurrent orchestrator threads (ID by LANE) · agent-comms bus = `harmonik comms` · hk-z0pmi = dispatch-deadlock fix · hk-12ke1 = spec-drift audit (validates the 33 closes) · "suite GREEN @6ecfb017" = scenario-test uplift done · supervisor = `/tmp/hk-daemon-supervise.sh` (`-c6`, single) · the-33-closes = flywheel's reassessment bead closes.
 
-# No hard blockers. Daemon healthy, bus live, both agents idle/resting. Next: deferred beads above, or new work from `kerf next`.
+# No hard blockers. Daemon healthy, bus live, backlog reassessed. Next: operator decisions above or `kerf next`.

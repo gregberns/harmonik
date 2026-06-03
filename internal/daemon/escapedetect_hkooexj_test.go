@@ -31,7 +31,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -364,5 +367,133 @@ func TestEscapeDetect_SiblingMergeSameFileEscapeDetected(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected foo.go in escape list, got %v", files)
+	}
+}
+
+// TestEscapeDetect_LockedPathNeverFiresOnConcurrentSiblingMerge is the hk-zguy6
+// concurrent regression guard. Two goroutines share a mergeMu:
+//
+//   - Goroutine A (escape check): locks mu, calls checkMainWorkingTreeDirty,
+//     unlocks — mirroring the hk-zguy6 production path in beadRunOne.
+//
+//   - Goroutine B (sibling merge): locks mu, runs update-ref → Gosched →
+//     reset-hard, unlocks, then restores main HEAD under mu for the next
+//     cycle — mirroring lockedMergeRunBranchToMain (hk-yyso7).
+//
+// With the lock held in A, the escape check always executes in a consistent
+// state (before or after B's full merge, never in the transient window between
+// update-ref and reset-hard). Without the lock on A, runtime.Gosched() after
+// update-ref would allow A to observe that window and report a false positive;
+// 100 cycles reliably catches that failure.
+//
+// The pre-fix race-window mechanics (without the lock) are documented by
+// TestEscapeDetect_SiblingMergeRaceWindow, which passes with/without the lock
+// because it calls checkMainWorkingTreeDirty directly, not through the
+// production-path mutex. THIS test is the locked-path guard that cannot pass
+// in the regressed (lock-removed) state.
+//
+// Helper prefix: escapeFixture (per implementer-protocol.md §Helper-prefix).
+// Bead: hk-weabh.
+func TestEscapeDetect_LockedPathNeverFiresOnConcurrentSiblingMerge(t *testing.T) {
+	const cycles = 100
+
+	dir := escapeFixtureGitRepo(t)
+
+	baseline, err := daemon.ExportedSnapshotUntrackedFiles(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("snapshotUntrackedFiles: %v", err)
+	}
+
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, runErr := cmd.CombinedOutput()
+		if runErr != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), runErr, out)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+
+	// Sibling branch: commit sibling.go on a separate branch, then leave main
+	// clean. This models a concurrent bead whose branch has a commit but whose
+	// working-tree-refresh (reset --hard) has not yet run on the main repo.
+	runGit("checkout", "-b", "sibling-concurrent")
+	escapeFixtureWrite(t, dir, "sibling.go", "package daemon\n")
+	runGit("add", "sibling.go")
+	runGit("commit", "-m", "sibling bead (hk-weabh)")
+	siblingTip := runGit("rev-parse", "HEAD")
+	runGit("checkout", "main")
+	originalTip := runGit("rev-parse", "HEAD")
+
+	var mu sync.Mutex
+	var falseEscapes int64 // atomic; >0 means the lock failed to exclude the transient window
+
+	var wg sync.WaitGroup
+
+	// Goroutine A — LOCKED escape check (hk-zguy6 production path).
+	// Holds mu before calling checkMainWorkingTreeDirty, exactly as beadRunOne
+	// does. With the lock, checkMainWorkingTreeDirty never runs in the transient
+	// window between sibling's update-ref and reset-hard.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < cycles; i++ {
+			if t.Context().Err() != nil {
+				return
+			}
+			mu.Lock()
+			dirty, files, _ := daemon.ExportedCheckMainWorkingTreeDirty(t.Context(), dir, baseline)
+			mu.Unlock()
+			if dirty {
+				for _, f := range files {
+					if f == "sibling.go" {
+						atomic.AddInt64(&falseEscapes, 1)
+					}
+				}
+			}
+		}
+	}()
+
+	// Goroutine B — in-flight sibling merge (mirrors lockedMergeRunBranchToMain).
+	// Holds mu across the full update-ref → reset-hard sequence (hk-yyso7).
+	// runtime.Gosched() between the two git commands maximises scheduler pressure
+	// while the transient window exists but mu is held: if A were NOT locked, it
+	// would be scheduled here and observe the dirty state; with the lock, A is
+	// parked waiting and never runs in the window.
+	// After each forward merge, restores main to originalTip (also under mu) so
+	// cycles repeat cleanly.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < cycles; i++ {
+			if t.Context().Err() != nil {
+				return
+			}
+			// Forward: advance main HEAD to include sibling.go, then make the
+			// working tree consistent (mirrors the EM-054 reset-hard in
+			// mergeRunBranchToMain). Both git commands are under mu so the
+			// transient update-ref-only state is never visible outside this section.
+			mu.Lock()
+			runGit("update-ref", "refs/heads/main", siblingTip)
+			runtime.Gosched() // invite scheduler; A is locked out, so this is a no-op for A
+			runGit("reset", "--hard", "HEAD")
+			mu.Unlock()
+
+			// Restore: move main HEAD back for the next cycle. Also under mu so
+			// the restore's own transient window (update-ref without reset-hard)
+			// is excluded from any concurrent escape check.
+			mu.Lock()
+			runGit("update-ref", "refs/heads/main", originalTip)
+			runtime.Gosched()
+			runGit("reset", "--hard", "HEAD")
+			mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
+
+	if fc := atomic.LoadInt64(&falseEscapes); fc > 0 {
+		t.Fatalf("hk-zguy6 regression: locked escape check observed sibling.go as dirty %d time(s) — mergeMu is not preventing the update-ref/reset-hard race window", fc)
 	}
 }

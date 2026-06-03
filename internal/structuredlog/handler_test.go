@@ -8,10 +8,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -489,6 +491,80 @@ func TestON035Handler_RotatedPathContainsSubsystem(t *testing.T) {
 		if !strings.HasSuffix(name, ".jsonl") {
 			t.Errorf("ON-035: rotated file %q does not end with '.jsonl'", name)
 		}
+	}
+}
+
+// TestON035Handler_ConcurrentWritesFromClones verifies that concurrent writes
+// through the original handler and clones produced by WithAttrs/WithGroup do
+// not corrupt each other. Each goroutine emits N records; the test asserts that
+// every emitted line is valid NDJSON (no interleaving of bytes from separate
+// writes). This is the regression test for the sync.Mutex lock-copy bug fixed
+// in hk-ampck: clone() was doing h2 := *h, copying the mutex value so each
+// clone held its own independent lock over the shared *os.File.
+func TestON035Handler_ConcurrentWritesFromClones(t *testing.T) {
+	t.Parallel()
+
+	const goroutines = 8
+	const recsPerGoroutine = 50
+
+	cfg := on035HandlerFixtureCfg(t)
+	h, err := structuredlog.NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each goroutine gets its own clone via WithAttrs/WithGroup to
+			// exercise the shared-lock path.
+			var logger *slog.Logger
+			if i%2 == 0 {
+				logger = slog.New(h.WithAttrs([]slog.Attr{slog.Int("worker", i)}))
+			} else {
+				logger = slog.New(h.WithGroup(fmt.Sprintf("g%d", i)))
+			}
+			for j := 0; j < recsPerGoroutine; j++ {
+				logger.Info("concurrent write", "seq", j)
+			}
+		}()
+	}
+	wg.Wait()
+	_ = h.Close()
+
+	// Every line must be valid JSON. A corrupted line (interleaved bytes) will
+	// fail to parse.
+	active := filepath.Join(cfg.ProjectDir, ".harmonik", "logs", cfg.Subsystem+"-active.jsonl")
+	//nolint:gosec // test helper
+	f, err := os.Open(active)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	lineN := 0
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		lineN++
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil {
+			t.Errorf("line %d is not valid JSON (concurrent corruption?): %v\nline: %s", lineN, err, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	want := goroutines * recsPerGoroutine
+	if lineN != want {
+		t.Errorf("want %d records, got %d", want, lineN)
 	}
 }
 

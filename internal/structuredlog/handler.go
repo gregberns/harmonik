@@ -65,6 +65,17 @@ func (c *Config) now() time.Time {
 	return time.Now()
 }
 
+// sharedWriter holds the file handle, its protecting mutex, and the rotation
+// counters. It is allocated once in NewHandler and shared by pointer across all
+// clones produced by WithAttrs/WithGroup, so that concurrent writes from any
+// clone are mutually exclusive through a single lock.
+type sharedWriter struct {
+	mu          sync.Mutex
+	file        *os.File
+	openedAt    time.Time
+	writtenSize int64
+}
+
 // Handler is a [log/slog.Handler] that writes ON-035-compliant NDJSON records.
 //
 // Thread-safe. Rotate is called on each Handle call when the rotation
@@ -75,11 +86,7 @@ type Handler struct {
 	cfg    Config
 	attrs  []slog.Attr
 	groups []string
-
-	mu          sync.Mutex
-	file        *os.File
-	openedAt    time.Time
-	writtenSize int64
+	shared *sharedWriter
 }
 
 // NewHandler constructs a Handler that writes structured logs to
@@ -96,7 +103,7 @@ func NewHandler(cfg Config) (*Handler, error) {
 		return nil, fmt.Errorf("structuredlog.NewHandler: ProjectDir is required")
 	}
 
-	h := &Handler{cfg: cfg}
+	h := &Handler{cfg: cfg, shared: &sharedWriter{}}
 	if err := h.openFile(); err != nil {
 		return nil, err
 	}
@@ -133,42 +140,42 @@ func (h *Handler) openFile() error {
 	// even when we're appending to an existing active file on startup.
 	info, statErr := f.Stat()
 	if statErr == nil {
-		h.writtenSize = info.Size()
+		h.shared.writtenSize = info.Size()
 	}
 
-	h.file = f
-	h.openedAt = h.cfg.now()
+	h.shared.file = f
+	h.shared.openedAt = h.cfg.now()
 	return nil
 }
 
 // rotateIfNeeded checks the size and age thresholds and rotates if either is
-// exceeded. Must be called with h.mu held.
+// exceeded. Must be called with h.shared.mu held.
 func (h *Handler) rotateIfNeeded() error {
 	now := h.cfg.now()
-	sizeExceeded := h.writtenSize >= rotateMaxBytes
-	ageExceeded := now.Sub(h.openedAt) >= rotateMaxAge
+	sizeExceeded := h.shared.writtenSize >= rotateMaxBytes
+	ageExceeded := now.Sub(h.shared.openedAt) >= rotateMaxAge
 
 	if !sizeExceeded && !ageExceeded {
 		return nil
 	}
 
 	// Close the active file.
-	if err := h.file.Close(); err != nil {
+	if err := h.shared.file.Close(); err != nil {
 		return fmt.Errorf("structuredlog: close active log for rotation: %w", err)
 	}
-	h.file = nil
+	h.shared.file = nil
 
 	// Rename active → <subsystem>-<rotated_at>.jsonl
 	// Use the time the file was opened (not now) so the name reflects the
 	// log window, matching the spec's "<subsystem>-<rotated_at>" convention.
-	stamp := h.openedAt.UTC().Format("2006-01-02T15-04-05Z")
+	stamp := h.shared.openedAt.UTC().Format("2006-01-02T15-04-05Z")
 	rotatedName := h.cfg.Subsystem + "-" + stamp + ".jsonl"
 	rotatedPath := filepath.Join(h.logDir(), rotatedName)
 	if err := os.Rename(h.activePath(), rotatedPath); err != nil {
 		return fmt.Errorf("structuredlog: rename %s → %s: %w", h.activePath(), rotatedPath, err)
 	}
 
-	h.writtenSize = 0
+	h.shared.writtenSize = 0
 	return h.openFile()
 }
 
@@ -247,28 +254,28 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	}
 	line = append(line, '\n')
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.shared.mu.Lock()
+	defer h.shared.mu.Unlock()
 
 	if rotErr := h.rotateIfNeeded(); rotErr != nil {
 		return rotErr
 	}
 
-	n, err := h.file.Write(line)
-	h.writtenSize += int64(n)
+	n, err := h.shared.file.Write(line)
+	h.shared.writtenSize += int64(n)
 	return err
 }
 
 // Close flushes and closes the underlying log file. After Close, Handle
 // returns an error.
 func (h *Handler) Close() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.file == nil {
+	h.shared.mu.Lock()
+	defer h.shared.mu.Unlock()
+	if h.shared.file == nil {
 		return nil
 	}
-	err := h.file.Close()
-	h.file = nil
+	err := h.shared.file.Close()
+	h.shared.file = nil
 	return err
 }
 

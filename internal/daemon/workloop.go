@@ -1036,28 +1036,40 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
 				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor)
+				// Capture queue count while the lock is still held so we can
+				// distinguish "zero queues loaded" from "queues exist but all
+				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).
+				loadedQueueCount := len(lq.LockedAllQueueNames())
 				lq.Done()
 				if !ok {
-					// No queue can contribute (all paused/empty or at their per-queue
-					// cap). Block until a queue-submit wake signal or shutdown.
-					if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
-						return exitClean()
+					if loadedQueueCount > 0 {
+						// Queues are loaded but none can contribute right now (all
+						// paused, drained, or at their per-queue cap). Block until a
+						// queue-submit wake signal or shutdown.
+						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
+							return exitClean()
+						}
+						continue
 					}
-					continue
-				}
-				// Advance the round-robin cursor EVERY time we pick a queue so the next
-				// tick starts at the next name (no reset-to-0 → no starvation).
-				rrCursor++
+					// Zero queues loaded — skip snap assignments so snapItemIdx stays
+					// at its -1 sentinel and the br-ready fallback path below handles
+					// dispatch. This restores --auto-pull and smoke-test behaviour
+					// broken by the NQ-B1 refactor (a027808d).
+				} else {
+					// Advance the round-robin cursor EVERY time we pick a queue so the
+					// next tick starts at the next name (no reset-to-0 → no starvation).
+					rrCursor++
 
-				snapItemIdx = sel.itemIdx
-				snapItemBeadID = sel.itemBeadID
-				snapItemContext = sel.itemContext
-				snapItemWFMode = sel.itemWFMode
-				snapItemWFRef = sel.itemWFRef
-				snapItemTemplateParams = sel.itemTemplateMap
-				snapGroupIndex = sel.groupIndex
-				snapQueueID = sel.queueID
-				snapQueueName = sel.queueName
+					snapItemIdx = sel.itemIdx
+					snapItemBeadID = sel.itemBeadID
+					snapItemContext = sel.itemContext
+					snapItemWFMode = sel.itemWFMode
+					snapItemWFRef = sel.itemWFRef
+					snapItemTemplateParams = sel.itemTemplateMap
+					snapGroupIndex = sel.groupIndex
+					snapQueueID = sel.queueID
+					snapQueueName = sel.queueName
+				}
 			}
 
 			if snapItemIdx >= 0 {

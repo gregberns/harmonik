@@ -69,30 +69,41 @@ func smokeFixtureProjectDir(t *testing.T) (projectDir, jsonlPath string) {
 	return projectDir, jsonlPath
 }
 
-// smokeFixtureGitRepo initialises a bare git repository with a single initial
+// smokeFixtureGitRepo initialises a git repository with a single initial
 // commit in dir.  Required because CreateWorktree calls `git worktree add` and
 // needs an existing git repo with a resolvable HEAD.
+//
+// A local bare repo is created as the "origin" remote so that the daemon's
+// post-merge `git push origin main` succeeds (push_failed is fatal otherwise).
 func smokeFixtureGitRepo(t *testing.T, dir string) {
 	t.Helper()
-	run := func(args ...string) {
+	run := func(d string, args ...string) {
 		t.Helper()
 		//nolint:gosec // G204: git args are test-internal literals; not user input
 		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
+		cmd.Dir = d
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("smokeFixtureGitRepo: git %v: %v\n%s", args, err, out)
 		}
 	}
-	run("init", "--initial-branch=main")
-	run("config", "user.email", "test@harmonik.local")
-	run("config", "user.name", "Harmonik Test")
+	run(dir, "init", "--initial-branch=main")
+	run(dir, "config", "user.email", "test@harmonik.local")
+	run(dir, "config", "user.name", "Harmonik Test")
 	initFile := filepath.Join(dir, "README")
 	if err := os.WriteFile(initFile, []byte("harmonik smoke test repo\n"), 0o644); err != nil {
 		t.Fatalf("smokeFixtureGitRepo: WriteFile: %v", err)
 	}
-	run("add", "README")
-	run("commit", "-m", "Initial commit")
+	run(dir, "add", "README")
+	run(dir, "commit", "-m", "Initial commit")
+
+	// Create a bare repo as the "origin" remote so the daemon's post-merge
+	// `git push origin main` succeeds.  Without an origin the merge path returns
+	// push_failed and reopens the bead indefinitely.
+	originDir := t.TempDir()
+	run(originDir, "init", "--bare", "--initial-branch=main")
+	run(dir, "remote", "add", "origin", originDir)
+	run(dir, "push", "origin", "main")
 }
 
 // smokeFixtureBrPath locates the real `br` binary via exec.LookPath.
@@ -126,15 +137,28 @@ func smokeFixtureBrWrapperScript(t *testing.T, realBrPath, dbPath string) string
 	return scriptPath
 }
 
-// smokeFixtureHandlerScript writes a /bin/sh script to t.TempDir() that exits
-// immediately with code 0. This is the happy-path handler for the smoke test.
-// It is used instead of Config.HandlerArgs (which does not exist on daemon.Config
-// at MVH — see follow-up bead filed in TestMVHSmoke).
+// smokeFixtureHandlerScript writes a /bin/sh script to t.TempDir() that makes
+// a minimal git commit and exits 0. The commit is required because the
+// no-commit guard (hk-9c1v4 / hk-mmh8f) fails the run when HEAD does not
+// advance past parentSHA; an exit-0 with no commit no longer auto-closes.
+// The script reads the bead_id from .harmonik/agent-task.md so the commit
+// message carries a proper Refs trailer.
 func smokeFixtureHandlerScript(t *testing.T) string {
 	t.Helper()
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "handler.sh")
-	content := "#!/bin/sh\nexit 0\n"
+	// Redirect git output to stderr so the daemon's NDJSON stdout parser does
+	// not see non-JSON output and raise a malformed_progress_message error.
+	content := `#!/bin/sh
+set -e
+bead_id=$(grep '^bead_id:' .harmonik/agent-task.md | awk '{print $2}') 2>/dev/null
+echo "smoke: ${bead_id}" > "smoke-${bead_id}.txt"
+git add "smoke-${bead_id}.txt" >&2
+git commit -m "smoke: handler commit for ${bead_id}
+
+Refs: ${bead_id}" >&2
+exit 0
+`
 	//nolint:gosec // G306: script is test-only, chmod 0755 required for execution
 	if err := os.WriteFile(scriptPath, []byte(content), 0o755); err != nil {
 		t.Fatalf("smokeFixtureHandlerScript: WriteFile: %v", err)
@@ -284,7 +308,7 @@ func TestMVHSmoke(t *testing.T) {
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	// MVH gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a

@@ -60,13 +60,27 @@ func parallelSmokeFixtureLocateBr(t *testing.T) string {
 }
 
 // parallelSmokeFixtureSleepHandlerScript writes a /bin/sh script to t.TempDir()
-// that sleeps briefly then exits 0.  The sleep ensures both goroutines are
-// simultaneously in-flight before either closes its bead.
+// that sleeps briefly, makes a minimal git commit, then exits 0.  The sleep
+// ensures both goroutines are simultaneously in-flight before either commits.
+// A commit is required because the no-commit guard (hk-mmh8f) fails the run
+// when HEAD does not advance; exit-0 with no commit no longer auto-closes.
 func parallelSmokeFixtureSleepHandlerScript(t *testing.T) string {
 	t.Helper()
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "handler.sh")
-	content := "#!/bin/sh\nsleep 0.3\nexit 0\n"
+	// Redirect git output to stderr so the daemon's NDJSON stdout parser does
+	// not see non-JSON output and raise a malformed_progress_message error.
+	content := `#!/bin/sh
+set -e
+sleep 0.3
+bead_id=$(grep '^bead_id:' .harmonik/agent-task.md | awk '{print $2}') 2>/dev/null
+echo "smoke: ${bead_id}" > "smoke-${bead_id}.txt"
+git add "smoke-${bead_id}.txt" >&2
+git commit -m "smoke: handler commit for ${bead_id}
+
+Refs: ${bead_id}" >&2
+exit 0
+`
 	//nolint:gosec // G306: script is test-only, chmod 0755 required for execution
 	if err := os.WriteFile(scriptPath, []byte(content), 0o755); err != nil {
 		t.Fatalf("parallelSmokeFixtureSleepHandlerScript: WriteFile: %v", err)
@@ -305,7 +319,7 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       2,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.

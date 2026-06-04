@@ -627,21 +627,28 @@ func runBeadSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	sessionNameBytes, tmuxErr := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output() //nolint:gosec // G204: arguments are hard-coded constants
-	if tmuxErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik run: cannot resolve tmux session name: %v\n", tmuxErr)
-		return 1
-	}
-	sessionName := strings.TrimSpace(string(sessionNameBytes))
-	if sessionName == "" {
-		fmt.Fprintln(os.Stderr, "harmonik run: tmux returned an empty session name — cannot attach substrate")
-		return 1
-	}
+	// hk-15b83: resolve the spawn-target session DETERMINISTICALLY from the
+	// project directory — NOT from the ambient $TMUX session.
+	//
+	// `tmux display-message -p '#{session_name}'` returns whatever session the
+	// calling process inherits via $TMUX.  When the auto-revive supervisor (itself
+	// running in its own `hk-daemon-supervise` session) starts `harmonik run`,
+	// that resolves to the SUPERVISOR's session, so implementer windows spawn there
+	// instead of the run-owned session (same root cause as hk-9vp51 #3 in main.go).
+	//
+	// DefaultSessionName(projectDir) == "harmonik-<hash>-default" — the same name
+	// `hk tmux-start` creates by default — so launched via tmux-start this attaches
+	// to the operator's existing session; launched by the supervisor it creates its own.
+	sessionName := tmux.DefaultSessionName(projectDir)
 
 	tmuxAdapter := tmux.OSAdapter{}
 	probeCtx := context.Background()
 	if probeErr := tmuxAdapter.ProbeTmux(probeCtx); probeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: tmux probe failed: %v\n", probeErr)
+		return 1
+	}
+	if ensErr := tmuxAdapter.EnsureSession(probeCtx, sessionName, projectDir); ensErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik run: cannot ensure tmux session %q: %v\n", sessionName, ensErr)
 		return 1
 	}
 

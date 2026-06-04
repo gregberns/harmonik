@@ -156,6 +156,22 @@ func SkipExecRecorder(out *[]string) ExecFunc {
 // Package-private helpers (tmuxStart prefix per bead hk-gql20.10)
 // ──────────────────────────────────────────────────────────────────────────────
 
+// DefaultSessionName returns the canonical per-project daemon tmux session name
+// for projectDir: "harmonik-<project_hash>-default" (PL-006a). This is the same
+// name `hk tmux-start` creates by default, so a daemon that EnsureSessions this
+// name attaches to the operator's session when launched via tmux-start, and
+// creates its own dedicated session otherwise.
+//
+// hk-9vp51 / hk-15b83: callers MUST derive the session name from the project
+// directory — NOT from the ambient $TMUX session via `tmux display-message
+// -p '#{session_name}'`. When the auto-revive supervisor (itself running inside
+// an `hk-daemon-supervise` session) starts the daemon, that call resolves to the
+// SUPERVISOR's session, so implementer windows spawn there instead of the
+// daemon-owned session.
+func DefaultSessionName(projectDir string) string {
+	return "harmonik-" + tmuxStartHashDir(projectDir) + "-default"
+}
+
 // tmuxStartHashDir returns the 12-char hex project hash for dir by resolving
 // symlinks and computing SHA-256, replicating the formula of
 // lifecycle.ComputeProjectHash (same spec: PL-006a). The formula is reproduced

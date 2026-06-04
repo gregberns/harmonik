@@ -1,16 +1,39 @@
-# Agent Operating Manual
+# Agent Operating Manual — Template
 
-> This file is the harmonik-project instance of [`templates/AGENT_OPERATING_MANUAL.template.md`](templates/AGENT_OPERATING_MANUAL.template.md).
-> Template variables filled in: `PROJECT_DIR=/Users/gb/github/harmonik`, `BEAD_PREFIX=hk`, `MAX_CONCURRENT=4`, `LANE_NAMES=main`.
-> To use this manual for another project, copy the template and substitute those variables.
+This is the reusable template for the Agent Operating Manual. Fill in the variables below
+and remove this header block before deploying to a project.
 
-A quick-start reference for an agent running harmonik. This doc distills the most operationally critical rules from [AGENTS.md](AGENTS.md) and [docs/orchestrator-rules.md](docs/orchestrator-rules.md) and adds five hard-won gotchas that are not written anywhere else. When a section says "see AGENTS.md §X", follow the link — this doc does not repeat large blocks.
+## Template Variables
+
+| Variable | Description | Harmonik Example |
+|---|---|---|
+| `{{PROJECT_DIR}}` | Absolute path to the project root | `/Users/gb/github/harmonik` |
+| `{{BEAD_PREFIX}}` | Bead ID prefix for this project (no trailing dash) | `hk` |
+| `{{MAX_CONCURRENT}}` | Default daemon concurrency ceiling for this machine | `4` |
+| `{{LANE_NAMES}}` | Comma-separated list of named queue lanes (use `main` if single-lane) | `main` |
+
+Sections tagged `<!-- REUSABLE -->` are identical across all projects — copy as-is.
+Sections tagged `<!-- PROJECT-SPECIFIC -->` contain one or more `{{PLACEHOLDER}}` substitutions.
 
 ---
 
+<!-- REUSABLE -->
+# Agent Operating Manual
+
+A quick-start reference for an agent running harmonik. This doc distills the most operationally
+critical rules from [AGENTS.md](AGENTS.md) and [docs/orchestrator-rules.md](docs/orchestrator-rules.md)
+and adds five hard-won gotchas that are not written anywhere else. When a section says
+"see AGENTS.md §X", follow the link — this doc does not repeat large blocks.
+
+---
+<!-- END REUSABLE -->
+
+<!-- REUSABLE -->
 ## 1. Orientation
 
-**Your role:** orchestrator — delegate substantive work to harmonik, not to sub-agents. ≥75% of substantive commits per session should land via the daemon queue (see [docs/orchestrator-rules.md §Dispatch discipline](docs/orchestrator-rules.md)).
+**Your role:** orchestrator — delegate substantive work to harmonik, not to sub-agents. ≥75% of
+substantive commits per session should land via the daemon queue (see
+[docs/orchestrator-rules.md §Dispatch discipline](docs/orchestrator-rules.md)).
 
 **Reading order on session start:**
 1. `AGENT_INDEX.md` — master map of the knowledge base
@@ -20,26 +43,30 @@ A quick-start reference for an agent running harmonik. This doc distills the mos
 5. `docs/orchestrator-rules.md` — permanent dispatch / priority / lifecycle rules
 
 ---
+<!-- END REUSABLE -->
 
+<!-- PROJECT-SPECIFIC: substitute {{PROJECT_DIR}} and {{MAX_CONCURRENT}} -->
 ## 2. Start the Daemon
 
 One persistent daemon per project. Start it once in a detached tmux session:
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'
+  'harmonik --project {{PROJECT_DIR}} --no-auto-pull --max-concurrent {{MAX_CONCURRENT}}'
 ```
 
 Key flags:
 - `--no-auto-pull` — queue-only mode; daemon dispatches only work submitted via the queue surface. **Always pass this** (see Gotcha #1 — billing).
-- `--max-concurrent 4` — throughput knee on a 10-core box (see Gotcha #2 — wide waves).
+- `--max-concurrent {{MAX_CONCURRENT}}` — throughput knee on a 10-core box (see Gotcha #2 — wide waves).
 
 If a daemon is already up, `harmonik queue status` shows the live queue. Do **not** start a second one — it collides on the pidfile lock (exit code 5).
 
 Full details: [AGENTS.md §Start the daemon once](AGENTS.md#start-the-daemon-once).
 
 ---
+<!-- END PROJECT-SPECIFIC -->
 
+<!-- PROJECT-SPECIFIC: substitute {{BEAD_PREFIX}} -->
 ## 3. The Daily Loop
 
 ```
@@ -66,8 +93,8 @@ harmonik queue status                   # confirm pickup
     "status": "pending",
     "created_at": "2026-05-31T00:00:00Z",
     "items": [
-      { "bead_id": "hk-aaa", "status": "pending" },
-      { "bead_id": "hk-bbb", "status": "pending" }
+      { "bead_id": "{{BEAD_PREFIX}}-aaa", "status": "pending" },
+      { "bead_id": "{{BEAD_PREFIX}}-bbb", "status": "pending" }
     ]
   }]
 }
@@ -76,13 +103,19 @@ harmonik queue status                   # confirm pickup
 ```bash
 harmonik queue dry-run /tmp/batch.json  # validate (reports ledger-dep deferrals)
 harmonik queue submit  /tmp/batch.json  # accept; prints queue_id
-harmonik queue append --queue-id <id> 0 hk-ccc hk-ddd  # mid-flight add to stream group
+harmonik queue append --queue-id <id> 0 {{BEAD_PREFIX}}-ccc {{BEAD_PREFIX}}-ddd  # mid-flight add to stream group
 ```
+<!-- END PROJECT-SPECIFIC -->
 
-Sub-agent dispatch (Agent tool) is the exception, justified only by the three narrow cases in [docs/orchestrator-rules.md §Dispatch discipline](docs/orchestrator-rules.md). Full queue model: `specs/queue-model.md`.
+<!-- REUSABLE -->
+Sub-agent dispatch (Agent tool) is the exception, justified only by the three narrow cases in
+[docs/orchestrator-rules.md §Dispatch discipline](docs/orchestrator-rules.md).
+Full queue model: `specs/queue-model.md`.
 
 ---
+<!-- END REUSABLE -->
 
+<!-- REUSABLE -->
 ## 4. Monitoring
 
 Arm `harmonik subscribe` immediately after submit. It attaches to the running daemon and streams typed events via NDJSON:
@@ -93,23 +126,29 @@ harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartb
 ```
 
 Re-arm if it hits the Monitor timeout. One subscribe sees all beads regardless of which agent submitted them.
+<!-- END REUSABLE -->
 
+<!-- PROJECT-SPECIFIC: substitute {{PROJECT_DIR}} -->
 **Fallback** (if subscribe is unavailable):
 
 ```bash
-tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
+tail -F {{PROJECT_DIR}}/.harmonik/events/events.jsonl 2>/dev/null \
   | grep --line-buffered -E "run_completed|run_failed|run_stale|merge_conflict|reviewer_verdict"
 ```
+<!-- END PROJECT-SPECIFIC -->
 
+<!-- REUSABLE -->
 There is no `daemon.log` and no per-run output file to tail.
 
 ---
+<!-- END REUSABLE -->
 
+<!-- PROJECT-SPECIFIC: substitute {{PROJECT_DIR}} and {{BEAD_PREFIX}} -->
 ## 5. Failure Triage
 
 After each batch completes, review outcomes before queuing the next:
 
-1. Read failure class from `.harmonik/events/events.jsonl` (`no_commit`, `context_cancelled`, etc.).
+1. Read failure class from `{{PROJECT_DIR}}/.harmonik/events/events.jsonl` (`no_commit`, `context_cancelled`, etc.).
 2. **Failed once:** eligible for re-dispatch in the next batch.
 3. **Failed twice in the same session:** STOP — dispatch an investigator sub-agent; do NOT re-dispatch the bead. Check: (a) bead description quality, (b) prior failure events in `events.jsonl`, (c) whether the work already landed via `git log --grep "Refs: <id>"`.
 4. **Never dispatch the same bead more than twice without investigation.**
@@ -120,24 +159,28 @@ For hang diagnosis (bead stuck at `launch_initiated`, no `run_started`): see [AG
 **Pre-screen before each batch** — verify the work hasn't already landed:
 
 ```bash
-for id in hk-aaa hk-bbb hk-ccc; do
-  hits=$(git -C /Users/gb/github/harmonik log --all --grep "Refs: $id" --oneline | wc -l)
+for id in {{BEAD_PREFIX}}-aaa {{BEAD_PREFIX}}-bbb {{BEAD_PREFIX}}-ccc; do
+  hits=$(git -C {{PROJECT_DIR}} log --all --grep "Refs: $id" --oneline | wc -l)
   echo "$id $hits"
 done
 # hits>0 → br close <id> --reason "Subsumed: landed as <sha>"
 ```
+<!-- END PROJECT-SPECIFIC -->
 
+<!-- REUSABLE -->
 Also check for the actual artifact in the codebase — many impls land without `Refs:` trailers.
 
 ---
+<!-- END REUSABLE -->
 
+<!-- REUSABLE -->
 ## 6. Gotchas / Pitfalls
 
 Five hard-won operational failures that are not documented anywhere else.
 
 ### Gotcha 1 — ENV-STRIP / BILLING
 
-**Symptom:** API credit consumed in ~2 hours with no obvious cause (2026-05-30 incident — all credit gone in ~2h).
+**Symptom:** API credit consumed in ~2 hours with no obvious cause.
 
 **Cause:** `ANTHROPIC_API_KEY` was present in a repo `.env` file that `harmonik --project` auto-sourced. Daemon-spawned claude sessions inherit the parent environment. An inherited API key makes claude bill pay-per-token API instead of the Max subscription.
 
@@ -166,7 +209,7 @@ Five hard-won operational failures that are not documented anywhere else.
 
 **Fix:**
 - Attach a bead to its kerf work via the `codename:<name>` **label**, not an epic dependency.
-- Example: `br label add hk-abc codename:productization` (not `br dep add hk-abc hk-epic`).
+- Example: `br label add {{BEAD_PREFIX}}-abc codename:mywork` (not `br dep add {{BEAD_PREFIX}}-abc {{BEAD_PREFIX}}-epic`).
 - To diagnose: `br show <id>` — look for `blocked_by` entries listing an open bead.
 
 ### Gotcha 4 — $TMUX REQUIRED
@@ -192,7 +235,9 @@ Five hard-won operational failures that are not documented anywhere else.
 3. Pair with Gotcha #2's reset-before-install: `git fetch && git reset --hard origin/main` first so you build from the latest merged code.
 
 ---
+<!-- END REUSABLE -->
 
+<!-- REUSABLE -->
 ## 7. Comms Bus (multi-agent coordination)
 
 When multiple orchestrator sessions run concurrently, coordinate via `harmonik comms` — not file appends. The old `AGENT_COMMS.md` / `.harmonik/comms/*.md` file convention is **retired** (concurrent-append races + escape-detector false positives).
@@ -210,18 +255,21 @@ Dedupe on `event_id` — delivery is at-least-once. Before touching shared resou
 Full surface: [AGENTS.md §Multi-agent comms](AGENTS.md#multi-agent-comms) and `.claude/skills/agent-comms/SKILL.md`.
 
 ---
+<!-- END REUSABLE -->
 
+<!-- PROJECT-SPECIFIC: substitute {{PROJECT_DIR}}, {{BEAD_PREFIX}}, {{MAX_CONCURRENT}} -->
 ## Quick Reference
 
 | Task | Command |
 |---|---|
-| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik --project /path --no-auto-pull --max-concurrent 4'` |
+| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik --project {{PROJECT_DIR}} --no-auto-pull --max-concurrent {{MAX_CONCURRENT}}'` |
 | Check daemon | `harmonik queue status` |
 | Validate batch | `harmonik queue dry-run /tmp/batch.json` |
 | Submit batch | `harmonik queue submit /tmp/batch.json` |
-| Append to stream | `harmonik queue append --queue-id <id> 0 hk-ccc` |
+| Append to stream | `harmonik queue append --queue-id <id> 0 {{BEAD_PREFIX}}-ccc` |
 | Monitor | `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` |
 | Change concurrency live | `harmonik queue set-concurrency N` |
-| Pre-screen bead | `git -C /Users/gb/github/harmonik log --all --grep "Refs: hk-abc" --oneline` |
+| Pre-screen bead | `git -C {{PROJECT_DIR}} log --all --grep "Refs: {{BEAD_PREFIX}}-abc" --oneline` |
 | Reopen wrongly-closed bead | `br update <id> --status=open` |
 | Send comms message | `harmonik comms send --to <agent> -- <body>` |
+<!-- END PROJECT-SPECIFIC -->

@@ -2,6 +2,8 @@
 
 > **Start here.** This is the master index for the harmonik knowledge base. Every document in the project is reachable from this file within two hops.
 >
+> **New to harmonik?** See [README.md](README.md) for what it is and how to install it, and [AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md) for the distilled ops guide agents need on every session.
+>
 > **For project state and what to do next, see [STATUS.md](STATUS.md) and [TASKS.md](TASKS.md).**
 
 ## What Is Harmonik?

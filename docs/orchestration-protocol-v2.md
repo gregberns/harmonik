@@ -1,6 +1,6 @@
 # Orchestration Protocol v2 — harmonik as the Default Dispatcher
 
-**Status:** PROPOSAL (2026-05-20). Awaits user review before landing in `CLAUDE.md` / `HANDOFF.md` / `session-resume`.
+**Status:** SUPERSEDED (2026-06-03). Normative orchestration content has been incorporated into `AGENTS.md` (= `CLAUDE.md`). This document is retained for historical context only.
 **Goal:** Make `harmonik run --beads <ids>` the default dispatch mechanism for harmonik's own development. Target: ≥75% of substantive work flows main-agent → kerf → harmonik (not main-agent → sub-agent).
 
 ## Synopsis (≤25 lines)

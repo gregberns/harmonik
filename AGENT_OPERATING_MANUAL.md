@@ -34,6 +34,8 @@ Key flags:
 - `--no-auto-pull` — queue-only mode; daemon dispatches only work submitted via the queue surface. **Always pass this** (see Gotcha #1 — billing).
 - `--max-concurrent 4` — throughput knee on a 10-core box (see Gotcha #2 — wide waves).
 
+**Named lanes for this project:** `main`. Submit to a specific lane with `harmonik queue submit --lane <name> /tmp/batch.json`. If this project uses only a single lane (`main`), the `--lane` flag can be omitted.
+
 If a daemon is already up, `harmonik queue status` shows the live queue. Do **not** start a second one — it collides on the pidfile lock (exit code 5).
 
 Full details: [AGENTS.md §Start the daemon once](AGENTS.md#start-the-daemon-once).
@@ -215,10 +217,11 @@ Full surface: [AGENTS.md §Multi-agent comms](AGENTS.md#multi-agent-comms) and `
 
 | Task | Command |
 |---|---|
-| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik --project /path --no-auto-pull --max-concurrent 4'` |
+| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'` |
 | Check daemon | `harmonik queue status` |
 | Validate batch | `harmonik queue dry-run /tmp/batch.json` |
-| Submit batch | `harmonik queue submit /tmp/batch.json` |
+| Submit to named lane | `harmonik queue submit --lane main /tmp/batch.json` |
+| Submit batch (default lane) | `harmonik queue submit /tmp/batch.json` |
 | Append to stream | `harmonik queue append --queue-id <id> 0 hk-ccc` |
 | Monitor | `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` |
 | Change concurrency live | `harmonik queue set-concurrency N` |

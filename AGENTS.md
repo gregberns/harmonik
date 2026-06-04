@@ -59,15 +59,17 @@ For repos where harmonik must **never auto-push `main`** (e.g. a product repo wi
 
 All three are enforced fail-closed at boot, at each dispatch, and during merge.
 
-#### config/branching.yaml template
+#### .harmonik/branching.yaml template
 
-Create `config/branching.yaml` at the repo root so agents pick up the config without flags:
+Create `.harmonik/branching.yaml` in the repo so agents pick up the config without flags:
 
 ```yaml
-# config/branching.yaml — work-project deployment
-protect_branches:
-  - main
-target_branch: integration
+# .harmonik/branching.yaml — work-project deployment
+version: 1
+defaults:
+  lands_on: integration
+  protect_branches:
+    - main
 ```
 
 The daemon reads this file on startup; CLI flags override it.
@@ -79,7 +81,7 @@ The daemon reads this file on startup; CLI flags override it.
    git checkout -b integration main
    git push -u origin integration
    ```
-2. **Configure branching** — add `config/branching.yaml` (above), or pass the flags directly:
+2. **Configure branching** — add `.harmonik/branching.yaml` (above), or pass the flags directly:
    ```bash
    harmonik --project /path/to/repo \
      --target-branch integration \

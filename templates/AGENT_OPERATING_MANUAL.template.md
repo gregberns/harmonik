@@ -211,7 +211,7 @@ Five hard-won operational failures that are not documented anywhere else.
 
 **Fix:**
 - Attach a bead to its kerf work via the `codename:<name>` **label**, not an epic dependency.
-- Example: `br label add {{BEAD_PREFIX}}-abc codename:mywork` (not `br dep add {{BEAD_PREFIX}}-abc {{BEAD_PREFIX}}-epic`).
+- Example: `br label add <bead-id> codename:mywork` (not `br dep add <bead-id> <epic-id>`).
 - To diagnose: `br show <id>` — look for `blocked_by` entries listing an open bead.
 
 ### Gotcha 4 — $TMUX REQUIRED

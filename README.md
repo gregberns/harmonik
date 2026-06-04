@@ -2,7 +2,7 @@
 
 > **SAFETY — read before pointing the daemon at any repo.**
 > By default the daemon **merges and pushes to `origin/main` on every successful bead**.
-> To target an integration branch and protect `main`, configure `config/branching.yaml`
+> To target an integration branch and protect `main`, configure `.harmonik/branching.yaml`
 > `protect_branches` (or pass `--target-branch`/`--protect-branch`/`--forbid-default-main`);
 > the daemon then **fail-closes** and refuses to push `main`.
 > Until you configure that, **do NOT run against a work repo or any branch that must not be
@@ -96,17 +96,19 @@ cd /path/to/your/repo
 harmonik init
 ```
 
-`harmonik init` creates `.harmonik/` (gitignored runtime state), an initial `config/branching.yaml`,
+`harmonik init` creates `.harmonik/` (gitignored runtime state), an initial `.harmonik/branching.yaml`,
 and scaffolds the bead ledger. Follow the prompts.
 
 ### 2. Configure branch protection (recommended)
 
-Edit `config/branching.yaml` to protect `main` and target an integration branch:
+Edit `.harmonik/branching.yaml` to protect `main` and target an integration branch:
 
 ```yaml
-protect_branches:
-  - main
-target_branch: harmonik-integration
+version: 1
+defaults:
+  lands_on: harmonik-integration
+  protect_branches:
+    - main
 ```
 
 Or pass flags at daemon start:

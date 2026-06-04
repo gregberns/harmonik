@@ -2306,7 +2306,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var noChangeTimeoutCh chan struct{}
 	if qs, ok := runPasteTarget.(quitSender); ok {
 		noChangeTimeoutCh = make(chan struct{})
-		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, tapCh)
+		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, tapCh, deps.bus, runID)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

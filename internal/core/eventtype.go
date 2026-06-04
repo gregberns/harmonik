@@ -293,6 +293,18 @@ const (
 	// Durability class: O.
 	// Refs: hk-4l7zs.
 	EventTypeSpawnCapBlocked EventType = "spawn_cap_blocked"
+
+	// EventTypeImplementerBudgetExceeded is the implementer_budget_exceeded event
+	// type. Emitted by the daemon when pasteInjectQuitOnCommit force-kills a
+	// hosted implementer session that exhausted its commit budget — the pane
+	// stayed active (or went dark) without a new commit landing before the hard
+	// ceiling. Before this diagnostic, such a kill surfaced only as a silent
+	// no_commit failure with no record of how long the session ran or when it
+	// last made progress.
+	// Payload: run_id, elapsed_ms, since_last_progress_ms, reason.
+	// Durability class: O.
+	// Refs: hk-9vp51.
+	EventTypeImplementerBudgetExceeded EventType = "implementer_budget_exceeded"
 )
 
 // ---------------------------------------------------------------------------

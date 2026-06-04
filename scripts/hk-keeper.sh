@@ -31,9 +31,11 @@
 #     HK_PROTECT_BRANCH=main \
 #     ./scripts/hk-keeper.sh
 #
-#   Alternatively, add config/branching.yaml to the repo (no flags needed):
-#     protect_branches: [main]
-#     target_branch: integration
+#   Alternatively, add .harmonik/branching.yaml to the repo (no flags needed):
+#     version: 1
+#     defaults:
+#       lands_on: integration
+#       protect_branches: [main]
 
 set -euo pipefail
 

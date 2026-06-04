@@ -49,6 +49,56 @@ tmux new-session -d -s harmonik-daemon \
 - `--max-concurrent N` sets the concurrent-dispatch ceiling for the whole daemon. Use the disk/CPU knee (~4–5 wide on a 10-core box) — wider oversubscribes cores and can exhaust disk.
 - If a daemon is already up, `harmonik queue status` returns the live queue; do NOT start a second one (it will collide on the pidfile lock and exit code 5).
 
+### Work-project deployment
+
+For repos where harmonik must **never auto-push `main`** (e.g. a product repo with branch-protection rules), use the integration-branch flags:
+
+- `--target-branch <branch>` — daemon merges and pushes here instead of `main`.
+- `--protect-branch <branch>` — deny-list; daemon fail-closes any run that would push this branch.
+- `--forbid-default-main` — refuse to start if the resolved target branch is `main`.
+
+All three are enforced fail-closed at boot, at each dispatch, and during merge.
+
+#### config/branching.yaml template
+
+Create `config/branching.yaml` at the repo root so agents pick up the config without flags:
+
+```yaml
+# config/branching.yaml — work-project deployment
+protect_branches:
+  - main
+target_branch: integration
+```
+
+The daemon reads this file on startup; CLI flags override it.
+
+#### Migration steps
+
+1. **Create the integration branch** off `main`:
+   ```bash
+   git checkout -b integration main
+   git push -u origin integration
+   ```
+2. **Configure branching** — add `config/branching.yaml` (above), or pass the flags directly:
+   ```bash
+   harmonik --project /path/to/repo \
+     --target-branch integration \
+     --protect-branch main \
+     --forbid-default-main \
+     --no-auto-pull --max-concurrent N
+   ```
+3. **Restart the daemon** so it picks up the new config/binary:
+   ```bash
+   pkill -f "harmonik --project /path/to/repo" || true
+   # re-launch via hk-keeper.sh (set HK_TARGET_BRANCH / HK_PROTECT_BRANCH) or the tmux command above
+   ```
+
+#### integration → main is a human step
+
+The daemon **never** auto-merges `integration` into `main`. Once a sprint of beads lands on `integration`, open a PR from `integration` → `main` for human review and merge.
+
+> **Coming:** `harmonik promote` (hk-gax8v) will automate opening that PR.
+
 ### The loop
 
 1. `kerf next` — surface the prioritized work (ranked feed of beads with work-context).

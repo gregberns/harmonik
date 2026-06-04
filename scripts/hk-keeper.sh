@@ -15,10 +15,25 @@
 #   HK_PROJECT=/path/to/project HK_CONCURRENCY=6 ./scripts/hk-keeper.sh
 #
 # Defaults:
-#   HK_PROJECT     — first positional arg, or $HK_PROJECT, or CWD
-#   HK_CONCURRENCY — second positional arg, or $HK_CONCURRENCY, or 6
-#   HK_LOG         — $HK_LOG, or /tmp/hk-daemon.log
-#   HK_SESS        — $HK_SESS, or hkdkeeper
+#   HK_PROJECT        — first positional arg, or $HK_PROJECT, or CWD
+#   HK_CONCURRENCY    — second positional arg, or $HK_CONCURRENCY, or 6
+#   HK_LOG            — $HK_LOG, or /tmp/hk-daemon.log
+#   HK_SESS           — $HK_SESS, or hkdkeeper
+#
+# Work-project deployment (repos where main must never be auto-pushed):
+#   Set HK_TARGET_BRANCH and HK_PROTECT_BRANCH to engage integration-branch mode.
+#   HK_TARGET_BRANCH  — daemon merges/pushes here instead of main (e.g. "integration")
+#   HK_PROTECT_BRANCH — deny-list branch; daemon fail-closes any run targeting it (e.g. "main")
+#
+#   Example:
+#     HK_PROJECT=/path/to/repo \
+#     HK_TARGET_BRANCH=integration \
+#     HK_PROTECT_BRANCH=main \
+#     ./scripts/hk-keeper.sh
+#
+#   Alternatively, add config/branching.yaml to the repo (no flags needed):
+#     protect_branches: [main]
+#     target_branch: integration
 
 set -euo pipefail
 
@@ -27,7 +42,19 @@ CONCURRENCY="${2:-${HK_CONCURRENCY:-6}}"
 LOG="${HK_LOG:-/tmp/hk-daemon.log}"
 SESS="${HK_SESS:-hkdkeeper}"
 
-echo "hk-keeper: project=$PROJ concurrency=$CONCURRENCY log=$LOG sess=$SESS"
+# Optional work-project integration-branch flags.
+TARGET_BRANCH="${HK_TARGET_BRANCH:-}"
+PROTECT_BRANCH="${HK_PROTECT_BRANCH:-}"
+
+BRANCH_FLAGS=""
+if [[ -n "$TARGET_BRANCH" ]]; then
+  BRANCH_FLAGS="$BRANCH_FLAGS --target-branch $TARGET_BRANCH --forbid-default-main"
+fi
+if [[ -n "$PROTECT_BRANCH" ]]; then
+  BRANCH_FLAGS="$BRANCH_FLAGS --protect-branch $PROTECT_BRANCH"
+fi
+
+echo "hk-keeper: project=$PROJ concurrency=$CONCURRENCY log=$LOG sess=$SESS${BRANCH_FLAGS:+ branch_flags=$BRANCH_FLAGS}"
 
 while true; do
   # Liveness check = a harmonik daemon PROCESS exists. This covers the
@@ -44,7 +71,7 @@ while true; do
   rm -f "$PROJ/.harmonik/daemon.sock"
   tmux new-session -d -s "$SESS" \
     "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-      harmonik --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY \
+      harmonik --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY $BRANCH_FLAGS \
       2>&1 | tee -a $LOG"
   sleep 25
 done

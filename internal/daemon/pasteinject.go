@@ -280,41 +280,14 @@ var briefDeliveredTimeout = 2 * time.Minute
 // wall time.
 var commitPollInterval = 500 * time.Millisecond
 
-// commitPollTimeout is the per-progress commit-budget window: the maximum time
-// pasteInjectQuitOnCommit will wait for a new commit WITHOUT a fresh progress
-// signal before giving up.  It is NOT a flat wall-clock deadline — every genuine
-// progress signal (an agent_heartbeat event) extends the budget by another
-// commitPollTimeout window (see commitHardCeiling for the absolute backstop).
-// This is a safety backstop only; the primary kill trigger is heartbeat
-// staleness (heartbeatStalenessThreshold).
-//
-// hk-9vp51: previously this was a FLAT 30-min wall clock that guillotined any
-// implementer that was genuinely working but slow to commit (e.g. a deep
-// go-test loop): the pane stayed "active" forever, slipping the 180s/8m
-// heartbeat checks, and was killed only by this flat deadline — silently, as
-// no_commit.  Making the budget progress-extended (with a hard ceiling) lets a
-// progressing session run as long as it keeps making progress, while a
-// stalled-but-active session is still killed once progress goes stale.
+// commitPollTimeout is the maximum total wall-clock time pasteInjectQuitOnCommit
+// will wait for a new commit before giving up.  This is a safety backstop only;
+// the primary kill trigger is heartbeat staleness (heartbeatStalenessThreshold).
+// Raised from 10 min to 30 min to give productive long-running beads more room.
 //
 // Declared as var (not const) so tests can override it without waiting real
 // wall time.
 var commitPollTimeout = 30 * time.Minute
-
-// commitHardCeiling is the absolute wall-clock backstop for the commit-poll
-// loop.  Unlike commitPollTimeout it is NEVER extended by progress signals: once
-// the loop has run this long, the session is force-killed regardless of pane
-// activity or heartbeats.  This bounds a truly-hung-but-pane-active implementer
-// (one that emits heartbeats forever but never commits) so it cannot run
-// indefinitely.
-//
-// hk-9vp51: set to 90 min — generous enough that a legitimate long task (deep
-// go-test loops, multi-file refactors that run the full suite, ~30–45 min) that
-// keeps making progress survives well past the old flat 30-min guillotine, while
-// still bounding a genuinely-stuck session.
-//
-// Declared as var (not const) so tests can override it without waiting real
-// wall time.
-var commitHardCeiling = 90 * time.Minute
 
 // heartbeatStalenessThreshold is the maximum time pasteInjectQuitOnCommit will
 // tolerate without receiving an agent_heartbeat event before it fires the kill
@@ -438,15 +411,8 @@ type sessionKiller interface {
 // killer and noChangeTimeoutCh may be nil (the kill and signal steps are
 // skipped when either is absent).
 //
-// bus and runID drive the hk-9vp51 implementer_budget_exceeded diagnostic: when
-// a kill fires because the commit budget (hard ceiling or stale progress) was
-// exhausted, an implementer_budget_exceeded event is emitted carrying the
-// elapsed time and time-since-last-progress, so a previously-silent no_commit
-// becomes self-explaining.  Both may be nil (event emission is skipped); the
-// kill still fires.
-//
 // Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3, hk-7srrd, hk-9vp51.
+// Beads: hk-cmybm, hk-trjef, hk-5s7tg, hk-930o3, hk-7srrd.
 func pasteInjectQuitOnCommit(
 	ctx context.Context,
 	qs quitSender,
@@ -456,8 +422,6 @@ func pasteInjectQuitOnCommit(
 	noChangeTimeoutCh chan<- struct{},
 	briefDelivered <-chan struct{},
 	eventCh <-chan core.EventEnvelope,
-	bus handlercontract.EventEmitter,
-	runID core.RunID,
 ) {
 	// hk-930o3: wait for brief delivery confirmation before entering the commit
 	// poll loop.  This prevents a /quit racing the brief when a stale tmux pane
@@ -486,19 +450,9 @@ func pasteInjectQuitOnCommit(
 	killDelay := noChangeKillDelay
 	stalenessThreshold := heartbeatStalenessThreshold
 	launchWindow := launchHeartbeatTimeout
-	hardCeiling := commitHardCeiling
 
-	loopStart := time.Now()
-	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on every
-	// genuine progress signal (agent_heartbeat) rather than a flat wall clock.
-	totalDeadline := loopStart.Add(pollTimeout)
-	// hk-9vp51: hardDeadline is the absolute backstop — never extended; bounds a
-	// truly-hung-but-pane-active session.
-	hardDeadline := loopStart.Add(hardCeiling)
+	totalDeadline := time.Now().Add(pollTimeout)
 	lastHeartbeat := time.Now() // initialised to now; first real beat resets it
-	// hk-9vp51: lastProgress tracks the last genuine progress signal for the
-	// implementer_budget_exceeded diagnostic (since_last_progress_ms).
-	lastProgress := loopStart
 	heartbeatProvided := eventCh != nil
 	// hk-3gq0b: launch-verification window — starts after brief delivery.
 	// When heartbeatProvided, the first heartbeat must arrive within launchWindow
@@ -516,23 +470,10 @@ func pasteInjectQuitOnCommit(
 	// fireNoChangePath sends /quit, waits killDelay, kills, and closes
 	// noChangeTimeoutCh.  Extracted to avoid duplication between the heartbeat-
 	// stale and total-deadline paths.
-	//
-	// hk-9vp51: budgetExceeded marks a kill caused by exhausting the commit
-	// budget (hard ceiling reached, or progress went stale).  When set, an
-	// implementer_budget_exceeded diagnostic is emitted (when bus != nil) carrying
-	// elapsed and since-last-progress so a previously-silent no_commit explains
-	// itself.  reasonTag is the short machine-readable reason for that payload.
-	fireNoChangePath := func(reason, reasonTag string, budgetExceeded bool) {
+	fireNoChangePath := func(reason string) {
 		fmt.Fprintf(os.Stderr,
 			"daemon: pasteinject: quit-on-commit: %s in %s (initial=%s); sending /quit unconditionally\n",
 			reason, wtPath, initialSHA)
-		// hk-9vp51: emit the budget-exceeded diagnostic before tearing down so
-		// the event is durable even if the kill steps below block on ctx.Done().
-		if budgetExceeded {
-			now := time.Now()
-			emitImplementerBudgetExceeded(ctx, bus, runID,
-				now.Sub(loopStart), now.Sub(lastProgress), reasonTag)
-		}
 		// Step 1: send /quit unconditionally — Claude may have self-quit
 		// without committing (e.g. detected nothing-to-do).
 		if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
@@ -574,51 +515,17 @@ func pasteInjectQuitOnCommit(
 				continue
 			}
 			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
-				now := time.Now()
-				lastHeartbeat = now
+				lastHeartbeat = time.Now()
 				firstHeartbeatSeen = true
-				// hk-9vp51: a genuine progress signal extends the per-progress
-				// commit budget so a session that keeps making progress is not
-				// guillotined by the flat budget window.  The absolute
-				// hardDeadline is NOT extended.
-				lastProgress = now
-				totalDeadline = now.Add(pollTimeout)
 			}
 
 		case <-ticker.C:
 			now := time.Now()
 
-			// hk-9vp51: absolute hard-ceiling backstop — never extended by
-			// progress.  Bounds a truly-hung-but-pane-active implementer (one
-			// that emits heartbeats forever, or keeps the pane active, but never
-			// commits) so it cannot run indefinitely.  Checked FIRST so it always
-			// wins over the progress-aware budget below.
-			if now.After(hardDeadline) {
-				fireNoChangePath(
-					fmt.Sprintf("hard-ceiling %v reached without a new commit", hardCeiling),
-					"hard-ceiling", true)
-				return
-			}
-
-			// hk-9vp51: per-progress commit-budget backstop.  Unlike the old flat
-			// wall-clock deadline, this fires only when the budget window has
-			// elapsed AND the pane is not making progress.  If the pane still has
-			// an active child process, treat it as progress-without-heartbeat
-			// (e.g. a long go-test loop that emits no agent_heartbeat): extend the
-			// budget rather than guillotine a working session.  A pane that has
-			// genuinely gone dark falls through to the kill.
+			// Check total wall-clock backstop first.
 			if now.After(totalDeadline) {
-				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-commit: commit-budget %v elapsed but pane has active child process in %s; extending budget (hard ceiling %v)\n",
-						pollTimeout, wtPath, hardCeiling)
-					lastProgress = now
-					totalDeadline = now.Add(pollTimeout)
-				} else {
-					fireNoChangePath("total-timeout waiting for new commit (pane inactive)",
-						"total-budget-stale", true)
-					return
-				}
+				fireNoChangePath("total-timeout waiting for new commit")
+				return
 			}
 
 			// hk-3gq0b: launch-verification check — if the first heartbeat has
@@ -639,8 +546,7 @@ func pasteInjectQuitOnCommit(
 					lastHeartbeat = now
 					launchDeadline = now.Add(launchWindow)
 				} else {
-					fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery",
-						"launch-heartbeat-timeout", false)
+					fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery")
 					return
 				}
 			}
@@ -661,7 +567,7 @@ func pasteInjectQuitOnCommit(
 					fireNoChangePath(fmt.Sprintf(
 						"heartbeat stale for >%v (no agent_heartbeat received)",
 						stalenessThreshold,
-					), "heartbeat-stale", true)
+					))
 					return
 				}
 			}
@@ -803,47 +709,6 @@ func emitPasteInjectFailed(ctx context.Context, bus handlercontract.EventEmitter
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypePasteInjectFailed, b)
-}
-
-// emitImplementerBudgetExceeded emits an implementer_budget_exceeded event
-// (hk-9vp51) when pasteInjectQuitOnCommit force-kills a hosted implementer
-// session for exhausting its commit budget.  It makes a previously-silent
-// no_commit self-explaining: operators see how long the session ran (elapsed)
-// and when it last made progress (sinceProgress).
-//
-// Non-fatal: a nil bus or a marshal error is silently discarded; the kill itself
-// is already surfaced via the reopen/done path.  elapsed/sinceProgress are
-// clamped so the payload always validates (Valid requires ElapsedMS > 0,
-// SinceLastProgressMS >= 0).
-//
-// Mirrors emitSpawnCapBlocked (hk-4l7zs).
-func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, elapsed, sinceProgress time.Duration, reason string) {
-	if bus == nil {
-		return
-	}
-	elapsedMS := elapsed.Milliseconds()
-	if elapsedMS <= 0 {
-		elapsedMS = 1
-	}
-	sinceMS := sinceProgress.Milliseconds()
-	if sinceMS < 0 {
-		sinceMS = 0
-	}
-	if reason == "" {
-		reason = "budget-exceeded"
-	}
-	pl := core.ImplementerBudgetExceededPayload{
-		RunID:               runID.String(),
-		ElapsedMS:           elapsedMS,
-		SinceLastProgressMS: sinceMS,
-		Reason:              reason,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emitImplementerBudgetExceeded: marshal: %v\n", err)
-		return
-	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerBudgetExceeded, b)
 }
 
 // splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.

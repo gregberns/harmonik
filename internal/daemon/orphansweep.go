@@ -95,15 +95,6 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-9eury.
 	CoordinatorSessionsSkipped int
 
-	// CoordinatorSessionsReaped is the count of coordinator (flywheel) tmux
-	// sessions force-killed at boot because their owning supervisor PID was
-	// confirmed DEAD (sentinel present but kill(pid,0) → ESRCH).  These sessions
-	// are exempt from the generic orphan-classification (sessionIsOrphaned can
-	// return false when the supervisor's re-parented children keep the pane
-	// "alive"), so a dead supervisor would otherwise leak its flywheel session
-	// forever.  hk-9vp51.
-	CoordinatorSessionsReaped int
-
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -298,58 +289,6 @@ func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoord
 	return probeCoordinatorSentinelResult{Live: true}, nil
 }
 
-// reapDeadCoordinatorSession force-kills the coordinator (flywheel) tmux session
-// for projectHash when its owning supervisor has been confirmed dead (caller
-// established this via probeCoordinatorSentinel: sentinel present, kill(pid,0) →
-// ESRCH).  It only kills the session if it is actually present in the live tmux
-// session list — never a live supervisor's session, because the caller only
-// invokes this on the dead-PID branch.
-//
-// Returns the count of sessions reaped (0 or 1).  Non-fatal: a nil adapter, a
-// ListSessions error, or a KillSession error is logged and treated as 0/handled.
-//
-// Mirrors the reconciler-reaper pattern (hk-5pg37) and the dead-PID liveness
-// discipline of sessionIsOrphaned.  hk-9vp51.
-func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHash, adapter ltmux.Adapter, logger *log.Logger) int {
-	if adapter == nil {
-		return 0
-	}
-	flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
-
-	// Confirm the session exists before issuing the kill (avoids a spurious
-	// KillSession error log for the common case where the supervisor exited
-	// cleanly and already tore down its session).
-	sessions, listErr := adapter.ListSessions(ctx)
-	if listErr != nil {
-		if logger != nil {
-			logger.Printf("daemon: reapDeadCoordinatorSession: ListSessions error (skipping reap): %v", listErr)
-		}
-		return 0
-	}
-	present := false
-	for _, s := range sessions {
-		if s == flywheelSession {
-			present = true
-			break
-		}
-	}
-	if !present {
-		return 0
-	}
-
-	if logger != nil {
-		logger.Printf("daemon: reapDeadCoordinatorSession: supervisor dead — reaping leaked coordinator session %q (hk-9vp51)", flywheelSession)
-	}
-	if killErr := adapter.KillSession(ctx, flywheelSession); killErr != nil {
-		// TOCTOU (session vanished) or other error: log and still count it — we
-		// identified it as a dead-supervisor leak.
-		if logger != nil {
-			logger.Printf("daemon: reapDeadCoordinatorSession: kill-session %q error (proceeding): %v", flywheelSession, killErr)
-		}
-	}
-	return 1
-}
-
 // readSupervisorPID reads a single ASCII decimal PID line from path.
 func readSupervisorPID(path string) (int, error) {
 	//nolint:gosec // G304: path is constructed from operator-controlled projectDir
@@ -434,18 +373,6 @@ func RunOrphanSweep(
 			if cfg.Logger != nil {
 				cfg.Logger.Printf("daemon: RunOrphanSweep: skipping coordinator session %q (orphan_sweep_skipped_coordinator_session)", flywheelSession)
 			}
-		} else if probe.SentinelRemoved {
-			// hk-9vp51: the sentinel was present but the supervisor PID is DEAD
-			// (probeCoordinatorSentinel removed the stale sentinel after kill(pid,0)
-			// returned ESRCH).  Force-reap the dead supervisor's flywheel/coordinator
-			// session at boot: it is exempt from the generic orphan classification
-			// (sessionIsOrphaned can report it "alive" when the supervisor's
-			// re-parented bash children keep the first pane PID live), so without
-			// this it leaks forever.  The supervisor PID is verified dead by the
-			// probe, so this is safe — we never kill a session of a LIVE supervisor.
-			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
-			result.CoordinatorSessionsReaped = reaped
-			result.TmuxSessionsKilled += reaped
 		}
 	}
 

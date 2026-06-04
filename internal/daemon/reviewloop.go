@@ -543,7 +543,7 @@ func runReviewLoop(
 			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
 			// nil eventCh — although implTapCh now exists (hk-kunm4), heartbeat
 			// staleness detection in pasteInjectQuitOnCommit is deferred (hk-7srrd).
-			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, nil, deps.bus, runID)
+			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, nil)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).

@@ -152,8 +152,6 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "launch_stall_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-4l7zs: spawn-cap-blocked diagnostic (slot-leak signature).
 	{TypeName: "spawn_cap_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	// hk-9vp51: implementer-budget-exceeded diagnostic (commit-budget kill).
-	{TypeName: "implementer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-djqc9: agent-comms typed events (agent-comms spec §1).
 	{TypeName: "agent_message", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_presence", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

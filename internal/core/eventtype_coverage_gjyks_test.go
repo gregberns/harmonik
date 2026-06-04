@@ -162,9 +162,6 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	// §8.2a Gate-node dispatch
 	{EventTypeGateDecisionRecorded, func() EventPayload { return &GateDecisionRecordedPayload{} }},
 
-	// Launch / dispatch diagnostics (hk-9vp51)
-	{EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} }},
-
 	// §8.10 Queue lifecycle
 	{EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} }},
 	{EventTypeQueueGroupStarted, func() EventPayload { return &QueueGroupStartedPayload{} }},

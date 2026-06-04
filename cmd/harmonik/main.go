@@ -603,36 +603,26 @@ EXAMPLES
 		return 1
 	}
 
-	// hk-9vp51: resolve the daemon's spawn-target session DETERMINISTICALLY from
-	// the project directory — NOT from the ambient $TMUX session.
-	//
-	// Previously we asked tmux for the current session via
-	// `display-message -p '#{session_name}'`.  That returns whatever session the
-	// daemon process happens to be launched inside; when the auto-revive
-	// supervisor (running in its own `hk-daemon-supervise` session) starts the
-	// daemon, the daemon inherits $TMUX pointing at the supervisor's session and
-	// spawned every implementer window THERE.  A peer's `grep harmonik-*-flywheel`
-	// then found "0 sessions" and mis-cried a launch wedge.
-	//
-	// DefaultSessionName(projectDir) == "harmonik-<hash>-default" is exactly the
-	// name `hk tmux-start` creates by default, so when the operator launched the
-	// daemon via tmux-start this attaches to the SAME session as before (no
-	// behaviour change); when the supervisor launched it, the daemon creates and
-	// owns its own session instead of polluting the supervisor's.
-	sessionName := tmux.DefaultSessionName(projectDir)
+	// Resolve the current session name by asking tmux directly.
+	// We use exec.Command here (not OSAdapter.display-message) because this path
+	// runs before the substrate is constructed and there is no window handle to
+	// target; the unqualified display-message returns the current session.
+	var sessionNameBytes []byte
+	sessionNameBytes, err = exec.Command("tmux", "display-message", "-p", "#{session_name}").Output() //nolint:gosec // G204: arguments are hard-coded constants
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: cannot resolve tmux session name: %v\n", err)
+		return 1
+	}
+	sessionName := strings.TrimSpace(string(sessionNameBytes))
+	if sessionName == "" {
+		fmt.Fprintln(os.Stderr, "harmonik: tmux returned an empty session name — cannot attach substrate")
+		return 1
+	}
 
 	// Probe tmux version (≥ 3.0 required for -e env-injection per PL-021b).
 	tmuxAdapter := tmux.OSAdapter{}
 	if probeErr := tmuxAdapter.ProbeTmux(ctx); probeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: tmux probe failed: %v\n", probeErr)
-		return 1
-	}
-
-	// Ensure the daemon-owned session exists before constructing the substrate
-	// (idempotent: returns nil if already present).  Implementer windows spawn
-	// into this session via NewWindowIn.
-	if ensErr := tmuxAdapter.EnsureSession(ctx, sessionName, projectDir); ensErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik: cannot ensure daemon tmux session %q: %v\n", sessionName, ensErr)
 		return 1
 	}
 

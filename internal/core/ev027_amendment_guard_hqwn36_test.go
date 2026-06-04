@@ -49,10 +49,6 @@ import "testing"
 // workflow:single label gates single mode, bypassing review-loop).
 // Amendment: daemon_config added (hk-sul12; O-class startup event stating the
 // resolved merge target and active branch-protection policy).
-// Amendment: implementer_budget_exceeded added (hk-9vp51; O-class diagnostic
-// emitted when pasteInjectQuitOnCommit force-kills an implementer session for
-// exhausting its commit budget — makes a previously-silent no_commit explain
-// elapsed time and last-progress time).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -69,7 +65,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 112
+	const wantCount = 111
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

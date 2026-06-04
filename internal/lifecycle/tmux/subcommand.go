@@ -86,7 +86,8 @@ func RunTmuxStart(
 			fmt.Fprintln(stderr, "hk tmux-start: project directory is required when --session-name is not provided")
 			return 24
 		}
-		computedName = DefaultSessionName(projectDir)
+		hash := tmuxStartHashDir(projectDir)
+		computedName = "harmonik-" + hash + "-default"
 	}
 
 	// Probe tmux before creating a session (exit code 22 on failure).
@@ -167,24 +168,6 @@ func tmuxStartHashDir(dir string) string {
 	}
 	sum := sha256.Sum256([]byte(resolved))
 	return fmt.Sprintf("%x", sum[:6]) // 6 bytes → 12 lowercase hex chars
-}
-
-// DefaultSessionName returns the canonical per-project daemon tmux session name
-// for projectDir: "harmonik-<project_hash>-default" (PL-006a).  This is the same
-// name `hk tmux-start` creates by default, so a daemon that EnsureSessions this
-// name attaches to the operator's session when launched via tmux-start, and
-// creates its own dedicated session otherwise.
-//
-// hk-9vp51: the daemon MUST spawn implementer windows into THIS deterministic
-// session rather than whatever ambient $TMUX session it inherits.  When the
-// daemon is launched by the auto-revive supervisor (itself running inside an
-// `hk-daemon-supervise` session), reading `tmux display-message -p
-// '#{session_name}'` resolves to the SUPERVISOR's session, so every implementer
-// window spawned into it and `grep harmonik-*-flywheel` found "0 sessions" —
-// mis-diagnosed as a launch wedge.  Deriving the session name from the project
-// (not the env) makes the spawn target deterministic and supervisor-independent.
-func DefaultSessionName(projectDir string) string {
-	return "harmonik-" + tmuxStartHashDir(projectDir) + "-default"
 }
 
 // tmuxEnvLookup returns the value of the named variable from the env slice.

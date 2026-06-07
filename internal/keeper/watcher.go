@@ -291,6 +291,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 				time.Since(modTime) >= w.cfg.IdleQuiesce
 			lastModTime = modTime
 
+			// ── Phase-2 gate predicates (computed + logged; not yet acted on) ──
+			// CrispIdle: Stop hook fired after the last gauge update.
+			// HoldingDispatch: orchestrator has in-flight queue work.
+			// The cycle bead will consume these predicates.
+			crispIdle := CrispIdle(w.cfg.ProjectDir, w.cfg.AgentName)
+			holdingDispatch := HoldingDispatch(w.cfg.ProjectDir, w.cfg.AgentName)
+			slog.DebugContext(ctx, "keeper: gate predicates",
+				"agent", w.cfg.AgentName,
+				"crisp_idle", crispIdle,
+				"holding_dispatch", holdingDispatch,
+			)
+
 			// ── warn state machine ───────────────────────────────────────────
 			if pct < w.cfg.WarnPct {
 				// Below threshold: reset so the next upward crossing will warn.

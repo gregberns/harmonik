@@ -163,6 +163,11 @@ type WatcherConfig struct {
 	// When nil, InjectWrapUpWarning is used. Set to a spy function in unit tests
 	// to verify injection without spawning real tmux commands.
 	InjectFn func(ctx context.Context, target string) error
+
+	// Cycler, if non-nil, enables Phase-2 cycle dispatch. MaybeRun is called on
+	// each fresh-gauge tick; gating (act_pct, CrispIdle, HoldingDispatch,
+	// anti-loop) is handled internally by the Cycler.
+	Cycler *Cycler
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -291,10 +296,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 				time.Since(modTime) >= w.cfg.IdleQuiesce
 			lastModTime = modTime
 
-			// ── Phase-2 gate predicates (computed + logged; not yet acted on) ──
+			// ── Phase-2 gate predicates ──────────────────────────────────────
 			// CrispIdle: Stop hook fired after the last gauge update.
 			// HoldingDispatch: orchestrator has in-flight queue work.
-			// The cycle bead will consume these predicates.
 			crispIdle := CrispIdle(w.cfg.ProjectDir, w.cfg.AgentName)
 			holdingDispatch := HoldingDispatch(w.cfg.ProjectDir, w.cfg.AgentName)
 			slog.DebugContext(ctx, "keeper: gate predicates",
@@ -302,6 +306,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 				"crisp_idle", crispIdle,
 				"holding_dispatch", holdingDispatch,
 			)
+
+			// ── Phase-2 cycle dispatch ────────────────────────────────────────
+			// Cycler.MaybeRun handles all internal gating (act_pct, CrispIdle,
+			// HoldingDispatch, anti-loop). We pass the full ctxFile so the cycler
+			// can read pct and session_id directly.
+			if w.cfg.Cycler != nil {
+				if cycleErr := w.cfg.Cycler.MaybeRun(ctx, ctxFile); cycleErr != nil {
+					slog.WarnContext(ctx, "keeper: cycle error", "agent", w.cfg.AgentName, "err", cycleErr)
+				}
+			}
 
 			// ── warn state machine ───────────────────────────────────────────
 			if pct < w.cfg.WarnPct {

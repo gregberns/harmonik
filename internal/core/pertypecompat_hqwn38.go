@@ -234,6 +234,11 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// ── §8.13 Session-keeper (codename:session-keeper, hk-ekap1) ───────────
 	{TypeName: "session_keeper_warn", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "session_keeper_no_gauge", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// Phase-2 cycle events (hk-22i70):
+	{TypeName: "session_keeper_handoff_started", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_cycle_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_cycle_aborted", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_clear_unconfirmed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

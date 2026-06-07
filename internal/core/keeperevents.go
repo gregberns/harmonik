@@ -46,3 +46,75 @@ type SessionKeeperNoGaugePayload struct {
 	// Values: "absent" | "stale".
 	Reason string `json:"reason"`
 }
+
+// SessionKeeperHandoffStartedPayload is the payload for
+// session_keeper_handoff_started (event-model.md §8.13.3).
+//
+// Emitted by the cycle core before the /session-handoff injection so the
+// cycle is auditable even if it subsequently aborts.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-22i70.
+type SessionKeeperHandoffStartedPayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+	// CycleID is the monotonic cycle identifier for this run.
+	CycleID string `json:"cycle_id"`
+	// SessionID is the gauge session_id at the time the cycle fires.
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// SessionKeeperCycleCompletePayload is the payload for
+// session_keeper_cycle_complete (event-model.md §8.13.4).
+//
+// Emitted on successful completion of the full 7-step cycle.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-22i70.
+type SessionKeeperCycleCompletePayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+	// CycleID is the cycle identifier.
+	CycleID string `json:"cycle_id"`
+	// PrevSessionID is the session_id before the /clear.
+	PrevSessionID string `json:"prev_session_id,omitempty"`
+	// NewSessionID is the session_id observed after the /clear (may be empty
+	// if the settle wait elapsed without detecting a new session_id).
+	NewSessionID string `json:"new_session_id,omitempty"`
+}
+
+// SessionKeeperCycleAbortedPayload is the payload for
+// session_keeper_cycle_aborted (event-model.md §8.13.5).
+//
+// Emitted when the cycle aborts without issuing /clear because the handoff
+// nonce confirmation timed out. The session is left untouched.
+//
+// Durability class: O (ordinary — operator attention required).
+// Refs: hk-22i70.
+type SessionKeeperCycleAbortedPayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+	// CycleID is the cycle identifier.
+	CycleID string `json:"cycle_id"`
+	// SessionID is the gauge session_id at the time the cycle was attempted.
+	SessionID string `json:"session_id,omitempty"`
+	// Reason describes why the cycle aborted. Values: "handoff_timeout".
+	Reason string `json:"reason"`
+}
+
+// SessionKeeperClearUnconfirmedPayload is the payload for
+// session_keeper_clear_unconfirmed (event-model.md §8.13.6).
+//
+// Emitted (best-effort) when the post-/clear settle wait elapses without
+// observing a new session_id in the gauge. The cycle continues regardless.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-22i70.
+type SessionKeeperClearUnconfirmedPayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+	// CycleID is the cycle identifier.
+	CycleID string `json:"cycle_id"`
+	// SessionID is the session_id before /clear was issued.
+	SessionID string `json:"session_id,omitempty"`
+}

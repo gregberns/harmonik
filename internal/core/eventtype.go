@@ -677,6 +677,35 @@ const (
 	// Durability class: O (ordinary — configuration-gap signal).
 	// Refs: hk-8vzek.
 	EventTypeSessionKeeperNoGauge EventType = "session_keeper_no_gauge"
+
+	// EventTypeSessionKeeperHandoffStarted is the session_keeper_handoff_started
+	// event type. Emitted by the keeper cycle core at Step 1 — immediately before
+	// the /session-handoff injection — so the cycle is auditable even if it aborts.
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-22i70.
+	EventTypeSessionKeeperHandoffStarted EventType = "session_keeper_handoff_started"
+
+	// EventTypeSessionKeeperCycleComplete is the session_keeper_cycle_complete
+	// event type. Emitted on successful completion of the full 7-step cycle
+	// (handoff confirmed → /clear → /session-resume).
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-22i70.
+	EventTypeSessionKeeperCycleComplete EventType = "session_keeper_cycle_complete"
+
+	// EventTypeSessionKeeperCycleAborted is the session_keeper_cycle_aborted
+	// event type. Emitted when the cycle aborts without performing /clear because
+	// the handoff nonce confirmation timed out.
+	// Durability class: O (ordinary — requires operator attention).
+	// Refs: hk-22i70.
+	EventTypeSessionKeeperCycleAborted EventType = "session_keeper_cycle_aborted"
+
+	// EventTypeSessionKeeperClearUnconfirmed is the session_keeper_clear_unconfirmed
+	// event type. Emitted (best-effort) when the post-/clear settle wait elapses
+	// without observing a new session_id in the gauge. The cycle continues — this
+	// is informational, not a hard gate.
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-22i70.
+	EventTypeSessionKeeperClearUnconfirmed EventType = "session_keeper_clear_unconfirmed"
 )
 
 // ---------------------------------------------------------------------------

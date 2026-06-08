@@ -572,7 +572,9 @@ func TestCycler_AbortDoesNotRefire(t *testing.T) {
 	if abortedAfterSecond != abortedAfterFirst {
 		t.Errorf("want no new cycle_aborted after second call; got %d total (was %d)", abortedAfterSecond, abortedAfterFirst)
 	}
-	_ = handoffEvts // aborted means handoff_started was emitted once (before timeout)
+	if handoffEvts != 1 {
+		t.Errorf("want 1 handoff_started (emitted before abort); got %d", handoffEvts)
+	}
 }
 
 // TestCycler_ManagedGuardInsideMaybeRun verifies DEFECT-3: the .managed check

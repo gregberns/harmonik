@@ -28,7 +28,11 @@ func precompactMarkerPath(projectDir, agent string) string {
 // HasPrecompactTrigger reports whether the precompact trigger marker exists for
 // the given agent. Returns true when the PreCompact hook has blocked at least
 // one compaction and the keeper has not yet consumed the trigger.
+// Returns false for any agent name that fails validateAgent (mirroring IsManaged).
 func HasPrecompactTrigger(projectDir, agent string) bool {
+	if validateAgent(agent) != nil {
+		return false // fail-open: traversal name cannot have a valid marker
+	}
 	_, err := os.Stat(precompactMarkerPath(projectDir, agent))
 	return err == nil
 }
@@ -37,6 +41,9 @@ func HasPrecompactTrigger(projectDir, agent string) bool {
 // agent. The keeper watcher calls this after deciding what action to take (cycle
 // or skip) so the next PreCompact fire gets a clean slate. Idempotent.
 func ClearPrecompactTrigger(projectDir, agent string) error {
+	if err := validateAgent(agent); err != nil {
+		return err
+	}
 	if err := os.Remove(precompactMarkerPath(projectDir, agent)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("keeper: remove precompact marker: %w", err)
 	}

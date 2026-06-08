@@ -62,6 +62,10 @@
 set -euo pipefail
 
 AGENT="${HARMONIK_KEEPER_AGENT:-${1:-default}}"
+# Reject path-traversal agent names (fail-open = allow native compaction).
+case "$AGENT" in
+    */*|*..*) exit 0 ;;
+esac
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
 KEEPER_DIR="${PROJECT}/.harmonik/keeper"
 MANAGED_FILE="${KEEPER_DIR}/${AGENT}.managed"

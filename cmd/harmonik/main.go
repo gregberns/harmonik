@@ -680,7 +680,7 @@ EXAMPLES
 		DaemonBinaryPath:         daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag, // hk-ymav1: bandwidth auto-tuner
-		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-rssrg: default to review-loop
+		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
 		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
 		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
 		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch

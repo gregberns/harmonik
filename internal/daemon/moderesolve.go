@@ -9,7 +9,7 @@ package daemon
 // Tier 1 — per-bead workflow:<mode> label (beads-integration.md §4.3 BI-009a)
 // Tier 2 — per-project config (reserved no-op for MVH; always absent)
 // Tier 3 — daemon default (workLoopDeps.workflowModeDefault per hk-7om2q.8)
-// Tier 4 — hard fallback: single
+// Tier 4 — hard fallback: dot (hk-30vlb)
 //
 // The resolved value MUST be sealed into the Run record before dispatch and
 // MUST NOT be re-evaluated for the run's lifetime per §4.3.EM-012a.

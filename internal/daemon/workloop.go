@@ -1644,7 +1644,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
 	// Four-tier precedence: per-bead label → project config (no-op) →
-	// daemon default → single. Resolved once at claim time; immutable for
+	// daemon default → dot (hk-30vlb). Resolved once at claim time; immutable for
 	// the run's lifetime. See moderesolve.go.
 	//
 	// hk-hiqrl: itemWorkflowMode is a tier-0 per-item override set by the

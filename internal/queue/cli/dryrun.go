@@ -27,24 +27,28 @@ import (
 //
 // Flag args (subArgs is os.Args[3:]):
 //
-//	--queue <name>           target queue name (default: main)
-//	--queue=<name>           equals form
-//	--beads hk-a,hk-b[,...]  comma-separated bead IDs (expands to stream group)
-//	--beads hk-a --beads hk-b repeated form; accumulates across flags
-//	--project <dir>          project directory (default: cwd)
-//	--project=<dir>          equals form
-//	--json                   output raw JSON (shorthand for --format json)
-//	--format json|text       output format (default text)
+//	--queue <name>               target queue name (default: main)
+//	--queue=<name>               equals form
+//	--beads hk-a,hk-b[,...]     comma-separated bead IDs (expands to stream group)
+//	--beads hk-a --beads hk-b   repeated form; accumulates across flags
+//	--workflow-mode <mode>       per-item workflow mode (default: review-loop); stamped on each
+//	                             minted item so the queue.json record is self-describing (hk-tldws)
+//	--workflow-mode=<mode>       equals form
+//	--project <dir>              project directory (default: cwd)
+//	--project=<dir>              equals form
+//	--json                       output raw JSON (shorthand for --format json)
+//	--format json|text           output format (default text)
 //
 // Spec refs:
 //   - specs/process-lifecycle.md §4.4 PL-028 + PL-028c
 //   - specs/queue-model.md §2.10 RECORD QueueDryRunRequest / QueueDryRunResponse
 //   - specs/queue-model.md §6 QM-028 (validate-only, no persist, no events)
 //
-// Bead ref: hk-eblue, hk-m9a7g, hk-40r9b.
+// Bead ref: hk-eblue, hk-m9a7g, hk-40r9b, hk-tldws.
 func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
 	var beadIDs []string
 	var queueName string
+	workflowMode := "review-loop" // default: review-loop per hk-g0ckv / hk-rssrg / hk-tldws
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--beads" && i+1 < len(args):
@@ -59,6 +63,12 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 		case strings.HasPrefix(args[i], "--queue="):
 			queueName = strings.TrimPrefix(args[i], "--queue=")
 			return i + 1, true
+		case args[i] == "--workflow-mode" && i+1 < len(args):
+			workflowMode = args[i+1]
+			return i + 2, true
+		case strings.HasPrefix(args[i], "--workflow-mode="):
+			workflowMode = strings.TrimPrefix(args[i], "--workflow-mode=")
+			return i + 1, true
 		}
 		return i, false
 	})
@@ -71,7 +81,7 @@ func RunQueueDryRun(ctx context.Context, subArgs []string, out io.Writer, errOut
 	switch {
 	case len(beadIDs) > 0:
 		var buildErr error
-		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName)
+		queueDoc, buildErr = beadsToQueueDoc(beadIDs, queueName, workflowMode)
 		if buildErr != nil {
 			fmt.Fprintf(errOut, "harmonik queue dry-run: cannot build queue doc: %v\n", buildErr)
 			return exitTransportError

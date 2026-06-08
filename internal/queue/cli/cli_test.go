@@ -1096,6 +1096,128 @@ func TestRunQueueSubmit_DefaultsToMain(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// --beads workflow_mode stamping (hk-tldws)
+// ---------------------------------------------------------------------------
+
+// TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop is the regression guard for
+// hk-tldws: items minted by `harmonik queue submit --beads` must carry
+// workflow_mode=review-loop in the serialized request so the queue.json record
+// is self-describing and durable (the daemon default may change; the item must
+// not silently inherit a different mode on daemon restart).
+func TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var capturedGroups []json.RawMessage
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if gBytes, ok := msg["groups"]; ok {
+				_ = json.Unmarshal(gBytes, &capturedGroups)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":    "aabbccdd-2222-7000-8000-000000000000",
+			"status":      "active",
+			"group_count": 1,
+		})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueSubmit(context.Background(), []string{
+		"--project", projectDir,
+		"--beads", "hk-tldws01",
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueSubmit --beads: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if len(capturedGroups) == 0 {
+		t.Fatal("RunQueueSubmit --beads: request contained no groups")
+	}
+
+	// Unmarshal the first group and its items.
+	var group struct {
+		Items []struct {
+			BeadID       string `json:"bead_id"`
+			WorkflowMode string `json:"workflow_mode"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(capturedGroups[0], &group); err != nil {
+		t.Fatalf("RunQueueSubmit --beads: cannot unmarshal group[0]: %v", err)
+	}
+	if len(group.Items) == 0 {
+		t.Fatal("RunQueueSubmit --beads: group[0] contains no items")
+	}
+	item := group.Items[0]
+	if item.BeadID != "hk-tldws01" {
+		t.Errorf("RunQueueSubmit --beads: item bead_id = %q, want %q", item.BeadID, "hk-tldws01")
+	}
+	if item.WorkflowMode != "review-loop" {
+		t.Errorf("RunQueueSubmit --beads: item workflow_mode = %q, want %q (hk-tldws regression)",
+			item.WorkflowMode, "review-loop")
+	}
+}
+
+// TestRunQueueSubmit_BeadsWorkflowModeOverride verifies that --workflow-mode single
+// overrides the review-loop default on minted items.
+func TestRunQueueSubmit_BeadsWorkflowModeOverride(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var capturedGroups []json.RawMessage
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if gBytes, ok := msg["groups"]; ok {
+				_ = json.Unmarshal(gBytes, &capturedGroups)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":    "aabbccdd-3333-7000-8000-000000000000",
+			"status":      "active",
+			"group_count": 1,
+		})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueSubmit(context.Background(), []string{
+		"--project", projectDir,
+		"--beads", "hk-tldws02",
+		"--workflow-mode", "single",
+	}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueSubmit --beads --workflow-mode single: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if len(capturedGroups) == 0 {
+		t.Fatal("RunQueueSubmit --beads --workflow-mode single: request contained no groups")
+	}
+
+	var group struct {
+		Items []struct {
+			WorkflowMode string `json:"workflow_mode"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(capturedGroups[0], &group); err != nil {
+		t.Fatalf("cannot unmarshal group[0]: %v", err)
+	}
+	if len(group.Items) == 0 {
+		t.Fatal("group[0] contains no items")
+	}
+	if group.Items[0].WorkflowMode != "single" {
+		t.Errorf("--workflow-mode single: item workflow_mode = %q, want %q",
+			group.Items[0].WorkflowMode, "single")
+	}
+}
+
 // TestQueueSubmit_RequestContainsOp verifies the socket request includes "op"
 // = "queue-submit" and the queue document fields at the top level.
 func TestQueueSubmit_RequestContainsOp(t *testing.T) {

@@ -168,15 +168,19 @@ func normalizeQueueDocGroups(doc map[string]json.RawMessage, errOut io.Writer) e
 // queueName is the optional routing key (absent/empty → default "main"). When
 // non-empty it is embedded as the "name" field in the returned document.
 //
+// workflowMode is stamped onto each minted item so the queue.json record is
+// self-describing (hk-tldws). Pass "" to omit it (daemon default applies).
+//
 // The returned map is in the same shape expected by buildEnvelope — a
 // map[string]json.RawMessage keyed by field name — so the caller can pass it
 // directly to buildEnvelope("queue-submit", ...) or buildEnvelope("queue-dry-run", ...).
 //
-// Bead ref: hk-tigaf.8.
-func beadsToQueueDoc(beadIDs []string, queueName string) (map[string]json.RawMessage, error) {
+// Bead ref: hk-tigaf.8, hk-tldws.
+func beadsToQueueDoc(beadIDs []string, queueName string, workflowMode string) (map[string]json.RawMessage, error) {
 	type itemDoc struct {
-		BeadID string `json:"bead_id"`
-		Status string `json:"status"`
+		BeadID       string `json:"bead_id"`
+		Status       string `json:"status"`
+		WorkflowMode string `json:"workflow_mode,omitempty"`
 	}
 	type groupDoc struct {
 		GroupIndex int       `json:"group_index"`
@@ -192,7 +196,7 @@ func beadsToQueueDoc(beadIDs []string, queueName string) (map[string]json.RawMes
 
 	items := make([]itemDoc, len(beadIDs))
 	for i, id := range beadIDs {
-		items[i] = itemDoc{BeadID: id, Status: "pending"}
+		items[i] = itemDoc{BeadID: id, Status: "pending", WorkflowMode: workflowMode}
 	}
 	doc := queueDoc{
 		SchemaVersion: 1,

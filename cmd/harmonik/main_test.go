@@ -25,7 +25,9 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // mainFixtureResetFlags resets flag.CommandLine to a fresh FlagSet so that
@@ -95,32 +97,50 @@ func TestRunTmuxEnvFastFail(t *testing.T) {
 
 // TestRunTmuxEnvSet_ProceedsToSubstratePath verifies that when $TMUX is set,
 // run() proceeds past the fail-fast guard and enters the substrate-construction
-// path (even if tmux is not actually reachable).
+// path, then shuts down cleanly when its signal-context is cancelled.
 //
-// With $TMUX set to a non-empty value but no real tmux server, run() will fail
-// at the `tmux display-message` step (or the ProbeTmux step), returning exit
-// code 1 from a different path than the fail-fast guard.
+// Why this test must drive a shutdown (hk-9ruez):
+//
+// The test's original assumption — that with a *fake* $TMUX socket run() would
+// fail in the tmux probe and return exit 1 — is false on any machine where the
+// tmux binary is installed.  OSAdapter.ProbeTmux only runs `tmux -V`; it never
+// connects to the $TMUX socket, so the probe succeeds and run() proceeds all
+// the way into daemon.Start.  daemon.Start then blocks forever in the work loop
+// (internal/daemon/daemon.go: `<-loopDone` after `go runWorkLoop(ctx, deps)`),
+// which is *correct* production behavior — the daemon is meant to run until its
+// signal-context (SIGINT/SIGTERM) is cancelled.  With no cancellation the test
+// hung until the package timeout, cascade-failing the whole cmd/harmonik
+// package.
+//
+// The fix exercises the real production shutdown path: run() builds its own
+// signal.NotifyContext(SIGINT, SIGTERM) at the composition root (main.go,
+// hk-7oz2f), so we deliver a single SIGTERM to this process to cancel that
+// context.  The work loop's exitClean path drains and runWorkLoop returns,
+// unblocking <-loopDone so run() returns.  Production dispatch behavior is
+// unchanged — only the test now bounds the daemon's lifetime.
 //
 // The observable contract here is:
 //  1. run() does not panic.
-//  2. run() returns without triggering the $TMUX-guard branch specifically
-//     (verified by the test for TestRunTmuxEnvFastFail, which is the
-//     negative case).
+//  2. run() reaches daemon.Start (past the $TMUX fail-fast guard) and then
+//     returns within a bounded time once SIGTERM cancels its context.
 //
-// This test is NOT parallel because it modifies the global os.Setenv state
-// and we want clean isolation from the fast-fail parallel test.
+// This test is NOT parallel because it modifies global os.Setenv/os.Args state
+// and delivers a process signal.
 //
-// Acceptance: hk-kqdpf.4 — "$TMUX set → wires substrate".
+// Acceptance: hk-kqdpf.4 — "$TMUX set → wires substrate"; hk-9ruez — bounded
+// shutdown so the substrate path does not hang.
 func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	mainFixtureResetFlags(t)
 	mainFixtureSaveRestoreEnv(t, "TMUX", "/tmp/tmux-fake/fake,0,0", false /* set */)
-	mainFixtureSaveRestoreArgs(t, []string{"harmonik"})
 
-	// With $TMUX set but no real tmux binary reachable, run() will fail
-	// somewhere in the tmux probe or session-name resolution path — not at
-	// the fast-fail guard.  The test asserts only that no panic occurs and
-	// that the function terminates.
-	//
+	// Point --project at a fresh temp dir.  This keeps the daemon's .harmonik/
+	// state out of the source tree AND guarantees an empty restart-record so the
+	// boot-backoff preflight (internal/daemon/restartbackoff.go) computes a
+	// zero delay — the test must not inherit accumulated rapid-boot penalties
+	// from earlier runs.
+	projectDir := t.TempDir()
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", projectDir})
+
 	// A panic here would indicate the substrate path has a nil-pointer bug.
 	defer func() {
 		if r := recover(); r != nil {
@@ -128,14 +148,32 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 		}
 	}()
 
-	exitCode := run()
+	// run() blocks in the daemon work loop until its SIGINT/SIGTERM signal
+	// context is cancelled, so call it in a goroutine and report the exit code
+	// back over a channel.
+	exitCh := make(chan int, 1)
+	go func() {
+		exitCh <- run()
+	}()
 
-	// Exit code must be non-zero (failure in tmux path), but NOT from a panic.
-	// We accept any code; the key assertion is no panic.
-	if exitCode == 0 {
-		// In a real tmux session this would be unexpected in a test env;
-		// log it but do not fail.
-		t.Logf("run() returned 0 with fake TMUX socket — unexpected in test env")
+	// Give run() a moment to install its signal.NotifyContext handler and enter
+	// daemon.Start before we deliver the signal.  While NotifyContext is active
+	// the SIGTERM is delivered to that handler (cancelling the daemon context)
+	// rather than killing the test process via the default disposition.
+	time.Sleep(250 * time.Millisecond)
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatalf("failed to deliver SIGTERM to self: %v", err)
+	}
+
+	select {
+	case exitCode := <-exitCh:
+		// A clean signal-driven shutdown returns 0 (daemon.Start returns nil on
+		// ctx-cancel).  Any non-zero code means run() failed earlier in the
+		// substrate path, which is also an acceptable terminal outcome — the
+		// contract is "no panic and bounded return", not a specific code.
+		t.Logf("run() returned exit code %d after SIGTERM", exitCode)
+	case <-time.After(30 * time.Second):
+		t.Fatal("run() did not return within 30s of SIGTERM — the substrate/work-loop shutdown path is hung (hk-9ruez regression)")
 	}
 }
 

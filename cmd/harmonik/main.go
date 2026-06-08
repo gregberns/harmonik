@@ -410,6 +410,14 @@ EXAMPLES
 		return runSubscribeSubcommand(os.Args[2:])
 	}
 
+	// harmonik smoke — 4-signal end-to-end verification of a live daemon (hk-4rkrg).
+	// Creates a smoke bead, submits it to the queue, and asserts
+	// run_started → run_completed + commit-on-branch + reviewer_verdict + bead_closed.
+	// Exit codes: 0 pass, 1 failure, 2 timeout, 17 daemon not running.
+	if len(os.Args) >= 2 && os.Args[1] == "smoke" {
+		return runSmokeSubcommand(os.Args[2:])
+	}
+
 	// harmonik comms <verb> — agent-to-agent messaging surface (agent-comms spec §2.1 C2/C3).
 	// Currently supports: comms send (T3), comms log (T5).
 	// Exit code 17 = daemon not running (send only; log reads directly from events.jsonl).

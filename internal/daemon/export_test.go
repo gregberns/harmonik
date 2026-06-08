@@ -351,8 +351,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		handlerPauseController: p.HandlerPauseController,
 		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
 		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
-		noAutoPull:             p.NoAutoPull,          // hk-h5lv2 / EM-066
-		concurrencyCtrl:        p.ConcurrencyCtrl,     // hk-ohiaf
+		noAutoPull:             p.NoAutoPull,         // hk-h5lv2 / EM-066
+		concurrencyCtrl:        p.ConcurrencyCtrl,    // hk-ohiaf
 		targetBranch:           resolveTargetBranch(p.TargetBranch),
 		protectBranches:        p.ProtectBranches,
 		mergeMu:                mergeMu,
@@ -962,6 +962,58 @@ func ExportedPasteInjectQuitOnReviewFile(
 	briefDelivered <-chan struct{},
 ) {
 	pasteInjectQuitOnReviewFile(ctx, qs, killer, wtPath, briefDelivered)
+}
+
+// hk-sah87 diff-scaled reviewer-budget test seams.
+
+// ExportedReviewFileHardCeiling is a pointer to the package-level
+// reviewFileHardCeiling var (the absolute upper bound on the reviewer-verdict
+// wait, regardless of diff size).
+//
+// Bead: hk-sah87.
+var ExportedReviewFileHardCeiling = &reviewFileHardCeiling
+
+// ExportedReviewFilePerKLineBudget is a pointer to the package-level
+// reviewFilePerKLineBudget var (extra wait per 1000 changed lines).
+//
+// Bead: hk-sah87.
+var ExportedReviewFilePerKLineBudget = &reviewFilePerKLineBudget
+
+// ExportedReviewBudgetForDiff exposes reviewBudgetForDiff for unit tests.
+//
+// Bead: hk-sah87.
+func ExportedReviewBudgetForDiff(changedLines int, base, perKLine, ceiling time.Duration) time.Duration {
+	return reviewBudgetForDiff(changedLines, base, perKLine, ceiling)
+}
+
+// ExportedSumNumstatLines exposes sumNumstatLines for unit tests.
+//
+// Bead: hk-sah87.
+func ExportedSumNumstatLines(numstat string) (int, bool) {
+	return sumNumstatLines(numstat)
+}
+
+// ExportedReviewerBudgetSentinelName re-exports reviewerBudgetSentinelName so
+// tests can assert the marker file basename.
+//
+// Bead: hk-sah87.
+const ExportedReviewerBudgetSentinelName = reviewerBudgetSentinelName
+
+// ExportedReadReviewerBudgetSentinelFields reads the reviewer budget-kill marker
+// at wtPath and returns its fields (present is false when the marker is absent).
+// Exposed so tests in package daemon_test can assert the marker contents without
+// access to the unexported reviewerBudgetSentinel struct.
+//
+// Bead: hk-sah87.
+func ExportedReadReviewerBudgetSentinelFields(wtPath string) (present bool, reason string, budgetMS, elapsedMS int64, changedLines int, err error) {
+	s, rErr := ReadReviewerBudgetSentinel(wtPath)
+	if rErr != nil {
+		return false, "", 0, 0, 0, rErr
+	}
+	if s == nil {
+		return false, "", 0, 0, 0, nil
+	}
+	return true, s.Reason, s.BudgetMS, s.ElapsedMS, s.ChangedLines, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

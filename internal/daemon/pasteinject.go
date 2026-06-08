@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1058,17 +1059,237 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	return ""
 }
 
-// reviewFileTimeout is the maximum time to wait for .harmonik/review.json to
-// appear after the reviewer brief is delivered. After this, /quit is sent
-// unconditionally.
+// reviewFileTimeout is the BASE (floor) window to wait for .harmonik/review.json
+// to appear after the reviewer brief is delivered.  It is no longer the flat
+// deadline it once was: the effective deadline is reviewFileTimeout plus a
+// diff-size-scaled extension (see reviewBudgetForDiff), capped at
+// reviewFileHardCeiling.  After the effective deadline elapses /quit is sent
+// unconditionally and the session is force-killed.
+//
+// hk-sah87: the old behaviour was a FLAT 10-minute deadline.  On a heavy /
+// large-diff bead the implementer commits fine (~10–13 min) but the reviewer
+// claude — which must read the whole diff before it can write a verdict — was
+// /quit+killed at the flat 10 min BEFORE it wrote .harmonik/review.json, so
+// ReadReviewVerdict returned nil and the run false-failed as "verdict absent".
+// The implementer phase, by contrast, has a 90-minute progress-aware ceiling
+// (commitHardCeiling).  Scaling the reviewer budget by diff size — with a hard
+// ceiling well below the implementer's — bounds heavy reviews without letting a
+// hung reviewer (hk-m5axg: alive 31 min emitting zero events) run forever.
 //
 // Declared as var so tests can override.
 //
-// Bead: hk-zimkh.
+// Bead: hk-zimkh, hk-sah87.
 var reviewFileTimeout = 10 * time.Minute
+
+// reviewFileHardCeiling is the absolute upper bound on the reviewer-verdict
+// wait, regardless of diff size.  A hung-at-empty-prompt reviewer keeps its
+// claude pane alive (so pane-liveness alone cannot distinguish it from a working
+// reviewer); this ceiling is the firm backstop that bounds it.  It is set well
+// below the implementer's commitHardCeiling (90 min) because a review is
+// read-only — it has no test loops or multi-file edits to run, so 30 minutes is
+// generous even for a very large diff.
+//
+// Declared as var so tests can override.
+//
+// Bead: hk-sah87.
+var reviewFileHardCeiling = 30 * time.Minute
+
+// reviewFilePerKLineBudget is the extra wait granted per 1000 changed lines in
+// the diff under review, added on top of reviewFileTimeout.  5 minutes/1000
+// lines means a 2000-line diff gets 10 (base) + 10 = 20 min, a 4000-line diff
+// gets 10 + 20 = 30 (capped by reviewFileHardCeiling).  A small diff stays at
+// the 10-minute base.
+//
+// Declared as var so tests can override.
+//
+// Bead: hk-sah87.
+var reviewFilePerKLineBudget = 5 * time.Minute
 
 // reviewFilePollInterval is how often to check for the review verdict file.
 var reviewFilePollInterval = 2 * time.Second
+
+// reviewBudgetForDiff computes the effective reviewer-verdict wait for a diff of
+// changedLines: the base timeout plus reviewFilePerKLineBudget per 1000 changed
+// lines, clamped to [base, reviewFileHardCeiling].  A negative changedLines
+// (diff size unknown / measurement failed) yields the base timeout — the
+// conservative pre-hk-sah87 behaviour.
+//
+// Snapshots of the package vars are passed in so the caller can read them once
+// (avoiding a race with tests that restore the vars after the run returns).
+//
+// Bead: hk-sah87.
+func reviewBudgetForDiff(changedLines int, base, perKLine, ceiling time.Duration) time.Duration {
+	if changedLines <= 0 {
+		// Unknown or empty diff → base budget.
+		if base > ceiling {
+			return ceiling
+		}
+		return base
+	}
+	// Scale linearly: perKLine for every 1000 changed lines (integer-safe via
+	// nanosecond arithmetic so a sub-1000-line diff still earns a proportional
+	// slice).
+	extra := time.Duration(int64(perKLine) * int64(changedLines) / 1000)
+	budget := base + extra
+	if budget > ceiling {
+		return ceiling
+	}
+	if budget < base {
+		return base
+	}
+	return budget
+}
+
+// worktreeDiffLineCount returns the number of changed lines (added + deleted)
+// across the commits unique to the worktree branch at wtPath, measured against
+// the repository's default branch (origin/HEAD, falling back to origin/main).
+// It is the diff the reviewer must read, so it drives the reviewer's verdict
+// budget (reviewBudgetForDiff).
+//
+// Returns -1 when the count cannot be determined (any git error, no remote-
+// tracking ref, detached state) — callers treat -1 as "use the base budget".
+// Best-effort and side-effect-free: it only runs read-only git plumbing.
+//
+// Bead: hk-sah87.
+func worktreeDiffLineCount(ctx context.Context, wtPath string) int {
+	// Try refs in order; the three-dot form diffs against the merge-base so a
+	// stale default-branch tip does not inflate the count with unrelated work.
+	for _, ref := range []string{"origin/HEAD", "origin/main"} {
+		cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", ref+"...HEAD")
+		cmd.Dir = wtPath
+		out, err := cmd.Output()
+		if err != nil {
+			continue
+		}
+		total, ok := sumNumstatLines(string(out))
+		if ok {
+			return total
+		}
+	}
+	return -1
+}
+
+// sumNumstatLines parses `git diff --numstat` output and returns the sum of
+// added + deleted line counts.  Binary files (numstat emits "-\t-\t<path>") are
+// skipped.  The ok result is false only when no parseable data row was seen
+// AND the output was non-empty in a way that suggests a parse problem; an empty
+// diff (no rows) returns (0, true) — a genuinely empty diff is a valid result.
+//
+// Bead: hk-sah87.
+func sumNumstatLines(numstat string) (int, bool) {
+	total := 0
+	sawRow := false
+	for _, line := range strings.Split(numstat, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		added, aErr := strconv.Atoi(fields[0])
+		deleted, dErr := strconv.Atoi(fields[1])
+		if aErr != nil || dErr != nil {
+			// Binary file ("-\t-") or unparseable row — skip but count as data.
+			sawRow = true
+			continue
+		}
+		total += added + deleted
+		sawRow = true
+	}
+	// Empty diff (no rows at all) is a valid zero result.
+	if !sawRow {
+		return 0, true
+	}
+	return total, true
+}
+
+// reviewerBudgetSentinelName is the basename of the marker file
+// pasteInjectQuitOnReviewFile writes into <wtPath>/.harmonik/ when it force-kills
+// a reviewer for exceeding its (diff-scaled) verdict budget.  Its presence lets
+// the caller distinguish a BUDGET kill (the reviewer was working but ran out of
+// time on a heavy diff) from a true no-verdict (reviewer produced nothing),
+// turning the previously-generic "verdict absent at iteration N" into a
+// self-explaining "reviewer budget exceeded" diagnostic — see the reviewloop
+// verdict-absent branch (reviewloop.go) and dot_cascade's reviewer-node path.
+//
+// Bead: hk-sah87.
+const reviewerBudgetSentinelName = "reviewer-budget-exceeded.json"
+
+// reviewerBudgetSentinel is the JSON shape written to the budget-kill marker
+// file.  It mirrors the fields of core.ImplementerBudgetExceededPayload so an
+// operator (or a future bead that registers a reviewer_budget_exceeded event
+// type and emits it from the caller) has the same diagnostic surface.
+//
+// Bead: hk-sah87.
+type reviewerBudgetSentinel struct {
+	BudgetMS     int64  `json:"budget_ms"`
+	ChangedLines int    `json:"changed_lines"`
+	ElapsedMS    int64  `json:"elapsed_ms"`
+	Reason       string `json:"reason"`
+}
+
+// reviewerBudgetSentinelPath returns the absolute path of the budget-kill marker
+// for the worktree at wtPath.
+func reviewerBudgetSentinelPath(wtPath string) string {
+	return filepath.Join(wtPath, ".harmonik", reviewerBudgetSentinelName)
+}
+
+// writeReviewerBudgetSentinel best-effort writes the budget-kill marker file so
+// the caller can emit a distinct "reviewer budget exceeded" diagnostic instead
+// of the generic "verdict absent".  Errors are logged and swallowed: the marker
+// is observability, not correctness — the kill still fires regardless.
+//
+// Bead: hk-sah87.
+func writeReviewerBudgetSentinel(wtPath string, budget time.Duration, changedLines int, elapsed time.Duration, reason string) {
+	pl := reviewerBudgetSentinel{
+		BudgetMS:     budget.Milliseconds(),
+		ChangedLines: changedLines,
+		ElapsedMS:    elapsed.Milliseconds(),
+		Reason:       reason,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: writeReviewerBudgetSentinel: marshal: %v\n", err)
+		return
+	}
+	path := reviewerBudgetSentinelPath(wtPath)
+	if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: writeReviewerBudgetSentinel: mkdir: %v\n", mkErr)
+		return
+	}
+	if wErr := os.WriteFile(path, b, 0o644); wErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: writeReviewerBudgetSentinel: write %s: %v\n", path, wErr)
+	}
+}
+
+// ReadReviewerBudgetSentinel reads the budget-kill marker (if present) for the
+// worktree at wtPath.  Returns (nil, nil) when the marker is absent — the normal
+// case for a successful or true-no-verdict review.  Callers use a non-nil result
+// to emit a distinct "reviewer budget exceeded" diagnostic in place of the
+// generic "verdict absent at iteration N".
+//
+// Exported (capitalized) so both the builtin review-loop (reviewloop.go) and the
+// DOT reviewer-node path (dot_cascade.go) can consult it without changing the
+// pasteInjectQuitOnReviewFile signature.
+//
+// Bead: hk-sah87.
+func ReadReviewerBudgetSentinel(wtPath string) (*reviewerBudgetSentinel, error) {
+	path := reviewerBudgetSentinelPath(wtPath)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("daemon: ReadReviewerBudgetSentinel: read %s: %w", path, err)
+	}
+	var pl reviewerBudgetSentinel
+	if uErr := json.Unmarshal(b, &pl); uErr != nil {
+		return nil, fmt.Errorf("daemon: ReadReviewerBudgetSentinel: unmarshal %s: %w", path, uErr)
+	}
+	return &pl, nil
+}
 
 // pasteInjectQuitOnReviewFile watches for <wtPath>/.harmonik/review.json to
 // appear (indicating the reviewer has written its verdict), then sends /quit
@@ -1078,7 +1299,21 @@ var reviewFilePollInterval = 2 * time.Second
 // Mirrors pasteInjectQuitOnCommit for the implementer phase, but watches for
 // a file instead of a git commit.
 //
-// Bead: hk-zimkh.
+// hk-sah87: the verdict-wait deadline is no longer a FLAT reviewFileTimeout.
+// It is now diff-size-scaled — reviewBudgetForDiff(reviewFileTimeout +
+// reviewFilePerKLineBudget × changed-kLOC, capped at reviewFileHardCeiling) —
+// because a heavy/large-diff bead's reviewer needs longer than 10 min just to
+// read the diff before it can write a verdict.  The flat 10-min deadline was
+// /quit+killing such reviewers BEFORE they wrote review.json, false-failing the
+// run as "verdict absent".  A pane-liveness check (mirroring the implementer
+// path) suppresses a kill that would land while the reviewer is still actively
+// working, but the hard ceiling (reviewFileHardCeiling, well below the
+// implementer's 90-min commitHardCeiling) is the firm backstop so a hung
+// reviewer (hk-m5axg: alive 31 min emitting zero events) cannot run forever.
+// On a budget kill a marker file is written (writeReviewerBudgetSentinel) so the
+// caller emits a distinct "reviewer budget exceeded" diagnostic.
+//
+// Bead: hk-zimkh, hk-sah87.
 func pasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	qs quitSender,
@@ -1100,11 +1335,27 @@ func pasteInjectQuitOnReviewFile(
 	}
 
 	verdictPath := filepath.Join(wtPath, ".harmonik", "review.json")
-	timeout := reviewFileTimeout
 	pollInterval := reviewFilePollInterval
 	killDelay := noChangeKillDelay
 
-	deadline := time.Now().Add(timeout)
+	// hk-sah87: size the verdict budget by the diff the reviewer must read.
+	// worktreeDiffLineCount returns -1 on any measurement failure → base budget.
+	changedLines := worktreeDiffLineCount(ctx, wtPath)
+	budget := reviewBudgetForDiff(changedLines, reviewFileTimeout, reviewFilePerKLineBudget, reviewFileHardCeiling)
+	fmt.Fprintf(os.Stderr,
+		"daemon: pasteinject: quit-on-review-file: verdict budget %v for %s (changed_lines=%d)\n",
+		budget, wtPath, changedLines)
+
+	loopStart := time.Now()
+	deadline := loopStart.Add(budget)
+	// hk-sah87: optional pane-liveness checker (same interface the implementer
+	// path uses).  When present, a deadline that lands while the reviewer pane
+	// still has an active child process is extended by one base window rather
+	// than killing a reviewer that is genuinely still reading the diff — but the
+	// extension is itself bounded by the absolute hard ceiling below.
+	livenessChecker, _ := qs.(paneLivenessChecker)
+	hardDeadline := loopStart.Add(reviewFileHardCeiling)
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -1113,10 +1364,33 @@ func pasteInjectQuitOnReviewFile(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if time.Now().After(deadline) {
+			now := time.Now()
+			if now.After(deadline) {
+				// hk-sah87: before killing, consult pane liveness.  If the
+				// reviewer pane still hosts an active claude process AND we are
+				// not yet past the absolute hard ceiling, extend the budget by
+				// one base window — the reviewer is still working, not hung.
+				if livenessChecker != nil && now.Before(hardDeadline) && livenessChecker.PaneHasActiveProcess(ctx) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-review-file: budget %v elapsed but reviewer pane active in %s; extending (hard ceiling %v)\n",
+						budget, wtPath, reviewFileHardCeiling)
+					deadline = now.Add(reviewFileTimeout)
+					if deadline.After(hardDeadline) {
+						deadline = hardDeadline
+					}
+					continue
+				}
+				reason := "budget-exceeded"
+				if !now.Before(hardDeadline) {
+					reason = "hard-ceiling"
+				}
 				fmt.Fprintf(os.Stderr,
-					"daemon: pasteinject: quit-on-review-file: timeout waiting for %s; sending /quit\n",
-					verdictPath)
+					"daemon: pasteinject: quit-on-review-file: %s after %v waiting for %s (budget=%v, changed_lines=%d); sending /quit\n",
+					reason, time.Since(loopStart), verdictPath, budget, changedLines)
+				// hk-sah87: write the budget-kill marker so the caller can emit a
+				// distinct "reviewer budget exceeded" diagnostic instead of the
+				// generic "verdict absent".
+				writeReviewerBudgetSentinel(wtPath, budget, changedLines, time.Since(loopStart), reason)
 				_ = qs.SendQuitToLastPane(ctx)
 				select {
 				case <-ctx.Done():

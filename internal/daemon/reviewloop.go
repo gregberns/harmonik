@@ -1034,6 +1034,20 @@ func runReviewLoop(
 			return result
 		}
 		if verdict == nil {
+			// hk-sah87: disambiguate a BUDGET kill (the reviewer was working but
+			// ran out of its diff-scaled verdict budget on a heavy diff — see
+			// pasteInjectQuitOnReviewFile) from a true no-verdict.  The marker is
+			// written into the reviewer's worktree, so read from revWtPath.
+			if sentinel, sErr := ReadReviewerBudgetSentinel(revWtPath); sErr == nil && sentinel != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: reviewloop: reviewer budget exceeded at iteration %d (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
+					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
+				result := rlErrorResult(fmt.Sprintf(
+					"reviewer budget exceeded at iteration %d (%s; budget=%dms, changed_lines=%d) — verdict absent",
+					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ChangedLines))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: verdict absent at iteration %d\n", state.iterationCount)
 			result := rlErrorResult(fmt.Sprintf("verdict absent at iteration %d", state.iterationCount))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)

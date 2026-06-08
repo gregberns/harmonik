@@ -385,8 +385,11 @@ EXAMPLES
 		if len(os.Args) >= 3 {
 			subArgs = os.Args[2:]
 		}
-		// Route to verb handlers before the help intercept so that
-		// "harmonik keeper set-dispatching --help" still shows the top-level usage.
+		// Route to verb handlers before the help intercept. Note: verbs use
+		// flag.ContinueOnError, so "harmonik keeper set-dispatching --help"
+		// prints the verb's own flag usage and exits 1 (not keeperTopUsage).
+		// The keeperTopUsage intercept below only fires for bare
+		// "harmonik keeper --help" or unknown subcommands.
 		if len(subArgs) > 0 {
 			switch subArgs[0] {
 			case "set-dispatching":

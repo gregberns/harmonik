@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -43,12 +44,15 @@ func (s *cycleSpyInjector) texts() []string {
 type journalCapture struct {
 	mu     sync.Mutex
 	phases []string
+	last   *keeper.CycleJournal
 }
 
 func (jc *journalCapture) write(_ string, j *keeper.CycleJournal) error {
 	jc.mu.Lock()
 	defer jc.mu.Unlock()
 	jc.phases = append(jc.phases, j.Phase)
+	cp := *j
+	jc.last = &cp
 	return nil
 }
 
@@ -58,6 +62,46 @@ func (jc *journalCapture) snapshot() []string {
 	out := make([]string, len(jc.phases))
 	copy(out, jc.phases)
 	return out
+}
+
+func (jc *journalCapture) lastJournal() *keeper.CycleJournal {
+	jc.mu.Lock()
+	defer jc.mu.Unlock()
+	return jc.last
+}
+
+// journalStore is a read-write fake journal store used for crash recovery tests.
+type journalStore struct {
+	mu sync.Mutex
+	j  *keeper.CycleJournal
+}
+
+func (js *journalStore) write(_ string, j *keeper.CycleJournal) error {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	cp := *j
+	js.j = &cp
+	return nil
+}
+
+func (js *journalStore) read(_ string) (*keeper.CycleJournal, error) {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	if js.j == nil {
+		return nil, os.ErrNotExist
+	}
+	cp := *js.j
+	return &cp, nil
+}
+
+func (js *journalStore) lastJournal() *keeper.CycleJournal {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	if js.j == nil {
+		return nil
+	}
+	cp := *js.j
+	return &cp
 }
 
 // handoffReturnsNonceAfter returns a ReadHandoff fake that returns an error on
@@ -100,6 +144,7 @@ func gaugeReturnsNewSIDAfter(n int, projectDir, agentName, prevSID, newSID strin
 }
 
 // newTestCycler builds a Cycler wired with test fakes.
+// isManaged controls whether the IsManagedFn returns true (managed) or false.
 func newTestCycler(
 	agentName string,
 	projectDir string,
@@ -114,19 +159,41 @@ func newTestCycler(
 	handoffTimeout time.Duration,
 	clearSettle time.Duration,
 ) *keeper.Cycler {
+	return newTestCyclerManaged(agentName, projectDir, em, spy, jc, cycleID,
+		readHandoff, readGaugeFn, crispIdle, holdingDispatch, handoffTimeout, clearSettle, true)
+}
+
+func newTestCyclerManaged(
+	agentName string,
+	projectDir string,
+	em keeper.Emitter,
+	spy *cycleSpyInjector,
+	jc *journalCapture,
+	cycleID string,
+	readHandoff func(string) (string, error),
+	readGaugeFn func(string, string) (*keeper.CtxFile, time.Time, error),
+	crispIdle bool,
+	holdingDispatch bool,
+	handoffTimeout time.Duration,
+	clearSettle time.Duration,
+	isManaged bool,
+) *keeper.Cycler {
 	cfg := keeper.CyclerConfig{
 		AgentName:      agentName,
 		ProjectDir:     projectDir,
 		TmuxTarget:     "fake-pane",
 		ActPct:         90.0,
+		WarnPct:        80.0,
 		HandoffTimeout: handoffTimeout,
 		ClearSettle:    clearSettle,
 		PollInterval:   10 * time.Millisecond,
 		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return isManaged },
 		HandoffFilePath: func(_, agent string) string {
 			return "/tmp/HANDOFF-" + agent + ".md"
 		},
 		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil }, // no-op in most tests
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return crispIdle },
@@ -413,6 +480,582 @@ func TestCycler_NoRefireWithinSameSessionID(t *testing.T) {
 	secondCount := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
 	if secondCount != firstCount {
 		t.Errorf("want exactly %d handoff_started after same-session second call; got %d (re-fired)", firstCount, secondCount)
+	}
+}
+
+// TestCycler_EmptySessionIDNeverFires verifies DEFECT-1: when session_id is
+// empty the cycle must never fire regardless of pct or other conditions.
+func TestCycler_EmptySessionIDNeverFires(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	alwaysNonce := func(_ string) (string, error) {
+		return "<!-- KEEPER:any -->", nil
+	}
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0}, time.Now(), nil
+	}
+
+	cycler := newTestCycler(
+		"empty-sid-agent", t.TempDir(), em, spy, jc, "cyc-empty-001",
+		alwaysNonce, noopGauge,
+		true, false,
+		100*time.Millisecond, 30*time.Millisecond,
+	)
+
+	// session_id is "" — must not fire even at pct >= act_pct.
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: ""}
+	for i := 0; i < 5; i++ {
+		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+			t.Fatalf("MaybeRun[%d]: %v", i, err)
+		}
+	}
+
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("want 0 inject calls with empty session_id; got %d", n)
+	}
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(evts) != 0 {
+		t.Errorf("want 0 handoff_started with empty session_id; got %d", len(evts))
+	}
+}
+
+// TestCycler_AbortDoesNotRefire verifies DEFECT-4: after an abort the cycle
+// must not re-fire on the same session_id on the very next tick.
+func TestCycler_AbortDoesNotRefire(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "abort-nofire-agent"
+		cycleID = "cyc-abort-nofire"
+		sid     = "sess-abort-nofire"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
+	}
+
+	cycler := newTestCycler(
+		agent, t.TempDir(), em, spy, jc, cycleID,
+		handoffNeverReturnsNonce, noopGauge,
+		true, false,
+		40*time.Millisecond, // short timeout to trigger abort quickly
+		20*time.Millisecond,
+	)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
+
+	// First call: fires but aborts (nonce never appears).
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("first MaybeRun: %v", err)
+	}
+	abortedAfterFirst := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if abortedAfterFirst != 1 {
+		t.Fatalf("want 1 cycle_aborted after first run; got %d", abortedAfterFirst)
+	}
+
+	// Second call: same session_id at high pct — must NOT re-fire (DEFECT-4 fix).
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("second MaybeRun: %v", err)
+	}
+	// No new handoff_started events — suppressed by abort.
+	handoffEvts := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
+	// handoff_started is emitted right after journal open, before the abort.
+	// There should be exactly 1 (from the first run, not a second).
+	abortedAfterSecond := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if abortedAfterSecond != abortedAfterFirst {
+		t.Errorf("want no new cycle_aborted after second call; got %d total (was %d)", abortedAfterSecond, abortedAfterFirst)
+	}
+	_ = handoffEvts // aborted means handoff_started was emitted once (before timeout)
+}
+
+// TestCycler_ManagedGuardInsideMaybeRun verifies DEFECT-3: the .managed check
+// is enforced inside MaybeRun, not only in the caller.
+func TestCycler_ManagedGuardInsideMaybeRun(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	alwaysNonce := func(_ string) (string, error) { return "<!-- KEEPER:any -->", nil }
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-managed"}, time.Now(), nil
+	}
+
+	// isManaged = false: managed guard should prevent firing.
+	cycler := newTestCyclerManaged(
+		"unmanaged-agent", t.TempDir(), em, spy, jc, "cyc-managed-001",
+		alwaysNonce, noopGauge,
+		true, false,
+		100*time.Millisecond, 30*time.Millisecond,
+		false, // not managed
+	)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-managed"}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("unmanaged: want 0 inject calls; got %d", n)
+	}
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(evts) != 0 {
+		t.Errorf("unmanaged: want 0 handoff_started; got %d", len(evts))
+	}
+}
+
+// TestCycler_SuppressionRequiresBothConditions verifies the full anti-loop
+// spec: after a cycle completes, the Cycler stays suppressed until BOTH a new
+// session_id is observed AND pct has been seen below WarnPct on that session.
+func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "rearm-agent"
+		cycleID = "cyc-rearm-001"
+		prevSID = "sess-old"
+		newSID  = "sess-new"
+		warnPct = 80.0
+		actPct  = 90.0
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+	stableGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: newSID}, time.Now(), nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            actPct,
+		WarnPct:           warnPct,
+		HandoffTimeout:    500 * time.Millisecond,
+		ClearSettle:       50 * time.Millisecond,
+		PollInterval:      10 * time.Millisecond,
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       stableGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Step 1: fire the cycle on prevSID at high pct.
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("first MaybeRun: %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Fatalf("want 1 handoff_started after first fire; got %d", n)
+	}
+
+	// Step 2: new session_id but pct still above WarnPct — must still be suppressed.
+	cfNewHighPct := &keeper.CtxFile{Pct: 95.0, SessionID: newSID}
+	if err := cycler.MaybeRun(context.Background(), cfNewHighPct); err != nil {
+		t.Fatalf("second MaybeRun (new SID, high pct): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("want still 1 handoff_started before low-pct seen; got %d (re-fired prematurely)", n)
+	}
+
+	// Step 3: observe pct below WarnPct on newSID — re-arms the cycler.
+	cfLowPct := &keeper.CtxFile{Pct: 70.0, SessionID: newSID} // below 80 = warnPct
+	if err := cycler.MaybeRun(context.Background(), cfLowPct); err != nil {
+		t.Fatalf("MaybeRun (low pct): %v", err)
+	}
+	// pct < actPct → still gated; but re-arm flag should now be set.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("want 1 handoff_started (not re-fired at low pct); got %d", n)
+	}
+
+	// Step 4: now pct crosses actPct on newSID — should fire.
+	cfNewHighPct2 := &keeper.CtxFile{Pct: 95.0, SessionID: newSID}
+	if err := cycler.MaybeRun(context.Background(), cfNewHighPct2); err != nil {
+		t.Fatalf("MaybeRun (new SID, high pct, armed): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 2 {
+		t.Errorf("want 2 handoff_started after re-arm + new fire; got %d", n)
+	}
+}
+
+// TestCycler_BootRecovery_PhaseCleared verifies that RecoverFromCrash injects
+// /session-resume when the journal phase is "cleared" (crashed after /clear,
+// before /resume).
+func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "recover-cleared-agent"
+		cycleID = "cyc-recover-001"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	js := &journalStore{j: &keeper.CycleJournal{
+		CycleID:   cycleID,
+		Phase:     "cleared",
+		OpenedAt:  time.Now().Add(-5 * time.Minute),
+		UpdatedAt: time.Now().Add(-5 * time.Minute),
+	}}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    js.write,
+		ReadJournalFn:     js.read,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+		t.Fatalf("RecoverFromCrash: %v", err)
+	}
+
+	// /session-resume must have been injected.
+	texts := spy.texts()
+	if len(texts) != 1 {
+		t.Fatalf("want 1 inject call; got %d: %v", len(texts), texts)
+	}
+	if !containsSubstr(texts[0], "/session-resume") {
+		t.Errorf("inject[0] should contain '/session-resume'; got %q", texts[0])
+	}
+
+	// Journal must be closed (phase = "complete").
+	j := js.lastJournal()
+	if j == nil {
+		t.Fatal("want journal written; got nil")
+	}
+	if j.Phase != "complete" {
+		t.Errorf("journal phase = %q; want \"complete\"", j.Phase)
+	}
+
+	// session_keeper_cycle_recovered must be emitted.
+	recoveredEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
+	if len(recoveredEvts) != 1 {
+		t.Fatalf("want 1 cycle_recovered; got %d", len(recoveredEvts))
+	}
+	var p core.SessionKeeperCycleRecoveredPayload
+	if err := json.Unmarshal(recoveredEvts[0].Payload, &p); err != nil {
+		t.Fatalf("unmarshal cycle_recovered: %v", err)
+	}
+	if p.PhaseAtCrash != "cleared" {
+		t.Errorf("cycle_recovered.phase_at_crash = %q; want \"cleared\"", p.PhaseAtCrash)
+	}
+}
+
+// TestCycler_BootRecovery_PhaseHandoff verifies that RecoverFromCrash
+// discards (aborts) the journal when phase is "handoff_injected" (crashed
+// before /clear — safe to discard, no injection needed).
+func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "recover-handoff-agent"
+		cycleID = "cyc-recover-handoff"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	js := &journalStore{j: &keeper.CycleJournal{
+		CycleID:   cycleID,
+		Phase:     "handoff_injected",
+		OpenedAt:  time.Now().Add(-5 * time.Minute),
+		UpdatedAt: time.Now().Add(-5 * time.Minute),
+	}}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    js.write,
+		ReadJournalFn:     js.read,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+		t.Fatalf("RecoverFromCrash: %v", err)
+	}
+
+	// No injection — /clear was never issued.
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("want 0 inject calls for handoff_injected phase; got %d: %v", n, spy.texts())
+	}
+
+	// Journal must be aborted.
+	j := js.lastJournal()
+	if j == nil {
+		t.Fatal("want journal written; got nil")
+	}
+	if j.Phase != "aborted" {
+		t.Errorf("journal phase = %q; want \"aborted\"", j.Phase)
+	}
+
+	// No cycle_recovered event (no action taken).
+	recoveredEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
+	if len(recoveredEvts) != 0 {
+		t.Errorf("want 0 cycle_recovered for handoff phase; got %d", len(recoveredEvts))
+	}
+}
+
+// TestCycler_BootRecovery_PhaseComplete verifies that RecoverFromCrash is a
+// no-op when the journal is already in a terminal state.
+func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "recover-complete-agent"
+		cycleID = "cyc-recover-complete"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+
+	for _, phase := range []string{"complete", "aborted"} {
+		phase := phase
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+
+			js := &journalStore{j: &keeper.CycleJournal{
+				CycleID:   cycleID,
+				Phase:     phase,
+				OpenedAt:  time.Now().Add(-5 * time.Minute),
+				UpdatedAt: time.Now().Add(-5 * time.Minute),
+			}}
+			var writeCount int
+			cfg := keeper.CyclerConfig{
+				AgentName:         agent,
+				ProjectDir:        t.TempDir(),
+				TmuxTarget:        "fake-pane",
+				ActPct:            90.0,
+				WarnPct:           80.0,
+				IsManagedFn:       func(_, _ string) bool { return true },
+				HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+				TruncateHandoffFn: func(_ string) error { return nil },
+				InjectFn:          spy.inject,
+				CrispIdleFn:       func(_, _ string) bool { return true },
+				HoldingDispatchFn: func(_, _ string) bool { return false },
+				WriteJournalFn: func(_ string, _ *keeper.CycleJournal) error {
+					writeCount++
+					return js.write("", &keeper.CycleJournal{})
+				},
+				ReadJournalFn: js.read,
+			}
+			cycler := keeper.NewCycler(cfg, em)
+
+			if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+				t.Fatalf("RecoverFromCrash: %v", err)
+			}
+
+			if n := len(spy.texts()); n != 0 {
+				t.Errorf("phase %q: want 0 inject calls; got %d", phase, n)
+			}
+			if writeCount != 0 {
+				t.Errorf("phase %q: want 0 journal writes (no-op); got %d", phase, writeCount)
+			}
+		})
+	}
+}
+
+// TestCycler_BootRecovery_NoJournal verifies that RecoverFromCrash is a
+// no-op when no journal file exists on disk.
+func TestCycler_BootRecovery_NoJournal(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	js := &journalStore{} // j == nil → read returns journalNotFoundError
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         "no-journal-agent",
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    js.write,
+		ReadJournalFn:     js.read,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+		t.Fatalf("RecoverFromCrash with no journal: %v", err)
+	}
+
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("want 0 inject calls with no journal; got %d", n)
+	}
+}
+
+// TestCycler_BootRecovery_UnmanagedNoOp verifies that RecoverFromCrash
+// respects the .managed guard: no action taken for an unmanaged agent.
+func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	js := &journalStore{j: &keeper.CycleJournal{
+		CycleID:   "cyc-unmanaged-recovery",
+		Phase:     "cleared",
+		OpenedAt:  time.Now().Add(-5 * time.Minute),
+		UpdatedAt: time.Now().Add(-5 * time.Minute),
+	}}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         "unmanaged-recover-agent",
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		IsManagedFn:       func(_, _ string) bool { return false }, // unmanaged
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    js.write,
+		ReadJournalFn:     js.read,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+		t.Fatalf("RecoverFromCrash unmanaged: %v", err)
+	}
+
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("unmanaged: want 0 inject calls; got %d", n)
+	}
+}
+
+// TestCycler_TruncateCalledBeforePoll verifies DEFECT-2: the handoff file is
+// truncated (clearing any stale nonce) before the nonce poll begins, so a
+// pre-crash leftover cannot pre-satisfy the new cycle's poll.
+func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent      = "truncate-agent"
+		newCycleID = "cyc-truncate-new"
+		sid        = "sess-truncate"
+	)
+	newNonce := "<!-- KEEPER:" + newCycleID + " -->"
+
+	var (
+		mu             sync.Mutex
+		truncateCalled bool
+		pollCount      int
+	)
+
+	// ReadHandoff: before truncation, return a stale nonce (wrong cycle ID).
+	// After truncation, return empty until a threshold, then return new nonce.
+	readHandoff := func(_ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		pollCount++
+		if !truncateCalled {
+			// Stale content with an old nonce — must NOT match newNonce.
+			return "# Handoff\n\n<!-- KEEPER:cyc-OLD-stale -->\n", nil
+		}
+		if pollCount > 5 {
+			return "# Handoff\n\n" + newNonce + "\n", nil
+		}
+		return "", context.DeadlineExceeded
+	}
+
+	truncateFn := func(_ string) error {
+		mu.Lock()
+		truncateCalled = true
+		mu.Unlock()
+		return nil
+	}
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		HandoffTimeout:    500 * time.Millisecond,
+		ClearSettle:       100 * time.Millisecond,
+		PollInterval:      10 * time.Millisecond,
+		CycleIDGen:        func() string { return newCycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: truncateFn,
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	mu.Lock()
+	called := truncateCalled
+	mu.Unlock()
+
+	if !called {
+		t.Error("want TruncateHandoffFn called before poll; was not called")
+	}
+
+	// Cycle must complete (stale nonce did not pre-satisfy).
+	phases := jc.snapshot()
+	if len(phases) == 0 {
+		t.Fatal("no journal phases recorded")
+	}
+	last := phases[len(phases)-1]
+	if last != "complete" {
+		t.Errorf("last journal phase = %q; want \"complete\" (stale nonce must not pre-satisfy)", last)
 	}
 }
 

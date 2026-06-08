@@ -118,3 +118,21 @@ type SessionKeeperClearUnconfirmedPayload struct {
 	// SessionID is the session_id before /clear was issued.
 	SessionID string `json:"session_id,omitempty"`
 }
+
+// SessionKeeperCycleRecoveredPayload is the payload for
+// session_keeper_cycle_recovered (event-model.md §8.13.7).
+//
+// Emitted on keeper boot when the journal shows the keeper crashed in the
+// "cleared" phase (after /clear was issued but before /session-resume).
+// The recovery path injects /session-resume to complete the interrupted cycle.
+//
+// Durability class: O (ordinary — observability; recovery is automatic).
+// Refs: hk-kct9t.
+type SessionKeeperCycleRecoveredPayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+	// CycleID is the cycle identifier from the recovered journal.
+	CycleID string `json:"cycle_id"`
+	// PhaseAtCrash is the journal phase at the time of the crash.
+	PhaseAtCrash string `json:"phase_at_crash"`
+}

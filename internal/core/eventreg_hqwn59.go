@@ -388,7 +388,7 @@ func registerWorkflowLoaderEvents() {
 }
 
 // registerKeeperEvents registers §8.13 session-keeper event payload constructors
-// (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70).
+// (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70, hk-kct9t).
 //
 // Durability classes per §8.13:
 //   - session_keeper_warn              (§8.13.1): O (ordinary — observability)
@@ -397,6 +397,7 @@ func registerWorkflowLoaderEvents() {
 //   - session_keeper_cycle_complete    (§8.13.4): O (ordinary — observability)
 //   - session_keeper_cycle_aborted     (§8.13.5): O (ordinary — operator attention)
 //   - session_keeper_clear_unconfirmed (§8.13.6): O (ordinary — observability)
+//   - session_keeper_cycle_recovered   (§8.13.7): O (ordinary — observability)
 func registerKeeperEvents() {
 	mustRegister("session_keeper_warn", func() EventPayload { return &SessionKeeperWarnPayload{} })
 	mustRegister("session_keeper_no_gauge", func() EventPayload { return &SessionKeeperNoGaugePayload{} })
@@ -404,6 +405,7 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_cycle_complete", func() EventPayload { return &SessionKeeperCycleCompletePayload{} })
 	mustRegister("session_keeper_cycle_aborted", func() EventPayload { return &SessionKeeperCycleAbortedPayload{} })
 	mustRegister("session_keeper_clear_unconfirmed", func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
+	mustRegister("session_keeper_cycle_recovered", func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

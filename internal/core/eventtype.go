@@ -706,6 +706,14 @@ const (
 	// Durability class: O (ordinary — observability).
 	// Refs: hk-22i70.
 	EventTypeSessionKeeperClearUnconfirmed EventType = "session_keeper_clear_unconfirmed"
+
+	// EventTypeSessionKeeperCycleRecovered is the session_keeper_cycle_recovered
+	// event type. Emitted on keeper boot when the journal shows the keeper crashed
+	// in the "cleared" phase (after /clear, before /resume). The recovery path
+	// injects /session-resume to complete the interrupted cycle.
+	// Durability class: O (ordinary — observability; recovery is automatic).
+	// Refs: hk-kct9t.
+	EventTypeSessionKeeperCycleRecovered EventType = "session_keeper_cycle_recovered"
 )
 
 // ---------------------------------------------------------------------------

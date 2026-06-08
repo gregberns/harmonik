@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,31 +29,38 @@ type CycleJournal struct {
 
 // CyclerConfig configures the Phase-2 cycle core.
 // Zero values for numeric/duration fields are replaced with the defaults below.
-// Spec ref: codename:session-keeper §4.3 Phase-2 cycle core (hk-22i70).
+// Spec ref: codename:session-keeper §4.3 Phase-2 cycle core (hk-22i70, hk-kct9t).
 type CyclerConfig struct {
 	AgentName  string
 	ProjectDir string
 	TmuxTarget string // empty = skip real injection (test / warn-only mode)
 
 	ActPct         float64       // threshold to fire; default 90
+	WarnPct        float64       // re-arm threshold; default 80
 	HandoffTimeout time.Duration // wait for handoff nonce; default 180s
 	ClearSettle    time.Duration // best-effort wait for new session_id; default 3s
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
 
 	// Injectable dependencies. Nil → production default.
 	CycleIDGen        func() string
+	IsManagedFn       func(projectDir, agentName string) bool
 	HandoffFilePath   func(projectDir, agentName string) string
 	ReadHandoff       func(path string) (string, error)
+	TruncateHandoffFn func(path string) error
 	InjectFn          func(ctx context.Context, target, text string) error
 	ReadGaugeFn       func(projectDir, agentName string) (*CtxFile, time.Time, error)
 	CrispIdleFn       func(projectDir, agentName string) bool
 	HoldingDispatchFn func(projectDir, agentName string) bool
 	WriteJournalFn    func(path string, j *CycleJournal) error
+	ReadJournalFn     func(path string) (*CycleJournal, error)
 }
 
 func (c *CyclerConfig) applyDefaults() {
 	if c.ActPct <= 0 {
 		c.ActPct = 90.0
+	}
+	if c.WarnPct <= 0 {
+		c.WarnPct = 80.0
 	}
 	if c.HandoffTimeout <= 0 {
 		c.HandoffTimeout = 180 * time.Second
@@ -66,11 +74,17 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.CycleIDGen == nil {
 		c.CycleIDGen = newCycleIDGen()
 	}
+	if c.IsManagedFn == nil {
+		c.IsManagedFn = IsManaged
+	}
 	if c.HandoffFilePath == nil {
 		c.HandoffFilePath = defaultHandoffFilePath
 	}
 	if c.ReadHandoff == nil {
 		c.ReadHandoff = defaultReadHandoff
+	}
+	if c.TruncateHandoffFn == nil {
+		c.TruncateHandoffFn = defaultTruncateHandoff
 	}
 	if c.InjectFn == nil {
 		c.InjectFn = InjectText
@@ -87,18 +101,20 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.WriteJournalFn == nil {
 		c.WriteJournalFn = writeJournalFile
 	}
+	if c.ReadJournalFn == nil {
+		c.ReadJournalFn = defaultReadJournal
+	}
 }
 
-// globalCycleSeq is used by the default CycleIDGen to produce monotonic IDs
-// within a single process lifetime.
-var globalCycleSeq uint64
-
-// newCycleIDGen returns a closure that generates monotonically increasing
-// cycle IDs of the form "cyc-000001", "cyc-000002", …
+// newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
+// The ID includes a startup-time timestamp prefix so IDs issued by different
+// process instances never collide, addressing DEFECT-2 (stale on-disk nonce).
 func newCycleIDGen() func() string {
+	prefix := time.Now().UTC().Format("20060102T150405")
+	var seq uint64
 	return func() string {
-		n := atomic.AddUint64(&globalCycleSeq, 1)
-		return fmt.Sprintf("cyc-%06d", n)
+		n := atomic.AddUint64(&seq, 1)
+		return fmt.Sprintf("cyc-%s-%06d", prefix, n)
 	}
 }
 
@@ -113,6 +129,11 @@ func defaultReadHandoff(path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func defaultTruncateHandoff(path string) error {
+	//nolint:gosec // G304,G306: path is operator-controlled; 0600 — keeper-owned
+	return os.WriteFile(path, []byte{}, 0o600)
 }
 
 func writeJournalFile(path string, j *CycleJournal) error {
@@ -131,6 +152,19 @@ func writeJournalFile(path string, j *CycleJournal) error {
 	return nil
 }
 
+func defaultReadJournal(path string) (*CycleJournal, error) {
+	//nolint:gosec // G304: path derived from operator-controlled projectDir + agentName
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var j CycleJournal
+	if err := json.Unmarshal(bytes.TrimSpace(data), &j); err != nil {
+		return nil, fmt.Errorf("keeper: parse journal %q: %w", path, err)
+	}
+	return &j, nil
+}
+
 // nonceMarker returns the HTML-comment nonce embedded in the handoff file
 // to confirm that the agent wrote the handoff for this specific cycle.
 func nonceMarker(cycleID string) string {
@@ -140,11 +174,16 @@ func nonceMarker(cycleID string) string {
 // Cycler runs the Phase-2 intent-preserving reset cycle when gate conditions
 // are met. It is safe to call MaybeRun on every watcher tick.
 //
-// Spec ref: codename:session-keeper §4.3 Phase-2 cycle core (hk-22i70).
+// Spec ref: codename:session-keeper §4.3 Phase-2 cycle core (hk-22i70, hk-kct9t).
 type Cycler struct {
-	cfg          CyclerConfig
-	emitter      Emitter
-	lastFiredSID string // anti-loop: session_id we last ran the cycle on
+	cfg     CyclerConfig
+	emitter Emitter
+
+	// Anti-loop state. The cycle is suppressed on a session_id after firing
+	// until BOTH (1) a new session_id is observed AND (2) pct has been seen
+	// below WarnPct on that new session_id.
+	lastFiredSID            string // session_id of the last completed or aborted cycle
+	seenLowPctAfterLastFire bool   // true once pct < WarnPct is observed on the new session
 }
 
 // NewCycler constructs a Cycler. Defaults are applied to zero-valued config fields.
@@ -162,25 +201,58 @@ func (c *Cycler) journalPath() string {
 }
 
 // MaybeRun checks all gate conditions and runs the cycle if they are all met.
-// Gates: pct >= act_pct AND CrispIdle AND NOT HoldingDispatch AND not same session_id.
+//
+// Gate order:
+//  1. .managed opt-in guard (DEFECT-3: enforced here, not only in the caller).
+//  2. Empty session_id → refuse; cannot establish anti-loop identity (DEFECT-1).
+//  3. Observe pct for re-arm tracking (low pct on new session_id).
+//  4. pct >= act_pct threshold.
+//  5. CrispIdle.
+//  6. NOT HoldingDispatch (fail-closed).
+//  7. Full anti-loop suppression: stay suppressed after a cycle (complete or
+//     aborted) until BOTH (a) new session_id AND (b) pct<WarnPct observed on
+//     that new session_id.
 //
 // It is safe to call on every watcher tick; gating is done internally.
 func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
-	// Gate 1: context-window percentage must reach the act threshold.
+	// Gate 1: .managed opt-in — co-located with the destructive action (DEFECT-3).
+	if !c.cfg.IsManagedFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+	// Gate 2: empty session_id → cannot establish anti-loop identity (DEFECT-1).
+	if cf.SessionID == "" {
+		return nil
+	}
+
+	// Observe pct for re-arm: track the first low-pct reading on a new session_id
+	// after a cycle has fired. This observation happens regardless of other gates
+	// so a brief low-pct window is never missed.
+	if c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && cf.Pct < c.cfg.WarnPct {
+		c.seenLowPctAfterLastFire = true
+	}
+
+	// Gate 3: context-window percentage must reach the act threshold.
 	if cf.Pct < c.cfg.ActPct {
 		return nil
 	}
-	// Gate 2: agent must be at a crisp await-input boundary.
+	// Gate 4: agent must be at a crisp await-input boundary.
 	if !c.cfg.CrispIdleFn(c.cfg.ProjectDir, c.cfg.AgentName) {
 		return nil
 	}
-	// Gate 3: no in-flight queue work (fail-closed via HoldingDispatchFn).
+	// Gate 5: no in-flight queue work (fail-closed via HoldingDispatchFn).
 	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
 		return nil
 	}
-	// Gate 4: anti-loop — do not re-fire for the same gauge session_id.
-	if cf.SessionID != "" && cf.SessionID == c.lastFiredSID {
-		return nil
+	// Gate 6: full anti-loop suppression (only applies after the first fire).
+	if c.lastFiredSID != "" {
+		// Suppress if still on the same session as the last cycle.
+		if cf.SessionID == c.lastFiredSID {
+			return nil
+		}
+		// Suppress on the new session until pct has been observed below WarnPct.
+		if !c.seenLowPctAfterLastFire {
+			return nil
+		}
 	}
 
 	return c.runCycle(ctx, cf)
@@ -208,7 +280,12 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// Emit session_keeper_handoff_started so the cycle is auditable.
 	c.emitHandoffStarted(ctx, cycleID, cf.SessionID)
 
-	// Step 2: inject /session-handoff with nonce directive.
+	// Step 2: truncate handoff file BEFORE injecting /session-handoff.
+	// This prevents a stale nonce from a pre-crash cycle from pre-satisfying
+	// the poll in step 3 (DEFECT-2).
+	_ = c.cfg.TruncateHandoffFn(handoffPath) //nolint:errcheck // non-fatal; poll will fail gracefully
+
+	// Step 2b: inject /session-handoff with nonce directive.
 	if c.cfg.TmuxTarget != "" {
 		handoffCmd := fmt.Sprintf(
 			"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
@@ -231,6 +308,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		j.Reason = "handoff_timeout"
 		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 		c.emitCycleAborted(ctx, cycleID, cf.SessionID, "handoff_timeout")
+		// DEFECT-4: record suppression on abort to prevent re-fire on next tick.
+		c.lastFiredSID = cf.SessionID
+		c.seenLowPctAfterLastFire = false
 		return nil
 	}
 
@@ -267,8 +347,76 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 	c.emitCycleComplete(ctx, cycleID, cf.SessionID, newSID)
 
-	// Anti-loop: record the session_id so we do not re-fire for it.
+	// Anti-loop: record the session_id so we do not re-fire for it until both
+	// a new session_id is observed AND pct drops below WarnPct on it.
 	c.lastFiredSID = cf.SessionID
+	c.seenLowPctAfterLastFire = false
+
+	return nil
+}
+
+// RecoverFromCrash checks for an in-progress cycle journal on boot and takes
+// corrective action based on the last recorded phase.
+//
+//   - phase "cleared": /clear was issued before the crash; inject /session-resume
+//     to complete the interrupted cycle, update journal to "complete", emit
+//     session_keeper_cycle_recovered.
+//   - phase "opened" / "handoff_injected" / "confirmed": /clear was NOT issued;
+//     update journal to "aborted" with reason "crash_before_clear", no injection.
+//   - phase "resumed": /session-resume was already injected; close journal.
+//   - phase "complete" / "aborted": terminal state; no-op.
+//
+// Respects the .managed guard: no injection if not managed.
+// Does NOT reuse the stale cycle_id nonce from the journal (DEFECT-2): the
+// recovery path injects /session-resume directly without a nonce poll, so a
+// stale nonce cannot trigger unintended behaviour.
+func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
+	// Fail-closed: only act on a managed agent.
+	if !c.cfg.IsManagedFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+
+	journalPath := c.journalPath()
+	j, err := c.cfg.ReadJournalFn(journalPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no journal = no crash to recover
+		}
+		return fmt.Errorf("keeper: read recovery journal: %w", err)
+	}
+
+	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
+
+	switch j.Phase {
+	case "cleared":
+		// /clear was issued; agent needs resume injected.
+		if c.cfg.TmuxTarget != "" {
+			_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, fmt.Sprintf("/session-resume %s", handoffPath)) //nolint:errcheck
+		}
+		j.Phase = "complete"
+		j.UpdatedAt = time.Now().UTC()
+		j.Reason = "recovered_from_crash"
+		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+		c.emitCycleRecovered(ctx, j.CycleID, "cleared")
+
+	case "resumed":
+		// /session-resume was already injected; just close the journal.
+		j.Phase = "complete"
+		j.UpdatedAt = time.Now().UTC()
+		j.Reason = "recovered_from_crash"
+		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+		c.emitCycleRecovered(ctx, j.CycleID, "resumed")
+
+	case "opened", "handoff_injected", "confirmed":
+		// /clear was NOT issued; discard (abort) the journal safely.
+		j.Phase = "aborted"
+		j.UpdatedAt = time.Now().UTC()
+		j.Reason = "crash_before_clear"
+		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+
+	case "complete", "aborted":
+		// Terminal state — nothing to recover.
+	}
 
 	return nil
 }
@@ -361,4 +509,15 @@ func (c *Cycler) emitClearUnconfirmed(ctx context.Context, cycleID, sessionID st
 	}
 	raw, _ := json.Marshal(payload)                                                                  //nolint:errcheck
 	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperClearUnconfirmed, raw) //nolint:errcheck
+}
+
+// emitCycleRecovered emits session_keeper_cycle_recovered.
+func (c *Cycler) emitCycleRecovered(ctx context.Context, cycleID, phaseAtCrash string) {
+	payload := core.SessionKeeperCycleRecoveredPayload{
+		AgentName:    c.cfg.AgentName,
+		CycleID:      cycleID,
+		PhaseAtCrash: phaseAtCrash,
+	}
+	raw, _ := json.Marshal(payload)                                                                //nolint:errcheck
+	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperCycleRecovered, raw) //nolint:errcheck
 }

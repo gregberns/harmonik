@@ -239,6 +239,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_cycle_complete", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "session_keeper_cycle_aborted", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "session_keeper_clear_unconfirmed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// Phase-2 crash-recovery (hk-kct9t):
+	{TypeName: "session_keeper_cycle_recovered", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

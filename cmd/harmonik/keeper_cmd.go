@@ -125,12 +125,102 @@ func runKeeperSubcommand(args []string) int {
 	return 0
 }
 
+// runKeeperSetDispatching implements `harmonik keeper set-dispatching <agent>`.
+//
+// Writes .harmonik/keeper/<agent>.dispatching so HoldingDispatch returns true.
+// The orchestrator calls this before submitting a batch to the daemon queue so
+// the session-keeper cycle defers the handoff action until dispatch completes.
+//
+// Exit codes:
+//
+//	0  — marker written successfully
+//	1  — argument error, path-traversal validation failure, or I/O error
+//
+// Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
+func runKeeperSetDispatching(args []string) int {
+	fs := flag.NewFlagSet("keeper set-dispatching", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	var projectFlag string
+	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "harmonik keeper set-dispatching: agent name argument is required")
+		return 1
+	}
+	agent := fs.Arg(0)
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: cannot determine working directory: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	if err := keeper.SetDispatching(projectFlag, agent); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// runKeeperClearDispatching implements `harmonik keeper clear-dispatching <agent>`.
+//
+// Removes .harmonik/keeper/<agent>.dispatching so HoldingDispatch returns false.
+// Idempotent: an already-absent marker is not an error. The orchestrator calls
+// this once all in-flight queue work has completed so the session-keeper cycle
+// may resume normal threshold checks.
+//
+// Exit codes:
+//
+//	0  — marker removed (or was already absent)
+//	1  — argument error, path-traversal validation failure, or I/O error
+//
+// Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
+func runKeeperClearDispatching(args []string) int {
+	fs := flag.NewFlagSet("keeper clear-dispatching", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	var projectFlag string
+	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "harmonik keeper clear-dispatching: agent name argument is required")
+		return 1
+	}
+	agent := fs.Arg(0)
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper clear-dispatching: cannot determine working directory: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	if err := keeper.ClearDispatching(projectFlag, agent); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper clear-dispatching: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
 
 USAGE
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N]
+  harmonik keeper set-dispatching <agent> [--project DIR]
+  harmonik keeper clear-dispatching <agent> [--project DIR]
 
-FLAGS
+VERBS
+  set-dispatching    Write the .dispatching marker for <agent>; HoldingDispatch → true.
+                     Call BEFORE submitting a batch to the daemon queue so the keeper
+                     cycle defers the handoff action while queue work is in flight.
+  clear-dispatching  Remove the .dispatching marker for <agent>; HoldingDispatch → false.
+                     Call when all in-flight queue work has completed. Idempotent.
+
+FLAGS (watcher mode)
   --agent <name>    Agent name (required); identifies the lockfile and .managed marker
   --tmux <target>   tmux pane target (optional; injected into on warn/act-pct crossing)
   --warn-pct N      Context-use percentage that triggers a warning (default 80)
@@ -154,12 +244,19 @@ GAUGE SETUP
       "command": "HARMONIK_PROJECT=/path/to/project HARMONIK_AGENT=<agent> /path/to/scripts/keeper-statusline.sh"
     }
 
-EXIT CODES
+EXIT CODES (watcher mode)
   0  Success (no-op or clean signal shutdown)
   1  Argument or I/O error
   2  Lock held by another live keeper
 
+EXIT CODES (set-dispatching / clear-dispatching)
+  0  Success
+  1  Argument, validation, or I/O error
+
 EXAMPLES
   harmonik keeper --agent orchestrator
   harmonik keeper --agent flywheel --tmux harmonik:0 --warn-pct 80
+  harmonik keeper set-dispatching orchestrator
+  harmonik keeper clear-dispatching orchestrator
+  harmonik keeper set-dispatching flywheel --project /path/to/project
 `

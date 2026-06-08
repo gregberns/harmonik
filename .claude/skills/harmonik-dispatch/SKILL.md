@@ -32,10 +32,21 @@ tmux new-session -d -s harmonik-daemon \
 
 1. **Triage.** `kerf next` — ranked feed of beads with work-context. Use `kerf triage` for drift detection (untriaged beads, external changes).
 2. **Pick a batch of beads** from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` until the probes land). The previously-flagged caveats (hk-rp48p priority-sort, hk-wx8z8 parallel pane allocator, hk-cj0gm Stop-hook delivery) are all FIXED; broad-class dispatch is now safe.
-3. **Submit to the running daemon's queue.** `harmonik queue submit --beads id1,id2,id3` (or `harmonik queue submit /tmp/batch.json` for a hand-authored `QueueSubmitRequest`). This does NOT block — it returns the daemon-minted `queue_id`. The daemon spawns claude per bead, watches for completion, commits, merges to main **one-at-a-time**, pushes, and **auto-skips** any bead whose merge conflicts. Review-loop is on by default.
-4. **Arm a Monitor.** Submitting returns only the `queue_id`; without a Monitor you are blind from submit to group-completion. Run `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` in a Monitor call (it attaches to the running daemon, so one Monitor sees every bead regardless of which agent submitted it).
-5. **Stay active while the daemon works.** Append the next batch (`harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` on a stream group); drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.
-6. **On group completion.** Inspect outcomes via the subscribe stream / `.harmonik/events/events.jsonl`; `git -C /Users/gb/github/harmonik log --oneline -N` for landed commits. Run reviewer on any load-bearing commit, then submit/append the next batch.
+3. **If the orchestrator session is keeper-managed:** signal in-flight dispatch before submitting:
+   ```bash
+   harmonik keeper set-dispatching <agent>
+   ```
+   This writes `.harmonik/keeper/<agent>.dispatching` so `HoldingDispatch` returns true and the
+   keeper cycle defers any handoff action while queue work is in flight (hk-rc51s).
+4. **Submit to the running daemon's queue.** `harmonik queue submit --beads id1,id2,id3` (or `harmonik queue submit /tmp/batch.json` for a hand-authored `QueueSubmitRequest`). This does NOT block — it returns the daemon-minted `queue_id`. The daemon spawns claude per bead, watches for completion, commits, merges to main **one-at-a-time**, pushes, and **auto-skips** any bead whose merge conflicts. Review-loop is on by default.
+5. **Arm a Monitor.** Submitting returns only the `queue_id`; without a Monitor you are blind from submit to group-completion. Run `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` in a Monitor call (it attaches to the running daemon, so one Monitor sees every bead regardless of which agent submitted it).
+6. **Stay active while the daemon works.** Append the next batch (`harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` on a stream group); drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.
+7. **On group completion.** Inspect outcomes via the subscribe stream / `.harmonik/events/events.jsonl`; `git -C /Users/gb/github/harmonik log --oneline -N` for landed commits. Run reviewer on any load-bearing commit, then submit/append the next batch.
+8. **When all in-flight work drains** (no more `pending` or `in_progress` beads in the group):
+   ```bash
+   harmonik keeper clear-dispatching <agent>
+   ```
+   Removes the `.dispatching` marker; the keeper cycle resumes normal threshold checks.
 
 ### Stream vs wave
 

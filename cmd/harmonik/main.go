@@ -364,18 +364,36 @@ EXAMPLES
 		return runBeadSubcommand(os.Args[2:])
 	}
 
-	// harmonik keeper --agent <name> [flags] — context watcher for a managed
-	// agent pane (session-keeper Phase-1, codename:session-keeper, hk-ekap1).
+	// harmonik keeper <verb|flags> — session-keeper context watcher and
+	// dispatching-marker control surface (codename:session-keeper, hk-ekap1).
+	//
+	// Verbs (hk-rc51s):
+	//   set-dispatching   <agent> [--project DIR] — write .dispatching marker
+	//   clear-dispatching <agent> [--project DIR] — remove .dispatching marker
+	//
+	// Watcher mode (flags only):
+	//   --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N]
+	//
 	// Dispatched before flag.Parse so that the global flag set does not reject
-	// the subcommand-specific flags (--agent, --tmux, --warn-pct, --act-pct).
+	// subcommand-specific flags.
 	//
 	// Exit-code contract: 0 success/no-op, 1 arg/IO error, 2 lock held.
 	//
-	// Spec ref: codename:session-keeper (hk-ekap1); bead hk-fzzc6.
+	// Spec ref: codename:session-keeper (hk-ekap1); beads hk-fzzc6, hk-rc51s.
 	if len(os.Args) >= 2 && os.Args[1] == "keeper" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {
 			subArgs = os.Args[2:]
+		}
+		// Route to verb handlers before the help intercept so that
+		// "harmonik keeper set-dispatching --help" still shows the top-level usage.
+		if len(subArgs) > 0 {
+			switch subArgs[0] {
+			case "set-dispatching":
+				return runKeeperSetDispatching(subArgs[1:])
+			case "clear-dispatching":
+				return runKeeperClearDispatching(subArgs[1:])
+			}
 		}
 		for _, arg := range subArgs {
 			if arg == "--help" || arg == "-h" {

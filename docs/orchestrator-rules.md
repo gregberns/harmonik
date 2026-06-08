@@ -52,8 +52,13 @@ done
 1. Rebuild harmonik (`go install ./cmd/harmonik`) — stale binary is the #1 cause of "but I fixed that".
 2. Pre-screen the batch; drop already-landed beads.
 3. Choose `--max-concurrent`; prefer `--wave` for N>1.
-4. Submit via `harmonik queue submit <file>`.
-5. Arm a Monitor running `harmonik subscribe` (see Monitor pattern below).
+4. **If the orchestrator session is keeper-managed:** signal in-flight dispatch before submitting:
+   `harmonik keeper set-dispatching <agent>` — sets `.harmonik/keeper/<agent>.dispatching` so
+   `HoldingDispatch` returns true and the keeper cycle defers the handoff action (hk-rc51s).
+5. Submit via `harmonik queue submit <file>`.
+6. Arm a Monitor running `harmonik subscribe` (see Monitor pattern below).
+7. **When all in-flight work completes** (group drains, no more `pending` beads):
+   `harmonik keeper clear-dispatching <agent>` — removes the marker; keeper resumes normal checks.
 
 ---
 

@@ -59,6 +59,7 @@ type brShowItem struct {
 type brShowEdge struct {
 	ID             string `json:"id"`
 	DependencyType string `json:"dependency_type"`
+	Status         string `json:"status"`
 }
 
 // brShowErrorEnvelope is the JSON shape returned on non-zero exit by br show.
@@ -164,10 +165,17 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		if kindErr := kind.UnmarshalText([]byte(dep.DependencyType)); kindErr != nil {
 			return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: dependency edge %q: %w", dep.ID, kindErr)
 		}
+		var epStatus core.CoarseStatus
+		if dep.Status != "" {
+			if statusErr := epStatus.UnmarshalText([]byte(dep.Status)); statusErr != nil {
+				return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: dependency edge %q status: %w", dep.ID, statusErr)
+			}
+		}
 		edges = append(edges, core.DependencyEdge{
-			FromBeadID: id,
-			ToBeadID:   core.BeadID(dep.ID),
-			EdgeKind:   kind,
+			FromBeadID:     id,
+			ToBeadID:       core.BeadID(dep.ID),
+			EdgeKind:       kind,
+			EndpointStatus: epStatus,
 		})
 	}
 
@@ -176,10 +184,17 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		if kindErr := kind.UnmarshalText([]byte(dep.DependencyType)); kindErr != nil {
 			return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: dependent edge %q: %w", dep.ID, kindErr)
 		}
+		var epStatus core.CoarseStatus
+		if dep.Status != "" {
+			if statusErr := epStatus.UnmarshalText([]byte(dep.Status)); statusErr != nil {
+				return core.BeadRecord{}, fmt.Errorf("brcli.ShowBead: dependent edge %q status: %w", dep.ID, statusErr)
+			}
+		}
 		edges = append(edges, core.DependencyEdge{
-			FromBeadID: core.BeadID(dep.ID),
-			ToBeadID:   id,
-			EdgeKind:   kind,
+			FromBeadID:     core.BeadID(dep.ID),
+			ToBeadID:       id,
+			EdgeKind:       kind,
+			EndpointStatus: epStatus,
 		})
 	}
 

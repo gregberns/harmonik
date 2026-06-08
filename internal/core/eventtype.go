@@ -714,6 +714,15 @@ const (
 	// Durability class: O (ordinary — observability; recovery is automatic).
 	// Refs: hk-kct9t.
 	EventTypeSessionKeeperCycleRecovered EventType = "session_keeper_cycle_recovered"
+
+	// EventTypeSessionKeeperPrecompactBlocked is the session_keeper_precompact_blocked
+	// event type. Emitted by the keeper watcher when it detects the .precompact
+	// trigger marker written by the PreCompact hook, and makes a cycle decision.
+	// The Action field in the payload records the outcome: "cycle_triggered",
+	// "hold_dispatch_skip", or "anti_loop_suppressed".
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-aalsm.
+	EventTypeSessionKeeperPrecompactBlocked EventType = "session_keeper_precompact_blocked"
 )
 
 // ---------------------------------------------------------------------------

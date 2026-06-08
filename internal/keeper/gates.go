@@ -17,6 +17,32 @@ func dispatchingMarkerPath(projectDir, agent string) string {
 	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".dispatching")
 }
 
+// precompactMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.precompact.
+// This file is written by keeper-precompact-hook.sh when it blocks native
+// auto-compaction (exit 2 / decision:block). The keeper watcher detects it and
+// runs the intent-preserving cycle, then calls ClearPrecompactTrigger.
+func precompactMarkerPath(projectDir, agent string) string {
+	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".precompact")
+}
+
+// HasPrecompactTrigger reports whether the precompact trigger marker exists for
+// the given agent. Returns true when the PreCompact hook has blocked at least
+// one compaction and the keeper has not yet consumed the trigger.
+func HasPrecompactTrigger(projectDir, agent string) bool {
+	_, err := os.Stat(precompactMarkerPath(projectDir, agent))
+	return err == nil
+}
+
+// ClearPrecompactTrigger removes the precompact trigger marker for the given
+// agent. The keeper watcher calls this after deciding what action to take (cycle
+// or skip) so the next PreCompact fire gets a clean slate. Idempotent.
+func ClearPrecompactTrigger(projectDir, agent string) error {
+	if err := os.Remove(precompactMarkerPath(projectDir, agent)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("keeper: remove precompact marker: %w", err)
+	}
+	return nil
+}
+
 // CrispIdle reports whether the agent is at a crisp await-input boundary: the
 // .idle marker exists AND its mtime is strictly newer than the .ctx gauge file's
 // mtime. The Stop hook writes .idle only at await-input boundaries, so .idle

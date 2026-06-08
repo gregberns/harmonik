@@ -317,6 +317,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
+			// ── PreCompact backstop ───────────────────────────────────────────
+			// If keeper-precompact-hook.sh blocked a native compaction it writes a
+			// .precompact marker. Detect it and run the cycle immediately, skipping
+			// the CrispIdle and act_pct gates (the agent is mid-turn when PreCompact
+			// fires). RunForPrecompact always clears the marker so the next PreCompact
+			// fire gets a clean slate (bounded-fallback contract).
+			if w.cfg.Cycler != nil && HasPrecompactTrigger(w.cfg.ProjectDir, w.cfg.AgentName) {
+				if pcErr := w.cfg.Cycler.RunForPrecompact(ctx, ctxFile); pcErr != nil {
+					slog.WarnContext(ctx, "keeper: precompact cycle error", "agent", w.cfg.AgentName, "err", pcErr)
+				}
+			}
+
 			// ── warn state machine ───────────────────────────────────────────
 			if pct < w.cfg.WarnPct {
 				// Below threshold: reset so the next upward crossing will warn.

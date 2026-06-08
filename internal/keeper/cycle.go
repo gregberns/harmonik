@@ -42,17 +42,18 @@ type CyclerConfig struct {
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
 
 	// Injectable dependencies. Nil → production default.
-	CycleIDGen        func() string
-	IsManagedFn       func(projectDir, agentName string) bool
-	HandoffFilePath   func(projectDir, agentName string) string
-	ReadHandoff       func(path string) (string, error)
-	TruncateHandoffFn func(path string) error
-	InjectFn          func(ctx context.Context, target, text string) error
-	ReadGaugeFn       func(projectDir, agentName string) (*CtxFile, time.Time, error)
-	CrispIdleFn       func(projectDir, agentName string) bool
-	HoldingDispatchFn func(projectDir, agentName string) bool
-	WriteJournalFn    func(path string, j *CycleJournal) error
-	ReadJournalFn     func(path string) (*CycleJournal, error)
+	CycleIDGen               func() string
+	IsManagedFn              func(projectDir, agentName string) bool
+	HandoffFilePath          func(projectDir, agentName string) string
+	ReadHandoff              func(path string) (string, error)
+	TruncateHandoffFn        func(path string) error
+	InjectFn                 func(ctx context.Context, target, text string) error
+	ReadGaugeFn              func(projectDir, agentName string) (*CtxFile, time.Time, error)
+	CrispIdleFn              func(projectDir, agentName string) bool
+	HoldingDispatchFn        func(projectDir, agentName string) bool
+	WriteJournalFn           func(path string, j *CycleJournal) error
+	ReadJournalFn            func(path string) (*CycleJournal, error)
+	ClearPrecompactTriggerFn func(projectDir, agentName string) error
 }
 
 func (c *CyclerConfig) applyDefaults() {
@@ -103,6 +104,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ReadJournalFn == nil {
 		c.ReadJournalFn = defaultReadJournal
+	}
+	if c.ClearPrecompactTriggerFn == nil {
+		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
 	}
 }
 
@@ -419,6 +423,97 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// RunForPrecompact is the PreCompact-backstop entry point. It is called by the
+// watcher when it detects the .precompact trigger marker written by
+// keeper-precompact-hook.sh. Unlike MaybeRun, it skips the CrispIdle and
+// act_pct gates — the PreCompact hook implies the context window is at or
+// near the compaction threshold, and the agent is not necessarily at an
+// await-input boundary.
+//
+// Gate order (subset of MaybeRun):
+//  1. .managed opt-in guard.
+//  2. Non-empty session_id (anti-loop identity requires it).
+//  3. NOT HoldingDispatch (fail-closed: skip cycle, clear marker → next PreCompact is fail-open).
+//  4. Anti-loop suppression (same policy as MaybeRun).
+//
+// The .precompact marker is ALWAYS cleared regardless of which gate fires, so
+// the shell script's "marker present → fail-open" bounded-fallback kicks in
+// cleanly: the keeper makes exactly one decision per marker write, then the
+// next PreCompact fire starts fresh.
+//
+// Emits session_keeper_precompact_blocked with the action taken.
+//
+// Spec ref: keeper-precompact-hook.sh; docs/components/internal/keeper-precompact.md.
+// Refs: hk-aalsm.
+func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
+	sessionID := ""
+	if cf != nil {
+		sessionID = cf.SessionID
+	}
+
+	// Gate 1: .managed opt-in (defensive; the shell script checks this too).
+	if !c.cfg.IsManagedFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		c.emitPrecompactBlocked(ctx, sessionID, "not_managed")
+		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+		return nil
+	}
+
+	// Gate 2: empty session_id → cannot establish anti-loop identity.
+	if sessionID == "" {
+		// Don't cycle but clear marker — let native compaction proceed next time.
+		c.emitPrecompactBlocked(ctx, sessionID, "hold_dispatch_skip")
+		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+		return nil
+	}
+
+	// Observe pct for re-arm tracking (mirrors MaybeRun gate 3 side-effect).
+	if cf != nil && c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && cf.Pct < c.cfg.WarnPct {
+		c.seenLowPctAfterLastFire = true
+	}
+
+	// Gate 3: HoldingDispatch — fail-closed; skip cycle.
+	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		c.emitPrecompactBlocked(ctx, sessionID, "hold_dispatch_skip")
+		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+		return nil
+	}
+
+	// Gate 4: anti-loop suppression.
+	if c.lastFiredSID != "" {
+		if sessionID == c.lastFiredSID {
+			c.emitPrecompactBlocked(ctx, sessionID, "anti_loop_suppressed")
+			_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+			return nil
+		}
+		if !c.seenLowPctAfterLastFire {
+			c.emitPrecompactBlocked(ctx, sessionID, "anti_loop_suppressed")
+			_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+			return nil
+		}
+	}
+
+	// All gates passed: emit the precompact event, clear the marker, run cycle.
+	c.emitPrecompactBlocked(ctx, sessionID, "cycle_triggered")
+	_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+
+	if cf == nil {
+		// Construct a minimal CtxFile so runCycle has a session_id.
+		cf = &CtxFile{SessionID: sessionID}
+	}
+	return c.runCycle(ctx, cf)
+}
+
+// emitPrecompactBlocked emits session_keeper_precompact_blocked.
+func (c *Cycler) emitPrecompactBlocked(ctx context.Context, sessionID, action string) {
+	payload := core.SessionKeeperPrecompactBlockedPayload{
+		AgentName: c.cfg.AgentName,
+		SessionID: sessionID,
+		Action:    action,
+	}
+	raw, _ := json.Marshal(payload)                                                                   //nolint:errcheck
+	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperPrecompactBlocked, raw) //nolint:errcheck
 }
 
 // pollForNonce polls handoffPath until the nonce appears or the handoff

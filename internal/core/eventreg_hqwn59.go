@@ -388,16 +388,17 @@ func registerWorkflowLoaderEvents() {
 }
 
 // registerKeeperEvents registers §8.13 session-keeper event payload constructors
-// (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70, hk-kct9t).
+// (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70, hk-kct9t, hk-aalsm).
 //
 // Durability classes per §8.13:
-//   - session_keeper_warn              (§8.13.1): O (ordinary — observability)
-//   - session_keeper_no_gauge          (§8.13.2): O (ordinary — configuration-gap signal)
-//   - session_keeper_handoff_started   (§8.13.3): O (ordinary — observability)
-//   - session_keeper_cycle_complete    (§8.13.4): O (ordinary — observability)
-//   - session_keeper_cycle_aborted     (§8.13.5): O (ordinary — operator attention)
-//   - session_keeper_clear_unconfirmed (§8.13.6): O (ordinary — observability)
-//   - session_keeper_cycle_recovered   (§8.13.7): O (ordinary — observability)
+//   - session_keeper_warn                (§8.13.1): O (ordinary — observability)
+//   - session_keeper_no_gauge            (§8.13.2): O (ordinary — configuration-gap signal)
+//   - session_keeper_handoff_started     (§8.13.3): O (ordinary — observability)
+//   - session_keeper_cycle_complete      (§8.13.4): O (ordinary — observability)
+//   - session_keeper_cycle_aborted       (§8.13.5): O (ordinary — operator attention)
+//   - session_keeper_clear_unconfirmed   (§8.13.6): O (ordinary — observability)
+//   - session_keeper_cycle_recovered     (§8.13.7): O (ordinary — observability)
+//   - session_keeper_precompact_blocked  (§8.13.8): O (ordinary — observability)
 func registerKeeperEvents() {
 	mustRegister("session_keeper_warn", func() EventPayload { return &SessionKeeperWarnPayload{} })
 	mustRegister("session_keeper_no_gauge", func() EventPayload { return &SessionKeeperNoGaugePayload{} })
@@ -406,6 +407,8 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_cycle_aborted", func() EventPayload { return &SessionKeeperCycleAbortedPayload{} })
 	mustRegister("session_keeper_clear_unconfirmed", func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
 	mustRegister("session_keeper_cycle_recovered", func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
+	// hk-aalsm: PreCompact backstop hook.
+	mustRegister("session_keeper_precompact_blocked", func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

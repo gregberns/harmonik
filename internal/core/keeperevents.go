@@ -119,6 +119,33 @@ type SessionKeeperClearUnconfirmedPayload struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// SessionKeeperPrecompactBlockedPayload is the payload for
+// session_keeper_precompact_blocked (event-model.md §8.13.8).
+//
+// Emitted by the keeper watcher when it detects the .precompact trigger marker
+// (written by the PreCompact hook) and makes a cycle decision. Always emitted
+// once per detected marker, immediately before clearing it.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-aalsm.
+type SessionKeeperPrecompactBlockedPayload struct {
+	// AgentName is the keeper agent name.
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the gauge session_id at the time the marker was detected.
+	// May be empty if the gauge file was unavailable.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Action describes what the keeper did upon detecting the marker.
+	// Values:
+	//   "cycle_triggered"       — all gates passed; cycle was started.
+	//   "hold_dispatch_skip"    — HoldingDispatch was true; cycle skipped.
+	//   "anti_loop_suppressed"  — anti-loop gate suppressed re-fire on same session.
+	//   "not_managed"           — .managed marker was absent (defensive; shell script
+	//                             should have caught this before writing the marker).
+	Action string `json:"action"`
+}
+
 // SessionKeeperCycleRecoveredPayload is the payload for
 // session_keeper_cycle_recovered (event-model.md §8.13.7).
 //

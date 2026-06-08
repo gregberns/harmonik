@@ -8,7 +8,8 @@
 // Topology:
 //   start
 //   → implement (agent: implementer; commit required)
-//   → commit_gate (tool: go build + go vet + go test + go test -tags=scenario)
+//   → commit_gate (tool: go build + go vet + scripts/scenario-gate.sh —
+//                  affected-package-scoped unit + scenario tests, fail-open)
 //     SUCCESS                   → review
 //     FAIL + deterministic      → implement (fix-loop, capped at 3)
 //     FAIL + transient          → commit_gate (self-loop, capped at 2)
@@ -21,8 +22,14 @@
 //
 // Key design decisions:
 //   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
-//   D3=v1: full scenario suite (-tags=scenario) inside commit_gate, matching the
-//     green-build-merge-gate precedent. Affected-package scoping is a v1.1 follow-up.
+//   D3=v1.1: the unit + scenario test steps are AFFECTED-PACKAGE-SCOPED and
+//     FAIL-OPEN via scripts/scenario-gate.sh (hk-u830m), superseding the v1
+//     whole-repo `go test ./... && go test -tags=scenario ./...`. The script
+//     mirrors the daemon's affectedScenarioPkgs / classifyScenarioGateError
+//     (internal/daemon/scenariogate.go) so script and daemon agree on which
+//     packages run and on failure-vs-infra-error classification. Required for
+//     the dispatch-default flip (hk-30vlb): a whole-repo gate would let a
+//     pre-existing RED test in an unrelated package block every bead.
 //   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
 //     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
 //
@@ -74,18 +81,25 @@ digraph "standard-bead" {
         role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
     ];
 
-    // commit_gate: shell gate — full build + vet + test + scenario suite.
+    // commit_gate: shell gate — build + vet (whole-repo) + affected-package-scoped
+    // tests. The unit and scenario test steps run only the Go packages this bead
+    // actually touched (vs. the merge base), via scripts/scenario-gate.sh, which
+    // is FAIL-OPEN on gate-infrastructure errors (timeout / OOM / compile) and
+    // BLOCKs only on a genuine `--- FAIL`. This is required for standard-bead.dot
+    // to be the dispatch default (hk-30vlb): a whole-repo `go test ./...` would
+    // let a pre-existing RED test in an UNRELATED package block every bead.
+    // build + vet stay whole-repo — a build break anywhere is legitimately fatal.
     // Exit 0 (SUCCESS) → all checks pass → advance to review.
-    // Non-zero deterministic → build or test failure → loop back to implement (capped at 3).
+    // Non-zero deterministic → build / vet / genuine test failure → loop back to implement (capped at 3).
     // Non-zero transient → infra glitch → self-loop retry (capped at 2).
     // Any other outcome → unconditional fallback → close-needs-attention.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="go build ./... && go vet ./... && go test ./... && go test -tags=scenario ./...",
+        tool_command="go build ./... && go vet ./... && bash scripts/scenario-gate.sh",
         timeout="900",
-        role="full commit gate: build + vet + unit tests + scenario suite; exit 0 = ready for review"
+        role="commit gate: build + vet + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label

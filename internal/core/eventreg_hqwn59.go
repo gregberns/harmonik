@@ -40,6 +40,7 @@ func init() {
 	registerGateDispatchEvents()
 	registerWorkflowLoaderEvents()
 	registerKeeperEvents()
+	registerAlarmEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -413,6 +414,16 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_cycle_recovered", func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
 	// hk-aalsm: PreCompact backstop hook.
 	mustRegister("session_keeper_precompact_blocked", func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
+}
+
+// registerAlarmEvents registers §8.14 alarm / self-check event payload
+// constructors (hk-tnmjy).
+//
+// Durability classes per §8.14:
+//   - review_gate_anomaly (§8.14.1): O (ordinary — observability alarm; reconstructible
+//     from bead_closed + reviewer_verdict sequence in the JSONL log)
+func registerAlarmEvents() {
+	mustRegister("review_gate_anomaly", func() EventPayload { return &ReviewGateAnomalyPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

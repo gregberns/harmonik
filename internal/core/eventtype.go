@@ -756,3 +756,25 @@ const (
 	// Refs: hk-iht2w.
 	EventTypeLoopObservedPhantomDone EventType = "loop_observed_phantom_done"
 )
+
+// ---------------------------------------------------------------------------
+// §8.14 Alarm / self-check event types (hk-tnmjy)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeReviewGateAnomaly is the review_gate_anomaly event type.
+	// Emitted by the daemon's ReviewGateAnomalyWatcher when N consecutive
+	// bead_closed events fire without any intervening reviewer_verdict event.
+	// This is the alarm that should have fired during the 2026-06-01 outage when
+	// ~117 beads were dispatched and closed without any review-loop verdicts.
+	//
+	// The watcher resets its counter whenever a reviewer_verdict is observed, so
+	// a single alarm fires per anomaly run rather than once per bead.
+	// After the alarm fires the counter is reset so subsequent batches re-arm.
+	//
+	// Payload fields: consecutive_count, threshold, bead_ids, detected_at.
+	// Durability class: O (ordinary — observability alarm; the causal sequence is
+	// reconstructible from bead_closed + reviewer_verdict events in the JSONL log).
+	// Refs: hk-tnmjy.
+	EventTypeReviewGateAnomaly EventType = "review_gate_anomaly"
+)

@@ -879,6 +879,17 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)
 	}
 
+	// Wire the review-gate anomaly watcher (hk-tnmjy).
+	//
+	// ReviewGateAnomalyWatcher fires review_gate_anomaly when N consecutive
+	// bead_closed events fire with no intervening reviewer_verdict — the alarm
+	// that should have fired on 2026-06-01 when ~117 beads closed without review.
+	// Default threshold: 3. Override via HARMONIK_REVIEW_GATE_ANOMALY_THRESHOLD.
+	reviewGateWatcher := NewReviewGateAnomalyWatcher(bus)
+	if subscribeErr := reviewGateWatcher.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: ReviewGateAnomalyWatcher.Subscribe: %w", subscribeErr)
+	}
+
 	// Wire the bandwidth-tuner rate-limit backstop (hk-lqtzq).
 	//
 	// bandwidthTunerBackstop subscribes to agent_rate_limited bus events

@@ -54,3 +54,11 @@ The script runs *outside* tmux, launches the daemon in a `hkdkeeper` tmux sessio
 **HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (first seen v47).**
 Symptom: sub-agent Write tool calls on `.md` files are blocked by the harness.
 Resolution: Orchestrator must persist markdown files via its own Write tool; do not delegate `.md` writes to sub-agents.
+
+---
+
+## DOT-mode issues
+
+**DOT COMMIT_GATE SHELL NODE: `go` COMMAND NOT FOUND / EXIT 127 (first seen 2026-06-08, fixed hk-m5axg).**
+Symptom: DOT-mode `commit_gate` shell nodes failed with `go: command not found` (exit 127), triggering fix-loop and eventually `run_stale`; `go` is not on `PATH` inside the shell node's subprocess.
+Resolution: Fixed in `internal/daemon/dot_cascade.go` by inheriting the daemon's full environment (`append(os.Environ(), env...)`) when spawning shell nodes, so `PATH` (and all other env vars) propagate correctly.

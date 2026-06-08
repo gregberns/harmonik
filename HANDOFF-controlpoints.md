@@ -19,7 +19,7 @@ The onboarding-docs tier is **done and verified on main** 5 days on: README.md (
 
 ## Next step (one decision, then optional work)
 1. Read the bus (`harmonik comms log --since 24h`); wait for named-queues' daemon-healthy broadcast.
-2. **Decision to surface to the user / peers:** the 7 remaining beads aren't really "controlpoints" — fold them into named-queues' queue, OR stand up a kerf work for the standard-bead.dot DOT-process design (3 beads) and take only that. If you want to keep moving solo, hk-tldws (P1 dispatch bug) is the most self-contained, but coordinate with named-queues first (their code).
+2. **RESOLVED 2026-06-08:** the 7 remaining beads were **TRANSFERRED to named-queues** (sent via `harmonik comms --to named-queues --topic ownership`). They now own the daemon/DOT productization work. Controlpoints does NOT pick these up.
 3. Minor open risk only: the README pins `br` install as `cargo install --git …beads_rust` UNVERIFIED on a clean machine — a real deployer could hit a snag. Low priority; verify if a deploy is imminent.
 
 ## Files to open first

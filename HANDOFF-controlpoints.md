@@ -1,37 +1,30 @@
-<!-- PP-TRIAL:v2 2026-06-08 main — controlpoints thread. LANE COMPLETE: the codename:productization onboarding-docs tier is DONE and has held for 5 days. There is NO major standalone controlpoints work left — everything remaining is daemon/DOT CODE owned by named-queues. The shared HANDOFF.md + flywheel/named-queues threads are SEPARATE concurrent work — do NOT clobber. -->
+<!-- PP-TRIAL:v2 2026-06-08 main — controlpoints thread. NEW DESIGN WORK this session: the `captain` kerf work (Captain & crew). CLEAN, nothing in flight. The prior controlpoints lane (productization onboarding-docs) stayed DONE; this session pivoted to a new design at the operator's request. Do NOT clobber the shared HANDOFF.md or the flywheel/named-queues threads. -->
 
-ROLE: orchestrator. Delegate via the persistent daemon's queue (skill `harmonik-dispatch`), your OWN `--queue controlpoints`. Don't edit main's working tree while a queue is ACTIVE (escape-detector). Failed-twice → investigator, never a 3rd blind re-dispatch.
+ROLE: orchestrator (design mode). The `captain` kerf work is a PLAN, not dispatchable code yet — no daemon work this session.
 
-# State: CLEAN (no controlpoints work in flight; controlpoints queue empty/archived). Local main = origin @2169450a.
-- Tree has ambient `.beads/issues.jsonl` churn — NOT mine (peer ledger drift); leave it for named-queues, who is actively working the ledger.
+# Where we are — CLEAN, design parked mid-kerf
+Designing **Captain & crew**: a long-lived "captain" orchestrator that spawns + coordinates long-lived "crew" agents (each owns one epic + its own queue), wired by comms + a new `epic_completed` event. **In scope = the wiring** (start captain+crew, comms between, the completion event). **Out of scope = the captain's judgment** (ranking initiatives, handling stuck/failed ones).
 
-## Bottom line — is there anything major left for controlpoints? NO.
-The onboarding-docs tier is **done and verified on main** 5 days on: README.md (227 ln), AGENT_OPERATING_MANUAL.md (230 ln), its template (278 ln), AGENT_INDEX bridge links, AGENTS.md work-project-deploy section. A new deployer can read README → install → `harmonik init` → run. The "hand-someone-a-link" onboarding goal is achieved.
+## Status: kerf work `captain` (plan jig) at the **research** pass
+Artifacts 01–04 are on the bench `.kerf/works/captain/` (gitignored, durable). **Next step = write the C1+C2 change-spec.** The operator wants a check-in at the change-spec and again at the final task list. Then integration → tasks. Resume with `kerf show captain`.
 
-## What's actually left (7 beads) — all named-queues' zone, NOT controlpoints solo work
-`br list --label codename:productization --status open` → hk-p0kum, hk-tldws, hk-tnmjy, hk-n7fw3, hk-30vlb, hk-4rkrg, hk-gax8v. All daemon/DOT **code**: the standard-bead.dot review-embedding process (p0kum/30vlb/n7fw3), queue-submit workflow_mode stamp bug (tldws, P1), review_gate_anomaly alarm (tnmjy), smoke-bead self-verification (4rkrg), `harmonik promote` PR helper (gax8v, needs design). These need DESIGN + named-queues coordination, not raw dispatch — they edit the exact dispatch path named-queues keeps churning.
+## Decisions locked (don't re-litigate)
+- **(a) long-lived autonomous crew.** Spawn/address/restart via **`claude remote-control` + `session_id`/`--resume`** (Agent SDK / `claude -p --resume`), NOT tmux-paste. The operator CORRECTED an earlier wrong finding of mine — programmatic remote-control drive IS documented and works. Settled.
+- **4 components:** C1 `epic_completed` event (code), C2 `harmonik crew start/stop` + per-crew registry (code), C3 crew launch context + shared handoff schema (instructions), C4 captain operating context (instructions). **No Go supervisor.**
+- Reviewer catches folded in: C1 needs an idempotent at-most-once emit + a `brShowEdge` status-field change; the handoff schema is the shared C2/C3/C4 contract; progress feed (#3) is owned via `comms --topic status` + `br comments`. Crew identity = `session_id` (resolves the keeper↔pane gap).
 
-## Daemon is NOT safe to dispatch to right now (gating the above)
-- Daemon (pid 39721, -c6) is running a **STALE Jun-3 binary**; main has moved ahead (session-keeper Phase-2 67a74def/2169450a, CHB-023, hk-15b83 d87c71a8).
-- named-queues' launch-stall fix **hk-9vp51 was REVERTED** (P0 spawn regression: deterministic sessionName broke spawn under supervisor tmux-nesting) — daemon reliability is still unsettled; fix-forward pending.
-- The `main` queue is stuck `paused-by-failure` on a STALE hk-mgoo7 group (the bead is closed/landed). named-queues said TODAY (06-08 09:22) it will clear that group + fix-forward hk-9vp51 + decide on a rebuild.
-- **So: do NOT dispatch controlpoints work until named-queues broadcasts "daemon redeployed/healthy."**
-
-## Next step (one decision, then optional work)
-1. Read the bus (`harmonik comms log --since 24h`); wait for named-queues' daemon-healthy broadcast.
-2. **RESOLVED 2026-06-08:** the 7 remaining beads were **TRANSFERRED to named-queues** (sent via `harmonik comms --to named-queues --topic ownership`). They now own the daemon/DOT productization work. Controlpoints does NOT pick these up.
-3. Minor open risk only: the README pins `br` install as `cargo install --git …beads_rust` UNVERIFIED on a clean machine — a real deployer could hit a snag. Low priority; verify if a deploy is imminent.
+## Loose threads (non-blocking)
+- Peer broadcast asking who validated `--remote-control` — no reply yet; doesn't block (docs confirmed it).
+- Keeper token-threshold bug (90%-of-1M ≈ 900k tokens; should gate on absolute ~200–300k) sent to **flywheel** via comms — they own folding it into session-keeper, NOT this work.
 
 ## Files to open first
-1. Memory `project_productization_initiative.md` (P0 + onboarding-docs tiers DONE; the 7 code beads listed).
-2. `br list --label codename:productization --status open`.
-3. `harmonik comms log --since 24h` — named-queues' daemon-stabilization status.
+`.kerf/works/captain/` → `01-problem-space.md`, `03-components.md`, `04-research/findings.md`.
 
-## Translations glossary
-- **codename:productization** — make harmonik deployable on new/work repos (onboarding docs DONE; review-embedding DOT process remains).
-- **onboarding-docs tier** — README + AGENT_OPERATING_MANUAL + templates + bridge links + work-deploy docs. DONE.
-- **standard-bead.dot** — the DOT graph defining a bead's process (implement→commit-gate→review); goal is non-bypassable review as a DOT floor. Beads hk-p0kum/hk-30vlb/hk-n7fw3.
-- **hk-tldws** — bug: `queue submit --beads` must stamp the resolved `workflow_mode` per item (relates to the historical review-off root cause).
-- **hk-9vp51** — named-queues' daemon launch-stall fix; REVERTED (P0 spawn regression), fix-forward pending. Daemon reliability not yet settled.
-- **stale Jun-3 binary** — the live daemon predates 5 days of main commits; a rebuild+restart is named-queues' call (their daemon work).
-- **controlpoints queue** — my isolated `--queue controlpoints`; clears on success, `paused-by-failure` on BLOCK.
+# Translations glossary
+- **captain / crew** — captain = top orchestrator that hands epics to long-lived "crew" agents; crew each own an epic + their own queue.
+- **epic_completed** — proposed new event fired when an epic's last child bead closes; the captain's structural trigger.
+- **C1–C4** — the four design components above.
+- **keeper** — harmonik's context-watcher that restarts a session near context-full (session-keeper work, flywheel's lane).
+- **comms** — `harmonik comms`, the inter-agent message bus (send/recv/--topic).
+- **session_id / --resume** — Claude Code's headless session id + resume flag; the crew addressing/restart primitive.
+- **productization** — the prior controlpoints lane (onboarding docs); DONE, not active.

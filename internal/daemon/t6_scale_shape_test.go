@@ -59,6 +59,24 @@ func t6FixtureDir(t *testing.T) (projectDir, jsonlPath, brWrapper, handlerScript
 	gitRun("add", "README")
 	gitRun("commit", "-m", "Initial commit")
 
+	// Create a bare repo as the "origin" remote so the daemon's post-merge
+	// `git push origin main` succeeds. Without an origin the single-mode merge
+	// path returns push_failed (fatal) once the committing smoke handler
+	// produces a real worktree commit (hk-4f5ua). Mirrors smokeFixtureGitRepo.
+	originDir := t.TempDir()
+	gitRunIn := func(dir string, args ...string) {
+		t.Helper()
+		//nolint:gosec // G204: git args are test-internal literals
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("t6FixtureDir: git -C %s %v: %v\n%s", dir, args, err, out)
+		}
+	}
+	gitRunIn(originDir, "init", "--bare", "--initial-branch=main")
+	gitRun("remote", "add", "origin", originDir)
+	gitRun("push", "origin", "main")
+
 	// .harmonik dirs
 	//nolint:gosec // G301: test-only temp directory
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
@@ -213,7 +231,11 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -312,7 +334,11 @@ func TestT6_1MBBeadBody(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -370,7 +396,11 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -440,7 +470,11 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -501,7 +535,11 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -550,7 +588,11 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 		JSONLLogPath:        jsonlPath,
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
+		// single-mode happy path that asserts run_completed counts. The smoke
+		// handler commits but writes no reviewer verdict, so review-loop would trip
+		// "verdict absent at iteration 1" and reopen every bead.
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

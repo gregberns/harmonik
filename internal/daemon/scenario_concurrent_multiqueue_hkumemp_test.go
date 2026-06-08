@@ -234,21 +234,39 @@ func cmqBuildActiveWaveQueue(name, queueID string, beadIDs ...core.BeadID) *queu
 	}
 }
 
-// cmqTwinWrapperScript writes a /bin/sh wrapper that invokes the twin binary
-// with --scenario single-happy-path, ignoring Claude-specific flags from
-// buildClaudeLaunchSpec (e.g. --session-id, --print).
+// cmqTwinWrapperScript writes a /bin/sh wrapper that is phase-aware so these
+// review-loop runs complete (hk-4f5ua).
 //
-// The twin's single-happy-path scenario emits the agent protocol events without
-// making any git commits; the no-commit guard (hk-mmh8f) is satisfied by the
-// emptyCommitWorktreeFactory injected via WithWorktreeFactory, which pre-commits
-// before the handler binary starts, serialising the commits and eliminating the
-// concurrent-merge race that would arise if the handler binary committed while
-// running concurrently with another bead's handler.
+// Phase detection is by the presence of .harmonik/review-target.md, which the
+// daemon writes ONLY into the reviewer's isolated worktree:
+//
+//   - Implementer phase (review-target.md absent): invoke the twin with
+//     --scenario single-happy-path. The twin emits the agent protocol events
+//     without making any git commits; the no-commit guard (hk-mmh8f) is
+//     satisfied by the emptyCommitWorktreeFactory injected via
+//     WithWorktreeFactory, which pre-commits before the handler binary starts,
+//     serialising commits and eliminating the concurrent-merge race.
+//   - Reviewer phase (review-target.md present): write an APPROVE verdict to
+//     $PWD/.harmonik/review.json so the review loop terminates with success →
+//     run_completed + bead closed. The reviewer must NOT commit (its worktree
+//     gets no pre-commit from the factory).
+//
+// Before hk-81n9r these runs were single-mode (no reviewer); hk-81n9r made them
+// review-loop, so the reviewer phase ran single-happy-path too, wrote no
+// verdict, and tripped "verdict absent at iteration 1".
 func cmqTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-cmq-wrapper.sh")
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario single-happy-path\n"
+	content := `#!/bin/sh
+set -e
+if [ -f "$PWD/.harmonik/review-target.md" ]; then
+  mkdir -p "$PWD/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"cmq review-loop happy path"}' > "$PWD/.harmonik/review.json"
+  exit 0
+fi
+exec "` + twinPath + `" --scenario single-happy-path
+`
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755), "cmqTwinWrapperScript: WriteFile")
 	return path

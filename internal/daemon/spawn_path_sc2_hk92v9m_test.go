@@ -53,13 +53,23 @@ import (
 )
 
 // sc2FixtureTwinWrapperScript writes a /bin/sh wrapper script that invokes the
-// twin binary with only --scenario single-happy-path, discarding all other args
-// that buildClaudeLaunchSpec appends (e.g. --session-id, --print).
+// twin binary with --scenario commit-on-cue-startup-delay, discarding all other
+// args that buildClaudeLaunchSpec appends (e.g. --session-id, --print).
+//
+// commit-on-cue-startup-delay (not single-happy-path) is used so each implementer
+// actually makes a git commit: single-happy-path never commits, so the no-commit
+// guard (hk-mmh8f) fires and reopens both beads instead of closing them (hk-4f5ua).
+//
+// ExportedWorkLoopDeps hardcodes handlerEnv=nil, so the wrapper re-exports the
+// test process's PATH so the twin's internal `git commit` can find git.
+// Each commit-on-cue commit is uniquely timestamped, so the two concurrent beads
+// do not collide.
 func sc2FixtureTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-sc2-wrapper.sh")
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario single-happy-path\n"
+	content := "#!/bin/sh\nexport PATH=" + os.Getenv("PATH") + "\nexec " + twinPath +
+		" --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("sc2FixtureTwinWrapperScript: WriteFile: %v", err)

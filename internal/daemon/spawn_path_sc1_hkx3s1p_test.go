@@ -62,16 +62,29 @@ import (
 )
 
 // sc1FixtureTwinWrapperScript writes a /bin/sh wrapper script that invokes the
-// twin binary with only --scenario single-happy-path, discarding all other args
-// that buildClaudeLaunchSpec appends (e.g. --session-id, --print).
+// twin binary with --scenario commit-on-cue-startup-delay, discarding all other
+// args that buildClaudeLaunchSpec appends (e.g. --session-id, --print).
+//
+// commit-on-cue-startup-delay (not single-happy-path) is used so the implementer
+// actually makes a git commit in the worktree: single-happy-path emits the
+// happy-path NDJSON but never commits, so the no-commit guard (hk-mmh8f) fires
+// and reopens the bead instead of closing it (hk-4f5ua).
+//
+// ExportedWorkLoopDeps hardcodes handlerEnv=nil, so the child inherits no
+// environment and the twin's internal `git commit` cannot find git on PATH. The
+// wrapper therefore re-exports the test process's PATH before exec'ing the twin.
+//
+// --worktree-path "$PWD" targets the worktree the daemon set as cmd.Dir.
 //
 // This is the canonical adaptation layer for twin-via-ExportedWorkLoopDeps tests.
 func sc1FixtureTwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-sc1-wrapper.sh")
-	// Discard all args; invoke only with --scenario.
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario single-happy-path\n"
+	// Discard all args; export PATH (handlerEnv is nil in the deps path) then
+	// invoke the committing scenario with the worktree path.
+	content := "#!/bin/sh\nexport PATH=" + os.Getenv("PATH") + "\nexec " + twinPath +
+		" --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("sc1FixtureTwinWrapperScript: WriteFile: %v", err)

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -237,6 +238,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-6r6xv.
 	ProtectBranches []string
+
+	// MergeMu, when non-nil, serialises every lockedMergeRunBranchToMain call
+	// across concurrent beadRunOne goroutines (mirrors WithMergeMutex on the
+	// daemon.Start path and the production newWorkLoopDeps default). When nil,
+	// ExportedWorkLoopDeps installs a fresh mutex so concurrent merges to the
+	// shared origin never race on refs/heads/main (hk-4f5ua / hk-bnm89).
+	MergeMu *sync.Mutex
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -293,6 +301,15 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	lsb := p.LaunchSpecBuilder
 	wtf := p.WorktreeFactory
 
+	// MergeMu: default to a fresh mutex (mirrors newWorkLoopDeps line ~575) so
+	// concurrent beadRunOne goroutines serialise their merge-to-origin and never
+	// race on refs/heads/main. Without this, an N>1 test (e.g. SC-2) sees one
+	// bead's `git reset --hard` killed mid-merge by a sibling (hk-4f5ua).
+	mergeMu := p.MergeMu
+	if mergeMu == nil {
+		mergeMu = &sync.Mutex{}
+	}
+
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
 	// Derive the submit-wake channel from the QueueStore when one is provided
@@ -338,6 +355,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		concurrencyCtrl:        p.ConcurrencyCtrl,     // hk-ohiaf
 		targetBranch:           resolveTargetBranch(p.TargetBranch),
 		protectBranches:        p.ProtectBranches,
+		mergeMu:                mergeMu,
 	}
 }
 

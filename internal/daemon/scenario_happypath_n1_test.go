@@ -133,6 +133,18 @@ func scenarioN1GitRepo(t *testing.T, dir string) {
 	}
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+
+	// Create a bare clone as "origin" so that mergeRunBranchToMain's
+	// `git push origin main` step succeeds now that the committing
+	// commit-on-cue twin produces a real worktree commit (hk-4f5ua). Without
+	// an origin remote the push fails and the run is reopened (run_failed).
+	bareDir := dir + "-bare"
+	//nolint:gosec // G204: git args are test-internal literals; not user input
+	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--bare", dir, bareDir)
+	if cloneOut, cloneErr := cloneCmd.CombinedOutput(); cloneErr != nil {
+		t.Fatalf("scenarioN1GitRepo: git clone --bare: %v\n%s", cloneErr, cloneOut)
+	}
+	run("remote", "add", "origin", bareDir)
 }
 
 // scenarioN1BrPath returns the path to the real `br` binary, skipping the test
@@ -184,8 +196,18 @@ func scenarioN1InitBr(t *testing.T, realBrPath, projectDir, brWrapper string) st
 }
 
 // scenarioN1TwinWrapperScript writes a /bin/sh wrapper script that invokes the
-// twin binary with --scenario single-happy-path, ignoring all other args
-// passed by daemon.Start's buildClaudeLaunchSpec (e.g. --session-id).
+// twin binary with --scenario commit-on-cue-startup-delay, ignoring all other
+// args passed by daemon.Start's buildClaudeLaunchSpec (e.g. --session-id).
+//
+// commit-on-cue-startup-delay (not single-happy-path) is used so the implementer
+// actually makes a git commit: single-happy-path emits the happy-path NDJSON but
+// never commits, so the no-commit guard (hk-mmh8f) fires and reopens the bead
+// instead of closing it (hk-4f5ua).
+//
+// This test's daemon.Config sets no HandlerEnv, so the child inherits no
+// environment; the wrapper re-exports the test process's PATH so the twin's
+// internal `git commit` can find git. --worktree-path "$PWD" targets the
+// worktree daemon.Start set as cmd.Dir.
 //
 // The wrapper is the adaptation layer between the production composition root
 // (which appends Claude-specific flags) and the twin binary (which only
@@ -194,8 +216,9 @@ func scenarioN1TwinWrapperScript(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-wrapper.sh")
-	// Ignore all args; invoke the twin with only --scenario.
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario single-happy-path\n"
+	// Ignore all args; export PATH then invoke the committing scenario.
+	content := "#!/bin/sh\nexport PATH=" + os.Getenv("PATH") + "\nexec " + twinPath +
+		" --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
 	//nolint:gosec // G306: script is test-only; chmod 0755 required for execution
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("scenarioN1TwinWrapperScript: WriteFile: %v", err)
@@ -340,8 +363,13 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		// is the OS scheduler quantum) while keeping the test under 10 s in CI.
 		AgentReadyTimeout: 5 * time.Second,
 		// LogWriter: direct daemon logs to test output for debugging.
-		LogWriter:           testLogWriter{t: t},
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		LogWriter: testLogWriter{t: t},
+		// Single mode: this is a single-mode happy-path test (its header and the
+		// AssertEventSequence below end in run_completed with no reviewer phase).
+		// Review-loop would launch a reviewer that — running the same committing
+		// twin — never writes a verdict, tripping "verdict absent at iteration 1"
+		// and reopening the bead (hk-4f5ua).
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	// Launch daemon.Start in a goroutine.
@@ -391,14 +419,20 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	// pre-exec AND by the twin) do not cause failures — the first occurrence
 	// is matched.
 
+	// Subsequence check. agent_heartbeat is placed before agent_ready because the
+	// commit-on-cue-startup-delay scenario does not script post-ready heartbeats;
+	// the only heartbeat is the daemon's timer-driven one emitted shortly after
+	// launch (during the startup delay, before agent_ready). The lifecycle order
+	// run_started → pre-exec messages → agent_ready → run_completed is unchanged,
+	// and the assertion still requires a heartbeat to be emitted (hk-4f5ua).
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeHandlerCapabilities)},
 		{Type: string(core.EventTypeSessionLogLocation)},
 		{Type: string(core.EventTypeSkillsProvisioned)},
 		{Type: string(core.EventTypeLaunchInitiated)},
-		{Type: string(core.EventTypeAgentReady)},
 		{Type: string(core.EventTypeAgentHeartbeat)},
+		{Type: string(core.EventTypeAgentReady)},
 		{Type: string(core.EventTypeRunCompleted)},
 	})
 

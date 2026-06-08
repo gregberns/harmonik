@@ -165,24 +165,27 @@ var _ handler.SubstrateSession = (*sc7FixtureNilStdoutSession)(nil)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // sc7FixtureHandlerScript writes a /bin/sh handler script that handles both
-// implementer (odd invocations) and reviewer (even invocations) phases.
+// implementer and reviewer phases.
 //
-// Odd invocations (1, 3, …) — implementer:
-//   - Optionally runs the twin binary in a background subshell (twinPath may be
-//     empty; when present, the twin runs with --scenario single-happy-path and
-//     exits; its NDJSON output is discarded because the nil-stdout substrate
-//     does not capture it in Go, but the subprocess runs normally).
-//   - Creates and commits a unique file so the review loop does not abort with
-//     a no-progress error.
+// Phase detection is by the presence of .harmonik/review-target.md, which the
+// daemon writes ONLY into the reviewer's isolated worktree (workspace.
+// WriteReviewTarget). The implementer and reviewer run in DIFFERENT worktrees,
+// so a per-worktree invocation counter does not carry over between them — the
+// review-target.md marker is the reliable per-worktree phase signal (hk-4f5ua).
 //
-// Even invocations (2, 4, …) — reviewer:
-//   - Writes an APPROVE verdict to $PWD/.harmonik/review.json.
-//   - Does NOT commit anything.
+// Implementer phase (no review-target.md):
+//   - Optionally runs the twin binary (twinPath may be empty; when present, the
+//     twin runs with --scenario single-happy-path and exits; its NDJSON output
+//     is discarded by the nil-stdout substrate, but the subprocess runs normally).
+//   - Creates and commits a unique file so the review loop advances HEAD and
+//     does not abort with a no-progress error.
 //
-// The counter file is stored in $PWD/.harmonik/sc7_count so it persists across
-// invocations within the same worktree (the worktree is reused across the
-// review loop iterations). Using $PWD (the worktree working directory, set by
-// handler.go via cmd.Dir = spec.WorkDir) avoids hard-coding a path.
+// Reviewer phase (review-target.md present):
+//   - Writes an APPROVE verdict to $PWD/.harmonik/review.json (read by the daemon
+//     from revWtPath). Does NOT commit anything.
+//
+// $PWD is the worktree working directory (cmd.Dir = in.Cwd), so paths need no
+// hard-coding.
 func sc7FixtureHandlerScript(t *testing.T, twinPath string) string {
 	t.Helper()
 
@@ -199,22 +202,16 @@ func sc7FixtureHandlerScript(t *testing.T, twinPath string) string {
 set -e
 WTP="$(pwd)"
 mkdir -p "$WTP/.harmonik"
-CNT_FILE="$WTP/.harmonik/sc7_count"
-if [ ! -f "$CNT_FILE" ]; then
-  printf '0' > "$CNT_FILE"
-fi
-CNT=$(cat "$CNT_FILE")
-CNT=$((CNT + 1))
-printf '%d' "$CNT" > "$CNT_FILE"
-if [ $((CNT % 2)) -eq 0 ]; then
-  # Even invocation: reviewer — write APPROVE verdict.
+if [ -f "$WTP/.harmonik/review-target.md" ]; then
+  # Reviewer phase: review-target.md is present only in the reviewer worktree.
   printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"SC-7 nil-watcher regression guard"}' > "$WTP/.harmonik/review.json"
 else
-  # Odd invocation: implementer — commit a unique file, optionally run twin.
-  printf '%d' "$CNT" > "$WTP/sc7_impl_$CNT.txt"
-  git add "sc7_impl_$CNT.txt" >/dev/null 2>&1
+  # Implementer phase: commit a unique file, optionally run twin.
+  STAMP=$(date +%s%N)
+  printf '%s' "$STAMP" > "$WTP/sc7_impl_$STAMP.txt"
+  git add "sc7_impl_$STAMP.txt" >/dev/null 2>&1
   git -c user.email=test@harmonik.local -c user.name="Test" \
-    commit -m "SC-7 impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+    commit -m "SC-7 impl $STAMP" --no-gpg-sign >/dev/null 2>&1
 ` + twinLine + `
 fi
 exit 0

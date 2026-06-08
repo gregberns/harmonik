@@ -131,24 +131,42 @@ func queueSubmitDispatchBrWrapper(t *testing.T, brPath, dbPath string) string {
 	return path
 }
 
-// queueSubmitDispatchTwinWrapper writes a /bin/sh wrapper that invokes the
-// twin binary with --scenario commit-on-cue-startup-delay and
-// --worktree-path $PWD.
+// queueSubmitDispatchTwinWrapper writes a /bin/sh wrapper that is phase-aware so
+// these review-loop tests complete: the implementer commits and the reviewer
+// emits an APPROVE verdict (hk-4f5ua).
 //
-// The commit-on-cue-startup-delay scenario includes a commit_on_cue step that
-// writes a timestamped sentinel file and git-commits it in the worktree —
-// satisfying the no-commit guard (hk-mmh8f) — then emits outcome_emitted and
-// agent_completed.  Each commit uses a unique timestamp so concurrent beads
-// do not conflict.
+// Phase detection is by the presence of .harmonik/review-target.md, which the
+// daemon writes ONLY into the reviewer's isolated worktree
+// (workspace.WriteReviewTarget):
 //
-// --worktree-path $PWD works because the daemon sets cmd.Dir = workspacePath
-// (handler.go line ~211), making $PWD equal to the worktree path at script
-// execution time.
+//   - Reviewer phase (review-target.md present): write an APPROVE verdict to
+//     $PWD/.harmonik/review.json (read by the daemon from revWtPath) so the
+//     review loop terminates with success → run_completed + bead closed.
+//   - Implementer phase (review-target.md absent): run the twin with
+//     --scenario commit-on-cue-startup-delay --worktree-path $PWD. The
+//     commit_on_cue step writes a timestamped sentinel file and git-commits it,
+//     satisfying the no-commit guard (hk-mmh8f), then emits outcome_emitted and
+//     agent_completed. Each commit uses a unique timestamp so concurrent beads
+//     do not conflict.
+//
+// Before hk-81n9r these tests ran in single mode (no reviewer); hk-81n9r made
+// them review-loop, so the reviewer phase previously ran commit-on-cue too,
+// wrote no verdict, and tripped "verdict absent at iteration 1".
+//
+// $PWD equals the worktree path because the daemon sets cmd.Dir = workspacePath.
 func queueSubmitDispatchTwinWrapper(t *testing.T, twinPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twin-wrapper.sh")
-	content := "#!/bin/sh\nexec " + twinPath + " --scenario commit-on-cue-startup-delay --worktree-path \"$PWD\"\n"
+	content := `#!/bin/sh
+set -e
+if [ -f "$PWD/.harmonik/review-target.md" ]; then
+  mkdir -p "$PWD/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"queue-submit-dispatch review-loop happy path"}' > "$PWD/.harmonik/review.json"
+  exit 0
+fi
+exec "` + twinPath + `" --scenario commit-on-cue-startup-delay --worktree-path "$PWD"
+`
 	//nolint:gosec // G306: script is test-only; 0755 required for execution
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755),
 		"queueSubmitDispatchTwinWrapper: WriteFile")

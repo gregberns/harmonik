@@ -155,16 +155,22 @@ func sweepQOInitBrWithInProgress(t *testing.T, realBrPath, projectDir, brWrapper
 	return beadID
 }
 
-// sweepQOWriteQueueJSON writes a queue.json file to .harmonik/queue.json under
-// projectDir. The queue has one active group with a single item whose bead_id
-// is beadID and status is "pending" (queue-owned, not dispatched).
+// sweepQOWriteQueueJSON writes the "main" queue file to
+// .harmonik/queues/main.json under projectDir. The queue has one active group
+// with a single item whose bead_id is beadID and status is "pending"
+// (queue-owned, not dispatched).
+//
+// The path is the NQ-A2 named-queues layout (.harmonik/queues/<name>.json) that
+// queue.Load reads; the pre-fix legacy path (.harmonik/queue.json) is no longer
+// loaded, so the sweep's QueueOwnedSet was empty and the bead never reset
+// (hk-4f5ua).
 func sweepQOWriteQueueJSON(t *testing.T, projectDir, beadID string) {
 	t.Helper()
 
-	harmonikDir := filepath.Join(projectDir, ".harmonik")
+	harmonikDir := filepath.Join(projectDir, ".harmonik", "queues")
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
-		t.Fatalf("sweepQOWriteQueueJSON: MkdirAll .harmonik: %v", err)
+		t.Fatalf("sweepQOWriteQueueJSON: MkdirAll .harmonik/queues: %v", err)
 	}
 
 	// Construct a minimal valid queue.json envelope (schema_version=1, status=active,
@@ -195,7 +201,7 @@ func sweepQOWriteQueueJSON(t *testing.T, projectDir, beadID string) {
 		t.Fatalf("sweepQOWriteQueueJSON: marshal: %v", err)
 	}
 
-	queuePath := filepath.Join(harmonikDir, "queue.json")
+	queuePath := filepath.Join(harmonikDir, "main.json")
 	if err := os.WriteFile(queuePath, data, 0o600); err != nil {
 		t.Fatalf("sweepQOWriteQueueJSON: WriteFile: %v", err)
 	}
@@ -276,6 +282,12 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 		// AgentReadyTimeout left at zero (= default 30 s); irrelevant since we
 		// cancel before any dispatch.
 		LogWriter: testLogWriter{t: t},
+		// WorkflowModeDefault is required by daemon.Start since hk-81n9r
+		// (9835491b). This sweep-only test cancels before any dispatch, so the
+		// value is never exercised by a workloop run; review-loop matches the
+		// daemon's documented default. Without it, daemon.Start returns the
+		// "WorkflowModeDefault must be set (PL-004a)" error (hk-4f5ua).
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
 	// Launch daemon.Start in a goroutine.

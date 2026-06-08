@@ -165,6 +165,66 @@ func t6PollAllClosed(t *testing.T, brWrapper string, beadIDs []string, budget ti
 	return false, time.Since(start)
 }
 
+// t6BeadStatus returns the current status string of a single bead (e.g. "open",
+// "closed", "in_progress"). Used to assert a bead is NOT closed (the empty-body
+// CHB-028-rejection case), which t6PollAllClosed cannot express.
+func t6BeadStatus(t *testing.T, brWrapper, beadID string) (string, error) {
+	t.Helper()
+	//nolint:gosec // G204: test-internal literals
+	cmd := exec.CommandContext(t.Context(), brWrapper, "show", beadID, "--format", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var items []struct {
+		Status string `json:"status"`
+	}
+	if jsonErr := json.Unmarshal(out, &items); jsonErr != nil {
+		return "", jsonErr
+	}
+	if len(items) != 1 {
+		return "", fmt.Errorf("t6BeadStatus: br show %s returned %d items, want 1", beadID, len(items))
+	}
+	return items[0].Status, nil
+}
+
+// t6PollJSONLContains polls the JSONL event log until it contains the given
+// substring (or budget expires). Returns true if the substring appears in time.
+// Used to wait for an asynchronously-emitted event (e.g. a TaskFileEmpty
+// rejection) that may not have landed by the time an unrelated bead closes.
+func t6PollJSONLContains(t *testing.T, jsonlPath, substr string, budget time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if t6JSONLContains(t, jsonlPath, substr) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// t6JSONLContains reports whether any line of the JSONL event log contains the
+// given substring. Used to assert the daemon surfaced a TaskFileEmpty rejection
+// (the empty-body summary lands in a run_failed workloopRunCompletedPayload).
+func t6JSONLContains(t *testing.T, jsonlPath, substr string) bool {
+	t.Helper()
+	//nolint:gosec // G304: path is t.TempDir()-based
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024) // 4MB buffer for large payloads
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // t6CountJSONLEvents reads a JSONL file and counts occurrences of each event type.
 //
 // NOTE (T6 finding F-001): The current busimpl.Emit appends only the redacted
@@ -365,31 +425,55 @@ func TestT6_1MBBeadBody(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// T6-3: Zero-byte / near-empty bead body
+// T6-3: Empty (no-body) vs whitespace-only bead body — CHB-028 boundary probe
 // ─────────────────────────────────────────────────────────────────────────────
-
+//
+// This probe documents and locks the two halves of the empty/near-empty boundary
+// against the CHB-028 TaskFileEmpty invariant (internal/workspace/agenttask_chb028.go:206).
+// They behave DIFFERENTLY, and that difference is by design — not a bug:
+//
+//   - No-body bead (no --body flag → absent/empty description): the daemon's
+//     launch-spec builder falls back to the bead TITLE when beadDescription == ""
+//     (internal/daemon/claudelaunchspec.go:261-267 — "use the bead title so the
+//     file is never structurally empty"). The agent-task file is therefore
+//     non-empty, CHB-028 passes, and the bead drains+closes like any T6 bead.
+//     This is the "empty bodies still process via the title fallback" half.
+//
+//   - Whitespace-only body (--body " "): br stores the description verbatim as
+//     " " (a single space, len 1), which is NON-empty, so the launch-spec
+//     title-fallback at claudelaunchspec.go:261 does NOT trigger. The " " flows
+//     straight to WriteAgentTask, which trims it: strings.TrimSpace(" ") == ""
+//     → ErrTaskFileEmpty (CHB-028). A whitespace-only body carries no work spec
+//     for the agent, so the daemon CORRECTLY rejects it on every launch attempt;
+//     the workloop reopens the bead and it NEVER closes.
+//
+// hk-5735k: the earlier version of this test expected BOTH beads to close within
+// 60s (t6PollAllClosed over both IDs) and mislabeled which case looped. The
+// whitespace-only bead can never close — CHB-028 rejects it by design — so the
+// test timed out blaming the daemon for honoring its own invariant. The fix is
+// to correct the TEST (assert the real per-case behavior), NOT to relax CHB-028.
 func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
-	// Seed 2 beads: one with empty body (no --body flag), one with a single space
-	var ids []string
-
-	// Empty body (no --body)
+	// No-body bead (no --body): description is empty, so the daemon's launch-spec
+	// builder falls back to the title → non-empty work spec → drains+closes.
 	//nolint:gosec // G204: test-internal literals
-	emptyCmd := exec.CommandContext(t.Context(), brWrapper, "create", "T6 empty body bead", "--silent")
-	emptyOut, emptyErr := emptyCmd.CombinedOutput()
-	if emptyErr != nil {
-		t.Fatalf("T6-3: create empty body bead: %v\n%s", emptyErr, emptyOut)
+	noBodyCmd := exec.CommandContext(t.Context(), brWrapper, "create", "T6 no-body bead", "--silent")
+	noBodyOut, noBodyErr := noBodyCmd.CombinedOutput()
+	if noBodyErr != nil {
+		t.Fatalf("T6-3: create no-body bead: %v\n%s", noBodyErr, noBodyOut)
 	}
-	ids = append(ids, strings.TrimSpace(string(emptyOut)))
+	noBodyID := strings.TrimSpace(string(noBodyOut))
 
-	// Near-empty body
-	nearEmptyBody := " "
-	moreIDs := t6SeedBeads(t, brWrapper, 1, func(_ int) string { return nearEmptyBody })
-	ids = append(ids, moreIDs...)
+	// Whitespace-only bead (--body " "): description is " " (non-empty, so the
+	// title-fallback is skipped) but trims to "" in WriteAgentTask → CHB-028
+	// rejects it → infinite reopen → it never closes.
+	whitespaceBody := " "
+	whitespaceIDs := t6SeedBeads(t, brWrapper, 1, func(_ int) string { return whitespaceBody })
+	whitespaceID := whitespaceIDs[0]
 
-	t.Logf("T6-3: seeded bead IDs = %v", ids)
+	t.Logf("T6-3: seeded no-body=%s whitespace-only=%s", noBodyID, whitespaceID)
 
 	cfg := daemon.Config{
 		ProjectDir:          projectDir,
@@ -408,7 +492,21 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	startDone := make(chan error, 1)
 	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
-	allClosed, elapsed := t6PollAllClosed(t, brWrapper, ids, 60*time.Second)
+	// The no-body bead must close (title-fallback makes the work spec non-empty).
+	// Once it has, the daemon has had ample time to also attempt (and reject) the
+	// whitespace-only bead at least once.
+	noBodyClosed, elapsed := t6PollAllClosed(t, brWrapper, []string{noBodyID}, 60*time.Second)
+
+	// The daemon must have surfaced the rejection on the bus: a run_failed event
+	// whose summary names the TaskFileEmpty invariant (CHB-028). The no-body bead
+	// can close before the daemon has attempted the whitespace-only bead even once
+	// (single-mode dispatches sequentially), so poll for the rejection rather than
+	// reading the log a single time.
+	rejected := t6PollJSONLContains(t, jsonlPath, "TaskFileEmpty", 30*time.Second)
+
+	// The whitespace-only bead must NOT have closed — CHB-028 rejects it on every
+	// launch attempt, so the workloop reopens it indefinitely.
+	whitespaceStatus, statusErr := t6BeadStatus(t, brWrapper, whitespaceID)
 
 	cancel()
 	select {
@@ -420,9 +518,24 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 		t.Error("daemon.Start did not return within 10s after cancel")
 	}
 
-	t.Logf("T6-3: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
-	if !allClosed {
-		t.Errorf("T6-3 FAIL: empty/near-empty body beads not closed within 60s")
+	t.Logf("T6-3: no_body_closed=%v elapsed=%.2fs whitespace_status=%q whitespace_rejected=%v",
+		noBodyClosed, elapsed.Seconds(), whitespaceStatus, rejected)
+
+	// Half 1 — no-body bead drains+closes via the title fallback.
+	if !noBodyClosed {
+		t.Errorf("T6-3 FAIL: no-body bead not closed within 60s (title-fallback should make it processable)")
+	}
+
+	// Half 2 — whitespace-only body is correctly REJECTED by CHB-028, never closed.
+	if statusErr != nil {
+		t.Errorf("T6-3: br show whitespace-only bead %s: %v", whitespaceID, statusErr)
+	} else if whitespaceStatus == "closed" {
+		t.Errorf("T6-3 FAIL: whitespace-only bead %s was closed, but CHB-028 must reject it "+
+			"(\" \" trims to empty → no work spec)", whitespaceID)
+	}
+	if !rejected {
+		t.Errorf("T6-3 FAIL: no TaskFileEmpty rejection (run_failed) observed for whitespace-only bead %s; "+
+			"expected the daemon to reject the whitespace-only work spec per CHB-028", whitespaceID)
 	}
 }
 

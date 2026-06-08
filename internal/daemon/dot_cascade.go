@@ -744,6 +744,18 @@ func dispatchDotAgenticNode(
 // Default axis_tags for shell: io-determinism=non-deterministic, replay-safety=unsafe.
 // No RETRY or PARTIAL outcomes are produced; the author routes on FAIL sub-classes
 // via edge conditions if needed.
+//
+// Environment (hk-m5axg): the shell command inherits the daemon's full process
+// environment (os.Environ()) with the handler-supplied env layered ON TOP so any
+// operator overrides win on duplicate keys. The handler env alone is just
+// HARMONIK_PROJECT_HASH (cfg.HandlerEnv is nil in production — see
+// cmd/harmonik/main.go daemon.Config) and crucially carries NO PATH. Without the
+// inherited environment, `/bin/sh -c "go build ..."` cannot find `go` (exit 127),
+// so the standard-bead commit_gate node always returned a deterministic FAIL and
+// the cascade looped commit_gate→implement forever, never reaching the review
+// node — the run went run_stale. Unlike the claude implementer/reviewer launches
+// (which inherit a full shell env via the tmux substrate), this shell node
+// exec.CommandContext's directly and so must reconstruct the environment itself.
 func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
 	timeoutSecs := 300
 	if node.Timeout != "" {
@@ -757,7 +769,9 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 
 	cmd := exec.CommandContext(execCtx, "/bin/sh", "-c", node.ToolCommand)
 	cmd.Dir = wtPath
-	cmd.Env = env
+	// Inherit the daemon's process env (PATH, HOME, GOPATH, …) then layer the
+	// handler-supplied entries last so they override on duplicate keys.
+	cmd.Env = append(os.Environ(), env...)
 
 	err := cmd.Run()
 	if err == nil {

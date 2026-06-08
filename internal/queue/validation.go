@@ -311,8 +311,18 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 	// ActiveQueue is the queue already stored under req.QueueName. The guard
 	// is now per-name: a submit that targets a name with an existing
 	// non-completed queue is rejected; other names are unaffected.
+	//
+	// A queue parked at paused-by-failure (§8.3 QM-052) is NOT advancing and
+	// holds no in-flight work — the §A.3 recovery story for a failed queue is to
+	// resubmit to the same name after addressing the failed beads. Treat it like
+	// a completed queue for this guard so a stuck failure-pause does not wedge
+	// the name (hk-fkpb7); the fresh submit overwrites it with a new queue_id.
+	// paused-by-drain still blocks resubmit: it is a transient operator hold with
+	// its own active↔drain resume path, not a terminal failure to recover from.
 	if !req.IsAppend {
-		if req.ActiveQueue != nil && req.ActiveQueue.Status != QueueStatusCompleted {
+		if req.ActiveQueue != nil &&
+			req.ActiveQueue.Status != QueueStatusCompleted &&
+			req.ActiveQueue.Status != QueueStatusPausedByFailure {
 			return []ValidationError{
 				{
 					Reason: ReasonQueueAlreadyActive,

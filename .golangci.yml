@@ -101,6 +101,18 @@ linters:
             - { pkg: "github.com/sashabaranov/go-openai", desc: "PL-INV-002: daemon must not import any LLM SDK" }
             - { pkg: "github.com/liushuangls/go-anthropic", desc: "PL-INV-002: daemon must not import any LLM SDK" }
   
+        # crew: stdlib + core + self-import (external test pattern); MUST NOT import daemon.
+        # The crew registry is a leaf durable-state package read by daemon and CLI.
+        # Rationale: docs/plans/captain/05-specs/c2-spec.md §3.3; bead hk-i1ue4.
+        crew:
+          files: ["**/internal/crew/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/crew"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crew MUST NOT import daemon (c2-spec.md §3.3)" }
+
         # keeper: stdlib + core + eventbus + self-import (external test pattern);
         # MUST NOT import daemon or workloop.
         # Rationale: codename:session-keeper (hk-ekap1); bead hk-fzzc6.

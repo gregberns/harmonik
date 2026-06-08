@@ -1,0 +1,170 @@
+// standard-bead.dot — the standard harmonik bead workflow (v1)
+//
+// The canonical bead lifecycle: implement → commit-gate (build+vet+test+scenario)
+// → independent review → close, with review APPROVE as the SOLE inbound edge to
+// close. Unions implement-review-fix.dot and green-build-merge-gate.dot into one
+// complete workflow. No daemon code change required.
+//
+// Topology:
+//   start
+//   → implement (agent: implementer; commit required)
+//   → commit_gate (tool: go build + go vet + go test + go test -tags=scenario)
+//     SUCCESS                   → review
+//     FAIL + deterministic      → implement (fix-loop, capped at 3)
+//     FAIL + transient          → commit_gate (self-loop, capped at 2)
+//     fallback                  → close-needs-attention (canceled / structural)
+//   → review (agent: reviewer)
+//     APPROVE                   → close (SOLE inbound edge to close)
+//     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
+//     BLOCK                     → close-needs-attention
+//     fallback                  → close-needs-attention
+//
+// Key design decisions:
+//   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
+//   D3=v1: full scenario suite (-tags=scenario) inside commit_gate, matching the
+//     green-build-merge-gate precedent. Affected-package scoping is a v1.1 follow-up.
+//   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
+//     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
+//
+// Spec refs:
+//   - docs/sdlc-workflow-corpus.md §1  (implement-review-fix reference topology)
+//   - docs/sdlc-workflow-corpus.md §15 (green-build-merge-gate topology)
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §6 WG-028 — traversal_cap
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/execution-model.md §II.7 EM-057 item 7 — exit-code → outcome
+//   - specs/execution-model.md §EM-015d (review-loop topology / verdict routing)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/handler-contract.md §III.1 HC-063 — in-process shell handler
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+//
+// Source: harmonik-productization-design workflow 2026-06-02.
+// Bead ref: hk-p0kum.
+
+digraph "standard-bead" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="standard-bead";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer. On the first visit, produces the change.
+    // On re-entry (after REQUEST_CHANGES or a deterministic commit_gate failure),
+    // addresses the reviewer feedback or fixes the build/test failure.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
+    ];
+
+    // commit_gate: shell gate — full build + vet + test + scenario suite.
+    // Exit 0 (SUCCESS) → all checks pass → advance to review.
+    // Non-zero deterministic → build or test failure → loop back to implement (capped at 3).
+    // Non-zero transient → infra glitch → self-loop retry (capped at 2).
+    // Any other outcome → unconditional fallback → close-needs-attention.
+    commit_gate [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="go build ./... && go vet ./... && go test ./... && go test -tags=scenario ./...",
+        timeout="900",
+        role="full commit gate: build + vet + unit tests + scenario suite; exit 0 = ready for review"
+    ];
+
+    // review: agentic reviewer. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
+    ];
+
+    // close: terminal node — APPROVE path only. The SOLE inbound edge is
+    // review→close[APPROVE]. No other path reaches this node.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — change accepted and ready to merge"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, gate fallback,
+    // and any unrecognized outcome.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="BLOCK / cap-hit / structural / unexpected — operator attention required"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+
+    // (1) Entry edge — unconditional.
+    start -> implement;
+
+    // (2) Implementer advances to commit_gate — unconditional.
+    implement -> commit_gate;
+
+    // (3) Gate SUCCESS → review.
+    commit_gate -> review [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (4) Gate deterministic failure (build error, test assertion) → fix-loop.
+    // Capped at 3: at most 3 fix attempts before escalating.
+    commit_gate -> implement [
+        condition="outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'",
+        traversal_cap="3"
+    ];
+
+    // (5) Gate transient failure (infra glitch, timeout) → self-loop retry.
+    // Capped at 2: transient retries are limited to avoid masking real failures.
+    commit_gate -> commit_gate [
+        condition="outcome.status == 'FAIL' && outcome.failure_class == 'transient'",
+        traversal_cap="2"
+    ];
+
+    // (6) Gate fallback (canceled / structural / unknown) → triage.
+    // Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Must appear last among commit_gate outgoing edges.
+    commit_gate -> "close-needs-attention";
+
+    // (7) APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
+    review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (8) REQUEST_CHANGES → loop back to implement (capped at 3 per EM-015e/WG-028).
+    review -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (9) BLOCK → close-needs-attention.
+    review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (10) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    review -> "close-needs-attention";
+}

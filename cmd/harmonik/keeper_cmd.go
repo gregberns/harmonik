@@ -96,9 +96,17 @@ func runKeeperSubcommand(args []string) int {
 		return 0
 	}
 
-	// Step 4: agent is managed — start the watcher and block until signal.
+	// Step 4: resolve the effective tmux target.
+	// If --tmux was provided, use it as-is. Otherwise attempt to auto-derive the
+	// session name from the harmonik convention: "harmonik-<hash12>-<agent>".
+	resolvedTmux := keeper.ResolveTmuxTarget(projectDir, agentFlag, tmuxFlag, nil)
+	if resolvedTmux != "" && resolvedTmux != tmuxFlag {
+		fmt.Fprintf(os.Stderr, "keeper: auto-resolved tmux target from convention: %q\n", resolvedTmux)
+	}
+
+	// Step 5: agent is managed — start the watcher and block until signal.
 	fmt.Fprintf(os.Stderr, "keeper started for %s (warn-pct=%d, act-pct=%d, tmux=%q)\n",
-		agentFlag, warnPctFlag, actPctFlag, tmuxFlag)
+		agentFlag, warnPctFlag, actPctFlag, resolvedTmux)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -108,7 +116,7 @@ func runKeeperSubcommand(args []string) int {
 	cycler := keeper.NewCycler(keeper.CyclerConfig{
 		AgentName:  agentFlag,
 		ProjectDir: projectDir,
-		TmuxTarget: tmuxFlag,
+		TmuxTarget: resolvedTmux,
 		ActPct:     float64(actPctFlag),
 	}, emitter)
 
@@ -122,7 +130,7 @@ func runKeeperSubcommand(args []string) int {
 		AgentName:  agentFlag,
 		ProjectDir: projectDir,
 		WarnPct:    float64(warnPctFlag),
-		TmuxTarget: tmuxFlag,
+		TmuxTarget: resolvedTmux,
 		Cycler:     cycler,
 	}
 	w := keeper.NewWatcher(cfg, emitter)

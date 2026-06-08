@@ -54,6 +54,18 @@ type CyclerConfig struct {
 	WriteJournalFn           func(path string, j *CycleJournal) error
 	ReadJournalFn            func(path string) (*CycleJournal, error)
 	ClearPrecompactTriggerFn func(projectDir, agentName string) error
+
+	// AppendHandoffFn appends text to the handoff file after the nonce is
+	// confirmed. Used to pin keeper-authoritative identity into the handoff so
+	// the resumed agent reads the correct name rather than guessing from context.
+	// Nil → default OS append.
+	AppendHandoffFn func(path, text string) error
+
+	// SetTmuxEnvFn sets a key=value in the tmux session that owns TmuxTarget.
+	// Called after nonce confirmation so HARMONIK_AGENT is inherited by the
+	// new Claude process started after /clear. Nil → default tmux setenv call.
+	// No-op when TmuxTarget is empty.
+	SetTmuxEnvFn func(ctx context.Context, target, key, value string) error
 }
 
 func (c *CyclerConfig) applyDefaults() {
@@ -108,6 +120,12 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ClearPrecompactTriggerFn == nil {
 		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
 	}
+	if c.AppendHandoffFn == nil {
+		c.AppendHandoffFn = defaultAppendHandoff
+	}
+	if c.SetTmuxEnvFn == nil {
+		c.SetTmuxEnvFn = SetTmuxEnv
+	}
 }
 
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
@@ -138,6 +156,32 @@ func defaultReadHandoff(path string) (string, error) {
 func defaultTruncateHandoff(path string) error {
 	//nolint:gosec // G304,G306: path is operator-controlled; 0600 — keeper-owned
 	return os.WriteFile(path, []byte{}, 0o600)
+}
+
+func defaultAppendHandoff(path, text string) error {
+	//nolint:gosec // G304,G306: path derived from operator-controlled projectDir + agentName; 0600 keeper-owned
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("keeper: append handoff %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }() //nolint:errcheck
+	if _, err := fmt.Fprint(f, text); err != nil {
+		return fmt.Errorf("keeper: write handoff append %q: %w", path, err)
+	}
+	return nil
+}
+
+// identityBlock returns the keeper-authoritative identity section to be
+// appended to the handoff file after the nonce is confirmed.
+// The resumed agent reads this and anchors its self-concept to the correct name.
+func identityBlock(agentName string) string {
+	return fmt.Sprintf("\n\n<!-- KEEPER-IDENTITY -->\n"+
+		"**Agent identity (keeper-authoritative):** You are `%s`. "+
+		"Your HARMONIK_AGENT environment variable is `%s`. "+
+		"Use `harmonik comms send --from %s` (or rely on $HARMONIK_AGENT). "+
+		"Do not reconstruct identity from conversation history — trust this line.\n"+
+		"<!-- /KEEPER-IDENTITY -->\n",
+		agentName, agentName, agentName)
 }
 
 func writeJournalFile(path string, j *CycleJournal) error {
@@ -321,6 +365,18 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	j.Phase = "confirmed"
 	j.UpdatedAt = time.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+
+	// Step 3b: pin identity — append keeper-authoritative identity block to the
+	// handoff file so the resumed agent reads the correct name rather than
+	// reconstructing it from context. Non-fatal: /session-resume can still run.
+	_ = c.cfg.AppendHandoffFn(handoffPath, identityBlock(c.cfg.AgentName)) //nolint:errcheck
+
+	// Step 3c: set HARMONIK_AGENT in the tmux session environment so the new
+	// Claude process started after /clear inherits the correct agent name.
+	// Non-fatal: the handoff identity block is the primary anchor.
+	if c.cfg.TmuxTarget != "" {
+		_ = c.cfg.SetTmuxEnvFn(ctx, c.cfg.TmuxTarget, "HARMONIK_AGENT", c.cfg.AgentName) //nolint:errcheck
+	}
 
 	// Step 4: inject /clear.
 	if c.cfg.TmuxTarget != "" {

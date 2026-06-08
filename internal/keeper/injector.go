@@ -60,3 +60,21 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 func InjectWrapUpWarning(ctx context.Context, tmuxTarget string) error {
 	return InjectText(ctx, tmuxTarget, wrapUpWarningText)
 }
+
+// SetTmuxEnv sets an environment variable in the tmux session that owns
+// tmuxTarget. The variable is inherited by any new process started in that
+// session after this call — including a Claude Code session resumed after /clear.
+//
+// Uses `tmux setenv -t <target> <key> <value>` which writes to the session
+// environment table. This is intentionally NOT `setenv -g` (global) to avoid
+// leaking across unrelated sessions.
+func SetTmuxEnv(ctx context.Context, tmuxTarget, key, value string) error {
+	if tmuxTarget == "" {
+		return fmt.Errorf("keeper: setenv: tmuxTarget is empty")
+	}
+	cmd := exec.CommandContext(ctx, "tmux", "setenv", "-t", tmuxTarget, key, value)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("keeper: tmux setenv %s: %w (stderr: %s)", key, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

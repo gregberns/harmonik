@@ -199,6 +199,8 @@ func newTestCyclerManaged(
 		CrispIdleFn:       func(_, _ string) bool { return crispIdle },
 		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil }, // no-op in most tests
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil }, // no-op in most tests
 	}
 	return keeper.NewCycler(cfg, em)
 }
@@ -1058,6 +1060,130 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 	last := phases[len(phases)-1]
 	if last != "complete" {
 		t.Errorf("last journal phase = %q; want \"complete\" (stale nonce must not pre-satisfy)", last)
+	}
+}
+
+// TestCycler_IdentityPinnedAfterNonceConfirm verifies that after nonce confirmation
+// the keeper (a) appends a KEEPER-IDENTITY block to the handoff file and (b) calls
+// SetTmuxEnvFn with HARMONIK_AGENT=<agent>. Both must happen before /clear.
+func TestCycler_IdentityPinnedAfterNonceConfirm(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "flywheel"
+		cycleID = "cyc-id-pin-001"
+		prevSID = "sess-before-id"
+		newSID  = "sess-after-id"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	jc := &journalCapture{}
+	spy := &cycleSpyInjector{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+
+	var (
+		appendedText string
+		appendOrder  int // injection-call count when append was called
+		envKey       string
+		envVal       string
+		envOrder     int
+		mu           sync.Mutex
+		injectCount  int
+	)
+
+	spyInject := func(_ context.Context, _, text string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		injectCount++
+		_ = spy.inject(context.Background(), "fake-pane", text)
+		return nil
+	}
+	appendFn := func(_, text string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		appendedText = text
+		appendOrder = injectCount
+		return nil
+	}
+	setEnvFn := func(_ context.Context, _, key, value string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		envKey = key
+		envVal = value
+		envOrder = injectCount
+		return nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    100 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spyInject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   appendFn,
+		SetTmuxEnvFn:      setEnvFn,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Identity block must contain the agent name.
+	if !containsSubstr(appendedText, agent) {
+		t.Errorf("AppendHandoffFn text does not contain agent name %q; got: %q", agent, appendedText)
+	}
+	if !containsSubstr(appendedText, "KEEPER-IDENTITY") {
+		t.Errorf("AppendHandoffFn text does not contain KEEPER-IDENTITY marker; got: %q", appendedText)
+	}
+
+	// HARMONIK_AGENT must be set to the agent name.
+	if envKey != "HARMONIK_AGENT" {
+		t.Errorf("SetTmuxEnvFn key = %q; want %q", envKey, "HARMONIK_AGENT")
+	}
+	if envVal != agent {
+		t.Errorf("SetTmuxEnvFn value = %q; want %q", envVal, agent)
+	}
+
+	// Both must happen before /clear (inject[1] is /clear).
+	// appendOrder and envOrder are the inject-call counts at the time each
+	// fn was called; /clear is inject call #2 (0-indexed: handoff=#1, clear=#2).
+	if appendOrder >= 2 {
+		t.Errorf("AppendHandoffFn called after /clear (inject count was %d; /clear is call 2)", appendOrder)
+	}
+	if envOrder >= 2 {
+		t.Errorf("SetTmuxEnvFn called after /clear (inject count was %d; /clear is call 2)", envOrder)
+	}
+
+	// Cycle must complete cleanly.
+	phases := jc.snapshot()
+	if len(phases) == 0 {
+		t.Fatal("no journal phases recorded")
+	}
+	if last := phases[len(phases)-1]; last != "complete" {
+		t.Errorf("last journal phase = %q; want \"complete\"", last)
 	}
 }
 

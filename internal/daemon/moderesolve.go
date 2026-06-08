@@ -68,7 +68,7 @@ func resolveWorkflowMode(
 			if mode == core.WorkflowModeSingle {
 				// Emit review_bypassed audit event (hk-81n9r): single mode is only
 				// reachable via an explicit per-bead label; the daemon default and
-				// tier-4 fallback both resolve to review-loop.
+				// tier-4 fallback both resolve to dot (hk-30vlb).
 				emitReviewBypassed(ctx, bus, bead, workflowLabels[0])
 			}
 			return mode
@@ -94,9 +94,10 @@ func resolveWorkflowMode(
 	}
 
 	// ── Tier 4: hard fallback ──────────────────────────────────────────────
-	// hk-g0ckv: review-loop is the system default; single is available via
-	// per-bead label or the --no-review-loop CLI flag.
-	return core.WorkflowModeReviewLoop
+	// hk-30vlb: dot is the system default (embedded standard-bead.dot).
+	// single is only reachable via an explicit workflow:single per-bead label
+	// or --workflow-mode single flag — NEVER via tier-3 or tier-4 resolution.
+	return core.WorkflowModeDot
 }
 
 // emitReviewBypassed emits a review_bypassed event (hk-81n9r) when a bead's

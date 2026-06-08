@@ -125,7 +125,7 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			name:              "tier1 conflict multiple labels falls to tier4 when daemon default absent",
 			beadLabels:        []string{"workflow:review-loop", "workflow:dot"},
 			daemonDefault:     core.WorkflowMode(""), // invalid / absent
-			wantMode:          core.WorkflowModeReviewLoop, // hk-g0ckv: tier4 fallback is now review-loop
+			wantMode:          core.WorkflowModeDot, // hk-30vlb: tier4 fallback is now dot
 			wantConflictEvent: true,
 		},
 
@@ -141,7 +141,7 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			name:              "tier1 unknown mode value falls to tier4 when daemon default absent",
 			beadLabels:        []string{"workflow:"},
 			daemonDefault:     core.WorkflowMode(""),
-			wantMode:          core.WorkflowModeReviewLoop, // hk-g0ckv: tier4 fallback is now review-loop
+			wantMode:          core.WorkflowModeDot, // hk-30vlb: tier4 fallback is now dot
 			wantConflictEvent: true,
 		},
 
@@ -163,18 +163,18 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			wantMode:      core.WorkflowModeReviewLoop,
 		},
 
-		// ── Tier 4: hard fallback → review-loop (hk-g0ckv) ──────────────────
+		// ── Tier 4: hard fallback → dot (hk-30vlb) ───────────────────────────
 		{
-			name:          "tier4 fallback to review-loop when no bead label and no daemon default",
+			name:          "tier4 fallback to dot when no bead label and no daemon default",
 			beadLabels:    nil,
 			daemonDefault: core.WorkflowMode(""), // empty → invalid
-			wantMode:      core.WorkflowModeReviewLoop,
+			wantMode:      core.WorkflowModeDot,
 		},
 		{
-			name:          "tier4 fallback to review-loop when bead has unrelated labels only",
+			name:          "tier4 fallback to dot when bead has unrelated labels only",
 			beadLabels:    []string{"size:S", "area:core"},
 			daemonDefault: core.WorkflowMode(""),
-			wantMode:      core.WorkflowModeReviewLoop,
+			wantMode:      core.WorkflowModeDot,
 		},
 	}
 

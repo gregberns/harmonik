@@ -52,6 +52,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workflow"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -1863,27 +1864,50 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// which walks the graph node-by-node using workflow.DecideNextNode
 		// (hk-9dnak; cascade engine library hk-bf85t).
 		//
-		// Resolve .dot path: use itemWorkflowRef when set (hk-qo9pq CLI --workflow-ref);
-		// fall back to the project-level convention <projectDir>/workflow.dot.
-		// Relative itemWorkflowRef is resolved against projectDir.
+		// Three-tier .dot source resolution (hk-30vlb):
+		//   1. itemWorkflowRef set → explicit path (absolute or projectDir-relative).
+		//   2. <projectDir>/workflow.dot exists → project-level override.
+		//   3. Neither → use the embedded standard-bead.dot graph (default).
 		dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		useEmbedded := false
 		if itemWorkflowRef != "" {
 			if filepath.IsAbs(itemWorkflowRef) {
 				dotPath = itemWorkflowRef
 			} else {
 				dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
 			}
+		} else if _, statErr := os.Stat(dotPath); os.IsNotExist(statErr) {
+			useEmbedded = true
 		}
+
 		// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
-		graph, loadErr := workflow.LoadDotWorkflowWithParams(dotPath, itemTemplateParams)
-		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), loadErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("workflow_load: %v", loadErr))
-			emitDone(false, fmt.Sprintf("workflow_load: %v", loadErr))
-			return
+		var graph *dot.Graph
+		var loadErr error
+		if useEmbedded {
+			// Embedded standard-bead.dot (hk-30vlb): reviewed by construction.
+			graph, loadErr = loadStandardGraph(itemTemplateParams)
+			if loadErr != nil {
+				// Safety floor (hk-30vlb): embedded graph load failed (should never
+				// happen if the test suite is green). Reopen so the bead is retried.
+				fmt.Fprintf(os.Stderr, "daemon: workloop: embedded standard-bead.dot load failed for bead %s run %s: %v (reopening)\n",
+					beadID, runID.String(), loadErr)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("embedded_graph_load: %v", loadErr))
+				emitDone(false, fmt.Sprintf("embedded_graph_load: %v", loadErr))
+				return
+			}
+		} else {
+			graph, loadErr = workflow.LoadDotWorkflowWithParams(dotPath, itemTemplateParams)
+			if loadErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
+					beadID, runID.String(), loadErr)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("workflow_load: %v", loadErr))
+				emitDone(false, fmt.Sprintf("workflow_load: %v", loadErr))
+				return
+			}
 		}
 
 		// WG-044: thread the (substituted) graph-level goal into every agentic node's

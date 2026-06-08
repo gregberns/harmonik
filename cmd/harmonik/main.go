@@ -499,12 +499,13 @@ EXAMPLES
 	// --workflow-mode: daemon-level default workflow mode (hk-rssrg).
 	// Tier-3 of the four-tier resolution chain (execution-model.md §4.3 EM-012a):
 	// per-bead label → per-project → daemon-default (this flag) → built-in fallback.
-	// Defaults to "review-loop" so the persistent-daemon path mirrors hk-g0ckv
-	// ("review-loop is on by default"). Pass --workflow-mode single to opt out.
+	// Defaults to "dot" so every bead with no explicit ref runs the embedded
+	// standard-bead.dot workflow (implement → commit_gate → review → merge).
+	// Pass --workflow-mode review-loop or --workflow-mode single to override.
 	// Valid values: single, review-loop, dot.
 	var workflowModeFlag string
-	flag.StringVar(&workflowModeFlag, "workflow-mode", string(core.WorkflowModeReviewLoop),
-		"daemon-level default workflow mode: single, review-loop, dot (default: review-loop)")
+	flag.StringVar(&workflowModeFlag, "workflow-mode", string(core.WorkflowModeDot),
+		"daemon-level default workflow mode: single, review-loop, dot (default: dot)")
 
 	// Queue-only is now the default (hk-8vy18): a bare boot with no submitted
 	// queue dispatches zero runs. --auto-pull opts in to the historical br-ready

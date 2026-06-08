@@ -184,6 +184,57 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 	return graph, nil
 }
 
+// LoadDotWorkflowFromBytes parses and validates a .dot workflow from an in-memory
+// byte slice. sourceName is used only for error messages (e.g. "embedded:standard-bead.dot").
+// When params is nil or empty, template substitution is a no-op.
+//
+// This is the load path for the embedded standard-bead.dot fallback
+// (hk-30vlb): same pipeline as LoadDotWorkflowWithParams but without the
+// os.ReadFile call.
+func LoadDotWorkflowFromBytes(src []byte, sourceName string, params map[string]string) (*dot.Graph, error) {
+	substituted, subErr := SubstituteTemplateParams(string(src), params)
+	if subErr != nil {
+		return nil, &ErrWorkflowLoad{
+			Path:   sourceName,
+			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
+		}
+	}
+
+	graph, parseErr := dot.Parse(substituted, sourceName)
+	if parseErr != nil {
+		if strings.Contains(parseErr.Error(), "CP-056") {
+			fmt.Fprintf(os.Stderr,
+				"DEPRECATION WARNING [CP-056]: workflow %q uses the deprecated \"policy_ref\" attribute. "+
+					"Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\n",
+				sourceName)
+			return nil, &ErrPolicyRefRejected{
+				Path:   sourceName,
+				Reason: fmt.Sprintf("policy_ref rejected (CP-056): use gate_ref, skills_ref, or freedom_profile_ref instead (CP-055); parse error: %v", parseErr),
+			}
+		}
+		return nil, &ErrWorkflowLoad{
+			Path:   sourceName,
+			Reason: fmt.Sprintf("parse failed: %v", parseErr),
+		}
+	}
+
+	diags := dot.Validate(graph)
+	var errs []string
+	for _, d := range diags {
+		if d.Severity == dot.SeverityError {
+			errs = append(errs, d.String())
+		}
+	}
+	if len(errs) > 0 {
+		return nil, &ErrWorkflowLoad{
+			Path:   sourceName,
+			Reason: fmt.Sprintf("validation failed: %s", strings.Join(errs, "; ")),
+		}
+	}
+
+	return graph, nil
+}
+
 // LoadDotWorkflowWithPolicy extends LoadDotWorkflow with skills_ref resolution
 // per control-points.md §4.13 CP-057.
 //

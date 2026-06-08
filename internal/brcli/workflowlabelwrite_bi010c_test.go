@@ -47,9 +47,16 @@ func wlwFixtureBenignArgs() []string {
 	return []string{"update", "hk-7om2q.13", "--notes", "some note"}
 }
 
-// wlwFixtureSpecContent reads specs/beads-integration.md and returns the
-// paragraph starting at the BI-010c anchor. The test fails if the spec is
-// unreadable or the anchor is absent.
+// wlwFixtureSpecContent reads specs/beads-integration.md and returns the body
+// of the BI-010c section. The test fails if the spec is unreadable or the
+// section heading is absent.
+//
+// The anchor is the section heading "#### BI-010c", NOT the bare token
+// "BI-010c": the spec contains earlier *cross-references* to BI-010c (e.g. the
+// BI-010b Branching-discipline paragraph cites "the same intra-run write
+// discipline as BI-010c"), and anchoring on the bare token would capture that
+// cross-reference paragraph instead of the normative section that defines the
+// requirement.
 func wlwFixtureSpecContent(t *testing.T) string {
 	t.Helper()
 
@@ -68,19 +75,20 @@ func wlwFixtureSpecContent(t *testing.T) string {
 	}
 	content := string(raw)
 
-	const anchor = "BI-010c"
+	const anchor = "#### BI-010c"
 	idx := strings.Index(content, anchor)
 	if idx < 0 {
 		t.Fatalf(
-			"wlwFixtureSpecContent: spec %s does not contain %q; BI-010c may have been removed or renamed",
+			"wlwFixtureSpecContent: spec %s does not contain heading %q; BI-010c may have been removed or renamed",
 			specPath, anchor,
 		)
 	}
 
-	// Return the paragraph from the anchor to the next section boundary.
+	// Return the section body from this heading to the next #### heading.
+	// Skip past the anchor itself so its own "####" does not terminate the slice.
 	para := content[idx:]
-	if end := strings.Index(para, "\n####"); end > 0 {
-		para = para[:end]
+	if end := strings.Index(para[len(anchor):], "\n####"); end >= 0 {
+		para = para[:len(anchor)+end]
 	}
 	return para
 }

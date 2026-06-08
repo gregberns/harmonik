@@ -39,6 +39,18 @@ const (
 	// PreSealSubsystemStaleWatcher is the StaleWatcher wildcard observer that
 	// emits run_stale when an active run produces no event for M minutes (hk-wkzlc).
 	PreSealSubsystemStaleWatcher PreSealSubsystem = "StaleWatcher"
+
+	// PreSealSubsystemSpendMeter is the DaemonSpendMeter (run_started max-runs
+	// counter + budget_accrual bytes proxy; hk-k3f8g).
+	PreSealSubsystemSpendMeter PreSealSubsystem = "DaemonSpendMeter"
+
+	// PreSealSubsystemReviewGateAnomaly is the ReviewGateAnomalyWatcher
+	// (bead_closed + reviewer_verdict consumers; hk-tnmjy).
+	PreSealSubsystemReviewGateAnomaly PreSealSubsystem = "ReviewGateAnomalyWatcher"
+
+	// PreSealSubsystemBandwidthTunerBackstop is the bandwidthTunerBackstop that
+	// subscribes to agent_rate_limited bus events as a rate-limit backstop (hk-81n9r).
+	PreSealSubsystemBandwidthTunerBackstop PreSealSubsystem = "bandwidthTunerBackstop"
 )
 
 // SubscribeContract declares the ConsumerIDs a subsystem registers via Subscribe.
@@ -68,6 +80,17 @@ var RequiredPreSealSubscribers = map[PreSealSubsystem]SubscribeContract{
 	}},
 	PreSealSubsystemStaleWatcher: {ConsumerIDs: []string{
 		"stale-watcher",
+	}},
+	PreSealSubsystemSpendMeter: {ConsumerIDs: []string{
+		"daemon-spend-meter-run-started",
+		"daemon-spend-meter-budget-accrual",
+	}},
+	PreSealSubsystemReviewGateAnomaly: {ConsumerIDs: []string{
+		"review-gate-anomaly-bead-closed",
+		"review-gate-anomaly-reviewer-verdict",
+	}},
+	PreSealSubsystemBandwidthTunerBackstop: {ConsumerIDs: []string{
+		"bandwidth-tuner-rate-limit-backstop",
 	}},
 }
 

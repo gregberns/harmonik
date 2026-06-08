@@ -1,35 +1,25 @@
-<!-- PP-TRIAL:v2 2026-06-08 PM main @2d0988e0 in-sync origin — CLEAN, no user blocker. THE FLIP IS DONE: daemon runs --workflow-mode dot (UN-PINNED, pid 53995, -c6), validated end-to-end (hk-m5axg resolved eadda06e — was the commit_gate stripped-env/PATH bug, not the review node; live-smoke hk-03k7n merged ba825032). DO NOT re-pin review-loop (review-loop is only a floor-fallback). Also landed: hk-sah87 (2d0988e0, diff-scaled reviewer budget — merged but NOT yet deployed; running daemon predates it) + hk-fkpb7 partial (40948fde). **LIVE CROSS-AGENT ISSUE: main is RED pre-existing** — TestBI010c_SpecContainsWorkflowLabelDiscipline fails in internal/brcli at ba825032; the DOT commit_gate is package-scoped so any bead touching a red package wedges (this wedged captain T1/T6; commits good, salvage after green). controlpoints filed hk-jk8ii (P1) + is fixing main green; captain dispatch HELD until green. Separate daemon-lane issue: a 2nd-implement no-spawn wedge — LIKELY DISK-FULL (flywheel found ENOSPC, ran go clean -cache; now 7Gi/97% — tight, watch df), NOT confirmed hk-4l7zs; disambiguate by re-dispatch after green+disk-free. 3 agents share the daemon: named-queues (daemon/queues), flywheel (session-keeper + v0.1.0 release-infra on branch release-infra), controlpoints (captain). Role handoffs: HANDOFF-named-queues.md / HANDOFF-flywheel.md (read yours). -->
+<!-- PP-TRIAL:v2 2026-06-08 PM main @eb12eb6b — CLEAN working tree, no user blocker. You are `captain` on the comms bus (pass `--from captain`). Peer `controlpoints` is IMPLEMENTING the captain feature. -->
 
-Read order (per CLAUDE.md): AGENT_INDEX.md → STATUS.md → TASKS.md. Cross-project rules: `~/.claude/CLAUDE.md`. Dispatch loop: skill `harmonik-dispatch`.
+Read order (per CLAUDE.md): AGENT_INDEX.md → STATUS.md → TASKS.md. Cross-project rules: `~/.claude/CLAUDE.md`. **But start with step 1 below — that's your actual brief this session.**
 
-ROLE: orchestrator. Delegate via the daemon queue / sub-agents; keep the main thread minimal. Failed-twice → investigator, don't re-dispatch.
+ROLE: captain = **pure delegator**. You orchestrate and spin up crew; you do NOT implement, investigate, or read code inline (mirror the orchestrator HARD RULE in CLAUDE.md). Every substantive task goes to a crew agent or the daemon queue.
 
-# Where we are (2026-06-02) — CLEAN, nothing blocking
-Main `5c51df8f`, `0/0` origin, build green, daemon UP at `--max-concurrent 6` on the latest binary. This was an autonomous overnight run with a peer agent (`flywheel`) while the operator slept. All major work landed + deployed + validated.
+# Your plan this session (in order)
 
-## What shipped this session
-- **`set-concurrency` (operator ask, `hk-ohiaf`):** runtime-adjustable dispatch ceiling — `harmonik queue set-concurrency N` (no restart; lowering drains-down, never kills). Concurrency now 6.
-- **Daemon-reliability cluster (6 fixes, all deployed):** `hk-77q8e` escape-detector (no longer false-fails concurrent beads on a dirty main), `hk-5pg37` reconciler reaps cancel/restart orphans, `hk-4kuvj` `cancel` name-targeting, `hk-a11re` cross-queue dispatch dedup, `hk-6ri5k` deferred-status gating, + set-concurrency. The multi-agent model is materially more robust now.
-- **agent-comms event bus (kerf work `agent-comms`, epic `hk-uxm0j`, T1-T13 ALL landed):** `harmonik comms send/recv/who/log/join/leave` + `subscribe --to/--from/--topic`; `agent_message`+`agent_presence` events; durable per-agent cursor (at-least-once, dedupe on `event_id`); one shared `matchAgentMessage` predicate (live+replay). Validated end-to-end; flywheel + named-queues now coordinate THROUGH it.
-- **Backlog hygiene:** closed 3 stale beads (`hk-dgwf4` P0 + `hk-hlmup` + `hk-dv8qv` — exit-17 was a misdiagnosis; dv8qv already fixed).
+1. **Start by reading the captain kerf work** to understand the role and what controlpoints is building. Read `docs/plans/captain/` — `SESSION.md` first, then `01-problem-space.md`, `03-components.md`, `06-integration.md`; and `kerf show captain` (status ready/SQUARE, 15 beads `codename:captain`). It's the Captain & Crew design: captain (you) spins up crew agents and delegates execution; crew does the judgment-free work. **controlpoints (peer, was online) is implementing this very feature** — coordinate via `harmonik comms recv --from controlpoints --follow`; do NOT touch its `codename:captain` implementation beads.
 
-## What changes your plan (READ THIS)
-1. **Comms is the `harmonik comms` BUS now — the `.md` outboxes are RETIRED.** Monitor incoming with a persistent `harmonik comms recv --agent <you> --follow --json`. (See the `agent-comms` skill.)
-2. **Daemon deploy = `go install ./cmd/harmonik` then `pkill -f "harmonik --project"`.** A keeper (`/tmp/hk-keeper.sh`) auto-revives on the new binary in ~5s at `-c6`. Do NOT manually `tmux`-restart — it loses the pidfile race to the keeper. Change live ceiling via `set-concurrency`.
-3. **Named-queue lifecycle verbs are reliable for submit/append but `cancel <name>` is FIXED but verify; pause/resume were flaky pre-fix.** Route concurrent work to your OWN `--queue <name>`, not shared `main`.
+2. **Draft your own delegation-discipline instruction set** — a short checklist you load each turn so you stay a delegator and never drift into implementing. Save it as a memory or a `docs/` note. (User: "maybe work on a set of instructions to make sure it's just delegating work out.")
 
-## Deferred for the operator (their call, not auto-dispatched)
-- `hk-ymav1` — auto-tune `--max-concurrent` from `~/.claude` token-rate (needs operator to calibrate the subscription-token ceiling; design in the bead).
-- `hk-ulp7v` (rename refactor), `hk-x6j6r` (eventbus layering move — may want operator input).
+3. **Spin up a new crew agent and delegate the codex-harness research.** harmonik today supports only **Claude Code** as the implementer harness when running tasks; we want to add **codex (OpenAI's harness)** as a second one. Crew mechanism = interactive `claude --remote-control "<name>" --session-id <caller-minted-uuid>` (bracketed-paste seed, `--resume` to re-task — the pinned mechanism in memory; the captain feature will automate this but isn't built yet, so use the manual path). Delegate to the crew: run `kerf new codex-harness` and do the **full research** — how harmonik launches/drives Claude today (tmux substrate, pasteinject, commit-detection, session-id), the codex CLI's equivalent surface, where the harness-abstraction seam belongs, auth/billing model, integration design. Crew produces the kerf work through its passes (problem-space → research → design → spec → tasks); it does NOT implement yet.
 
-## Files to open first
-`.kerf/works/agent-comms/` (05-spec-draft.md, 07-tasks.md) · `internal/daemon/workloop.go` (dispatch gate) · `internal/queue/` (comms ops in socket.go) · the `agent-comms` skill.
+4. **(Bonus) Monitor that crew's context and reset it at ~300k tokens.** If you can watch the crew session's token usage and clear/reset at 300k, do it (session-keeper style — see memory `project_session_keeper_design`). If current tooling can't, leave it — the operator will handle it in the morning. State which you did in your next handoff.
+
+# State
+Main `@eb12eb6b`, clean tree. Verify build green before any daemon dispatch. Daemon + comms bus live. Disk: resolved earlier — ample free space, **no action, do not investigate or discuss it.**
 
 # Translations glossary
-- **named-queues / flywheel** — the two concurrent Claude orchestrator sessions (peers) sharing one daemon. A `/clear` can mis-ID which one you are (on 2026-06-02 flywheel mis-read this very line, thought it was named-queues, and aliased itself `nq-resume` before correcting). Determine your identity by LANE, not this line: daemon+queues+scenario-tests = named-queues; ledger+kerf hygiene = flywheel. Check which HANDOFF-<role>.md is yours.
-- **agent-comms bus** — the new `harmonik comms` inter-agent messaging feature (replaces the AGENT_COMMS.md file hack).
-- **keeper** — `/tmp/hk-keeper.sh`, the while-loop that auto-revives the daemon on death (at `-c6`).
-- **set-concurrency** — runtime daemon dispatch-ceiling RPC (`hk-ohiaf`).
-- **T1-T13** — the agent-comms build tasks (named-queues built T1/T2/T4/T6/T7/T8; flywheel T3/T5/T9/T10/T11/T12/T13).
-
-# No hard blockers. Daemon healthy, bus live, both agents idle/resting. Next: deferred beads above, or new work from `kerf next`.
+- **captain** — two referents: (1) YOU, the comms-bus identity (`--from captain`); (2) the kerf WORK/feature codenamed `captain` (Captain & Crew) that controlpoints is implementing.
+- **crew agent** — a worker session captain spins up via `claude --remote-control "<name>" --session-id <uuid>`; execution, not judgment.
+- **codex** — OpenAI's coding harness/CLI; the second implementer harness we want harmonik to support alongside Claude Code.
+- **kerf work** — a structured planning unit (`kerf new <codename>`); the planning surface for non-trivial new work.
+- **controlpoints** — peer agent, implementing the captain feature.

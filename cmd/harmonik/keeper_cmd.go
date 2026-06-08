@@ -81,13 +81,22 @@ func runKeeperSubcommand(args []string) int {
 	}
 	defer func() { _ = lock.Release() }() //nolint:errcheck // best-effort on shutdown
 
-	// Step 2: check .managed opt-in guard (fail-safe: absent = no-op).
+	// Step 2: run doctor at boot as a loud diagnostic (non-fatal).
+	{
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
+			settingsPath := home + "/.claude/settings.json"
+			runKeeperDoctorAtBoot(projectDir, agentFlag, settingsPath)
+		}
+	}
+
+	// Step 3: check .managed opt-in guard (fail-safe: absent = no-op).
 	if !keeper.IsManaged(projectDir, agentFlag) {
 		fmt.Fprintf(os.Stderr, "keeper: %s not opted-in (.managed marker missing); no-op\n", agentFlag)
 		return 0
 	}
 
-	// Step 3: agent is managed — start the watcher and block until signal.
+	// Step 4: agent is managed — start the watcher and block until signal.
 	fmt.Fprintf(os.Stderr, "keeper started for %s (warn-pct=%d, act-pct=%d, tmux=%q)\n",
 		agentFlag, warnPctFlag, actPctFlag, tmuxFlag)
 
@@ -210,10 +219,21 @@ const keeperTopUsage = `harmonik keeper — context watcher for a managed agent 
 
 USAGE
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N]
+  harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
+  harmonik keeper doctor <agent> [--project DIR]
   harmonik keeper set-dispatching <agent> [--project DIR]
   harmonik keeper clear-dispatching <agent> [--project DIR]
 
 VERBS
+  enable             Wire statusLine + Stop + PreCompact stanzas into ~/.claude/settings.json
+                     (idempotent, JSON-aware, backs up first, normalizes env-var names).
+                     Seeds HANDOFF-<agent>.md, validates tmux pane, prints the run command.
+                     .managed creation requires --yes-destructive.
+                     Run 'harmonik keeper enable --help' for full usage.
+  doctor             Read-only drift validator: binary currency, all 3 hooks present,
+                     gauge freshness, .idle written, .managed present, ANTHROPIC_API_KEY risk.
+                     Exits non-zero on any gap.  Also runs automatically at keeper BOOT.
+                     Run 'harmonik keeper doctor --help' for full usage.
   set-dispatching    Write the .dispatching marker for <agent>; HoldingDispatch → true.
                      Call BEFORE submitting a batch to the daemon queue so the keeper
                      cycle defers the handoff action while queue work is in flight.

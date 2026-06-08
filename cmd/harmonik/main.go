@@ -393,6 +393,10 @@ EXAMPLES
 				return runKeeperSetDispatching(subArgs[1:])
 			case "clear-dispatching":
 				return runKeeperClearDispatching(subArgs[1:])
+			case "enable":
+				return runKeeperEnableSubcommand(subArgs[1:])
+			case "doctor":
+				return runKeeperDoctorSubcommand(subArgs[1:])
 			}
 		}
 		for _, arg := range subArgs {

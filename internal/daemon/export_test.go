@@ -1596,6 +1596,33 @@ func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) 
 var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 
 // ─────────────────────────────────────────────────────────────────────────────
+// buildCrewLaunchSpec test seams (hk-kbqto C2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedCrewLaunchCtx is the exported shape of crewLaunchCtx for tests.
+//
+// Bead ref: hk-kbqto.
+type ExportedCrewLaunchCtx struct {
+	ClaudeBinary string
+	Name         string
+	SessionID    string
+	ProjectDir   string
+}
+
+// ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
+// daemon_test. See crewlaunchspec.go for semantics.
+//
+// Bead ref: hk-kbqto.
+func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, error) {
+	return buildCrewLaunchSpec(crewLaunchCtx{
+		claudeBinary: rc.ClaudeBinary,
+		name:         rc.Name,
+		sessionID:    rc.SessionID,
+		projectDir:   rc.ProjectDir,
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OperatorPauseController test seams (hk-ry8q1)
 // ─────────────────────────────────────────────────────────────────────────────
 

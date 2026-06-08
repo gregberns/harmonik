@@ -46,11 +46,15 @@ type Session interface {
 	// Returns an error if the subprocess has already exited or the write fails.
 	SendInput(ctx context.Context, line string) error
 
-	// Kill sends SIGTERM to the subprocess process group. If ctx expires before
+	// Kill sends SIGTERM to the subprocess (positive PID, not the process group
+	// — see the implementation note on session.Kill). If ctx expires before
 	// Wait returns, it escalates to SIGKILL.
 	//
 	// Kill returns once the termination signal has been sent (not once the
-	// subprocess exits).  Use Wait to block until the process is reaped.
+	// subprocess exits).  Use Wait to block until the process is reaped.  Note
+	// that Kill targets only the immediate handler process; grandchildren it
+	// forked may survive briefly and are bounded by the caller's post-kill wait
+	// and the daemon's orphan sweep.
 	Kill(ctx context.Context) error
 
 	// Wait blocks until the subprocess exits and has been reaped. Delegates to
@@ -112,6 +116,21 @@ type Outcome struct {
 // stderrRingCapBytes is the maximum number of stderr bytes captured for
 // Outcome.StderrTail.
 const stderrRingCapBytes = 4 * 1024 // 4 KiB
+
+// stderrDrainGrace bounds how long runWait waits for the stderr drain goroutine
+// to finish after the subprocess is reaped, before it force-closes the stderr
+// read-end to unblock the drain.
+//
+// On normal exit the drain reaches EOF immediately (all fd-holders are gone), so
+// this grace never elapses and stderr capture is unaffected.  It only matters on
+// the cancel/kill path when a surviving grandchild keeps the stderr write-end
+// open: without the bound, sess.Wait would wedge for the grandchild's full
+// runtime (the hk-4c7kw slow-shutdown bug).  500 ms is generous headroom over
+// the sub-millisecond normal drain while keeping shutdown well under the 10 s T3
+// budget.
+//
+// Bead: hk-4c7kw.
+const stderrDrainGrace = 500 * time.Millisecond
 
 // session is the concrete implementation of Session.
 type session struct {
@@ -292,9 +311,33 @@ func (s *session) drainStderr(r io.Reader) {
 func (s *session) runWait(_ context.Context) {
 	startedAt := s.startedAt
 	waitErr := s.waitOwner.WaitAndReap()
+
 	// Wait for drainStderr to finish before reading stderrBuf so that concurrent
 	// ringBuffer.Write and ringBuffer.Bytes calls don't race.
-	<-s.stderrDone
+	//
+	// Normal exit: the subprocess and all its descendants are gone, so the
+	// stderr write-end is fully closed; drainStderr hits EOF and closes
+	// stderrDone essentially immediately — the grace below never elapses and
+	// stderr capture is unaffected.
+	//
+	// Cancel/kill path (hk-4c7kw): a grandchild the handler forked (e.g. a
+	// `sleep` left by a shell handler) inherited the stderr write-end and may
+	// still be alive after the immediate process was reaped, so drainStderr's
+	// Read stays blocked and stderrDone would never close — wedging sess.Wait
+	// (and therefore daemon shutdown) for the full grandchild runtime.  When the
+	// grace elapses, close the read-end to force drainStderr to return so
+	// stderrDone closes and the outcome is finalised promptly.  Closing the
+	// read-end makes the blocked Read return an error, ending drainStderr; we
+	// only read stderrBuf.Bytes() after stderrDone closes, so the no-race
+	// invariant on the unsynchronised ringBuffer is preserved either way.
+	select {
+	case <-s.stderrDone:
+	case <-time.After(stderrDrainGrace):
+		if c, ok := s.stderr.(io.Closer); ok {
+			_ = c.Close()
+		}
+		<-s.stderrDone
+	}
 	duration := time.Since(startedAt)
 
 	o := Outcome{
@@ -333,14 +376,30 @@ func (s *session) SendInput(_ context.Context, line string) error {
 	return nil
 }
 
-// Kill sends SIGTERM to the subprocess process group.  If ctx expires before
-// the subprocess exits, it escalates to SIGKILL.
+// Kill sends SIGTERM to the subprocess.  If ctx expires before the subprocess
+// exits, it escalates to SIGKILL.
+//
+// Signalling targets the subprocess PID directly (positive PID), NOT the
+// process group (-pgid).  The handler is spawned with SysProcAttr{Setpgid:
+// true, Pgid: <daemon_pgid>} (lifecycle.SpawnChildSysProcAttr per HC-044 /
+// PL-006a), so the child joins the DAEMON's process group rather than becoming
+// its own group leader.  A syscall.Kill(-childPid, …) therefore addresses a
+// process group whose ID equals the child's PID — which does not exist — so the
+// signal returns ESRCH and never reaches the subprocess (this was the hk-4c7kw
+// slow-shutdown bug: the in-flight handler ran to natural completion).  Using
+// -daemonPgid would be worse: it would signal the daemon itself and every
+// sibling handler.  Signalling the positive child PID reaps the immediate
+// handler process promptly; any grandchildren it forked are bounded by the
+// caller's post-kill wait (waitWithSocketGrace) plus the daemon's orphan sweep.
+//
+// Bead: hk-4c7kw.
 func (s *session) Kill(ctx context.Context) error {
-	pgid := s.cmd.Process.Pid // when Setpgid=true, pgid == pid of group leader
+	pid := s.cmd.Process.Pid
 
-	// SIGTERM the process group.
-	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
-		return fmt.Errorf("handler: Session.Kill: SIGTERM pgid %d: %w", pgid, err)
+	// SIGTERM the subprocess.  ESRCH (process already exited and been reaped) is
+	// not an error — the reap below observes the exit either way.
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+		return fmt.Errorf("handler: Session.Kill: SIGTERM pid %d: %w", pid, err)
 	}
 
 	// Wait for process exit or ctx deadline; on deadline, escalate to SIGKILL.
@@ -355,9 +414,10 @@ func (s *session) Kill(ctx context.Context) error {
 		// Process exited cleanly after SIGTERM.
 		return nil
 	case <-ctx.Done():
-		// ctx expired — escalate to SIGKILL.
-		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-			return fmt.Errorf("handler: Session.Kill: SIGKILL pgid %d: %w", pgid, err)
+		// ctx expired (or was already cancelled when Kill was called) —
+		// escalate to SIGKILL.
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return fmt.Errorf("handler: Session.Kill: SIGKILL pid %d: %w", pid, err)
 		}
 		return nil
 	}

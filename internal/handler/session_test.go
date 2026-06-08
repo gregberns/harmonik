@@ -27,12 +27,18 @@ import (
 )
 
 // sessionFixtureCmd builds an *exec.Cmd for use in session tests.
-// It sets Setpgid=true so Kill(-pgid, ...) targets the full process group,
-// matching the production path through lifecycle.SpawnChildSysProcAttr.
+//
+// It mirrors the PRODUCTION spawn config (lifecycle.SpawnChildSysProcAttr per
+// HC-044 / PL-006a): Setpgid=true with Pgid set to the daemon's process-group
+// ID, so the child JOINS the daemon's group rather than becoming its own group
+// leader.  This is the configuration session.Kill must operate under; using
+// Pgid:0 here would let the child be its own group leader — a config production
+// never uses — and would mask the hk-4c7kw bug where `kill(-childPid, …)`
+// returns ESRCH because the child is not a group leader.
 func sessionFixtureCmd(t *testing.T, shell string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", shell)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: syscall.Getpgrp()}
 	return cmd
 }
 
@@ -186,23 +192,35 @@ func TestSession_Stdout_Exposed(t *testing.T) {
 	_ = sess.Wait(t.Context())
 }
 
-// TestSession_Kill_PropagatesSignalToProcessGroup verifies that Kill sends
-// SIGTERM to the entire process group, not just the direct child.
+// TestSession_Kill_ReapsImmediateChildPromptly verifies that Kill reaps the
+// immediate handler subprocess promptly under the PRODUCTION spawn config
+// (Setpgid=true, Pgid=<daemon_pgid>; see sessionFixtureCmd), even when that
+// child forked a grandchild that is still alive.
 //
-// The child shell forks a grandchild (sleep 300) and writes the grandchild's
-// PID to a temp file.  After Kill returns both the child and the grandchild
-// must be gone, exercising the syscall.Kill(-pgid, SIGTERM) path in
-// session.Kill.
+// Background (hk-4c7kw): the handler is deliberately placed in the DAEMON's
+// process group (HC-044 / PL-006a) so the orphan sweep can find re-parented
+// descendants by PGID.  The child is therefore NOT its own group leader, so the
+// old `kill(-childPid, …)` path returned ESRCH and never reached the
+// subprocess — daemon shutdown then blocked for the full handler runtime.  Kill
+// now signals the immediate child's positive PID, which reaps it promptly;
+// grandchildren are NOT Kill's responsibility — they are torn down by the
+// caller's bounded post-kill wait (waitWithSocketGrace) and the daemon's orphan
+// sweep (PL-006), exercised by the T3 scenario tests and the orphan-sweep tests.
+//
+// This test asserts the property Kill DOES own (prompt immediate-child reap) and
+// explicitly does NOT assert grandchild death — that would re-encode the invalid
+// assumption that masked the bug.  The grandchild is cleaned up at the end to
+// avoid leaking a process out of the test.
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006a; handler-contract.md HC-044.
-// Bead ref: hk-44w19 (SIGTERM propagation).
-func TestSession_Kill_PropagatesSignalToProcessGroup(t *testing.T) {
+// Bead ref: hk-44w19 (signal delivery), hk-4c7kw (prompt-reap under prod pgroup).
+func TestSession_Kill_ReapsImmediateChildPromptly(t *testing.T) {
 	t.Parallel()
 
 	pidFile := t.TempDir() + "/grandchild.pid"
 
 	// Child forks a grandchild sleep, records its PID, then waits.
-	// Both stay alive until the process group receives a signal.
+	// Both stay alive until the child receives a signal.
 	script := `sh -c 'sleep 300' & echo $! > ` + pidFile + `; wait`
 
 	cmd := sessionFixtureCmd(t, script)
@@ -231,26 +249,39 @@ func TestSession_Kill_PropagatesSignalToProcessGroup(t *testing.T) {
 	if _, scanErr := fmt.Sscan(strings.TrimSpace(string(grandchildPIDBytes)), &grandchildPID); scanErr != nil {
 		t.Fatalf("parse grandchild PID: %v", scanErr)
 	}
+	// Ensure the orphaned grandchild does not leak out of the test regardless of
+	// outcome (the daemon's orphan sweep owns this in production).
+	defer func() { _ = syscall.Kill(grandchildPID, syscall.SIGKILL) }()
 
 	// Confirm the grandchild is alive before Kill.
 	if probeErr := syscall.Kill(grandchildPID, 0); probeErr != nil {
 		t.Fatalf("grandchild (pid %d) not alive before Kill: %v", grandchildPID, probeErr)
 	}
 
-	killCtx, killCancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer killCancel()
+	// Kill with an already-cancelled ctx exercises the cancel-path escalation
+	// (SIGTERM then immediate SIGKILL) used by waitWithSocketGrace on ctx-cancel.
+	killCtx, killCancel := context.WithCancel(t.Context())
+	killCancel()
 
+	t0 := time.Now()
 	if err := sess.Kill(killCtx); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
-	_ = sess.Wait(t.Context())
 
-	// Give the OS a brief moment to reap the grandchild.
-	time.Sleep(100 * time.Millisecond)
+	// Wait must return promptly — the immediate child is reaped within budget,
+	// NOT blocked on the surviving grandchild (the hk-4c7kw regression).
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- sess.Wait(t.Context()) }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Kill+Wait did not return within 5s (immediate child not reaped promptly) — hk-4c7kw regression")
+	}
+	t.Logf("Kill+Wait returned in %v", time.Since(t0))
 
-	// The grandchild must no longer exist.
-	if killErr := syscall.Kill(grandchildPID, 0); killErr == nil {
-		t.Errorf("grandchild (pid %d) is still alive after Kill — SIGTERM did not propagate to process group", grandchildPID)
+	o := sess.Outcome()
+	if o.Signal != syscall.SIGKILL && o.ExitCode != -1 {
+		t.Errorf("Outcome should reflect signal-termination of the immediate child; got Signal=%d ExitCode=%d", o.Signal, o.ExitCode)
 	}
 }
 

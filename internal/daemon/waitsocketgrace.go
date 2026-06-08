@@ -39,6 +39,26 @@ import (
 // crash cases where no hook will arrive.
 const stopHookGrace = 3 * time.Second
 
+// killWatcherReapGrace bounds the post-Kill wait for the watcher goroutine to
+// drain on the ctx-cancel (operator-stop / SIGINT / SIGTERM) path.
+//
+// Why a bound is needed (hk-4c7kw): after sess.Kill reaps the immediate handler
+// process, the watcher's NDJSON read-loop may still be blocked on its progress
+// stream because a grandchild the handler forked (e.g. a `sleep` left running by
+// a shell handler) inherited the stdout write-end and keeps it open until it
+// exits naturally.  Blocking unbounded on watcher.Done() in that case made
+// daemon shutdown wait the full handler runtime (~30 s in the T3 scenario tests)
+// instead of returning promptly.  Bounding the wait lets the daemon proceed to
+// reap + reopen the bead within budget; the watcher goroutine unblocks on its
+// own once the grandchild exits or its enclosing ctx is observed.
+//
+// 3 s mirrors stopHookGrace (a generous margin over the normal sub-millisecond
+// watcher teardown) while keeping the operator-perceived shutdown well under the
+// 10 s T3 budget.
+//
+// Bead: hk-4c7kw.
+const killWatcherReapGrace = 3 * time.Second
+
 // exitInfo carries the process exit metadata captured after sess.Wait() returns.
 type exitInfo struct {
 	exitCode   int
@@ -81,10 +101,19 @@ func waitWithSocketGrace(
 		case <-watcher.Done():
 			// Normal exit: handler process terminated.
 		case <-ctx.Done():
-			// Operator/daemon cancellation: kill the session and wait for the
-			// watcher to drain before proceeding.
+			// Operator/daemon cancellation: kill the session, then wait for the
+			// watcher to drain — but bound that wait. The watcher's read-loop can
+			// stay blocked on the progress stream when a handler grandchild
+			// inherited the stdout write-end and is still alive (hk-4c7kw); without
+			// a bound, shutdown would block for the full handler runtime. The reap
+			// (sess.Wait below) returns promptly once the immediate handler exits.
 			_ = sess.Kill(ctx)
-			<-watcher.Done()
+			select {
+			case <-watcher.Done():
+			case <-time.After(killWatcherReapGrace):
+				// Watcher still draining (grandchild holds the pipe open). Proceed;
+				// the goroutine unblocks on its own once the grandchild exits.
+			}
 		}
 	} else if ctx.Err() != nil {
 		// Substrate path, context already cancelled — kill and fall through.

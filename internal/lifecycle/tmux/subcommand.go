@@ -162,14 +162,63 @@ func SkipExecRecorder(out *[]string) ExecFunc {
 // name attaches to the operator's session when launched via tmux-start, and
 // creates its own dedicated session otherwise.
 //
-// hk-9vp51 / hk-15b83: callers MUST derive the session name from the project
-// directory — NOT from the ambient $TMUX session via `tmux display-message
-// -p '#{session_name}'`. When the auto-revive supervisor (itself running inside
-// an `hk-daemon-supervise` session) starts the daemon, that call resolves to the
-// SUPERVISOR's session, so implementer windows spawn there instead of the
-// daemon-owned session.
+// hk-9vp51 / hk-15b83: callers MUST NOT spawn implementer windows into the
+// ambient $TMUX session when that session is the supervisor's — see
+// ResolveDaemonSpawnSession for the dispatch-time resolution that excludes it.
 func DefaultSessionName(projectDir string) string {
 	return "harmonik-" + tmuxStartHashDir(projectDir) + "-default"
+}
+
+// SupervisorSessionName is the tmux session the auto-revive supervisor
+// (/tmp/hk-daemon-supervise.sh) runs in. The daemon, launched as a child of the
+// supervisor, can inherit $TMUX pointing at this session; implementer windows
+// MUST NOT spawn here (they would leak into the supervisor's session and a
+// `grep harmonik-*-flywheel` would find "0 sessions" — the symptom that
+// mis-diagnosed hk-9vp51 as a launch wedge).
+//
+// hk-9vp51 fix-forward: this is the ONE session ResolveDaemonSpawnSession
+// excludes; every other ambient session (including the operator's `hk
+// tmux-start` session) is a valid, already-existing spawn target.
+const SupervisorSessionName = "hk-daemon-supervise"
+
+// ResolveDaemonSpawnSession decides which tmux session the daemon should spawn
+// implementer windows into, given the live session it currently runs inside
+// (liveSession, as returned by `tmux display-message -p '#{session_name}'`).
+//
+// hk-9vp51 fix-forward (option (a) — LOW RISK): keep dispatch-time live-session
+// resolution — which ALWAYS resolves to a session that exists right now — and
+// EXCLUDE ONLY the supervisor's own session. Concretely:
+//
+//   - liveSession is a normal session (operator's tmux-start session, an ambient
+//     `harmonik` session, etc.) → use it verbatim. It provably exists at this
+//     instant (the daemon is running inside it), so SpawnWindow can never hit
+//     "session does not exist". needEnsure is false.
+//   - liveSession is empty (display-message failed) OR is the supervisor session
+//     → fall back to the deterministic per-project DefaultSessionName and signal
+//     needEnsure=true so the caller EnsureSessions it before constructing the
+//     substrate. This is the only case where we depart from the live session,
+//     and it is exactly the case the original sub-fix #3 over-generalised: it
+//     ALWAYS switched to the deterministic name (even when the live session was
+//     fine) and that boot-created session did not persist to dispatch time,
+//     breaking every spawn. Here we switch ONLY when forced, and the fallback is
+//     ensured-and-kept-alive by the caller (a detached tmux session with a live
+//     shell persists; the #4 coordinator reaper only targets "-flywheel"
+//     sessions, never this "-default" one).
+//
+// Returns the chosen session name and whether the caller must EnsureSession it
+// (true only for the fallback). The returned name is never the supervisor
+// session and is never empty.
+func ResolveDaemonSpawnSession(projectDir, liveSession string) (session string, needEnsure bool) {
+	live := strings.TrimSpace(liveSession)
+	if live == "" || live == SupervisorSessionName {
+		// Forced fallback: the ambient session is unusable as a spawn target.
+		// Use the deterministic daemon-owned session and require the caller to
+		// ensure it exists (and keep it alive for the daemon's lifetime).
+		return DefaultSessionName(projectDir), true
+	}
+	// The live session exists right now (we are running in it) and is not the
+	// supervisor's — use it verbatim. No EnsureSession needed.
+	return live, false
 }
 
 // tmuxStartHashDir returns the 12-char hex project hash for dir by resolving

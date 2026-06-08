@@ -95,6 +95,15 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-9eury.
 	CoordinatorSessionsSkipped int
 
+	// CoordinatorSessionsReaped is the count of coordinator (flywheel) tmux
+	// sessions force-killed at boot because their owning supervisor PID was
+	// confirmed DEAD (sentinel present but kill(pid,0) → ESRCH).  These sessions
+	// are exempt from the generic orphan-classification (sessionIsOrphaned can
+	// return false when the supervisor's re-parented children keep the pane
+	// "alive"), so a dead supervisor would otherwise leak its flywheel session
+	// forever.  hk-9vp51.
+	CoordinatorSessionsReaped int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -200,6 +209,16 @@ type OrphanSweepConfig struct {
 	// BrTimeoutCfg forwards the BI-025c timeout configuration to ResetBead.
 	BrTimeoutCfg brcli.TimeoutConfig
 
+	// DaemonSpawnSession is the tmux session name the daemon spawns implementer
+	// windows into (resolved by tmux.ResolveDaemonSpawnSession at boot). When
+	// non-empty it is EXCLUDED from the session-level orphan sweep so the daemon
+	// never kills its own spawn-target session — critical for the fix-forward
+	// fallback case where the daemon EnsureSessions a fresh "harmonik-<hash>-
+	// default" session that has only an idle zsh window at boot (which the generic
+	// sweep would otherwise classify as orphaned and kill before the first
+	// dispatch). hk-9vp51.
+	DaemonSpawnSession string
+
 	// Logger receives diagnostic messages. Nil → silent.
 	Logger *log.Logger
 }
@@ -289,6 +308,81 @@ func probeCoordinatorSentinel(projectDir string, logger *log.Logger) (probeCoord
 	return probeCoordinatorSentinelResult{Live: true}, nil
 }
 
+// reapDeadCoordinatorSession force-kills the coordinator (flywheel) tmux session
+// for projectHash when its owning supervisor has been confirmed dead (caller
+// established this via probeCoordinatorSentinel: sentinel present, kill(pid,0) →
+// ESRCH).  It only kills the session if it is actually present in the live tmux
+// session list — never a live supervisor's session, because the caller only
+// invokes this on the dead-PID branch.
+//
+// SAFETY (hk-9vp51 fix-forward): the ONLY session this reaper can ever target is
+// lifecycle.TmuxSessionName(projectHash, "flywheel") — the "-flywheel"-suffixed
+// coordinator session.  The daemon's own implementer-spawn-target session is a
+// DIFFERENT name (the ambient session the daemon runs in, or the
+// "-default"-suffixed session per DefaultSessionName), so this reaper can NEVER
+// kill the daemon's own live spawn-target session.  This is the explicit guard
+// the original sub-fix #3 lacked: that revert was caused by the spawn target
+// vanishing; here we prove by construction the reaper cannot be the cause.  As a
+// belt-and-suspenders assertion we refuse to kill anything that does not carry
+// the flywheel suffix.
+//
+// Returns the count of sessions reaped (0 or 1).  Non-fatal: a nil adapter, a
+// ListSessions error, or a KillSession error is logged and treated as 0/handled.
+//
+// Mirrors the reconciler-reaper pattern (hk-5pg37) and the dead-PID liveness
+// discipline of sessionIsOrphaned.  hk-9vp51.
+func reapDeadCoordinatorSession(ctx context.Context, projectHash core.ProjectHash, adapter ltmux.Adapter, logger *log.Logger) int {
+	if adapter == nil {
+		return 0
+	}
+	flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
+
+	// Belt-and-suspenders self-guard: the reaper must ONLY ever target the
+	// flywheel-suffixed coordinator session, never the daemon's own spawn-target
+	// session.  If the name does not carry the flywheel suffix something is badly
+	// wrong; refuse rather than risk reaping a live spawn target (the prime
+	// suspect that broke the original sub-fix #3).
+	if !strings.HasSuffix(flywheelSession, "-flywheel") {
+		if logger != nil {
+			logger.Printf("daemon: reapDeadCoordinatorSession: refusing to reap %q — not a flywheel-suffixed coordinator session (hk-9vp51 self-guard)", flywheelSession)
+		}
+		return 0
+	}
+
+	// Confirm the session exists before issuing the kill (avoids a spurious
+	// KillSession error log for the common case where the supervisor exited
+	// cleanly and already tore down its session).
+	sessions, listErr := adapter.ListSessions(ctx)
+	if listErr != nil {
+		if logger != nil {
+			logger.Printf("daemon: reapDeadCoordinatorSession: ListSessions error (skipping reap): %v", listErr)
+		}
+		return 0
+	}
+	present := false
+	for _, s := range sessions {
+		if s == flywheelSession {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return 0
+	}
+
+	if logger != nil {
+		logger.Printf("daemon: reapDeadCoordinatorSession: supervisor dead — reaping leaked coordinator session %q (hk-9vp51)", flywheelSession)
+	}
+	if killErr := adapter.KillSession(ctx, flywheelSession); killErr != nil {
+		// TOCTOU (session vanished) or other error: log and still count it — we
+		// identified it as a dead-supervisor leak.
+		if logger != nil {
+			logger.Printf("daemon: reapDeadCoordinatorSession: kill-session %q error (proceeding): %v", flywheelSession, killErr)
+		}
+	}
+	return 1
+}
+
 // readSupervisorPID reads a single ASCII decimal PID line from path.
 func readSupervisorPID(path string) (int, error) {
 	//nolint:gosec // G304: path is constructed from operator-controlled projectDir
@@ -359,7 +453,20 @@ func RunOrphanSweep(
 	// If the sentinel is present and the supervisor PID is live, exclude the
 	// flywheel session from the sweep. If the sentinel is stale (dead PID), kill
 	// the session normally and remove the sentinel.
-	var excludedTmuxSessions map[string]struct{}
+	excludedTmuxSessions := map[string]struct{}{}
+	// hk-9vp51: ALWAYS exclude the daemon's own spawn-target session from the
+	// session-level sweep — regardless of coordinator state. In the fix-forward
+	// fallback case the daemon EnsureSessions a fresh "harmonik-<hash>-default"
+	// session whose only window is an idle zsh at boot; without this exclusion the
+	// generic sweep (sessionIsOrphaned: zero non-zsh windows → orphaned) would
+	// kill the daemon's own session before the first dispatch, reproducing the
+	// reverted sub-fix #3 "session does not exist" regression.
+	if cfg.DaemonSpawnSession != "" {
+		excludedTmuxSessions[cfg.DaemonSpawnSession] = struct{}{}
+		if cfg.Logger != nil {
+			cfg.Logger.Printf("daemon: RunOrphanSweep: excluding daemon spawn-target session %q from sweep (hk-9vp51)", cfg.DaemonSpawnSession)
+		}
+	}
 	if projectDir != "" {
 		probe, probeErr := probeCoordinatorSentinel(projectDir, cfg.Logger)
 		if probeErr != nil {
@@ -368,11 +475,23 @@ func RunOrphanSweep(
 		if probe.Live {
 			// Coordinator is live: exclude its flywheel session from the kill sweep.
 			flywheelSession := lifecycle.TmuxSessionName(projectHash, "flywheel")
-			excludedTmuxSessions = map[string]struct{}{flywheelSession: {}}
+			excludedTmuxSessions[flywheelSession] = struct{}{}
 			result.CoordinatorSessionsSkipped = 1
 			if cfg.Logger != nil {
 				cfg.Logger.Printf("daemon: RunOrphanSweep: skipping coordinator session %q (orphan_sweep_skipped_coordinator_session)", flywheelSession)
 			}
+		} else if probe.SentinelRemoved {
+			// hk-9vp51: the sentinel was present but the supervisor PID is DEAD
+			// (probeCoordinatorSentinel removed the stale sentinel after kill(pid,0)
+			// returned ESRCH).  Force-reap the dead supervisor's flywheel/coordinator
+			// session at boot: it is exempt from the generic orphan classification
+			// (sessionIsOrphaned can report it "alive" when the supervisor's
+			// re-parented bash children keep the first pane PID live), so without
+			// this it leaks forever.  The supervisor PID is verified dead by the
+			// probe, so this is safe — we never kill a session of a LIVE supervisor.
+			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
+			result.CoordinatorSessionsReaped = reaped
+			result.TmuxSessionsKilled += reaped
 		}
 	}
 
@@ -382,7 +501,9 @@ func RunOrphanSweep(
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("tmux: %v", err))
 	}
-	result.TmuxSessionsKilled = tmuxKilled
+	// hk-9vp51: accumulate (+=) rather than assign so the dead-supervisor
+	// coordinator reaper's contribution above is not overwritten.
+	result.TmuxSessionsKilled += tmuxKilled
 
 	//   (a1b) Kill orphan harmonik-owned sessions via the Adapter path (hk-kqdpf.3):
 	//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those

@@ -1056,6 +1056,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			sweepTmuxAdapter = sa.tmuxAdapter()
 		}
 
+		// hk-9vp51: extract the daemon's own spawn-target session name so the
+		// orphan sweep EXCLUDES it. Without this, a freshly-ensured fallback
+		// "harmonik-<hash>-default" session (created when the ambient session was
+		// the supervisor's) has only an idle zsh window at boot and would be
+		// classified orphaned and killed by the daemon's own boot sweep before the
+		// first dispatch — the exact "session does not exist" regression that
+		// reverted the original sub-fix #3.
+		var daemonOwnSession string
+		if ss, ok := cfg.Substrate.(substrateWithSessionName); ok {
+			daemonOwnSession = ss.daemonSessionName()
+		}
+
 		sweepResult, sweepErr := RunOrphanSweep(
 			ctx,
 			cfg.ProjectDir,
@@ -1079,9 +1091,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				},
 				IntentLogDir:    intentLogDir,
 				DaemonStartNS:   daemonStartTime.UnixNano(),
-				QueueDispatched: queueDispatched,
-				QueueOwned:      queueOwned,
-				TmuxAdapter:     sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
+				QueueDispatched:   queueDispatched,
+				QueueOwned:        queueOwned,
+				TmuxAdapter:       sweepTmuxAdapter,  // hk-xb5yi: reap orphan windows from prior crash
+				DaemonSpawnSession: daemonOwnSession, // hk-9vp51: never sweep the daemon's own spawn-target session
 			},
 		)
 

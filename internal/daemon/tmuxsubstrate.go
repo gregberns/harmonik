@@ -558,6 +558,22 @@ type substrateWithAdapter interface {
 // call it on the concrete type.  This satisfies substrateWithAdapter.
 func (s *tmuxSubstrate) tmuxAdapter() tmux.Adapter { return s.adapter }
 
+// substrateWithSessionName is an optional interface a Substrate may implement to
+// expose the tmux session name it spawns implementer windows into.  The boot
+// orphan sweep probes for this so it can EXCLUDE the daemon's own spawn-target
+// session from the session-level kill sweep (hk-9vp51): when the daemon falls
+// back to a freshly-created "harmonik-<hash>-default" session, that session has
+// only an idle zsh window at boot, so sessionIsOrphaned would classify it as
+// orphaned and the daemon's own sweep would kill it before the first dispatch —
+// reproducing the original sub-fix #3 "session does not exist" regression.
+type substrateWithSessionName interface {
+	daemonSessionName() string
+}
+
+// daemonSessionName exposes the session name this substrate spawns windows into,
+// satisfying substrateWithSessionName (hk-9vp51).
+func (s *tmuxSubstrate) daemonSessionName() string { return s.sessionName }
+
 // KillAllWindows kills every tmux window spawned by this daemon instance.
 //
 // It is called from exitClean() in runWorkLoop after wg.Wait() returns, so all

@@ -179,6 +179,10 @@ func registerAgentEvents() {
 	// acquire a spawn-semaphore slot within the bounded acquire timeout — the
 	// observable signature of a slot leak. Durability class: O.
 	mustRegister("spawn_cap_blocked", func() EventPayload { return &SpawnCapBlockedPayload{} })
+	// implementer_budget_exceeded (hk-9vp51): emitted by pasteInjectQuitOnCommit
+	// when an implementer session is force-killed for exhausting its commit
+	// budget (hard ceiling reached, or progress went stale). Durability class: O.
+	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })

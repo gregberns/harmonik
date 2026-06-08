@@ -1324,6 +1324,10 @@ type ExportedSessionKiller = sessionKiller
 // eventCh may be nil; when nil the heartbeat-staleness check is skipped and
 // only the wall-clock commitPollTimeout acts as the kill trigger.
 //
+// This wrapper passes a nil bus and a zero runID (no implementer_budget_exceeded
+// emission); use ExportedPasteInjectQuitOnCommitWithBus when the test needs to
+// observe the hk-9vp51 diagnostic.
+//
 // Beads: hk-trjef, hk-930o3, hk-7srrd.
 func ExportedPasteInjectQuitOnCommit(
 	ctx context.Context,
@@ -1335,8 +1339,33 @@ func ExportedPasteInjectQuitOnCommit(
 	briefDelivered <-chan struct{},
 	eventCh <-chan core.EventEnvelope,
 ) {
-	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh)
+	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, nil, core.RunID{})
 }
+
+// ExportedPasteInjectQuitOnCommitWithBus is like ExportedPasteInjectQuitOnCommit
+// but threads a bus and runID so tests can observe the hk-9vp51
+// implementer_budget_exceeded diagnostic emitted on a commit-budget kill.
+//
+// Bead: hk-9vp51.
+func ExportedPasteInjectQuitOnCommitWithBus(
+	ctx context.Context,
+	qs quitSenderExported,
+	killer sessionKiller,
+	wtPath string,
+	initialSHA string,
+	noChangeTimeoutCh chan<- struct{},
+	briefDelivered <-chan struct{},
+	eventCh <-chan core.EventEnvelope,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+) {
+	pasteInjectQuitOnCommit(ctx, qs, killer, wtPath, initialSHA, noChangeTimeoutCh, briefDelivered, eventCh, bus, runID)
+}
+
+// ExportedCommitHardCeiling is a pointer to the package-level commitHardCeiling
+// var.  Tests set *ExportedCommitHardCeiling to a short duration to exercise the
+// absolute-backstop kill path quickly (hk-9vp51).
+var ExportedCommitHardCeiling = &commitHardCeiling
 
 // ExportedHeartbeatStalenessThreshold is a pointer to the package-level
 // heartbeatStalenessThreshold var.  Tests set *ExportedHeartbeatStalenessThreshold

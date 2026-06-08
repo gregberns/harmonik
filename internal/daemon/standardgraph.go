@@ -8,10 +8,13 @@ package daemon
 // The embedded graph is identical to specs/examples/standard-bead.dot (the canonical
 // source of truth). The copy here is the embed target; keep in sync with the spec file.
 //
-// Review-floor guarantee: the embedded graph contains a reviewer node, so the DOT
-// default is reviewed by construction. If loading the embedded graph fails (parse or
-// validation error), the workloop falls through to the hardcoded review-loop, NEVER
-// to single (per hk-30vlb review-floor invariant §REVIEW FLOOR).
+// Review-floor guarantee (hk-30vlb §REVIEW FLOOR):
+//   (a) The embedded graph contains a reviewer node, so the DOT default is reviewed
+//       by construction.
+//   (b) If loading the embedded graph fails (parse or validation error), the pre-switch
+//       block in workloop.go changes workflowMode to WorkflowModeReviewLoop before
+//       entering the dispatch switch, so execution falls through to the review-loop
+//       driver — NEVER to single.
 
 import (
 	_ "embed"

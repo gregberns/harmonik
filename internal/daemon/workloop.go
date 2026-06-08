@@ -1742,16 +1742,44 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
 
+	// Pre-switch: for DOT mode, resolve and pre-load the graph source (hk-30vlb).
+	// Three-tier resolution:
+	//   1. itemWorkflowRef set → explicit path (resolved below in the DOT case).
+	//   2. <projectDir>/workflow.dot exists → project-level path (resolved below).
+	//   3. Neither → use the embedded standard-bead.dot (loaded here).
+	//
+	// The embedded load happens here — before the switch — so that if it fails we
+	// can change workflowMode to review-loop and let the review-loop case execute
+	// normally (spec §REVIEW FLOOR item b: fall through to review-loop, NEVER single).
+	var preloadedDotGraph *dot.Graph
+	if workflowMode == core.WorkflowModeDot && itemWorkflowRef == "" {
+		defaultDotPath := filepath.Join(deps.projectDir, "workflow.dot")
+		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
+			g, embErr := loadStandardGraph(itemTemplateParams)
+			if embErr != nil {
+				// Safety floor (hk-30vlb §REVIEW FLOOR item b): embedded graph parse
+				// failure — fall through to review-loop, NEVER to single.
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: embedded standard-bead.dot load failed for bead %s run %s: %v (falling back to review-loop)\n",
+					beadID, runID.String(), embErr)
+				workflowMode = core.WorkflowModeReviewLoop
+			} else {
+				preloadedDotGraph = g
+			}
+		}
+	}
+
 	// Mode-dispatch: route to the mode-specific driver.
 	//
 	// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
-	// handled by runReviewLoop in reviewloop.go.
+	// handled by runReviewLoop in reviewloop.go. Also the fallback when the
+	// embedded DOT graph fails to load (hk-30vlb §REVIEW FLOOR item b).
 	//
 	// dot mode: DOT-defined workflow graph; loader validates the artifact,
-	// then (stub) falls through to single-mode until the cascade engine
-	// (hk-bf85t) lands.
+	// then drives the cascade (driveDotWorkflow). Default uses the embedded
+	// standard-bead.dot (pre-loaded above into preloadedDotGraph).
 	//
-	// single mode (default MVH): one-shot implementer dispatch.
+	// single mode: one-shot implementer dispatch.
 	switch workflowMode {
 	case core.WorkflowModeReviewLoop:
 		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch)
@@ -1864,40 +1892,27 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// which walks the graph node-by-node using workflow.DecideNextNode
 		// (hk-9dnak; cascade engine library hk-bf85t).
 		//
-		// Three-tier .dot source resolution (hk-30vlb):
-		//   1. itemWorkflowRef set → explicit path (absolute or projectDir-relative).
-		//   2. <projectDir>/workflow.dot exists → project-level override.
-		//   3. Neither → use the embedded standard-bead.dot graph (default).
-		dotPath := filepath.Join(deps.projectDir, "workflow.dot")
-		useEmbedded := false
-		if itemWorkflowRef != "" {
-			if filepath.IsAbs(itemWorkflowRef) {
-				dotPath = itemWorkflowRef
-			} else {
-				dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
-			}
-		} else if _, statErr := os.Stat(dotPath); os.IsNotExist(statErr) {
-			useEmbedded = true
-		}
-
-		// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
+		// Graph source resolution uses preloadedDotGraph (Tier 3: embedded) when
+		// already set by the pre-switch block; otherwise resolves Tier 1/2 from
+		// an explicit ref or <projectDir>/workflow.dot (three-tier spec hk-30vlb).
+		// Embedded-load failure was already handled above: workflowMode was changed
+		// to WorkflowModeReviewLoop and this case is not reached.
 		var graph *dot.Graph
-		var loadErr error
-		if useEmbedded {
-			// Embedded standard-bead.dot (hk-30vlb): reviewed by construction.
-			graph, loadErr = loadStandardGraph(itemTemplateParams)
-			if loadErr != nil {
-				// Safety floor (hk-30vlb): embedded graph load failed (should never
-				// happen if the test suite is green). Reopen so the bead is retried.
-				fmt.Fprintf(os.Stderr, "daemon: workloop: embedded standard-bead.dot load failed for bead %s run %s: %v (reopening)\n",
-					beadID, runID.String(), loadErr)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("embedded_graph_load: %v", loadErr))
-				emitDone(false, fmt.Sprintf("embedded_graph_load: %v", loadErr))
-				return
-			}
+		if preloadedDotGraph != nil {
+			// Tier 3: embedded standard-bead.dot (already parsed and validated).
+			graph = preloadedDotGraph
 		} else {
+			// Tier 1 or 2: explicit ref or <projectDir>/workflow.dot.
+			// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
+			dotPath := filepath.Join(deps.projectDir, "workflow.dot")
+			if itemWorkflowRef != "" {
+				if filepath.IsAbs(itemWorkflowRef) {
+					dotPath = itemWorkflowRef
+				} else {
+					dotPath = filepath.Join(deps.projectDir, itemWorkflowRef)
+				}
+			}
+			var loadErr error
 			graph, loadErr = workflow.LoadDotWorkflowWithParams(dotPath, itemTemplateParams)
 			if loadErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",

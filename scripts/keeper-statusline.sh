@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # keeper-statusline.sh — reads Claude Code statusLine JSON from stdin,
-# extracts .context_window.used_percentage and .session_id, and atomically
-# writes .harmonik/keeper/<agent>.ctx = {"pct":<N>,"session_id":<S>,"ts":<RFC3339>}.
+# extracts .context_window.used_percentage, .context_window.total_input_tokens,
+# .context_window_size, and .session_id, and atomically writes
+# .harmonik/keeper/<agent>.ctx = {"pct":<N>,"tokens":<N>,"window_size":<N>,"session_id":<S>,"ts":<RFC3339>}.
 #
 # The field path is .context_window.used_percentage (verified empirically).
 # It reads NA right after a /clear, in which case the write is skipped.
+#
+# tokens and window_size default to 0 when absent (older Claude Code versions
+# that do not emit these fields). The keeper watcher falls back to pct-based
+# gating when tokens == 0 || window_size == 0.
 #
 # Usage
 #   Called automatically as the statusLine.command in ~/.claude/settings.json.
@@ -21,9 +26,9 @@
 #   Atomically writes (via a rename-to-final) to:
 #     $HARMONIK_PROJECT/.harmonik/keeper/$HARMONIK_AGENT.ctx
 #   The file contains a single JSON line:
-#     {"pct":<float>,"session_id":<string>,"ts":"<RFC3339>"}
+#     {"pct":<float>,"tokens":<int>,"window_size":<int>,"session_id":<string>,"ts":"<RFC3339>"}
 #
-# Refs: hk-8vzek (session-keeper Phase-1).
+# Refs: hk-8vzek (session-keeper Phase-1), hk-cl74g (absolute-token gate fix).
 set -euo pipefail
 
 AGENT="${HARMONIK_AGENT:-default}"
@@ -46,12 +51,22 @@ fi
 SESSION_ID="$(printf '%s' "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)"
 TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
+# Extract absolute token counts — default to 0 when absent (older Claude Code).
+TOKENS="$(printf '%s' "${INPUT}" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null || echo '0')"
+WINDOW_SIZE="$(printf '%s' "${INPUT}" | jq -r '.context_window_size // 0' 2>/dev/null || echo '0')"
+
+# Sanitise: replace non-integer values with 0.
+if ! printf '%s' "${TOKENS}" | grep -qE '^[0-9]+$'; then TOKENS=0; fi
+if ! printf '%s' "${WINDOW_SIZE}" | grep -qE '^[0-9]+$'; then WINDOW_SIZE=0; fi
+
 # Encode session_id as a JSON string (handles empty and special chars).
 SESSION_ID_JSON="$(printf '%s' "${SESSION_ID}" | jq -Rc . 2>/dev/null || printf '""')"
 
 mkdir -p "${CTX_DIR}"
-printf '{"pct":%s,"session_id":%s,"ts":"%s"}\n' \
+printf '{"pct":%s,"tokens":%s,"window_size":%s,"session_id":%s,"ts":"%s"}\n' \
     "${PCT}" \
+    "${TOKENS}" \
+    "${WINDOW_SIZE}" \
     "${SESSION_ID_JSON}" \
     "${TS}" > "${TMP_FILE}"
 mv "${TMP_FILE}" "${CTX_FILE}"

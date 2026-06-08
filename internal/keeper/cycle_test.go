@@ -1187,6 +1187,199 @@ func TestCycler_IdentityPinnedAfterNonceConfirm(t *testing.T) {
 	}
 }
 
+// TestCycler_AbsoluteTokenGate verifies that the cycle fires based on absolute
+// token count rather than percentage when both Tokens and WindowSize are present.
+//
+// Scenario: a 1M-token window at 28% (280k tokens). With the old pct-based gate
+// (ActPct=90) the cycle would NOT fire. With the absolute gate
+// (ActAbsTokens=280k, ActPctCeil=0.85) the threshold is min(280k, 850k)=280k
+// and the cycle SHOULD fire.
+//
+// This is the key regression guard for hk-cl74g: prevents the keeper from
+// cycling ~3x too late on Opus-1M sessions.
+func TestCycler_AbsoluteTokenGate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "abs-gate-agent"
+		cycleID = "cyc-abs-001"
+		sid     = "sess-abs"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 28.0, Tokens: 280_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,         // pct gate would NOT fire at 28%
+		WarnPct:        80.0,
+		ActAbsTokens:   280_000,      // absolute gate fires at exactly 280k
+		ActPctCeil:     0.85,
+		WarnAbsTokens:  220_000,
+		WarnPctCeil:    0.70,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil },
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 28.0, Tokens: 280_000, WindowSize: 1_000_000, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	// Cycle must have fired despite low pct.
+	handoffEvts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)
+	if len(handoffEvts) != 1 {
+		t.Errorf("want 1 handoff_started (absolute-token gate fired); got %d", len(handoffEvts))
+	}
+}
+
+// TestCycler_AbsoluteTokenGate_BelowThreshold verifies that the cycle does NOT
+// fire when total_input_tokens is below the effective abs threshold.
+// Scenario: 1M window, 200k tokens (below min(280k, 850k)=280k). Old pct gate
+// would also not fire (20% < 90%), but we want to confirm abs-gate path is taken.
+func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "abs-below-agent"
+		cycleID = "cyc-abs-below"
+		sid     = "sess-abs-below"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ActAbsTokens:   280_000,
+		ActPctCeil:     0.85,
+		WarnAbsTokens:  220_000,
+		WarnPctCeil:    0.70,
+		HandoffTimeout: 100 * time.Millisecond,
+		ClearSettle:    30 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       func(_ string) (string, error) { return "", nil },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
+		},
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("want 0 inject calls (below abs threshold); got %d", n)
+	}
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(evts) != 0 {
+		t.Errorf("want 0 handoff_started below abs threshold; got %d", len(evts))
+	}
+}
+
+// TestCycler_AbsoluteTokenGate_200kWindow verifies behaviour on a 200k window:
+// min(280k, 0.85*200k=170k) = 170k. The cycle should fire at 170k tokens
+// even though pct is only 85% (below the 90% pct gate).
+func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "abs-200k-agent"
+		cycleID = "cyc-abs-200k"
+		sid     = "sess-200k"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 85.0, Tokens: 170_000, WindowSize: 200_000, SessionID: sid}, time.Now(), nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,    // pct gate would NOT fire at 85%
+		WarnPct:        80.0,
+		ActAbsTokens:   280_000, // effective threshold = min(280k, 0.85*200k=170k) = 170k
+		ActPctCeil:     0.85,
+		WarnAbsTokens:  220_000,
+		WarnPctCeil:    0.70,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil },
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 85.0, Tokens: 170_000, WindowSize: 200_000, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("want 1 handoff_started (pct-ceil gate on 200k window); got %d", n)
+	}
+}
+
 // containsSubstr is a helper to check substring presence.
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && func() bool {

@@ -141,9 +141,20 @@ type WatcherConfig struct {
 	// PollInterval is how often the watcher reads the gauge file. Default: 5s.
 	PollInterval time.Duration
 
-	// WarnPct is the upward percentage threshold that triggers a warn injection.
-	// Default: 80.
+	// WarnPct is the upward percentage threshold that triggers a warn injection
+	// when absolute token counts are unavailable. Default: 80.
 	WarnPct float64
+
+	// WarnAbsTokens is the absolute-token warn threshold. The effective threshold
+	// is min(WarnAbsTokens, WarnPctCeil * WindowSize). Used when the gauge file
+	// contains both Tokens and WindowSize (i.e. keeper-statusline.sh is current).
+	// Falls back to WarnPct when Tokens or WindowSize are zero. Default: 220000.
+	// Refs: hk-cl74g.
+	WarnAbsTokens int64
+
+	// WarnPctCeil caps the warn threshold as a fraction of the context window,
+	// preventing late warnings on large windows. Default: 0.70.
+	WarnPctCeil float64
 
 	// IdleQuiesce is the minimum duration of gauge-file quiescence before the
 	// watcher considers the pane idle enough to accept an injection.
@@ -178,12 +189,35 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.WarnPct <= 0 {
 		c.WarnPct = 80.0
 	}
+	if c.WarnAbsTokens <= 0 {
+		c.WarnAbsTokens = 220_000
+	}
+	if c.WarnPctCeil <= 0 {
+		c.WarnPctCeil = 0.70
+	}
 	if c.IdleQuiesce <= 0 {
 		c.IdleQuiesce = 8 * time.Second
 	}
 	if c.Staleness <= 0 {
 		c.Staleness = 120 * time.Second
 	}
+}
+
+// belowWarnThreshold reports whether the gauge reading is below the warn
+// threshold. Uses absolute tokens when both Tokens and WindowSize are available;
+// otherwise falls back to Pct vs WarnPct.
+func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
+		threshold := c.WarnAbsTokens
+		if c.WarnPctCeil > 0 {
+			pctBased := int64(c.WarnPctCeil * float64(cf.WindowSize))
+			if pctBased < threshold {
+				threshold = pctBased
+			}
+		}
+		return cf.Tokens < threshold
+	}
+	return cf.Pct < c.WarnPct
 }
 
 // Watcher polls the gauge file and manages the warn-injection state machine.
@@ -286,8 +320,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 			noGaugeEmittedAtBoot = false
 			lastNoGaugeEmit = time.Time{}
 
-			pct := ctxFile.Pct
-
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not
 			// changed since the previous tick for at least IdleQuiesce.
@@ -330,7 +362,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 
 			// ── warn state machine ───────────────────────────────────────────
-			if pct < w.cfg.WarnPct {
+			if w.cfg.belowWarnThreshold(ctxFile) {
 				// Below threshold: reset so the next upward crossing will warn.
 				warnArmed = true
 				warnFired = false
@@ -338,7 +370,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 
-			// pct >= warnPct
+			// At or above the warn threshold.
 			if warnArmed && !warnFired {
 				// Upward crossing detected — emit the warn event immediately.
 				// Inject delivery is deferred until the pane is quiesced; see

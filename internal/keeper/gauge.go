@@ -10,10 +10,17 @@ import (
 
 // CtxFile is the JSON content written by scripts/keeper-statusline.sh to
 // .harmonik/keeper/<agent>.ctx on every statusLine update.
+//
+// Tokens and WindowSize are populated by keeper-statusline.sh from
+// .context_window.total_input_tokens and .context_window_size respectively.
+// They default to 0 on older Claude Code versions that do not emit those fields;
+// keeper logic falls back to Pct-based gating when either is zero.
 type CtxFile struct {
-	Pct       float64 `json:"pct"`
-	SessionID string  `json:"session_id"`
-	Ts        string  `json:"ts"` // RFC 3339
+	Pct        float64 `json:"pct"`
+	Tokens     int64   `json:"tokens,omitempty"`
+	WindowSize int64   `json:"window_size,omitempty"`
+	SessionID  string  `json:"session_id"`
+	Ts         string  `json:"ts"` // RFC 3339
 }
 
 // ctxFilePath returns the absolute path to <projectDir>/.harmonik/keeper/<agent>.ctx.

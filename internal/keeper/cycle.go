@@ -35,8 +35,22 @@ type CyclerConfig struct {
 	ProjectDir string
 	TmuxTarget string // empty = skip real injection (test / warn-only mode)
 
-	ActPct         float64       // threshold to fire; default 90
-	WarnPct        float64       // re-arm threshold; default 80
+	// Absolute-token thresholds (preferred when CtxFile.Tokens + WindowSize are
+	// available). The effective act threshold is min(ActAbsTokens, ActPctCeil *
+	// WindowSize); similarly for warn. This handles both 200k and 1M windows:
+	// on a 200k window the pct-ceil wins (~170k); on a 1M window the abs cap
+	// wins (280k) — preventing the 90%-pct gate from firing at ~900k tokens.
+	// Refs: hk-cl74g.
+	ActAbsTokens  int64   // absolute cycle threshold; default 280000
+	ActPctCeil    float64 // pct-of-window cap for cycle gate; default 0.85
+	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 220000
+	WarnPctCeil   float64 // pct-of-window cap for warn gate; default 0.70
+
+	// Pct-based fallbacks used when CtxFile.Tokens == 0 or WindowSize == 0
+	// (older Claude Code versions that do not emit absolute token counts).
+	ActPct  float64 // threshold to fire; default 90
+	WarnPct float64 // re-arm threshold; default 80
+
 	HandoffTimeout time.Duration // wait for handoff nonce; default 180s
 	ClearSettle    time.Duration // best-effort wait for new session_id; default 3s
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
@@ -69,6 +83,18 @@ type CyclerConfig struct {
 }
 
 func (c *CyclerConfig) applyDefaults() {
+	if c.ActAbsTokens <= 0 {
+		c.ActAbsTokens = 280_000
+	}
+	if c.ActPctCeil <= 0 {
+		c.ActPctCeil = 0.85
+	}
+	if c.WarnAbsTokens <= 0 {
+		c.WarnAbsTokens = 220_000
+	}
+	if c.WarnPctCeil <= 0 {
+		c.WarnPctCeil = 0.70
+	}
 	if c.ActPct <= 0 {
 		c.ActPct = 90.0
 	}
@@ -126,6 +152,52 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.SetTmuxEnvFn == nil {
 		c.SetTmuxEnvFn = SetTmuxEnv
 	}
+}
+
+// actThreshold returns the effective absolute-token cycle threshold for the
+// given windowSize. It returns min(ActAbsTokens, int64(ActPctCeil * windowSize))
+// when windowSize > 0, ensuring the gate fires early enough on both 200k and 1M
+// windows. When windowSize == 0 (old .ctx without window data) returns ActAbsTokens
+// so callers can still apply it as a hard cap if they have a token count.
+func (c *CyclerConfig) actThreshold(windowSize int64) int64 {
+	if windowSize > 0 {
+		pctBased := int64(c.ActPctCeil * float64(windowSize))
+		if pctBased < c.ActAbsTokens {
+			return pctBased
+		}
+	}
+	return c.ActAbsTokens
+}
+
+// warnThreshold returns the effective absolute-token warn/re-arm threshold for
+// the given windowSize, using the same min(abs, pct*window) formula as actThreshold.
+func (c *CyclerConfig) warnThreshold(windowSize int64) int64 {
+	if windowSize > 0 {
+		pctBased := int64(c.WarnPctCeil * float64(windowSize))
+		if pctBased < c.WarnAbsTokens {
+			return pctBased
+		}
+	}
+	return c.WarnAbsTokens
+}
+
+// belowActThreshold reports whether cf is below the cycle-trigger threshold.
+// Uses absolute tokens when both Tokens and WindowSize are available; otherwise
+// falls back to Pct vs ActPct (backwards compat for old .ctx files).
+func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
+		return cf.Tokens < c.actThreshold(cf.WindowSize)
+	}
+	return cf.Pct < c.ActPct
+}
+
+// belowWarnThreshold reports whether cf is below the warn/re-arm threshold.
+// Uses absolute tokens when available, otherwise falls back to Pct vs WarnPct.
+func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
+		return cf.Tokens < c.warnThreshold(cf.WindowSize)
+	}
+	return cf.Pct < c.WarnPct
 }
 
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
@@ -272,15 +344,17 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 
-	// Observe pct for re-arm: track the first low-pct reading on a new session_id
-	// after a cycle has fired. This observation happens regardless of other gates
-	// so a brief low-pct window is never missed.
-	if c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && cf.Pct < c.cfg.WarnPct {
+	// Observe context level for re-arm: track the first below-warn reading on a
+	// new session_id after a cycle has fired. This happens regardless of other
+	// gates so a brief low-context window is never missed.
+	if c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
 		c.seenLowPctAfterLastFire = true
 	}
 
-	// Gate 3: context-window percentage must reach the act threshold.
-	if cf.Pct < c.cfg.ActPct {
+	// Gate 3: context must reach the act threshold.
+	// Uses absolute tokens when available (min(ActAbsTokens, ActPctCeil*window));
+	// falls back to percentage when Tokens/WindowSize are absent (old .ctx files).
+	if c.cfg.belowActThreshold(cf) {
 		return nil
 	}
 	// Gate 4: agent must be at a crisp await-input boundary.
@@ -524,8 +598,8 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 
-	// Observe pct for re-arm tracking (mirrors MaybeRun gate 3 side-effect).
-	if cf != nil && c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && cf.Pct < c.cfg.WarnPct {
+	// Observe context level for re-arm tracking (mirrors MaybeRun side-effect).
+	if cf != nil && c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
 		c.seenLowPctAfterLastFire = true
 	}
 

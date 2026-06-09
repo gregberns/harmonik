@@ -92,6 +92,78 @@ Twins must stay honest — their behavior must track what real agents actually d
 - **Cadence.** On every real-agent version bump; on every twin update; monthly in CI.
 - **Ownership.** S07 owns the suite; foundation specifies the obligation.
 
+## Scenario fixture determinism recipe
+
+Scenario tests boot a real daemon against twin binaries in a temporary git repo, which introduces four classes of non-determinism. The canonical recipe, discoverable in `internal/daemon/scenario_concurrent_multiqueue_hkumemp_test.go` and `internal/daemon/run_w3cp1_boiwe_hiqrl_test.go`, eliminates each one.
+
+### 1. No-commit guard — `WithWorktreeFactory(emptyCommitWorktreeFactory)`
+
+The daemon's merge path checks that `HEAD` has advanced past the bead's base SHA before merging (`hk-mmh8f` no-commit guard). Twins that emit protocol events but do not run `git commit` would trip this check and produce a `no_commit` `run_failed` event.
+
+Fix: inject `emptyCommitWorktreeFactory` via `daemon.WithWorktreeFactory`. It wraps `ExportedProductionWorktreeFactory` and, immediately after creating the worktree, runs `git commit --allow-empty -m "test: advance HEAD for <run_id>"`. HEAD advances past the base SHA before the handler binary starts. Using `--allow-empty` is critical: a file-based commit adds a `D <file>` to `git status` in the brief window between `update-ref` and `reset --hard` in `mergeRunBranchToMain`, triggering a false positive in `checkMainWorkingTreeDirty` for any concurrently-running bead.
+
+### 2. Concurrent-merge race — `WithMergeMutex(&mergeMu)`
+
+When `MaxConcurrent > 1`, multiple bead goroutines may finish their rebase and attempt to push to the shared bare-repo origin simultaneously. The second push sees a non-fast-forward ref and emits `push_failed` → `run_failed`, even when both worktrees contain correct commits.
+
+Fix: declare a `sync.Mutex` in the test and inject it via `daemon.WithMergeMutex(&mergeMu)`. This overrides the production per-daemon merge mutex and serialises the full `rebase → update-ref → push` sequence across all concurrent goroutines. The mutex is test-local, so parallel test cases do not contend.
+
+### 3. Phase-aware twin wrapper (review-loop mode)
+
+Scenario tests that run under `WorkflowModeDefault: core.WorkflowModeReviewLoop` launch two handler invocations per bead: implementer phase and reviewer phase. A twin binary that always runs the same scenario will skip writing a `review.json` verdict in the reviewer phase, causing the review loop to stall with `verdict absent at iteration 1`.
+
+Fix: write a `/bin/sh` wrapper script rather than invoking the twin binary directly. The wrapper detects the current phase by checking for `.harmonik/review-target.md`, which the daemon writes only into the reviewer's isolated worktree:
+
+```sh
+#!/bin/sh
+set -e
+if [ -f "$PWD/.harmonik/review-target.md" ]; then
+  mkdir -p "$PWD/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"scenario review-loop happy path"}' \
+    > "$PWD/.harmonik/review.json"
+  exit 0
+fi
+exec "/path/to/harmonik-twin-generic" --scenario single-happy-path
+```
+
+- **Implementer phase** (`review-target.md` absent): runs the twin with `--scenario single-happy-path`. The twin emits protocol events; `emptyCommitWorktreeFactory` provides the commit.
+- **Reviewer phase** (`review-target.md` present): writes an APPROVE verdict and exits. The reviewer must NOT commit (its worktree gets no pre-commit from the factory).
+
+### 4. Skip flags — disable expensive test-incompatible paths
+
+Three `daemon.Config` fields disable operations that are either unnecessary in tests or introduce timing hazards:
+
+| Flag | Why |
+|---|---|
+| `SkipWALCheckpoint: true` | Avoids SQLite WAL checkpoint on exit, which races with test teardown |
+| `SkipBrHistoryRotation: true` | Avoids rotating the br history log, which touches the live `.beads/` tree |
+| `SkipRestartBackoff: true` | Removes the exponential backoff on daemon restart so tests don't wait |
+
+### Putting it together
+
+```go
+var mergeMu sync.Mutex
+go func() {
+    startDone <- daemon.StartForTesting(ctx, daemon.Config{
+        ProjectDir:            projectDir,
+        JSONLLogPath:          jsonlPath,
+        HandlerBinary:         twinWrapperScript,
+        NoAutoPull:            true,
+        MaxConcurrent:         2,
+        SkipWALCheckpoint:     true,
+        SkipBrHistoryRotation: true,
+        SkipRestartBackoff:    true,
+        AgentReadyTimeout:     5 * time.Second,
+        WorkflowModeDefault:   core.WorkflowModeReviewLoop,
+    },
+        daemon.WithWorktreeFactory(emptyCommitWorktreeFactory),
+        daemon.WithMergeMutex(&mergeMu),
+    )
+}()
+```
+
+All four elements are required for deterministic concurrent-scenario tests. Omitting any one produces intermittent failures that vary with scheduler timing.
+
 ## Test infrastructure conventions
 
 - **No external services in CI.** Beads SQLite is embedded; event log is a tempdir; workspaces are tempdir worktrees. CI runs do not touch the network.

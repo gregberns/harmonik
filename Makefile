@@ -62,6 +62,19 @@ test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + bina
 test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requires credentials + binaries on PATH)
 	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeReviewLoopMode ./internal/daemon/...
 
+# test-scenario: run the scenario tier with -race and the scenario build tag.
+# Prereq: build-all compiles cmd/harmonik + all twins (twins/generic-twin,
+# harmonik-twin-claude) so scenario tests can locate them without a rebuild.
+# Budget: 10 minutes, matching the scenario sub-run in check-full (Tier 3).
+# Covers all packages that carry //go:build scenario files:
+#   ./test/scenario/...  — top-level scenario package (test/scenario/harness_test.go)
+#   ./internal/daemon/...— daemon-resident scenario tests (scenario_*.go files)
+# See docs/methodology/TESTING.md §Scenario fixture determinism recipe for the
+# worktree-factory / merge-mutex / phase-aware-twin / Skip* recipe used here.
+.PHONY: test-scenario
+test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budget; prereq: build-all)
+	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
+
 # ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------

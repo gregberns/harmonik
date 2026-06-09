@@ -354,6 +354,7 @@ exit 0
 // emitting any NDJSON signals, the bead is CLOSED (success path) and a
 // run_completed event is emitted.
 func TestT2_ExitZeroNoSignal(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	// Shell script: writes nothing, exits 0.

@@ -283,6 +283,7 @@ var _ time.Duration
 // Spec refs: specs/process-lifecycle.md §4.7 PL-021b, specs/handler-contract.md §4.8.
 // Bead: hk-3aqtb.
 func TestScenario_ReviewLoop_NilWatcherNoRace(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := nilwatcherFixtureProjectSetup(t)

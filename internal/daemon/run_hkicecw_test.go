@@ -93,6 +93,7 @@ func runBeadFixtureDeps(
 //
 // Bead ref: hk-icecw.
 func TestRunBead_ExitOnEmpty(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

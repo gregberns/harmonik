@@ -102,6 +102,7 @@ func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {
 // Spec ref: specs/queue-model.md §8.
 // Bead ref: hk-ppt32.
 func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

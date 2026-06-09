@@ -154,6 +154,7 @@ func TestRunBead_ExitOnFailure(t *testing.T) {
 //
 // Bead ref: hk-8jh26.
 func TestRunBead_RefusesActiveQueue(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -235,6 +236,7 @@ func TestRunBead_RefusesActiveQueue(t *testing.T) {
 //
 // Bead ref: hk-8jh26.
 func TestRunBead_ExitOnEmpty_ExitCodeZero(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

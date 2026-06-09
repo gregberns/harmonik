@@ -113,6 +113,7 @@ func startHk6ynv4Rig(t *testing.T) *hk6ynv4ScenarioRig {
 //     missing-event class).
 //   - Subscription closes cleanly on daemon cancel.
 func TestScenario_Hk6ynv4_SubscribeStream_EndToEnd(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 	rig := startHk6ynv4Rig(t)
 

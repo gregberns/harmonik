@@ -305,6 +305,7 @@ func stopHookE2EFixtureCoreSetup(t *testing.T, runID, handlerSessID, claudeSessi
 // This is the primary guard for hk-6pbe3: the complete production chain
 // (twin → wrapper → hook-relay → socket → store) must function end-to-end.
 func TestStopHookE2E_TwinRelayFastPath(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const runID = "run-e2e-6pbe3-fast-01"
@@ -347,6 +348,7 @@ func TestStopHookE2E_TwinRelayFastPath(t *testing.T) {
 // and the fast-path check missed it". This test confirms the fast path works
 // end-to-end with real binaries.
 func TestStopHookE2E_TwinRelayWaitGrace(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const runID = "run-e2e-6pbe3-grace-01"

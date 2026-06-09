@@ -294,6 +294,7 @@ func throughputFixtureRunDaemon(
 // Spec ref: POST_MVH_PARALLELISM_ROADMAP.md row 11.
 // Bead ref: hk-e61c3.6.
 func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	realBrPath := throughputFixtureLocateBr(t)

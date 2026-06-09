@@ -163,6 +163,7 @@ func queueDispatchFixturePollClosed(t *testing.T, ledger *stubBeadLedger, count 
 // Spec ref: execution-model.md §7.4 (TS-1); QM-011, QM-012.
 // Bead ref: hk-45ude.
 func TestQueueDispatch_HappyPath(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -428,6 +429,7 @@ func TestQueueDispatch_FailurePath_QueuePaused(t *testing.T) {
 //
 // Bead ref: hk-45ude.
 func TestQueueDispatch_BackwardCompat_BrReadyFallback(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

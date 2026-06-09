@@ -168,6 +168,7 @@ func clScenarioCollectBudgetExhausted(t *testing.T, bus eventbus.EventBus) <-cha
 // specs/handler-pause.md §11a HP-012, §7.1 HP-030.
 // Bead: hk-c7lxc.
 func TestScenario_CognitionLoop_UsdCapTripsHandlerPause(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const capBytes = 1000.0
@@ -307,6 +308,7 @@ func TestScenario_CognitionLoop_UsdCapTripsHandlerPause(t *testing.T) {
 // specs/handler-pause.md §11a HP-012, §7.1 HP-030.
 // Bead: hk-c7lxc.
 func TestScenario_CognitionLoop_MaxRunsTripsHandlerPause(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const maxRuns = 3

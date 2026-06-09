@@ -239,6 +239,7 @@ func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
 // daemon MUST emit daemon_orphan_sweep_completed."
 // Bead ref: hk-60uvn.
 func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)

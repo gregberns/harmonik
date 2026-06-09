@@ -277,6 +277,7 @@ func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_10BeadSequentialDrain(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 

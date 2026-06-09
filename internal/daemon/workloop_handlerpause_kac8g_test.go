@@ -123,6 +123,7 @@ func hpcPollEventType(t *testing.T, col *stubEventCollector, evtType string, min
 //
 // Bead ref: hk-kac8g.
 func TestHandlerPause_QueuePath_SkipOnPaused(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -289,6 +290,7 @@ func TestHandlerPause_HeldEventDedup(t *testing.T) {
 //
 // Bead ref: hk-kac8g.
 func TestHandlerPause_BrReadyPath_SkipOnPaused(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

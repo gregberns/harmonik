@@ -263,6 +263,7 @@ exit 0
 //
 // Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
 func TestPasteInjectSubstrateWiring_ReviewLoopCallsSpawnWindowTwice(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := pasteinjectFixtureProjectSetup(t)
@@ -312,6 +313,7 @@ func TestPasteInjectSubstrateWiring_ReviewLoopCallsSpawnWindowTwice(t *testing.T
 // Regression: if reviewloop.go guards are missing, a nil substrate passed to
 // handler.Launch would panic. This test confirms the nil-safe fallback works.
 func TestPasteInjectSubstrateWiring_NilSubstrateFallback(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := pasteinjectFixtureProjectSetup(t)

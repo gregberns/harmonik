@@ -144,6 +144,15 @@ run_go_test() {
     if [ "$class" = "scenario" ]; then
         gotest_args+=(-tags=scenario)
         tagdesc="-tags=scenario "
+    else
+        # Affected-unit step runs in -short mode: heavy real-daemon / real-binary
+        # E2E tests opt out of the per-bead commit_gate via testing.Short()
+        # (e.g. internal/daemon's ~21 daemon.Start / twin-binary / review-loop
+        # tests, which are red on main for environmental reasons). They still run
+        # without -short in the full CI lane. See skipRealDaemonE2EInShort
+        # (internal/daemon/shortskip_hkp258q_test.go). Refs: hk-p258q.
+        gotest_args+=(-short)
+        tagdesc="-short "
     fi
     gotest_args+=("$@")        # each remaining arg is one package pattern
     local pkglist="$*"          # space-joined, for log/warn messages only

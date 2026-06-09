@@ -334,6 +334,7 @@ exit 0
 //
 // Bead: hk-7x7ea.
 func TestScenario_ReviewLoop_FeedbackFileInjected(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := rlFBInjectProjectDir(t)

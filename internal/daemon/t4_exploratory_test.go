@@ -368,11 +368,24 @@ exit 0
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{handlerScript},
+		// Advance HEAD via an --allow-empty commit so the single-mode no-commit
+		// guard (hk-mmh8f) does not pre-empt this scenario's own failure/success
+		// logic. Iteration 1's handler exits 1 (intentional failure → reopen via
+		// the non-zero-exit path, unaffected by the advanced HEAD); iteration 2
+		// exits 0 and needs HEAD advanced so the run merges to main and the bead
+		// is closed (rather than being reopened by the no-commit guard).
+		WorktreeFactory:  emptyCommitWorktreeFactory,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// This scenario runs the work loop through TWO full iterations (iter-1 fails
+	// exit 1 → reopen; iter-2 exits 0 → empty-commit merge-to-main → close). Each
+	// iteration pays the stopHookGrace (~3s) window plus worktree-create + merge
+	// overhead, so the close arrives at ~8s. The poll deadline / ctx budget are
+	// sized generously (25s / 30s) so the test isn't flaky under parallel load —
+	// it still breaks out of the poll the instant the bead closes (hk-st77j).
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -380,17 +393,17 @@ exit 0
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until bead is closed (max 8s).
-	deadline := time.After(8 * time.Second)
+	// Poll until bead is closed (ceiling 25s; the happy path closes at ~8s).
+	deadline := time.After(25 * time.Second)
 	for {
 		if len(requeueLedger.getClosedIDs()) > 0 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Logf("T4-S3: bead not closed within 8s; reopened=%v closed=%v events=%v",
+			t.Logf("T4-S3: bead not closed within 25s; reopened=%v closed=%v events=%v",
 				requeueLedger.getReopenedIDs(), requeueLedger.getClosedIDs(), collector.eventTypes())
-			t.Error("T4-S3: FINDING: bead was not closed within 8s after reopen+redispatch")
+			t.Error("T4-S3: FINDING: bead was not closed within 25s after reopen+redispatch")
 			goto done
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -694,13 +707,21 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
+		// Advance HEAD via an --allow-empty commit so the single-mode no-commit
+		// guard (hk-mmh8f) does NOT reopen the bead before CloseBead is reached.
+		// A bare `exit 0` handler leaves HEAD == parent, which the guard treats
+		// as a no-commit failure (run_failed + ReopenBead); this scenario probes
+		// the close-success ordering, so it needs a real (empty) commit to land.
+		WorktreeFactory:  emptyCommitWorktreeFactory,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; the handler
-	// exits 0, stopHookGrace (~3s) fires, then CloseBead is called. 15s total
-	// budget covers git worktree creation + grace window + CI variability (hk-ngw3d).
+	// Real buildClaudeLaunchSpec + emptyCommitWorktreeFactory run; the handler
+	// exits 0 (HEAD already advanced by the factory's --allow-empty commit),
+	// stopHookGrace (~3s) fires, the run-branch merges to main, then CloseBead
+	// is called. 15s total budget covers git worktree creation + grace window
+	// + CI variability (hk-ngw3d).
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

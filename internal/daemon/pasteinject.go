@@ -551,6 +551,15 @@ func pasteInjectQuitOnCommit(
 	launchSuppressDeadline := loopStart.Add(launchSuppressCeil)
 	firstHeartbeatSeen := false
 
+	// hk-az4fd: worktree-activity fingerprint for activity-aware launch
+	// suppression.  An implementer that is ACTIVELY editing files (but has not
+	// yet committed or emitted a heartbeat the tap can observe) advances this
+	// fingerprint every tick; a truly-wedged pane (active child but doing
+	// nothing) leaves it stable.  When the launch-suppression ceiling elapses we
+	// consult this to distinguish "working past the ceiling" (defer to the 90-min
+	// hard budget) from "wedged at the ceiling" (kill — preserves hk-jgxqc).
+	lastActivityFingerprint, _ := worktreeActivityFingerprint(ctx, wtPath)
+
 	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
 	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
 	livenessChecker, _ := qs.(paneLivenessChecker)
@@ -677,15 +686,46 @@ func pasteInjectQuitOnCommit(
 			// a heartbeat.  Reset lastHeartbeat and extend the launch deadline so
 			// the kill does not fire until the session actually goes dark.
 			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
+				// hk-az4fd: ACTIVITY-AWARE launch suppression.  Before applying the
+				// hk-jgxqc ceiling, check for demonstrable progress in the worktree
+				// (HEAD advanced, or working-tree changes churning) WHILE the pane
+				// has an active child.  A claude that is editing files but has not
+				// yet committed — and whose agent_heartbeat events were drained by a
+				// competing tapCh reader under concurrency, so firstHeartbeatSeen
+				// never flips — would otherwise be false-killed at the 12-minute
+				// ceiling mid-work.  Treating fresh activity as a heartbeat clears
+				// firstHeartbeatSeen, so the launch branch is permanently bypassed
+				// and the run defers to the per-progress commit budget bounded by
+				// the 90-minute hard ceiling (hk-9vp51) — NOT infinite.
+				//
+				// hk-jgxqc intent preserved: a pane that reports an active child but
+				// produces NO progress (stable fingerprint) does NOT clear
+				// firstHeartbeatSeen, so the launch-suppression ceiling below still
+				// fires for the genuinely-wedged case.
+				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
+					if fp, ok := worktreeActivityFingerprint(ctx, wtPath); ok && fp != lastActivityFingerprint {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: worktree progressing (active pane + changed working tree) in %s; treating as heartbeat, deferring to commit budget (hard ceiling %v)\n",
+							wtPath, hardCeiling)
+						lastActivityFingerprint = fp
+						firstHeartbeatSeen = true
+						lastHeartbeat = now
+						lastProgress = now
+						totalDeadline = now.Add(pollTimeout)
+						continue
+					}
+				}
+
 				// hk-jgxqc: the active-pane suppression is bounded by an absolute
 				// ceiling (launchSuppressDeadline, NEVER extended).  Past that
 				// ceiling the suppression is no longer permitted: a pane that has
 				// reported "active child process" for the entire launch-suppression
-				// window without ever emitting a heartbeat OR committing is wedged
-				// (e.g. an idle claude whose heartbeats were consumed by a competing
-				// tapCh reader under concurrency), so we MUST fire the kill so
-				// sess.Wait unblocks and the workflow advances.  Within the ceiling
-				// the legitimate launch-phase suppression is preserved unchanged.
+				// window WITHOUT ever emitting a heartbeat, committing, OR making
+				// observable worktree progress is wedged (e.g. an idle claude whose
+				// heartbeats were consumed by a competing tapCh reader under
+				// concurrency), so we MUST fire the kill so sess.Wait unblocks and
+				// the workflow advances.  Within the ceiling the legitimate launch-
+				// phase suppression is preserved unchanged.
 				if now.Before(launchSuppressDeadline) &&
 					livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
 					fmt.Fprintf(os.Stderr,
@@ -1262,6 +1302,66 @@ func sumNumstatLines(numstat string) (int, bool) {
 		return 0, true
 	}
 	return total, true
+}
+
+// worktreeActivityFingerprint returns a string that changes whenever the
+// implementer makes demonstrable progress in its worktree WITHOUT yet having
+// committed.  It combines three signals so that BOTH tracked-file edits and
+// brand-new untracked files (including content churn of an untracked file, which
+// `git status` alone cannot see) move the fingerprint:
+//
+//   - HEAD — so a commit (the success case) always changes the fingerprint;
+//   - `git status --porcelain=v1` — the SET of working-tree changes (added,
+//     modified, deleted, untracked PATHS); and
+//   - a size+mtime signature over every changed/untracked file's bytes, so that
+//     ongoing edits to a file already present in the porcelain set (e.g. an
+//     untracked draft claude keeps growing) still advance the fingerprint.
+//
+// An implementer that is actively editing files (the false-kill scenario at the
+// 12-minute launch-suppression ceiling) produces a fingerprint that advances
+// from one check to the next; a genuinely-wedged pane (active child but doing
+// nothing, e.g. an idle claude whose heartbeats were drained by a competing
+// tapCh reader under concurrency — the hk-jgxqc wedge) produces a STABLE
+// fingerprint, so the launch-suppression ceiling still fires for it.
+//
+// Returns ("", false) on any git error so callers treat unknown as "no
+// observable progress" (conservative — the ceiling kill is allowed to proceed).
+//
+// Bead: hk-az4fd.
+func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bool) {
+	head, err := resolveWorktreeHEAD(ctx, wtPath)
+	if err != nil {
+		return "", false
+	}
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1")
+	cmd.Dir = wtPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	var sb strings.Builder
+	sb.WriteString(head)
+	sb.WriteByte(0)
+	sb.Write(out)
+	// Stat each changed/untracked path so content churn of files already in the
+	// porcelain set (notably untracked files, whose bytes git does not track)
+	// advances the fingerprint.  porcelain v1 rows are "XY <path>"; the path
+	// begins at byte offset 3.  Renames ("R  old -> new") and quoted paths are
+	// not stat-able as-is — they are skipped (the path-set change in `out`
+	// already captures them).
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		if strings.Contains(path, " -> ") || strings.HasPrefix(path, "\"") {
+			continue
+		}
+		if fi, statErr := os.Stat(filepath.Join(wtPath, path)); statErr == nil {
+			fmt.Fprintf(&sb, "\x00%s:%d:%d", path, fi.Size(), fi.ModTime().UnixNano())
+		}
+	}
+	return sb.String(), true
 }
 
 // reviewerBudgetSentinelName is the basename of the marker file

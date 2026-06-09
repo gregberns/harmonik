@@ -314,6 +314,14 @@ harmonik comms recv --follow --json     # drains backlog then streams live
 The rule is uniform: **detect mechanically, surface to the operator, await — never
 decide.** (c4-spec §7.)
 
+> **Attribution-first rule (Gap 1 — F13 reinforcement):** For EVERY run event you
+> surface (`epic_completed`, `run_failed`, `run_stale`, wedge), **resolve the owning
+> crew BEFORE reporting** by reading the durable `--assignee` mirror:
+> `br show <epic_or_bead_id> --format json` → `assignee`. Do NOT ask crew members
+> or the operator "whose bead is this?" — the answer is always in `br show`. Failing
+> to consult the mirror causes ownership round-trips (observed ≥4× over hk-w6y70 /
+> hk-xdxws / hk-kbqto / hk-3kyh3, logmine F13).
+
 | Situation | Mechanical detection | Captain action (mechanics only) |
 |---|---|---|
 | **Daemon down** | any daemon RPC (`crew start/stop`, `comms send/recv/join/leave`, `subscribe`) exits **17** | SURFACE "daemon not running"; do NOT proceed to spawn/mail. `crew list`, `comms log`, `comms who` still work (local) — use them to report state. |
@@ -322,7 +330,7 @@ decide.** (c4-spec §7.)
 | **`epic_completed` for an unknown/unassigned epic** | `br show <epic_id> --format json` → `assignee` is empty / matches no live crew in `crew list` | SURFACE it as informational ("epic <id> completed; not tracked to any current crew"); do NOT spawn/assign in response. (Happens for an epic closed out-of-band, or one whose crew was already stopped.) |
 | **Duplicate `epic_completed`** (at-least-once bus, or a C1 crash-window retry) | same `event_id` re-delivered, OR a second event for an already-surfaced epic | Dedupe on `event_id` (N3). If a logically-duplicate completion for an already-surfaced epic arrives with a NEW `event_id`, surface at most ONE "epic <id> completed" to the operator (idempotent surfacing). |
 | **Sub-epic completion before top-level** (C1 is single-level) | `epic_completed` for a child epic whose parent epic is still open | Surface each as it arrives; do NOT roll up to the parent (no tree-walk). |
-| **Stuck dispatch / run failure you happen to see** | a `run_failed` / `run_stale` on a subscription you also watch (optional — you MAY add `--types epic_completed,run_failed,run_stale`) | SURFACE as a stuck signal; do NOT classify or recover. Failure handling is judgment-out and lives in `harmonik-dispatch` for the *crew's* loop, not yours. |
+| **Stuck dispatch / run failure you happen to see** | a `run_failed` / `run_stale` on a subscription you also watch (optional — you MAY add `--types epic_completed,run_failed,run_stale`) | **Before surfacing, attribute the owning crew (Gap 1 — same pattern as `epic_completed`):** `br show <bead_id> --format json` → read `parent_id` (the epic) → `br show <parent_id> --format json` → `assignee`. Include the crew name in the surface message: "bead <id> failed/stale (crew <name>); stuck signal — awaiting direction." If `parent_id` is absent or `assignee` is empty, surface as unattributed. Do NOT classify or recover — failure handling is judgment-out and lives in `harmonik-dispatch` for the *crew's* loop, not yours. |
 
 **Concurrency guard (from `harmonik-dispatch`):** you are a LIGHT orchestrator. Do
 NOT spin up ≥10 parallel Agent-tool sub-agents while the daemon dispatches crew

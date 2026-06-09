@@ -75,10 +75,12 @@ br update <epic_id> --assignee <crew_name>
 
 This is a **metadata-only write** (permitted by beads-cli write discipline — it
 is NOT a terminal transition). **This mirror is load-bearing for the Captain's
-`epic_completed` attribution (06-integration.md §4 Gap 1):** the Captain
-attributes a completed epic to its owning crew by reading `br show <epic_id>
---format json` → `assignee` field. Without this mirror the Captain reads a stale
-assignee and mis-attributes completion.
+attribution on ALL run events (06-integration.md §4 Gap 1):** the Captain
+attributes epics (on `epic_completed`) AND individual task beads (on
+`run_failed`/`run_stale`) to their owning crew by reading `br show <epic_id>
+--format json` → `assignee` field. Without this mirror the Captain cannot identify
+which crew owns a failing or wedged bead, causing "whose bead is this?"
+round-trips (logmine F13: ≥4 such exchanges observed over hk-w6y70/xdxws/kbqto/3kyh3).
 
 **MUST run on EVERY epic adoption — at boot AND on every `topic == assign`
 comms re-task.** Not only on first boot, not only for restart re-hydration.
@@ -309,7 +311,9 @@ before leaving.
 - Dedupe all comms messages on `event_id` (agent-comms N3, NORMATIVE).
 - Submit beads ONLY to `--queue <your-queue>`.
 - Run `br update <epic_id> --assignee <crew_name>` on EVERY epic adoption (boot
-  AND comms re-task).
+  AND comms re-task). This is the captain's attribution source for ALL run events —
+  `epic_completed`, `run_failed`, `run_stale`, wedge. Stale or missing assignee =
+  "whose bead is this?" round-trips (Gap 1, F13).
 - Emit status on BOTH surfaces (`comms --topic status` AND `br comments`) on ALL
   four triggers (boot, bead-close, ≤10-min timer, drain).
 - Re-hydrate from durable state on restart (handoff frontmatter AND/OR beads

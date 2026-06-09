@@ -6,11 +6,13 @@ package daemon_test
 //
 //   - AC2.1: initial run argv = codex exec --json --sandbox workspace-write -a never -C <wt> <seed>
 //   - AC2.2: resume run argv includes "resume <thread_id>" prefix
-//   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present)
+//   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present),
+//     including when inherited from the real process env via os.Environ() (C3/T10, hk-jxgnp)
 //   - AC3.4: CODEX_HOME set to a non-empty path in env
 //   - Error cases: empty workspacePath, empty beadID, empty priorThreadID string
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -157,6 +159,87 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("AC3.1: spec.Env missing empty override %q", want)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv (C3/T10, hk-jxgnp)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv is the T10
+// regression lock mirroring the claude-side
+// TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv (claudelaunchspec_test.go).
+//
+// It verifies the billing-leak guard end-to-end through the *real process
+// environment*: OPENAI_API_KEY and CODEX_API_KEY are set on the parent process
+// via t.Setenv, then os.Environ() (which now carries those live values) is
+// passed straight through as BaseEnv — simulating a caller that forwards the
+// daemon's inherited environment without pre-filtering. The resulting child env
+// MUST carry an explicit empty override ("KEY=") for each, never a live value.
+//
+// The tmux server's -e mechanism is additive: merely omitting a key leaves the
+// server env value intact; only an explicit KEY= zeros it in the spawned window.
+// Without the strip, a live OPENAI_API_KEY / CODEX_API_KEY would let `codex exec`
+// silently bill the API credit pool instead of the ChatGPT subscription.
+//
+// This is the codex analogue of the 2026-05-30 ANTHROPIC_API_KEY burn guard
+// (hk-f2nm1); see codexCredentialDenyKeys / buildCodexEnv in codexlaunchspec.go.
+//
+// Spec: C3-auth-billing-spec.md AC3.1; specs/harness-contract.md §2 N1.
+func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process env, which forbids parallel tests.
+
+	// Set live credential values on the parent process. Test-only sentinels; no
+	// real credentials are used. t.Setenv restores the prior values on cleanup.
+	t.Setenv("OPENAI_API_KEY", "sk-t10-sentinel-must-not-reach-codex-child")
+	t.Setenv("CODEX_API_KEY", "ck-t10-sentinel-must-not-reach-codex-child")
+
+	// Sanity: confirm the sentinels really are in the process environment, so a
+	// passing assertion below cannot be a false negative from an unset var.
+	if os.Getenv("OPENAI_API_KEY") == "" || os.Getenv("CODEX_API_KEY") == "" {
+		t.Fatalf("test setup: expected OPENAI_API_KEY and CODEX_API_KEY to be set in process env")
+	}
+
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath: "/tmp/wt-test-codex-procenv",
+		BeadID:        "hk-test-t10",
+		// Forward the real process environment unfiltered, exactly as a caller
+		// passing os.Environ() would. This is what makes the leak observable.
+		BaseEnv: os.Environ(),
+	}
+
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv: unexpected error: %v", err)
+	}
+
+	denyKeys := []string{"OPENAI_API_KEY", "CODEX_API_KEY"}
+
+	// AC3.1: no live value for either credential key leaks into the child env.
+	// Error messages redact the value (print only the key).
+	for _, kv := range spec.Env {
+		for _, dk := range denyKeys {
+			prefix := dk + "="
+			if strings.HasPrefix(kv, prefix) && len(kv) > len(prefix) {
+				t.Errorf("AC3.1 (T10): child env carries live value for %q inherited from process env; must be empty override %q", dk, prefix)
+			}
+		}
+	}
+
+	// AC3.1: an explicit empty override ("KEY=") must be present for each key.
+	// Without it, the tmux server env value would survive into the child window.
+	for _, dk := range denyKeys {
+		want := dk + "="
+		found := false
+		for _, kv := range spec.Env {
+			if kv == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("AC3.1 (T10): child env missing empty override %q; required to zero an inherited process-env credential", want)
 		}
 	}
 }

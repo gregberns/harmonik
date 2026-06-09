@@ -267,6 +267,37 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	}
 	env := append(base, required...)
 
+	// Shell rc-prompt suppression (hk-5s6re).
+	//
+	// The daemon spawns each implementer/reviewer claude inside a tmux window
+	// whose pane shell is an interactive login zsh. That shell sources the
+	// operator's ~/.zshrc, which under oh-my-zsh can fire an interactive
+	// `[Y/n] Would you like to update?` prompt. The spawned shell then hangs at
+	// that prompt — claude never launches, no heartbeat is emitted, and the
+	// daemon watchdog /quits the run after the budget expires. It looks exactly
+	// like a daemon spawn-wedge but is a shell prompt entirely outside harmonik
+	// code (root cause confirmed 2026-06-09 by a pane-content verifier; the
+	// historical mis-attribution saga is in the spawn-semaphore-wedge memo).
+	//
+	// Injecting these vars makes the prompt structurally unable to fire,
+	// independent of the operator's ~/.zshrc:
+	//   - DISABLE_AUTO_UPDATE=true   — oh-my-zsh short-circuits its entire
+	//     update check before any prompt logic runs (the strongest lever).
+	//   - DISABLE_UPDATE_PROMPT=true — belt-and-braces: if a config still
+	//     reaches the update path, oh-my-zsh auto-applies without the
+	//     interactive [Y/n] prompt rather than blocking on input.
+	// These are additive env entries only; they never touch PATH, the chosen
+	// shell, aliases, or rc-driven shims, so the prior exit-127/no-PATH hazard
+	// (which came from changing shell interactivity / dropping ~/.zshrc) cannot
+	// recur here. They flow to the pane via the tmux substrate's additive -e
+	// mechanism, so the prompt is neutralized at the source for every launch
+	// phase (implementer-initial, implementer-resume, reviewer) that builds its
+	// env through ClaudeEnvVars.
+	env = append(env,
+		"DISABLE_AUTO_UPDATE=true",
+		"DISABLE_UPDATE_PROMPT=true",
+	)
+
 	// Optional vars — only set when non-empty (CHB-006).
 	if cfg.WorkflowMode != "" {
 		env = append(env, "HARMONIK_WORKFLOW_MODE="+cfg.WorkflowMode)

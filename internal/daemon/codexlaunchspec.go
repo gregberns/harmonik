@@ -193,6 +193,18 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 	// Set CODEX_HOME (C3 AC3.4).
 	env = append(env, "CODEX_HOME="+resolvedCodexHome)
 
+	// Shell rc-prompt suppression (hk-5s6re). The codex harness spawns through
+	// the same tmux substrate as the claude harness, so its pane shell is the
+	// same interactive login zsh that sources the operator's ~/.zshrc and can
+	// hang at an oh-my-zsh `[Y/n] Would you like to update?` prompt — the spawn
+	// wedge described in ClaudeEnvVars. Injecting the same disable vars makes the
+	// prompt structurally unable to fire here too. Additive env only; never
+	// touches PATH/shell/aliases (see ClaudeEnvVars for the full rationale).
+	env = append(env,
+		"DISABLE_AUTO_UPDATE=true",
+		"DISABLE_UPDATE_PROMPT=true",
+	)
+
 	return env
 }
 

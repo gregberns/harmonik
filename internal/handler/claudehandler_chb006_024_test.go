@@ -282,6 +282,41 @@ func TestClaudeEnvVars_RequiredVarsPresent(t *testing.T) {
 	}
 }
 
+// TestClaudeEnvVars_ShellUpdatePromptDisabled verifies that the oh-my-zsh
+// auto-update disable vars are always injected (hk-5s6re). These neutralize the
+// interactive `[Y/n] Would you like to update?` prompt that otherwise wedges the
+// implementer/reviewer login shell spawned in the tmux pane — independent of the
+// operator's ~/.zshrc.
+func TestClaudeEnvVars_ShellUpdatePromptDisabled(t *testing.T) {
+	t.Parallel()
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-omz",
+		DaemonSocket:     "/tmp/d.sock",
+		WorkspacePath:    "/ws",
+		HandlerSessionID: "h-sess",
+		ClaudeSessionID:  "c-sess",
+		WorkflowID:       "wf-omz",
+		NodeID:           "n-omz",
+	}
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	want := map[string]string{
+		"DISABLE_AUTO_UPDATE":   "true",
+		"DISABLE_UPDATE_PROMPT": "true",
+	}
+	for k, v := range want {
+		got, ok := envMap[k]
+		if !ok {
+			t.Errorf("missing shell-prompt-disable env var %q (hk-5s6re)", k)
+			continue
+		}
+		if got != v {
+			t.Errorf("env var %q = %q; want %q", k, got, v)
+		}
+	}
+}
+
 // TestClaudeEnvVars_OptionalVars_SetWhenNonEmpty verifies optional vars appear
 // only when non-empty.
 func TestClaudeEnvVars_OptionalVars_SetWhenNonEmpty(t *testing.T) {

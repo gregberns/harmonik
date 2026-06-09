@@ -64,10 +64,12 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 	//   7. * (wildcard)            — SubscribeHub fans events to socket 'subscribe' op (hk-6ynv4)
 	//   8. * (wildcard)            — StaleWatcher per-run silence monitor (hk-wkzlc)
 	//   9. agent_rate_limit_status  — bandwidthTunerBackstop emergency backstop
+	//  10. bead_closed             — ReviewGateAnomalyWatcher consecutive-close alarm (hk-tnmjy)
+	//  11. reviewer_verdict        — ReviewGateAnomalyWatcher verdict reset (hk-tnmjy)
 	//
 	// Any deviation indicates a composition-root wiring regression.
-	// Update history: 4→5 (SubscribeHub hk-6ynv4), 5→8 (SpendMeter hk-k3f8g +2, StaleWatcher hk-wkzlc +1), 8→9 (bandwidthTunerBackstop).
-	const wantSubscriptions = 9
+	// Update history: 4→5 (SubscribeHub hk-6ynv4), 5→8 (SpendMeter hk-k3f8g +2, StaleWatcher hk-wkzlc +1), 8→9 (bandwidthTunerBackstop), 9→11 (ReviewGateAnomalyWatcher hk-tnmjy registers bead_closed + reviewer_verdict).
+	const wantSubscriptions = 11
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"HandlerPausePolicyGoroutine.Subscribe must be called pre-Seal in daemon.Start (hk-37zy8)",

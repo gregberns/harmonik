@@ -65,9 +65,13 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 	//   7. * (wildcard)            — SubscribeHub fans events to socket subscribers (hk-6ynv4)
 	//   8. * (wildcard)            — StaleWatcher per-run silence monitor (hk-wkzlc)
 	//   9. agent_rate_limit_status  — bandwidthTunerBackstop emergency backstop
+	//  10. bead_closed             — ReviewGateAnomalyWatcher consecutive-close alarm (hk-tnmjy)
+	//  11. reviewer_verdict        — ReviewGateAnomalyWatcher verdict reset (hk-tnmjy)
 	//
 	// Any deviation indicates a composition-root wiring regression.
-	const wantSubscriptions = 9
+	// Update history: 9→11 (ReviewGateAnomalyWatcher hk-tnmjy registers two
+	// subscriptions — bead_closed + reviewer_verdict).
+	const wantSubscriptions = 11
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"QueueOperatorEventConsumer.Subscribe must be called pre-Seal in daemon.Start (hk-7urls)",

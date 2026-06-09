@@ -1972,3 +1972,42 @@ func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts
 		TurnFailureMessage: arts.turnFailureMessage,
 	}, nil
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// codex Refs:<bead> trailer guarantee test seams (hk-bpxci C2/T9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedCodexRefsOutcome mirrors the internal codexRefsOutcome enum for tests.
+type ExportedCodexRefsOutcome = codexRefsOutcome
+
+// Exported codexRefsOutcome constants for ensureCodexRefsTrailer assertions.
+const (
+	ExportedCodexRefsAlreadyPresent = codexRefsAlreadyPresent
+	ExportedCodexRefsAmended        = codexRefsAmended
+	ExportedCodexRefsCommitted      = codexRefsCommitted
+	ExportedCodexRefsNoChange       = codexRefsNoChange
+)
+
+// ExportedWorktreeHEADHasRefsTrailer exposes worktreeHEADHasRefsTrailer (VERIFY).
+//
+// Bead ref: hk-bpxci.
+func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
+	return worktreeHEADHasRefsTrailer(ctx, wtPath, beadID)
+}
+
+// ExportedEnsureCodexRefsTrailer exposes ensureCodexRefsTrailer (VERIFY +
+// deterministic commit-after-exit FALLBACK).
+//
+// Bead ref: hk-bpxci.
+func ExportedEnsureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (ExportedCodexRefsOutcome, error) {
+	return ensureCodexRefsTrailer(ctx, wtPath, parentSHA, beadID)
+}
+
+// ExportedCodexSeedPromptInstruction returns the codex seed prompt for beadID so
+// tests can assert the INSTRUCT part (the prompt tells codex to commit with the
+// Refs: trailer).
+//
+// Bead ref: hk-bpxci.
+func ExportedCodexSeedPromptInstruction(beadID core.BeadID) string {
+	return fmt.Sprintf(codexSeedPromptTemplate, string(beadID))
+}

@@ -51,8 +51,17 @@ var codexCredentialDenyKeys = []string{
 // task, and commit with the required Refs: trailer so the daemon's
 // commit-detection path can confirm the work landed.
 //
+// The trailer instruction is load-bearing: harmonik detects bead completion by a
+// git commit whose body carries an exact "Refs: <bead-id>" trailer line
+// (workloop.go beadAlreadySubsumedInMain). The instruction is deliberately
+// explicit — single work commit, trailer on its own line in the body — to
+// maximise the chance codex obeys it. The codex commit-after-exit fallback
+// (codexcommit.go ensureCodexRefsTrailer) is the deterministic backstop for when
+// codex edits files but does not produce a trailer-carrying commit; this prompt
+// is the happy-path INSTRUCT half of the T9 guarantee (hk-bpxci).
+//
 // %s is replaced with the bead ID.
-const codexSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. Commit your work with a commit message that includes the line "Refs: %s" in the commit body.`
+const codexSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. When you are done, commit ALL your changes in a single git commit, and the commit message MUST include the line "Refs: %s" on its own line in the commit body. This trailer is required — without it the system cannot detect that your work is complete.`
 
 // codexRunCtx carries the per-launch inputs to buildCodexLaunchSpec.
 type codexRunCtx struct {

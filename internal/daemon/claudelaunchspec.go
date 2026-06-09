@@ -192,6 +192,13 @@ type claudeRunArtifacts struct {
 	// At MVH this is always nil; the handler falls back to exec.CommandContext.
 	// TODO(hk-gql20.x): wire tmux substrate once component-2 lands.
 	substrate interface{}
+
+	// resolvedAgentType is the agent_type resolved by the four-tier harness
+	// precedence walk (resolveHarness). Set by routedLaunchSpecBuilder (T12,
+	// hk-xhawy) so callers can look up the correct Adapter via
+	// adapterRegistry.ForAgent(resolvedAgentType) instead of hardcoding claude-code.
+	// Zero value ("") means the caller should default to core.AgentTypeClaudeCode.
+	resolvedAgentType core.AgentType
 }
 
 // buildClaudeLaunchSpec threads together all bridge pieces required to launch

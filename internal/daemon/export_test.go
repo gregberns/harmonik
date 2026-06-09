@@ -1804,6 +1804,65 @@ func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType cor
 // Bead ref: hk-3kyh3.
 var ExportedNewClaudeHarness = NewClaudeHarness
 
+// ExportedNewHarnessRegistry exposes newHarnessRegistry for tests in package
+// daemon_test. It returns the daemon's HarnessRegistry with ClaudeHarness
+// registered for core.AgentTypeClaudeCode (claude-only in C1/T3).
+//
+// Bead ref: hk-hj9ld.
+func ExportedNewHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
+	return newHarnessRegistry()
+}
+
+// ExportedRoutedLaunchSpecBuilder exposes routedLaunchSpecBuilder for tests in
+// package daemon_test. It returns a builder that resolves the harness via the
+// four-tier precedence walk and the HarnessRegistry, then (for the claude
+// harness) delegates to buildClaudeLaunchSpec. The returned closure has the same
+// shape as the workLoopDeps.launchSpecBuilder hook; the artifacts are translated
+// to the exported shape for comparison against ExportedBuildClaudeLaunchSpec.
+//
+// Bead ref: hk-hj9ld.
+func ExportedRoutedLaunchSpecBuilder(
+	reg *handlercontract.HarnessRegistry,
+	bead core.BeadRecord,
+	queueDefault core.AgentType,
+	nodeDefault core.AgentType,
+	globalDefault core.AgentType,
+	bus handlercontract.EventEmitter,
+) func(context.Context, ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+	builder := routedLaunchSpecBuilder(reg, bead, queueDefault, nodeDefault, globalDefault, bus)
+	return func(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+		internal := claudeRunCtx{
+			runID:             rc.RunID,
+			beadID:            rc.BeadID,
+			workspacePath:     rc.WorkspacePath,
+			daemonSocket:      rc.DaemonSocket,
+			workflowMode:      rc.WorkflowMode,
+			phase:             rc.Phase,
+			iterationCount:    rc.IterationCount,
+			priorClaudeSessID: rc.PriorClaudeSessID,
+			handlerBinary:     rc.HandlerBinary,
+			daemonBinaryPath:  rc.DaemonBinaryPath,
+			baseEnv:           rc.BaseEnv,
+			model:             rc.Model,
+			effort:            rc.Effort,
+			worktreeRootPath:  rc.WorktreeRootPath,
+			beadDescription:   rc.BeadDescription,
+			nodePrompt:        rc.NodePrompt,
+		}
+		spec, arts, err := builder(ctx, internal)
+		if err != nil {
+			return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
+		}
+		return spec, ExportedClaudeRunArtifacts{
+			ClaudeSessionID:  arts.claudeSessionID,
+			SessionLogPath:   arts.sessionLogPath,
+			HandlerSessionID: arts.handlerSessionID,
+			PreExecMsgs:      arts.preExecMsgs,
+			Substrate:        arts.substrate,
+		}, nil
+	}
+}
+
 // ExportedRunCtxFromClaudeRunCtx converts an ExportedClaudeRunCtx into the
 // handlercontract.RunCtx shape expected by ClaudeHarness.LaunchSpec.  This
 // allows harness-golden tests to use the same fixture builders as the
@@ -1812,21 +1871,21 @@ var ExportedNewClaudeHarness = NewClaudeHarness
 // Bead ref: hk-3kyh3.
 func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.RunCtx {
 	return handlercontract.RunCtx{
-		RunID:             rc.RunID,
-		BeadID:            rc.BeadID,
-		WorkspacePath:     rc.WorkspacePath,
-		DaemonSocket:      rc.DaemonSocket,
-		WorkflowMode:      rc.WorkflowMode,
-		Phase:             rc.Phase,
-		IterationCount:    rc.IterationCount,
-		PriorSessionID:    rc.PriorClaudeSessID,
-		HandlerBinary:     rc.HandlerBinary,
-		DaemonBinaryPath:  rc.DaemonBinaryPath,
-		BaseEnv:           rc.BaseEnv,
-		Model:             rc.Model,
-		Effort:            rc.Effort,
-		WorktreeRootPath:  rc.WorktreeRootPath,
-		BeadDescription:   rc.BeadDescription,
-		NodePrompt:        rc.NodePrompt,
+		RunID:            rc.RunID,
+		BeadID:           rc.BeadID,
+		WorkspacePath:    rc.WorkspacePath,
+		DaemonSocket:     rc.DaemonSocket,
+		WorkflowMode:     rc.WorkflowMode,
+		Phase:            rc.Phase,
+		IterationCount:   rc.IterationCount,
+		PriorSessionID:   rc.PriorClaudeSessID,
+		HandlerBinary:    rc.HandlerBinary,
+		DaemonBinaryPath: rc.DaemonBinaryPath,
+		BaseEnv:          rc.BaseEnv,
+		Model:            rc.Model,
+		Effort:           rc.Effort,
+		WorktreeRootPath: rc.WorktreeRootPath,
+		BeadDescription:  rc.BeadDescription,
+		NodePrompt:       rc.NodePrompt,
 	}
 }

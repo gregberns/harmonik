@@ -270,6 +270,23 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14; hk-d8u1y.
 	adapterRegistry *handlercontract.AdapterRegistry
 
+	// harnessRegistry is the per-agent-type Harness route table (codex-harness
+	// C1/T3, hk-hj9ld). The production single-mode dispatch path builds the
+	// implementer launch spec via routedLaunchSpecBuilder, which resolves the
+	// agent_type (resolveHarness) and looks up the concrete Harness here.
+	//
+	// CLAUDE-ONLY in T3: only ClaudeHarness is registered, so the default
+	// resolution lands on core.AgentTypeClaudeCode and the routed builder
+	// delegates to buildClaudeLaunchSpec — byte-identical to the pre-T3 path.
+	//
+	// May be nil for test fixtures that inject launchSpecBuilder directly (the
+	// dispatch path prefers an explicitly-injected launchSpecBuilder and only
+	// reaches for harnessRegistry when launchSpecBuilder is nil). newWorkLoopDeps
+	// wires a registry with ClaudeHarness registered.
+	//
+	// Bead ref: hk-hj9ld.
+	harnessRegistry *handlercontract.HarnessRegistry
+
 	// substrate is the optional tmux-substrate for handler.Launch.  At MVH this
 	// is always nil; handler falls back to exec.CommandContext.  When non-nil it
 	// is attached to the LaunchSpec.Substrate field so the handler spawns the
@@ -553,6 +570,14 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	handlerEnv = append(handlerEnv, lifecycle.ProvenanceEnvVar(projectHash))
 	handlerEnv = append(handlerEnv, cfg.HandlerEnv...)
 
+	// Build the harness route registry (codex-harness C1/T3, hk-hj9ld). The
+	// production single-mode dispatch path routes the launchSpecBuilder lookup
+	// through this registry. CLAUDE-ONLY: only ClaudeHarness is registered.
+	harnessReg, hErr := newHarnessRegistry()
+	if hErr != nil {
+		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: newHarnessRegistry: %w", hErr)
+	}
+
 	return workLoopDeps{
 		brAdapter:           adapter,
 		bus:                 bus,
@@ -571,15 +596,16 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		hookStore:           store,
 		cpRegistry:          cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:     registry,
+		harnessRegistry:     harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
 		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:   cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
 		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:         newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:  adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
-		noAutoPull:          cfg.NoAutoPull,            // hk-exd7m: queue-only mode for flywheel topology
-		mergeMu:             &sync.Mutex{},             // hk-yyso7: global merge-serialisation across all queues
+		queueStore:          nil,                            // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:         newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:  adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
+		noAutoPull:          cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
+		mergeMu:             &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
 		emittedEpics:        make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:      &sync.Mutex{},
 		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
@@ -2039,9 +2065,29 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
 		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
+	// Resolve the launch-spec builder. Test fixtures may inject one directly via
+	// deps.launchSpecBuilder; that takes precedence. Otherwise the production path
+	// routes the lookup through the harness route registry (codex-harness C1/T3,
+	// hk-hj9ld): resolveHarness picks the agent_type (default = claude-code) and
+	// HarnessRegistry.ForAgent selects the concrete Harness. CLAUDE-ONLY in T3 —
+	// the routed builder delegates to buildClaudeLaunchSpec for the claude harness,
+	// so the resolved LaunchSpec is byte-identical to the pre-T3 direct call.
 	specBuilder := deps.launchSpecBuilder
 	if specBuilder == nil {
-		specBuilder = buildClaudeLaunchSpec
+		if deps.harnessRegistry != nil {
+			specBuilder = routedLaunchSpecBuilder(
+				deps.harnessRegistry,
+				beadRecord,
+				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				core.AgentType(""), // node default: DOT node harness attr not yet landed (hk-u67of)
+				core.AgentType(""), // global default: built-in fallback resolves to claude-code
+				deps.bus,
+			)
+		} else {
+			// No injected builder and no registry (legacy test fixtures): fall
+			// straight back to the direct claude builder.
+			specBuilder = buildClaudeLaunchSpec
+		}
 	}
 	spec, artifacts, specErr := specBuilder(ctx, rc)
 	if specErr != nil {

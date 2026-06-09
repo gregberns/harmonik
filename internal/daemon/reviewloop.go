@@ -128,7 +128,22 @@ type reviewLoopState struct {
 	// lastDiffHash is the SHA-256 hex digest of `git diff <parent>..<head>`
 	// computed after the most recent implementer run (just before the reviewer
 	// launches). Empty before iteration 1's reviewer.
+	//
+	// hk-togxq: retained only for the no_progress_detected event payload
+	// (diff_hash_current / diff_hash_prior, an observability surface). The
+	// progress signal is now HEAD advancement (lastIterHeadSHA), NOT diff-hash
+	// equality, so a new commit whose net parent..HEAD diff collides with a prior
+	// commit is no longer false-flagged as no-progress.
 	lastDiffHash string
+
+	// lastIterHeadSHA is the worktree HEAD recorded just before the prior
+	// iteration's reviewer launch. The no-progress check (iteration ≥ 2) fires
+	// only when the current HEAD equals this — i.e. the implementer-resume made
+	// no new commit in response to the prior REQUEST_CHANGES. (Reaching iteration
+	// ≥ 2 in the review-loop is itself proof the prior verdict was
+	// REQUEST_CHANGES; APPROVE/BLOCK return before incrementing.) Empty before
+	// iteration 1's reviewer. hk-togxq.
+	lastIterHeadSHA string
 
 	// priorVerdicts accumulates per-iteration verdict summaries for the
 	// `## Prior verdicts` section of review-target.md (EM-015d-RIA). Empty for
@@ -692,37 +707,60 @@ func runReviewLoop(
 			}
 		}
 
-		// ── Compute diff hash BEFORE launching reviewer ───────────────────
+		// ── Compute diff hash + HEAD BEFORE launching reviewer ────────────
 		//
 		// Per EM-015d: "Before launching the reviewer, the daemon MUST compute
 		// last_diff_hash and write it into Run.context.last_diff_hash."
 		// Per EM-015e (no-progress early-exit, T-WM-022): "Before launching
-		// reviewer from iteration 2 onward, compare current diff hash to
-		// Run.context.last_diff_hash. If equal, emit no_progress_detected and
-		// terminate."
+		// reviewer from iteration 2 onward" detect no-progress and terminate.
+		//
+		// hk-togxq: the progress signal is now COMMIT/HEAD ADVANCEMENT, not
+		// diff-hash equality. The old `currentHash == state.lastDiffHash` test was
+		// HEAD-blind: a real iter-N commit whose net parent..HEAD diff happened to
+		// equal a prior iteration's diff (e.g. a revert+re-apply, or a commit that
+		// nets to the same tree) was false-flagged as no-progress and the run
+		// hard-failed, discarding the committed work. We now compare the current
+		// worktree HEAD to the HEAD recorded before the prior iteration's reviewer
+		// launch (state.lastIterHeadSHA): if HEAD advanced, the implementer-resume
+		// committed real work in response to the prior REQUEST_CHANGES → progress
+		// → do NOT fire. Reaching iteration ≥ 2 here is itself proof the prior
+		// verdict was REQUEST_CHANGES (APPROVE/BLOCK return before incrementing),
+		// so the verdict half of the rule is structurally guaranteed; the explicit
+		// check is the HEAD-advance half. lastDiffHash is retained only for the
+		// no_progress_detected event payload.
 		currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
 		if hashErr != nil {
 			result := rlErrorResult(fmt.Sprintf("diff-hash error before reviewer at iteration %d: %v", state.iterationCount, hashErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
+		currentHead, npHeadErr := resolveWorktreeHEAD(ctx, wtPath)
+		if npHeadErr != nil {
+			result := rlErrorResult(fmt.Sprintf("resolve HEAD before reviewer at iteration %d: %v", state.iterationCount, npHeadErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
 
-		// No-progress check (iteration ≥ 2 only): compare to prior iteration's hash.
-		// Iteration 1 has no prior hash, so the check is skipped.
-		if state.iterationCount >= 2 && currentHash == state.lastDiffHash {
+		// No-progress check (iteration ≥ 2 only): fire only if HEAD did NOT
+		// advance since the prior iteration's reviewer launch — i.e. the
+		// implementer-resume produced no new commit in response to the prior
+		// REQUEST_CHANGES. Iteration 1 has no prior HEAD, so the check is skipped.
+		headAdvanced := state.lastIterHeadSHA == "" || currentHead != state.lastIterHeadSHA
+		if state.iterationCount >= 2 && !headAdvanced {
 			emitNoProgressDetected(ctx, deps.bus, runID, state.iterationCount, currentHash, state.lastDiffHash)
 			result := reviewLoopResult{
 				success:          false,
 				completionReason: core.ReviewLoopCompletionReasonNoProgress,
-				summary:          fmt.Sprintf("no-progress detected at iteration %d: diff hash unchanged", state.iterationCount),
+				summary:          fmt.Sprintf("no-progress detected at iteration %d: HEAD unchanged after REQUEST_CHANGES", state.iterationCount),
 				needsAttention:   true,
 			}
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
 
-		// Store diff hash for next iteration's no-progress check.
+		// Store diff hash + HEAD for next iteration's no-progress check.
 		state.lastDiffHash = currentHash
+		state.lastIterHeadSHA = currentHead
 
 		// ── Archive prior verdict file (iteration ≥ 2) ───────────────────
 		//

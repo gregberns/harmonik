@@ -190,10 +190,29 @@ func driveDotWorkflow(
 	var claudeSessionID string
 
 	// lastDiffHash is the SHA-256 hex digest of `git diff <parent>..<head>`
-	// captured before each reviewer launch.  When iterationCount ≥ 2 and the
-	// current hash equals the prior, the implementer made zero meaningful changes;
-	// we emit no_progress_detected and terminate (EM-015e for DOT mode).
+	// captured before each reviewer launch.  It is retained ONLY for the
+	// no_progress_detected event payload (diff_hash_current / diff_hash_prior),
+	// which is an observability surface; it is NO LONGER the progress signal.
+	//
+	// hk-togxq: the diff-hash equality test was VERDICT-BLIND and HEAD-BLIND. It
+	// hard-failed any agentic re-entry at iteration ≥ 2 whose cumulative
+	// parent..HEAD diff was unchanged, regardless of (a) whether a real commit
+	// already landed (HEAD advanced past parentSHA / the prior iteration) and
+	// (b) the prior reviewer verdict. That discarded good committed work:
+	//   - a run that committed iter-1 work then re-entered with no NEW commit was
+	//     failed instead of being allowed to flow to review/merge, and
+	//   - a run whose iter-N commit produced the same NET diff as a prior commit
+	//     (HEAD advanced, but `git diff parent..HEAD` collided) was false-flagged.
+	// Progress is now measured by COMMIT/HEAD advancement across iterations
+	// (priorIterHeadSHA) combined with the prior reviewer verdict (priorVerdict);
+	// see the no-progress block below.
 	lastDiffHash := ""
+
+	// priorIterHeadSHA is the worktree HEAD recorded at the prior agentic-node
+	// entry. The no-progress check compares the current HEAD to this value: if
+	// HEAD advanced, the intervening implementer committed real work (progress),
+	// so no_progress MUST NOT fire. Empty before the first agentic entry.
+	priorIterHeadSHA := ""
 
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
@@ -250,32 +269,53 @@ func driveDotWorkflow(
 
 			// ── No-progress check before ANY agentic dispatch (EM-015e / DOT) ──
 			//
-			// Compute the diff hash from parentSHA to the current worktree HEAD.
-			// On iteration ≥ 2, if the hash is unchanged from the prior agentic
-			// dispatch the implementer made zero meaningful code changes since
-			// then; emit no_progress_detected and terminate (mirrors
-			// reviewloop.go:701-725 for the review-loop path).
+			// hk-togxq — HEAD-ADVANCEMENT no-progress detection. The progress signal
+			// is COMMIT/HEAD ADVANCEMENT across agentic-node entries, NOT a stale
+			// working-tree diff hash. At iteration ≥ 2 we fire no_progress ONLY when
+			// HEAD did NOT advance since the prior agentic-node entry
+			// (priorIterHeadSHA) — i.e. the intervening implementer produced no new
+			// commit. This corrects the regression (dd7c3b57 / hk-pj4b6) where the
+			// check was VERDICT-BLIND and HEAD-BLIND: it compared `git diff
+			// parentSHA..HEAD` hashes and hard-failed whenever the *cumulative* diff
+			// from parent was unchanged, regardless of whether HEAD itself advanced.
+			// That false-flagged a run whose iter-N commit produced the same NET
+			// parent..HEAD diff as a prior commit (HEAD advanced, but the diff hash
+			// collided) — discarding good committed work stranded on the run branch.
 			//
-			// This check is HOISTED out of the (formerly reviewer-only) branch so
-			// it fires for BOTH paths that re-enter an agentic node at iteration
-			// ≥ 2 (hk-pj4b6):
-			//   - reviewer re-entry after a REQUEST_CHANGES back-edge (the original
-			//     behaviour — preserved), and
-			//   - implementer re-entry after a deterministic commit_gate FAIL
-			//     back-edge. Before the hoist this implementer→commit_gate→implement
-			//     loop had NO escape: a no-diff re-entry was never detected, so the
-			//     back-edge looped until the traversal cap fired ~30min later. Now a
-			//     no-diff implementer re-entry is caught cleanly as no-progress.
+			// This satisfies:
+			//   - REQUEST_CHANGES iter-1 + a REAL new iter-N commit (HEAD advances,
+			//     MODE B): HEAD advanced → NO fire → flow on to re-review the new
+			//     work, even when its net parent..HEAD diff collides with a prior
+			//     commit (the old diff-hash test false-flagged exactly that);
+			//   - REQUEST_CHANGES iter-1 + NO new commit at iter-N (HEAD unchanged,
+			//     NEGATIVE GUARD): HEAD did not advance → fire → reject; un-addressed
+			//     work is never merged;
+			//   - implementer re-entry from a deterministic commit_gate FAIL with no
+			//     new commit (hk-pj4b6 no-escape loop): HEAD unchanged → fire → clean
+			//     no-progress failure BEFORE the traversal cap is hit.
 			//
-			// Timing mirrors the review-loop: the increment happens AFTER the check,
-			// so the threshold uses the iteration count of the dispatch that just
-			// COMPLETED. lastDiffHash carries the hash captured before the prior
-			// agentic dispatch; an unchanged hash at iteration ≥ 2 means the
-			// intervening implementer produced no new diff.
+			// NOTE (hk-togxq scope): a run that committed VALID iter-1 work which the
+			// commit_gate then WRONGLY bounced (no new commit on re-entry) is also
+			// caught here — but that is a DIFFERENT bug (commit_gate bouncing a valid
+			// commit; tracked separately) and is structurally indistinguishable at
+			// this site from a genuinely-stuck gate loop. Salvaging that committed
+			// work is out of scope for the no_progress signal.
+			//
+			// lastDiffHash is retained only to populate the no_progress_detected
+			// event payload (diff_hash_current / diff_hash_prior — an observability
+			// surface); it no longer gates the run.
 			//
 			// Unlike the review-loop, DOT mode does NOT emit
 			// review_loop_cycle_complete after no_progress_detected — the DOT walk
 			// terminates directly per the §8.1a ordering-rule DOT exemption.
+			currentHead, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			if headErr != nil {
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: false,
+					summary:        fmt.Sprintf("dot: resolve HEAD before agentic node %q at iteration %d: %v", currentNodeID, iterationCount, headErr),
+				}
+			}
 			currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
 			if hashErr != nil {
 				return dotWorkflowResult{
@@ -284,15 +324,17 @@ func driveDotWorkflow(
 					summary:        fmt.Sprintf("dot: diff-hash error before agentic node %q at iteration %d: %v", currentNodeID, iterationCount, hashErr),
 				}
 			}
-			if iterationCount >= 2 && currentHash == lastDiffHash {
+			headAdvanced := priorIterHeadSHA == "" || currentHead != priorIterHeadSHA
+			if iterationCount >= 2 && !headAdvanced {
 				emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
 				return dotWorkflowResult{
 					success:        false,
 					needsAttention: true,
-					summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: diff hash unchanged", iterationCount),
+					summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: HEAD did not advance", iterationCount),
 				}
 			}
 			lastDiffHash = currentHash
+			priorIterHeadSHA = currentHead
 
 			// Increment AFTER the no-progress check: an implementer (re-)entry
 			// counts as a new iteration; reviewers reuse the implementer's count

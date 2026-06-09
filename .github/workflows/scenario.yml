@@ -1,0 +1,30 @@
+# Tier 3 — make test-scenario
+# Builds all twin binaries then runs the scenario suite (-race, -tags=scenario, 10m).
+# Covers test/scenario/... and internal/daemon/... scenario build-tag files.
+# Non-merge-blocking: no required status check configured in branch protection.
+name: Scenario
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 04:00 UTC so failures surface before the next workday.
+    - cron: "0 4 * * *"
+
+jobs:
+  scenario:
+    name: scenario (Tier 3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: make test-scenario
+        run: make test-scenario

@@ -252,6 +252,44 @@ const commitOnCueStep = "commit_on_cue"
 // Cite: specs/handler-contract.md §4.6.HC-024, §4.5.HC-020, CHB-018 §7.1.
 const signalInterruptStep = "signal_interrupt"
 
+// holdStep is the type constant for the YAML step that BLOCKS the twin process
+// (keeping the OS process — and therefore the tmux pane child process — alive)
+// for a configurable duration WITHOUT committing or emitting a terminal event.
+//
+// This is the watchdog-engaging primitive for the hk-37giq concurrent-dispatch
+// regression guard (validation-net VN2, bead hk-he18w). Unlike single-happy-path
+// (which commits/quits immediately), commit-on-cue (which commits after ~100ms),
+// or silent-hang (which stops heartbeating and trips the HC-056 silent-hang
+// detector), the hold step keeps the process ALIVE so:
+//
+//  1. On the stdout-watcher exec path: the daemon's stdout watcher goroutine
+//     stays live (the subprocess has not exited), so waitAgentReady's drain
+//     goroutine continues to contend on the per-run event tap.
+//  2. On the tmux-substrate path: the pane child process stays alive, so
+//     perRunSubstrate.PaneHasActiveProcess returns true — keeping the
+//     pasteInjectQuitOnCommit launch-suppression branch (internal/daemon/
+//     pasteinject.go:679 "pane has active child") active. That is the exact
+//     condition the tapCh competing-consumer starve needed: with the first
+//     heartbeat never reaching the watchdog (stolen by waitAgentReady's drainer
+//     on the pre-53ead2aa single-shared-channel tap), the launch deadline reset
+//     loops forever and the run wedges (launch_stall_detected → run_stale).
+//
+// The step is deliberately a no-terminal-event blocker: the daemon cancels the
+// run's context (on completion budget, watchdog kill, or daemon shutdown), which
+// unblocks the hold and exits the twin cleanly. Emit at least one agent_heartbeat
+// BEFORE the hold step in the scenario so the heartbeat-stream path is exercised.
+//
+// Payload fields (all read from ScriptMessage.Payload):
+//
+//	hold_ms  int  Optional. Maximum milliseconds to block before returning.
+//	              0 (the default) means block until ctx is cancelled. A positive
+//	              value bounds the hold so the twin self-terminates even if the
+//	              daemon never cancels (defensive; the daemon normally cancels
+//	              first via its watchdog/shutdown path).
+//
+// Cite: validation-net VN2 (hk-he18w); internal/daemon/pasteinject.go:679.
+const holdStep = "hold"
+
 // runScript drives the wireEmitter through the ordered message list in sf.
 //
 // For each ScriptMessage:
@@ -317,6 +355,16 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 			}
 			return nil // stop script after emitting; exit code 0 per CHB-020
+		}
+
+		// hold blocks the twin process (keeping the pane child alive) until ctx is
+		// cancelled or hold_ms elapses, WITHOUT committing or emitting a terminal
+		// event. This is the watchdog-engaging step for the hk-37giq regression
+		// guard (VN2). After the hold returns (ctx cancelled by the daemon, or
+		// hold_ms elapsed) the script stops; the twin exits 0.
+		if msg.Type == holdStep {
+			runHold(ctx, msg)
+			return nil // stop script after the hold; exit code 0
 		}
 
 		if err := emitScriptMessage(e, msg); err != nil {
@@ -499,6 +547,42 @@ func runSignalInterrupt(ctx context.Context, e *wireEmitter, msg ScriptMessage) 
 		return fmt.Errorf("signal_interrupt: emit agent_failed: %w", err)
 	}
 	return nil
+}
+
+// runHold handles the hold script step (VN2, hk-he18w).
+//
+// It blocks (keeping the twin OS process — and thus the tmux pane child — alive)
+// until ctx is cancelled or, when hold_ms > 0, until that many milliseconds
+// elapse. It emits NO event and makes NO commit: the goal is solely to keep the
+// process alive so the daemon's watcher / pane-liveness probe observes an active
+// child while the watchdog and waitAgentReady contend on the per-run event tap.
+//
+// hold_ms semantics:
+//   - 0 (default): block until ctx is cancelled (the daemon cancels on its
+//     completion budget, watchdog kill, or shutdown). This is the canonical mode
+//     for the regression guard.
+//   - >0: bound the block so the twin self-terminates even if the daemon never
+//     cancels (defensive backstop against a test that forgets to cancel).
+func runHold(ctx context.Context, msg ScriptMessage) {
+	var holdMs int
+	switch v := msg.Payload["hold_ms"].(type) {
+	case int:
+		holdMs = v
+	case float64:
+		// YAML / canned-scenario numbers may arrive as float64 via map[string]any.
+		holdMs = int(v)
+	}
+	if holdMs <= 0 {
+		// Block until the daemon cancels the run context.
+		<-ctx.Done()
+		return
+	}
+	timer := time.NewTimer(time.Duration(holdMs) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 // emitScriptMessage serialises one ScriptMessage as a NDJSON-framed JSON object.

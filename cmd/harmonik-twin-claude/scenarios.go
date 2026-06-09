@@ -64,8 +64,10 @@ func cannedScenario(name string) (*ScriptFile, error) {
 		return scenarioSilentHang(), nil
 	case "partial-pre-exec":
 		return scenarioPartialPreExec(), nil
+	case "heartbeat-then-hold":
+		return scenarioHeartbeatThenHold(), nil
 	default:
-		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal, silent-hang, partial-pre-exec", name)
+		return nil, fmt.Errorf("unknown scenario %q: must be one of single-happy-path, review-loop-3iter, rate-limit, dial-failed, daemon-not-ready-retry, commit-on-cue-startup-delay, budget-exhausted, handler-fatal, silent-hang, partial-pre-exec, heartbeat-then-hold", name)
 	}
 }
 
@@ -994,6 +996,111 @@ func scenarioHandlerFatal() *ScriptFile {
 					"ended_at":       now.Add(20 * time.Millisecond).Format(time.RFC3339Nano),
 					"error_category": "transient",
 					"reason":         "handler_fatal_test",
+				},
+			},
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenario: heartbeat-then-hold (validation-net VN2, hk-he18w)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// scenarioHeartbeatThenHold is the watchdog-engaging scenario for the hk-37giq
+// concurrent-dispatch regression guard. It emits the pre-exec preamble and at
+// least one agent_heartbeat, then BLOCKS the twin process alive (via the hold
+// step) WITHOUT committing or emitting a terminal event.
+//
+// Why this scenario exists (and why the existing twins don't suffice):
+//
+//   - single-happy-path commits/quits immediately → the pane child exits, the
+//     watcher goes Done, and there is no live contention on the per-run tap.
+//   - commit-on-cue-startup-delay commits after ~100ms → the commit detection
+//     fires quickly and the run completes before any starve can manifest.
+//   - silent-hang stops heartbeating entirely → the run trips HC-056 silent-hang
+//     detection (a DIFFERENT timeout regime), not the launch-suppression wedge.
+//
+// heartbeat-then-hold is the missing primitive: it emits agent_heartbeat (so the
+// heartbeat stream the watchdog tracks is exercised) and then keeps the pane
+// child ALIVE indefinitely. On the tmux-substrate path this keeps
+// perRunSubstrate.PaneHasActiveProcess true, so the pasteInjectQuitOnCommit
+// launch-suppression branch (internal/daemon/pasteinject.go:679) stays active.
+// On the pre-53ead2aa single-shared-channel tap, waitAgentReady's drain
+// goroutine steals the heartbeats from the watchdog, firstHeartbeatSeen never
+// becomes true, and the launch deadline resets forever → the run wedges
+// (launch_stall_detected → run_stale). With the 53ead2aa fan-out tap, the
+// watchdog gets its own copy of every heartbeat, advances normally, and the
+// daemon's downstream lifecycle (commit/merge/close in the fixture's
+// pre-committing worktree factory) proceeds.
+//
+// The hold has hold_ms=0 → it blocks until the daemon cancels the run context
+// (completion budget, watchdog kill, or shutdown). The twin then exits 0.
+//
+// Cite: validation-net VN2 (hk-he18w); internal/daemon/pasteinject.go:679;
+// hk-37giq.
+func scenarioHeartbeatThenHold() *ScriptFile {
+	now := time.Now().UTC()
+	const (
+		runID     = "run-vn2-hth-001"
+		sessID    = "sess-vn2-hth-001"
+		nodeID    = "node-vn2-hth-001"
+		agentType = "claude-twin-claude"
+	)
+
+	return &ScriptFile{
+		HeartbeatMode: heartbeatModeScripted,
+		Messages: []ScriptMessage{
+			// 1. handler_capabilities — first message on stream (HC-009).
+			{
+				Type: "handler_capabilities",
+				Payload: map[string]any{
+					"run_id":                      runID,
+					"session_id":                  sessID,
+					"protocol_versions_supported": []any{1},
+					"claude_session_id":           "claude-sess-vn2-hth-001",
+				},
+			},
+			// 2. agent_ready (HC-039) — clears waitAgentReady so the run advances
+			//    into the paste-inject + watchdog phase where the tap contention
+			//    occurs.
+			{
+				Type: "agent_ready",
+				Payload: map[string]any{
+					"run_id":       runID,
+					"session_id":   sessID,
+					"capabilities": []any{"scripted", "heartbeat"},
+				},
+			},
+			// 3. agent_started (§6.4).
+			{
+				Type: "agent_started",
+				Payload: map[string]any{
+					"run_id":     runID,
+					"session_id": sessID,
+					"node_id":    nodeID,
+					"agent_type": agentType,
+					"started_at": now.Format(time.RFC3339Nano),
+				},
+			},
+			// 4. agent_heartbeat — the heartbeat the watchdog must observe
+			//    (firstHeartbeatSeen) to advance. On the pre-fix shared tap this is
+			//    stolen by waitAgentReady's drainer under concurrency.
+			{
+				Type: "agent_heartbeat",
+				Payload: map[string]any{
+					"session_id": sessID,
+					"phase":      "reasoning",
+				},
+				RelativeTimestampMs: 10,
+			},
+			// 5. hold — keep the pane child alive (no commit, no terminal event)
+			//    until the daemon cancels the run context. This is the
+			//    watchdog-engaging block: the pane stays "active" so the
+			//    launch-suppression branch remains live.
+			{
+				Type: holdStep,
+				Payload: map[string]any{
+					"hold_ms": 0, // block until ctx cancel
 				},
 			},
 		},

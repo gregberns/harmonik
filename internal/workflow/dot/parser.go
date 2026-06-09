@@ -734,6 +734,48 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			} else {
 				node.Timeout = pair.val
 			}
+		case "harness":
+			// Per-node harness override (codex-harness C4/T5, hk-u67of). Supplies
+			// the tier-3 (node) default for resolveHarness. Value MUST satisfy
+			// core.AgentType.Valid() (AR-025); invalid → strict error so node-tier
+			// selection never produces a malformed AgentType.
+			if !core.AgentType(pair.val).Valid() {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: harness %q must be a valid agent_type matching %s (AR-025, codex-harness C4/T5)",
+						rn.id, pair.val, core.AgentTypeRegexPattern),
+				})
+			} else {
+				node.Harness = pair.val
+			}
+		case "agent_runtime":
+			// Alias spelling for the per-node harness override (codex-harness
+			// C4/T5, hk-u67of). Same validity contract as harness=.
+			if !core.AgentType(pair.val).Valid() {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: agent_runtime %q must be a valid agent_type matching %s (AR-025, codex-harness C4/T5)",
+						rn.id, pair.val, core.AgentTypeRegexPattern),
+				})
+			} else {
+				node.AgentRuntime = pair.val
+			}
+		case "reviewer_harness":
+			// Per-node reviewer harness override (codex-harness C4/T5, hk-u67of;
+			// consumed by C5/T14 hk-iv748). Independent of the implementer harness.
+			// Value MUST satisfy core.AgentType.Valid() (AR-025); invalid → strict error.
+			if !core.AgentType(pair.val).Valid() {
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: reviewer_harness %q must be a valid agent_type matching %s (AR-025, codex-harness C4/T5)",
+						rn.id, pair.val, core.AgentTypeRegexPattern),
+				})
+			} else {
+				node.ReviewerHarness = pair.val
+			}
 		case "policy_ref":
 			// Reserved-and-rejected per CP-056 / WG-031.
 			errs = append(errs, &ParseError{
@@ -812,6 +854,18 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			})
 			node.Effort = ""
 		}
+	}
+	// Post-loop: harness= and agent_runtime= are alias spellings of the same
+	// per-node harness override (codex-harness C4/T5, hk-u67of). When both are
+	// present with DIFFERENT values the node-tier harness is ambiguous → strict
+	// error. When both are present with the SAME value it is accepted (no-op).
+	if node.Harness != "" && node.AgentRuntime != "" && node.Harness != node.AgentRuntime {
+		errs = append(errs, &ParseError{
+			Line: node.Line,
+			Message: fmt.Sprintf(
+				"node %q: harness %q and agent_runtime %q conflict; they are alias spellings of the same per-node harness override (codex-harness C4/T5)",
+				rn.id, node.Harness, node.AgentRuntime),
+		})
 	}
 	return node, errs, warns
 }

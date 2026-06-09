@@ -201,6 +201,32 @@ type Node struct {
 	// parse time (WG-024). The dispatcher converts to time.Duration.
 	Timeout string
 
+	// Harness is the optional per-node harness override (codex-harness C4/T5,
+	// hk-u67of). When present on an agentic node it supplies the tier-3
+	// (node-tier) default for the harness-selection precedence walk
+	// (resolveHarness, harnessresolve.go): bead-label > per-queue > NODE > global.
+	// Value MUST satisfy core.AgentType.Valid() (AR-025); an invalid value is a
+	// strict parse error so node-tier selection never resolves to a malformed
+	// AgentType. Empty when absent. The dispatch path (C5) reads this field as
+	// resolveHarness's nodeDefault argument.
+	Harness string
+
+	// AgentRuntime is the optional agent_runtime attribute (codex-harness C4/T5,
+	// hk-u67of). It is an alias spelling for the per-node harness override; it
+	// resolves into the same node-tier default as Harness. Value MUST satisfy
+	// core.AgentType.Valid() (AR-025). Empty when absent. When both harness and
+	// agent_runtime are present on the same node with different values, parsing
+	// is a strict error (ambiguous node-tier harness).
+	AgentRuntime string
+
+	// ReviewerHarness is the optional reviewer_harness attribute (codex-harness
+	// C4/T5, hk-u67of). When present it supplies the per-node harness override
+	// for the reviewer-class node spawned in review-loop / dot mode, independent
+	// of the implementer harness (consumed by C5/T14, hk-iv748). Value MUST
+	// satisfy core.AgentType.Valid() (AR-025); invalid is a strict parse error.
+	// Empty when absent (the reviewer defaults to the implementer harness).
+	ReviewerHarness string
+
 	// UnknownAttrs retains non-reserved node-level attributes per WG-032.
 	// Keys and values are retained verbatim for debugging tools / replay tooling.
 	// The dispatcher MUST NOT read from this map; it is for informational use only.

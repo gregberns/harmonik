@@ -188,3 +188,61 @@ func TestBuildCrewLaunchSpec_ValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildCrewLaunchSpec_ResumePath verifies that Resume=true produces
+// --resume <uuid> instead of --session-id <uuid> (c2-spec.md §7 stale re-launch).
+//
+// AC-5 extension: resume argv must be [--remote-control <name> --resume <uuid>].
+// Bead ref: hk-4z0gp.
+func TestBuildCrewLaunchSpec_ResumePath(t *testing.T) {
+	t.Parallel()
+
+	const uuid = "01930000-0000-7000-8000-000000000099"
+	rc := daemon.ExportedCrewLaunchCtx{
+		Name:      "resume-crew",
+		SessionID: uuid,
+		ProjectDir: "/tmp/harmonik",
+		Resume:    true,
+	}
+
+	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("buildCrewLaunchSpec(resume): unexpected error: %v", err)
+	}
+
+	if len(spec.Args) != 4 {
+		t.Fatalf("len(Args) = %d; want 4: got %v", len(spec.Args), spec.Args)
+	}
+	if spec.Args[2] != "--resume" {
+		t.Errorf("Args[2] = %q; want --resume (resume path)", spec.Args[2])
+	}
+	if spec.Args[3] != uuid {
+		t.Errorf("Args[3] = %q; want %q (session UUID)", spec.Args[3], uuid)
+	}
+}
+
+// TestBuildCrewLaunchSpec_WorkDir verifies WorkDir is set to projectDir so the
+// crew session starts at the project root.
+//
+// Bead ref: hk-4z0gp.
+func TestBuildCrewLaunchSpec_WorkDir(t *testing.T) {
+	t.Parallel()
+
+	const projDir = "/home/user/my-project"
+	rc := daemon.ExportedCrewLaunchCtx{
+		Name:       "eta",
+		SessionID:  "01930000-0000-7000-8000-000000000007",
+		ProjectDir: projDir,
+	}
+
+	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
+	}
+	if spec.WorkDir != projDir {
+		t.Errorf("WorkDir = %q; want %q (project root)", spec.WorkDir, projDir)
+	}
+	if spec.Role != "crew" {
+		t.Errorf("Role = %q; want %q", spec.Role, "crew")
+	}
+}

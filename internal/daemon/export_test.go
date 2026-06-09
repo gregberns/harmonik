@@ -1611,24 +1611,28 @@ var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 
 // ExportedCrewLaunchCtx is the exported shape of crewLaunchCtx for tests.
 //
-// Bead ref: hk-kbqto.
+// Bead ref: hk-kbqto, hk-4z0gp.
 type ExportedCrewLaunchCtx struct {
 	ClaudeBinary string
 	Name         string
 	SessionID    string
 	ProjectDir   string
+	// Resume, when true, builds argv with --resume instead of --session-id
+	// (stale re-launch path per c2-spec.md §7).
+	Resume bool
 }
 
 // ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
 // daemon_test. See crewlaunchspec.go for semantics.
 //
-// Bead ref: hk-kbqto.
+// Bead ref: hk-kbqto, hk-4z0gp.
 func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, error) {
 	return buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: rc.ClaudeBinary,
 		name:         rc.Name,
 		sessionID:    rc.SessionID,
 		projectDir:   rc.ProjectDir,
+		resume:       rc.Resume,
 	})
 }
 

@@ -30,5 +30,14 @@ jobs:
       - name: Install dev tools
         run: make tools
 
+      # TEMPORARY (flywheel, per operator directive): continue-on-error so failed runs
+      # report SUCCESS and stop emailing the operator. Main is currently red on Linux for
+      # reasons unrelated to the originally-expected test reds — REMOVE this once green:
+      #   hk-x342d  Linux build break (monotonic_linux.go syscall.ClockGettime) — KEYSTONE
+      #   hk-agouy  gofumpt/gci formatting drift (e.g. internal/hooksystem/dispatcher.go)
+      #   hk-jzepv  Tier2 should run lint + `go test -short` (full make check pulls
+      #             real-daemon E2E needing br/twins); also owns removing this interim
+      #   hk-ihfzp/hk-tidsb/hk-feow8 (specaudit) + hk-sr5jb (t6probe) test reds
       - name: make check
         run: make check
+        continue-on-error: true

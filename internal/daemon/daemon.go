@@ -461,6 +461,36 @@ type Config struct {
 	//
 	// Bead ref: hk-mkxw1.
 	ForbidUnprotectedDefault bool
+
+	// DefaultHarness is the tier-4 (global) default harness for the harness-
+	// selection precedence chain (bead > queue > node > global).
+	//
+	// When non-empty it MUST be a valid core.AgentType per AR-025. The daemon
+	// validates this at startup; an unrecognised value is a startup error.
+	//
+	// The zero value (empty string) falls back to the built-in default:
+	// core.AgentTypeClaudeCode. This preserves backward-compatible behaviour for
+	// all existing daemon configurations that do not set the field.
+	//
+	// The composition root exposes this as --default-harness.
+	//
+	// Bead ref: hk-y01k6 [C4/T4].
+	DefaultHarness core.AgentType
+
+	// CodexBinary is the path to the codex executable used when the resolved
+	// harness is core.AgentTypeCodex.
+	//
+	// When empty the codex launch-spec builder defaults to the bare name "codex",
+	// which is resolved by the PATH of the tmux window at spawn time. An absolute
+	// path avoids PATH-resolution ambiguity in controlled deployments.
+	//
+	// The zero value (empty string) is safe: buildCodexLaunchSpec normalises it
+	// to "codex".
+	//
+	// The composition root exposes this as --codex-binary.
+	//
+	// Bead ref: hk-y01k6 [C4/T4].
+	CodexBinary string
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the

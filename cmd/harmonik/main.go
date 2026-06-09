@@ -567,6 +567,21 @@ EXAMPLES
 	flag.BoolVar(&forbidUnprotectedDefaultFlag, "forbid-default-main", false,
 		"refuse to start if the default branch (main/master) is not in --protect-branch")
 
+	// --default-harness: tier-4 (global) default for the harness-selection chain
+	// (bead > queue > node > global, codex-harness C4/T4, hk-y01k6).
+	// The empty default causes the daemon to fall back to the built-in default
+	// (claude-code) per the tier-4 fallback in resolveHarness.
+	// Valid values: "claude-code", "codex", or any registered AgentType (AR-025).
+	var defaultHarnessFlag string
+	flag.StringVar(&defaultHarnessFlag, "default-harness", "",
+		"global default harness (tier-4): claude-code, codex (default: claude-code built-in fallback)")
+
+	// --codex-binary: path to the codex executable used when the resolved harness
+	// is codex.  Empty falls back to bare "codex" resolved by PATH (hk-y01k6).
+	var codexBinaryFlag string
+	flag.StringVar(&codexBinaryFlag, "codex-binary", "",
+		"path to the codex executable (default: 'codex' resolved by PATH)")
+
 	flag.Usage = harmonikUsage
 	flag.Parse()
 
@@ -718,6 +733,8 @@ EXAMPLES
 		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
 		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
 		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
+		DefaultHarness:           core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
+		CodexBinary:              codexBinaryFlag,                     // hk-y01k6: codex executable path
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

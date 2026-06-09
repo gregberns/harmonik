@@ -390,6 +390,21 @@ func ExportedResolveWorkflowMode(
 	return resolveWorkflowMode(ctx, bead, daemonDefault, bus)
 }
 
+// ExportedResolveHarness exposes resolveHarness for tests in package daemon_test.
+// See harnessresolve.go for semantics.
+//
+// Bead ref: hk-y01k6 [C4/T4].
+func ExportedResolveHarness(
+	ctx context.Context,
+	bead core.BeadRecord,
+	queueDefault core.AgentType,
+	nodeDefault core.AgentType,
+	globalDefault core.AgentType,
+	bus handlercontract.EventEmitter,
+) core.AgentType {
+	return resolveHarness(ctx, bead, queueDefault, nodeDefault, globalDefault, bus)
+}
+
 // ExportedModelPreferenceError is a type alias for ModelPreferenceError so tests
 // in package daemon_test can use errors.As without importing internal types.
 //

@@ -219,10 +219,16 @@ func HandleQueueSubmit(
 		// request to the global --max-concurrent; honour a positive request
 		// verbatim (oversubscription permitted — the runtime global ceiling still
 		// wins per QM-062). The caller (HandlerAdapter) logs oversubscription once.
-		Workers:     DefaultWorkers(req.Workers, globalMaxConcurrent),
-		SubmittedAt: now,
-		Groups:      groups,
-		Status:      QueueStatusActive,
+		Workers: DefaultWorkers(req.Workers, globalMaxConcurrent),
+		// DefaultHarness is the per-queue harness-selection default (tier 2 of the
+		// resolveHarness precedence walk; hk-4x3rg [C4/T6]). A valid requested
+		// AgentType is carried verbatim; an invalid/empty value is normalised to
+		// empty (treated as absent). Dispatch-time wiring into resolveHarness is
+		// C5/T12 (hk-xhawy) — out of scope here.
+		DefaultHarness: NormaliseDefaultHarness(req.DefaultHarness),
+		SubmittedAt:    now,
+		Groups:         groups,
+		Status:         QueueStatusActive,
 	}
 
 	// Persist per QM-001 (QM-063: persist before events).
@@ -716,6 +722,23 @@ func DefaultWorkers(requested, globalCap int) int {
 		return globalCap
 	}
 	return requested
+}
+
+// NormaliseDefaultHarness resolves the effective per-queue harness default
+// from a requested value. A value that satisfies core.AgentType.Valid()
+// (AR-025) is returned verbatim so it can serve as resolveHarness's tier-2
+// queueDefault; any invalid value (including the empty string) is normalised
+// to the empty AgentType, which the harness resolver treats as "absent" and
+// falls through to the node/global tiers. This mirrors the silent-ignore
+// posture of the other daemon-minted submit fields (the request carries an
+// intent; the daemon owns the persisted truth).
+//
+// Bead ref: hk-4x3rg [C4/T6].
+func NormaliseDefaultHarness(requested core.AgentType) core.AgentType {
+	if requested.Valid() {
+		return requested
+	}
+	return core.AgentType("")
 }
 
 // NewHandlerAdapter returns a *HandlerAdapter wired to ledger and projectDir.

@@ -275,6 +275,30 @@ type Queue struct {
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	Workers int `json:"workers,omitempty"`
 
+	// DefaultHarness is the per-queue harness-selection default — tier 2 of the
+	// four-tier precedence walk (bead-label > per-queue > node > global) in
+	// resolveHarness (internal/daemon/harnessresolve.go). When set to a valid
+	// core.AgentType it serves as resolveHarness's queueDefault argument so every
+	// bead dispatched from this queue selects that harness unless a per-bead
+	// harness:<agent-type> label (tier 1) overrides it.
+	//
+	// The value MUST satisfy core.AgentType.Valid() (AR-025: ^[a-z][a-z0-9-]{1,62}$).
+	// Invalid values are normalised to empty at submit time (treated as absent,
+	// so the precedence walk falls through to the node/global tiers) — consistent
+	// with resolveHarness's tier-2 .Valid() guard. The empty value means "no
+	// per-queue default" and is the backward-compatible default for queue.json
+	// files that predate this field.
+	//
+	// NOTE: wiring this field into the dispatch/cascade resolveHarness call at
+	// launch is C5/T12 (hk-xhawy) — this field only needs to exist, persist,
+	// validate, and be readable here (C4/T6, hk-4x3rg).
+	//
+	// omitempty preserves round-trip compat with queue.json files that predate
+	// the field; absent unmarshals to "" (no default).
+	//
+	// Bead ref: hk-4x3rg [C4/T6].
+	DefaultHarness core.AgentType `json:"default_harness,omitempty"`
+
 	// SubmittedAt is set at queue-submit accept; ISO 8601 / UTC.
 	SubmittedAt time.Time `json:"submitted_at"`
 
@@ -339,6 +363,16 @@ type QueueSubmitRequest struct {
 	//
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	Workers int `json:"workers,omitempty"`
+
+	// DefaultHarness is the requested per-queue harness-selection default
+	// (tier 2 of the precedence walk; see Queue.DefaultHarness). When set to a
+	// valid core.AgentType it is carried onto the persisted Queue. An invalid or
+	// empty value is normalised to empty (treated as absent) so the daemon's
+	// harness resolver falls through to the node/global tiers — consistent with
+	// the silently-ignored daemon-minted fields documented above.
+	//
+	// Bead ref: hk-4x3rg [C4/T6].
+	DefaultHarness core.AgentType `json:"default_harness,omitempty"`
 }
 
 // QueueSubmitResponse is the response payload for queue-submit

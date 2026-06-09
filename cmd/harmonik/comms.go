@@ -47,6 +47,8 @@ package main
 //	--from NAME                Filter: only messages from NAME.
 //	--topic T                  Filter: only messages with topic T.
 //	--follow                   After draining the backlog, tail live messages via subscribe (streams until signal).
+//	--wait                     Block until exactly one matching message, deliver it, advance the cursor, exit (hk-tafd4).
+//	--timeout DUR              With --wait: exit 3 if no message arrives within DUR (e.g. 30s).
 //	--json                     Emit one JSON object per message (NDJSON) instead of human-readable.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
@@ -1041,6 +1043,8 @@ func runCommsRecvSubcommand(subArgs []string) int {
 	fromFlag := ""
 	topicFlag := ""
 	followFlag := false
+	waitFlag := false
+	timeoutFlag := time.Duration(0)
 	jsonFlag := false
 	socketFlag := ""
 	projectFlag := ""
@@ -1068,6 +1072,23 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			topicFlag = strings.TrimPrefix(arg, "--topic=")
 		case arg == "--follow":
 			followFlag = true
+		case arg == "--wait":
+			waitFlag = true
+		case arg == "--timeout" && i+1 < len(subArgs):
+			i++
+			d, perr := time.ParseDuration(subArgs[i])
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv: --timeout %q is not a valid duration: %v\n", subArgs[i], perr)
+				return 1
+			}
+			timeoutFlag = d
+		case strings.HasPrefix(arg, "--timeout="):
+			d, perr := time.ParseDuration(strings.TrimPrefix(arg, "--timeout="))
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv: --timeout is not a valid duration: %v\n", perr)
+				return 1
+			}
+			timeoutFlag = d
 		case arg == "--json":
 			jsonFlag = true
 		case arg == "--socket" && i+1 < len(subArgs):
@@ -1096,6 +1117,17 @@ func runCommsRecvSubcommand(subArgs []string) int {
 	}
 	if agent == "" {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: --agent is required (or set $HARMONIK_AGENT)\n")
+		return 1
+	}
+
+	// --follow and --wait are mutually exclusive: --follow streams indefinitely,
+	// --wait blocks for exactly one message then exits (hk-tafd4).
+	if followFlag && waitFlag {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: --follow and --wait are mutually exclusive\n")
+		return 1
+	}
+	if timeoutFlag != 0 && !waitFlag {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv: --timeout requires --wait\n")
 		return 1
 	}
 
@@ -1200,27 +1232,26 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 
+	// --wait: block until exactly ONE matching message, then exit. If the drain
+	// already produced messages, the first one IS that message (cursor already
+	// advanced by the one-shot comms-recv op) — print it and exit 0 (hk-tafd4).
+	if waitFlag {
+		if len(result.Messages) > 0 {
+			m := result.Messages[0]
+			printCommsRecvMsg(jsonFlag, m.EventID, m.From, m.To, m.Topic, m.Body, m.InReplyTo, m.Ts)
+			return 0
+		}
+		// Backlog empty — block on a subscribe stream for exactly one message.
+		return runCommsRecvWait(sockPath, agent, fromFlag, topicFlag, result.CursorAfter, jsonFlag, timeoutFlag)
+	}
+
 	if len(result.Messages) == 0 && !jsonFlag && !followFlag {
 		fmt.Fprintln(os.Stderr, "harmonik comms recv: no new messages")
 		return 0
 	}
 
 	for _, msg := range result.Messages {
-		if jsonFlag {
-			line, marshalErr := json.Marshal(msg)
-			if marshalErr != nil {
-				fmt.Fprintf(os.Stderr, "harmonik comms recv: marshal message: %v\n", marshalErr)
-				return 1
-			}
-			fmt.Println(string(line))
-		} else {
-			direction := fmt.Sprintf("%s → %s", msg.From, msg.To)
-			if msg.Topic != "" {
-				fmt.Printf("%s  %-30s  [%s]  %s\n", msg.Ts, direction, msg.Topic, msg.Body)
-			} else {
-				fmt.Printf("%s  %-30s  %s\n", msg.Ts, direction, msg.Body)
-			}
-		}
+		printCommsRecvMsg(jsonFlag, msg.EventID, msg.From, msg.To, msg.Topic, msg.Body, msg.InReplyTo, msg.Ts)
 	}
 
 	if !followFlag {
@@ -1360,6 +1391,158 @@ func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID s
 	return 0
 }
 
+// printCommsRecvMsg renders one received message to stdout in either NDJSON
+// (jsonOut) or human-readable form, matching the comms-recv / --follow format.
+func printCommsRecvMsg(jsonOut bool, eventID, from, to, topic, body, inReplyTo, ts string) {
+	if jsonOut {
+		msg := struct {
+			EventID   string `json:"event_id"`
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Topic     string `json:"topic,omitempty"`
+			Body      string `json:"body"`
+			InReplyTo string `json:"in_reply_to,omitempty"`
+			Ts        string `json:"ts"`
+		}{
+			EventID:   eventID,
+			From:      from,
+			To:        to,
+			Topic:     topic,
+			Body:      body,
+			InReplyTo: inReplyTo,
+			Ts:        ts,
+		}
+		line, marshalErr := json.Marshal(msg)
+		if marshalErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv: marshal message: %v\n", marshalErr)
+			return
+		}
+		fmt.Println(string(line))
+		return
+	}
+	direction := fmt.Sprintf("%s → %s", from, to)
+	if topic != "" {
+		fmt.Printf("%s  %-30s  [%s]  %s\n", ts, direction, topic, body)
+	} else {
+		fmt.Printf("%s  %-30s  %s\n", ts, direction, body)
+	}
+}
+
+// runCommsRecvWait blocks until exactly ONE matching agent_message arrives via a
+// subscribe stream anchored at sinceEventID (the cursor_after from the preceding
+// empty drain), prints it, and exits 0. The daemon advances the agent's durable
+// cursor as it delivers the event (hk-tafd4), so the message is consumed exactly
+// as a one-shot `comms recv` would consume it.
+//
+// With timeout > 0, the call returns commsRecvWaitTimeoutExit if no matching
+// message arrives in time. timeout == 0 blocks indefinitely (until signal).
+//
+// Bead ref: hk-tafd4.
+func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool, timeout time.Duration) int {
+	// Build the subscribe request (agent_message events directed to this agent).
+	reqBody := map[string]any{
+		"op":                "subscribe",
+		"heartbeat_seconds": 60,
+		"types":             []string{"agent_message"},
+		"to":                agent,
+	}
+	if fromFilter != "" {
+		reqBody["from"] = fromFilter
+	}
+	if topicFilter != "" {
+		reqBody["topic"] = topicFilter
+	}
+	if sinceEventID != "" {
+		reqBody["since_event_id"] = sinceEventID
+	}
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: marshal subscribe request: %v\n", err)
+		return 1
+	}
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancelDial()
+	if dialErr != nil {
+		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: daemon not running (socket %s missing or refused)\n", sockPath)
+			return 17
+		}
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: dial %s: %v\n", sockPath, dialErr)
+		return 1
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: write subscribe request: %v\n", writeErr)
+		return 1
+	}
+
+	// Cancel on signal or (if set) timeout — closing conn unblocks the decoder.
+	baseCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	waitCtx := baseCtx
+	if timeout > 0 {
+		var cancelTimeout context.CancelFunc
+		waitCtx, cancelTimeout = context.WithTimeout(baseCtx, timeout)
+		defer cancelTimeout()
+	}
+	go func() {
+		<-waitCtx.Done()
+		_ = conn.Close()
+	}()
+
+	dec := json.NewDecoder(conn)
+	for {
+		var env struct {
+			Type          string          `json:"type"`
+			EventID       string          `json:"event_id"`
+			TimestampWall string          `json:"timestamp_wall"`
+			Payload       json.RawMessage `json:"payload"`
+		}
+		if decErr := dec.Decode(&env); decErr != nil {
+			// Timeout / signal close manifests as an EOF or "use of closed".
+			if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
+				if timeout > 0 && waitCtx.Err() == context.DeadlineExceeded {
+					fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: timed out after %s with no message\n", timeout)
+					return commsRecvWaitTimeoutExit
+				}
+				return 0
+			}
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: decode event: %v\n", decErr)
+			return 1
+		}
+
+		// Skip non-message events (heartbeats, subscription_gap, etc.).
+		if env.Type != "agent_message" {
+			continue
+		}
+
+		var p struct {
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Topic     string `json:"topic,omitempty"`
+			Body      string `json:"body"`
+			InReplyTo string `json:"in_reply_to,omitempty"`
+		}
+		if decErr := json.Unmarshal(env.Payload, &p); decErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: decode agent_message payload: %v\n", decErr)
+			continue
+		}
+
+		printCommsRecvMsg(jsonOut, env.EventID, p.From, p.To, p.Topic, p.Body, p.InReplyTo, env.TimestampWall)
+		// Got our one message — close the connection so the daemon flushes the
+		// cursor (defer flushCursor in HandleSubscribe), then exit 0.
+		return 0
+	}
+}
+
+// commsRecvWaitTimeoutExit is the exit code `comms recv --wait --timeout` returns
+// when the timeout elapses with no matching message. Distinct from 1 (arg/IO
+// error) and 17 (daemon down) so scripts can branch on "no message yet".
+const commsRecvWaitTimeoutExit = 3
+
 func commsRecvUsage() {
 	fmt.Print(`harmonik comms recv — receive unread agent_messages from the durable cursor
 
@@ -1370,30 +1553,42 @@ Sends a comms-recv op to the daemon. The daemon reads unread agent_message event
 from the agent's durable cursor, advances the cursor (at-least-once delivery: N3),
 and returns the matched messages. Recipients should deduplicate on event_id.
 
-Without --follow: drains the backlog once and exits.
+Without --follow / --wait: drains the backlog once and exits.
 
 With --follow: drains the backlog, then streams live agent_message events via the
 subscribe transport. The subscribe connection is anchored at the cursor position
 returned by the drain (cursor_after), so no messages are missed between the drain
-and the live tail. Streams until SIGINT/SIGTERM.
+and the live tail. The daemon advances the agent's durable cursor as it delivers
+each live message, so a watcher restart does NOT replay already-delivered
+messages. Streams until SIGINT/SIGTERM.
+
+With --wait: blocks until exactly ONE matching message arrives, prints it, advances
+the durable cursor, and exits 0. With --timeout <dur> (e.g. 30s) it exits 3 if no
+matching message arrives in time. A clean block-for-one primitive (vs --follow).
 
 FLAGS
   --agent NAME    Agent identity (default: $HARMONIK_AGENT env var). Required.
   --from NAME     Filter: only messages from NAME.
   --topic T       Filter: only messages with topic T.
   --follow        After draining the backlog, tail live messages (streams until signal).
+  --wait          Block until exactly one matching message, deliver it, advance the
+                  cursor, and exit. Mutually exclusive with --follow.
+  --timeout DUR   With --wait: exit 3 if no message arrives within DUR (e.g. 30s).
   --json          Emit one JSON object per message (NDJSON) instead of human-readable output.
   --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR   Project directory (default: cwd).
 
 EXIT CODES
-  0   Success (zero or more messages printed; --follow exits on signal)
+  0   Success (zero or more messages printed; --follow exits on signal; --wait got one)
   1   Argument error or daemon rejected the op
+  3   --wait --timeout elapsed with no matching message
   17  Daemon not running (socket missing or ECONNREFUSED)
 
 EXAMPLES
   harmonik comms recv --agent myagent
   harmonik comms recv --agent myagent --follow
+  harmonik comms recv --agent myagent --wait
+  harmonik comms recv --agent myagent --wait --timeout 30s
   harmonik comms recv --agent myagent --from orchestrator
   harmonik comms recv --agent myagent --topic status --json
   harmonik comms recv --agent myagent --follow --json

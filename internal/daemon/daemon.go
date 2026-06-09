@@ -1390,9 +1390,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		commsSendHandler := NewCommsSendHandler(bus)
 		// Wire comms-recv deps (T8, hk-nnwaa): cursor store + events JSONL path.
 		// SetRecvDeps is a no-op when commsSendHandler is nil (bus stub case).
+		// The SAME cursor store is shared with the SubscribeHub (hk-tafd4) so that
+		// a `comms recv --follow` session advances the same durable cursor a
+		// one-shot `comms recv` would — no parallel cursor, no replay on restart.
 		if impl, ok := commsSendHandler.(*commsSendHandlerImpl); ok && cfg.ProjectDir != "" {
 			cursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
-			impl.SetRecvDeps(NewCursorStore(cursorDir), cfg.JSONLLogPath)
+			commsCursorStore := NewCursorStore(cursorDir)
+			impl.SetRecvDeps(commsCursorStore, cfg.JSONLLogPath)
+			subscribeHub.SetCommsCursorStore(commsCursorStore)
 		}
 
 		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).

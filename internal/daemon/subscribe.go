@@ -121,6 +121,13 @@ const (
 	subscribeChannelCapacity = 256
 )
 
+// commsCursorFlushInterval bounds how often a `comms recv --follow` subscribe
+// session fsyncs the agent's durable comms cursor (hk-tafd4). Advancing per
+// delivered event would fsync on every message; batching every few seconds
+// bounds the IO while keeping the replay-on-restart window small. The cursor is
+// also flushed once on session return so the final delivered event is durable.
+const commsCursorFlushInterval = 2 * time.Second
+
 // ActiveRunsSource is the minimal RunRegistry surface that subscribeHub
 // needs to render the heartbeat active_runs snapshot. *RunRegistry satisfies
 // this interface via Snapshot().
@@ -200,7 +207,25 @@ type SubscribeHub struct {
 	// goroutine returns. Used to enforce cfg.MaxConnections.
 	connCount atomic.Int64
 
+	// cursorStore, when non-nil, lets a `comms recv --follow` subscribe session
+	// advance the calling agent's durable comms cursor as agent_message events
+	// are delivered (hk-tafd4). Without this, a --follow watcher that restarts
+	// replays everything since its initial drain because the cursor only moves on
+	// a one-shot `comms recv`. Set post-construction via SetCommsCursorStore so
+	// the hub and the comms-recv handler share ONE cursor store (no parallel
+	// cursor). nil = cursor advancement disabled (subscribe behaves as before).
+	cursorStore *CursorStore
+
 	closed atomic.Bool
+}
+
+// SetCommsCursorStore wires the per-agent comms cursor store into the hub so a
+// `comms recv --follow` subscribe session advances the agent's durable cursor as
+// agent_message events are delivered (hk-tafd4). Pass the SAME *CursorStore the
+// comms-recv handler uses (see daemon wiring) so both paths share one cursor.
+// A nil store leaves cursor advancement disabled.
+func (h *SubscribeHub) SetCommsCursorStore(store *CursorStore) {
+	h.cursorStore = store
 }
 
 // NewSubscribeHub returns a hub bound to cfg. Bus is required.
@@ -353,6 +378,41 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 
 	enc := json.NewEncoder(conn)
 
+	// Comms-cursor advancement for `comms recv --follow` (hk-tafd4). When the hub
+	// has a cursor store and the request carries an agent name (req.To), we
+	// advance that agent's durable cursor as agent_message events directed to it
+	// are delivered, so a watcher restart does NOT replay already-delivered
+	// messages. To bound fsync churn we track the last-delivered event_id and
+	// flush it to the cursor at most every cursorFlushInterval (and once more on
+	// return). Advancing AFTER delivery preserves at-least-once (N3): a crash
+	// between deliver and flush re-delivers; clients dedup on event_id.
+	cursorAdvanceEnabled := h.cursorStore != nil && req.To != ""
+	var pendingCursorID string // last agent_message event_id delivered but not yet flushed
+	flushCursor := func() {
+		if !cursorAdvanceEnabled || pendingCursorID == "" {
+			return
+		}
+		// Best-effort: a failed flush is non-fatal (at-least-once tolerates it).
+		// Serialize against concurrent one-shot comms-recv on the same agent.
+		agentMu := h.cursorStore.AgentMu(req.To)
+		agentMu.Lock()
+		_ = h.cursorStore.Advance(req.To, pendingCursorID)
+		agentMu.Unlock()
+		pendingCursorID = ""
+	}
+	defer flushCursor()
+	// Only arm the cursor-flush timer when advancement is enabled. When it is
+	// not, leave cursorFlushC nil so the select branch below never fires and the
+	// timer factory (which tests inspect for the FIRST call = heartbeat interval)
+	// is not invoked for a flush timer at all.
+	var cursorFlushC <-chan time.Time
+	cursorFlushStop := func() bool { return true }
+	cursorFlushReset := func(time.Duration) {}
+	if cursorAdvanceEnabled {
+		cursorFlushC, cursorFlushStop, cursorFlushReset = h.cfg.NewTimer(commsCursorFlushInterval)
+	}
+	defer cursorFlushStop()
+
 	var lastReplayedUID [16]byte
 
 	if req.SinceEventID != "" && h.cfg.EventsJSONLPath != "" {
@@ -381,7 +441,14 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 					return
 				}
 				lastReplayedUID = [16]byte(evt.EventID)
+				// Advance the comms cursor over replayed agent_message events too:
+				// the replay window covers messages this agent has now seen.
+				if cursorAdvanceEnabled && evt.Type == "agent_message" {
+					pendingCursorID = evt.EventID.String()
+				}
 			}
+			// Persist progress made during replay before entering the live loop.
+			flushCursor()
 		}
 	}
 
@@ -416,6 +483,11 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			if err := enc.Encode(evt); err != nil {
 				return
 			}
+			// hk-tafd4: record this delivered agent_message so the cursor advances
+			// past it. Flush is batched on the cursorFlushC tick (and on return).
+			if cursorAdvanceEnabled && evt.Type == "agent_message" {
+				pendingCursorID = evt.EventID.String()
+			}
 			// Reset heartbeat — we just wrote, so the line is fresh.
 			if !hbStop() {
 				select {
@@ -424,6 +496,11 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				}
 			}
 			hbReset(heartbeatInterval)
+
+		case <-cursorFlushC:
+			// Batched durable cursor advance for --follow (hk-tafd4).
+			flushCursor()
+			cursorFlushReset(commsCursorFlushInterval)
 
 		case <-hbC:
 			payload := h.makeHeartbeat()

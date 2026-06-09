@@ -225,10 +225,13 @@ linters:
           files: ["**/internal/adapter/ntm/**"]
           allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
 
-        # Workspace: core + eventbus + adapter-br + uuid.
+        # Workspace: core + eventbus + adapter-br + handlercontract + uuid.
         # uuid is a leaf utility (no harmonik-internal deps); workspace needs it
         # to parse RunID/WorkflowID strings from JSON (leaselock.go, test helpers).
         # Already in core's allow-list; adding here is consistent.
+        # handlercontract: conflictresolution_wm024.go builds a LaunchSpec and
+        # claudetrust_wm040b.go wraps handlercontract.ErrStructural (hk-bfvby) so
+        # the dispatch path classifies a bounded-lock timeout as structural.
         workspace:
           files: ["**/internal/workspace/**"]
           allow:
@@ -236,6 +239,7 @@ linters:
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/eventbus"
             - "github.com/gregberns/harmonik/internal/adapter/br"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/google/uuid"
 
         # Agent runner: core + eventbus + handler contract + adapter-ntm.

@@ -2915,6 +2915,14 @@ func removeWorktree(ctx context.Context, repoRoot, wtPath string) {
 	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", wtPath)
 	cmd.Dir = repoRoot
 	_ = cmd.Run()
+
+	// hk-bfvby: GC the per-worktree trust key from ~/.claude.json. harmonik
+	// creates one ephemeral worktree per bead and never reuses the path, so
+	// without this the trust "projects" map grows unbounded (observed 36.6k
+	// leaked keys / 8.6MB bloat that, with the per-call rewrite, produced the
+	// ~16-min spawn stall). Best-effort: cleanup failure is non-fatal — the
+	// bounded lock inside PruneWorktreeTrust ensures it can never wedge the loop.
+	_ = workspace.PruneWorktreeTrust(wtPath)
 }
 
 // emitPreExecMessage emits a single CHB-018 pre-exec progress message on the

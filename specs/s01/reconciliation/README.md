@@ -1,5 +1,19 @@
 # S01 Reconciliation Workflow Library
 
+```yaml
+---
+title: S01 Reconciliation Workflow Library
+spec-id: s01-reconciliation-readme
+status: draft
+spec-shape: index
+spec-category: foundation-cross-cutting
+version: 1.0.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-09
+---
+```
+
 Owned by S01 (Orchestrator Core) per [reconciliation/spec.md §4.1 RC-004].
 
 This directory contains the concrete DOT workflows, YAML policies, and

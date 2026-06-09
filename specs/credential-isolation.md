@@ -1,10 +1,13 @@
+# Credential Isolation
+
+```yaml
 ---
 title: Credential Isolation
 spec-id: credential-isolation
 requirement-prefix: CI
 status: draft
 spec-shape: requirements-first
-spec-category: cross-cutting-invariant
+spec-category: foundation-cross-cutting
 version: 0.1.0
 spec-template-version: 1.1
 owner: flywheel-author
@@ -17,8 +20,8 @@ depends-on:
   - process-lifecycle
   - operator-nfr
 ---
+```
 
-# Credential Isolation
 
 ## 1. Purpose
 This spec defines harmonik's **credential isolation** contract: which process MAY hold a sensitive model credential, the scrub guarantee owed at every `claude` spawn boundary, and the scoped-injection rule that delivers the credential to the one process permitted to hold it. The contract is cross-cutting — it spans daemon child-env assembly ([claude-launchspec.md §4], [claude-hook-bridge.md §4.2 CHB-006]), the cognition (Pi) process launch ([cognition-loop.md §4.1, §4.12]), and the tmux substrate handoff — and no single subsystem owns all three boundaries. This spec is the normative source for the credential-holder discipline; the sibling specs it touches carry additive notes referencing it (Appendix A).

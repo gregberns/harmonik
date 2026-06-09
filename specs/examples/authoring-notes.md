@@ -1,5 +1,19 @@
 # specs/examples/ — Authoring and Porting Notes
 
+```yaml
+---
+title: specs/examples/ — Authoring and Porting Notes
+spec-id: examples-authoring-notes
+status: draft
+spec-shape: guidance
+spec-category: foundation-cross-cutting
+version: 1.0.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-09
+---
+```
+
 > **NON-NORMATIVE.** This file is a guidance document, not a spec section.
 > Normative obligations are in `specs/workflow-graph.md`. This document
 > consolidates the authoring rules and porting aliases scattered across WG-039

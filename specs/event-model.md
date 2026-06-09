@@ -348,6 +348,8 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 > Section Axes (§8.12 Decision-required lifecycle): Both entries are mechanism-tagged, class F (fsync-backed): `decision_required` loss silently leaves a double-failed bead eligible for re-dispatch; `decision_acknowledged` loss leaves the ack-state file authoritative but JSONL observability broken. Axes: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent`.
 
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 8.13 Epic-completion lifecycle
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
@@ -359,6 +361,8 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 > **EV-029 compatibility.** This row is additive per EV-029 (N-1 readable): existing consumers that do not recognise `epic_completed` MUST ignore it per §6.4 row 1.
 
 > Section Axes (§8.13 Epic-completion lifecycle): mechanism-tagged, class O (ordinary — observational; loss does not affect bead routing or completion). Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
 ## 4. Normative requirements
 

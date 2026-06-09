@@ -1,3 +1,6 @@
+# Cognition Loop
+
+```yaml
 ---
 title: Cognition Loop
 spec-id: cognition-loop
@@ -25,8 +28,7 @@ depends-on:
   - control-points
   - credential-isolation
 ---
-
-# Cognition Loop
+```
 
 ## 1. Purpose
 This spec defines harmonik's **cognition loop**: the long-running, agent-led process that supervises a harmonik daemon — prioritizing dispatch, reacting to run outcomes, investigating failures, and escalating when judgment is required. The cognition loop is the realization of the orchestrator-agent role named (and explicitly post-MVH) by [process-lifecycle.md §4.6 PL-019]; this spec promotes that role from an informative placeholder to a specified long-running process with its own lifecycle, consistency contract, and composition root.
@@ -77,6 +79,57 @@ The spec exists separately from `process-lifecycle.md` because cognition is a po
 - **unified spend meter** — the per-day governance meter that sums the loop's own Pi model-turn cost AND daemon-spawned `claude` session cost against one cap. (see §4.11)
 
 ## 4. Normative requirements
+
+### 4.a Subsystem envelope
+
+#### CL-ENV-001 — Envelope declaration
+
+Envelope for the cognition-loop subsystem per [architecture.md §4.0 AR-053]. The cognition loop is the daemon-adjacent, singleton, orchestrator-side cognition harness (Pi extension or Go-native per CL-100); it owns the `.harmonik/cognition/` file surface and is a second, read-only consumer of the daemon's durable substrate (CL-050). It mutates no harmonik-owned daemon state and emits no run-routing events.
+
+(a) Events produced:
+  - `budget_exhausted` (scope `handler_account`) — emitted to the SHARED bus per §4.11 CL-090 and OQ-CL-004; consumed by [handler-pause.md §4 HP-012]. Class O.
+  - `loop_observed_phantom_done`, `loop_cold_start` — loop diagnostic/warning events per §4.8 CL-051/CL-054; emitted to the loop's separate `.harmonik/cognition/` event surface at v0.1 (OQ-CL-004), NOT the shared bus. Class L (lossy-tail-ok; observational).
+
+(b) Events consumed (via `harmonik subscribe`, read-only second consumer per CL-050/CL-060):
+  - `run_completed`, `run_failed`, `run_canceled` — drive deterministic eager refill per §4.9 CL-071.
+  - `reviewer_verdict`, `merge_conflict`, `decision_required`, `pattern_detected`, `bus_overflow` — Wake-LLM tier per §4.8 CL-061.
+  - `state_entered`, `state_exited`, `node_dispatch_requested`, `heartbeat` — ignore/deterministic tiers per §4.8 CL-061.
+  - `epic_completed` — observational; ignore tier per §4.8 CL-061 (no semantic effect on dispatch).
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `Note` (§6) | mechanism | baseline |
+  | `WatermarkState` (§6) | mechanism | baseline |
+  | `DigestJSON` (§6) | mechanism | baseline |
+  | `WakeTier` (§6) | mechanism | baseline |
+  | `FullnessBand` (§6) | mechanism | baseline |
+  | `LoopStatus` (§6) | mechanism | baseline |
+  | `BudgetState` (§6) | mechanism | baseline |
+
+(d) Handlers implemented: none. The cognition loop is not a handler-contract handler; it is an orchestrator-side consumer process launched via `harmonik supervise` per §4.10 CL-080.
+
+(e) State owned:
+  - `.harmonik/cognition/` file surface (§4.1 CL-003a): `loop.lock`, `state.json` (`WatermarkState`, §4.7 CL-052), `notes.jsonl` (`Note` log, §4.5 CL-040), `heartbeat`, `dispatch-log.jsonl`, `budget` (`BudgetState`, §4.11). The loop MUST NOT write to harmonik-owned files outside this surface (`queue.json`, `events/`, `beads-intents/`, `worktrees/`).
+
+(f) Control points provided: none. The loop's operations are mechanism-tagged (CL-013, CL-INV-001); they are not gate/hook/guard/budget points per [control-points.md §4.1]. The wake-filter and eager-refill paths are internal eligibility checks, not control-points primitives.
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-035` structured logging — the loop emits `loop_cold_start`/diagnostic warnings per §4.8 CL-054.
+  - Inherited: `WM-026` atomic-write discipline — applied to `state.json` per §4.7 CL-052.
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `event_react` (§4.8 CL-061..CL-064) | cognition | `llm-freedom=bounded; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `eager_refill` (§4.9 CL-071) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `digest_produce` (§4.6 CL-030/CL-031) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `watermark_advance` (§4.7 CL-052/CL-053) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `note_write` (§4.5 CL-040/CL-042) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `context_recycle` (§4.3 CL-024) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+
+Tags: mechanism
 
 ### 4.1 Process model
 - **CL-001 — Separate process from the daemon.** The cognition loop MUST run as a separate OS process; MUST NOT share an address space with the daemon. Interacts via the daemon's documented surfaces only (socket per PL-003a; `harmonik subscribe`; git working tree read-only; `br`). MUST NOT call into daemon-internal Go packages. Preserves PL-018.

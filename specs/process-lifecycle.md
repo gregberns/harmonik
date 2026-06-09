@@ -609,7 +609,7 @@ For the MVH the daemon MUST consume a direct-tmux substrate in place of the ntm 
    Cross-spec coordination request: [event-model.md §6.3] `agent_started` payload schema requires a new optional `tmux_window_name string` field for this requirement (applicable when substrate = direct-tmux). Refs: hk-gql20.25.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-021c — Pane orphan recovery within PL-006
 
@@ -631,7 +631,7 @@ The session-level sweep of PL-006 is NOT modified.
 Cross-spec coordination: [event-model.md §8.7] `daemon_orphan_sweep_completed` payload schema requires the `tmux_windows_killed` field addition.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-021d — Daemon→pane write mechanism (tmux load-buffer + paste-buffer)
 
@@ -672,7 +672,7 @@ The buffer name MUST be globally unique within tmux (tmux buffer names are share
 This ensures the operator and conformance tests can audit every daemon-injected write without parsing pane output.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-022 — ntm adapter MUST NOT consume workflow-semantic features
 
@@ -787,7 +787,7 @@ The `harmonik runner` four-step lifecycle of PL-028 obligates the daemon (or run
 5. **Exit codes.** 22 if `tmux -V` probe fails; 24 (PL-INTERIM) for any other unrecoverable failure during steps i–iv. Code 0 for the "$TMUX already set" no-op path.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-028b — `hk` daemon refusal when `$TMUX` is unset
 
@@ -798,7 +798,7 @@ Because PL-005 step 4 (Cat 0 pre-check) follows step 3a (socket bind) in the seq
 The daemon MUST NOT silently create its own tmux session when `$TMUX` is unset; the operator must opt in explicitly via `hk tmux-start`.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-028c — `hk queue` subcommand-family pre-`flag.Parse` dispatch
 
@@ -807,7 +807,7 @@ The `hk queue` family MUST be dispatched in `cmd/harmonik/main.go` before `flag.
 The daemon-not-running path MUST be uniform across all four verbs: socket-probe `ECONNREFUSED` against `.harmonik/daemon.sock` → exit code **17** (`multi-daemon-target-missing` per ON §8 / PL-008a). The single-project remediation prose (start `harmonik daemon` rather than `harmonik list`) is owned by [operator-nfr.md §4.1 ON-004]; PL-028c references it without restating.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-028d — `harmonik supervise` subcommand-family verb contract
 
@@ -824,7 +824,7 @@ Verb obligations:
 The daemon-not-running path for `start`/`restart` MUST be: socket-probe `ECONNREFUSED` against `.harmonik/daemon.sock` → exit 17, stderr directive `"daemon not running; start with: harmonik daemon"`.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=replay-safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ## 5. Invariants
 

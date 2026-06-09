@@ -1,5 +1,19 @@
 # Cat 6a Investigator Prompt Template
 
+```yaml
+---
+title: Cat 6a Investigator Prompt Template
+spec-id: s01-reconciliation-cat-6a-investigator
+status: draft
+spec-shape: prompt-template
+spec-category: foundation-cross-cutting
+version: 1.0.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-09
+---
+```
+
 <!-- Pinned by:
   - specs/reconciliation/spec.md §4.1 RC-004(c) (S01 ships investigator-agent prompt templates)
   - specs/reconciliation/spec.md §4.4 RC-015/RC-015a (investigator as HC handler, investigator role)

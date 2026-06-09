@@ -844,7 +844,7 @@ Tags: configuration
 **Defense-in-depth assertion (inline branch gate).** As a redundant safety assertion, when the fallback path is reached (which, per the clarification above, can only occur if an implementation has scoped `should_pause_between_runs()` more narrowly than the full ON-008 operator-control state — e.g. to handler-pause only — and thereby bypassed the loop-top operator-pause gate), the fallback branch MUST independently check the operator-control state: if it is `pausing` or `paused` per ON-011, the fallback path MUST NOT dispatch — it MUST take the §7.4 idle-wait branch and MUST NOT call `br ready` or emit `run_started` until the state returns to `running` (via `resuming`) per [operator-nfr.md §7.1]. A conforming implementation where the loop-top check covers the full operator-control state will find this inline branch never taken under operator pause; that is correct and intended (the assertion holds vacuously). The gate is effective once the ON-056/ON-057 producer emits in production; absent that producer both the loop-top check and this inline assertion behave as a daemon with no operator pause in effect.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=safe
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ## 4.12 Run-branch merge-to-main
 

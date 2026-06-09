@@ -6,7 +6,7 @@ title: Crew Mission-Handoff Schema
 spec-id: crew-handoff-schema
 status: draft
 spec-shape: contract
-spec-category: agent-coordination
+spec-category: foundation-cross-cutting
 version: 1.0.0
 spec-template-version: 1.1
 owner: captain-plan-author

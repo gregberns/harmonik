@@ -200,6 +200,8 @@ Envelope for the handler-pause subsystem per [/Users/gb/github/harmonik/specs/ar
   | `persist_handler_state` (§3.5 HP-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
   | `startup_load_handler_state` (§3.5 HP-001..HP-003) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
 
+Tags: mechanism
+
 ## 5. Trigger taxonomy
 
 ### 5.1 Handler-fatal definition

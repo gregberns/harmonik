@@ -69,6 +69,44 @@ This spec does **not** re-state those rules. It consolidates three things those 
 
 ## 4. Normative requirements
 
+### 4.a Subsystem envelope
+
+#### CLS-ENV-001 — Envelope declaration
+
+Envelope for the claude-launchspec subsystem per [architecture.md §4.0 AR-053]. This subsystem is the `buildClaudeLaunchSpec` assembly function (`internal/daemon/claudelaunchspec.go`) that bridges the daemon's run-dispatch layer to the Claude Code (or twin) subprocess launch. It is a pure assembly seam: it transforms a read-only `claudeRunCtx` into a `handler.LaunchSpec` plus `claudeRunArtifacts`; it neither emits bus events itself nor persists state — those obligations are the daemon caller's (CLS-030, CLS-031).
+
+(a) Events produced: none directly. The function returns `claudeRunArtifacts.preExecMsgs` — 4 ordered NDJSON pre-exec messages per [claude-hook-bridge.md §4.7 CHB-018]; the daemon caller MUST emit them on the bus before `handler.Launch` per §4.4 CLS-030. Emission ownership is the caller's, not this subsystem's.
+
+(b) Events consumed: none. The assembly function performs no bus reads; all inputs arrive via the `claudeRunCtx` struct (§4.1).
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `claudeRunCtx` (§4.1) | mechanism | baseline |
+  | `claudeRunArtifacts` (§3, §4.4) | mechanism | baseline |
+  | `ModelPreferenceError` (§4.1 CLS-004, §5) | mechanism | baseline |
+
+(d) Handlers implemented: none. This subsystem assembles the `LaunchSpec` for the `claude-code` handler defined in [handler-contract.md §4.1]; it does not itself implement a handler-contract handler.
+
+(e) State owned: none. `claudeRunCtx` is a read-only per-launch input (§3); `claudeRunArtifacts` is a returned value. Durability of `claudeRunArtifacts.claudeSessionID` for implementer-resume is the daemon's responsibility per §4.4 CLS-031 and [claude-hook-bridge.md §4.8 CHB-023], not this subsystem's.
+
+(f) Control points provided: none. The assembly function is mechanism-tagged; the credential-env deny-list strip (§4.1) and the `isHarmonikManagedWorktree` positive-allowlist check (§4.5 CLS-040) are deterministic guards internal to assembly, not control-points primitives per [control-points.md §4.1].
+
+(g) NFRs inherited / overridden:
+  - Inherited: credential-isolation `CI-002`/`CI-003` — the env deny-list strip of §4.1 enforces the credential-holder discipline at the launch boundary.
+  - Inherited: `HC-INV-004` pre-exec-before-launch ordering — surfaced as the CLS-030 caller obligation.
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `build_launch_spec` (§4.2 CLS-010) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `mint_claude_session_id` (§4.2 step 1) | mechanism | `llm-freedom=none; io-determinism=nondeterministic; replay-safety=unsafe; idempotency=non-idempotent` |
+  | `validate_model_preference` (§4.1 CLS-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `worktree_path_check` (§4.5 CLS-040) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+
+Tags: mechanism
+
 ### 4.1 claudeRunCtx field contract
 
 #### CLS-001 — Unconditional required fields

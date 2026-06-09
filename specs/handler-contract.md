@@ -679,7 +679,7 @@ The timeout MUST fire from the same goroutine that owns the session's lifecycle 
 Cross-refs: HC-039 (emitter identity), HC-041 (DetectReady), [claude-hook-bridge.md §4.5 CHB-013] (SessionStart → agent_ready mapping), [claude-hook-bridge.md §4.7 CHB-018] (launch_initiated precursor, agent_ready gating), [claude-hook-bridge.md §4.7 CHB-020] (terminal-event mapping). Closes follow-up bead `hk-do7te`.
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-057 — Heartbeat-emission ownership for `claude-code` at MVH
 
@@ -700,7 +700,7 @@ Post-MVH, when a `harmonik claude-handler` shim binary lands, heartbeat emission
 Cross-ref: [claude-hook-bridge.md §4.7 CHB-019].
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.10 Agent-to-orchestrator trust (MVH)
 
@@ -796,7 +796,7 @@ A daemon that detects any of these flags in `Config.HandlerArgs` MUST refuse to 
 Cross-refs: [claude-hook-bridge.md §4.2 CHB-006] (env), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags), [claude-hook-bridge.md §4.1 CHB-001..005] (settings.json materialization), §4.10.HC-055b (worktree path-check for `--dangerously-skip-permissions`).
 
 Tags: mechanism, security-relevant
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-055b — Worktree path-check for `--dangerously-skip-permissions`
 
@@ -1123,7 +1123,7 @@ Multiple concurrent `Attach()` calls are permitted; each call returns an indepen
 Cross-refs: [process-lifecycle.md §4.7 PL-021b] (pane substrate), [claude-hook-bridge.md §4.7 CHB-018] (pre-exec emission ordering — unaffected).
 
 Tags: mechanism
-Axes: llm-freedom=mechanical; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 6.2 Wire-protocol message envelope
 

@@ -1,5 +1,19 @@
 # per-node-model-effort.dot — documentation sidecar
 
+```yaml
+---
+title: per-node-model-effort.dot — documentation sidecar
+spec-id: examples-per-node-model-effort
+status: draft
+spec-shape: guidance
+spec-category: foundation-cross-cutting
+version: 1.0.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-09
+---
+```
+
 Per [specs/workflow-graph.md §12 WG-037], each canonical example requires a
 sidecar documenting which spec sections it exercises, its expected golden trace,
 and any reserved context-key dependencies.

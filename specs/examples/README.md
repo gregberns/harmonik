@@ -1,5 +1,19 @@
 # specs/examples/ — Canonical Workflow Graphs
 
+```yaml
+---
+title: specs/examples/ — Canonical Workflow Graphs
+spec-id: examples-readme
+status: draft
+spec-shape: index
+spec-category: foundation-cross-cutting
+version: 1.0.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-09
+---
+```
+
 ## Purpose
 
 This directory holds canonical workflow graphs that harmonik's spec uses as worked examples. Each `.dot` file under `specs/examples/` MUST round-trip through C2's validator and MUST execute cleanly under the C2 dispatch driver against C3's Outcome contract. Examples here are normative in the sense that the spec pins them: a spec section that names an example by filename is asserting that the file is the worked demonstration of that section's claims.

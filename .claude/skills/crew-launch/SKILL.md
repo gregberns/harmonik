@@ -230,7 +230,7 @@ Durable in `events.jsonl`; the captain reads it via `comms recv`/`comms log`.
 **Surface 2 — Epic journal in beads (durable record):**
 
 ```bash
-br comments add <epic_id> --body "<update>"
+br comments add <epic_id> "<update>"   # TEXT is positional (or --message "<update>"); there is NO --body flag
 ```
 
 Durable in SQLite + `.beads/issues.jsonl`; survives any session or daemon

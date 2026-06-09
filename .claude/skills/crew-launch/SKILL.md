@@ -80,7 +80,7 @@ attributes a completed epic to its owning crew by reading `br show <epic_id>
 --format json` → `assignee` field. Without this mirror the Captain reads a stale
 assignee and mis-attributes completion.
 
-**MUST run on EVERY epic adoption — at boot AND on every `topic == assignment`
+**MUST run on EVERY epic adoption — at boot AND on every `topic == assign`
 comms re-task.** Not only on first boot, not only for restart re-hydration.
 
 Fallback (if `br` lacks `--assignee`):
@@ -123,11 +123,11 @@ harmonik comms recv --follow --json
 
 | `topic` | Action |
 |---|---|
-| `assignment` (or a message naming a new `epic_id`) | Adopt the new epic: update your working `epic_id`, run `br update <new_epic> --assignee <crew_name>` (**load-bearing, every re-task**), and begin dispatching its ready beads to your queue. |
+| `assign` (or a message naming a new `epic_id`) | Adopt the new epic: update your working `epic_id`, run `br update <new_epic> --assignee <crew_name>` (**load-bearing, every re-task**), and begin dispatching its ready beads to your queue. |
 | `reprioritize` / other directives | Act per the body. |
 | Anything else | Log and no-op (do not crash). |
 
-The `--assignee` mirror on every re-task is **NOT optional** — see Step 4 rationale.
+The `--assignee` mirror on every `topic == assign` re-task is **NOT optional** — see Step 4 rationale.
 
 ---
 
@@ -283,7 +283,7 @@ your `queue` and `epic_id` are durable in beads.
 **Idempotent actions on restart:**
 - `br update <epic_id> --assignee <crew_name>` on an already-assigned epic → no-op.
 - Submitting a bead already in your queue → the daemon deduplicates it.
-- Re-processing a `topic == assignment` with a dedupe hit → no-op (same
+- Re-processing a `topic == assign` with a dedupe hit → no-op (same
   `event_id`).
 
 ---

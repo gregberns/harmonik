@@ -1417,6 +1417,28 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
 		}
+
+		// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log
+		// so a restart does not re-emit epic_completed for an already-completed epic
+		// (AC-5). When cfg.JSONLLogPath is empty (unit-test mode), the empty map
+		// from newWorkLoopDeps is retained — the in-process guard still works for
+		// the session.
+		if cfg.JSONLLogPath != "" {
+			seed := make(map[core.BeadID]struct{})
+			for ev := range eventbus.ScanAfter(cfg.JSONLLogPath, core.EventID{}) {
+				if core.EventType(ev.Type) != core.EventTypeEpicCompleted {
+					continue
+				}
+				var pl core.EpicCompletedPayload
+				if err := json.Unmarshal(ev.Payload, &pl); err != nil || !pl.Valid() {
+					continue
+				}
+				seed[pl.EpicID] = struct{}{}
+			}
+			deps.emittedEpics = seed
+			deps.emittedEpicsMu = &sync.Mutex{}
+		}
+
 		// Inject the QueueStore singleton so the work loop can pull from the
 		// active queue (queue-pull dispatch path per execution-model.md §7.4 TS-1).
 		//

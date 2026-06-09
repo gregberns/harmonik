@@ -64,6 +64,8 @@ done
 
 ## Bead lifecycle discipline
 
+**THROWAWAY-CANARY DISCIPLINE (HARD RULE).** When probing for daemon spawn wedges or verifying spawn behavior after a restart, use a **throwaway trivial smoke bead** as the canary — NOT a real implementation bead. Re-dispatching a real bead >2× as a spawn canary violates the never-re-dispatch-without-investigation rule and burns real captain-impl slots. If no throwaway canary exists, create one with `br create --title="canary: throwaway smoke probe" --type=chore --priority=4` and close it after the probe. Incident: hk-w6y70 (a real T2 bead) was used as the spawn-wedge canary 5× across restarts (logmine F15, 2026-06-09).
+
 **EVERY BEAD GETS A REVIEW PHASE (HARD RULE).** `harmonik run` includes a review phase on every batch by default (hk-g0ckv landed). Pass `--no-review-loop` only to explicitly opt out.
 
 **DON'T LET BEADS CLOSE WITHOUT IMPL.** Reopen any beads marked closed-without-commit. Implementers sometimes run `br close` then exit without producing code — reopen and reinvestigate.

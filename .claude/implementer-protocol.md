@@ -58,6 +58,12 @@ If `git branch --show-current` returns `main`, you have escaped your worktree. S
 
 The directives in `HANDOFF.md` describe a "merge dance" run from the main repo dir — that is the **orchestrator's** job after your review, NOT yours. You stay in the worktree for the entire dispatch. Read-only inspection of files under `/Users/gb/github/harmonik` is fine; ANY git write operation (commit, branch, reset, checkout) MUST happen from the worktree path.
 
+**F18 — `.harmonik/` is per-tree.** Your worktree has its OWN `.harmonik/` directory (agent-task.md, reviewer-feedback files). The MAIN repo's `.harmonik/` (queue.json, events.jsonl, daemon.sock) is a DIFFERENT tree. Never read or write the main-repo `.harmonik/`.
+
+## Edit discipline — unicode comment tables (F20)
+
+When a Go file contains aligned Unicode box-drawing characters (e.g. `│`, `─`, `┌`, `└`) in comment tables, the Edit tool's `old_string` matching fails on the multi-byte sequences. Remedy: Read the exact bytes around your target anchor first, then use the shortest purely-ASCII substring in that row as the `old_string` anchor (e.g. the label text or an adjacent Go keyword) rather than the full aligned row.
+
 ## Commit format (REQUIRED — verbatim HEREDOC pattern with quoted EOF)
 
 ```
@@ -140,6 +146,8 @@ You will not get an answer — the orchestrator dispatches you and moves on. **M
 - `go test ./<target-package>/...`
 - `gofmt -d ./<target-package>/` (must show empty diff)
 - Optional: `golangci-lint run ./<target-package>/...` if available locally
+
+**F19 — Never run daemon-booting or scenario-tagged suites.** Tests tagged `//go:build scenario` spin up real daemons and routinely exceed your wall-clock budget, causing Exit-137 (SIGKILL). Run only the targeted fast unit-test gate for your package. If a scenario test is the natural gate for your bead, skip it here and note in your commit that the scenario-test gate is deferred.
 
 If any of the above fails, fix before committing. Do not commit broken code expecting the reviewer to flag it.
 

@@ -300,6 +300,8 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString(fmt.Sprintf("  CORRECT:   find %s/internal -name '*.go'\n", p.WorkspacePath))
 		sb.WriteString("  WRONG:     find /Users/gb/github/harmonik/internal -name '*.go'   (main repo — your edits will be lost)\n\n")
 		sb.WriteString("If a discovery command returns paths under the main repo root, translate them into your worktree before reading or editing.\n")
+		// F18 (logmine hk-rpk5k): agents reach for repo-root .harmonik/ instead of worktree-local.
+		sb.WriteString(fmt.Sprintf("Note: your worktree has its OWN `.harmonik/` directory at `%s/.harmonik/` (agent-task.md, reviewer-feedback files). The MAIN repo's `.harmonik/` (queue.json, events.jsonl, daemon.sock) is a DIFFERENT tree — do not read or write there.\n", p.WorkspacePath))
 	}
 
 	// Bead Lifecycle prohibition (hk-4jipv, hk-2hb2y): rendered BEFORE the Task

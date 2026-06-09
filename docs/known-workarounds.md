@@ -47,6 +47,9 @@ HK_PROJECT=/path/to/project HK_CONCURRENCY=4 ./scripts/hk-keeper.sh
 
 The script runs *outside* tmux, launches the daemon in a `hkdkeeper` tmux session (not `harmonik-*` prefixed so orphan sweeps can't kill it), strips `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (subscription-billed), and revives on process absence. Do NOT `rm` the socket while the daemon is live — only the keeper does that after confirming the process is gone.
 
+**TMUX NEW-WINDOW TIMEOUT (fixed hk-r1rup, commit ec30b225).**
+2026-06-08: tmux new-window calls are now bounded by a 60s timeout (hk-r1rup, commit ec30b225). A hung tmux new-window now emits a tmux_new_window_timeout event + returns ErrStructural to reopen the bead, instead of wedging a daemon slot at launch_stall forever (was the hk-9vp51 residual no-spawn wedge).
+
 ---
 
 ## Harness issues

@@ -1453,6 +1453,14 @@ var ExportedHeartbeatStalenessThreshold = &heartbeatStalenessThreshold
 // Bead: hk-3gq0b.
 var ExportedLaunchHeartbeatTimeout = &launchHeartbeatTimeout
 
+// ExportedLaunchSuppressionCeiling is a pointer to the package-level
+// launchSuppressionCeiling var. Tests set *ExportedLaunchSuppressionCeiling to a
+// short duration to prove the launch-verification suppression terminates even
+// when the pane reports an active child process forever (hk-jgxqc).
+//
+// Bead: hk-jgxqc.
+var ExportedLaunchSuppressionCeiling = &launchSuppressionCeiling
+
 // quitSenderExported is the exported alias for quitSender so the exported
 // wrapper can accept it.
 type quitSenderExported = quitSender

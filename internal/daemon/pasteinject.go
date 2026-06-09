@@ -363,6 +363,40 @@ var heartbeatStalenessThreshold = 8 * time.Minute
 // Bead: hk-3gq0b.
 var launchHeartbeatTimeout = 180 * time.Second
 
+// launchSuppressionCeiling is the ABSOLUTE bound on how long the launch-
+// verification window (hk-3gq0b) may be suppressed by a still-active pane
+// (hk-fbydv) before the kill fires unconditionally.
+//
+// hk-jgxqc root cause: the launch-verification branch resets launchDeadline on
+// every tick where the first agent_heartbeat has NOT yet arrived but the pane
+// reports an active child process.  Under concurrency the per-run heartbeat tap
+// (tapCh) is drained by a competing consumer (chanAgentEventSource feeding
+// waitAgentReady), so pasteInjectQuitOnCommit NEVER observes a heartbeat,
+// firstHeartbeatSeen stays false forever, and the suppression resets the launch
+// deadline UNBOUNDEDLY — the goroutine spins in a sleep/reset loop emitting
+// "launch-heartbeat-timeout suppressed" every launchWindow and never proceeds to
+// /quit → grace → force-kill, so sess.Wait never unblocks and the workflow never
+// advances from implement → merge.  The commit-budget path has commitHardCeiling
+// as its absolute backstop; the launch-verification path had NO such ceiling.
+//
+// This ceiling caps the TOTAL launch-suppression window measured from loopStart.
+// Once it elapses the launch-verification branch stops suppressing and fires the
+// noChange kill even when the pane still reports an active child process —
+// guaranteeing the post-spawn watchdog always terminates.  It does NOT regress
+// the legitimate launch-phase suppression: a genuinely-booting Claude emits its
+// first heartbeat (or commits) well within this window, which clears
+// firstHeartbeatSeen / triggers commit detection and exits the branch normally.
+//
+// 12 min is a generous multiple of the 180s launchWindow (≈4 windows): long
+// enough that no legitimate launch is guillotined, short enough that a wedged
+// run is freed in minutes rather than at the 90-min commitHardCeiling.
+//
+// Declared as var (not const) so tests can override it without waiting real
+// wall time.
+//
+// Bead: hk-jgxqc.
+var launchSuppressionCeiling = 12 * time.Minute
+
 // noChangeKillDelay is the grace period between the unconditional /quit send
 // (on commitPollTimeout) and the forced sess.Kill call.  30 s gives Claude Code
 // time to respond to /quit and exit cleanly; if the pane is still alive after
@@ -488,6 +522,11 @@ func pasteInjectQuitOnCommit(
 	stalenessThreshold := heartbeatStalenessThreshold
 	launchWindow := launchHeartbeatTimeout
 	hardCeiling := commitHardCeiling
+	// hk-jgxqc: snapshot the absolute launch-suppression ceiling. After this
+	// window (measured from loopStart) the launch-verification branch may no
+	// longer suppress on an active pane — it fires the kill so the watchdog
+	// always terminates.
+	launchSuppressCeil := launchSuppressionCeiling
 
 	loopStart := time.Now()
 	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on every
@@ -505,6 +544,11 @@ func pasteInjectQuitOnCommit(
 	// When heartbeatProvided, the first heartbeat must arrive within launchWindow
 	// or the session is killed (paste likely landed in an empty pane).
 	launchDeadline := time.Now().Add(launchWindow)
+	// hk-jgxqc: absolute backstop for the launch-verification window. Unlike
+	// launchDeadline (which the suppress branch resets on every active-pane
+	// tick), this is NEVER extended — once it passes the suppression is no
+	// longer permitted and the kill fires even on an active pane.
+	launchSuppressDeadline := loopStart.Add(launchSuppressCeil)
 	firstHeartbeatSeen := false
 
 	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
@@ -633,15 +677,30 @@ func pasteInjectQuitOnCommit(
 			// a heartbeat.  Reset lastHeartbeat and extend the launch deadline so
 			// the kill does not fire until the session actually goes dark.
 			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
-				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
+				// hk-jgxqc: the active-pane suppression is bounded by an absolute
+				// ceiling (launchSuppressDeadline, NEVER extended).  Past that
+				// ceiling the suppression is no longer permitted: a pane that has
+				// reported "active child process" for the entire launch-suppression
+				// window without ever emitting a heartbeat OR committing is wedged
+				// (e.g. an idle claude whose heartbeats were consumed by a competing
+				// tapCh reader under concurrency), so we MUST fire the kill so
+				// sess.Wait unblocks and the workflow advances.  Within the ceiling
+				// the legitimate launch-phase suppression is preserved unchanged.
+				if now.Before(launchSuppressDeadline) &&
+					livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout suppressed: pane has active child process in %s; resetting staleness clock\n",
 						wtPath)
 					lastHeartbeat = now
 					launchDeadline = now.Add(launchWindow)
 				} else {
-					fireNoChangePath("launch-heartbeat-timeout: no heartbeat within launch window after brief delivery",
-						"launch-heartbeat-timeout", false)
+					reason := "launch-heartbeat-timeout: no heartbeat within launch window after brief delivery"
+					if !now.Before(launchSuppressDeadline) {
+						reason = fmt.Sprintf(
+							"launch-heartbeat-timeout: no heartbeat within launch-suppression ceiling %v (pane active but never progressed)",
+							launchSuppressCeil)
+					}
+					fireNoChangePath(reason, "launch-heartbeat-timeout", false)
 					return
 				}
 			}

@@ -332,11 +332,26 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission WriteLastPane: %v\n", err)
 		return
 	}
-	// Submit the pasted message.
+	// Settle after the paste before submitting (hk-jzpqo).
+	//
+	// Root cause of the not-submitted seed: the post-paste submit Enter was sent
+	// IMMEDIATELY after WriteLastPane (the bracketed paste), with no settle in
+	// between.  A freshly-spawned crew pane — like a freshly-`--resume`'d
+	// implementer (hk-ip33d) — has a REPL input handler that is intermittently
+	// not yet ready to accept the keypress at that instant: the paste content is
+	// still being absorbed by the TUI, so the single Enter races it and is
+	// swallowed.  The seed then sits in the input bar unsubmitted and the crew
+	// never begins its loop until someone manually presses Enter.
+	//
+	// Fix: mirror the working implementer paths — wait splashDismissWait after the
+	// paste so the bracketed-paste content lands and the REPL returns to an
+	// input-ready prompt, THEN submit via sendResumeSubmitEnter, the same bounded
+	// submit-Enter retry the implementer-resume path uses (hk-ip33d).  A redundant
+	// Enter at an already-submitted REPL is a harmless empty line, so the retry
+	// only ever helps: at least one keypress lands after the input handler is ready.
+	splashDismissWait(ctx)
 	if es, ok := inj.(enterSender); ok {
-		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: crew-start: post-paste SendEnterToLastPane: %v\n", err)
-		}
+		sendResumeSubmitEnter(ctx, es)
 	}
 }
 

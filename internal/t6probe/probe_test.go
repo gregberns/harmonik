@@ -191,7 +191,7 @@ func t6probeRunGate(t *testing.T, profilePath, baselineContent string) (output s
 func TestT6_FloorFailureWithMatchingBaseline(t *testing.T) {
 	t.Parallel()
 
-	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract/...")
+	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract")
 	actualPct := t6probeReadTotalPct(t, profilePath)
 	pkgPath := t6probePackagePath(t, profilePath)
 	if pkgPath == "" {
@@ -230,7 +230,7 @@ func TestT6_FloorFailureWithMatchingBaseline(t *testing.T) {
 func TestT6_RegressionDetection(t *testing.T) {
 	t.Parallel()
 
-	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract/...")
+	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract")
 	actualPct := t6probeReadTotalPct(t, profilePath)
 	pkgPath := t6probePackagePath(t, profilePath)
 	if pkgPath == "" {
@@ -267,7 +267,7 @@ func TestT6_RegressionDetection(t *testing.T) {
 func TestT6_VacuousPassOnEmptyBaseline(t *testing.T) {
 	t.Parallel()
 
-	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract/...")
+	profilePath := t6probeGenerateProfile(t, "./internal/handlercontract")
 	// Empty baseline — regression gate has nothing to compare against.
 	output, exitCode := t6probeRunGate(t, profilePath, "# empty baseline\n")
 	t.Logf("gate output:\n%s", output)

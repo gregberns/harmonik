@@ -572,6 +572,19 @@ func dispatchDotAgenticNode(
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+	// hk-goczd: emit the CHB-018 pre-exec progress messages (handler_capabilities,
+	// session_log_location, skills_provisioned) BEFORE Launch, holding back
+	// launch_initiated to emit AFTER the window is actually live. The DOT cascade
+	// previously emitted NONE of these, so launch_initiated never fired for any
+	// DOT-mode run — and the stale watcher's launch_stall_detected keys solely on
+	// launch_initiated absence (stalewatch.go:296), firing a FALSE-POSITIVE stall
+	// on every DOT dispatch even when the implementer spawned fine and the run
+	// succeeded. Mirrors the single-mode path (workloop.go:2098/2137) and the
+	// review-loop path (reviewloop.go:336). Holding launch_initiated until after a
+	// successful Launch also keeps it truthful: when SpawnWindow is wedged on a
+	// leaked slot, Launch returns an error below and launch_initiated never fires.
+	nodeLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+
 	nodeLaunchedAt := time.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
@@ -596,6 +609,24 @@ func dispatchDotAgenticNode(
 		}
 		return core.Outcome{}, fmt.Errorf("launch node %q: %w", node.ID, launchErr)
 	}
+
+	// hk-goczd: the tmux window has actually spawned (Launch returned a live
+	// session) — emit the held-back launch_initiated now. This clears the
+	// false-positive launch_stall_detected the DOT path otherwise triggered on
+	// every run. Mirrors workloop.go:2137-2139.
+	if nodeLaunchInitiatedMsg != nil {
+		emitPreExecMessage(ctx, deps.bus, runID, nodeLaunchInitiatedMsg)
+	}
+
+	// hk-goczd / hk-68pvl: force-tear-down the session before this function
+	// returns on EVERY exit path (success, ctx-cancel, verdict-read error, HEAD
+	// resolution error, reviewer-success return). The success path below kills the
+	// session only when watcher == nil (the substrate path, dot_cascade.go ~line
+	// 674); this defer is the slot-reclaim backstop that guarantees the spawn
+	// semaphore slot (hk-xb5yi / hk-4l7zs) is returned even on the exec path or any
+	// early return between here and that conditional kill. Kill is idempotent
+	// (killOnce), so this is a no-op when the session was already torn down.
+	defer forceTeardownSession(sess)
 
 	if deps.hookStore != nil {
 		capturedTap := tap

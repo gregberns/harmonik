@@ -330,6 +330,14 @@ func executeCognitionGate(
 	tap, tapCh := newPerRunEventTap(deps.bus, runID)
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+	// hk-goczd: emit the CHB-018 pre-exec messages before Launch, holding back
+	// launch_initiated for after the window is live — same false-positive
+	// launch_stall_detected fix as the DOT cascade path (dot_cascade.go) and the
+	// single-mode path (workloop.go:2098/2137). Without this the cognition-gate
+	// node never emits launch_initiated and the stale watcher (stalewatch.go:296)
+	// flags a phantom launch stall on every gate dispatch.
+	gateLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
+
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		if deps.hookStore != nil {
@@ -337,6 +345,20 @@ func executeCognitionGate(
 		}
 		return nil, fmt.Errorf("cognition gate %q: launch: %w", gateRef, launchErr)
 	}
+
+	// hk-goczd: window is live — emit the held-back launch_initiated to clear the
+	// false stall. Mirrors workloop.go:2137-2139.
+	if gateLaunchInitiatedMsg != nil {
+		emitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
+	}
+
+	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
+	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
+	// below kills the session only when watcher == nil (dot_gate.go ~line 397);
+	// this defer covers the exec path and any early return (agent_ready timeout,
+	// ctx-cancel, verdict-read error). Kill is idempotent, so it is a no-op when
+	// the session was already torn down.
+	defer forceTeardownSession(sess)
 
 	if deps.hookStore != nil {
 		capturedTap := tap

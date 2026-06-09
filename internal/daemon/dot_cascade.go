@@ -69,6 +69,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -246,37 +247,59 @@ func driveDotWorkflow(
 			// Agentic node: dispatch the handler into the substrate, then derive
 			// the outcome from the run result (HEAD advanced + reviewer verdict).
 			isReviewer := nodeIsReviewer(node)
+
+			// ── No-progress check before ANY agentic dispatch (EM-015e / DOT) ──
+			//
+			// Compute the diff hash from parentSHA to the current worktree HEAD.
+			// On iteration ≥ 2, if the hash is unchanged from the prior agentic
+			// dispatch the implementer made zero meaningful code changes since
+			// then; emit no_progress_detected and terminate (mirrors
+			// reviewloop.go:701-725 for the review-loop path).
+			//
+			// This check is HOISTED out of the (formerly reviewer-only) branch so
+			// it fires for BOTH paths that re-enter an agentic node at iteration
+			// ≥ 2 (hk-pj4b6):
+			//   - reviewer re-entry after a REQUEST_CHANGES back-edge (the original
+			//     behaviour — preserved), and
+			//   - implementer re-entry after a deterministic commit_gate FAIL
+			//     back-edge. Before the hoist this implementer→commit_gate→implement
+			//     loop had NO escape: a no-diff re-entry was never detected, so the
+			//     back-edge looped until the traversal cap fired ~30min later. Now a
+			//     no-diff implementer re-entry is caught cleanly as no-progress.
+			//
+			// Timing mirrors the review-loop: the increment happens AFTER the check,
+			// so the threshold uses the iteration count of the dispatch that just
+			// COMPLETED. lastDiffHash carries the hash captured before the prior
+			// agentic dispatch; an unchanged hash at iteration ≥ 2 means the
+			// intervening implementer produced no new diff.
+			//
+			// Unlike the review-loop, DOT mode does NOT emit
+			// review_loop_cycle_complete after no_progress_detected — the DOT walk
+			// terminates directly per the §8.1a ordering-rule DOT exemption.
+			currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
+			if hashErr != nil {
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: false,
+					summary:        fmt.Sprintf("dot: diff-hash error before agentic node %q at iteration %d: %v", currentNodeID, iterationCount, hashErr),
+				}
+			}
+			if iterationCount >= 2 && currentHash == lastDiffHash {
+				emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: true,
+					summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: diff hash unchanged", iterationCount),
+				}
+			}
+			lastDiffHash = currentHash
+
+			// Increment AFTER the no-progress check: an implementer (re-)entry
+			// counts as a new iteration; reviewers reuse the implementer's count
+			// (matching the review-loop semantics, where iterationCount tracks
+			// implementer turns).
 			if !isReviewer {
 				iterationCount++
-			} else {
-				// ── No-progress check before reviewer dispatch (EM-015e / DOT) ──
-				//
-				// Before launching a reviewer, compute the diff hash from parentSHA
-				// to the current worktree HEAD.  On iteration ≥ 2, if the hash is
-				// unchanged from the prior iteration the implementer made zero
-				// meaningful code changes; emit no_progress_detected and terminate
-				// (mirrors reviewloop.go:628-653 for the review-loop path).
-				//
-				// Unlike the review-loop, DOT mode does NOT emit
-				// review_loop_cycle_complete after no_progress_detected — the DOT
-				// walk terminates directly per the §8.1a ordering-rule DOT exemption.
-				currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
-				if hashErr != nil {
-					return dotWorkflowResult{
-						success:        false,
-						needsAttention: false,
-						summary:        fmt.Sprintf("dot: diff-hash error before reviewer node %q at iteration %d: %v", currentNodeID, iterationCount, hashErr),
-					}
-				}
-				if iterationCount >= 2 && currentHash == lastDiffHash {
-					emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
-					return dotWorkflowResult{
-						success:        false,
-						needsAttention: true,
-						summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: diff hash unchanged", iterationCount),
-					}
-				}
-				lastDiffHash = currentHash
 			}
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
@@ -796,26 +819,62 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 	// handler-supplied entries last so they override on duplicate keys.
 	cmd.Env = append(os.Environ(), env...)
 
-	err := cmd.Run()
+	// CAPTURE the combined stdout+stderr instead of discarding it (hk-pj4b6).
+	// On a deterministic gate FAIL the cascade loops back to the implementer; the
+	// diagnostic (which `go build`/`go vet`/test step failed and why) is the single
+	// most useful thing to feed that re-entering implementer. Previously cmd.Run()
+	// threw the output away, so a re-entering implementer had no signal about what
+	// to fix and tended to re-commit nothing — the no-escape loop. We retain the
+	// tail in Outcome.Notes (observability surface, opaque to the cascade) and log
+	// it so the failure is never silent.
+	combined, err := cmd.CombinedOutput()
 	if err == nil {
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 	}
 
+	outputTail := tailString(string(combined), dotGateOutputTailBytes)
+
 	// Timeout-killed: parent deadline exceeded first.
 	if execCtx.Err() == context.DeadlineExceeded {
 		fc := core.FailureClassTransient
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
+		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q timed out after %ds; output tail:\n%s\n", node.ID, timeoutSecs, outputTail)
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 	}
 
 	// Parent context cancelled (operator stop / SIGKILL / ctx-cancel).
 	if ctx.Err() != nil {
 		fc := core.FailureClassCanceled
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 	}
 
-	// Non-zero exit code (1..255) → deterministic failure.
+	// Non-zero exit code (1..255) → deterministic failure. This is the gate-FAIL
+	// case that drives the commit_gate→implement back-edge; surface the diagnostic.
 	fc := core.FailureClassDeterministic
-	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc}, nil
+	fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v); output tail:\n%s\n", node.ID, err, outputTail)
+	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+}
+
+// dotGateOutputTailBytes bounds how much of a failed tool node's combined output
+// is retained in Outcome.Notes / logged. Gate output (full `go build`/`go vet`/
+// test logs) can be large; the tail carries the actionable failure lines.
+const dotGateOutputTailBytes = 4096
+
+// tailString returns the last n bytes of s (rune-boundary-safe at the cut),
+// prefixed with a truncation marker when s was longer than n. Returns s
+// unchanged when it already fits.
+func tailString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[len(s)-n:]
+	// Advance to the next rune boundary so we never emit a half-rune.
+	for i := 0; i < len(cut) && i < 4; i++ {
+		if utf8.RuneStart(cut[i]) {
+			cut = cut[i:]
+			break
+		}
+	}
+	return "…(truncated)…\n" + cut
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

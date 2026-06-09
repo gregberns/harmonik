@@ -52,9 +52,11 @@ survives it). Every ~2 s it:
    `from == self` (loop guard), dedupe on `event_id`, then append the raw event
    to a per-agent on-disk **pending queue** (`~/.harmonik-wake/<agent>.pending`).
 3. **Idle-gates the injection**: only if the target pane is *idle-at-prompt*
-   does it inject the oldest pending message. If the pane is busy, the message
+   (empty input prompt on the last row, AND no dialog/menu, AND no
+   spinner/running-line) does it inject the oldest pending message. If the pane
+   is busy — including when a permission dialog or menu is open — the message
    stays in the pending queue and is retried next tick — it is **held, never
-   dropped**.
+   dropped, never auto-answered**.
 4. **Injects safely** via `tmux send-keys` (see mitigations), then records the
    `event_id` in the **seen set** (`~/.harmonik-wake/<agent>.seen`) so it is
    never re-injected, even across a watcher restart.
@@ -97,19 +99,33 @@ test-verified.
 
 2. **Idle-gate (do-no-harm).** Inject **only** when the pane is positively
    confirmed idle-at-prompt — never mid-turn (injecting mid-turn would corrupt
-   the agent's in-flight input or be silently dropped). Idle =
-   - a `❯` prompt input row is present in the captured tail, **AND**
-   - no active spinner / running-line is present.
+   the agent's in-flight input or be silently dropped), and **never into a
+   dialog/menu** (injecting text+Enter into a permission prompt would
+   AUTO-ANSWER it and could confirm a destructive action). Idle = ALL of:
+   - **(a)** the **last content row** is an EMPTY input prompt — a `❯` caret
+     followed only by whitespace to end-of-line (matches `❯[[:space:]]*$` on
+     the trailing-blank-stripped last row). A row like `❯ do something` (human
+     pre-typed text) is **not** empty ⇒ busy; **AND**
+   - **(b)** NO dialog / menu / confirmation signal is present in the visible
+     tail. Claude reuses `❯` as the **selection caret** in permission dialogs
+     and numbered menus (`Do you want to proceed? ❯ 1. Yes / 2. No`), so the
+     empty-prompt check alone is not enough. Fail **busy** on any of:
+     `Do you want to`, `❯ 1.` / `❯ 2.`, a numbered option row
+     (`^[[:space:]]*[12]\.[[:space:]]`), or `esc to interrupt` on a line that
+     is **not** the static footer bar; **AND**
+   - **(c)** NO active spinner / running-line is present.
 
-   Busy signals matched: a spinner glyph (`✻ ✶ ✳ …`) followed by a work verb
-   (`Worked for`, `Cogitating`, `Considering`, …), and the live elapsed-time
-   running-line `(<n>s ·` / `(<n>m <n>s ·` that Claude prints during a turn.
-   The static footer hint bar (`⏵⏵ bypass permissions on · … · esc to
-   interrupt · ctrl+t to hide`) is **always present** and is therefore *not*
-   treated as a busy signal — `esc to interrupt` only counts when it co-occurs
-   with a running timer on the same line. **Any uncertainty ⇒ treat as busy and
-   hold.** (Verified: a message sent during a long essay turn was held in the
-   pending queue and delivered only after the turn ended.)
+   Busy spinner/running-line signals matched: a spinner glyph (`✻ ✶ ✳ …`)
+   followed by a work verb (`Worked for`, `Cogitating`, `Considering`, …), and
+   the live elapsed-time running-line `(<n>s ·` / `(<n>m <n>s ·` that Claude
+   prints during a turn. The static footer hint bar (`⏵⏵ bypass permissions on
+   · … · esc to interrupt · ctrl+t to hide`) is **always present** and is
+   therefore *not* treated as a busy signal — bare `esc to interrupt` only
+   counts when it appears on a line WITHOUT the footer markers
+   (`⏵⏵` / `ctrl+t` / `bypass permissions`). **Any uncertainty ⇒ treat as busy
+   and hold.** (Verified: a message sent during a long essay turn was held in
+   the pending queue and delivered only after the turn ended; a permission
+   dialog and a pre-typed prompt both read BUSY.)
 
 3. **Strip trailing blank rows before scanning.** A Claude pane is a tall
    buffer with many blank rows *below* the prompt. A naive `tail -n N` of the
@@ -258,6 +274,37 @@ was touched. All scenarios **passed**.
 | 5 | Restart no-replay (dedupe) | PASS — killed and restarted the watcher; only the "watching" banner appeared, no re-injection; seen-count stayed 4, wrapper-line count stayed 2. |
 | 6 | Lifecycle self-exit | PASS — `tmux kill-session -t wake-test` made the watcher self-exit within one poll (`target session 'wake-test' gone — exiting`). |
 | — | Idle-detection unit table (8 fixtures: empty prompt, pre-typed prompt, prompt+footer, spinner, cogitate, running-line, `(1m 16s ·`, dead pane) | PASS 8/8. |
+
+### Review-fix re-test (2026-06-09, post-REQUEST_CHANGES)
+
+A review flagged three issues; all fixed and re-tested. The idle-fixture suite is
+now a checked-in script, [`scripts/hk-wake-idle-test.sh`](../../scripts/hk-wake-idle-test.sh)
+(run: `bash scripts/hk-wake-idle-test.sh`).
+
+| Fix | Re-test | Result |
+|-----|---------|--------|
+| **[HIGH]** `pane_is_idle()` reused `❯`-anywhere as the idle signal, so a permission **dialog** (`Do you want to proceed? ❯ 1. Yes / 2. No`) read IDLE → the watcher would inject text+Enter and **auto-answer** the dialog (could confirm a destructive action). Rewritten to require ALL of: (a) an EMPTY input-prompt row (`❯` + whitespace to EOL), (b) NO dialog/menu signal (`Do you want to`, `❯ 1.`/`❯ 2.`, numbered option row, non-footer `esc to interrupt`), (c) NO spinner/running-line. | Fixture `permission-dialog (❯ 1. Yes / 2. No)` + `numbered menu` | **BUSY** (PASS) — dialog no longer auto-answered. |
+| **[MED]** Human pre-typed text on the input row (`❯ do something`) must read BUSY (the post-caret text is non-empty). Covered by the same rewrite (empty-after-caret check). | Fixture `pre-typed prompt (❯ do something)` **and** live E2E — the woken agent typed `❯ did the wake-loop fire correctly?` into its own input row mid-test | **BUSY** (PASS) — watcher held rather than injecting over the agent's in-progress input. |
+| **[LOW]** Dedupe compared a raw substring `grep -F "\"event_id\":\"$eid\""` over the pending NDJSON — a body embedding the UUID caused a false skip. Replaced with `pending_has_eid()`, which compares each pending line's PARSED `.event_id` via `jq`. | Unit test: a pending line whose **body** embeds another event's UUID is no longer matched as that event | PASS — body-embedded UUID ignored; real `event_id` still matched. |
+
+Idle-fixture suite: **PASS 9/9** (the 5 required cases — permission-dialog→BUSY,
+pre-typed→BUSY, empty-prompt→IDLE, tall-pane idle→IDLE, spinner/`esc to
+interrupt`→BUSY — plus elapsed-running-line, numbered-menu, footer-only-idle, and
+dead-pane). Live E2E re-run with throwaway `wake-probe` / `wake-test`: basic wake
+fired (idle pane woke and ran a turn), a message sent while the pane was busy was
+**held in `<agent>.pending` and not injected** until idle, and the watcher
+**self-exited** within one poll when `wake-test` was killed. The real idle Claude
+layout was confirmed: the `❯` input row is bracketed by box-rule lines with the
+footer hint bar rendered **below** it (so the idle check scans the tail for the
+empty input row rather than assuming it is the last content row). No real session
+or comms identity was touched; `wake-test` and all `wake-probe` state were cleaned
+up.
+
+> Note: `pane_is_idle()` relies on the GNU/BSD `grep` selected by the script's
+> `#!/usr/bin/env bash` shebang. An interactive zsh `grep`→`ugrep -G` shim
+> mishandles the multibyte footer-exclusion pattern (`⏵⏵`) and mis-reads an idle
+> pane as busy — a shell-artifact, not a script bug; run the script (and the
+> fixture suite) under `bash`, which uses `/usr/bin/grep`.
 
 ### The exact working send-keys incantation
 

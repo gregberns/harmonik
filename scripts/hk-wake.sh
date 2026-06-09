@@ -80,8 +80,18 @@ touch "$SEEN_FILE" "$PENDING_FILE"
 log() { printf '%s hk-wake[%s]: %s\n' "$(date '+%H:%M:%S')" "$AGENT" "$*" >&2; }
 
 # --- is the target pane idle-at-prompt? ----------------------------------
-# Returns 0 (idle) only when we can POSITIVELY confirm the prompt is present
-# and no spinner / running-line is active. Any uncertainty => busy (return 1).
+# Returns 0 (idle) ONLY when ALL of these hold:
+#   (a) an EMPTY input-prompt row is present — a row whose first non-space
+#       glyph is "❯" with ONLY whitespace after the caret. (The "❯" input row
+#       is not necessarily the LAST content row: Claude renders a footer/status
+#       box BELOW it. So we scan the tail for the input row, not just tail -1.)
+#   (b) NO dialog / menu / confirmation signal is present in the visible tail
+#       (Claude uses "❯" ALSO as the SELECTION CARET in permission dialogs and
+#       numbered menus — "Do you want to proceed? ❯ 1. Yes / 2. No". Treating
+#       such a dialog as idle would inject text+Enter and AUTO-ANSWER it, which
+#       could confirm a destructive action. So a dialog reads BUSY.);
+#   (c) NO spinner / "esc to interrupt" running-line is present.
+# Any uncertainty => busy (return 1). Hold-not-drop, never auto-answer.
 pane_is_idle() {
   local raw cap
   # capture-pane fails if the pane is gone; caller handles session liveness.
@@ -91,12 +101,12 @@ pane_is_idle() {
   # the prompt+footer. A naive `tail -n N` of the raw buffer would miss the
   # prompt row. Strip trailing blank lines FIRST (awk: print only up to the last
   # line that has a non-space character), then take the last N lines — that
-  # window reliably contains the prompt + footer + any active spinner line.
+  # window reliably contains the prompt + footer + any active spinner/dialog.
   cap="$(printf '%s\n' "$raw" | awk '{a[NR]=$0} /[^[:space:]]/{last=NR} END{for(i=1;i<=last;i++)print a[i]}' | tail -n "$CAPTURE_LINES")"
   [[ -z "$cap" ]] && return 1
 
-  # BUSY signals: a live spinner with an elapsed timer, or the running-line
-  # that Claude shows mid-turn. These only appear while a turn is in progress.
+  # (c) BUSY: a live spinner with an elapsed timer, or the running-line that
+  # Claude shows mid-turn. These only appear while a turn is in progress.
   #   "✻ Worked for 1m 16s"   "✶ Cogitating… (5s · esc to interrupt)"
   #   "(12s · ↓ 4.0k tokens)" "esc to interrupt" on a spinner line
   # The static footer hint bar ("⏵⏵ bypass permissions on · … · esc to
@@ -118,11 +128,38 @@ pane_is_idle() {
     return 1
   fi
 
-  # IDLE signal: a prompt input row "❯" must be present in the tail.
-  if printf '%s' "$cap" | grep -qE '(^|[[:space:]])❯'; then
+  # (b) BUSY: a dialog / menu / confirmation is on screen. Claude reuses "❯" as
+  # the selection caret for these, so the empty-prompt check below is NOT
+  # enough — we must positively reject any of these dialog signals first.
+  #   "Do you want to proceed?"  /  "❯ 1. Yes"  /  "❯ 2. No"  /  a numbered
+  #   option row like "  1. Yes" / "2. No" / "❯ 1. Allow" / etc.
+  if printf '%s' "$cap" | grep -qE 'Do you want to'; then
+    return 1
+  fi
+  if printf '%s' "$cap" | grep -qE '❯[[:space:]]*[0-9]+\.'; then
+    return 1
+  fi
+  # A standalone numbered-option row ("1. Yes", "  2. No"): a menu choice line.
+  if printf '%s' "$cap" | grep -qE '^[[:space:]]*[12]\.[[:space:]]'; then
+    return 1
+  fi
+  # "esc to interrupt" anywhere we have NOT already cleared as the static footer
+  # bar: if it appears on a line WITHOUT the footer-bar markers, treat as busy.
+  if printf '%s' "$cap" | grep -E 'esc to interrupt' | grep -qvE '⏵⏵|ctrl\+t|bypass permissions'; then
+    return 1
+  fi
+
+  # (a) IDLE: an EMPTY input-prompt row must be present — a row whose first
+  # non-space glyph is "❯" followed by ONLY whitespace to end-of-line. A row
+  # like "❯ do something" (human pre-typed text) has non-whitespace after the
+  # caret => NOT empty => busy. The input row is not necessarily the last
+  # content row (a footer/status box renders below it), so we scan the tail.
+  # The dialog/menu guards above already rejected the "❯ 1. Yes" selection-caret
+  # case, so any empty "❯ " row remaining here is the real input prompt.
+  if printf '%s' "$cap" | grep -qE '^[[:space:]]*❯[[:space:]]*$'; then
     return 0
   fi
-  # No prompt row visible => can't confirm idle => treat as busy.
+  # No empty input-prompt row => can't confirm idle => busy.
   return 1
 }
 
@@ -150,6 +187,21 @@ inject() {
   # Separate Enter submits the single line (embedded newlines would NOT submit).
   tmux send-keys -t "$TARGET" Enter || return 1
   return 0
+}
+
+# --- is event_id already in the pending queue? ----------------------------
+# Compares the PARSED `.event_id` of each pending NDJSON line, so a body that
+# happens to embed the UUID string does not cause a false-positive skip.
+pending_has_eid() {
+  local want="$1"
+  [[ -s "$PENDING_FILE" ]] || return 1
+  local pline peid
+  while IFS= read -r pline; do
+    [[ -z "$pline" ]] && continue
+    peid="$(printf '%s' "$pline" | jq -r '.event_id // empty' 2>/dev/null)"
+    [[ "$peid" == "$want" ]] && return 0
+  done < "$PENDING_FILE"
+  return 1
 }
 
 # --- drain comms into the pending queue (cursor-advancing recv) -----------
@@ -181,8 +233,10 @@ drain_into_pending() {
     if grep -qxF "$eid" "$SEEN_FILE" 2>/dev/null; then
       continue
     fi
-    # already queued in pending?
-    if grep -qF "\"event_id\":\"$eid\"" "$PENDING_FILE" 2>/dev/null; then
+    # already queued in pending? Compare the PARSED event_id of each pending
+    # line, not a raw substring of the NDJSON — a body that embeds this UUID
+    # would otherwise cause a false skip.
+    if pending_has_eid "$eid"; then
       continue
     fi
     printf '%s\n' "$line" >> "$PENDING_FILE"

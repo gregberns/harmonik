@@ -2808,43 +2808,52 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 	}
 }
 
-// drainCancelledQueue transitions the active queue (if any) to
-// QueueStatusCancelled and archives the file so that the next harmonik run
+// drainCancelledQueue transitions all active queues (if any) to
+// QueueStatusCancelled and archives their files so that the next harmonik run
 // invocation can proceed without the QM-027 "already active" guard blocking it.
+//
+// Prior to hk-u6m4l this function only drained the "main" queue via the
+// backward-compat lq.Queue() shim, leaving named queues (e.g. "cp") on disk
+// with status=active after shutdown. The fix iterates all queues in the store
+// via AllQueues() so every active named queue is archived on exit.
 //
 // This is called on every clean exit of runWorkLoop — when ctx is cancelled due
 // to SIGINT, SIGTERM, or a timeout — after wg.Wait() ensures all in-flight
 // goroutines have completed. The function is a no-op when:
 //   - deps.queueStore is nil (no queue surface in use).
-//   - The in-memory queue is nil (already cleared by ClearQueue).
-//   - The queue is already in a terminal state (paused-by-failure, completed,
-//     cancelled) — evaluateGroupAdvanceWithOutcome already transitioned it.
+//   - All in-memory queues are nil or already in a terminal state
+//     (paused-by-failure, completed, cancelled) — evaluateGroupAdvanceWithOutcome
+//     already transitioned them.
 //
 // Uses context.Background() because ctx is always cancelled by the time this
 // runs; queue.CancelQueueOnShutdown needs a non-cancelled context for Persist.
 //
-// Errors are logged to stderr but do not block shutdown.
+// Errors are logged to stderr but do not block shutdown; other queues are still
+// drained even if one fails.
 //
 // Spec ref: specs/queue-model.md §8 (shutdown drain).
-// Bead ref: hk-ppt32.
+// Bead ref: hk-ppt32, hk-u6m4l.
 func drainCancelledQueue(ctx context.Context, deps workLoopDeps) {
 	if deps.queueStore == nil {
 		return
 	}
-	lq := deps.queueStore.LockForMutation()
-	q := lq.Queue()
-	if q == nil || q.Status != queue.QueueStatusActive {
-		lq.Done()
-		return
+	// Snapshot all queues under the read lock. drainCancelledQueue is called
+	// after wg.Wait() so there are no concurrent mutations; AllQueues is safe
+	// here and avoids holding the write lock across I/O.
+	snapshot := deps.queueStore.AllQueues()
+	for name, q := range snapshot {
+		if q == nil || q.Status != queue.QueueStatusActive {
+			continue
+		}
+		// Queue is still active: transition to cancelled and archive.
+		if err := queue.CancelQueueOnShutdown(ctx, deps.projectDir, q); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: drainCancelledQueue queueID=%s name=%q: %v\n",
+				q.QueueID, name, err)
+			// Continue draining other queues even if one fails.
+		}
+		// Clear in-memory state for this queue.
+		deps.queueStore.ClearQueueByName(name)
 	}
-	// Queue is still active: transition to cancelled and archive.
-	lq.Done() // release lock before I/O
-	if err := queue.CancelQueueOnShutdown(ctx, deps.projectDir, q); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: drainCancelledQueue queueID=%s: %v\n", q.QueueID, err)
-		return
-	}
-	// Clear in-memory state so callers that inspect qs.Queue() see nil.
-	deps.queueStore.ClearQueue()
 }
 
 // workloopSleep sleeps for d or until ctx is cancelled. Returns a non-nil

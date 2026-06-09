@@ -280,3 +280,106 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 		t.Errorf("queue.Status = %q; want paused-by-failure", reloaded.Status)
 	}
 }
+
+// TestQueueCancel_NamedQueue_ArchivedOnShutdown verifies the hk-u6m4l fix:
+// drainCancelledQueue must drain ALL active queues, not just "main". Prior to
+// the fix, named queues (e.g. "cp") survived daemon shutdown with status=active
+// on disk, blocking future submits with queue_already_active (-32010).
+//
+// The test simulates a daemon shutdown with a named queue "cp" still active
+// (no items dispatched). After the workloop exits it asserts:
+//   (a) .harmonik/queues/cp.json is absent (archived by drainCancelledQueue).
+//   (b) QueueStore.QueueByName("cp") is nil after exit.
+//   (c) queue.Load for "cp" returns nil so QM-027 is not tripped on resubmit.
+//
+// Bead ref: hk-u6m4l.
+func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const queueName = "cp"
+	const beadID = core.BeadID("hk-u6m4l-named-queue-cancel-bead-001")
+
+	// Build a named queue with status=active (one pending item, no dispatch).
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "u6m4l-named-queue-" + t.Name(),
+		Name:          queueName,
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindStream,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{BeadID: beadID, Status: queue.ItemStatusPending},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+	if err := queue.Persist(context.Background(), projectDir, q); err != nil {
+		t.Fatalf("Persist named queue: %v", err)
+	}
+
+	// Precondition: named queue file is present and active.
+	loaded, err := queue.Load(context.Background(), projectDir, queueName)
+	if err != nil || loaded == nil || loaded.Status != queue.QueueStatusActive {
+		t.Fatalf("precondition: expected active %q queue on disk; loaded=%v err=%v", queueName, loaded, err)
+	}
+
+	// Wire a QueueStore pre-loaded with the named queue.
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q) // SetQueue normalises to q.Name = "cp"
+
+	ledger := &stubBeadLedger{}
+	bus := &stubEventCollector{}
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:        ledger,
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		QueueStore:       qs,
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	// Cancel immediately — simulates SIGINT before any dispatch.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	select {
+	case <-loopDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("workloop did not exit within 5s after immediate context cancel")
+	}
+
+	// (a) .harmonik/queues/cp.json must be absent (archived by drainCancelledQueue).
+	reloaded, loadErr := queue.Load(context.Background(), projectDir, queueName)
+	if loadErr != nil {
+		t.Errorf("queue.Load(%q) after cancel: %v", queueName, loadErr)
+	}
+	if reloaded != nil {
+		t.Errorf("queue.Load(%q) after cancel: got non-nil queue (status=%s); want nil — drainCancelledQueue did not archive named queue",
+			queueName, reloaded.Status)
+	}
+
+	// (b) In-memory QueueStore slot for "cp" must be cleared.
+	if got := qs.QueueByName(queueName); got != nil {
+		t.Errorf("QueueStore.QueueByName(%q) = %+v; want nil after cancel", queueName, got)
+	}
+}

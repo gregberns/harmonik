@@ -656,7 +656,14 @@ func dispatchDotAgenticNode(
 		if isReviewer {
 			go pasteInjectQuitOnReviewFile(ctx, qs, sess, wtPath, briefDelivered)
 		} else {
-			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, tapCh, deps.bus, runID)
+			// hk-37giq: give the watchdog its OWN independent subscription
+			// (tap.Subscribe()) rather than sharing tapCh with waitAgentReady.
+			// Sharing one channel let waitAgentReady's drain goroutine steal every
+			// heartbeat under concurrent dispatch, wedging this watchdog in the
+			// launch-suppression branch forever. The fan-out tap delivers each
+			// consumer its own copy of every event.
+			watchdogCh := tap.Subscribe()
+			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
 		}
 	}
 

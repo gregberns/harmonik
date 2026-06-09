@@ -2351,17 +2351,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// workloop checks it non-blockingly in the default switch branch to
 	// distinguish a forced-kill from a genuine agent failure.
 	//
-	// hk-7srrd: pass tapCh so pasteInjectQuitOnCommit can track agent_heartbeat
-	// events and use heartbeat staleness as the primary kill trigger instead of
-	// a fixed wall-clock deadline.  tapCh is the same channel used by
-	// waitAgentReady; both goroutines consume from it concurrently (each sees
-	// a copy of each event because perRunEventTap fans out to the channel).
-	// waitAgentReady returns before this goroutine is launched (step 6 above),
-	// so there is no competition for the agent_ready event.
+	// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
+	// track agent_heartbeat events and use heartbeat staleness as the primary
+	// kill trigger instead of a fixed wall-clock deadline.
+	//
+	// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
+	// the same tapCh that waitAgentReady consumes. A Go channel receive is
+	// exclusive, so sharing tapCh let waitAgentReady's drain goroutine — which can
+	// keep running after readyCancel() until it happens to select ctx.Done() —
+	// steal every heartbeat from this watchdog under concurrent dispatch. With the
+	// fan-out tap, the watchdog gets its own copy of every event and observes
+	// firstHeartbeatSeen, so it advances instead of spinning in the launch-
+	// suppression branch forever (launch_stall_detected → run_stale wedge).
 	var noChangeTimeoutCh chan struct{}
 	if qs, ok := runPasteTarget.(quitSender); ok {
 		noChangeTimeoutCh = make(chan struct{})
-		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, tapCh, deps.bus, runID)
+		watchdogCh := tap.Subscribe()
+		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

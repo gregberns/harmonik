@@ -1702,3 +1702,43 @@ func ExportedSnapshotUntrackedFiles(ctx context.Context, mainPath string) (map[s
 func ExportedCheckMainWorkingTreeDirty(ctx context.Context, mainPath string, baseline map[string]struct{}) (bool, []string, error) {
 	return checkMainWorkingTreeDirty(ctx, mainPath, baseline)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-run event-tap fan-out test seams (hk-37giq)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedPerRunEventTap is the exported alias for the per-run fan-out event
+// tap so the competing-consumer race regression test can construct one and
+// register multiple independent subscribers (hk-37giq).
+type ExportedPerRunEventTap = perRunEventTap
+
+// noopExportedEmitter is a no-op handlercontract.EventEmitter used as the tap's
+// underlying bus in the fan-out regression test: it discards all emits so the
+// test exercises ONLY the per-subscriber fan-out behaviour.
+type noopExportedEmitter struct{}
+
+func (noopExportedEmitter) Emit(context.Context, core.EventType, []byte) error { return nil }
+func (noopExportedEmitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []byte) error {
+	return nil
+}
+
+// ExportedNewPerRunEventTap constructs a perRunEventTap backed by a no-op
+// underlying emitter and returns the tap plus its initial subscriber channel
+// (the same channel newChanAgentEventSource/waitAgentReady consumes in
+// production). Additional independent subscribers are obtained via
+// tap.ExportedSubscribe (hk-37giq).
+func ExportedNewPerRunEventTap(runID core.RunID) (*ExportedPerRunEventTap, <-chan core.EventEnvelope) {
+	return newPerRunEventTap(noopExportedEmitter{}, runID)
+}
+
+// ExportedSubscribe registers and returns a new independent subscriber channel
+// on the tap (hk-37giq).
+func (t *ExportedPerRunEventTap) ExportedSubscribe() <-chan core.EventEnvelope {
+	return t.Subscribe()
+}
+
+// ExportedEmit fans an event of eventType out to every subscriber via the tap's
+// production Emit path (hk-37giq).
+func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType core.EventType) error {
+	return t.Emit(ctx, eventType, nil)
+}

@@ -92,6 +92,8 @@ done
 
 **DELEGATE INVESTIGATION TO SUB-AGENTS.** The orchestrator MUST NOT do inline code reading/investigation on the main thread. When a friction issue or bug is discovered: (1) file a bead, (2) dispatch a sub-agent to investigate/fix, (3) keep the main thread dispatching.
 
+**MAJOR-ISSUE FAN-OUT PROTOCOL (HARD RULE).** When a wedge/failure has survived ≥2 fix attempts OR the root cause has flip-flopped ≥2×: stop single-thread investigation and trigger the fan-out protocol. Fan out 10–15 agents at DISTINCT angles + ≥2 adversarial verifiers that can OVERRULE a wrong synthesis. **NEVER hand-grep `events.jsonl` by `run_id`** — use `jq 'select(.run_id == "<id>")'` or `harmonik subscribe --json`. Full protocol: `docs/major-issue-fanout-protocol.md`. Skill: `.claude/skills/major-issue-fanout/SKILL.md`. Source: logmine F14 + 2026-06-09 postmortem (~18h burned on 6 refuted diagnoses from hand-grep false negatives).
+
 ---
 
 ## Review and quality gates

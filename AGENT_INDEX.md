@@ -135,6 +135,11 @@ Most recent entries:
 ## Plans
 - [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)
 
+## Operational Protocols
+- [docs/orchestrator-rules.md](docs/orchestrator-rules.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)
+- [docs/major-issue-fanout-protocol.md](docs/major-issue-fanout-protocol.md) -- Major-issue fan-out diagnosis protocol: when a wedge survives ≥2 fix attempts, fan out 10–15 agents at distinct angles + ≥2 adversarial verifiers; never hand-grep events.jsonl by run_id
+- [docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md](docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md) -- tapCh competing-consumer race; 18h incident; 6 refuted hypotheses; fix + process lessons (motivating source for major-issue-fanout protocol)
+
 ## Deep References
 - [AlphaGo-Modeled Orchestration System](refs/AlphaGo-modeled-orch-system.md) -- 800+ line architectural reference document
 

@@ -1663,6 +1663,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
 	beadID := beadRecord.BeadID
 
+	// runTipSHA is set (in the DOT failure path) to the worktree HEAD SHA when
+	// HEAD has advanced past the parent commit — meaning the implementer produced
+	// a commit that the gate later bounced. Included in run_failed so operators
+	// can salvage the stranded run-branch commit (hk-8b35c orphan-salvage).
+	var runTipSHA *string
+
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
 	// every run_completed / run_failed event emitted from this function. Using a
 	// closure avoids threading the optional queue fields through every call site.
@@ -1674,7 +1680,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if runSucceeded != nil {
 			*runSucceeded = success
 		}
-		emitRunCompleted(ctx, deps.bus, runID, success, summary, queueID, queueGroupIndex)
+		emitRunCompleted(ctx, deps.bus, runID, success, summary, queueID, queueGroupIndex, runTipSHA)
 	}
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
@@ -2025,6 +2031,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// Non-success terminal (BLOCK / cap-hit / no-progress / structural
 			// failure / gate-out-of-scope) → reopen the bead so it can be retried
 			// or escalated. The needsAttention flag is carried in the summary.
+			//
+			// Orphan-salvage (hk-8b35c): if the implementer advanced HEAD past the
+			// parent (a commit landed on the run branch before the gate bounced it),
+			// record the tip SHA in the run_failed payload so the operator can find
+			// and manually cherry-pick / merge the stranded work.
+			if tipSHA, tipErr := resolveWorktreeHEAD(ctx, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
+				runTipSHA = &tipSHA
+			}
 			reopenTID, _ := deps.tidGen.Next()
 			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, dotResult.summary); reopenErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (dot) %s: %v\n", beadID, reopenErr)
@@ -3080,6 +3094,11 @@ type workloopRunStartedPayload struct {
 //
 // QueueID and QueueGroupIndex are optional: set when the run was dispatched
 // from a queue submission per QM-011 / QM-012 (EM-015b).
+//
+// WorktreeTipSHA is set on run_failed when the implementer's HEAD advanced past
+// the parent (a commit was produced) but the run still failed — e.g. when the
+// commit_gate bounced a valid commit into a no-progress loop. Operators can use
+// this SHA to salvage the committed work from the stranded run branch (hk-8b35c).
 type workloopRunCompletedPayload struct {
 	RunID           string  `json:"run_id"`
 	Success         bool    `json:"success"`
@@ -3087,6 +3106,7 @@ type workloopRunCompletedPayload struct {
 	EndedAt         string  `json:"ended_at"`
 	QueueID         *string `json:"queue_id,omitempty"`
 	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
+	WorktreeTipSHA  *string `json:"worktree_tip_sha,omitempty"`
 }
 
 func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int) {
@@ -3105,7 +3125,7 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
 }
 
-func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string, queueID *string, queueGroupIndex *int) {
+func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string, queueID *string, queueGroupIndex *int, worktreeTipSHA *string) {
 	pl := workloopRunCompletedPayload{
 		RunID:           runID.String(),
 		Success:         success,
@@ -3113,6 +3133,7 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 		EndedAt:         time.Now().UTC().Format(time.RFC3339),
 		QueueID:         queueID,
 		QueueGroupIndex: queueGroupIndex,
+		WorktreeTipSHA:  worktreeTipSHA,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {

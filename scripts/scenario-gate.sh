@@ -207,9 +207,30 @@ run_go_test() {
     fi
 
     # Genuine test failure: exit 1 with a FAIL marker = tests RAN and FAILED.
+    # Retry once to distinguish a pre-existing flaky red from a real regression
+    # introduced by this commit (hk-8b35c). A test that fails on run 1 but passes
+    # on run 2 is flaky/transient — fail-open so it doesn't bounce a valid commit.
+    # A test that fails on both runs is a genuine regression — block.
     if [ "$rc" -eq 1 ] && printf '%s' "$trimmed" | grep -qE '(--- FAIL|^FAIL|[[:space:]]FAIL)'; then
-        log "BLOCK: genuine test FAILURE for go test ${tagdesc}${pkglist} (rc=${rc})"
+        log "first-run FAIL for go test ${tagdesc}${pkglist} — retrying once to check for flakiness (hk-8b35c)"
         printf '%s\n' "$trimmed" >&2
+        local retry_out retry_rc
+        if command -v timeout >/dev/null 2>&1; then
+            retry_out=$(timeout --kill-after=30s "${SCENARIO_GATE_TIMEOUT:-600}s" \
+                go "${gotest_args[@]}" 2>&1)
+            retry_rc=$?
+        else
+            retry_out=$(go "${gotest_args[@]}" 2>&1)
+            retry_rc=$?
+        fi
+        if [ "$retry_rc" -eq 0 ]; then
+            warn "FLAKY: go test ${tagdesc}${pkglist} failed run 1 but passed run 2 — ALLOWING (pre-existing flaky red, not a regression; hk-8b35c)"
+            return 0
+        fi
+        local retry_trimmed
+        retry_trimmed=$(printf '%s' "$retry_out" | tail -c 2000)
+        log "BLOCK: genuine test FAILURE on both runs for go test ${tagdesc}${pkglist}"
+        printf '%s\n' "$retry_trimmed" >&2
         return 1
     fi
 

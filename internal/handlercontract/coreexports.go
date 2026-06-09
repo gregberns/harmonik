@@ -30,3 +30,8 @@ type EventID = core.EventID
 // rather than importing internal/core directly (EV-002b boundary;
 // event-model.md §4.1).
 const AgentTypeClaudeCode = core.AgentTypeClaudeCode
+
+// AgentTypeCodex is a re-export of core.AgentTypeCodex — the
+// reserved agent-type identifier for the OpenAI codex harness (hk-e8omz).
+// Registered but unreachable until C4 wires the harness selection path.
+const AgentTypeCodex = core.AgentTypeCodex

@@ -19,6 +19,9 @@ const (
 	AgentTypePi         AgentType = "pi"
 	AgentTypeClaudeTwin AgentType = "claude-twin"
 	AgentTypePiTwin     AgentType = "pi-twin"
+	// AgentTypeCodex is the OpenAI codex harness identifier (codex-harness T1, hk-e8omz).
+	// Registered but unreachable until C4 (ResolveHarness) wires the selection path.
+	AgentTypeCodex AgentType = "codex"
 )
 
 // AgentTypeRegexPattern is the canonical regex string for the agent_type

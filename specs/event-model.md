@@ -348,6 +348,18 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 > Section Axes (§8.12 Decision-required lifecycle): Both entries are mechanism-tagged, class F (fsync-backed): `decision_required` loss silently leaves a double-failed bead eligible for re-dispatch; `decision_acknowledged` loss leaves the ack-state file authoritative but JSONL observability broken. Axes: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent`.
 
+### 8.13 Epic-completion lifecycle
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.13.1 | `epic_completed` | O | daemon-core | observability, audit, cognition-loop | `epic_id`, `last_child_bead_id`, `closed_at` |
+
+> **Emission rule (§8.13.1).** Daemon MUST emit `epic_completed` at most once per parent epic per daemon session (at-most-once guard keyed on `epic_id`; in-process `emittedEpics` map). Emission is triggered after a successful `CloseBead` call: if the closed bead has a parent epic AND every sibling child shows `status=closed` in the Beads ledger, the guard is claimed (under `emittedEpicsMu`) and the event is emitted. Zero-emit conditions: (a) closed bead has no parent (AC-4); (b) at least one sibling child is not yet closed (AC-3); (c) `emittedEpics` already contains the parent ID. Cross-process sibling-race (AC-2) and boot-survival (AC-5) are out-of-scope for C1 and exercised by the T4 scenario bead.
+
+> **EV-029 compatibility.** This row is additive per EV-029 (N-1 readable): existing consumers that do not recognise `epic_completed` MUST ignore it per §6.4 row 1.
+
+> Section Axes (§8.13 Epic-completion lifecycle): mechanism-tagged, class O (ordinary — observational; loss does not affect bead routing or completion). Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
 ## 4. Normative requirements
 
 ### 4.1 Envelope

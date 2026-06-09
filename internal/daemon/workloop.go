@@ -237,6 +237,13 @@ type workLoopDeps struct {
 	// Bead ref: hk-bnm89 (scenario-test harness hardening), hk-yyso7 (race fix).
 	mergeMu *sync.Mutex
 
+	// emittedEpics tracks parent epic IDs for which epic_completed has already
+	// been emitted this daemon session, providing the at-most-once guard (AC-1).
+	// Concurrent access is serialised by emittedEpicsMu.
+	// Bead ref: hk-w6y70.
+	emittedEpics   map[core.BeadID]struct{}
+	emittedEpicsMu *sync.Mutex
+
 	// cpRegistry is the daemon's ControlPoint registry, populated from policy
 	// YAML during daemon startup per specs/control-points.md §4.9.CP-043.
 	//
@@ -573,6 +580,8 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		staleBlockerCloser:  adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
 		noAutoPull:          cfg.NoAutoPull,            // hk-exd7m: queue-only mode for flywheel topology
 		mergeMu:             &sync.Mutex{},             // hk-yyso7: global merge-serialisation across all queues
+		emittedEpics:        make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:      &sync.Mutex{},
 		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:     cfg.ProtectBranches,
 	}, nil
@@ -1810,7 +1819,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, rlResult.summary)
 			}
 		} else {
@@ -1872,7 +1881,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					reopenTID, _ := deps.tidGen.Next()
 					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, exhaustedSummary)
 				} else {
-					emitBeadClosed(ctx, deps.bus, runID, beadID)
+					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				}
 				emitDone(false, exhaustedSummary)
 			} else {
@@ -1970,7 +1979,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot success) %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, dotResult.summary)
 			}
 		} else if dotResult.subsumed {
@@ -1983,7 +1992,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot noChange-subsumed) %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "noChange-subsumed: bead found in main")
 			}
 		} else {
@@ -2529,7 +2538,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "agent_completed: stop-hook outcome")
 			}
 		}
@@ -2564,7 +2573,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
 				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 			} else {
-				emitBeadClosed(ctx, deps.bus, runID, beadID)
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "auto-close: exit=0")
 			}
 		}
@@ -2581,7 +2590,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (noChange-subsumed) %s: %v\n", beadID, closeErr)
 					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
 				} else {
-					emitBeadClosed(ctx, deps.bus, runID, beadID)
+					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 					emitDone(true, "noChange-subsumed: bead found in main")
 				}
 			} else {
@@ -3436,6 +3445,13 @@ type beadClosedPayload struct {
 	BeadID string `json:"bead_id"`
 }
 
+// epicCompletedPayload is the JSON payload for the epic_completed event (hk-w6y70).
+type epicCompletedPayload struct {
+	EpicID          string `json:"epic_id"`
+	LastChildBeadID string `json:"last_child_bead_id"`
+	ClosedAt        string `json:"closed_at"`
+}
+
 // workingTreeRefreshFailedPayload is the JSON payload for the
 // working_tree_refresh_failed event (§4.12.EM-054).
 type workingTreeRefreshFailedPayload struct {
@@ -4042,6 +4058,83 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 		return
 	}
 	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
+}
+
+// emitBeadClosedAndMaybeEpic emits bead_closed then checks whether the closed
+// bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
+// point replacing the seven raw emitBeadClosed call sites.
+func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
+	emitBeadClosed(ctx, deps.bus, runID, beadID)
+	maybeEmitEpicCompleted(ctx, deps, runID, beadID)
+}
+
+// maybeEmitEpicCompleted checks whether closedBeadID's parent epic now has all
+// children closed, and if so emits epic_completed exactly once (AC-1 at-most-once
+// per daemon session). Zero-emit on: no parent (AC-4), still-open sibling (AC-3),
+// or already-emitted guard hit.
+//
+// Bead: hk-w6y70.
+func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.RunID, closedBeadID core.BeadID) {
+	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
+	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,
+	// ToBeadID == parent (per brcli/show.go: dependencies[] → outgoing edges).
+	closedRecord, err := deps.brAdapter.ShowBead(ctx, closedBeadID)
+	if err != nil {
+		return
+	}
+
+	var parentID core.BeadID
+	for _, e := range closedRecord.Edges {
+		if e.EdgeKind == core.EdgeKindParentChild && e.FromBeadID == closedBeadID {
+			parentID = e.ToBeadID
+			break
+		}
+	}
+	if parentID == "" {
+		// AC-4: no parent → zero emit.
+		return
+	}
+
+	// Step 2: ShowBead(parent) to enumerate all children and check their statuses.
+	// Incoming parent-child edges on the parent have ToBeadID == parent,
+	// FromBeadID == child (per brcli/show.go: dependents[] → incoming edges).
+	parentRecord, err := deps.brAdapter.ShowBead(ctx, parentID)
+	if err != nil {
+		return
+	}
+
+	for _, e := range parentRecord.Edges {
+		if e.EdgeKind == core.EdgeKindParentChild && e.ToBeadID == parentID {
+			if e.EndpointStatus != core.CoarseStatusClosed {
+				// AC-3: at least one child still open → zero emit.
+				return
+			}
+		}
+	}
+
+	// All children are closed (or there are none — edge case: epic with no
+	// children recorded yet; we emit to avoid silent gaps, consistent with AC-1).
+
+	// Step 3: claim under emittedEpicsMu BEFORE emit (at-most-once guard AC-1).
+	deps.emittedEpicsMu.Lock()
+	if _, already := deps.emittedEpics[parentID]; already {
+		deps.emittedEpicsMu.Unlock()
+		return
+	}
+	deps.emittedEpics[parentID] = struct{}{}
+	deps.emittedEpicsMu.Unlock()
+
+	// Step 4: emit epic_completed.
+	pl := epicCompletedPayload{
+		EpicID:          string(parentID),
+		LastChildBeadID: string(closedBeadID),
+		ClosedAt:        time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = deps.bus.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
 }
 
 // snapshotUntrackedFiles (hk-ooexj) captures the set of paths the main repo's

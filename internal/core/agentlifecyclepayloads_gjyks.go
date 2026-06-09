@@ -369,6 +369,46 @@ func (p AgentHardTerminatingPayload) Valid() bool {
 	return true
 }
 
+// EpicCompletedPayload is the typed event payload for the epic_completed event
+// (specs/event-model.md §8.13).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — observational; emitted at most once per epic per daemon session).
+//
+// Emitted by the daemon after the last child of an epic closes, guarded by
+// an in-process at-most-once lock (emittedEpics). Cross-process sibling-race
+// (AC-2) and boot-survival (AC-5) are exercised by the T4 scenario bead.
+//
+// # Payload fields (specs/event-model.md §8.13)
+//
+//   - epic_id            — the parent epic bead that just completed
+//   - last_child_bead_id — the child bead whose closure triggered the check
+//   - closed_at          — RFC3339 timestamp of the triggering close
+type EpicCompletedPayload struct {
+	// EpicID is the identifier of the parent epic bead.
+	// Required (non-empty).
+	EpicID BeadID `json:"epic_id"`
+
+	// LastChildBeadID is the bead that closed last, triggering emission.
+	// Required (non-empty).
+	LastChildBeadID BeadID `json:"last_child_bead_id"`
+
+	// ClosedAt is the RFC3339 timestamp of the triggering close.
+	// Required (non-empty).
+	ClosedAt string `json:"closed_at"`
+}
+
+// Valid reports whether p is a well-formed EpicCompletedPayload.
+//
+// Rules per specs/event-model.md §8.13:
+//   - EpicID must be non-empty.
+//   - LastChildBeadID must be non-empty.
+//   - ClosedAt must be non-empty.
+func (p EpicCompletedPayload) Valid() bool {
+	return p.EpicID != "" && p.LastChildBeadID != "" && p.ClosedAt != ""
+}
+
 // BeadClosedPayload is the typed event payload for the bead_closed event
 // (execution-model.md §4.12 EM-052).
 //

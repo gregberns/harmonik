@@ -79,6 +79,13 @@ const (
 	// Refs: hk-ftyvo.
 	EventTypeBeadClosed EventType = "bead_closed"
 
+	// EventTypeEpicCompleted is the epic_completed event type (specs/event-model.md §8.13).
+	// Emitted at most once per parent epic, after the last child bead closes,
+	// guarded by emittedEpics (at-most-once per daemon session).
+	// Durability class: O.
+	// Refs: hk-w6y70.
+	EventTypeEpicCompleted EventType = "epic_completed"
+
 	// EventTypeWorkingTreeRefreshFailed is the working_tree_refresh_failed event
 	// type (§4.12.EM-054). Emitted when git reset --hard HEAD fails after a
 	// successful merge-to-main. The merge itself succeeded; this event is

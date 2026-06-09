@@ -356,6 +356,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		targetBranch:           resolveTargetBranch(p.TargetBranch),
 		protectBranches:        p.ProtectBranches,
 		mergeMu:                mergeMu,
+		emittedEpics:           make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:         &sync.Mutex{},
 	}
 }
 

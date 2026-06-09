@@ -48,6 +48,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeNodeDispatchRequested, func() EventPayload { return &NodeDispatchRequestedPayload{} }},
 	{EventTypeNodeDispatchDecided, func() EventPayload { return &NodeDispatchDecidedPayload{} }},
 	{EventTypeBeadClosed, func() EventPayload { return &BeadClosedPayload{} }},
+	{EventTypeEpicCompleted, func() EventPayload { return &EpicCompletedPayload{} }},
 	{EventTypeWorkingTreeRefreshFailed, func() EventPayload { return &WorkingTreeRefreshFailedPayload{} }},
 	{EventTypeImplementerEscapedWorktree, func() EventPayload { return &ImplementerEscapedWorktreePayload{} }},
 	{EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} }},

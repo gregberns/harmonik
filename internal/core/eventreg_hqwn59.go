@@ -60,6 +60,7 @@ func init() {
 //   - sub_workflow_exited (§8.1.10):           O (ordinary — observability stream)
 //   - node_dispatch_requested (§8.1.11):       O (ordinary — observability stream)
 //   - bead_closed (EM-052 §4.12.6):            F (fsync-boundary — bead closure terminal-state landmark)
+//   - epic_completed (§8.13 hk-w6y70):         O (ordinary — observational; at-most-once per epic)
 //   - working_tree_refresh_failed (EM-054):    O (ordinary — informational; merge already durable)
 func registerRunLifecycle() {
 	mustRegister("run_started", func() EventPayload { return &RunStartedPayload{} })
@@ -78,6 +79,9 @@ func registerRunLifecycle() {
 	// Durability class: O. Bead ref: hk-bf85t (T-IMPL-008).
 	mustRegister("node_dispatch_decided", func() EventPayload { return &NodeDispatchDecidedPayload{} })
 	mustRegister("bead_closed", func() EventPayload { return &BeadClosedPayload{} })
+	// epic_completed (hk-w6y70): emitted at most once per parent epic after the
+	// last child closes. Durability class: O (ordinary — observational).
+	mustRegister("epic_completed", func() EventPayload { return &EpicCompletedPayload{} })
 	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
 	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop
 	// when, after the implementer exits, the MAIN repo's working tree contains

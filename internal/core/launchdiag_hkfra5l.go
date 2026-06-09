@@ -108,6 +108,39 @@ func (p SpawnCapBlockedPayload) Valid() bool {
 	return p.RunID != "" && p.WaitedMS > 0 && p.CapSize > 0
 }
 
+// TmuxNewWindowTimeoutPayload is the event-bus payload for the
+// tmux_new_window_timeout event type (hk-r1rup).
+//
+// Emitted by the daemon when tmuxSubstrate.SpawnWindow's underlying
+// `tmux new-window` shell call (adapter.NewWindowIn) does not return within the
+// bounded new-window timeout. This is the observable signature of a hung tmux
+// invocation: the call neither succeeds nor errors, so handler.Launch never
+// returns, launch_initiated never fires, and the run wedges at
+// launch_stall_detected → run_stale forever, holding a daemon slot. Bounding the
+// call converts that indefinite hang into a prompt, observable launch failure.
+//
+// This is DISTINCT from spawn_cap_blocked, which fires when SpawnWindow cannot
+// acquire a spawn-semaphore slot (a slot leak), not when the new-window call
+// itself hangs.
+//
+// # Payload fields
+//
+//   - run_id    — the run whose new-window call hung (required, non-empty)
+//   - waited_ms — milliseconds spent blocked before the timeout fired (> 0)
+type TmuxNewWindowTimeoutPayload struct {
+	// RunID is the run whose new-window call hung. Required (non-empty).
+	RunID string `json:"run_id"`
+
+	// WaitedMS is the number of milliseconds the new-window call blocked before
+	// the bounded timeout fired. Always positive.
+	WaitedMS int64 `json:"waited_ms"`
+}
+
+// Valid reports whether p is a well-formed TmuxNewWindowTimeoutPayload.
+func (p TmuxNewWindowTimeoutPayload) Valid() bool {
+	return p.RunID != "" && p.WaitedMS > 0
+}
+
 // ImplementerBudgetExceededPayload is the event-bus payload for the
 // implementer_budget_exceeded event type (hk-9vp51).
 //

@@ -133,6 +133,23 @@ type tmuxSubstrate struct {
 	// duration spent blocked; inUse / capSize describe the semaphore at the
 	// moment of the timeout. Nil in tests that do not need the hook.
 	spawnCapBlocked func(waited time.Duration, inUse, capSize int)
+
+	// newWindowTimeout bounds how long SpawnWindow waits for the underlying
+	// `tmux new-window` call (adapter.NewWindowIn) to return before treating the
+	// launch as failed (hk-r1rup). A hung tmux invocation otherwise blocks
+	// SpawnWindow → handler.Launch indefinitely (the no-spawn wedge); bounding it
+	// converts that into a prompt, observable launch failure.
+	//
+	// Zero or negative disables the bound (blocks until ctx is cancelled, the
+	// pre-hk-r1rup behaviour). NewTmuxSubstrate applies defaultNewWindowTimeout
+	// when unset. Set via WithNewWindowTimeout.
+	newWindowTimeout time.Duration
+
+	// newWindowTimedOut, when non-nil, is invoked once when the `tmux new-window`
+	// call does not return within newWindowTimeout. It is a diagnostic hook the
+	// daemon wires to emit a tmux_new_window_timeout event (hk-r1rup). waited is
+	// the duration spent blocked. Nil in tests that do not need the hook.
+	newWindowTimedOut func(waited time.Duration)
 }
 
 // TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
@@ -174,6 +191,30 @@ var ErrSpawnCapTimeout = errors.New("daemon: spawn cap acquire timed out (possib
 // a prompt launch failure rather than a 30-min no_commit timeout.
 const defaultSpawnAcquireTimeout = 2 * time.Minute
 
+// ErrTmuxNewWindowTimeout is the sentinel wrapped by SpawnWindow when the
+// underlying `tmux new-window` shell call (adapter.NewWindowIn) does not return
+// within newWindowTimeout (hk-r1rup). The daemon launch paths detect it via
+// errors.Is to emit a tmux_new_window_timeout event with run context. It is also
+// wrapped with handler.ErrStructural so existing structural-error handling
+// (reopen-the-bead) continues to apply.
+//
+// This is DISTINCT from ErrSpawnCapTimeout (hk-4l7zs), which fires when the
+// spawn-semaphore acquire saturates (a slot leak), not when the new-window call
+// itself hangs.
+var ErrTmuxNewWindowTimeout = errors.New("daemon: tmux new-window timed out (possible hung tmux invocation)")
+
+// defaultNewWindowTimeout is the default bound on how long SpawnWindow waits for
+// the underlying `tmux new-window` call to return before treating the launch as
+// failed (hk-r1rup). The actual shell call has no inherent timeout, so a hung
+// tmux invocation (the recurring "no-spawn wedge") blocks handler.Launch
+// indefinitely: launch_initiated never fires, the run wedges at
+// launch_stall_detected → run_stale forever, holding a daemon slot until the
+// 30-min implementer budget expires and it fails no_commit. Bounding the call
+// converts that indefinite hang into a prompt, observable launch failure. Far
+// below the 30-min budget so the wedge surfaces promptly, but generous enough to
+// absorb a momentarily-busy tmux server under load.
+const defaultNewWindowTimeout = 60 * time.Second
+
 // WithSpawnAcquireTimeout sets the bound on how long SpawnWindow blocks waiting
 // for a free spawn slot before treating the launch as failed (hk-4l7zs).
 //
@@ -192,6 +233,28 @@ func WithSpawnAcquireTimeout(d time.Duration) TmuxSubstrateOption {
 func WithSpawnCapBlockedHook(fn func(waited time.Duration, inUse, capSize int)) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		s.spawnCapBlocked = fn
+	}
+}
+
+// WithNewWindowTimeout sets the bound on how long SpawnWindow waits for the
+// underlying `tmux new-window` call (adapter.NewWindowIn) to return before
+// treating the launch as failed (hk-r1rup).
+//
+// A value <= 0 disables the bound (blocks until ctx is cancelled — the
+// pre-hk-r1rup behaviour). When unset, NewTmuxSubstrate applies
+// defaultNewWindowTimeout.
+func WithNewWindowTimeout(d time.Duration) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.newWindowTimeout = d
+	}
+}
+
+// WithNewWindowTimedOutHook installs a diagnostic callback invoked when the
+// `tmux new-window` call does not return within newWindowTimeout (hk-r1rup). The
+// daemon wires this to emit a tmux_new_window_timeout event.
+func WithNewWindowTimedOutHook(fn func(waited time.Duration)) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.newWindowTimedOut = fn
 	}
 }
 
@@ -232,6 +295,14 @@ func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string, opts ...TmuxSubs
 	// launch failure instead of an indefinite SpawnWindow hang.
 	if sub.spawnSem != nil && sub.spawnAcquireTimeout == 0 {
 		sub.spawnAcquireTimeout = defaultSpawnAcquireTimeout
+	}
+	// hk-r1rup: when no explicit new-window timeout was supplied, apply the
+	// default bound so a hung `tmux new-window` call surfaces as a prompt launch
+	// failure instead of an indefinite SpawnWindow hang. Unlike the spawn-cap
+	// acquire timeout this is NOT gated on a configured cap — the no-spawn wedge
+	// can hang any new-window call regardless of whether a spawn cap is set.
+	if sub.newWindowTimeout == 0 {
+		sub.newWindowTimeout = defaultNewWindowTimeout
 	}
 	return sub
 }
@@ -378,7 +449,20 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		Command:    command,
 	}
 
-	outcome := s.adapter.NewWindowIn(ctx, params)
+	// hk-r1rup: bound the underlying `tmux new-window` shell call. The call has
+	// no inherent timeout, so a hung tmux invocation (the recurring "no-spawn
+	// wedge") otherwise blocks here indefinitely — handler.Launch never returns,
+	// launch_initiated never fires, and the run wedges at launch_stall_detected →
+	// run_stale forever, holding a daemon slot until the 30-min implementer budget
+	// expires and fails no_commit. callNewWindowBounded converts that indefinite
+	// hang into a prompt, observable launch failure (tmux_new_window_timeout
+	// diagnostic + ErrStructural). The semaphore slot is released on the timeout
+	// path so the leak does not compound.
+	outcome, timeoutErr := s.callNewWindowBounded(ctx, params)
+	if timeoutErr != nil {
+		s.releaseSpawnSlot()
+		return nil, timeoutErr
+	}
 	if outcome.Err != nil {
 		// Release the semaphore slot before returning the error — the window was
 		// never created so the slot is immediately available for reuse.
@@ -463,6 +547,63 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		releaseSlot: s.releaseSpawnSlot,
 	}
 	return sess, nil
+}
+
+// callNewWindowBounded invokes adapter.NewWindowIn with a bound on how long the
+// underlying `tmux new-window` shell call may take (hk-r1rup). The call runs in
+// a goroutine so a hung tmux invocation — one that returns NEITHER a value nor
+// an error — cannot block SpawnWindow forever even if the adapter ignores ctx
+// cancellation. The select races the call's completion against a bounded
+// context (newWindowTimeout) and the caller's ctx.
+//
+// Returns (outcome, nil) when the call completes in time — the caller then
+// inspects outcome.Err as before. Returns (zero, err) when the call does not
+// return within the bound (err wraps ErrTmuxNewWindowTimeout + ErrStructural,
+// firing the newWindowTimedOut diagnostic hook) or the caller's ctx is cancelled
+// (err wraps ErrStructural). A non-positive newWindowTimeout disables the bound,
+// blocking until the call returns or the caller's ctx is cancelled — the
+// pre-hk-r1rup behaviour.
+//
+// The bounded ctx is passed to NewWindowIn so a ctx-aware adapter (OSAdapter
+// uses exec.CommandContext) also gets its tmux subprocess SIGKILLed on timeout;
+// the goroutine+select wrapper is the backstop for adapters that ignore ctx.
+func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, params tmux.NewWindowIn) (tmux.Outcome, error) {
+	callCtx := ctx
+	var cancel context.CancelFunc
+	if s.newWindowTimeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, s.newWindowTimeout)
+		defer cancel()
+	}
+
+	type result struct {
+		outcome tmux.Outcome
+	}
+	// Buffered so the goroutine never leaks if we return on the timeout path
+	// before it finishes (the hung-tmux case).
+	resCh := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		resCh <- result{outcome: s.adapter.NewWindowIn(callCtx, params)}
+	}()
+
+	select {
+	case r := <-resCh:
+		return r.outcome, nil
+	case <-callCtx.Done():
+		waited := time.Since(start)
+		// Distinguish the caller's ctx cancellation from our own bounded timeout.
+		// The bounded timeout fires only when the caller's ctx is still live, so
+		// check the parent first.
+		if ctx.Err() != nil {
+			return tmux.Outcome{}, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: tmux new-window: context cancelled: %w: %w",
+				ctx.Err(), handler.ErrStructural)
+		}
+		if s.newWindowTimedOut != nil {
+			s.newWindowTimedOut(waited)
+		}
+		return tmux.Outcome{}, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: tmux new-window did not return within %s: %w: %w",
+			s.newWindowTimeout, ErrTmuxNewWindowTimeout, handler.ErrStructural)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

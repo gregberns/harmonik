@@ -2107,6 +2107,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			inUse, capSize := substrateSpawnStats(deps.substrate)
 			emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implementerLaunchedAt), inUse, capSize)
 		}
+		// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
+		// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
+		// see WHY the launch failed (tmux new-window did not return) instead of an
+		// opaque launch-error reopen.
+		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
+			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(implementerLaunchedAt))
+		}
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("launch error: %v", launchErr))
@@ -4259,6 +4266,34 @@ func emitSpawnCapBlocked(ctx context.Context, bus handlercontract.EventEmitter, 
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeSpawnCapBlocked, b)
+}
+
+// emitTmuxNewWindowTimeout emits a tmux_new_window_timeout event (hk-r1rup) when
+// a launch's SpawnWindow times out waiting for the underlying `tmux new-window`
+// call to return — the observable signature of a hung tmux invocation (the
+// no-spawn wedge). Non-fatal: emit-marshal errors are silently discarded; the
+// launch failure is already surfaced via the reopen/done path.
+//
+// waited is the duration the new-window call blocked before the bound fired;
+// when unknown (<= 0) the payload still validates via a minimum waited_ms of 1
+// so the event is never dropped. Mirrors emitSpawnCapBlocked (hk-4l7zs).
+func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, waited time.Duration) {
+	if bus == nil {
+		return
+	}
+	waitedMS := waited.Milliseconds()
+	if waitedMS <= 0 {
+		waitedMS = 1
+	}
+	pl := core.TmuxNewWindowTimeoutPayload{
+		RunID:    runID.String(),
+		WaitedMS: waitedMS,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeTmuxNewWindowTimeout, b)
 }
 
 // emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when

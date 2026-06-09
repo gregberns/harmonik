@@ -184,6 +184,11 @@ func registerAgentEvents() {
 	// when an implementer session is force-killed for exhausting its commit
 	// budget (hard ceiling reached, or progress went stale). Durability class: O.
 	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
+	// tmux_new_window_timeout (hk-r1rup): emitted by the daemon when
+	// tmuxSubstrate.SpawnWindow's underlying `tmux new-window` shell call hangs
+	// past the bounded new-window timeout — the observable signature of a hung
+	// tmux invocation (the no-spawn wedge). Durability class: O.
+	mustRegister("tmux_new_window_timeout", func() EventPayload { return &TmuxNewWindowTimeoutPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })

@@ -125,3 +125,43 @@ func TestProp_LaunchStallDetectedPayload_Valid_RejectsZeroStallSeconds(t *testin
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// TmuxNewWindowTimeoutPayload (hk-r1rup)
+// ---------------------------------------------------------------------------
+
+func TestProp_TmuxNewWindowTimeoutPayload_Valid_AcceptsFullPayload(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		p := TmuxNewWindowTimeoutPayload{
+			RunID:    rapid.StringN(1, 64, -1).Draw(rt, "run_id"),
+			WaitedMS: rapid.Int64Range(1, 1_000_000).Draw(rt, "waited_ms"),
+		}
+		if !p.Valid() {
+			rt.Errorf("Valid() = false for fully-populated TmuxNewWindowTimeoutPayload, want true")
+		}
+	})
+}
+
+func TestProp_TmuxNewWindowTimeoutPayload_Valid_RejectsEmptyRunID(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		p := TmuxNewWindowTimeoutPayload{
+			RunID:    "",
+			WaitedMS: rapid.Int64Range(1, 1_000_000).Draw(rt, "waited_ms"),
+		}
+		if p.Valid() {
+			rt.Errorf("Valid() = true with empty RunID, want false")
+		}
+	})
+}
+
+func TestProp_TmuxNewWindowTimeoutPayload_Valid_RejectsNonPositiveWaitedMS(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		p := TmuxNewWindowTimeoutPayload{
+			RunID:    rapid.StringN(1, 64, -1).Draw(rt, "run_id"),
+			WaitedMS: rapid.Int64Range(-100, 0).Draw(rt, "waited_ms"),
+		}
+		if p.Valid() {
+			rt.Errorf("Valid() = true with WaitedMS <= 0, want false")
+		}
+	})
+}

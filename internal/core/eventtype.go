@@ -305,6 +305,19 @@ const (
 	// Durability class: O.
 	// Refs: hk-9vp51.
 	EventTypeImplementerBudgetExceeded EventType = "implementer_budget_exceeded"
+
+	// EventTypeTmuxNewWindowTimeout is the tmux_new_window_timeout event type.
+	// Emitted by the daemon when tmuxSubstrate.SpawnWindow's underlying
+	// `tmux new-window` shell call (adapter.NewWindowIn) does not return within
+	// the bounded new-window timeout — the symptom of a hung tmux invocation.
+	// Before this diagnostic, such a hang surfaced only as an indefinite
+	// launch_initiated stall (run_stale forever, holding a daemon slot) ending in
+	// a 30-min no_commit failure. Distinct from spawn_cap_blocked, which fires on
+	// spawn-semaphore acquire saturation (slot leak), not on the new-window call.
+	// Payload: run_id, waited_ms.
+	// Durability class: O.
+	// Refs: hk-r1rup.
+	EventTypeTmuxNewWindowTimeout EventType = "tmux_new_window_timeout"
 )
 
 // ---------------------------------------------------------------------------

@@ -362,6 +362,12 @@ func runReviewLoop(
 				inUse, capSize := substrateSpawnStats(implSubstrate)
 				emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implLaunchedAt), inUse, capSize)
 			}
+			// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
+			// dedicated tmux_new_window_timeout event when the implementer launch is
+			// wedged on the new-window call.
+			if errors.Is(implLaunchErr, ErrTmuxNewWindowTimeout) {
+				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(implLaunchedAt))
+			}
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
@@ -875,6 +881,12 @@ func runReviewLoop(
 			if errors.Is(revLaunchErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(revSubstrate)
 				emitSpawnCapBlocked(ctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
+			}
+			// hk-r1rup: hung `tmux new-window` (no-spawn wedge) on the reviewer
+			// launch. No launch-time var here (mirrors the spawn-cap branch), so
+			// use defaultNewWindowTimeout as the proxy waited value.
+			if errors.Is(revLaunchErr, ErrTmuxNewWindowTimeout) {
+				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, defaultNewWindowTimeout)
 			}
 			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)

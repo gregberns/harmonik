@@ -359,6 +359,31 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// live run task branch. Authorised: WM-035 intra-run rollback test.
 	"internal/workspace/intrarunrollback_wm035_test.go": "WM-035 test fixture; test-only isolated repo, not a live run task branch",
 
+	// internal/daemon/workloop.go — the merge-to-main path rebases the run/* run
+	// branch ONTO the target branch before the fast-forward merge, per the
+	// EM-052 pre-merge rebase step (`git rebase <target>` in the worktree),
+	// auto-resolves a .beads/issues.jsonl-only conflict via `git rebase
+	// --continue`, and `git rebase --abort`s on any other conflict to fall
+	// through to the EM-053 reopen path. This is the authorised merge-back
+	// operation of WM §4.5 — it advances the integration tip, it does NOT
+	// rewrite the history of a workspace_leased task branch under an observer.
+	// Authorised: execution-model.md §4.12 EM-052/EM-053; workspace-model.md §4.5.
+	"internal/daemon/workloop.go": "EM-052/EM-053 pre-merge rebase of run-branch onto target (WM §4.5 merge-back); not a workspace_leased task-branch rewrite",
+
+	// internal/daemon/mergetomain_dirtyledger_hk3yz2d_test.go — scenario test
+	// that drives the EM-052 merge-path rebase (and rebase --abort) inside an
+	// isolated throwaway test repo to exercise the dirty-ledger auto-resolve
+	// path (hk-3yz2d); not a live run task branch.
+	// Authorised: EM-052/EM-053 merge-path test fixture.
+	"internal/daemon/mergetomain_dirtyledger_hk3yz2d_test.go": "EM-052/EM-053 merge-path test fixture; isolated test repo, not a live run task branch",
+
+	// internal/daemon/mergetomain_residualdelta_hkrljho_test.go — scenario test
+	// that drives the EM-052 merge-path rebase inside an isolated throwaway test
+	// repo to exercise the residual-tracked-delta commit-then-rebase path
+	// (hk-rljho); not a live run task branch.
+	// Authorised: EM-052/EM-053 merge-path test fixture.
+	"internal/daemon/mergetomain_residualdelta_hkrljho_test.go": "EM-052/EM-053 merge-path test fixture; isolated test repo, not a live run task branch",
+
 	// internal/specaudit/wminv003_task_branch_append_only_test.go — this file
 	// itself contains synthetic Go code fragments (as string literals) used in
 	// TestWMINV003PartBSyntheticViolationDetected and

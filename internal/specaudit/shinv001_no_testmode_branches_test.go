@@ -59,7 +59,17 @@ import (
 )
 
 // shinv001FixtureForbiddenTokens is the canonical token-set from SH-INV-001
-// check (1). Matching is case-insensitive.
+// check (1). Matching is case-insensitive but identifier-boundary-aware (see
+// shinv001FixtureContainsToken): a forbidden token only matches when it is a
+// standalone identifier, NOT when it is a substring of a larger identifier.
+//
+// Boundary-awareness is required because a naive case-insensitive substring
+// match over-fires: "isTwin" is a substring of "ListWindows"/"listWindow"
+// (the "stwin" run), which would flag every tmux window-listing call site in
+// internal/lifecycle/tmux/** and internal/daemon/scenariotest/** even though
+// none of those are "is this a twin?" branches (hk-feow8). Identifier-boundary
+// matching restricts the hit to a genuine `isTwin` token while still catching
+// any real test-mode discriminator.
 var shinv001FixtureForbiddenTokens = []string{
 	"scenarioMode",
 	"isTest",
@@ -68,6 +78,66 @@ var shinv001FixtureForbiddenTokens = []string{
 	"isFakeRunner",
 	"useStub",
 	"cfg.TestMode",
+}
+
+// shinv001FixtureContainsToken reports whether line contains tok as a
+// standalone identifier, case-insensitively. A match must not be flanked by an
+// identifier character (ASCII letter, digit, or underscore) on either side, so
+// that e.g. "isTwin" does not match inside "ListWindows". The "." in a token
+// such as "cfg.TestMode" is treated as a token character (it is part of the
+// selector expression the spec names), so the boundary check is applied to the
+// surrounding bytes only.
+func shinv001FixtureContainsToken(line, tok string) bool {
+	lowerLine := strings.ToLower(line)
+	lowerTok := strings.ToLower(tok)
+	from := 0
+	for {
+		idx := strings.Index(lowerLine[from:], lowerTok)
+		if idx < 0 {
+			return false
+		}
+		start := from + idx
+		end := start + len(lowerTok)
+		leftOK := start == 0 || !shinv001FixtureIsIdentByte(lowerLine[start-1])
+		rightOK := end >= len(lowerLine) || !shinv001FixtureIsIdentByte(lowerLine[end])
+		if leftOK && rightOK {
+			return true
+		}
+		from = start + 1
+	}
+}
+
+// shinv001FixtureIsIdentByte reports whether b is an ASCII identifier byte
+// (letter, digit, or underscore).
+func shinv001FixtureIsIdentByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '_':
+		return true
+	default:
+		return false
+	}
+}
+
+// shinv001FixtureEnvVarModeAllowlist exempts specific HARMONIK_*_MODE env-var
+// names that are genuine, spec-mandated production configuration rather than
+// test/scenario-mode toggles. SH-INV-001 check (4) forbids test-mode env vars;
+// these entries are reviewed production env vars that merely share the *_MODE
+// suffix shape (hk-feow8).
+//
+// MAINTENANCE: adding an entry requires a citation to the spec requirement that
+// mandates the env var as production configuration.
+var shinv001FixtureEnvVarModeAllowlist = map[string]string{
+	// HARMONIK_WORKFLOW_MODE selects the per-run workflow (e.g. review-loop);
+	// it is a normative production env var injected into the claude handler,
+	// not a test-mode toggle. Authorised: handler-contract.md §4.2 HC-006a;
+	// claude-hook-bridge.md §4.2 CHB-006.
+	"HARMONIK_WORKFLOW_MODE": "handler-contract.md §4.2 HC-006a / claude-hook-bridge.md §4.2 CHB-006; production workflow-mode selector, not a test toggle",
 }
 
 // shinv001FixtureRegexBranch is SH-INV-001 check (2): an if-branch that
@@ -81,8 +151,13 @@ var shinv001FixtureSuffixTwin = regexp.MustCompile(`HasSuffix\([^,]+,\s*"-twin"\
 var shinv001FixtureAgentTypeTwin = regexp.MustCompile(`agent_type\s*==\s*"\*?-twin"`)
 
 // shinv001FixtureEnvVarMode is SH-INV-001 check (4): HARMONIK_*_MODE env-var
-// name in production code.
-var shinv001FixtureEnvVarMode = regexp.MustCompile(`HARMONIK_[A-Z_]+_MODE`)
+// name in production code. The trailing `\b` anchors the match to the end of
+// the *_MODE token so that env vars whose name merely *starts* with a *_MODE
+// run — e.g. HARMONIK_CLAUDE_MODEL (a model-selection var, "MODE" ⊂ "MODEL") —
+// are NOT matched (hk-feow8). The capture group records the exact env-var name
+// so the allowlist (shinv001FixtureEnvVarModeAllowlist) can exempt genuine
+// production *_MODE env vars.
+var shinv001FixtureEnvVarMode = regexp.MustCompile(`(HARMONIK_[A-Z_]+_MODE)\b`)
 
 // shinv001FixtureViolation records a single SH-INV-001 violation.
 type shinv001FixtureViolation struct {
@@ -219,11 +294,10 @@ func shinv001FixtureScanFile(t *testing.T, absPath string) []shinv001FixtureViol
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Text()
-		lower := strings.ToLower(line)
 
-		// Check 1: token-set grep (case-insensitive).
+		// Check 1: token-set grep (case-insensitive, identifier-boundary-aware).
 		for _, tok := range shinv001FixtureForbiddenTokens {
-			if strings.Contains(lower, strings.ToLower(tok)) {
+			if shinv001FixtureContainsToken(line, tok) {
 				violations = append(violations, shinv001FixtureViolation{
 					file:   absPath,
 					lineNo: lineNo,
@@ -263,13 +337,19 @@ func shinv001FixtureScanFile(t *testing.T, absPath string) []shinv001FixtureViol
 			})
 		}
 
-		// Check 4: HARMONIK_*_MODE env-var name.
-		if m := shinv001FixtureEnvVarMode.FindString(line); m != "" {
+		// Check 4: HARMONIK_*_MODE env-var name. Each match is the exact env-var
+		// name (capture group 1); genuine production *_MODE env vars listed in
+		// shinv001FixtureEnvVarModeAllowlist are exempt.
+		for _, sm := range shinv001FixtureEnvVarMode.FindAllStringSubmatch(line, -1) {
+			name := sm[1]
+			if _, allowed := shinv001FixtureEnvVarModeAllowlist[name]; allowed {
+				continue
+			}
 			violations = append(violations, shinv001FixtureViolation{
 				file:   absPath,
 				lineNo: lineNo,
 				check:  "env-var-mode",
-				token:  m,
+				token:  name,
 			})
 		}
 	}

@@ -394,7 +394,7 @@ type ar041FixtureExpectedViolation struct {
 //   - An entry whose violation IS present produces t.Logf and does NOT fail.
 //   - Any NEW violation NOT in this map DOES fail the suite.
 var ar041FixtureExpectedViolations = map[string]ar041FixtureExpectedViolation{
-	// CP-034 (specs/control-points.md line 316): `https://github.com/expr-lang/expr`
+	// CP-034 (specs/control-points.md line 319): `https://github.com/expr-lang/expr`
 	//
 	// This URL is a library-attribution citation for the `expr-lang/expr` Go
 	// module, which CP-034 mandates as the policy-expression grammar.  The
@@ -404,15 +404,16 @@ var ar041FixtureExpectedViolations = map[string]ar041FixtureExpectedViolation{
 	// external knowledge source.  No spec-fix bead is required; this entry
 	// documents the evaluation decision.
 	// Line shifted from 315 → 316 when hk-zs0.1 added spec-category to
-	// control-points.md front matter (one line inserted above line 315).
-	"specs/control-points.md:316:CP-034:external-url:https://github.com/expr-lang/expr": {
+	// control-points.md front matter (one line inserted above line 315);
+	// then 316 → 319 (hk-feow8) as control-points.md grew above CP-034.
+	"specs/control-points.md:319:CP-034:external-url:https://github.com/expr-lang/expr": {
 		pinnedBy: "ar041-allowable",
 		reason: "CP-034 cites github.com/expr-lang/expr for the policy-expression grammar library; " +
 			"the normative artifact is the in-repo go.mod entry, not the external URL; " +
 			"this is an attribution citation and is not load-bearing for conformance",
 	},
 
-	// AR-041 self-referential prohibited-channel mentions (architecture.md line 353).
+	// AR-041 self-referential prohibited-channel mentions (architecture.md line 378).
 	//
 	// The AR-041 requirement body names "external wikis", "out-of-band knowledge
 	// bases", and "tribal-knowledge channels" as part of its own prohibition
@@ -421,17 +422,17 @@ var ar041FixtureExpectedViolations = map[string]ar041FixtureExpectedViolation{
 	// not depending on those channels.  Matching them as violations would be
 	// circular self-application.  Pinned as structurally allowable; no spec fix
 	// required.
-	"specs/architecture.md:353:AR-041:prohibited-channel:external wiki": {
+	"specs/architecture.md:378:AR-041:prohibited-channel:external wiki": {
 		pinnedBy: "ar041-allowable",
 		reason: "AR-041 names 'external wiki' in its own prohibition clause; the phrase is definitional " +
 			"(declaring what is forbidden), not a load-bearing reference to an external wiki",
 	},
-	"specs/architecture.md:353:AR-041:prohibited-channel:tribal-knowledge": {
+	"specs/architecture.md:378:AR-041:prohibited-channel:tribal-knowledge": {
 		pinnedBy: "ar041-allowable",
 		reason: "AR-041 names 'tribal-knowledge' in its own prohibition clause; definitional self-reference, " +
 			"not a load-bearing external knowledge dependency",
 	},
-	"specs/architecture.md:353:AR-041:prohibited-channel:out-of-band knowledge base": {
+	"specs/architecture.md:378:AR-041:prohibited-channel:out-of-band knowledge base": {
 		pinnedBy: "ar041-allowable",
 		reason: "AR-041 names 'out-of-band knowledge bases' in its own prohibition clause; definitional " +
 			"self-reference, not a load-bearing external knowledge dependency",

@@ -188,6 +188,56 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// NDJSON envelopes to stdout. No daemon-state mutation, no run impact.
 	// Authorised by operator-nfr.md §4.9 ON-055.
 	"subscribe": "operator-nfr.md §4.9 ON-055; read-only event stream, no run impact",
+	// hk-y4e96: usage text printed to stdout and immediate exit; no daemon
+	// connection, no state mutation, no in-flight run impact.
+	"--help": "operator-nfr.md §4.9 ON-055; help text to stdout, no run impact",
+	// hk-y171w: project-bootstrap subcommand; scaffolds .harmonik/ on a fresh
+	// repo before any daemon exists. Cannot abort an in-flight run (there is none).
+	"init": "operator-nfr.md §4.9 ON-055; pre-daemon project bootstrap, no run impact",
+	// hk-lgtq2: Cat-3c auto-reconciler; detects and closes IN_PROGRESS beads whose
+	// implementation already merged. Routes through the reconciliation carve-out
+	// (§4.3 ON-010); does not abort in-flight runs.
+	"reconcile": "operator-nfr.md §4.3 ON-010; reconciliation carve-out, no mid-run abort",
+	// hk-63oh.39: operator confirms a PENDING reconciliation verdict so the daemon
+	// proceeds with verdict execution; pre-execution verdict pause per ON-014. The
+	// run is already drain-parked awaiting the verdict — confirm does not abort it.
+	"confirm-verdict": "operator-nfr.md §4.3 ON-014; pre-execution verdict confirm, no abort",
+	// hk-63oh.39: operator vetoes a PENDING reconciliation verdict (optionally
+	// substituting escalate-to-human); pre-execution verdict pause per ON-014.
+	// Acts before verdict execution; does not abort an in-flight run.
+	"veto-verdict": "operator-nfr.md §4.3 ON-014; pre-execution verdict veto, no in-flight abort",
+	// hk-jon6r: git merge-driver for .beads/issues.jsonl invoked by git during
+	// merge (harmonik beads-merge %O %A %B %P). A file-merge helper; not a daemon
+	// control surface and cannot abort runs.
+	"beads-merge": "operator-nfr.md §4.9 ON-055; git merge-driver helper, no run impact",
+	// hk-39ryh: read-only handler-pause status surface; reads
+	// .harmonik/handler-state.json directly (no daemon). No state mutation.
+	"handler": "operator-nfr.md §4.9 ON-055; read-only handler status, no run impact",
+	// hk-ekap1 (session-keeper): context-watcher and .dispatching-marker control;
+	// set/clear-dispatching write an agent-scoped marker file only. No daemon
+	// state mutation, no in-flight run impact.
+	"keeper": "operator-nfr.md §4.9 ON-055; agent dispatching-marker, no run abort",
+	// hk-qx702: supervisor/cognition process management per PL-028d; start/stop/
+	// status/attach/restart/logs act on the supervisor process, not on in-flight
+	// runs. SIGTERM of the daemon still routes through the ON-027 drain steps.
+	"supervise": "process-lifecycle.md §4.10 PL-028d; supervisor process mgmt, ON-027 drain on stop",
+	// hk-4rkrg: end-to-end smoke verification; creates a smoke bead and submits it
+	// through the normal queue path (ON-008 drain-safe). Asserts on events; does
+	// not abort any other run.
+	"smoke": "queue-model.md §8; submits a smoke bead via the queue, ON-008 compliant",
+	// hk-cnjhx/hk-onn1x: agent-to-agent messaging surface; send/recv/log/who write
+	// and read comms events only. No daemon run-state mutation, no run abort.
+	"comms": "operator-nfr.md §4.9 ON-055; agent messaging events, no run impact",
+	// hk-yj2j6 (captain/crew): crew session management (start/stop/list). Manages
+	// crew sub-sessions, not in-flight harmonik runs; cannot abort the between-task
+	// invariant.
+	"crew": "operator-nfr.md §4.9 ON-055; crew session mgmt, no in-flight run abort",
+	// hk-voyf4: workflow-graph utilities (graph validate <path>); reads files
+	// directly, no daemon, no state mutation.
+	"graph": "operator-nfr.md §4.9 ON-055; offline graph validation, no run impact",
+	// hk-1qrty: status-sheet builder; snapshot mode reads .harmonik/ with no
+	// daemon. Read-only reporting, no run impact.
+	"digest": "operator-nfr.md §4.9 ON-055; read-only status sheet, no run impact",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled
@@ -223,6 +273,21 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	// (in-flight items complete; new dispatches are gated). ON-007/ON-010.
 	"operator-pause":  "operator-nfr.md §4.3 ON-007; drain-gated pause, no mid-run abort",
 	"operator-resume": "operator-nfr.md §4.3 ON-010; resume from paused-by-drain, ON-010",
+	// hk-tigaf: adjusts the daemon's concurrency ceiling (HandleQueueSetConcurrency).
+	// Raising/lowering the ceiling gates future dispatch only — in-flight runs
+	// complete normally; it cannot abort an in-flight run. Drain-safe per ON-008.
+	"queue-set-concurrency": "operator-nfr.md §4.3 ON-008; concurrency-ceiling gate, no mid-run abort",
+	// hk-nbrmf/hk-7t27s: agent-comms ops route through the comms event handlers
+	// only; they write/read agent_message + presence events and never touch daemon
+	// run state. No in-flight run abort.
+	"comms-send":     "operator-nfr.md §4.9 ON-055; agent message write, no run impact",
+	"comms-recv":     "operator-nfr.md §4.9 ON-055; agent message read, no run impact",
+	"comms-presence": "operator-nfr.md §4.9 ON-055; presence read, no run impact",
+	// hk-5tg5o (captain/crew): crew-start/stop manage crew sub-sessions per
+	// c2-spec.md §3.1–§3.5; they spawn/teardown crew sessions, not harmonik runs,
+	// and cannot abort the between-task invariant.
+	"crew-start": "operator-nfr.md §4.9 ON-055; crew session spawn, no in-flight run abort",
+	"crew-stop":  "operator-nfr.md §4.9 ON-055; crew session teardown, no in-flight run abort",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

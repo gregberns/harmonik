@@ -25,6 +25,15 @@ package specaudit_test
 // 'update' subcommand passes --status open as separate args — the exact shape
 // a direct bypass would take.
 //
+// BI-010d governs only the in_progress → open RESET transition, which is the
+// `br update ... --status open` write. Lines whose argv carries a non-update
+// br subcommand are NOT resets and are excluded:
+//   - "list"   — a READ (e.g. `br list --status=open -q`); transitions nothing.
+//   - "create" — mints a NEW bead in the open state; it is not an
+//     in_progress → open reset of an existing bead.
+// Excluding these subcommand tokens keeps the heuristic scoped to the actual
+// bypass shape and avoids firing on reads and creates (hk-feow8).
+//
 // True negatives: git status calls never carry `"open"` as a separate arg.
 // tmux / ps calls do not use `"--status"`. The heuristic is tightly scoped.
 //
@@ -119,6 +128,12 @@ func bi010dAdptFileViolates(path string) ([]string, error) {
 		// a direct br update --status open subprocess call.
 		if strings.Contains(line, `"--status", "open"`) ||
 			strings.Contains(line, `"--status=open"`) {
+			// BI-010d targets only the `br update ... --status open` RESET.
+			// Lines whose argv carries a non-update br subcommand ("list" is a
+			// read; "create" mints a new open bead) are not resets — skip them.
+			if strings.Contains(line, `"list"`) || strings.Contains(line, `"create"`) {
+				continue
+			}
 			violations = append(violations, fmt.Sprintf("line %d: %s", lineNo, strings.TrimSpace(line)))
 		}
 	}

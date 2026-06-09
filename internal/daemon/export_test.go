@@ -1889,3 +1889,86 @@ func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.Run
 		NodePrompt:       rc.NodePrompt,
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CodexHarness + codex JSONL parser test seams (hk-m57va C2/T8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedNewCodexHarness re-exports NewCodexHarness for tests in package
+// daemon_test.
+//
+// Bead ref: hk-m57va.
+var ExportedNewCodexHarness = NewCodexHarness
+
+// ExportedCodexEventKind mirrors the internal codexEventKind enum for tests.
+type ExportedCodexEventKind = codexEventKind
+
+// Exported codexEventKind constants for table-driven parser tests.
+const (
+	ExportedCodexEventKindOther         = CodexEventKindOther
+	ExportedCodexEventKindThreadStarted = CodexEventKindThreadStarted
+	ExportedCodexEventKindTurnStarted   = CodexEventKindTurnStarted
+	ExportedCodexEventKindTurnCompleted = CodexEventKindTurnCompleted
+	ExportedCodexEventKindTurnFailed    = CodexEventKindTurnFailed
+)
+
+// ExportedCodexEvent is the exported projection of the parsed codexEvent for
+// test assertions.
+type ExportedCodexEvent struct {
+	Kind         ExportedCodexEventKind
+	RawType      string
+	ThreadID     string
+	TurnID       string
+	ErrorMessage string
+}
+
+// ExportedParseCodexJSONLEvent exposes parseCodexJSONLEvent for tests, returning
+// the exported event projection.
+//
+// Bead ref: hk-m57va.
+func ExportedParseCodexJSONLEvent(line []byte) (ExportedCodexEvent, error) {
+	ev, err := parseCodexJSONLEvent(line)
+	if err != nil {
+		return ExportedCodexEvent{}, err
+	}
+	return ExportedCodexEvent{
+		Kind:         ev.Kind,
+		RawType:      ev.RawType,
+		ThreadID:     ev.ThreadID,
+		TurnID:       ev.TurnID,
+		ErrorMessage: ev.ErrorMessage,
+	}, nil
+}
+
+// ExportedCodexRunArtifacts is the exported projection of codexRunArtifacts for
+// thread-id-capture tests.
+type ExportedCodexRunArtifacts struct {
+	CapturedThreadID   string
+	TurnCompleted      bool
+	TurnFailed         bool
+	TurnFailureMessage string
+}
+
+// ExportedCaptureCodexThreadStream folds an ordered slice of raw JSONL lines
+// through parseCodexJSONLEvent + captureCodexThreadID and returns the resulting
+// run artifacts. Malformed lines are surfaced as an error (the production stream
+// reader skips them, but tests assert exact behaviour). This exercises the
+// thread-id capture-into-run-state requirement of T8.
+//
+// Bead ref: hk-m57va.
+func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts, error) {
+	var arts codexRunArtifacts
+	for _, line := range lines {
+		ev, err := parseCodexJSONLEvent(line)
+		if err != nil {
+			return ExportedCodexRunArtifacts{}, err
+		}
+		captureCodexThreadID(&arts, ev)
+	}
+	return ExportedCodexRunArtifacts{
+		CapturedThreadID:   arts.capturedThreadID,
+		TurnCompleted:      arts.turnCompleted,
+		TurnFailed:         arts.turnFailed,
+		TurnFailureMessage: arts.turnFailureMessage,
+	}, nil
+}

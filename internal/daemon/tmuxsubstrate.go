@@ -99,6 +99,19 @@ type tmuxSubstrate struct {
 	adapter     tmux.Adapter
 	sessionName string
 
+	// newWindowMu serializes the underlying `tmux new-window` exec across the
+	// whole daemon (hk-oihnf). All implementer/reviewer child windows are created
+	// in the same shared tmux session (sessionName, immutable), so two concurrent
+	// `tmux new-window` invocations contend on the tmux server's GLOBAL command
+	// lock: one serializes behind the other and can crawl ~16 min behind under
+	// MaxConcurrent>1. A single bead never collides. Holding this mutex around the
+	// bounded new-window call (and ONLY that call — not the semaphore acquire or
+	// spec-build) makes window creation strictly one-at-a-time daemon-wide,
+	// eliminating the contention. The 60 s new-window bound caps how long a hung
+	// new-window can hold the mutex: the bound fires, the call returns, and the
+	// mutex is released, so a single wedge cannot block all other launches forever.
+	newWindowMu sync.Mutex
+
 	// spawnedMu guards spawnedHandles.
 	spawnedMu sync.Mutex
 	// spawnedHandles accumulates the WindowHandle of every window created by
@@ -256,6 +269,42 @@ func WithNewWindowTimedOutHook(fn func(waited time.Duration)) TmuxSubstrateOptio
 	return func(s *tmuxSubstrate) {
 		s.newWindowTimedOut = fn
 	}
+}
+
+// setDiagnosticHooks installs the spawn-cap-blocked and new-window-timed-out
+// diagnostic callbacks AFTER the substrate has been constructed (hk-oihnf).
+//
+// # Why a post-construction setter
+//
+// The substrate is built by the composition root (cmd/harmonik) inside
+// daemon.Config BEFORE daemon.Start runs — but the event bus the hooks must emit
+// onto does not exist until Start builds it. The WithSpawnCapBlockedHook /
+// WithNewWindowTimedOutHook construction options therefore could not be wired at
+// the call site (no bus in scope), which is exactly why s.spawnCapBlocked /
+// s.newWindowTimedOut were left nil and the diagnostic events never fired from
+// the substrate layer. Start probes cfg.Substrate for this setter once the bus is
+// live and installs hooks that emit the non-run-scoped diagnostic events. (The
+// run-scoped, runID-bearing emission already happens in the dispatch paths —
+// workloop / reviewloop / dot_cascade — via errors.Is on the structural launch
+// error.)
+//
+// Either fn may be nil to leave that hook unset.
+func (s *tmuxSubstrate) setDiagnosticHooks(spawnCapBlocked func(waited time.Duration, inUse, capSize int), newWindowTimedOut func(waited time.Duration)) {
+	if spawnCapBlocked != nil {
+		s.spawnCapBlocked = spawnCapBlocked
+	}
+	if newWindowTimedOut != nil {
+		s.newWindowTimedOut = newWindowTimedOut
+	}
+}
+
+// substrateDiagnosticHookSetter is the optional interface a Substrate may
+// implement to receive the spawn-cap-blocked / new-window-timed-out diagnostic
+// hooks after construction (hk-oihnf). daemon.Start probes cfg.Substrate for this
+// interface once the event bus is live and wires hooks that emit the diagnostic
+// events. *tmuxSubstrate implements it.
+type substrateDiagnosticHookSetter interface {
+	setDiagnosticHooks(spawnCapBlocked func(waited time.Duration, inUse, capSize int), newWindowTimedOut func(waited time.Duration))
 }
 
 // Compile-time assertion: tmuxSubstrate implements handler.Substrate.
@@ -568,6 +617,16 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // uses exec.CommandContext) also gets its tmux subprocess SIGKILLed on timeout;
 // the goroutine+select wrapper is the backstop for adapters that ignore ctx.
 func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, params tmux.NewWindowIn) (tmux.Outcome, error) {
+	// hk-oihnf: serialize the new-window exec daemon-wide. The mutex is held ONLY
+	// for the duration of this bounded call (the tmux-server-lock contention
+	// point), never across the semaphore acquire or spec-build in SpawnWindow. The
+	// defer guarantees release on EVERY return path — success, adapter error, the
+	// new-window timeout, and the caller-ctx-cancelled path below — so a hung
+	// new-window holds the mutex for at most newWindowTimeout (the bound below
+	// fires, this function returns, and the unlock runs).
+	s.newWindowMu.Lock()
+	defer s.newWindowMu.Unlock()
+
 	callCtx := ctx
 	var cancel context.CancelFunc
 	if s.newWindowTimeout > 0 {

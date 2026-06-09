@@ -905,6 +905,26 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
 	}
 
+	// Wire the substrate launch-timeout diagnostic hooks (hk-oihnf). The substrate
+	// was constructed by the composition root (cmd/harmonik) BEFORE the bus
+	// existed, so its spawn_cap_blocked / tmux_new_window_timeout hooks were left
+	// nil and the diagnostic events never fired from the substrate layer. Now that
+	// the bus is live, probe cfg.Substrate for the hook setter and install hooks
+	// that emit the non-run-scoped diagnostic events directly onto the bus. The
+	// run-scoped (runID-bearing) emission still happens in the dispatch paths
+	// (workloop / reviewloop / dot_cascade) via errors.Is on the structural launch
+	// error; these substrate-layer hooks are the immediate, in-SpawnWindow signal.
+	if hookSetter, ok := cfg.Substrate.(substrateDiagnosticHookSetter); ok {
+		hookSetter.setDiagnosticHooks(
+			func(waited time.Duration, inUse, capSize int) {
+				emitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
+			},
+			func(waited time.Duration) {
+				emitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
+			},
+		)
+	}
+
 	// Notify the test-only observer (when set) so tests can inspect bus
 	// subscription state before Seal locks it.  Only reachable via
 	// StartForTesting; production Start always passes a zero-value daemonTestHooks.

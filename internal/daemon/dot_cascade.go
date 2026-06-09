@@ -555,6 +555,22 @@ func dispatchDotAgenticNode(
 		if deps.hookStore != nil {
 			deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
 		}
+		// hk-oihnf: surface structural launch-timeout failures as their dedicated
+		// diagnostic events before returning — mirrors the single-mode path
+		// (workloop.go beadRunOne, the errors.Is branches after Launch). Without
+		// this the DOT path returned an opaque "launch node ...: %w" error and the
+		// operator never saw WHY the launch failed (spawn-pool saturated vs. hung
+		// tmux new-window). The returned launchErr already wraps handler.ErrStructural
+		// (SpawnWindow stamps it), so the cascade's existing structural-error
+		// handling reopens the bead — these branches only add the observability the
+		// single-mode path already has.
+		if errors.Is(launchErr, ErrSpawnCapTimeout) {
+			inUse, capSize := substrateSpawnStats(deps.substrate)
+			emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(nodeLaunchedAt), inUse, capSize)
+		}
+		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
+			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(nodeLaunchedAt))
+		}
 		return core.Outcome{}, fmt.Errorf("launch node %q: %w", node.ID, launchErr)
 	}
 

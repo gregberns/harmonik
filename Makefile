@@ -46,6 +46,14 @@ build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4
 test:  ## go test ./... (no race; quick smoke)
 	go test ./...
 
+# smoke-scratch: run harmonik smoke in a throw-away temp project so real-daemon
+# validation never commits scratch files to the main trunk (logmine F17 / hk-nk9pu).
+# Prereq: harmonik binary is built from source (this target builds it internally).
+# Env overrides: HARMONIK_BIN, SMOKE_TIMEOUT, SKIP_BUILD, KEEP_DIR.
+.PHONY: smoke-scratch
+smoke-scratch:  ## Run harmonik smoke in a throw-away temp project (never touches main trunk; hk-nk9pu)
+	scripts/smoke-scratch.sh
+
 # test-e2e-real-claude: run the real-Claude single-mode E2E smoke test.
 # Requires: claude, tmux, git, br, ntm on PATH; ANTHROPIC_API_KEY or
 # CLAUDE_CODE_OAUTH_TOKEN set; harmonik buildable from source.

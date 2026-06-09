@@ -64,6 +64,8 @@ done
 
 ## Bead lifecycle discipline
 
+**SMOKE-SCRATCH DISCIPLINE (HARD RULE).** Real-daemon validation MUST use the smoke scratch lane — never commit scratch/canary files to the main trunk. The scratch lane runs in a throw-away temp project with its own daemon so all smoke commits land there and are discarded. Use `make smoke-scratch` (or `scripts/smoke-scratch.sh`) for all concurrency-fix and deploy validation. Direct commits to main of scratch markers (e.g. `docs/_smoke_*.md`) followed by cleanup commits are PROHIBITED. Source: logmine F17 — 6 smoke commits + 3 cleanups netted to zero code on main (hk-nk9pu).
+
 **THROWAWAY-CANARY DISCIPLINE (HARD RULE).** When probing for daemon spawn wedges or verifying spawn behavior after a restart, use a **throwaway trivial smoke bead** as the canary — NOT a real implementation bead. Re-dispatching a real bead >2× as a spawn canary violates the never-re-dispatch-without-investigation rule and burns real captain-impl slots. If no throwaway canary exists, create one with `br create --title="canary: throwaway smoke probe" --type=chore --priority=4` and close it after the probe. Incident: hk-w6y70 (a real T2 bead) was used as the spawn-wedge canary 5× across restarts (logmine F15, 2026-06-09).
 
 **EVERY BEAD GETS A REVIEW PHASE (HARD RULE).** `harmonik run` includes a review phase on every batch by default (hk-g0ckv landed). Pass `--no-review-loop` only to explicitly opt out.

@@ -1606,6 +1606,39 @@ func (n *noopTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) 
 var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 
 // ─────────────────────────────────────────────────────────────────────────────
+// buildCodexLaunchSpec test seams (hk-rgxwd C2/T7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedCodexRunCtx is the exported shape of codexRunCtx for tests.
+// Fields mirror codexRunCtx verbatim with exported names.
+//
+// Bead ref: hk-rgxwd.
+type ExportedCodexRunCtx struct {
+	CodexBinary   string
+	WorkspacePath string
+	BeadID        string
+	PriorThreadID *string
+	BaseEnv       []string
+	CodexHome     string
+}
+
+// ExportedBuildCodexLaunchSpec exposes buildCodexLaunchSpec for tests in
+// package daemon_test. The ExportedCodexRunCtx is translated to the internal
+// codexRunCtx before calling.
+//
+// Bead ref: hk-rgxwd.
+func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, error) {
+	return buildCodexLaunchSpec(codexRunCtx{
+		codexBinary:   rc.CodexBinary,
+		workspacePath: rc.WorkspacePath,
+		beadID:        rc.BeadID,
+		priorThreadID: rc.PriorThreadID,
+		baseEnv:       rc.BaseEnv,
+		codexHome:     rc.CodexHome,
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildCrewLaunchSpec test seams (hk-kbqto C2)
 // ─────────────────────────────────────────────────────────────────────────────
 

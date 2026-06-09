@@ -40,6 +40,7 @@ Skills live at `.claude/skills/<skill-name>/` in the repo, plus `~/.claude/skill
 | `spec-finalize` | `.claude/skills/spec-finalize/` | `kerf finalize` handoff: copy drafts to `specs/`, update AGENT_INDEX, open a foundation-amendment log entry if needed. |
 | `agent-reviewer` | `.claude/skills/agent-reviewer/` | runs on every non-trivial commit (per `build-practices.md §Agent review on every commit`). Checks spec alignment, idiom compliance, test adequacy, unwanted-abstraction detection, bead/codename match. Emits `APPROVE` / `REQUEST_CHANGES` / `BLOCK` verdict; the non-`BLOCK` verdict lands as the commit's `Reviewed-By:` trailer. **Load-bearing; must not rot.** Tier 2 cadence explicitly checks its currency. Emits JSON verdict per `build-practices.md §Commit conventions`. Schema owned by this skill; versioned. |
 | `agent-config-reviewer` | `.claude/skills/agent-config-reviewer/` | the review subagent for the cadence below; emits a diff proposing CLAUDE.md / AGENTS.md / skills updates. |
+| `crew-launch` | `.claude/skills/crew-launch/` | boot context for a Captain & Crew crew orchestrator: parse handoff, join comms, mirror `--assignee` on every epic adoption (Gap 1, load-bearing), subscribe inbox with `event_id` dedupe, dispatch beads to the crew's OWN named queue (NEVER `main`), and emit the mandatory progress feed on both surfaces (comms `--topic status` + `br comments`) on the locked cadence. |
 
 Any node whose workflow declares a skill MUST have that skill resolvable; handler fails launch otherwise (foundation §4.11).
 

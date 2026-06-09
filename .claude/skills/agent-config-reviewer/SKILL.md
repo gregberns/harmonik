@@ -125,6 +125,7 @@ frontmatter `name` and `description`) against the normative skill table in
   | `agent-reviewer` | `.claude/skills/agent-reviewer/SKILL.md` |
   | `agent-config-reviewer` | `.claude/skills/agent-config-reviewer/SKILL.md` |
   | `crew-launch` | `.claude/skills/crew-launch/SKILL.md` |
+  | `captain` | `.claude/skills/captain/SKILL.md` |
 
 - Is the `agent-reviewer` skill current? Specifically: does its check list match the
   check categories in `build-practices.md §Agent review on every commit`? If a

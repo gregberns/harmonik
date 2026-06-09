@@ -200,7 +200,13 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 		},
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
+	// CodexHarness.LaunchSpec runs the fail-closed billing guard (C3/T11) by
+	// default — RunCtx exposes no SkipBillingGuard, so we point CODEX_HOME at a
+	// writable temp dir and let the guard materialize a valid
+	// forced_login_method=chatgpt config.toml and PASS, exactly as the production
+	// cascade (T12) sets up CODEX_HOME. (An unwritable/real home would make the
+	// guard's mkdir/assert fail and short-circuit this credential-strip check.)
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -234,13 +240,19 @@ func TestCodexHarness_LaunchSpec_CodexHomePresent(t *testing.T) {
 		BeadID:        "hk-m57va-test-home",
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "/custom/codex/home")
+	// Use a writable temp dir as CODEX_HOME so the fail-closed billing guard
+	// (C3/T11, which CodexHarness.LaunchSpec runs by default since RunCtx exposes
+	// no SkipBillingGuard) can materialize a valid forced_login_method=chatgpt
+	// config.toml and PASS — the same setup the production cascade (T12) performs.
+	// The previous "/custom/codex/home" tripped mkdir on a read-only path.
+	codexHome := t.TempDir()
+	h := daemon.ExportedNewCodexHarness("", codexHome)
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
 	}
-	if !codexHarnessArgsContain(spawn.Env, "CODEX_HOME=/custom/codex/home") {
-		t.Errorf("SpawnSpec.Env missing CODEX_HOME=/custom/codex/home: %v", spawn.Env)
+	if !codexHarnessArgsContain(spawn.Env, "CODEX_HOME="+codexHome) {
+		t.Errorf("SpawnSpec.Env missing CODEX_HOME=%s: %v", codexHome, spawn.Env)
 	}
 }
 

@@ -65,11 +65,18 @@ func claudeHarnessFixtureRunCtx(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Pure-LaunchSpec golden tests
+//
+// These tests deliberately do NOT call t.Parallel(): they all invoke
+// buildClaudeLaunchSpec (via ClaudeHarness.LaunchSpec) which calls
+// EnsureWorktreeTrust and writes to ~/.claude.json under a file lock.
+// Running them in parallel with each other and with the integration-test suite
+// (TestT4_ConcurrentLoops, TestParallelSmoke_TwoBeadsConcurrent) creates
+// excessive contention on that lock, causing unrelated tests to hit the
+// "write-lock acquire timed out" deadline and fail spuriously.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestClaudeHarness_LaunchSpec_Single verifies SpawnSpec parity for single-mode.
 func TestClaudeHarness_LaunchSpec_Single(t *testing.T) {
-	t.Parallel()
 
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
@@ -98,8 +105,6 @@ func TestClaudeHarness_LaunchSpec_Single(t *testing.T) {
 // TestClaudeHarness_LaunchSpec_ImplementerInitial verifies SpawnSpec parity for
 // implementer-initial phase.
 func TestClaudeHarness_LaunchSpec_ImplementerInitial(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseImplementerInitial, nil, 1)
 
@@ -124,8 +129,6 @@ func TestClaudeHarness_LaunchSpec_ImplementerInitial(t *testing.T) {
 // TestClaudeHarness_LaunchSpec_ImplementerResume verifies SpawnSpec parity for
 // implementer-resume phase: --resume flag, reused session ID.
 func TestClaudeHarness_LaunchSpec_ImplementerResume(t *testing.T) {
-	t.Parallel()
-
 	priorUID, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("mint prior UUID: %v", err)
@@ -159,8 +162,6 @@ func TestClaudeHarness_LaunchSpec_ImplementerResume(t *testing.T) {
 // TestClaudeHarness_LaunchSpec_Reviewer verifies SpawnSpec parity for the
 // reviewer phase: fresh session ID, --session-id flag.
 func TestClaudeHarness_LaunchSpec_Reviewer(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, handlercontract.ReviewLoopPhaseReviewer, nil, 1)
 
@@ -185,8 +186,6 @@ func TestClaudeHarness_LaunchSpec_Reviewer(t *testing.T) {
 // TestClaudeHarness_LaunchSpec_EnvKeys verifies CHB-006 env vars are present in
 // the SpawnSpec returned by ClaudeHarness.LaunchSpec (same as buildClaudeLaunchSpec).
 func TestClaudeHarness_LaunchSpec_EnvKeys(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
@@ -212,8 +211,6 @@ func TestClaudeHarness_LaunchSpec_EnvKeys(t *testing.T) {
 // credential deny-list scrub applies to the harness path (same regression lock as
 // TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv).
 func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	runUID, err := uuid.NewV7()
 	if err != nil {
@@ -274,8 +271,6 @@ func TestClaudeHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 // ClaudeHarness.LaunchSpec materializes .claude/settings.json in the workspace
 // (same side-effect as buildClaudeLaunchSpec / MaterializeClaudeSettings).
 func TestClaudeHarness_LaunchSpec_SettingsJSON_Created(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
@@ -295,8 +290,6 @@ func TestClaudeHarness_LaunchSpec_SettingsJSON_Created(t *testing.T) {
 // ClaudeHarness.LaunchSpec writes .harmonik/agent-task.md into the workspace
 // (same side-effect as buildClaudeLaunchSpec / WriteAgentTask).
 func TestClaudeHarness_LaunchSpec_AgentTask_Created(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)
@@ -315,8 +308,6 @@ func TestClaudeHarness_LaunchSpec_AgentTask_Created(t *testing.T) {
 // TestClaudeHarness_LaunchSpec_WorkDir verifies that SpawnSpec.WorkDir equals the
 // workspace path supplied in RunCtx, mirroring the buildClaudeLaunchSpec behaviour.
 func TestClaudeHarness_LaunchSpec_WorkDir(t *testing.T) {
-	t.Parallel()
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 	hrc := daemon.ExportedRunCtxFromClaudeRunCtx(rc)

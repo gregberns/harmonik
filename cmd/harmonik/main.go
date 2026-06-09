@@ -451,6 +451,15 @@ EXAMPLES
 		return runCommsSubcommand(os.Args[2:])
 	}
 
+	// harmonik crew <verb> — captain & crew session management (C2).
+	// crew start/stop are daemon RPCs (exit 17 when daemon down).
+	// crew list is a local read that works daemon-down.
+	// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
+	// Bead ref: hk-yj2j6 (C2 CLI).
+	if len(os.Args) >= 2 && os.Args[1] == "crew" {
+		return runCrewSubcommand(os.Args[2:])
+	}
+
 	// harmonik graph <verb> — workflow graph utilities (hk-voyf4).
 	// Currently supports: graph validate <path>
 	// No daemon required; reads files directly.

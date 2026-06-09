@@ -1627,7 +1627,7 @@ var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 // ExportedCodexRunCtx is the exported shape of codexRunCtx for tests.
 // Fields mirror codexRunCtx verbatim with exported names.
 //
-// Bead ref: hk-rgxwd.
+// Bead refs: hk-rgxwd (T7), hk-tu48u (T11 billing-guard fields).
 type ExportedCodexRunCtx struct {
 	CodexBinary   string
 	WorkspacePath string
@@ -1635,6 +1635,11 @@ type ExportedCodexRunCtx struct {
 	PriorThreadID *string
 	BaseEnv       []string
 	CodexHome     string
+	// BillingEmitter / RunID / SkipBillingGuard expose the C3/T11 positive
+	// billing-guard seams (hk-tu48u).
+	BillingEmitter   handlercontract.EventEmitter
+	RunID            core.RunID
+	SkipBillingGuard bool
 }
 
 // ExportedBuildCodexLaunchSpec exposes buildCodexLaunchSpec for tests in
@@ -1644,14 +1649,49 @@ type ExportedCodexRunCtx struct {
 // Bead ref: hk-rgxwd.
 func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, error) {
 	return buildCodexLaunchSpec(codexRunCtx{
-		codexBinary:   rc.CodexBinary,
-		workspacePath: rc.WorkspacePath,
-		beadID:        rc.BeadID,
-		priorThreadID: rc.PriorThreadID,
-		baseEnv:       rc.BaseEnv,
-		codexHome:     rc.CodexHome,
+		codexBinary:      rc.CodexBinary,
+		workspacePath:    rc.WorkspacePath,
+		beadID:           rc.BeadID,
+		priorThreadID:    rc.PriorThreadID,
+		baseEnv:          rc.BaseEnv,
+		codexHome:        rc.CodexHome,
+		billingEmitter:   rc.BillingEmitter,
+		runID:            rc.RunID,
+		skipBillingGuard: rc.SkipBillingGuard,
 	})
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// codex billing guard test seams (hk-tu48u C3/T11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedMaterializeForcedLoginMethod exposes materializeForcedLoginMethod for
+// tests in package daemon_test.
+//
+// Bead ref: hk-tu48u.
+func ExportedMaterializeForcedLoginMethod(codexHome string) error {
+	return materializeForcedLoginMethod(codexHome)
+}
+
+// ExportedAssertChatGPTPlan exposes the fail-closed assertChatGPTPlan for tests
+// in package daemon_test.
+//
+// Bead ref: hk-tu48u.
+func ExportedAssertChatGPTPlan(codexHome string) error {
+	return assertChatGPTPlan(codexHome)
+}
+
+// ExportedRunCodexBillingGuard exposes runCodexBillingGuard (materialize + assert
+// + emit) for tests in package daemon_test.
+//
+// Bead ref: hk-tu48u.
+func ExportedRunCodexBillingGuard(bus handlercontract.EventEmitter, beadID, codexHome string) error {
+	return runCodexBillingGuard(context.Background(), bus, core.RunID{}, beadID, codexHome)
+}
+
+// ExportedForcedLoginMethodValue is the value the guard materializes / asserts.
+// Bead ref: hk-tu48u.
+const ExportedForcedLoginMethodValue = forcedLoginMethodValue
 
 // ─────────────────────────────────────────────────────────────────────────────
 // buildCrewLaunchSpec test seams (hk-kbqto C2)

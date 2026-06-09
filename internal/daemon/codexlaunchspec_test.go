@@ -28,9 +28,10 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 	t.Parallel()
 
 	rc := daemon.ExportedCodexRunCtx{
-		WorkspacePath: "/tmp/wt-test-codex-initial",
-		BeadID:        "hk-test001",
-		BaseEnv:       []string{"PATH=/usr/bin"},
+		WorkspacePath:    "/tmp/wt-test-codex-initial",
+		BeadID:           "hk-test001",
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -67,9 +68,10 @@ func TestBuildCodexLaunchSpec_CustomBinary(t *testing.T) {
 	t.Parallel()
 
 	rc := daemon.ExportedCodexRunCtx{
-		CodexBinary:   "/usr/local/bin/codex",
-		WorkspacePath: "/tmp/wt-test-codex-bin",
-		BeadID:        "hk-test002",
+		CodexBinary:      "/usr/local/bin/codex",
+		WorkspacePath:    "/tmp/wt-test-codex-bin",
+		BeadID:           "hk-test002",
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -93,10 +95,11 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 
 	threadID := "thread-abc-123"
 	rc := daemon.ExportedCodexRunCtx{
-		WorkspacePath: "/tmp/wt-test-codex-resume",
-		BeadID:        "hk-test003",
-		PriorThreadID: &threadID,
-		BaseEnv:       []string{"PATH=/usr/bin"},
+		WorkspacePath:    "/tmp/wt-test-codex-resume",
+		BeadID:           "hk-test003",
+		PriorThreadID:    &threadID,
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -129,6 +132,7 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 			"OPENAI_API_KEY=sk-test-must-not-leak",
 			"CODEX_API_KEY=ck-test-must-not-leak",
 		},
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -206,7 +210,8 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 		BeadID:        "hk-test-t10",
 		// Forward the real process environment unfiltered, exactly as a caller
 		// passing os.Environ() would. This is what makes the leak observable.
-		BaseEnv: os.Environ(),
+		BaseEnv:          os.Environ(),
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -256,9 +261,10 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 	// Case 1: explicit CodexHome.
 	explicitHome := "/tmp/test-codex-home"
 	rc := daemon.ExportedCodexRunCtx{
-		WorkspacePath: "/tmp/wt-test-codex-home",
-		BeadID:        "hk-test005",
-		CodexHome:     explicitHome,
+		WorkspacePath:    "/tmp/wt-test-codex-home",
+		BeadID:           "hk-test005",
+		CodexHome:        explicitHome,
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
 	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
@@ -280,8 +286,9 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 
 	// Case 2: default (empty CodexHome → non-empty path derived from $HOME).
 	rc2 := daemon.ExportedCodexRunCtx{
-		WorkspacePath: "/tmp/wt-test-codex-home2",
-		BeadID:        "hk-test005b",
+		WorkspacePath:    "/tmp/wt-test-codex-home2",
+		BeadID:           "hk-test005b",
+		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 	spec2, err := daemon.ExportedBuildCodexLaunchSpec(rc2)
 	if err != nil {

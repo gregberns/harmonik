@@ -193,6 +193,11 @@ func registerAgentEvents() {
 	// past the bounded new-window timeout — the observable signature of a hung
 	// tmux invocation (the no-spawn wedge). Durability class: O.
 	mustRegister("tmux_new_window_timeout", func() EventPayload { return &TmuxNewWindowTimeoutPayload{} })
+	// codex_billing_guard (hk-tu48u, C3/T11): emitted by the codex launch path's
+	// positive billing guard at each observable step (materialize
+	// forced_login_method=chatgpt, pre-flight assert allowed, pre-flight assert
+	// denied = fail-closed). Durability class: O.
+	mustRegister("codex_billing_guard", func() EventPayload { return &CodexBillingGuardPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })

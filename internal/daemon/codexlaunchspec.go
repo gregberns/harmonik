@@ -27,9 +27,13 @@ package daemon
 // Bead: hk-rgxwd [C2/T7]
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 
 	"github.com/gregberns/harmonik/internal/handler"
 )
@@ -89,6 +93,22 @@ type codexRunCtx struct {
 	// "$HOME/.codex" (using os.UserHomeDir). A non-writable path is not
 	// validated here; the pre-flight billing guard (C3/T11) enforces that.
 	codexHome string
+
+	// billingEmitter, when non-nil, receives codex_billing_guard events from the
+	// positive billing guard (C3/T11). Nil disables event emission; the guard's
+	// enforcement (materialize + fail-closed assert) still runs regardless.
+	billingEmitter handlercontract.EventEmitter
+
+	// runID correlates the codex_billing_guard events with a run. May be the zero
+	// (uuid.Nil) RunID when the spec is built before a run_id is minted, in which
+	// case the events are emitted run-unscoped.
+	runID core.RunID
+
+	// skipBillingGuard disables the positive billing guard (C3/T11). It exists
+	// solely so unit tests that only exercise argv/env shape do not have to
+	// materialize a config.toml. Production callers MUST leave it false so the
+	// fail-closed guard runs.
+	skipBillingGuard bool
 }
 
 // buildCodexLaunchSpec constructs a handler.LaunchSpec for launching a codex
@@ -146,6 +166,22 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	// Build env: copy baseEnv, strip credential keys, set CODEX_HOME.
 	env := buildCodexEnv(rc.baseEnv, rc.codexHome)
 
+	// Positive billing guard (C3/T11, hk-tu48u): materialize
+	// forced_login_method=chatgpt into $CODEX_HOME/config.toml and run a
+	// FAIL-CLOSED pre-flight assert. If the ChatGPT plan cannot be confirmed the
+	// guard returns an error and we refuse to launch codex (no spec returned), so
+	// codex can never be launched against an unforced/API-key config.
+	//
+	// resolveCodexHome here MUST match the CODEX_HOME the child receives (set by
+	// buildCodexEnv above) so the guard inspects exactly the config codex will
+	// read.
+	if !rc.skipBillingGuard {
+		guardedHome := resolveCodexHome(rc.codexHome)
+		if err := runCodexBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, guardedHome); err != nil {
+			return handler.LaunchSpec{}, err
+		}
+	}
+
 	return handler.LaunchSpec{
 		Binary:  binary,
 		Args:    args,
@@ -153,6 +189,23 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 		WorkDir: rc.workspacePath,
 		Role:    "implementer",
 	}, nil
+}
+
+// resolveCodexHome normalises a codexHome path the same way buildCodexEnv does:
+// an empty value becomes "$HOME/.codex" via os.UserHomeDir, falling back to the
+// literal "$HOME/.codex" string only if the home directory cannot be resolved.
+// Both buildCodexEnv (for the CODEX_HOME env value) and the billing guard (for
+// the directory it materializes into and asserts against) MUST resolve through
+// this single helper so they never disagree about which CODEX_HOME codex reads.
+func resolveCodexHome(codexHome string) string {
+	if codexHome != "" {
+		return codexHome
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "$HOME/.codex"
+	}
+	return home + "/.codex"
 }
 
 // buildCodexEnv constructs the codex child environment from baseEnv.
@@ -164,18 +217,9 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 //     billing guard in C3/T11 is the backstop for a misconfigured home directory.
 //   - Preserves all other baseEnv entries unchanged.
 func buildCodexEnv(baseEnv []string, codexHome string) []string {
-	// Resolve CODEX_HOME before iterating baseEnv.
-	resolvedCodexHome := codexHome
-	if resolvedCodexHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			// Fallback: literal string; the billing-guard pre-flight (C3/T11) will
-			// catch a bad CODEX_HOME before any real codex run launches.
-			resolvedCodexHome = "$HOME/.codex"
-		} else {
-			resolvedCodexHome = home + "/.codex"
-		}
-	}
+	// Resolve CODEX_HOME before iterating baseEnv. resolveCodexHome is shared with
+	// the billing guard (C3/T11) so both agree on which CODEX_HOME codex reads.
+	resolvedCodexHome := resolveCodexHome(codexHome)
 
 	denySet := make(map[string]bool, len(codexCredentialDenyKeys))
 	for _, k := range codexCredentialDenyKeys {

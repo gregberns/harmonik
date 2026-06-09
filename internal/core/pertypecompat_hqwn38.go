@@ -158,6 +158,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "implementer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-r1rup: tmux-new-window-timeout diagnostic (hung `tmux new-window`).
 	{TypeName: "tmux_new_window_timeout", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-tu48u: codex positive billing guard (C3/T11) — forced ChatGPT login.
+	{TypeName: "codex_billing_guard", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-djqc9: agent-comms typed events (agent-comms spec §1).
 	{TypeName: "agent_message", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_presence", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

@@ -325,6 +325,25 @@ const (
 	// Durability class: O.
 	// Refs: hk-r1rup.
 	EventTypeTmuxNewWindowTimeout EventType = "tmux_new_window_timeout"
+
+	// EventTypeCodexBillingGuard is the codex_billing_guard event type.
+	// Emitted by the codex launch path's positive billing guard (C3/T11) at each
+	// of its observable steps: when forced_login_method=chatgpt is materialized
+	// into $CODEX_HOME/config.toml ("materialized"), when the pre-flight
+	// assertChatGPTPlan confirms the ChatGPT plan ("allowed"), and when it cannot
+	// confirm the ChatGPT plan and the launch is refused ("denied"). The denied
+	// case is the fail-closed signal: codex is NOT launched, so the only record
+	// that a launch was attempted-and-blocked is this event.
+	//
+	// This is the positive counterpart to the credential-strip guard (C3/T10,
+	// codexCredentialDenyKeys): T10 zeros the API-pool keys; T11 forces and
+	// asserts ChatGPT-subscription billing.
+	//
+	// Payload fields: run_id, bead_id, codex_home, outcome, reason.
+	// Durability class: O (ordinary -- observability; a denied launch is also
+	// surfaced via the buildCodexLaunchSpec error to the caller).
+	// Refs: hk-tu48u.
+	EventTypeCodexBillingGuard EventType = "codex_billing_guard"
 )
 
 // ---------------------------------------------------------------------------

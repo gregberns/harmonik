@@ -1395,13 +1395,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			impl.SetRecvDeps(NewCursorStore(cursorDir), cfg.JSONLLogPath)
 		}
 
+		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).
+		// Spec ref: docs/plans/captain/05-specs/c2-spec.md.
+		// Bead ref: hk-5tg5o.
+		crewHandler := NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.Substrate, opPauseCtrl)
+
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
 		// channel to avoid goroutine leaks; error is discarded per the same
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListenerFull(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, queueHandler)
+			socketDone <- RunSocketListenerWithCrew(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}

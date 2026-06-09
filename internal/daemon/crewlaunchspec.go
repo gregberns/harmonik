@@ -33,6 +33,12 @@ type crewLaunchCtx struct {
 	// projectDir is the harmonik project root directory: set as HARMONIK_PROJECT
 	// and used as WorkDir so the crew session runs at the project root.
 	projectDir string
+
+	// resume, when true, builds argv with --resume <uuid> instead of
+	// --session-id <uuid>. Used for stale re-launches (spec §7): the session
+	// already exists on disk; --resume continues the same conversation without
+	// forking a new session id.
+	resume bool
 }
 
 // buildCrewLaunchSpec constructs a handler.LaunchSpec for launching a
@@ -58,9 +64,11 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 		binary = "claude"
 	}
 
-	args := []string{
-		"--remote-control", rc.name,
-		"--session-id", rc.sessionID,
+	var args []string
+	if rc.resume {
+		args = []string{"--remote-control", rc.name, "--resume", rc.sessionID}
+	} else {
+		args = []string{"--remote-control", rc.name, "--session-id", rc.sessionID}
 	}
 
 	env := []string{

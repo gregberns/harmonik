@@ -272,6 +272,16 @@ func RunSocketListenerWithSubscribe(ctx context.Context, sockPath string, h Requ
 //
 // Bead ref: hk-ry8q1 (operator control), hk-nbrmf (comms-send T4).
 func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, qh ...QueueHandler) error {
+	return RunSocketListenerWithCrew(ctx, sockPath, h, hr, sub, oh, ch, nil, qh...)
+}
+
+// RunSocketListenerWithCrew is RunSocketListenerFull with an additional
+// CrewHandler parameter. When crewh is nil, crew-start/crew-stop ops return an
+// error response.
+//
+// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
+// Bead ref: hk-5tg5o (C2 daemon handler).
+func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, qh ...QueueHandler) error {
 	if err := removeStaleSocket(sockPath); err != nil {
 		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
 	}
@@ -308,7 +318,7 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh)
 	}
 }
 
@@ -326,7 +336,7 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -534,6 +544,34 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-resume: %v", err)}
 		} else {
 			resp = SocketResponse{Ok: true}
+		}
+
+	case "crew-start":
+		// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1–§3.4.
+		// Bead ref: hk-5tg5o.
+		if crewh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: CrewHandler not registered"}
+			break
+		}
+		result, err := crewh.HandleCrewStart(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: crew-start: %v", err)}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	case "crew-stop":
+		// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.5.
+		// Bead ref: hk-5tg5o.
+		if crewh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: CrewHandler not registered"}
+			break
+		}
+		result, err := crewh.HandleCrewStop(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: crew-stop: %v", err)}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
 		}
 
 	default:

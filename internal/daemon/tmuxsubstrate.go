@@ -797,6 +797,35 @@ func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 	return nil
 }
 
+// StopWindowByHandle sends /quit to the pane (best-effort), waits a grace
+// period, then kills the window identified by handle. Used by crew-stop to tear
+// down a persistent crew session whose handle was recorded in the crew registry.
+//
+// handle is the tmux window handle string (e.g. "session:window-name") stored
+// in crew.Record.Handle. The pane target for /quit is derived as handle+".0".
+//
+// Implements crewPaneStopper (crewstart.go).
+// Bead ref: hk-5tg5o (C2).
+func (s *tmuxSubstrate) StopWindowByHandle(ctx context.Context, handle string) error {
+	// Best-effort /quit: sends /quit\n to the first pane of the window.
+	// Errors here are swallowed; the KillWindow below is authoritative.
+	paneTarget := handle + ".0"
+	_ = s.adapter.SendKeysQuit(ctx, paneTarget) //nolint:errcheck // best-effort; kill is authoritative
+
+	// Grace period: wait for the crew session to exit cleanly before hard kill.
+	select {
+	case <-ctx.Done():
+		// Context cancelled — proceed to kill immediately.
+	case <-time.After(crewStopQuitGrace):
+	}
+
+	return s.adapter.KillWindow(ctx, tmux.WindowHandle(handle))
+}
+
+// crewStopQuitGrace is the grace period between sending /quit and force-killing
+// a crew window in StopWindowByHandle (C2 crew-stop path).
+const crewStopQuitGrace = 30 * time.Second
+
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
 // sub and captures the spawned pane target from the returned SubstrateSession.
 //
@@ -1239,6 +1268,16 @@ func (s *tmuxSubstrateSession) PaneTarget() string {
 		return string(s.handle) + ".0"
 	}
 	return ""
+}
+
+// WindowHandle returns the tmux window handle string (e.g. "session:window-name")
+// for this session. Used by the crew handler to record the handle in the crew
+// registry so crew-stop can tear down the pane.
+//
+// Implements windowHandleExposer (crewstart.go).
+// Bead ref: hk-5tg5o (C2).
+func (s *tmuxSubstrateSession) WindowHandle() string {
+	return string(s.handle)
 }
 
 // Stdout returns nil: tmux-hosted sessions do not expose a stdout pipe to the

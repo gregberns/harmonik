@@ -1794,3 +1794,39 @@ func (t *ExportedPerRunEventTap) ExportedSubscribe() <-chan core.EventEnvelope {
 func (t *ExportedPerRunEventTap) ExportedEmit(ctx context.Context, eventType core.EventType) error {
 	return t.Emit(ctx, eventType, nil)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ClaudeHarness test seams (hk-3kyh3 C1/T2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedNewClaudeHarness re-exports NewClaudeHarness for tests.
+//
+// Bead ref: hk-3kyh3.
+var ExportedNewClaudeHarness = NewClaudeHarness
+
+// ExportedRunCtxFromClaudeRunCtx converts an ExportedClaudeRunCtx into the
+// handlercontract.RunCtx shape expected by ClaudeHarness.LaunchSpec.  This
+// allows harness-golden tests to use the same fixture builders as the
+// buildClaudeLaunchSpec tests and compare outputs side-by-side.
+//
+// Bead ref: hk-3kyh3.
+func ExportedRunCtxFromClaudeRunCtx(rc ExportedClaudeRunCtx) handlercontract.RunCtx {
+	return handlercontract.RunCtx{
+		RunID:             rc.RunID,
+		BeadID:            rc.BeadID,
+		WorkspacePath:     rc.WorkspacePath,
+		DaemonSocket:      rc.DaemonSocket,
+		WorkflowMode:      rc.WorkflowMode,
+		Phase:             rc.Phase,
+		IterationCount:    rc.IterationCount,
+		PriorSessionID:    rc.PriorClaudeSessID,
+		HandlerBinary:     rc.HandlerBinary,
+		DaemonBinaryPath:  rc.DaemonBinaryPath,
+		BaseEnv:           rc.BaseEnv,
+		Model:             rc.Model,
+		Effort:            rc.Effort,
+		WorktreeRootPath:  rc.WorktreeRootPath,
+		BeadDescription:   rc.BeadDescription,
+		NodePrompt:        rc.NodePrompt,
+	}
+}

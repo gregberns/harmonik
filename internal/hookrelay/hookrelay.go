@@ -7,6 +7,9 @@
 //
 // Spec: specs/claude-hook-bridge.md §4.4 CHB-010..012, §4.5 CHB-013..014,
 // §4.6 CHB-015..017, §6.1 HookRelayMessage, §6.2 HookRelayAck, §8 error taxonomy.
+// Spec: specs/handler-contract.md §4.10 HC-045b (hook-bridge connection regime for
+// short-lived subprocesses: one-shot NDJSON, run_id+claude_session_id envelope,
+// dial timeout ≤ 5 s, message ≤ 1 MiB, ack-line read with 5 s deadline, then close).
 //
 // Tags: mechanism. No cognition. All behaviour is deterministic.
 package hookrelay

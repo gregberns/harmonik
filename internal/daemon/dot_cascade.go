@@ -215,6 +215,16 @@ func driveDotWorkflow(
 	// so no_progress MUST NOT fire. Empty before the first agentic entry.
 	priorIterHeadSHA := ""
 
+	// priorVerdict is the preferred_label of the MOST RECENT reviewer node
+	// (APPROVE / REQUEST_CHANGES / BLOCK), or "" before any reviewer has run.
+	// hk-8ps7q: the no-progress check consults this to distinguish a
+	// genuinely-stuck re-entry (prior verdict REQUEST_CHANGES — the implementer
+	// was asked to make changes but produced none) from an approved-and-done
+	// re-entry (prior verdict APPROVE — there is legitimately nothing left to do,
+	// so HEAD does not advance). The latter must COMPLETE-and-merge the already
+	// committed, reviewer-approved work, NOT no_progress-fail and strand it.
+	priorVerdict := ""
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -327,6 +337,39 @@ func driveDotWorkflow(
 			}
 			headAdvanced := priorIterHeadSHA == "" || currentHead != priorIterHeadSHA
 			if iterationCount >= 2 && !headAdvanced {
+				// hk-8ps7q — approved-and-done is COMPLETION, not no-progress.
+				//
+				// The no-progress condition (iter ≥ 2 + HEAD unchanged) is met by
+				// TWO structurally-distinct situations, disambiguated ONLY by the
+				// prior reviewer verdict:
+				//
+				//   (1) GENUINELY STUCK: the prior reviewer said REQUEST_CHANGES
+				//       (or no reviewer has run yet) and the implementer re-entered
+				//       WITHOUT a new commit — un-addressed feedback, nothing to
+				//       merge. This MUST no_progress-fail (keeps the hk-togxq
+				//       negative-guard + hk-5e9yj behavior intact).
+				//
+				//   (2) APPROVED AND DONE: there IS a committed result (HEAD is past
+				//       the run baseline parentSHA) AND the prior reviewer APPROVED.
+				//       HEAD legitimately does not advance because there is nothing
+				//       left for the next iteration to do. Firing no_progress here
+				//       false-fails the run and STRANDS the valid, reviewer-approved
+				//       commit on the run branch (it is never merged). The run must
+				//       instead COMPLETE so the caller merges the approved work.
+				//
+				// Note: a single APPROVE that routes straight to a terminal (e.g.
+				// review→close in standard-bead.dot) never re-enters an agentic
+				// node, so this branch only triggers in graphs whose post-APPROVE
+				// path loops back through an agentic node (e.g. a commit_gate
+				// fix-loop re-entry on an already-approved, already-committed bead —
+				// the production T12/hk-xhawy shape).
+				committedResult := parentSHA == "" || currentHead != parentSHA
+				if committedResult && priorVerdict == workspace.ReviewVerdictApprove {
+					return dotWorkflowResult{
+						success: true,
+						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
+					}
+				}
 				emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
 				return dotWorkflowResult{
 					success:        false,
@@ -362,6 +405,14 @@ func driveDotWorkflow(
 				}
 			}
 			outcome = nodeOutcome
+
+			// hk-8ps7q: remember the most recent reviewer verdict so the
+			// no-progress check above can distinguish an approved-and-done re-entry
+			// (complete-and-merge) from a genuinely-stuck REQUEST_CHANGES re-entry
+			// (no_progress-fail). Only reviewer nodes carry a preferred_label.
+			if isReviewer && nodeOutcome.PreferredLabel != nil {
+				priorVerdict = *nodeOutcome.PreferredLabel
+			}
 
 		case core.NodeTypeGate:
 			// Gate dispatch: resolve gate_ref → ControlPoint, build GateEvalFunc

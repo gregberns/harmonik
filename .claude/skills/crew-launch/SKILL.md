@@ -85,6 +85,12 @@ round-trips (logmine F13: ≥4 such exchanges observed over hk-w6y70/xdxws/kbqto
 **MUST run on EVERY epic adoption — at boot AND on every `topic == assign`
 comms re-task.** Not only on first boot, not only for restart re-hydration.
 
+**`--assignee` goes on the EPIC ONLY — NEVER on a child / dispatchable bead.** The
+daemon claims dispatchable beads via `br claim`, which REFUSES an already-assigned
+bead (→ `max_attempts_exceeded`, `run_id=null`, never dispatches). Mirror the
+assignee on the parent epic for attribution; leave every child you submit
+UNASSIGNED. (Refs hk-kr791, hk-amed0.)
+
 Fallback (if `br` lacks `--assignee`):
 
 ```bash
@@ -324,6 +330,11 @@ before leaving.
 
 - Submit to the `main` queue (HARD RULE — any crew that submits to `main` is in
   spec violation).
+- **Pre-assign a dispatchable bead.** The daemon claims dispatchable beads via
+  `br claim`, which **REFUSES an already-assigned bead** → `max_attempts_exceeded`,
+  `run_id=null`, and the bead **never dispatches**. `--assignee` goes on the
+  **EPIC only** (Step 4 — the captain's attribution mirror); every child /
+  dispatchable bead you submit **stays UNASSIGNED**. (Refs hk-kr791, hk-amed0.)
 - `br close`, `br claim`, or `br reopen` any bead (daemon-only terminal writes).
 - Spawn Agent-tool sub-agents for the epic's work (use the daemon queue — see
   harmonik-dispatch).

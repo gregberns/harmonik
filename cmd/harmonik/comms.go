@@ -735,9 +735,7 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 		}
 	}
 
-	// Post-scan: compute EffectiveLastSeen for each known agent.
-	// Only update agents already present in byAgent — agent_message alone does NOT
-	// create a registry entry (an agent must have emitted at least one presence beat).
+	// Post-scan: compute EffectiveLastSeen for agents with an explicit presence beat.
 	for agent, rec := range byAgent {
 		effective := rec.LastSeen
 		if act := lastActivity[agent]; act.After(effective) {
@@ -745,6 +743,21 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 		}
 		rec.EffectiveLastSeen = effective
 		byAgent[agent] = rec
+	}
+
+	// Synthesize entries for send-only agents — agents that appear only as senders
+	// in agent_message events but never emitted an explicit agent_presence beat.
+	// agent_message is F-class (fsync'd), so these entries survive daemon crashes
+	// even when the O-class implicit refresh beats were not flushed to disk (hk-nf111).
+	for agent, act := range lastActivity {
+		if _, known := byAgent[agent]; known {
+			continue // already covered above
+		}
+		byAgent[agent] = PresenceRecord{
+			Agent:             agent,
+			Status:            "online",
+			EffectiveLastSeen: act,
+		}
 	}
 
 	return byAgent

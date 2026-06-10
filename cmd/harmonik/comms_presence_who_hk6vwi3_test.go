@@ -365,10 +365,11 @@ func TestPresenceWho_NoAgents(t *testing.T) {
 	}
 }
 
-// TestPresenceWho_ActivityAloneDoesNotCreateEntry verifies that an agent_message
-// with no agent_presence events does NOT create a registry entry (fix #1 only
-// extends existing entries; it does not synthesize ghost agents).
-func TestPresenceWho_ActivityAloneDoesNotCreateEntry(t *testing.T) {
+// TestPresenceWho_SendOnlyAgentGetsEntry verifies that an agent_message with no
+// agent_presence events DOES create a synthetic registry entry (hk-nf111 fix).
+// agent_message is F-class (fsync'd) and survives daemon crashes even when the
+// O-class implicit refresh beat was not flushed to disk.
+func TestPresenceWho_SendOnlyAgentGetsEntry(t *testing.T) {
 	msgTS := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
 
 	lines := []string{
@@ -377,7 +378,54 @@ func TestPresenceWho_ActivityAloneDoesNotCreateEntry(t *testing.T) {
 	eventsPath := buildEventsFile(t, lines)
 	registry := ComputePresenceRegistry(eventsPath)
 
-	if _, ok := registry["ghost"]; ok {
-		t.Error("agent_message alone must NOT create a presence entry (no join beat)")
+	rec, ok := registry["ghost"]
+	if !ok {
+		t.Fatal("send-only agent must get a synthetic presence entry (hk-nf111)")
+	}
+	if GetPresenceState(rec) != PresenceStateOnline {
+		t.Errorf("send-only agent sent 10s ago must be Online; got state %d", GetPresenceState(rec))
+	}
+}
+
+// TestPresenceWho_SendOnlyAgentInWhoOutput verifies that a send-only agent appears
+// in "comms who" output (no presence beat, activity-derived liveness, hk-nf111).
+func TestPresenceWho_SendOnlyAgentInWhoOutput(t *testing.T) {
+	msgTS := time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339)
+
+	lines := []string{
+		messageEvent("01965b00-0000-7000-8000-000000000001", msgTS, "ghost", "other"),
+	}
+	eventsPath := buildEventsFile(t, lines)
+	projDir := extractProjectDir(eventsPath)
+
+	out, code := captureCommsWho(t, projDir, false)
+	if code != 0 {
+		t.Fatalf("comms who: expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "ghost") {
+		t.Errorf("send-only agent 'ghost' must appear in comms who output; got: %q", out)
+	}
+}
+
+// TestPresenceWho_CrashDurable verifies that a send-only agent remains visible after
+// a simulated daemon crash where only the F-class agent_message event survives
+// (the O-class refresh beat was not flushed). hk-nf111 fix.
+func TestPresenceWho_CrashDurable(t *testing.T) {
+	// Simulate post-crash events.jsonl: only agent_message survives (F-class).
+	// The implicit refresh beat (O-class) is absent — daemon crashed before flush.
+	msgTS := time.Now().Add(-30 * time.Second).UTC().Format(time.RFC3339)
+
+	lines := []string{
+		messageEvent("01965b00-0000-7000-8000-000000000001", msgTS, "survivor", "other"),
+	}
+	eventsPath := buildEventsFile(t, lines)
+	registry := ComputePresenceRegistry(eventsPath)
+
+	rec, ok := registry["survivor"]
+	if !ok {
+		t.Fatal("crash-durable: send-only agent must have a synthetic entry after crash (hk-nf111)")
+	}
+	if GetPresenceState(rec) != PresenceStateOnline {
+		t.Errorf("crash-durable: agent sent 30s ago must be Online; got state %d", GetPresenceState(rec))
 	}
 }

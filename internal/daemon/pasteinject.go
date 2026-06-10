@@ -586,6 +586,11 @@ func pasteInjectQuitOnCommit(
 	// longer permitted and the kill fires even on an active pane.
 	launchSuppressDeadline := loopStart.Add(launchSuppressCeil)
 	firstHeartbeatSeen := false
+	// lastLaunchSuppressLog / lastStalenessLog throttle the high-frequency
+	// "suppressed" diagnostic lines (F21: x347/x142 occurrences per session).
+	// Both log at most once per 10 minutes per run to keep stderr readable.
+	var lastLaunchSuppressLog time.Time
+	var lastStalenessLog time.Time
 
 	// hk-az4fd: worktree-activity fingerprint for activity-aware launch
 	// suppression.  An implementer that is ACTIVELY editing files (but has not
@@ -798,9 +803,14 @@ func pasteInjectQuitOnCommit(
 				// phase suppression is preserved unchanged.
 				if now.Before(launchSuppressDeadline) &&
 					livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout suppressed: pane has active child process in %s; resetting staleness clock\n",
-						wtPath)
+					// F21: rate-limit to ≤1/10min — fires every launchWindow (~3min)
+					// otherwise, generating hundreds of entries per session.
+					if now.Sub(lastLaunchSuppressLog) >= 10*time.Minute {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout suppressed: pane has active child process in %s; resetting staleness clock\n",
+							wtPath)
+						lastLaunchSuppressLog = now
+					}
 					lastHeartbeat = now
 					launchDeadline = now.Add(launchWindow)
 				} else {
@@ -823,9 +833,13 @@ func pasteInjectQuitOnCommit(
 			// lastHeartbeat so the staleness clock restarts from now.
 			if heartbeatProvided && now.Sub(lastHeartbeat) > stalenessThreshold {
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-commit: heartbeat-staleness suppressed: pane has active child process in %s; resetting staleness clock\n",
-						wtPath)
+					// F21: rate-limit same as launch-heartbeat-timeout suppressed.
+					if now.Sub(lastStalenessLog) >= 10*time.Minute {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-commit: heartbeat-staleness suppressed: pane has active child process in %s; resetting staleness clock\n",
+							wtPath)
+						lastStalenessLog = now
+					}
 					lastHeartbeat = now
 				} else {
 					fireNoChangePath(fmt.Sprintf(

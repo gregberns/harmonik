@@ -179,6 +179,12 @@ type WatcherConfig struct {
 	// each fresh-gauge tick; gating (act_pct, CrispIdle, HoldingDispatch,
 	// anti-loop) is handled internally by the Cycler.
 	Cycler *Cycler
+
+	// SuppressNoGauge disables session_keeper_no_gauge emissions when the gauge
+	// file is expected to be absent — e.g. in dogfood/test sessions that run the
+	// keeper without a real gauge writer. Without this flag such sessions produce
+	// x66+ no_gauge events per session (F21).
+	SuppressNoGauge bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -430,7 +436,12 @@ func (w *Watcher) maybeReemitNoGauge(ctx context.Context, reason string, lastEmi
 }
 
 // emitNoGauge emits the session_keeper_no_gauge event.
+// When SuppressNoGauge is set the call is a no-op (F21: dogfood/test sessions
+// without a real gauge writer otherwise produce x66+ events per session).
 func (w *Watcher) emitNoGauge(ctx context.Context, reason string) {
+	if w.cfg.SuppressNoGauge {
+		return
+	}
 	payload := core.SessionKeeperNoGaugePayload{
 		AgentName: w.cfg.AgentName,
 		Reason:    reason,

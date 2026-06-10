@@ -3883,13 +3883,8 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	// Refresh-failure policy (EM-054): if git reset --hard HEAD fails, the merge
 	// is already durable. Log a warning, emit working_tree_refresh_failed, and
 	// return success=true so the caller proceeds to CloseBead normally.
-	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	statusCmd.Dir = projectDir
-	if statusOut, statusErr := statusCmd.Output(); statusErr == nil && len(statusOut) > 0 {
-		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: uncommitted changes in project working tree before refresh (bead %s run %s):\n%s",
-			beadID, runID.String(), statusOut)
-	}
-
+	// F21: "uncommitted changes before refresh" WARN removed — fires x142/session
+	// during normal operation; the reset below always cleans it up unconditionally.
 	resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD")
 	resetCmd.Dir = projectDir
 	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {

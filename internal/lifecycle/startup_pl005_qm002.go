@@ -599,7 +599,9 @@ func reconcileThreeWay(
 				if _, inQueue := beadsInQueue[rec.BeadID]; inQueue {
 					continue // bead has a queue item — not a Class B orphan
 				}
-				logger.WarnContext(ctx, "QM-002b Class B: ledger in_progress bead has no queue item (bead_inprogress_queue_absent)",
+				// F21: demoted Warn→Info — fires x83/session on normal restarts where
+				// in_progress beads predate the current queue (QM-002b reap handles it).
+				logger.InfoContext(ctx, "QM-002b Class B: ledger in_progress bead has no queue item (bead_inprogress_queue_absent)",
 					"bead_id", string(rec.BeadID),
 				)
 				if emitter != nil {

@@ -133,6 +133,7 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		BeadInProgressReset:        r.BeadInProgressReset,
 		BeadCat3cClosed:            r.BeadCat3cClosed,
 		CoordinatorSessionsSkipped: r.CoordinatorSessionsSkipped,
+		CoordinatorSessionsReaped:  r.CoordinatorSessionsReaped,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -515,6 +516,19 @@ func RunOrphanSweep(
 			// probe, so this is safe — we never kill a session of a LIVE supervisor.
 			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
 			result.CoordinatorSessionsReaped = reaped
+			result.TmuxSessionsKilled += reaped
+		} else {
+			// hk-7u002: Sentinel absent — no supervisor was ever started, or it
+			// stopped cleanly and removed its own sentinel.  The flywheel session is
+			// unconditionally orphaned: sessionIsOrphaned misses sessions whose first
+			// pane PID is live (shells from prior implementer launches that outlived the
+			// daemon crash), so without this explicit reap, harmonik-<hash>-flywheel
+			// sessions accumulate across daemon restarts until tmux resource exhaustion
+			// blocks new spawns.  At daemon startup every project-scoped session is an
+			// orphan by definition (PL-006: "the new daemon has no in-memory tracking
+			// at this point"), so reaping a sentinel-absent flywheel session is safe.
+			reaped := reapDeadCoordinatorSession(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger)
+			result.CoordinatorSessionsReaped += reaped
 			result.TmuxSessionsKilled += reaped
 		}
 	}

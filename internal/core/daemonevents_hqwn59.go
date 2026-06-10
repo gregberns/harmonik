@@ -813,6 +813,15 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// Bead ref: hk-9eury.
 	CoordinatorSessionsSkipped int `json:"coordinator_sessions_skipped"`
 
+	// CoordinatorSessionsReaped is the count of coordinator (flywheel) tmux
+	// sessions force-killed at boot because the sentinel was absent or the
+	// supervisor PID was dead (PL-006d). Required (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d — sentinel-absent OR
+	// sentinel-present+PID-dead → force-reap flywheel session.
+	// Bead ref: hk-7u002, hk-9vp51.
+	CoordinatorSessionsReaped int `json:"coordinator_sessions_reaped"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`
@@ -855,6 +864,9 @@ func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.BeadCat3cClosed < 0 {
+		return false
+	}
+	if p.CoordinatorSessionsReaped < 0 {
 		return false
 	}
 	if p.SweptAt == "" {

@@ -332,10 +332,18 @@ func runCommsSendSubcommand(subArgs []string) int {
 }
 
 // commsIsSocketAbsent reports whether err indicates a missing socket file.
+// On Linux connect(2) to a missing unix socket returns ENOENT.
+// On macOS connect(2) to a missing unix socket returns EINVAL
+// (the kernel rejects the path because no socket file exists there).
+// Both are handled via errors.Is traversal over the full error chain.
 func commsIsSocketAbsent(err error) bool {
-	var sysErr *os.PathError
-	if errors.As(err, &sysErr) {
-		return errors.Is(sysErr.Err, syscall.ENOENT)
+	if errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	// EINVAL on a unix-domain connect means the path does not exist as a
+	// socket on macOS (connect(2) returns EINVAL when the socket file is absent).
+	if errors.Is(err, syscall.EINVAL) {
+		return true
 	}
 	return strings.Contains(err.Error(), "no such file or directory")
 }
@@ -1356,128 +1364,224 @@ func runCommsRecvSubcommand(subArgs []string) int {
 	return runCommsRecvFollow(sockPath, agent, fromFlag, topicFlag, result.CursorAfter, jsonFlag)
 }
 
+// commsFollowReconnectInitialBackoff is the starting reconnect delay after a
+// dropped subscribe connection (daemon restart or transient disconnect).
+// Doubles on each attempt up to commsFollowReconnectMaxBackoff.
+const commsFollowReconnectInitialBackoff = time.Second
+
+// commsFollowReconnectMaxBackoff caps the reconnect delay so an agent is never
+// more than ~10 s away from picking up the live stream after a daemon revive.
+// This is the primary lever against the F12 false-STALLED / stale-ceiling class
+// of misreads (logmine finding F12, bead hk-5xuvc).
+const commsFollowReconnectMaxBackoff = 10 * time.Second
+
 // runCommsRecvFollow opens a subscribe connection for live agent_message events
 // anchored at sinceEventID (the cursor_after from the preceding comms-recv drain).
 // Streams until signal or connection close.
+//
+// Reconnect behaviour (F12 fix, hk-5xuvc): when the subscribe connection drops
+// (daemon restart or transient disconnect), the function waits a short backoff
+// (1 s → 2 s → … → 10 s) and re-dials, anchoring the new subscribe at the last
+// seen event_id so no messages are missed or duplicated. The loop exits only on
+// SIGINT/SIGTERM. This eliminates the ~10-30 s comms dead-window that caused
+// false STALLED reads and stale concurrency-ceiling beliefs.
 func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool) int {
-	// Build the subscribe request.
-	reqBody := map[string]any{
-		"op":                "subscribe",
-		"heartbeat_seconds": 60,
-		"types":             []string{"agent_message"},
-		"to":                agent,
-	}
-	if fromFilter != "" {
-		reqBody["from"] = fromFilter
-	}
-	if topicFilter != "" {
-		reqBody["topic"] = topicFilter
-	}
-	if sinceEventID != "" {
-		reqBody["since_event_id"] = sinceEventID
-	}
-	reqBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal subscribe request: %v\n", err)
-		return 1
-	}
-
-	// Dial.
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
-	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
-	cancelDial()
-	if dialErr != nil {
-		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
-			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon not running (socket %s missing or refused)\n", sockPath)
-			return 17
-		}
-		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: dial %s: %v\n", sockPath, dialErr)
-		return 1
-	}
-	defer func() { _ = conn.Close() }()
-
-	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: write subscribe request: %v\n", writeErr)
-		return 1
-	}
-
-	// On signal, close conn so the scan loop exits cleanly.
+	// Register signal handler once for the lifetime of the --follow loop.
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-sigCtx.Done()
-		_ = conn.Close()
-	}()
 
-	// Stream: read lines, parse event envelopes, format and print.
-	dec := json.NewDecoder(conn)
+	// lastSeen tracks the highest event_id delivered so far; it advances as
+	// messages arrive and becomes the since_event_id anchor on reconnect.
+	lastSeen := sinceEventID
+	backoff := commsFollowReconnectInitialBackoff
+	firstDial := true
+
 	for {
-		var env struct {
-			Type          string          `json:"type"`
-			EventID       string          `json:"event_id"`
-			TimestampWall string          `json:"timestamp_wall"`
-			Payload       json.RawMessage `json:"payload"`
+		// Exit cleanly when a signal arrived while we were sleeping.
+		if sigCtx.Err() != nil {
+			return 0
 		}
-		if decErr := dec.Decode(&env); decErr != nil {
-			if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
-				break
-			}
-			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode event: %v\n", decErr)
+
+		// Build subscribe request anchored at lastSeen.
+		reqBody := map[string]any{
+			"op":                "subscribe",
+			"heartbeat_seconds": 60,
+			"types":             []string{"agent_message"},
+			"to":                agent,
+		}
+		if fromFilter != "" {
+			reqBody["from"] = fromFilter
+		}
+		if topicFilter != "" {
+			reqBody["topic"] = topicFilter
+		}
+		if lastSeen != "" {
+			reqBody["since_event_id"] = lastSeen
+		}
+		reqBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal subscribe request: %v\n", err)
 			return 1
 		}
 
-		// Skip non-message events (heartbeats, etc.).
-		if env.Type != "agent_message" {
-			continue
+		// Dial — use sigCtx so the dial itself is cancelled on signal.
+		dialCtx, cancelDial := context.WithTimeout(sigCtx, 5*time.Second)
+		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+		cancelDial()
+
+		if sigCtx.Err() != nil {
+			return 0 // signal fired during dial
 		}
 
-		var p struct {
-			From      string `json:"from"`
-			To        string `json:"to"`
-			Topic     string `json:"topic,omitempty"`
-			Body      string `json:"body"`
-			InReplyTo string `json:"in_reply_to,omitempty"`
-		}
-		if decErr := json.Unmarshal(env.Payload, &p); decErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode agent_message payload: %v\n", decErr)
-			continue
+		if dialErr != nil {
+			if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+				if firstDial {
+					// On the very first attempt, report that the daemon is not
+					// running and return exit 17 so callers that require the
+					// daemon to already be up get a clear signal.
+					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon not running (socket %s missing or refused)\n", sockPath)
+					return 17
+				}
+				// Subsequent attempts: daemon is restarting — wait and retry.
+				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: daemon offline, reconnecting in %v...\n", backoff)
+				select {
+				case <-time.After(backoff):
+				case <-sigCtx.Done():
+					return 0
+				}
+				if backoff < commsFollowReconnectMaxBackoff {
+					backoff *= 2
+					if backoff > commsFollowReconnectMaxBackoff {
+						backoff = commsFollowReconnectMaxBackoff
+					}
+				}
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: dial %s: %v\n", sockPath, dialErr)
+			return 1
 		}
 
-		if jsonOut {
-			msg := struct {
-				EventID   string `json:"event_id"`
+		// Reset backoff on successful connect.
+		backoff = commsFollowReconnectInitialBackoff
+		firstDial = false
+
+		if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+			_ = conn.Close()
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: write subscribe request: %v\n", writeErr)
+			return 1
+		}
+
+		// Close conn on signal so the decode loop below exits cleanly.
+		connCloseOnce := make(chan struct{})
+		go func() {
+			select {
+			case <-sigCtx.Done():
+				_ = conn.Close()
+			case <-connCloseOnce:
+			}
+		}()
+
+		// Stream events; update lastSeen so reconnects pick up without gaps.
+		reconnect := false
+		dec := json.NewDecoder(conn)
+		for {
+			var env struct {
+				Type          string          `json:"type"`
+				EventID       string          `json:"event_id"`
+				TimestampWall string          `json:"timestamp_wall"`
+				Payload       json.RawMessage `json:"payload"`
+			}
+			if decErr := dec.Decode(&env); decErr != nil {
+				close(connCloseOnce) // stop the signal-closer goroutine
+				_ = conn.Close()
+				if sigCtx.Err() != nil {
+					return 0 // clean signal exit
+				}
+				if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
+					// Connection dropped — reconnect after a short backoff.
+					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: connection dropped, reconnecting in %v...\n", backoff)
+					select {
+					case <-time.After(backoff):
+					case <-sigCtx.Done():
+						return 0
+					}
+					if backoff < commsFollowReconnectMaxBackoff {
+						backoff *= 2
+						if backoff > commsFollowReconnectMaxBackoff {
+							backoff = commsFollowReconnectMaxBackoff
+						}
+					}
+					reconnect = true
+					break
+				}
+				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode event: %v\n", decErr)
+				return 1
+			}
+
+			// Skip non-message events (heartbeats, etc.).
+			if env.Type != "agent_message" {
+				continue
+			}
+
+			// Advance lastSeen so reconnects anchor past this message.
+			if env.EventID != "" {
+				lastSeen = env.EventID
+			}
+
+			var p struct {
 				From      string `json:"from"`
 				To        string `json:"to"`
 				Topic     string `json:"topic,omitempty"`
 				Body      string `json:"body"`
 				InReplyTo string `json:"in_reply_to,omitempty"`
-				Ts        string `json:"ts"`
-			}{
-				EventID:   env.EventID,
-				From:      p.From,
-				To:        p.To,
-				Topic:     p.Topic,
-				Body:      p.Body,
-				InReplyTo: p.InReplyTo,
-				Ts:        env.TimestampWall,
 			}
-			line, marshalErr := json.Marshal(msg)
-			if marshalErr != nil {
-				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal message: %v\n", marshalErr)
-				return 1
+			if decErr := json.Unmarshal(env.Payload, &p); decErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode agent_message payload: %v\n", decErr)
+				continue
 			}
-			fmt.Println(string(line))
-		} else {
-			ts := env.TimestampWall
-			direction := fmt.Sprintf("%s → %s", p.From, p.To)
-			if p.Topic != "" {
-				fmt.Printf("%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body)
+
+			if jsonOut {
+				msg := struct {
+					EventID   string `json:"event_id"`
+					From      string `json:"from"`
+					To        string `json:"to"`
+					Topic     string `json:"topic,omitempty"`
+					Body      string `json:"body"`
+					InReplyTo string `json:"in_reply_to,omitempty"`
+					Ts        string `json:"ts"`
+				}{
+					EventID:   env.EventID,
+					From:      p.From,
+					To:        p.To,
+					Topic:     p.Topic,
+					Body:      p.Body,
+					InReplyTo: p.InReplyTo,
+					Ts:        env.TimestampWall,
+				}
+				line, marshalErr := json.Marshal(msg)
+				if marshalErr != nil {
+					close(connCloseOnce)
+					_ = conn.Close()
+					fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: marshal message: %v\n", marshalErr)
+					return 1
+				}
+				fmt.Println(string(line))
 			} else {
-				fmt.Printf("%s  %-30s  %s\n", ts, direction, p.Body)
+				ts := env.TimestampWall
+				direction := fmt.Sprintf("%s → %s", p.From, p.To)
+				if p.Topic != "" {
+					fmt.Printf("%s  %-30s  [%s]  %s\n", ts, direction, p.Topic, p.Body)
+				} else {
+					fmt.Printf("%s  %-30s  %s\n", ts, direction, p.Body)
+				}
 			}
 		}
+
+		if !reconnect {
+			// Non-reconnect exit path (write error already returned above).
+			return 0
+		}
 	}
-	return 0
 }
 
 // printCommsRecvMsg renders one received message to stdout in either NDJSON

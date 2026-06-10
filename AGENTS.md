@@ -154,7 +154,7 @@ harmonik queue status                      # inspect the live queue (returns the
 - `kind: "stream"` groups accept mid-flight appends; `kind: "wave"` groups are immutable after submit. Use `stream` for the daily loop.
 - **Mid-flight adds:** `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` — e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`. Streams accept appends while pending or active.
 - Exit code 17 from any `queue` verb means the daemon is not running — start it first.
-- In-flight gaps: **hk-m9a7g** will let `submit` / `dry-run` accept `--beads hk-a,hk-b` directly so you no longer hand-author the JSON file; **hk-24xn1** — the daemon doesn't wake on submit/append when idle, so newly-submitted beads sit `pending` until the next workloop tick (it advances on its own; just don't expect instant pickup).
+- In-flight gaps: **hk-m9a7g** will let `submit` / `dry-run` accept `--beads hk-a,hk-b` directly so you no longer hand-author the JSON file. **hk-24xn1 LANDED** — idle-wake channel (`QueueStore.WakeCh()`) is wired; submit and append both call `SetQueue` which fires it immediately. Verified by `scenario_queue_submit_dispatch_hksk00a_test.go`.
 
 ## Monitoring the daemon
 
@@ -201,11 +201,11 @@ done
 
 ### Queue semantics — `wave` vs `stream`
 
-Each group in a submitted queue has a `kind`. **Use `kind: "stream"` for the daily loop** — stream groups accept mid-flight appends via `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>`. `kind: "wave"` groups are immutable after submit (no appends), but dispatch their whole set concurrently up to the daemon's `--max-concurrent`. Stream-mode enforces head-of-line blocking via `streamEligible()`, so a stream group dispatches its items in order; reach for a `wave` group when you need true concurrent dispatch of a fixed set with `--max-concurrent > 1`. Remaining gap: hk-24xn1 — the daemon doesn't wake on submit/append when idle, so newly-added beads sit `pending` until the next workloop tick.
+Each group in a submitted queue has a `kind`. **Use `kind: "stream"` for the daily loop** — stream groups accept mid-flight appends via `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>`. `kind: "wave"` groups are immutable after submit (no appends), but dispatch their whole set concurrently up to the daemon's `--max-concurrent`. Stream-mode enforces head-of-line blocking via `streamEligible()`, so a stream group dispatches its items in order; reach for a `wave` group when you need true concurrent dispatch of a fixed set with `--max-concurrent > 1`. **hk-24xn1 LANDED** — idle daemon wakes immediately on submit/append via `QueueStore.WakeCh()`.
 
 ### Appending to a running queue
 
-Mid-flight appends to a **stream** group: `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` (e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`). Streams accept appends while pending or active. Get the `queue_id` from the `submit` response or `harmonik queue status`. Remaining gap: hk-24xn1 — appended beads sit `pending` until the next workloop tick.
+Mid-flight appends to a **stream** group: `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` (e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`). Streams accept appends while pending or active. Get the `queue_id` from the `submit` response or `harmonik queue status`. **hk-24xn1 LANDED** — appended beads wake the daemon immediately.
 
 **Wave groups do NOT accept appends.** Wait for the wave to drain, then `harmonik queue submit` a new group (or submit a fresh stream group up front).
 

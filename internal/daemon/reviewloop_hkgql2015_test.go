@@ -344,6 +344,11 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 	// control flow.
 	t.Run("integration_rc_approve_cycle", func(t *testing.T) {
 		t.Parallel()
+		// Real review-loop over a Unix-domain socket with multi-second per-phase
+		// socket-grace waits and strict cross-goroutine event-ordering asserts —
+		// non-deterministic enough to flake the per-bead commit_gate (-short). The
+		// unit subtest above is deterministic and still runs. Refs: hk-6ra3p, hk-p258q.
+		skipRealDaemonE2EInShort(t)
 
 		projectDir := rlBridgeFixtureProjectDir(t)
 		rlBridgeFixtureGitRepo(t, projectDir)
@@ -404,6 +409,10 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 // directory), which causes MkdirAll to fail in MaterializeClaudeSettings.
 func TestReviewLoopBridge_SpecErrorPath(t *testing.T) {
 	t.Parallel()
+	// Boots a real review loop over a socket (same non-deterministic timing class
+	// as the CHB-009 integration subtest); excluded from the per-bead commit_gate
+	// (-short) so it cannot flake internal/daemon merges. Refs: hk-6ra3p, hk-p258q.
+	skipRealDaemonE2EInShort(t)
 
 	projectDir := rlBridgeFixtureProjectDir(t)
 	rlBridgeFixtureGitRepo(t, projectDir)
@@ -466,6 +475,10 @@ func TestReviewLoopBridge_SpecErrorPath(t *testing.T) {
 // phase cannot be routed to the wrong session.
 func TestReviewLoopBridge_HookStore_PhaseIsolation(t *testing.T) {
 	t.Parallel()
+	// Boots a real review loop over a socket (same non-deterministic timing class
+	// as the CHB-009 integration subtest); excluded from the per-bead commit_gate
+	// (-short) so it cannot flake internal/daemon merges. Refs: hk-6ra3p, hk-p258q.
+	skipRealDaemonE2EInShort(t)
 
 	projectDir := rlBridgeFixtureProjectDir(t)
 	rlBridgeFixtureGitRepo(t, projectDir)

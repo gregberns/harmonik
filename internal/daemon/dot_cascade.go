@@ -88,6 +88,13 @@ import (
 // of reopening. Bead: hk-9v5yo.
 var errDotNoChangeSubsumed = errors.New("dot: noChange-subsumed: work already in main")
 
+// errDotReviewerNoVerdict is returned by dispatchDotAgenticNode when a
+// reviewer node exits without writing a verdict file (stall, hang, or
+// budget-kill without a budget sentinel). driveDotWorkflow uses this to
+// distinguish a retriable reviewer stall (committed work exists) from a hard
+// dispatch error. Bead: hk-bqf1q.
+var errDotReviewerNoVerdict = errors.New("dot: reviewer node produced no verdict")
+
 // dotMaxNodeVisits is the absolute upper bound on the number of node visits in a
 // single DOT-mode run. It is a safety net independent of per-edge traversal_cap
 // enforcement: a graph that omits a cap on a back-edge (which the validator
@@ -224,6 +231,15 @@ func driveDotWorkflow(
 	// so HEAD does not advance). The latter must COMPLETE-and-merge the already
 	// committed, reviewer-approved work, NOT no_progress-fail and strand it.
 	priorVerdict := ""
+
+	// reviewerNoVerdictRetries counts how many times the current reviewer node
+	// invocation was retried after producing no verdict (stall / hang).
+	// hk-bqf1q: when committed work exists, the caller retries the reviewer
+	// up to dotMaxReviewerNoVerdictRetries times before hard-failing.
+	// Reset to 0 whenever a new implementation cycle begins (implementer runs)
+	// or a reviewer produces a real verdict (stall resolved).
+	const dotMaxReviewerNoVerdictRetries = 1
+	reviewerNoVerdictRetries := 0
 
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
@@ -384,8 +400,12 @@ func driveDotWorkflow(
 			// counts as a new iteration; reviewers reuse the implementer's count
 			// (matching the review-loop semantics, where iterationCount tracks
 			// implementer turns).
+			// hk-bqf1q: each new implementer cycle resets the reviewer-stall
+			// retry counter — a fresh impl commit warrants a full retry budget
+			// for the subsequent reviewer invocation.
 			if !isReviewer {
 				iterationCount++
+				reviewerNoVerdictRetries = 0
 			}
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
@@ -396,6 +416,29 @@ func driveDotWorkflow(
 					return dotWorkflowResult{
 						subsumed: true,
 						summary:  "noChange-subsumed: bead found in main",
+					}
+				}
+				// hk-bqf1q: reviewer produced no verdict (stall / hang / budget
+				// kill). When committed work exists, retry the reviewer once rather
+				// than hard-failing and stranding the valid impl commit.
+				//
+				// The retry re-enters the same reviewer node (currentNodeID
+				// unchanged). reviewerNoVerdictRetries gates the total retry count
+				// so a permanently-stalled reviewer does not loop indefinitely.
+				//
+				// NOTE: we do NOT update priorIterHeadSHA here — it was already set
+				// to currentHead (the impl commit SHA) at line 381 above. The
+				// no-progress check at the next agentic entry will see the same HEAD
+				// and iterationCount=1, so iterationCount < 2 → no_progress does
+				// NOT fire on the retry.
+				if errors.Is(nodeErr, errDotReviewerNoVerdict) && isReviewer {
+					committedResult := parentSHA == "" || currentHead != parentSHA
+					if committedResult && reviewerNoVerdictRetries < dotMaxReviewerNoVerdictRetries {
+						reviewerNoVerdictRetries++
+						fmt.Fprintf(os.Stderr,
+							"daemon: dot: reviewer node %q produced no verdict; committed result present — retrying reviewer (attempt %d/%d) [hk-bqf1q]\n",
+							currentNodeID, reviewerNoVerdictRetries+1, dotMaxReviewerNoVerdictRetries+1)
+						continue
 					}
 				}
 				return dotWorkflowResult{
@@ -410,8 +453,11 @@ func driveDotWorkflow(
 			// no-progress check above can distinguish an approved-and-done re-entry
 			// (complete-and-merge) from a genuinely-stuck REQUEST_CHANGES re-entry
 			// (no_progress-fail). Only reviewer nodes carry a preferred_label.
+			// hk-bqf1q: also reset the stall retry counter — a real verdict
+			// means the reviewer is no longer stalled.
 			if isReviewer && nodeOutcome.PreferredLabel != nil {
 				priorVerdict = *nodeOutcome.PreferredLabel
+				reviewerNoVerdictRetries = 0
 			}
 
 		case core.NodeTypeGate:
@@ -868,7 +914,10 @@ func dispatchDotAgenticNode(
 			return core.Outcome{}, fmt.Errorf("read reviewer verdict for node %q: %w", node.ID, verdictErr)
 		}
 		if verdict == nil {
-			return core.Outcome{}, fmt.Errorf("reviewer node %q produced no verdict", node.ID)
+			// hk-bqf1q: return the typed sentinel so driveDotWorkflow can detect
+			// a reviewer stall and retry when committed work exists, rather than
+			// hard-failing and stranding the valid impl commit.
+			return core.Outcome{}, fmt.Errorf("%w (node %q)", errDotReviewerNoVerdict, node.ID)
 		}
 		// Emit reviewer_verdict matching the builtin review-loop path (reviewloop.go:932).
 		// WorkflowMode is DOT; session_id is a fresh handler-minted ID for this

@@ -49,13 +49,22 @@ import (
 // it call t.Skip if this is empty.
 var twinBinaryPath string
 
-// TestMain builds the harmonik-twin-claude binary once per test binary run and
-// stores its path in twinBinaryPath. Tests that require the twin check this
-// field before proceeding.
+// codexTwinBinaryPath is set by TestMain after harmonik-twin-codex is built.
+// Scenarios that require the codex twin call t.Skip if this is empty.
+var codexTwinBinaryPath string
+
+// TestMain builds the harmonik-twin-claude and harmonik-twin-codex binaries
+// once per test binary run and stores their paths in twinBinaryPath /
+// codexTwinBinaryPath. Tests that require a twin check its field before
+// proceeding.
 func TestMain(m *testing.M) {
 	bin, err := scenarioFixtureBuildTwin()
 	if err == nil {
 		twinBinaryPath = bin
+	}
+	codexBin, codexErr := scenarioFixtureBuildCodexTwin()
+	if codexErr == nil {
+		codexTwinBinaryPath = codexBin
 	}
 	os.Exit(m.Run())
 }
@@ -94,6 +103,49 @@ func scenarioFixtureBuildTwin() (string, error) {
 	buildCmd := exec.Command( //nolint:gosec // G204: goTool from LookPath
 		goTool, "build", "-o", binPath,
 		"github.com/gregberns/harmonik/cmd/harmonik-twin-claude",
+	)
+	buildCmd.Dir = moduleRoot
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+
+	if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+		_ = os.RemoveAll(outDir)
+		return "", &buildError{out: string(out), err: buildErr}
+	}
+	return binPath, nil
+}
+
+// scenarioFixtureBuildCodexTwin builds cmd/harmonik-twin-codex into a temp
+// directory and returns its absolute path.
+//
+// On failure, a descriptive error is returned. Callers (test functions) use
+// codexTwinBinaryPath and skip if it is empty.
+func scenarioFixtureBuildCodexTwin() (string, error) {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		return "", err
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	goModCmd := exec.Command(goTool, "env", "GOMOD") //nolint:gosec // G204: goTool from LookPath
+	goModCmd.Dir = cwd
+	goModOut, err := goModCmd.Output()
+	if err != nil {
+		return "", err
+	}
+	moduleRoot := filepath.Dir(strings.TrimSpace(string(goModOut)))
+
+	outDir, err := os.MkdirTemp("", "scenario-codex-twin-")
+	if err != nil {
+		return "", err
+	}
+	binPath := filepath.Join(outDir, "harmonik-twin-codex")
+
+	buildCmd := exec.Command( //nolint:gosec // G204: goTool from LookPath
+		goTool, "build", "-o", binPath,
+		"github.com/gregberns/harmonik/cmd/harmonik-twin-codex",
 	)
 	buildCmd.Dir = moduleRoot
 	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0")

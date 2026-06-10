@@ -1555,11 +1555,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// The goroutine runs until ctx is cancelled and emits
 		// reconciliation_started{trigger:"scheduled-hourly"} on each tick, followed
-		// by a Cat 3c bead-ledger scan. The default interval is 1 h
-		// (ReconciliationScanCadenceDefault); operators may override via
-		// cfg.ReconciliationScanCadence (operator-nfr.md §4.3 reconciliation_scan_cadence).
+		// by a Cat 3c bead-ledger scan and a Class B orphan repair pass
+		// (hk-m3ydd: beads in_progress with no queue record are reset to open).
+		// The default interval is 1 h (ReconciliationScanCadenceDefault); operators
+		// may override via cfg.ReconciliationScanCadence
+		// (operator-nfr.md §4.3 reconciliation_scan_cadence).
 		//
-		// Bead ref: hk-63oh.21.
+		// Bead ref: hk-63oh.21, hk-m3ydd.
 		StartReconciliationScheduler(ctx, ReconciliationSchedulerConfig{
 			ProjectDir:   cfg.ProjectDir,
 			BrPath:       cfg.BrPath,

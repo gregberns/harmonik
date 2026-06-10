@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -193,7 +194,7 @@ func (a *Adapter) ClaimBead(
 	transitionID core.TransitionID,
 	beadID core.BeadID,
 ) error {
-	if err := a.terminalTransitionWrite(
+	claimErr := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
 		cfg,
@@ -203,8 +204,33 @@ func (a *Adapter) ClaimBead(
 		core.TerminalOpClaim,
 		core.CoarseStatusInProgress,
 		[]string{"update", string(beadID), "--claim"},
-	); err != nil {
-		return err
+	)
+	if claimErr != nil {
+		// hk-amed0: br --claim rejects beads that already have an assignee
+		// (exit 4, "Validation failed: claim: issue <id> already assigned to <name>").
+		// This happens when a crew creates a bead with `br create --assignee <crew>` —
+		// a normal pattern. Fall back to `br update --status in_progress` which
+		// transitions the status without requiring the assignee to be unset.
+		// The same intent-log entry (same ikey) covers both writes, so BI-030
+		// idempotency is maintained.
+		if strings.Contains(claimErr.Error(), "already assigned") {
+			fmt.Printf("brcli.ClaimBead: %s --claim rejected (pre-assigned assignee); retrying with --status in_progress (hk-amed0)\n", beadID)
+			if fallbackErr := a.terminalTransitionWrite(
+				ctx,
+				intentLogDir,
+				cfg,
+				runID,
+				transitionID,
+				beadID,
+				core.TerminalOpClaim,
+				core.CoarseStatusInProgress,
+				[]string{"update", string(beadID), "--status", "in_progress"},
+			); fallbackErr == nil {
+				_ = writeBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; see hk-11xkn
+				return nil
+			}
+		}
+		return claimErr
 	}
 	// Write ownership sentinel (best-effort; non-fatal if projectDir is empty
 	// or the write fails — falls back to intent-log provenance signal).

@@ -467,6 +467,18 @@ EXAMPLES
 		return runGraphSubcommand(os.Args[2:])
 	}
 
+	// harmonik release <verb> — release ledger management (hk-n7ofb).
+	// ledger: list entries; certify: flip prerelease:false + stamp certified_at;
+	// yank: mark yanked. No daemon required; operates on the ledger JSON file.
+	// Spec ref: specs/release-pipeline.md §4, §6, §7.1.
+	if len(os.Args) >= 2 && os.Args[1] == "release" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runReleaseSubcommand(subArgs)
+	}
+
 	// harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
 	// Pure-Go status sheet builder; snapshot mode requires no daemon.
 	// Missing .harmonik/ → exit 7. Spec: specs/digest-command.md; CL-030..033.

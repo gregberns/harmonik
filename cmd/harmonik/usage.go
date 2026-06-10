@@ -24,6 +24,7 @@ SUBCOMMANDS
   confirm-verdict  Confirm a pending reconciliation verdict (daemon must be running)
   veto-verdict     Veto a pending reconciliation verdict (daemon must be running)
   graph            Workflow graph utilities (validate, etc.)
+  release          Release ledger management (ledger, certify, yank)
   supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
   keeper           Context watcher for a managed agent pane (session-keeper Phase-1)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)

@@ -237,6 +237,19 @@ func loadOneQueueAtStartup(
 		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: QM-002b three-way reconcile: %w", name, err)
 	}
 
+	// F5 (hk-qkahq): clear the stale active-marker left by a killed/wedged run.
+	// After item-level reconciliation, check whether the queue's effective state
+	// is fully terminal. If all groups are complete-success the file is unlinked;
+	// if all groups are terminal with failures the status is demoted to
+	// paused-by-failure (which QM-027 allows to be overwritten by a fresh submit).
+	done, termErr := reconcileQueueTerminalState(ctx, projectDir, q, logger)
+	if termErr != nil {
+		return nil, fmt.Errorf("lifecycle: LoadQueueAtStartup[%s]: terminal-state reconcile: %w", name, termErr)
+	}
+	if done {
+		return nil, nil
+	}
+
 	return q, nil
 }
 
@@ -772,4 +785,139 @@ func reapOrphanWorktreesFromArchives(
 			}
 		}
 	}
+}
+
+// reconcileQueueTerminalState detects and clears the stale active-marker left
+// when a daemon is killed or wedged after all queue items reached terminal
+// states but before evaluateGroupAdvanceWithOutcome could advance the group
+// status and call CompleteAndUnlink.
+//
+// The reconciliation passes (QM-002a, QM-002b) fix individual item statuses
+// but do not re-evaluate group or queue status. This function fills that gap:
+//
+//  1. Pass 1 — advance any active group where all items are terminal.
+//     Items that are completed or failed are considered terminal; any other
+//     status (pending, dispatched, deferred-for-ledger-dep) blocks the
+//     transition (mirrors the QM-030 all-terminal gate in state.go).
+//
+//  2. Pass 2 — evaluate the overall queue terminal state:
+//     - All groups complete-success → CompleteAndUnlink; return done=true.
+//       The caller should NOT add this queue to QueueStore.
+//     - All groups terminal (some complete-with-failures) → transition
+//       q.Status to paused-by-failure and persist. QM-027 allows a fresh
+//       submit to overwrite a paused-by-failure queue, so the queue name is
+//       unblocked without discarding the failure record. Return done=false.
+//     - Any group still pending or active → return done=false; the daemon
+//       resumes dispatching normally.
+//
+// Returns (true, nil)  when the queue was fully cleaned up.
+// Returns (false, nil) when the queue has pending/active work or was
+//
+//	transitioned to paused-by-failure.
+//
+// Returns (false, err) only on an unexpected persistence failure.
+//
+// Bead ref: hk-qkahq (logmine F5 — stale active-marker on kill/wedge).
+func reconcileQueueTerminalState(
+	ctx context.Context,
+	projectDir string,
+	q *queue.Queue,
+	logger *slog.Logger,
+) (done bool, err error) {
+	// Only active queues can carry a stale active-marker.
+	// paused-by-failure already unblocks QM-027; other statuses are not targets.
+	if q.Status != queue.QueueStatusActive {
+		return false, nil
+	}
+
+	// Pass 1: advance each active group whose items are all terminal.
+	for gi := range q.Groups {
+		g := &q.Groups[gi]
+		if g.Status != queue.GroupStatusActive {
+			continue
+		}
+		allTerminal := true
+		hasFailed := false
+		for _, item := range g.Items {
+			switch item.Status {
+			case queue.ItemStatusCompleted:
+				// terminal, success
+			case queue.ItemStatusFailed:
+				hasFailed = true
+			default:
+				// pending, dispatched, deferred-for-ledger-dep — not terminal
+				allTerminal = false
+			}
+		}
+		if !allTerminal {
+			continue
+		}
+		before := g.Status
+		if hasFailed {
+			g.Status = queue.GroupStatusCompleteWithFailures
+		} else {
+			g.Status = queue.GroupStatusCompleteSuccess
+		}
+		logger.InfoContext(ctx, "reconcile F5: advanced all-terminal active group (stale active-marker)",
+			"queue_id", q.QueueID,
+			"group_index", gi,
+			"from", string(before),
+			"to", string(g.Status),
+		)
+	}
+
+	// Pass 2: derive overall terminal state from group statuses.
+	// Require at least one group (an empty queue cannot be "all complete").
+	allSuccess := len(q.Groups) > 0
+	allTerminal := len(q.Groups) > 0
+	for _, g := range q.Groups {
+		switch g.Status {
+		case queue.GroupStatusCompleteSuccess:
+			// contributes to both allSuccess and allTerminal
+		case queue.GroupStatusCompleteWithFailures:
+			allSuccess = false
+		default:
+			// pending or active — not terminal
+			allSuccess = false
+			allTerminal = false
+		}
+	}
+
+	if allSuccess {
+		// Mirror the happy-path completion in evaluateGroupAdvanceWithOutcome:
+		// CompleteAndUnlink sets status=completed and removes the queue file.
+		logger.InfoContext(ctx, "reconcile F5: all groups complete-success; unlinking queue (stale active-marker cleared)",
+			"queue_id", q.QueueID,
+		)
+		if unlinkErr := queue.CompleteAndUnlink(ctx, projectDir, q); unlinkErr != nil {
+			// Non-fatal: log and still return done=true. The queue must not be
+			// loaded into QueueStore (it would permanently block new submits).
+			// The stale file will be retried on the next daemon restart.
+			logger.WarnContext(ctx, "reconcile F5: CompleteAndUnlink failed; file may remain but queue will not be loaded",
+				"queue_id", q.QueueID,
+				"error", unlinkErr,
+			)
+		}
+		return true, nil
+	}
+
+	if allTerminal {
+		// All groups are terminal but some have failures. Demote to
+		// paused-by-failure so QM-027 lets operators submit new work to the
+		// same queue name without a manual file removal step.
+		logger.InfoContext(ctx, "reconcile F5: all groups terminal with failures; demoting queue to paused-by-failure",
+			"queue_id", q.QueueID,
+		)
+		q.Status = queue.QueueStatusPausedByFailure
+		if persistErr := queue.Persist(ctx, projectDir, q); persistErr != nil {
+			logger.WarnContext(ctx, "reconcile F5: Persist paused-by-failure failed; queue stays active in file",
+				"queue_id", q.QueueID,
+				"error", persistErr,
+			)
+		}
+		return false, nil
+	}
+
+	// Queue has pending or active groups with non-terminal items — normal dispatch.
+	return false, nil
 }

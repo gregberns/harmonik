@@ -721,34 +721,20 @@ func TestLoadQueueAtStartup_QM002b_ClassA_BeadClosedQueuePending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Class A: unexpected error: %v", err)
 	}
-	if gotQueue == nil {
-		t.Fatal("Class A: expected non-nil Queue")
+	// After Class A reconciliation the single item is advanced to completed, making
+	// all items terminal. reconcileQueueTerminalState then detects this and calls
+	// CompleteAndUnlink (F5/hk-qkahq), so the returned queue must be nil.
+	if gotQueue != nil {
+		t.Errorf("Class A: expected nil queue (cleaned up by F5 after all items completed), got status=%q", gotQueue.Status)
 	}
 
-	// Assertion 1: item advanced to completed.
-	if len(gotQueue.Groups) == 0 || len(gotQueue.Groups[0].Items) == 0 {
-		t.Fatal("Class A: returned queue has no items")
-	}
-	item := gotQueue.Groups[0].Items[0]
-	if item.Status != queue.ItemStatusCompleted {
-		t.Errorf("Class A: item status: got %q, want %q (bead_closed_queue_pending advance)",
-			item.Status, queue.ItemStatusCompleted)
+	// Assertion 1: queue file unlinked (CompleteAndUnlink ran).
+	queueFilePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	if _, statErr := os.Stat(queueFilePath); !os.IsNotExist(statErr) {
+		t.Error("Class A: queue file still exists; expected it to be unlinked after all items completed")
 	}
 
-	// Assertion 2: on-disk queue reflects completed.
-	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
-	if loadErr != nil {
-		t.Fatalf("Class A: Load from disk: %v", loadErr)
-	}
-	if diskQueue == nil || len(diskQueue.Groups) == 0 || len(diskQueue.Groups[0].Items) == 0 {
-		t.Fatal("Class A: disk queue missing items")
-	}
-	if diskQueue.Groups[0].Items[0].Status != queue.ItemStatusCompleted {
-		t.Errorf("Class A: disk item status: got %q, want %q",
-			diskQueue.Groups[0].Items[0].Status, queue.ItemStatusCompleted)
-	}
-
-	// Assertion 3: reconciliation_mismatch_observed event emitted.
+	// Assertion 2: reconciliation_mismatch_observed event emitted (fires before cleanup).
 	evs := emitter.Events()
 	if len(evs) == 0 {
 		t.Fatal("Class A: expected reconciliation_mismatch_observed event, got none")
@@ -921,34 +907,20 @@ func TestLoadQueueAtStartup_QM002b_ClassAPrime_DispatchedBeadClosed(t *testing.T
 	if err != nil {
 		t.Fatalf("Class A': unexpected error: %v", err)
 	}
-	if gotQueue == nil {
-		t.Fatal("Class A': expected non-nil Queue")
+	// After Class A' reconciliation the single item is advanced to completed, making
+	// all items terminal. reconcileQueueTerminalState then detects this and calls
+	// CompleteAndUnlink (F5/hk-qkahq), so the returned queue must be nil.
+	if gotQueue != nil {
+		t.Errorf("Class A': expected nil queue (cleaned up by F5 after all items completed), got status=%q", gotQueue.Status)
 	}
 
-	// Assertion 1: item advanced to completed.
-	if len(gotQueue.Groups) == 0 || len(gotQueue.Groups[0].Items) == 0 {
-		t.Fatal("Class A': returned queue has no items")
-	}
-	item := gotQueue.Groups[0].Items[0]
-	if item.Status != queue.ItemStatusCompleted {
-		t.Errorf("Class A': item status: got %q, want %q (bead_closed_queue_dispatched advance)",
-			item.Status, queue.ItemStatusCompleted)
+	// Assertion 1: queue file unlinked (CompleteAndUnlink ran).
+	queueFilePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	if _, statErr := os.Stat(queueFilePath); !os.IsNotExist(statErr) {
+		t.Error("Class A': queue file still exists; expected it to be unlinked after all items completed")
 	}
 
-	// Assertion 2: on-disk queue reflects completed.
-	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
-	if loadErr != nil {
-		t.Fatalf("Class A': Load from disk: %v", loadErr)
-	}
-	if diskQueue == nil || len(diskQueue.Groups) == 0 || len(diskQueue.Groups[0].Items) == 0 {
-		t.Fatal("Class A': disk queue missing items")
-	}
-	if diskQueue.Groups[0].Items[0].Status != queue.ItemStatusCompleted {
-		t.Errorf("Class A': disk item status: got %q, want %q",
-			diskQueue.Groups[0].Items[0].Status, queue.ItemStatusCompleted)
-	}
-
-	// Assertion 3: reconciliation_mismatch_observed event with bead_closed_queue_dispatched.
+	// Assertion 2: reconciliation_mismatch_observed event with bead_closed_queue_dispatched.
 	evs := emitter.Events()
 	if len(evs) == 0 {
 		t.Fatal("Class A': expected reconciliation_mismatch_observed event, got none")
@@ -1070,17 +1042,20 @@ func TestLoadQueueAtStartup_QM002b_ClassC_BeadClosedQueueInProgress(t *testing.T
 	if err != nil {
 		t.Fatalf("Class C: unexpected error: %v", err)
 	}
-	if gotQueue == nil {
-		t.Fatal("Class C: expected non-nil Queue")
+	// The Class C fixture has the item already completed and the group still active.
+	// reconcileQueueTerminalState (F5/hk-qkahq) advances the group and cleans up
+	// the queue via CompleteAndUnlink, so the returned queue must be nil.
+	if gotQueue != nil {
+		t.Errorf("Class C: expected nil queue (cleaned up by F5 after all items completed), got status=%q", gotQueue.Status)
 	}
 
-	// Assertion 1: queue item remains completed (no mutation).
-	item := gotQueue.Groups[0].Items[0]
-	if item.Status != queue.ItemStatusCompleted {
-		t.Errorf("Class C: item status mutated: got %q, want completed", item.Status)
+	// Assertion 1: queue file unlinked (CompleteAndUnlink ran).
+	queueFilePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	if _, statErr := os.Stat(queueFilePath); !os.IsNotExist(statErr) {
+		t.Error("Class C: queue file still exists; expected it to be unlinked after all items completed")
 	}
 
-	// Assertion 2: reconciliation_mismatch_observed event emitted.
+	// Assertion 2: reconciliation_mismatch_observed event emitted (fires before cleanup).
 	evs := emitter.Events()
 	found := false
 	for _, ev := range evs {
@@ -1243,5 +1218,240 @@ func TestLoadQueueAtStartup_QM002b_ClassB_Reaping(t *testing.T) {
 	}
 	if !found {
 		t.Error("Class B reap: reconciliation_mismatch_observed event for orphan not found")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// F5 (hk-qkahq): stale active-marker reconciliation tests
+// ---------------------------------------------------------------------------
+
+// startupQueueFixtureAllItemsCompletedQueue builds a Queue where the queue
+// status is active, the group status is active, but ALL items are completed.
+// This simulates a daemon killed after items finished but before
+// CompleteAndUnlink ran.
+func startupQueueFixtureAllItemsCompletedQueue(beadIDs ...core.BeadID) queue.Queue {
+	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	items := make([]queue.Item, len(beadIDs))
+	for i, id := range beadIDs {
+		items[i] = queue.Item{
+			BeadID: id,
+			Status: queue.ItemStatusCompleted,
+		}
+	}
+	return queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "019605a0-f501-7000-8000-000000000001",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items:      items,
+				CreatedAt:  now,
+			},
+		},
+	}
+}
+
+// startupQueueFixtureAllItemsFailedQueue builds a Queue where the queue
+// status is active, the group status is active, but ALL items are failed.
+// This simulates a daemon killed after items ran with failures but before
+// paused-by-failure transition ran.
+func startupQueueFixtureAllItemsFailedQueue(beadIDs ...core.BeadID) queue.Queue {
+	now := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	items := make([]queue.Item, len(beadIDs))
+	for i, id := range beadIDs {
+		items[i] = queue.Item{
+			BeadID: id,
+			Status: queue.ItemStatusFailed,
+		}
+	}
+	return queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "019605a0-f502-7000-8000-000000000002",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items:      items,
+				CreatedAt:  now,
+			},
+		},
+	}
+}
+
+// TestLoadQueueAtStartup_F5_AllItemsCompleted verifies scenario (e):
+// queue file has status=active, group active, all items completed — the stale
+// active-marker left by a killed daemon is cleared at startup.
+//
+// Assertions:
+//  1. LoadQueueAtStartup returns nil queue (file cleaned up, don't load).
+//  2. The queue file (.harmonik/queues/main.json) no longer exists on disk.
+//
+// Bead ref: hk-qkahq (logmine F5).
+func TestLoadQueueAtStartup_F5_AllItemsCompleted(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const beadA = core.BeadID("hk-f5-done-01")
+	const beadB = core.BeadID("hk-f5-done-02")
+
+	q := startupQueueFixtureAllItemsCompletedQueue(beadA, beadB)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// No ledger calls expected: items are already completed, reconcileDispatchedItems
+	// and reconcileThreeWay skip them; reconcileQueueTerminalState doesn't need ledger.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			beadA: core.CoarseStatusClosed,
+			beadB: core.CoarseStatusClosed,
+		},
+		nil,
+	)
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("F5 all-completed: unexpected error: %v", err)
+	}
+	// Queue should be cleaned up — caller must NOT load it into QueueStore.
+	if gotQueue != nil {
+		t.Errorf("F5 all-completed: expected nil queue (cleaned up), got queue with status=%q", gotQueue.Status)
+	}
+
+	// Queue file should be unlinked.
+	queueFilePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	if _, statErr := os.Stat(queueFilePath); !os.IsNotExist(statErr) {
+		t.Error("F5 all-completed: queue file still exists after active-marker cleanup; expected it to be unlinked")
+	}
+}
+
+// TestLoadQueueAtStartup_F5_AllItemsFailed verifies scenario (f):
+// queue file has status=active, group active, all items failed — the stale
+// active-marker is demoted to paused-by-failure so QM-027 allows new submits.
+//
+// Assertions:
+//  1. LoadQueueAtStartup returns the queue (non-nil).
+//  2. Returned queue has status=paused-by-failure.
+//  3. The queue file on disk reflects status=paused-by-failure.
+//
+// Bead ref: hk-qkahq (logmine F5).
+func TestLoadQueueAtStartup_F5_AllItemsFailed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const beadA = core.BeadID("hk-f5-fail-01")
+
+	q := startupQueueFixtureAllItemsFailedQueue(beadA)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// QM-002b Class C: queue item is failed (terminal) but ledger may be in_progress.
+	// Configuring closed so Class C doesn't fire a mismatch event.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			beadA: core.CoarseStatusClosed,
+		},
+		nil,
+	)
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("F5 all-failed: unexpected error: %v", err)
+	}
+	if gotQueue == nil {
+		t.Fatal("F5 all-failed: expected non-nil queue, got nil")
+	}
+
+	// Queue should be demoted to paused-by-failure.
+	if gotQueue.Status != queue.QueueStatusPausedByFailure {
+		t.Errorf("F5 all-failed: status: got %q, want %q", gotQueue.Status, queue.QueueStatusPausedByFailure)
+	}
+
+	// Group should be advanced to complete-with-failures.
+	if len(gotQueue.Groups) == 0 {
+		t.Fatal("F5 all-failed: no groups in returned queue")
+	}
+	if gotQueue.Groups[0].Status != queue.GroupStatusCompleteWithFailures {
+		t.Errorf("F5 all-failed: group[0].Status: got %q, want %q",
+			gotQueue.Groups[0].Status, queue.GroupStatusCompleteWithFailures)
+	}
+
+	// Disk state must reflect paused-by-failure.
+	diskQueue, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
+	if loadErr != nil {
+		t.Fatalf("F5 all-failed: Load from disk: %v", loadErr)
+	}
+	if diskQueue == nil {
+		t.Fatal("F5 all-failed: disk queue is nil after reconciliation")
+	}
+	if diskQueue.Status != queue.QueueStatusPausedByFailure {
+		t.Errorf("F5 all-failed: disk queue status: got %q, want %q",
+			diskQueue.Status, queue.QueueStatusPausedByFailure)
+	}
+}
+
+// TestLoadQueueAtStartup_F5_PendingItemsNotAffected verifies that a queue with
+// pending items is NOT cleaned up by reconcileQueueTerminalState — only
+// all-terminal groups are advanced.
+//
+// Bead ref: hk-qkahq (logmine F5).
+func TestLoadQueueAtStartup_F5_PendingItemsNotAffected(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	// Queue with one pending item — not a stale active-marker case.
+	const beadA = core.BeadID("hk-f5-pending-01")
+	q := startupQueueFixtureMinimalQueue()
+	q.Groups[0].Items[0].BeadID = beadA
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			beadA: core.CoarseStatusOpen,
+		},
+		nil,
+	)
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("F5 pending-not-affected: unexpected error: %v", err)
+	}
+	if gotQueue == nil {
+		t.Fatal("F5 pending-not-affected: expected non-nil queue (still has pending work), got nil")
+	}
+
+	// Queue and group status must be unchanged.
+	if gotQueue.Status != queue.QueueStatusActive {
+		t.Errorf("F5 pending-not-affected: queue status: got %q, want %q",
+			gotQueue.Status, queue.QueueStatusActive)
+	}
+	if gotQueue.Groups[0].Status != queue.GroupStatusActive {
+		t.Errorf("F5 pending-not-affected: group[0].Status: got %q, want %q",
+			gotQueue.Groups[0].Status, queue.GroupStatusActive)
 	}
 }

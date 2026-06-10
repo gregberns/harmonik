@@ -699,6 +699,64 @@ func (p ReconciliationVerdictExecutionRetryPayload) Valid() bool {
 	return true
 }
 
+// ReconciliationCompletedPayload is the typed event payload for the
+// reconciliation_completed event.
+//
+// Emitted after each reconciliation scan (startup or scheduled cadence) finishes,
+// paired with reconciliation_started so that a hung reconciliation is detectable
+// (reconciliation_started with no matching reconciliation_completed).
+//
+// # Payload fields
+//
+//   - reconciliation_run_id — the run_id of the reconciliation workflow (matches reconciliation_started)
+//   - trigger               — what triggered this reconciliation run
+//   - beads_examined        — number of in_progress beads examined during the scan
+//   - beads_closed          — number of beads auto-closed (Cat 3c)
+//   - beads_reset           — number of beads reset to open (Class B orphan repair)
+//   - completed_at          — RFC 3339 wall-clock timestamp at completion
+type ReconciliationCompletedPayload struct {
+	// ReconciliationRunID is the run_id of the reconciliation workflow.
+	// Required (must not be uuid.Nil). Matches the reconciliation_started event.
+	ReconciliationRunID RunID `json:"reconciliation_run_id"`
+
+	// Trigger mirrors the trigger from the paired reconciliation_started event.
+	// Required; must be a valid ReconciliationTrigger constant.
+	Trigger ReconciliationTrigger `json:"trigger"`
+
+	// BeadsExamined is the number of in_progress beads examined during the scan.
+	// Required (must be >= 0).
+	BeadsExamined int `json:"beads_examined"`
+
+	// BeadsClosed is the number of beads auto-closed via Cat 3c resolution.
+	// Required (must be >= 0).
+	BeadsClosed int `json:"beads_closed"`
+
+	// BeadsReset is the number of beads reset to open by the Class B orphan repair.
+	// Required (must be >= 0).
+	BeadsReset int `json:"beads_reset"`
+
+	// CompletedAt is the RFC 3339 wall-clock timestamp at scan completion.
+	// Required (non-empty).
+	CompletedAt string `json:"completed_at"`
+}
+
+// Valid reports whether p is a well-formed ReconciliationCompletedPayload.
+func (p ReconciliationCompletedPayload) Valid() bool {
+	if uuid.UUID(p.ReconciliationRunID) == uuid.Nil {
+		return false
+	}
+	if !p.Trigger.Valid() {
+		return false
+	}
+	if p.BeadsExamined < 0 || p.BeadsClosed < 0 || p.BeadsReset < 0 {
+		return false
+	}
+	if p.CompletedAt == "" {
+		return false
+	}
+	return true
+}
+
 // BeadTerminalTransitionOp is the typed discriminator for the op field of a
 // bead_terminal_transition_recovered event (event-model.md §8.6.14).
 //

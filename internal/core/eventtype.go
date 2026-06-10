@@ -458,6 +458,14 @@ const (
 	// via ON-035 at MVH per event-model.md §8.6.14.
 	EventTypeBeadTerminalTransitionRecovered EventType = "bead_terminal_transition_recovered"
 
+	// EventTypeReconciliationCompleted is the reconciliation_completed event type.
+	// Emitted after each reconciliation scan (startup or scheduled) completes,
+	// pairing with reconciliation_started to make hung reconciliations detectable.
+	// Carries counts of beads examined, closed, and reset.
+	// Durability class: O.
+	// Bead ref: hk-mptxw.
+	EventTypeReconciliationCompleted EventType = "reconciliation_completed"
+
 	// EventTypeReconciliationMismatchObserved is the reconciliation_mismatch_observed
 	// event type (§8.6.15 — added by hk-nvfvj full three-way reconciliation).
 	// Durability class: O.

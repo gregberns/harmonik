@@ -111,8 +111,8 @@ func StartReconciliationScheduler(ctx context.Context, cfg ReconciliationSchedul
 }
 
 // runScheduledReconciliationScan performs one scheduled detector scan:
-// emits reconciliation_started, runs the Cat 3c auto-resolver, then runs
-// the Class B orphan repair pass.
+// emits reconciliation_started, runs the Cat 3c auto-resolver, runs
+// the Class B orphan repair pass, then emits reconciliation_completed.
 func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSchedulerConfig, logW io.Writer) {
 	// Emit reconciliation_started{trigger:"scheduled-hourly"} (RC-020a).
 	reconciliationRunID, uidErr := uuid.NewV7()
@@ -120,8 +120,9 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		fmt.Fprintf(logW, "reconciliation scheduler: generate run ID: %v (skipping tick)\n", uidErr)
 		return
 	}
+	runID := core.RunID(reconciliationRunID)
 	payload := core.ReconciliationStartedPayload{
-		ReconciliationRunID: core.RunID(reconciliationRunID),
+		ReconciliationRunID: runID,
 		Trigger:             core.ReconciliationTriggerScheduled,
 	}
 	payloadBytes, marshalErr := json.Marshal(payload)
@@ -133,6 +134,24 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 		fmt.Fprintf(logW, "reconciliation scheduler: emit reconciliation_started: %v\n", emitErr)
 		// Non-fatal: continue with the Cat 3c scan regardless.
 	}
+
+	var beadsExamined, beadsClosed, beadsReset int
+
+	// Emit reconciliation_completed once the scan finishes (non-fatal; pairs with
+	// reconciliation_started so a hung scan is detectable from the JSONL log).
+	defer func() {
+		completedPayload := core.ReconciliationCompletedPayload{
+			ReconciliationRunID: runID,
+			Trigger:             core.ReconciliationTriggerScheduled,
+			BeadsExamined:       beadsExamined,
+			BeadsClosed:         beadsClosed,
+			BeadsReset:          beadsReset,
+			CompletedAt:         time.Now().UTC().Format(time.RFC3339),
+		}
+		if completedBytes, cErr := json.Marshal(completedPayload); cErr == nil {
+			_ = cfg.Emitter.Emit(ctx, core.EventTypeReconciliationCompleted, completedBytes)
+		}
+	}()
 
 	// Skip bead-ledger operations when br is not configured.
 	if cfg.BrPath == "" {
@@ -156,6 +175,8 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	if len(beads) == 0 {
 		return
 	}
+
+	beadsExamined = len(beads)
 
 	targetBranch := cfg.TargetBranch
 	if targetBranch == "" {
@@ -181,6 +202,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 			fmt.Fprintf(logW, "reconciliation scheduler: bead %s close: %v\n", bead.BeadID, closeErr)
 			continue
 		}
+		beadsClosed++
 		fmt.Fprintf(logW, "reconciliation scheduler: bead %s closed (Cat 3c scheduled)\n", bead.BeadID)
 	}
 
@@ -188,7 +210,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 	// record back to open so they can be re-dispatched.
 	//
 	// Spec ref: hk-m3ydd — scheduled reconciliation must repair bead_inprogress_queue_absent.
-	runScheduledClassBRepair(scanCtx, cfg, adapter, beads, logW)
+	beadsReset = runScheduledClassBRepair(scanCtx, cfg, adapter, beads, logW)
 }
 
 // runScheduledClassBRepair implements the Class B orphan repair pass for the
@@ -203,6 +225,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 // the daemon start time) so that each hourly tick can re-attempt beads that
 // were not successfully reset on a prior tick.
 //
+// Returns the number of beads successfully reset to open.
 // Non-fatal: failures for individual beads are logged and skipped.
 //
 // Spec ref: hk-m3ydd — reconciliation must repair bead_inprogress_queue_absent.
@@ -212,10 +235,12 @@ func runScheduledClassBRepair(
 	resetter lifecycle.BeadResetter,
 	inFlight []core.BeadRecord,
 	logW io.Writer,
-) {
+) int {
 	if len(inFlight) == 0 || cfg.ProjectDir == "" {
-		return
+		return 0
 	}
+
+	var resetCount int
 
 	observedAt := time.Now().UTC()
 	observedAtStr := observedAt.Format(time.RFC3339Nano)
@@ -225,7 +250,7 @@ func runScheduledClassBRepair(
 	names, enumErr := queue.EnumerateQueueNames(cfg.ProjectDir)
 	if enumErr != nil {
 		fmt.Fprintf(logW, "reconciliation scheduler (Class B): EnumerateQueueNames: %v (skipping repair)\n", enumErr)
-		return
+		return 0
 	}
 	for _, name := range names {
 		q, loadErr := queue.Load(ctx, cfg.ProjectDir, name)
@@ -288,6 +313,8 @@ func runScheduledClassBRepair(
 			fmt.Fprintf(logW, "reconciliation scheduler (Class B): ResetBead %s: %v\n", rec.BeadID, resetErr)
 			continue
 		}
+		resetCount++
 		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s reset to open (queue_absent_reap)\n", rec.BeadID)
 	}
+	return resetCount
 }

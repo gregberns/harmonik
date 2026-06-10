@@ -38,6 +38,14 @@ COMMIT_HASH := $(shell git rev-parse HEAD)
 build-harmonik:  ## Build cmd/harmonik → /tmp/harmonik with commit-hash stamp (hk-mz0x4)
 	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o /tmp/harmonik ./cmd/harmonik
 
+# install-harmonik: install cmd/harmonik to $GOPATH/bin with the commit-hash ldflags
+# stamp so daemon_started.binary_commit_hash is a real SHA (not "unknown").
+# Use this instead of plain `go install ./cmd/harmonik` which omits the stamp.
+# Bead ref: hk-mptxw (F8).
+.PHONY: install-harmonik
+install-harmonik:  ## Install cmd/harmonik with commit-hash stamp; use instead of plain go install (hk-mptxw)
+	go install -ldflags "-X main.commitHash=$(COMMIT_HASH)" ./cmd/harmonik
+
 .PHONY: build
 build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4)
 	go build ./...

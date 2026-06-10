@@ -240,6 +240,7 @@ func registerWorkspaceEvents() {
 //
 // Durability classes per §8.6 table (all class O — ordinary):
 //   - reconciliation_started (§8.6.1)
+//   - reconciliation_completed (hk-mptxw)
 //   - reconciliation_category_assigned (§8.6.2)
 //   - reconciliation_verdict_emitted (§8.6.3)
 //   - reconciliation_verdict_executed (§8.6.4)     — uses VerdictExecutedPayload
@@ -255,6 +256,7 @@ func registerWorkspaceEvents() {
 //   - bead_terminal_transition_recovered (§8.6.14) — post-MVH per OQ-BI-008; type reserved
 func registerReconciliationEvents() {
 	mustRegister("reconciliation_started", func() EventPayload { return &ReconciliationStartedPayload{} })
+	mustRegister("reconciliation_completed", func() EventPayload { return &ReconciliationCompletedPayload{} })
 	mustRegister("reconciliation_category_assigned", func() EventPayload { return &ReconciliationCategoryAssignedPayload{} })
 	mustRegister("reconciliation_verdict_emitted", func() EventPayload { return &ReconciliationVerdictEmittedPayload{} })
 	mustRegister("reconciliation_verdict_executed", func() EventPayload { return &VerdictExecutedPayload{} })

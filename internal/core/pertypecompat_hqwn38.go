@@ -178,6 +178,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 
 	// ── §8.6 Reconciliation lifecycle ──────────────────────────────────────
 	{TypeName: "reconciliation_started", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "reconciliation_completed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "reconciliation_mismatch_observed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "reconciliation_category_assigned", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "reconciliation_verdict_emitted", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

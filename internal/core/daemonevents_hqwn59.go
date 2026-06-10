@@ -1034,11 +1034,14 @@ func (p OperatorEscalationClearedPayload) Valid() bool {
 //
 // # Payload fields (event-model.md §8.7.18)
 //
-//   - target_branch      — resolved merge target branch (never empty)
-//   - protect_branches   — list of branch names the daemon must never merge into
-//   - forbid_unprotected_default — whether --forbid-default-main is active
+//   - target_branch               — resolved merge target branch (never empty)
+//   - protect_branches            — list of branch names the daemon must never merge into
+//   - forbid_unprotected_default  — whether --forbid-default-main is active
+//   - workflow_mode               — resolved workflow_mode_default (single/review-loop/dot)
+//   - max_concurrent              — --max-concurrent ceiling (0 = daemon default of 1)
+//   - no_auto_pull                — whether --no-auto-pull is active
 //
-// Bead ref: hk-sul12.
+// Bead ref: hk-sul12, hk-mptxw.
 type DaemonConfigPayload struct {
 	// TargetBranch is the resolved merge target branch. Required (non-empty).
 	// This is the value after resolveTargetBranch() normalisation: when the
@@ -1053,6 +1056,20 @@ type DaemonConfigPayload struct {
 	// true the daemon rejected any configuration where TargetBranch was empty
 	// (i.e., would have defaulted to "main" without an explicit --target-branch).
 	ForbidUnprotectedDefault bool `json:"forbid_unprotected_default"`
+
+	// WorkflowMode is the resolved workflow_mode_default for this daemon session
+	// (single / review-loop / dot). Non-empty when set by the operator via
+	// --workflow-mode or the default in main.go.
+	WorkflowMode string `json:"workflow_mode,omitempty"`
+
+	// MaxConcurrent is the --max-concurrent ceiling passed at startup. Zero means
+	// the daemon defaults to 1 internally. Serialised so config drift across
+	// restarts is visible in the event log (F8/hk-mptxw).
+	MaxConcurrent int `json:"max_concurrent"`
+
+	// NoAutoPull mirrors --no-auto-pull: when true the daemon does not
+	// automatically drain br ready items; only queue-submitted beads are dispatched.
+	NoAutoPull bool `json:"no_auto_pull"`
 }
 
 // Valid reports whether p is a well-formed DaemonConfigPayload.

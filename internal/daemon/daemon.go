@@ -1003,11 +1003,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// hk-sul12: emit daemon_config stating the resolved merge-target and active
 	// branch-protection policy. Emitted immediately after daemon_started so the
 	// resolved config is observable before any dispatch work begins.
+	// hk-mptxw (F8): also serialise workflow_mode, max_concurrent, no_auto_pull
+	// so config drift across daemon restarts is visible in the event log.
 	// Non-fatal: a marshal or emit failure does not block startup.
 	if cfgPayload := (core.DaemonConfigPayload{
 		TargetBranch:             resolvedTargetBranch,
 		ProtectBranches:          cfg.ProtectBranches,
 		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
+		WorkflowMode:             string(cfg.WorkflowModeDefault),
+		MaxConcurrent:            cfg.MaxConcurrent,
+		NoAutoPull:               cfg.NoAutoPull,
 	}); cfgPayload.Valid() {
 		if cfgBytes, cfgMarshalErr := json.Marshal(cfgPayload); cfgMarshalErr == nil {
 			_ = bus.Emit(context.Background(), core.EventTypeDaemonConfig, cfgBytes)
@@ -1189,14 +1194,29 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// startup scan happened (INFORMATIVE note at §4.3). Non-fatal: a generation
 		// or emit error does not block the daemon from reaching `ready`.
 		//
-		// Bead ref: hk-63oh.21.
+		// reconciliation_completed is emitted immediately after so that a hung
+		// startup reconciliation is detectable (F6/hk-mptxw).
+		//
+		// Bead ref: hk-63oh.21, hk-mptxw.
 		if startupRunUID, startupUIDErr := uuid.NewV7(); startupUIDErr == nil {
+			startupRunID := core.RunID(startupRunUID)
 			startupRecPayload := core.ReconciliationStartedPayload{
-				ReconciliationRunID: core.RunID(startupRunUID),
+				ReconciliationRunID: startupRunID,
 				Trigger:             core.ReconciliationTriggerStartup,
 			}
 			if startupRecBytes, marshalErr := json.Marshal(startupRecPayload); marshalErr == nil {
 				_ = bus.Emit(context.Background(), core.EventTypeReconciliationStarted, startupRecBytes)
+			}
+			startupCompPayload := core.ReconciliationCompletedPayload{
+				ReconciliationRunID: startupRunID,
+				Trigger:             core.ReconciliationTriggerStartup,
+				BeadsExamined:       sweepResult.BeadInProgressReset + sweepResult.BeadCat3cClosed,
+				BeadsClosed:         sweepResult.BeadCat3cClosed,
+				BeadsReset:          sweepResult.BeadInProgressReset,
+				CompletedAt:         time.Now().UTC().Format(time.RFC3339),
+			}
+			if startupCompBytes, marshalErr := json.Marshal(startupCompPayload); marshalErr == nil {
+				_ = bus.Emit(context.Background(), core.EventTypeReconciliationCompleted, startupCompBytes)
 			}
 		}
 	}

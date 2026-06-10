@@ -61,3 +61,4 @@ HANDOFF-*.md
 
 # Claude Code session scheduler lock
 .claude/scheduled_tasks.lock
+HANDOFF.md

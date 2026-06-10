@@ -967,18 +967,63 @@ var ExportedReviewFileTimeout = &reviewFileTimeout
 // Bead: hk-jimbc.
 var ExportedReviewFilePollInterval = &reviewFilePollInterval
 
+// PasteInjecterExported is an exported alias for the unexported pasteInjecter
+// interface so tests in package daemon_test can supply a structural stub as the
+// inj re-seed target of ExportedPasteInjectQuitOnReviewFile (hk-7rgqs).
+type PasteInjecterExported = pasteInjecter
+
+// EnterSenderExported is an exported alias for the unexported enterSender
+// interface so tests can assert on / drive the splash-dismiss + submit Enter
+// path (hk-7rgqs).
+type EnterSenderExported = enterSender
+
+// ExportedReviewerReseedGrace is a pointer to the package-level
+// reviewerReseedGrace var.  Tests set *ExportedReviewerReseedGrace to a short
+// duration to exercise the hk-7rgqs one-shot reviewer re-seed path without
+// waiting the production 75s.
+//
+// Bead: hk-7rgqs.
+var ExportedReviewerReseedGrace = &reviewerReseedGrace
+
+// ExportedSplashDismissDelay is a pointer to the package-level splashDismissDelay
+// var.  Tests set *ExportedSplashDismissDelay to a short duration so the
+// splash-dismiss wait inside the paste-inject helpers does not slow unit tests.
+//
+// Bead: hk-7rgqs.
+var ExportedSplashDismissDelay = &splashDismissDelay
+
+// ExportedPasteInjectReviewer exposes pasteInjectReviewer for unit tests that
+// assert the reviewer kick-off delivery (splash-dismiss → paste → bounded submit
+// Enter) directly (hk-7rgqs).
+func ExportedPasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
+	return pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
+}
+
+// ExportedPasteInjectImplementerInitial exposes pasteInjectImplementerInitial for
+// unit tests that assert the implementer-initial robust-submit hardening
+// (hk-7rgqs).
+func ExportedPasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
+	return pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+}
+
 // ExportedPasteInjectQuitOnReviewFile exposes pasteInjectQuitOnReviewFile for
 // tests in package daemon_test.
 //
-// Bead: hk-jimbc.
+// hk-7rgqs: now takes inj (pasteInjecter) + claudeSessID so the one-shot re-seed
+// path is exercisable; pass nil inj to disable re-seed (the pre-hk-7rgqs
+// behaviour).
+//
+// Bead: hk-jimbc, hk-7rgqs.
 func ExportedPasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	qs quitSenderExported,
 	killer sessionKiller,
+	inj pasteInjecter,
+	claudeSessID string,
 	wtPath string,
 	briefDelivered <-chan struct{},
 ) {
-	pasteInjectQuitOnReviewFile(ctx, qs, killer, wtPath, briefDelivered)
+	pasteInjectQuitOnReviewFile(ctx, qs, killer, inj, claudeSessID, wtPath, briefDelivered)
 }
 
 // hk-sah87 diff-scaled reviewer-budget test seams.

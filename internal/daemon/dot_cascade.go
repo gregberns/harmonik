@@ -863,7 +863,13 @@ func dispatchDotAgenticNode(
 		phase, iterationCount, wtPath, deps.bus, runID)
 	if qs, ok := pasteTarget.(quitSender); ok {
 		if isReviewer {
-			go pasteInjectQuitOnReviewFile(ctx, qs, sess, wtPath, briefDelivered)
+			// hk-7rgqs: pass the pasteInjecter + claude session id so the watchdog
+			// can re-seed the reviewer brief once if the original submit Enter was
+			// swallowed by a slow splash (pasteTarget implements pasteInjecter when
+			// it is a perRunSubstrate; a non-pasteInjecter target yields a nil inj
+			// inside the watchdog → re-seed disabled).
+			revInj, _ := pasteTarget.(pasteInjecter)
+			go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.claudeSessionID, wtPath, briefDelivered)
 		} else {
 			// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 			// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +

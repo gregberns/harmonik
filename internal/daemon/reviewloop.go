@@ -1054,7 +1054,13 @@ func runReviewLoop(
 			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
 			deps.bus, runID)
 		if qs, ok := revPasteTarget.(quitSender); ok {
-			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revWtPath, revBriefDelivered)
+			// hk-7rgqs: pass the pasteInjecter + claude session id so the watchdog
+			// can re-seed the reviewer brief once if the original submit Enter was
+			// swallowed by a slow splash (revPasteTarget implements pasteInjecter
+			// when it is a perRunSubstrate; a non-pasteInjecter target yields a nil
+			// inj inside the watchdog → re-seed disabled).
+			revInj, _ := revPasteTarget.(pasteInjecter)
+			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered)
 		}
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

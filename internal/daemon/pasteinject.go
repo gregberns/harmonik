@@ -52,30 +52,47 @@ import (
 // Claude Code welcome splash needs ~400–600ms to animate away and transition
 // the terminal to the REPL input state; 750ms provides a conservative margin.
 //
-// Bead: hk-rf4ux.
-const splashDismissDelay = 750 * time.Millisecond
+// NOTE (hk-7rgqs): this single fixed wait is NOT sufficient on its own under
+// concurrent cold-boots, where the splash can take >750ms to clear and the
+// post-paste submit Enter then lands on the still-up splash and is swallowed.
+// The robust submit is the bounded-retry Enter (sendSubmitEnterWithRetry); this
+// delay just keeps the FIRST submit attempt from arriving absurdly early.
+//
+// Declared as a var (not const) so tests can override it without waiting real
+// wall time, matching every other timing knob in this file.
+//
+// Bead: hk-rf4ux, hk-7rgqs.
+var splashDismissDelay = 750 * time.Millisecond
 
 // resumeSubmitRetries and resumeSubmitRetryDelay govern the bounded submit-retry
-// on the implementer-resume (iteration ≥ 2) paste path (hk-ip33d).
+// on EVERY post-paste submit Enter (implementer-initial, reviewer, and the
+// implementer-resume iteration ≥ 2 path).
 //
-// Root cause: on a `claude --resume <session-id>` reattach the REPL's input
-// handler is intermittently not yet ready to accept the Enter keypress at the
-// instant the post-paste SendEnterToLastPane fires — the freshly-resumed TUI is
-// still settling after the welcome splash.  The single Enter is dropped, the
-// combined task+feedback prompt sits in the input bar unsubmitted, claude stays
-// idle, and the run goes run_stale with no iteration-2 progress.  Confirmed in
-// production: a manual `tmux send-keys -t <pane> Enter` submitted the prompt and
-// iteration 2 began immediately.  This is a residual timing race left over from
-// the hk-poy7k combined-paste fix.
+// Root cause (hk-ip33d, generalised by hk-7rgqs): the post-paste Enter that
+// SUBMITS the kick-off prompt is intermittently dropped because the Claude Code
+// REPL's input handler is not yet ready to accept the keypress at the instant
+// SendEnterToLastPane fires.  Two arrival paths exhibit this:
 //
-// There is no pane-capture primitive on tmux.Adapter to detect "input cleared",
-// so we cannot positively confirm submission.  Instead we send the submit Enter,
-// wait a short settle, and re-send it up to resumeSubmitRetries additional times.
-// A redundant Enter at a REPL that has ALREADY submitted is a harmless no-op
-// (an empty line at the now-clear prompt), so the retries only ever help: at
-// least one of them lands after the input handler is ready.  This reuses the
-// same send-keys-Enter key-event idiom as the splash-dismiss path (hk-rf4ux) and
-// the time-grace patterns already in this file.
+//   - implementer-resume (hk-ip33d): a freshly `claude --resume <id>` TUI is
+//     still settling after the welcome splash; the single Enter is dropped, the
+//     combined task+feedback prompt sits unsubmitted, claude stays idle, and the
+//     run goes run_stale with no iteration-2 progress.
+//   - reviewer / implementer-initial under load (hk-7rgqs): under concurrent
+//     cold-boots the splash takes >750ms to clear, so the FIXED splashDismissDelay
+//     elapses while the splash is still up; the post-paste submit Enter lands on
+//     the splash and is SWALLOWED, leaving the brief typed-but-UNSUBMITTED.  The
+//     reviewer then idles, never reads review-target.md, never writes review.json,
+//     and the run stalls until the verdict budget elapses.
+//
+// There is no pane-capture primitive on the enterSender interface to detect
+// "input cleared", so we cannot positively confirm submission.  Instead we send
+// the submit Enter, wait a short settle, and re-send it up to resumeSubmitRetries
+// additional times.  A redundant Enter at a REPL that has ALREADY submitted is a
+// harmless no-op (an empty line at the now-clear prompt), so the retries only
+// ever help: at least one of them lands after the input handler is ready (and
+// after a still-animating splash has cleared).  This reuses the same
+// send-keys-Enter key-event idiom as the splash-dismiss path (hk-rf4ux) and the
+// time-grace patterns already in this file.
 //
 // Declared as vars (not consts) so tests can override them without waiting real
 // wall time.
@@ -1001,11 +1018,14 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 		return reason
 	}
-	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	// Send Enter after paste to submit the message regardless of terminal
+	// bracketed-paste mode (hk-8cq23).  Under a concurrent cold-boot the splash
+	// can outlast the fixed splashDismissDelay, so a single submit Enter lands on
+	// the still-up splash and is swallowed, leaving the brief unsubmitted
+	// (hk-7rgqs).  Send the submit Enter with the same bounded retry the resume
+	// path uses so at least one keypress lands after the splash clears.
 	if es, ok := inj.(enterSender); ok {
-		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-initial post-paste SendEnterToLastPane: %v\n", err)
-		}
+		sendSubmitEnterWithRetry(ctx, es, "implementer-initial")
 	}
 	return ""
 }
@@ -1084,21 +1104,24 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	return ""
 }
 
-// sendResumeSubmitEnter delivers the submit Enter for the implementer-resume
-// paste with a bounded retry (hk-ip33d).
+// sendSubmitEnterWithRetry delivers the post-paste submit Enter with a bounded
+// retry (hk-ip33d, generalised by hk-7rgqs).
 //
 // It sends Enter once, then re-sends it up to resumeSubmitRetries additional
-// times with resumeSubmitRetryDelay between attempts.  The retries defend
-// against the fresh-`--resume` timing race where the REPL input handler is not
-// yet ready to accept the first keypress: a dropped first Enter leaves the
-// prompt unsubmitted (the hk-ip33d run_stale), while a redundant Enter at an
-// already-submitted REPL is a harmless empty line.  The loop returns early if
-// ctx is cancelled.
+// times with resumeSubmitRetryDelay between attempts.  The retries defend against
+// the post-paste lost-Enter timing race where the REPL input handler is not yet
+// ready to accept the first keypress — either because a fresh `--resume` TUI is
+// still settling (hk-ip33d) or because the welcome splash is still up under a
+// concurrent cold-boot whose animation overran the fixed splashDismissDelay
+// (hk-7rgqs).  A dropped first Enter leaves the brief unsubmitted (claude idles →
+// run_stale); a redundant Enter at an already-submitted REPL is a harmless empty
+// line.  The loop returns early if ctx is cancelled.  phase is a short label used
+// only in the diagnostic log line.
 //
-// Bead: hk-ip33d.
-func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
+// Bead: hk-ip33d, hk-7rgqs.
+func sendSubmitEnterWithRetry(ctx context.Context, es enterSender, phase string) {
 	if err := es.SendEnterToLastPane(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume post-paste SendEnterToLastPane: %v\n", err)
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s post-paste SendEnterToLastPane: %v\n", phase, err)
 	}
 	for i := 0; i < resumeSubmitRetries; i++ {
 		select {
@@ -1107,9 +1130,16 @@ func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
 		case <-time.After(resumeSubmitRetryDelay):
 		}
 		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: implementer-resume submit-retry %d SendEnterToLastPane: %v\n", i+1, err)
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s submit-retry %d SendEnterToLastPane: %v\n", phase, i+1, err)
 		}
 	}
+}
+
+// sendResumeSubmitEnter is the implementer-resume call site of
+// sendSubmitEnterWithRetry (hk-ip33d).  Retained as a named wrapper so the
+// hk-ip33d resume path reads clearly and existing references stay stable.
+func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
+	sendSubmitEnterWithRetry(ctx, es, "implementer-resume")
 }
 
 // pasteInjectReviewer delivers the reviewer kick-off message.
@@ -1149,11 +1179,18 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 		return reason
 	}
-	// Send Enter after paste to submit the message regardless of terminal bracketed-paste mode (hk-8cq23).
+	// Send Enter after paste to submit the message regardless of terminal
+	// bracketed-paste mode (hk-8cq23).  hk-7rgqs (the reviewer SEED-SUBMIT RACE):
+	// under concurrent claude cold-boots the splash takes >750ms to clear, so the
+	// fixed splashDismissDelay elapses while the splash is still up; a single
+	// submit Enter lands on the splash and is SWALLOWED, leaving the review brief
+	// typed-but-UNSUBMITTED — the reviewer idles, never reads review-target.md,
+	// never writes review.json, and the run stalls until the verdict budget.
+	// Send the submit Enter with the same bounded retry the resume path uses so at
+	// least one keypress lands after the splash clears.  The safety net in
+	// pasteInjectQuitOnReviewFile re-seeds once if even the retries lose the race.
 	if es, ok := inj.(enterSender); ok {
-		if err := es.SendEnterToLastPane(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: pasteinject: reviewer post-paste SendEnterToLastPane: %v\n", err)
-		}
+		sendSubmitEnterWithRetry(ctx, es, "reviewer")
 	}
 	return ""
 }
@@ -1206,6 +1243,27 @@ var reviewFilePerKLineBudget = 5 * time.Minute
 
 // reviewFilePollInterval is how often to check for the review verdict file.
 var reviewFilePollInterval = 2 * time.Second
+
+// reviewerReseedGrace is the short window pasteInjectQuitOnReviewFile waits for
+// .harmonik/review.json to appear before it RE-SEEDS the reviewer brief once
+// (hk-7rgqs safety net).  If no verdict has appeared within this grace AND the
+// pane still hosts an active claude process, the brief was almost certainly typed
+// but never submitted (the splash swallowed the submit Enter under a concurrent
+// cold-boot — see pasteInjectReviewer), so we re-run the splash-dismiss +
+// paste-brief + submit-Enter sequence once.  This mirrors the implementer path's
+// activity-aware re-detection: a reviewer that already submitted writes review.json
+// well within the budget and never reaches the re-seed; a wedged-at-unsubmitted
+// reviewer is recovered without waiting out the full diff-scaled verdict budget.
+//
+// 75s is long enough that a reviewer which DID submit has begun reading the diff
+// (no spurious re-seed) yet short enough to recover a stalled reviewer minutes
+// before the 10-minute base budget would otherwise fire.
+//
+// Declared as var (not const) so tests can override it without waiting real wall
+// time.
+//
+// Bead: hk-7rgqs.
+var reviewerReseedGrace = 75 * time.Second
 
 // reviewBudgetForDiff computes the effective reviewer-verdict wait for a diff of
 // changedLines: the base timeout plus reviewFilePerKLineBudget per 1000 changed
@@ -1472,11 +1530,25 @@ func ReadReviewerBudgetSentinel(wtPath string) (*reviewerBudgetSentinel, error) 
 // On a budget kill a marker file is written (writeReviewerBudgetSentinel) so the
 // caller emits a distinct "reviewer budget exceeded" diagnostic.
 //
-// Bead: hk-zimkh, hk-sah87.
+// hk-7rgqs (reviewer SEED-SUBMIT RACE safety net): before the budget logic can
+// help, a one-shot re-seed recovers the common stall where the reviewer brief was
+// typed but never SUBMITTED (the splash swallowed the submit Enter under a
+// concurrent cold-boot).  If no review.json has appeared within reviewerReseedGrace
+// AND the pane still hosts an active claude process (so we are not re-seeding a
+// dead pane), the reviewer kick-off (splash-dismiss + paste-brief + bounded submit
+// Enter) is re-run ONCE via pasteInjectReviewer, then the loop continues.  inj and
+// claudeSessID are the pasteInjecter and claude session id for this reviewer's
+// pane (the same pair pasteInjectOnLaunch used to deliver the brief); when inj is
+// nil (the deterministic test path / a non-pasteInjecter substrate) the re-seed is
+// skipped and only the budget logic applies.
+//
+// Bead: hk-zimkh, hk-sah87, hk-7rgqs.
 func pasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	qs quitSender,
 	killer sessionKiller,
+	inj pasteInjecter,
+	claudeSessID string,
 	wtPath string,
 	briefDelivered <-chan struct{},
 ) {
@@ -1515,6 +1587,15 @@ func pasteInjectQuitOnReviewFile(
 	livenessChecker, _ := qs.(paneLivenessChecker)
 	hardDeadline := loopStart.Add(reviewFileHardCeiling)
 
+	// hk-7rgqs (reviewer SEED-SUBMIT RACE safety net): fire a one-shot re-seed of
+	// the reviewer brief if no verdict appears within reviewerReseedGrace and the
+	// pane is still active (brief typed but submit Enter swallowed by the splash).
+	// reseedDeadline is the absolute instant the grace elapses; reseeded guards the
+	// once-only semantics.  Disabled when inj is nil (no pasteInjecter to re-seed
+	// through, e.g. the deterministic test path).
+	reseedDeadline := loopStart.Add(reviewerReseedGrace)
+	reseeded := inj == nil
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -1524,6 +1605,34 @@ func pasteInjectQuitOnReviewFile(
 			return
 		case <-ticker.C:
 			now := time.Now()
+
+			// hk-7rgqs: one-shot re-seed BEFORE the budget/verdict checks.  When
+			// the grace has elapsed, no verdict file exists yet, and the pane still
+			// hosts an active claude process, re-run the reviewer kick-off once: the
+			// brief was almost certainly typed but never submitted (splash swallowed
+			// the submit Enter).  A pane with NO active process is left to the budget
+			// path (re-seeding a dead pane cannot help).  When liveness is
+			// unobservable (livenessChecker == nil) we still re-seed once on the
+			// grace, since the original submit may simply have been dropped — a
+			// redundant brief at an already-working reviewer is a harmless extra
+			// prompt it ignores.
+			if !reseeded && now.After(reseedDeadline) {
+				if _, err := os.Stat(verdictPath); err == nil {
+					// Verdict already present — no re-seed needed.
+					reseeded = true
+				} else if livenessChecker == nil || livenessChecker.PaneHasActiveProcess(ctx) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-review-file: no verdict after %v re-seed grace and pane active in %s; re-seeding reviewer brief once (hk-7rgqs)\n",
+						reviewerReseedGrace, wtPath)
+					if reason := pasteInjectReviewer(ctx, inj, claudeSessID, wtPath); reason != "" {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-review-file: re-seed failed for %s: %s\n",
+							wtPath, reason)
+					}
+					reseeded = true
+				}
+			}
+
 			if now.After(deadline) {
 				// hk-sah87: before killing, consult pane liveness.  If the
 				// reviewer pane still hosts an active claude process AND we are

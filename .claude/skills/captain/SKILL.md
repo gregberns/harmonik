@@ -153,28 +153,41 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > lane map to verify against live state in the boot sequence (§0.5 Step 1–3) — NOT
 > as gospel. Re-derive the live lanes from `crew list` + `kerf next` every boot.
 
-### Current four lanes
+### Current lanes (status snapshot: 2026-06-10 — fleet CONSOLIDATED)
 
-| crew | lane (initiative) | epic |
-|---|---|---|
-| **stilgar** | daemon / infra | `hk-3js5m` |
-| **duncan** | codex-harness (2nd implementer harness) | `hk-w4tmz` |
-| **liet** | test / CI restoration | `hk-kjkbw` |
-| **chani** | release-pipeline | `hk-brc3z` |
+> Consolidated to **2 live crews** on the operator's "run fewer" directive
+> (2026-06-10): the queue-bug, daemon/infra, and validation-net lanes completed, so
+> **duncan** and **stilgar** were stood down (clean `crew stop`; mission files persist
+> for respawn). Both live crews are PARKED on an operator action (gh `workflow` scope
+> re-auth). **Do NOT auto-re-establish the stood-down crews** — re-derive live lanes
+> from `crew list` + `kerf next` every boot.
 
-### Prioritized NEXT work (what to feed the fleet after the current lanes)
+| crew | lane (initiative) | epic | live state (2026-06-10) |
+|---|---|---|---|
+| **chani** | release-pipeline | `hk-brc3z` | LIVE — blocked: release.yml/validate push-reject on missing gh `workflow` scope |
+| **liet** | test / CI restoration | `hk-kjkbw` | LIVE — lane done except `hk-jzepv` (held on same gh re-auth); `tijaj` banked |
+| ~~duncan~~ | ~~codex-harness `hk-w4tmz`~~ | — | STOOD DOWN — codex-harness 8/8 + queue-bug 3/3 complete |
+| ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra beads + session-keeper + logmine complete |
 
-- **Daemon-reliability / logmine beads belong to stilgar's lane** (daemon/infra,
-  `hk-3js5m`). Fold them in there rather than spinning a new crew.
-- **Near-done 1-bead singletons are QUEUE-SUBMITTABLE with NO crew** — submit them
-  straight to the daemon queue; they don't warrant a dedicated crew:
-  - extqueue → `hk-fkpb7`
-  - flywheel → `hk-m8zqv`
-  - named-queues → `hk-tigaf`
-  - session-keeper → `hk-2ojne`
-  - pilot → `hk-ynjnf`
-- **Hygiene:** `kerf triage --ack` (there is a large untriaged backlog to clear);
-  wire or shelve the unwired kerf works so the feed stays clean.
+**Operator blocker:** `gh auth refresh -s workflow` → then daemon redeploy (picks up
+the new credential + ~20 banked daemon fixes on main-but-not-live) unblocks both crews.
+
+### Prioritized NEXT work (what to feed the fleet next)
+
+- **Next phase (pending operator ranking):** **standard-bead-dot** (per-bead DOT
+  workflow, the Phase-3 north-star keystone) is the top KNOWN candidate. Full
+  analysis + ~25 harmonik-embed proposals: `docs/retro/2026-06-10/SYNTHESIS.md`.
+- **Open product bug:** `hk-h8u7p` (P1) — daemon's concurrent `git worktree add`
+  races `.git/index.lock` at MaxConcurrent>1 (the `--max-concurrent 4` workaround's
+  root). Needs a product fix (serialize prod `CreateWorktree` / bounded retry).
+- **Retro beads filed 2026-06-10:** `hk-my7y8` (restore-staged-after-merge),
+  `hk-7evda` (epic-assignee in run events), `hk-37ra4` (comms `--wake`),
+  `hk-pk3p1` (`harmonik promote`), `hk-jzdy5` (refresh AGENT_INDEX/STATUS),
+  `hk-g1umi` (create captain/SHUTDOWN.md).
+- **Singletons (verify before submit — some landed):** `extqueue hk-fkpb7` LANDED,
+  `session-keeper` code COMPLETE; remaining candidates `flywheel hk-m8zqv` (4h smoke,
+  needs ranking), `named-queues hk-tigaf` (epic), `pilot hk-ynjnf`.
+- **Hygiene:** `kerf triage --ack`; wire or shelve unwired kerf works.
 
 ### Assignment rule (LOAD-BEARING)
 

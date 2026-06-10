@@ -77,7 +77,15 @@ func runBeadFixtureDeps(
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		CancelOnQueueDrain: cancelOnDrain,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty registry bypasses the waitAgentReady 15s gate: the exit-0 shell
+		// handler never delivers agent_ready, so a sealed claude-adapter registry
+		// would hang. With no claude adapter, ForAgent errors and waitAgentReady
+		// is skipped (hk-ngw3d).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		// Pre-commit factory advances HEAD so the no-commit guard (hk-mmh8f) does
+		// not reopen the bead — this test asserts the bead CLOSES on the success
+		// path. Mirrors the landed fix for the other success-path E2E tests.
+		WorktreeFactory: workloopFixturePreCommitWorktreeFactory,
 	}
 }
 

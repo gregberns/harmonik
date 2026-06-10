@@ -62,7 +62,13 @@ func runBead8jh26FixtureDepsWithExit(
 		QueueStore:         qs,
 		CancelOnQueueDrain: cancelOnDrain,
 		CancelOnQueueExit:  cancelOnExit,
-		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
+		// Empty registry bypasses the waitAgentReady 15s gate: the exit-code shell
+		// handler never delivers agent_ready, so a sealed claude-adapter registry
+		// would hang. With no claude adapter, ForAgent errors and waitAgentReady
+		// is skipped (hk-ngw3d). The pre-commit WorktreeFactory (needed only by
+		// the success-path callers that assert the bead CLOSES) is set at the
+		// call site, not here — the failure-path test must hit no-commit→fail.
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 	}
 }
 
@@ -185,8 +191,11 @@ func TestRunBead_RefusesActiveQueue(t *testing.T) {
 	}
 
 	// Capture original file contents for comparison after the guard check.
-	queuePath := filepath.Join(projectDir, ".harmonik", "queue.json")
-	//nolint:gosec // G304: queuePath derived from projectDir (.harmonik/queue.json) — test-only read
+	// NQ-A2 path drift: queue.Persist now writes the canonical per-queue path
+	// .harmonik/queues/<name>.json (not the legacy .harmonik/queue.json), so read
+	// the same path queue.Persist/queue.Load use (queue.QueueNameMain slot).
+	queuePath := filepath.Join(projectDir, ".harmonik", "queues", queue.QueueNameMain+".json")
+	//nolint:gosec // G304: queuePath derived from projectDir (.harmonik/queues/main.json) — test-only read
 	originalData, err := os.ReadFile(queuePath)
 	if err != nil {
 		t.Fatalf("setup: read queue.json: %v", err)
@@ -255,6 +264,12 @@ func TestRunBead_ExitOnEmpty_ExitCodeZero(t *testing.T) {
 	_ = exitCtx // used via testCtx below
 
 	p := runBead8jh26FixtureDepsWithExit(t, projectDir, bus, q, cancelDrain, cancelExit, 0 /* success */)
+	// Success path asserts QueueStore.Queue() == nil (CompleteAndUnlink fired),
+	// which requires the bead to CLOSE. The exit-0 handler makes no commit, so the
+	// no-commit guard (hk-mmh8f) would reopen it — pre-commit the worktree to
+	// advance HEAD past the parent SHA. (The failure-path sibling deliberately
+	// omits this so it hits no-commit→fail.)
+	p.WorktreeFactory = workloopFixturePreCommitWorktreeFactory
 	deps := daemon.ExportedWorkLoopDeps(p)
 
 	testCtx, testCancel := context.WithTimeout(drainCtx, 20*time.Second)

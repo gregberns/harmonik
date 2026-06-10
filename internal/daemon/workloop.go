@@ -3955,10 +3955,34 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 
 	// Step 5: refresh project working tree to match HEAD (EM-054).
 	//
-	// git reset --hard HEAD re-syncs both the index and the working tree to the
-	// new HEAD (which is now the run-branch tip). This eliminates the "modified"
-	// state that appears in git status when update-ref advances HEAD without
-	// touching the working tree files.
+	// Step 5a: restore the staged index before the working-tree reset.
+	//
+	// git update-ref (step 4) advances HEAD but leaves the index at the
+	// pre-merge state.  Any files that were added/modified by the merged commit
+	// now appear as "staged deletions" (index behind HEAD) in git status
+	// --porcelain.  If git reset --hard HEAD (step 5b) subsequently fails
+	// (non-fatal per EM-054), those staged phantom-deletions persist into the
+	// next bead's run and trigger false implementer_escaped_worktree positives.
+	//
+	// git restore --staged . clears the index to match HEAD without touching
+	// the working tree.  It is lighter than reset --hard and less likely to
+	// fail (no working-tree I/O, no file-lock contention).  Running it first
+	// means that even on a reset --hard failure the staged index is already
+	// clean for the subsequent escape check.
+	//
+	// Best-effort / non-fatal: a failure here is harmless because step 5b will
+	// attempt the same cleanup (and more) via reset --hard.
+	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", ".")
+	restoreCmd.Dir = projectDir
+	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git restore --staged failed (bead %s run %s): %v\n%s",
+			beadID, runID.String(), restoreErr, out)
+	}
+
+	// Step 5b: git reset --hard HEAD re-syncs both the index and the working
+	// tree to the new HEAD (which is now the run-branch tip). This eliminates
+	// the "modified" state that appears in git status when update-ref advances
+	// HEAD without touching the working tree files.
 	//
 	// Uncommitted-changes policy (EM-054): if the working tree has uncommitted
 	// changes, log a warning and still reset. The daemon owns the project working

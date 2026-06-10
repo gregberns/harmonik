@@ -938,18 +938,40 @@ Refs: hk-ftyvo, hk-j1aq5
 Tags: mechanism
 
 After step 4 (`git update-ref`) and step 5 (`git push`) of §4.12.EM-052 both
-succeed, the daemon MUST refresh the project working tree to match the new HEAD.
-The required mechanism is:
+succeed, the daemon MUST refresh the project working tree to match the new HEAD
+using a two-sub-step sequence:
+
+**Step 6a — staged-index restore (best-effort):**
+
+```
+git restore --staged .
+```
+
+run from the project repository root. This clears the index to match HEAD without
+touching the working tree. After `git update-ref` advances HEAD, the index is
+still at the pre-merge state: files added or modified by the merged commit appear
+as "staged deletions" in the index relative to the new HEAD. If `git reset --hard
+HEAD` (step 6b) subsequently fails (non-fatal per the refresh-failure policy
+below), those phantom staged changes would persist into the next bead's run and
+trigger false `implementer_escaped_worktree` positives in
+`checkMainWorkingTreeDirty`. Running `git restore --staged .` first — which is
+lighter (index-only, no working-tree I/O) and less likely to fail under lock
+contention — ensures the staged index is clean even on a step-6b failure.
+
+Step 6a is best-effort: if `git restore --staged .` fails, log a warning to
+stderr and continue to step 6b.
+
+**Step 6b — working-tree reset:**
 
 ```
 git reset --hard HEAD
 ```
 
-run from the project repository root. `git reset --hard HEAD` is chosen over
-`git checkout-index -f -a` because it updates both the index and the working tree
-in a single atomic operation, correctly handles deletions (files removed by the
-agent's commits will be removed from disk), and its semantics are stable across
-git versions available in CI environments.
+run from the project repository root. `git reset --hard HEAD` re-syncs both the
+index and the working tree to the new HEAD in a single atomic operation, correctly
+handles deletions (files removed by the agent's commits will be removed from
+disk), and its semantics are stable across git versions available in CI
+environments.
 
 **Uncommitted-changes policy.** If the project working tree has uncommitted
 changes at the time of the refresh (i.e., `git status --porcelain` is non-empty
@@ -973,7 +995,7 @@ refresh failure. Instead it MUST:
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
-Refs: hk-4goy3
+Refs: hk-4goy3, hk-my7y8
 
 ## 4.13 Eager refill obligation
 

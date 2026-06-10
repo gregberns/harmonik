@@ -127,15 +127,28 @@ func stopHookE2EFixtureWorktree(t *testing.T, harmonikBin string) string {
 	// Write wrapper.sh.
 	// The script:
 	//   1. Reads HARMONIK_CLAUDE_SESSION_ID from env (set by the daemon at twin launch).
-	//   2. Constructs a minimal Stop hook input JSON per CHB-012.
+	//   2. Constructs a Stop hook input JSON matching the real Claude Code wire
+	//      shape per CHB-012 (§4.4): session_id, hook_event_name, AND
+	//      transcript_path. transcript_path is a required field of Claude's hook
+	//      payload — the relay rejects an absent/empty transcript_path with
+	//      bridge_malformed_hook_payload (internal/hookrelay/hookrelay.go) per the
+	//      CHB-012 unit contract (TestHookRelay_CHB012_TranscriptPathAbsent). A
+	//      real Claude Stop hook always supplies it, so this fixture MUST too;
+	//      otherwise the relay exits 1 BEFORE reaching the daemon socket and
+	//      outcome_emitted never lands in the store. That was the root cause of
+	//      hk-numyh: the fixture sent a non-representative payload (missing
+	//      transcript_path), not a product break in the twin→relay→store chain.
 	//   3. Pipes it to `harmonik hook-relay Stop` which reads HARMONIK_* env vars,
 	//      validates the JSON, and sends outcome_emitted to the daemon socket.
 	//
 	// Quoting: hookCommand is the absolute harmonik binary path; no shell injection
-	// risk since it is derived from exec.LookPath + temp build dir.
+	// risk since it is derived from exec.LookPath + temp build dir. transcriptPath
+	// is a fixed in-worktree path; the relay only validates its presence per
+	// CHB-012 and never reads the file for the implementer WORK_COMPLETE mapping.
 	wrapperPath := filepath.Join(root, "wrapper.sh")
+	transcriptPath := filepath.Join(root, "transcript.jsonl")
 	wrapperContent := "#!/bin/sh\n" +
-		`printf '{"session_id":"%s","hook_event_name":"Stop"}' "$HARMONIK_CLAUDE_SESSION_ID"` +
+		`printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"` + transcriptPath + `"}' "$HARMONIK_CLAUDE_SESSION_ID"` +
 		" | " + harmonikBin + " hook-relay Stop\n"
 	if err := os.WriteFile(wrapperPath, []byte(wrapperContent), 0o755); err != nil { //nolint:gosec // G306: wrapper.sh needs executable bit
 		t.Fatalf("stopHookE2EFixtureWorktree: write wrapper.sh: %v", err)

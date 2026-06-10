@@ -164,6 +164,66 @@ go func() {
 
 All four elements are required for deterministic concurrent-scenario tests. Omitting any one produces intermittent failures that vary with scheduler timing.
 
+## Flake policy — de-flake, quarantine, re-verify, or file-a-bug
+
+> Standing convention owned by **validation-net** (VN11, `hk-s2psr`; folds in `hk-6ra3p` + `hk-3hf9n`). When a test is red or intermittently red, classify it into exactly one of four categories below, then act. The §Coverage enforcement rule "No skipped tests in main" still holds — quarantine is `t.Skip` *under `-short` only*, never a silent disable, and never a delete.
+
+The decision tree, in order. Stop at the first branch that matches:
+
+1. **Is the disk/environment unhealthy?** → **RE-VERIFY (no change).**
+2. **Is it a fast unit/integration test that flakes on contention, a data race, or a too-tight timeout?** → **DE-FLAKE (fix root cause).**
+3. **Is it a legitimately slow real-daemon / real-binary E2E that doesn't belong in the fast per-bead gate?** → **QUARANTINE from `-short`** (still runs in full CI).
+4. **Did the flake expose a genuine product/infra bug?** → **FILE A BUG** (the test stays; never silently disabled).
+
+### 1. Re-verify (no change) — the red was environment-induced
+
+The test is correct and the product is correct; the red came from the *machine*, not the code. Confirm environment health **first**, before touching any test.
+
+- **Canonical signal:** real-daemon / worktree-boot tests time out under disk starvation. `hk-3hf9n` — eight tests including `TestQueueDispatch_HappyPath` timed out at 94% disk (ENOSPC); on a healthy disk they are deterministically green.
+- **How to confirm:** `df -h /System/Volumes/Data` (or the test's tempdir mount). Check for ENOSPC in the test log, OOM-kill in `dmesg`, or a since-retired CI machine.
+- **Action:** re-run on a healthy machine. **Do NOT quarantine or "fix" an env-induced red** — there is no defect to fix, and quarantining hides a real test. If the environment failure is recurring infrastructure (disk fills routinely), file an *infra* bug against the environment, not the test.
+
+### 2. De-flake — fix the root cause (PREFERRED for fast tests)
+
+The flake is a fixable test-harness defect: shared-state / lock contention, a data race, or an unrealistic timeout. **Prefer fixing over quarantining** — these tests belong in the fast per-bead gate, and the fix removes the flake for good.
+
+- **Shared-state / lock contention** → isolate per-test state. Canonical fix (`hk-1o0cc`): `~/.claude.json` trust-lock contention resolved via per-test config isolation — a `TestMain` that points `HARMONIK_CLAUDE_CONFIG_PATH` at a temp config so concurrent tests don't fight over one global file.
+- **Data race** → remove the race, don't paper over it. Same lane (`hk-1o0cc`): a real data race was removed by dropping `t.Parallel()` on tests that mutate package-level vars the production path reads.
+- **Too-tight timeout** → bump it to a realistic value. Same lane: a `100ms` timeout that lost races on a loaded box was bumped.
+- **Concurrent-scenario non-determinism** → apply the four-element recipe in §Scenario fixture determinism recipe (no-commit guard, merge mutex, phase-aware twin, skip flags) before concluding a scenario test is "inherently flaky."
+- **Action:** land the fix with a `Refs:` to the flake bead. The test stays in `-short` / the per-bead gate.
+
+### 3. Quarantine — exclude from the fast per-bead gate ONLY
+
+The test is a *legitimate* slow real-daemon E2E (multi-second socket waits, real review loops, strict cross-goroutine event ordering) that is too non-deterministic for a fast merge gate but is still valuable in full CI. Quarantine moves it out of `-short`; it **still runs** in the full CI / Tier-3 lane.
+
+- **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_hkp258q_test.go`; ~24 sibling tests already use it). It `t.Skip`s only when `testing.Short()` — the per-bead `commit_gate` runs `-short` (see `scripts/scenario-gate.sh` "affected-unit" step), so the test is skipped there but runs in the full lane.
+- **Canonical example:** `hk-6ra3p` — three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads; quarantined behind the guard.
+- **Hard limits:**
+  - Quarantine = move out of `-short` **only**. Never `t.Skip` unconditionally, never delete, never `//nolint`-away the suite.
+  - **Never quarantine a fast unit test.** A fast test that flakes has a fixable root cause (category 2) — fix it; do not hide it.
+  - Quarantine is a *temporary shelving* with an owning un-shelve bead (the guard's docstring tracks `hk-p258q`). The end state is the test back in the gate once the underlying real-daemon-boot reds are fixed.
+
+### 4. File a bug — don't quarantine-and-forget
+
+The flake is the messenger for a **genuine product or infrastructure defect**. The test is doing its job; the bug is real.
+
+- **Canonical signals:** `hk-gq3my` (a `git worktree add` metadata race under concurrency — a real product race the test surfaced); `hk-i0hor` + `hk-numyh` (genuine daemon bugs); `hk-5pwv5` (residual `internal/daemon` reds whose root cause is product behavior, not test timing).
+- **Action:** file a tracked bug bead **with a repro** (per `build-practices.md §Bug fixes require a reproducing scenario test`, the fix lands with a reproducing scenario test). The test **stays** — either red-and-tracked, or `t.Skip` with the bug ID in the skip message and a `// TODO <bead-id>` so the skip is never silent. It is **never** disabled without a tracking bead.
+
+### Classification at a glance
+
+| Symptom | Category | Action | Canonical refs |
+|---|---|---|---|
+| ENOSPC / OOM / disk-starvation; green on healthy box | Re-verify | Confirm env health first; do not touch test | `hk-3hf9n` |
+| Shared global file / lock contention | De-flake | Per-test config isolation (`TestMain` + temp path) | `hk-1o0cc` |
+| `-race` data race; package-level var mutated under `t.Parallel()` | De-flake | Remove the race (drop parallel, or guard the var) | `hk-1o0cc` |
+| Too-tight timeout loses on a loaded box | De-flake | Bump to a realistic value | `hk-1o0cc` |
+| Slow real-daemon / socket / review-loop E2E flakes the fast gate | Quarantine | `skipRealDaemonE2EInShort(t)` (out of `-short` only) | `hk-6ra3p`, `hk-p258q` |
+| Flake reveals a real product/infra race or daemon bug | File a bug | Tracked bead + repro; test stays | `hk-gq3my`, `hk-i0hor`, `hk-numyh`, `hk-5pwv5` |
+
+**Anti-patterns (forbidden):** deleting a flaky test; `t.Skip`ing it unconditionally with no owning bead; quarantining a fast unit test instead of fixing its root cause; quarantining an env-induced red instead of fixing the environment; bumping a timeout to mask a real product slowness (that's category 4, not category 2).
+
 ## Test infrastructure conventions
 
 - **No external services in CI.** Beads SQLite is embedded; event log is a tempdir; workspaces are tempdir worktrees. CI runs do not touch the network.

@@ -296,8 +296,6 @@ Tags: mechanism
 
 The `budget-paused` pause-reason ([cognition-loop.md §6]) — entered when the unified per-day spend meter exhausts per [cognition-loop.md §4.11 CL-090] and the budget-exhaustion handler-pause policy fires ([handler-pause.md §4 HP-012]) — MUST be surfaced to the operator per §9 alongside `circuit-tripped`. The operator clears the budget-exhaustion handler pause via the existing handler-resume surface (`harmonik supervise resume`); reset is not automatic.
 
-Tags: mechanism
-
 For runs with `workflow_mode = single` or `workflow_mode = dot` (per [handler-contract.md §4.2 HC-006]), the durable checkpoint at which the run yields to the drain gate is the between-task checkpoint per [execution-model.md §4.5]; this is the default semantics. For runs with `workflow_mode = review-loop`, the durable checkpoint set is EXTENDED to include intra-run iteration boundaries: the interval between emission of a `reviewer_verdict` event (per [event-model.md §8.1]) and the next `implementer_resumed` event of the same cycle is a legitimate pause checkpoint. A `pause` issued mid-iteration of a `review-loop` run MUST be honored at the next such iteration-boundary checkpoint OR at the end of the cycle, whichever arrives first; the pause MUST NOT be deferred beyond the next iteration boundary. The amended pause checkpoint set applies ONLY when the run's resolved `workflow_mode` is `review-loop`; the original between-task invariant is unchanged for `single` and `dot` modes. `stop --immediate` aborts mid-iteration per §4.3.ON-009 regardless of mode; the run is left in the standard canceled-and-reconciled state.
 
 Tags: mechanism
@@ -714,6 +712,8 @@ The spec-draft pass MUST produce normative definitions for machine-level operato
 Tags: mechanism
 
 #### ON-041a — `harmonik list` normative surface
+
+Tags: mechanism
 
 `harmonik list` MUST enumerate every running or stale harmonik daemon on the machine, subject to the discovery scope and the stale-classification rule of ON-041. The following sub-requirements are normative fulfillments of the ON-041(a) obligation.
 

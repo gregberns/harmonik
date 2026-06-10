@@ -134,7 +134,7 @@ A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model
 
 **Observability.** A tool node reuses the existing node-lifecycle observability surface: `node_dispatch_requested` ([event-model.md §8.1.11]) fires before dispatch, and the command's result flows through the standard `Outcome` surface and run-terminal events. No `tool_command_completed` event is introduced at v1 (per the integration-pass observability decision; per-command lifecycle events are deliberately excluded by [event-model.md §8]'s lifecycle-boundary discipline).
 
-Tags: mechanism, normative
+Tags: mechanism
 
 ### 4.2 Wire protocol
 
@@ -164,6 +164,8 @@ The delivered LaunchSpec MUST conform to the record shape in §6.1. Required fie
 Tags: mechanism
 
 #### HC-006a — Per-phase LaunchSpec field requirements (normative table)
+
+Tags: mechanism
 
 This table is the single authoritative reference for which `LaunchSpec` fields MUST differ across the three `review-loop` phases vs. which fields MAY be shared. Each row names the field (or field group), gives the required value shape per phase, and cites the spec clause that is the primary normative source for that requirement.
 
@@ -795,7 +797,7 @@ A daemon that detects any of these flags in `Config.HandlerArgs` MUST refuse to 
 
 Cross-refs: [claude-hook-bridge.md §4.2 CHB-006] (env), [claude-hook-bridge.md §4.2 CHB-007] (forbidden flags), [claude-hook-bridge.md §4.1 CHB-001..005] (settings.json materialization), §4.10.HC-055b (worktree path-check for `--dangerously-skip-permissions`).
 
-Tags: mechanism, security-relevant
+Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-055b — Worktree path-check for `--dangerously-skip-permissions`
@@ -812,7 +814,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 **HC-055b-1 (settings.json workaround obsolescence):** This rule OBVIATES any prior `dangerouslyAllowedPermissions` field in the worktree-materialized `.claude/settings.json`. The workaround code MUST be removed in the same commit that adds this path-check; the CLI flag replaces it.
 
-Tags: mechanism, security-relevant
+Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### HC-055a — ModelPreference descriptor invariants

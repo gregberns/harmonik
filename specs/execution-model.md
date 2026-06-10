@@ -250,6 +250,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### EM-012b — Model/effort resolution precedence
 
+Tags: mechanism
+
 The daemon's claim path MUST resolve a run's `(model, effort)` pair (the `ModelPreference` sealed into the Run record per §6.1) by walking the following tiers in order and selecting the first tier that produces a non-empty value:
 
 1. **Per-task.** The bead's `model:<alias>` label AND the optional `effort:<level>` label. `effort` is a closed enum: accepted values are `low`, `medium`, `high`, `xhigh`, `max`. If the bead carries more than one `model:<alias>` label or more than one `effort:<level>` label, the daemon MUST treat tier 1 as absent AND MUST emit `bead_label_conflict` per [event-model.md §8.8] before continuing the walk. An unrecognised `effort:<value>` label MUST cause tier 1 to be treated as absent AND MUST emit `bead_label_conflict` with the offending label recorded in the payload. `model` and `effort` are resolved independently within tier 1: if a `model:<alias>` label is present but no `effort:<level>` label is present, only `model` is taken from tier 1; the walk for `effort` continues to tier 2.
@@ -341,6 +343,8 @@ A run reaches terminal state when (a) its current `node_id` is in the workflow's
 Tags: mechanism
 
 #### EM-015d — Review-loop mode lifecycle
+
+Tags: mechanism
 
 A run with `workflow_mode = review-loop` (per §4.3.EM-012) MUST execute a hardcoded two-node cycle: `implementer → reviewer → {APPROVE: close, REQUEST_CHANGES: implementer, BLOCK: close-needs-attention, iteration-cap: close-needs-attention, no-progress: close-needs-attention}`. The graph is fixed by this spec and is NOT obligated to be expressed as a DOT document at MVH; the v1 driver is mode-specific code on the daemon's claim and dispatch path. This sub-graph shape is representable as an instance of the general workflow-graph model defined for `dot` mode (see §7.5 — `dot` mode binding).
 
@@ -817,7 +821,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 The daemon MUST accept `max_concurrent` as a startup-time integer ≥ 1 (default 1) via the `--max-concurrent` flag per [process-lifecycle.md §4.1]. Runtime mutation is out of scope for v0.1; the value MUST be sealed at daemon startup and MUST NOT be re-read for the lifetime of the daemon process. Requirements §4.11.EM-049 and §4.11.EM-050 share the same `max_concurrent` value.
 
-Tags: configuration
+Tags: mechanism
 
 > **EM-NOTE-WAKE (informative, 2026-05-30).** hk-24xn1 (daemon wake on submit/append) is **closed**. `QueueStore.SetQueue` (called on every accepted `queue-submit` and `queue-append`) signals `wakeC` via a buffered-1 channel; the workloop's `workloopSleep`/`workloopIdleWait` helpers select on `wakeC` alongside the poll timer (`internal/daemon/queuestore_hkj808w.go:97-104`). A newly submitted or appended item wakes the workloop at sub-poll-interval latency; no poll-interval wait. Earlier CLAUDE.md guidance ("append while idle sits `pending` until the next workloop tick") was accurate before hk-24xn1; it is now stale. §4.13 eager-refill relies on this sub-poll-interval guarantee.
 >
@@ -833,7 +837,7 @@ When `--no-auto-pull` is NOT set, the daemon retains the historical single-daemo
 
 **Default (amended — hk-8vy18).** Queue-only is now the default for **all** daemon topologies: a bare `harmonik --project` boot with no submitted queue dispatches zero runs without requiring any explicit flag. The `br ready` fallback is opt-in via `--auto-pull`; `--no-auto-pull` is accepted as a no-op back-compat alias (it was the opt-in flag before this amendment; passing it is now redundant but harmless). This supersedes the earlier topology-scoped default (supervised ON, historical OFF).
 
-Tags: configuration
+Tags: mechanism
 
 #### EM-067 — Operator-pause binding and defense-in-depth gate on the `br ready` fallback path
 
@@ -854,6 +858,8 @@ The two success branches in Step 9 of the daemon's single-run dispatch path (the
 before closing the bead. This section fills that gap.
 
 #### EM-052 — Merge run-branch to main on success
+
+Tags: mechanism
 
 On both success branches (§4.3 Step 9 branch 1 — `agent_completed`; §4.3 Step 9
 branch 2 — `exit=0` heuristic), the daemon MUST execute the following ordered
@@ -929,6 +935,8 @@ Refs: hk-ftyvo, hk-j1aq5
 
 #### EM-054 — Working-tree refresh after successful merge-to-main
 
+Tags: mechanism
+
 After step 4 (`git update-ref`) and step 5 (`git push`) of §4.12.EM-052 both
 succeed, the daemon MUST refresh the project working tree to match the new HEAD.
 The required mechanism is:
@@ -994,7 +1002,7 @@ FUNCTION eager_refill_eval():
 
 `OVERFETCH_FACTOR` SHOULD be 2 at v1 (pre-screen rejections don't leave an avoidable gap). Compile-time constant; not operator-tunable at v1.
 Refill MUST fire AFTER all terminal-event processing for the tick (merge, reviewer-launch, `CloseBead`, group-advance evaluation per §4.3 EM-015f) completes for the current run. **Finishing in-flight work takes priority over pulling new work.**
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 #### EM-063 — Pre-screen and provenance guard
 
@@ -1010,7 +1018,7 @@ Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-
 
 **Result.** Ordered list of survivors in `kerf next` priority order. Ordering preserved into `queue_append`.
 
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 ## 4.14 Check-observed-before-submit guard
 
@@ -1028,7 +1036,7 @@ Before submitting or appending any bead X to the execution queue, the orchestrat
 | 4 | `events.jsonl` | `run_started` for X with no subsequent terminal event | yes (in-flight) |
 
 Tier 1 is fastest (in-memory queue scan); MUST be first. Tier 2 uses `origin/main` NOT local `main` (rationale per EM-063). Tiers 3+4 are supplementary; a conforming impl covering 1+2 satisfies the guard at v1 correctness. Tiers 3+4 SHOULD be checked in long-running orchestrator sessions to catch cross-session drift. The read order is normative; MUST NOT reverse (queue.json is the fastest and most current in-memory mirror).
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 #### EM-065 — Submit/append targets the active stream group; no double-queue
 
@@ -1036,7 +1044,7 @@ Orchestrator MUST submit beads to the single active queue per [queue-model.md §
 
 > INFORMATIVE: The daemon's Beads atomic claim (`ClaimBead` per [beads-integration.md §4.3 BI-009]) is the final barrier at the execution layer. EM-064 is an orchestrator-layer pre-flight, complementary not replacement.
 
-Tags: mechanism.
+Tags: mechanism
 
 ## 5. Invariants
 

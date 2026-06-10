@@ -635,6 +635,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### PL-021d — Daemon→pane write mechanism (tmux load-buffer + paste-buffer)
 
+Tags: mechanism
+
 PL-021b §5 forbids the daemon from *reading* pane output via `tmux pipe-pane` or any equivalent channel. This clause addresses the symmetric case — the daemon *writing* content into a pane — which is unspecified in PL-021b and needed for initial-task delivery and inter-phase message injection (see [docs/claude-session-comms-audit-2026-05-13.md §6 B2]).
 
 **Permitted write mechanism.** When the daemon must deliver text to a pane (e.g., initial task instruction, phase-transition directive), it MUST use the `tmux load-buffer` + `tmux paste-buffer` sequence rather than `tmux send-keys` with a bare string argument:

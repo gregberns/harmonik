@@ -699,54 +699,54 @@ Tags: mechanism
 #### EV-037 — External consumers MUST persist a watermark of `last_processed_event_id`
 
 The consumer MUST persist the UUIDv7 of the last fully-processed event to a stable location (e.g. `.harmonik/cognition/watermark.json`). On reconnect or cold-start it MUST supply this as `--since-event-id` to `harmonik subscribe`, triggering server-side replay before live-stream resumes. The consumer MUST NOT advance its watermark BEFORE recording any reaction to the processed event; required ordering: effect → ledger-entry → watermark-advance. Crash between effect and ledger-entry is recovered via effect idempotency (keyed on `event_id`); crash between ledger-entry and watermark-advance causes a re-read that finds the ledger entry and skips. Watermark keys MUST be UUIDv7 `event_id`, NEVER a byte offset (byte offsets are rotation-unsafe and undefined after log compaction).
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 #### EV-037a — Watermark MUST NOT regress
 
 Safe advance rule: `watermark = max(persisted_watermark, incoming_event_id)`. On heartbeat whose `last_event_id > current watermark`, advance even when no actionable event was processed — this is how quiet periods advance the watermark without LLM work. No-regression invariant prevents a context-reset crash from re-processing already-reacted events.
-Tags: mechanism · Axes: same.
+Tags: mechanism
 
 #### EV-038 — Consumers MUST treat `subscription_gap` as a forced re-sync trigger
 
 On `subscription_gap{dropped:N}` (drop-oldest overflow per `internal/daemon/subscribe.go`), the consumer MUST NOT continue as if no events were lost. It MUST: (a) `ScanAfter(watermark)` on `events.jsonl` to replay the gap; (b) re-sense `queue.json` and the git completion log (for any run_id whose terminal event may have been dropped). Only after re-sync may live-stream processing resume. Required because a dropped event might be a Tier-2 judgment event (e.g. `run_failed`, `merge_conflict_escalation`, `iteration_cap_hit`) whose loss would silently leave the consumer in an incorrect state.
-Tags: mechanism · Axes: same.
+Tags: mechanism
 
 #### EV-039 — Heartbeat carries `last_event_id` + `active_runs`; consumers MUST use both
 
 Heartbeat (default 60s) payload: `last_event_id` (UUIDv7 string), `active_runs[]` array of `{bead_id: String, age_seconds: Integer}`. Consumers MUST advance their watermark to `last_event_id` on every heartbeat (per EV-037a). Consumers SHOULD inspect `active_runs[].age_seconds`; if any run exceeds a configured stall threshold, treat as a synthetic Tier-2 wake to investigate. **The `active_runs` array carries `bead_id` + `age_seconds` ONLY; it does NOT carry `run_id`.** Consumers MUST NOT assume `run_id` is present; run-level correlation requires reading `queue.json`.
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 #### EV-040 — Missing heartbeats = daemon liveness failure; reconnect with backoff
 
 No heartbeat for `K × heartbeat_interval` (recommended K=2 → 120s at 60s) → treat as daemon liveness failure. Reconnect with exponential backoff (suggested 5s/10s/30s). If `harmonik subscribe` exits 17 (daemon-not-running sentinel), emit a synthetic `daemon_down` signal to the consumer's reaction layer. Reconnection MUST supply `--since-event-id=<watermark>` (per EV-037); MUST NOT start from live-stream head on reconnect — terminal events emitted during the outage would be missed.
-Tags: mechanism · Axes: same as EV-039.
+Tags: mechanism
 
 #### EV-041 — Git-done-but-no-terminal-event after K heartbeats SHOULD trigger a wake
 
 If after K consecutive heartbeats (suggested K=2) a `bead_id` has disappeared from `active_runs` yet no terminal event has been processed for that run since the watermark, the consumer SHOULD git-check the missing `run_id` (`git log --all --grep "Harmonik-Run-ID: <run_id>"`). A merged commit without a terminal event = daemon crashed mid-terminal-emission; treat the git completion as authoritative (per EV-INV-001) and synthesize a Tier-1 reaction (advance kerf baseline, close stale bead) without waiting for an event that will never arrive. This SHOULD does not override EV-022 (state reconstruction MUST walk git+Beads); it's an observational heuristic.
-Tags: mechanism · Axes: same.
+Tags: mechanism
 
 ### 4.12 `decision_required` dispatch-blocking rule
 
 #### EV-042 — `decision_required` MUST be emitted on the four canonical conditions
 
 Daemon MUST emit on each condition enumerated in §8.12.1. Emission MUST be fsync-backed (class F) and MUST precede any state mutation the condition would otherwise trigger (e.g. workloop MUST NOT attempt a third dispatch for a double-failed bead before `decision_required` is durable). Emission idempotency-keyed on `triggering_event_id`; re-processing after restart MUST NOT produce a second event for an already-pending `ack_token`.
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 #### EV-043 — Unacknowledged `decision_required` blocks dispatch for its subject
 
 While a `decision_required` for a given `subject` is unacknowledged (no matching `decision_acknowledged` in `events.jsonl` AND `.harmonik/decision_acks/<ack_token>` absent or `status=pending`), daemon MUST NOT dispatch a new run for that subject. Blocking check MUST run at daemon startup (EV-043a) AND at every workloop dispatch attempt for the subject. ACK via `harmonik decision ack <token>` or cognition-loop `note()` unblocks atomically; `decision_acknowledged` MUST be emitted+fsynced BEFORE the workloop is permitted to dispatch.
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent.
+Tags: mechanism
 
 #### EV-043a — Startup MUST restore `decision_required` blocking state
 
 On startup, daemon MUST scan `.harmonik/decision_acks/` for records `status=pending` and restore the corresponding dispatch-blocking state BEFORE the workloop begins dispatching. Loss of a `decision_required` event from JSONL (ordinary tail-truncation) is survived via `.harmonik/decision_acks/`, which is fsynced independently as the authoritative ack-state store. The ack-state file is the durability anchor; the JSONL event is the observational record.
-Tags: mechanism · Axes: same.
+Tags: mechanism
 
 #### EV-044 — Unacknowledged `decision_required` is a digest exception
 
 Any cognition-loop or external monitoring consumer producing a periodic digest MUST surface every unacknowledged `decision_required` in that digest, regardless of whether a Tier-2 action has been taken. MUST NOT silently suppress on the grounds that the consumer has already "seen" the event; suppression is only valid after `decision_acknowledged` for the matching `ack_token` is observed.
-Tags: mechanism · Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent.
+Tags: mechanism
 
 ## 5. Invariants
 

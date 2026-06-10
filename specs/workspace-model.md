@@ -273,7 +273,7 @@ Tags: mechanism
 
 Do NOT reuse the WM-008 ID. Do NOT implement the retired operator-policy enum.
 
-Tags: retired
+Tags: mechanism
 
 #### WM-009 — Branch naming is stable across a harmonik version
 
@@ -672,7 +672,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 Cross-refs: [claude-hook-bridge.md §4.12 CHB-029] (authoritative requirement; WM-040b is the workspace-model side of the same contract). Code: `internal/workspace/claudetrust_wm040b.go`.
 
-Tags: mechanism, security-relevant
+Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.8 Failed-run worktree persistence

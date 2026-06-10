@@ -464,6 +464,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CHB-028 — `agent-task.md` as the daemon-to-claude task-delivery file
 
+Tags: mechanism
+
 **Purpose.** The daemon MUST materialize a task artifact at `${workspace_path}/.harmonik/agent-task.md` before launching any `claude-code` session. This file is the normative daemon→claude task-delivery channel under the tmux substrate (per [process-lifecycle.md §4.7 PL-021b]). It is the mechanism by which harmonik hands an implementer or reviewer a concrete unit of work before exec'ing Claude.
 
 **Reserved name.** The filename `agent-task.md` under `${workspace_path}/.harmonik/` is reserved for harmonik's exclusive use. No user-authored file, no operator-side config, and no agent-written output MAY occupy this path. The daemon owns writes to the path. Each launch overwrites the file with content for the caller's `(run_id, phase, iteration)` tuple; review-loop phase transitions (impl → reviewer → impl-resume) reuse the same worktree and each is its own logical launch — overwrite is the expected behavior, not an error. (Amended 2026-05-13: original CHB-028 treated a pre-existing file as `task_file_collision` `ErrStructural`; that semantic was a spec-author oversight that did not accommodate review-loop phase transitions and is hereby retracted. See §10 revision history.)
@@ -527,6 +529,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 ### 4.12 Worktree auto-trust pre-seed
 
 #### CHB-029 — Pre-seed `~/.claude.json` with worktree trust before exec
+
+Tags: mechanism
 
 **Problem.** When Claude Code starts in a directory it has not seen before, it displays an interactive "Trust this directory?" dialog on the terminal. With no human at the keyboard (daemon-spawned tmux pane), this dialog blocks indefinitely and HC-056 fires.
 

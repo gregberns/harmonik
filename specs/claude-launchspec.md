@@ -111,6 +111,8 @@ Tags: mechanism
 
 #### CLS-001 — Unconditional required fields
 
+Tags: mechanism
+
 Every `claudeRunCtx` MUST supply:
 
 - `runID` — non-zero `core.RunID` (UUIDv7).
@@ -123,6 +125,8 @@ Every `claudeRunCtx` MUST supply:
 Violation of any required-field rule returns `ErrStructural` from `buildClaudeLaunchSpec`.
 
 #### CLS-002 — Phase field and workflow mode
+
+Tags: mechanism
 
 `phase` encodes the review-loop position for this launch:
 
@@ -137,6 +141,8 @@ Any other `phase` value is a structural error.
 
 #### CLS-002a — Remaining unconditional fields
 
+Tags: mechanism
+
 The following `claudeRunCtx` fields are always present but have relaxed constraints:
 
 | Field | Semantics | Empty/zero behavior |
@@ -149,6 +155,8 @@ The following `claudeRunCtx` fields are always present but have relaxed constrai
 | `extraContext` | Optional operator-supplied free-form string injected into `agent-task.md` as a `## Extra Context` section (hk-boiwe). | Empty means no section is rendered. |
 
 #### CLS-003 — Phase-conditional fields
+
+Tags: mechanism
 
 The following `claudeRunCtx` fields are only valid for specific phases; supplying them for the wrong phase is a no-op (the assembly function ignores them) but SHOULD NOT be done by callers:
 
@@ -165,6 +173,8 @@ Cross-ref: [handler-contract.md §4.2 HC-006a] (per-phase LaunchSpec field table
 
 #### CLS-004 — ModelPreference validation
 
+Tags: mechanism
+
 When `claudeRunCtx.model` is non-empty it MUST match `^[A-Za-z0-9._:/-]+$` and be ≤ 128 characters. When `claudeRunCtx.effort` is non-empty it MUST be one of `{low, medium, high, xhigh, max}`. Violation of either rule returns `*ModelPreferenceError` (a typed `ErrStructural`) before any file-system or IPC operations are attempted.
 
 Cross-ref: [handler-contract.md §4.10 HC-055a] (invariants on the `ModelPreference` descriptor).
@@ -172,6 +182,8 @@ Cross-ref: [handler-contract.md §4.10 HC-055a] (invariants on the `ModelPrefere
 ### 4.2 Assembly sequence and ordering invariants
 
 #### CLS-010 — The assembly sequence is normative (9 steps, steps 3a/3b are sub-steps of step 3)
+
+Tags: mechanism
 
 `buildClaudeLaunchSpec` MUST execute the following steps in order. No step may be skipped; no step may reorder relative to its predecessor unless explicitly noted. The numbering matches the step comments in `internal/daemon/claudelaunchspec.go`.
 
@@ -199,11 +211,15 @@ Cross-ref: [handler-contract.md §4.10 HC-055a] (invariants on the `ModelPrefere
 
 #### CLS-011 — On-error invariant
 
+Tags: mechanism
+
 If any step returns a non-nil error, `buildClaudeLaunchSpec` MUST return the zero `handler.LaunchSpec`, zero `claudeRunArtifacts`, and the wrapped error. The caller MUST NOT call `handler.Launch` when `buildClaudeLaunchSpec` returns a non-nil error.
 
 ### 4.3 Review-loop phase lifecycle state machine
 
 #### CLS-020 — Phase lifecycle state machine
+
+Tags: mechanism
 
 This section owns the normative lifecycle for the review-loop `phase` field. The reviewer-verdict field is the `verdict` string from the agent-reviewer JSON schema v1 (per [workspace-model.md §4.7 WM-027a]).
 
@@ -247,6 +263,8 @@ This section owns the normative lifecycle for the review-loop `phase` field. The
 
 #### CLS-021 — Phase transition rules (normative table)
 
+Tags: mechanism
+
 | Current phase | Trigger | Next phase | Notes |
 |---|---|---|---|
 | `—` (pre-launch) | dispatch, `workflow_mode = review-loop` | `implementer-initial` | `iteration = 1`; `priorClaudeSessID = nil` |
@@ -262,9 +280,13 @@ Cross-ref: [handler-contract.md §4.2 HC-006a] (per-phase LaunchSpec field table
 
 #### CLS-022 — claudeSessionID durability across implementer-resume
 
+Tags: mechanism
+
 For `phase = implementer-resume`, the `priorClaudeSessID` value passed to `buildClaudeLaunchSpec` MUST be the exact `claude_session_id` minted by the corresponding `implementer-initial` launch. The daemon's durability obligation for this value is defined in [claude-hook-bridge.md §4.6 CHB-023]. The assembly function returns `ErrStructural` if `phase = implementer-resume` and `priorClaudeSessID` is nil or empty.
 
 #### CLS-023 — Reviewer session independence
+
+Tags: mechanism
 
 Each reviewer phase MUST receive a freshly minted Claude session ID. The assembly function MUST pass `nil` for `priorClaudeSessID` on reviewer launches. The `mintResult.ResumeMode` field MUST be `false` for reviewer launches; violation is caught by the MintClaudeSessionID implementation per CHB-009.
 
@@ -272,15 +294,21 @@ Each reviewer phase MUST receive a freshly minted Claude session ID. The assembl
 
 #### CLS-030 — Pre-exec message emission MUST precede handler.Launch
 
+Tags: mechanism
+
 The `claudeRunArtifacts.preExecMsgs` slice returned by `buildClaudeLaunchSpec` contains 4 ordered NDJSON messages (per CHB-018). The caller MUST emit all 4 messages on the event bus **before** calling `handler.Launch`. Emitting after launch creates a race between the relay's first hook emission and the handler's first message read, violating HC-INV-004.
 
 #### CLS-031 — claudeSessionID storage for implementer-resume
+
+Tags: mechanism
 
 The caller MUST persist `claudeRunArtifacts.claudeSessionID` into the Run record after a successful `implementer-initial` launch so it can be passed as `priorClaudeSessID` on the next `implementer-resume` launch. Durability of this value is the daemon's responsibility (CHB-023).
 
 ### 4.5 Worktree path-check
 
 #### CLS-040 — isHarmonikManagedWorktree positive-allowlist match
+
+Tags: mechanism
 
 `--dangerously-skip-permissions` is emitted in argv if and only if `workspacePath` canonicalizes (via `os.EvalSymlinks`) to a path whose prefix is `worktreeRootPath + filepath.Separator`. Both paths are canonicalized before comparison. If either `os.EvalSymlinks` call fails, the function returns `false` and the flag is silently omitted; no error is returned. An empty `worktreeRootPath` always returns `false`.
 
@@ -328,6 +356,8 @@ Cross-ref: [claude-hook-bridge.md §8] for the sub-reason strings owned by CHB s
 ## 7. Test surface
 
 #### CLS-T001 — Per-phase assembly invariants (gap filler for HC-006a sensor)
+
+Tags: mechanism
 
 A dedicated test `TestCLS_PerPhaseLaunchSpecInvariants` in `internal/daemon/` SHOULD exercise all three review-loop phases through `buildClaudeLaunchSpec` and assert:
 - `implementer-initial`: `--session-id` in argv, `priorClaudeSessID = nil` accepted, `phase` field in LaunchSpec = `"implementer-initial"`.

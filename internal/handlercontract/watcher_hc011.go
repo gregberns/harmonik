@@ -169,6 +169,20 @@ type SpawnWatcherConfig struct {
 	// Optional: when nil the watcher emits events to the bus but does NOT drive
 	// FSM transitions (backward-compatible with callers that predate HC-064).
 	Machine *hclifecycle.Machine
+
+	// NodeType is the workflow-graph node type for the node this session is
+	// executing, per specs/handler-contract.md §4.2a HC-058 / HC-061.
+	//
+	// When set to core.NodeTypeSubWorkflow the watcher MUST reject any
+	// outcome_emitted message from the handler subprocess as a structural error
+	// (ErrStructural, sub-reason SubworkflowBoundaryEmitSubReason) because
+	// sub-workflow nodes are graph-level expansion constructs that MUST NOT
+	// dispatch handler subprocesses and MUST NOT emit an Outcome at the
+	// boundary.
+	//
+	// Optional: the zero value (empty string) disables the HC-061 guard and
+	// is the default for sessions whose node type is not a sub-workflow.
+	NodeType core.NodeType
 }
 
 // Watcher is the daemon-side goroutine that owns (a) the NDJSON read-loop on
@@ -418,6 +432,19 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		// to be deployed before all consumers are updated.
 		if typeOnly.Type == "" || !isKnownProgressMsgType(typeOnly.Type) {
 			continue
+		}
+
+		// HC-061: sub-workflow boundary handlers MUST NOT emit an Outcome.
+		// If cfg.NodeType == NodeTypeSubWorkflow and the handler emits
+		// outcome_emitted, the watcher MUST reject it as ErrStructural with
+		// sub-reason SubworkflowBoundaryEmitSubReason.
+		// Cite: specs/handler-contract.md §4.2a HC-061.
+		if typeOnly.Type == ProgressMsgTypeOutcomeEmitted && cfg.NodeType == core.NodeTypeSubWorkflow {
+			termErr := fmt.Errorf("handlercontract: handler emitted Outcome on sub-workflow boundary node (HC-061 violation): %w", ErrStructural)
+			w.setTermErr(termErr)
+			et, pl := buildWatcherFailedPayload(w.sessionID, SubworkflowBoundaryEmitSubReason, termErr)
+			w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
+			return
 		}
 
 		// Emit the progress-stream message to the bus.

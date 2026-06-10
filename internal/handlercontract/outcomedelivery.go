@@ -97,6 +97,20 @@ const (
 	OutcomeDelivered OutcomeDeliveryState = true
 )
 
+// SubworkflowBoundaryEmitSubReason is the sub_reason field value the watcher
+// MUST use in the agent_failed payload when a handler emits outcome_emitted on
+// a node whose type is NodeTypeSubWorkflow.
+//
+// Sub-workflow nodes are graph-level expansion constructs that MUST NOT be
+// dispatched to a handler subprocess; the daemon calls SubWorkflowRunner.Run
+// instead of Handler.Launch for such nodes (handler-contract.md §4.2a HC-058).
+// If outcome_emitted is received while cfg.NodeType == NodeTypeSubWorkflow, the
+// watcher MUST reject it as a structural error.
+//
+// Error class: ErrStructural.
+// Cite: specs/handler-contract.md §4.2a HC-061.
+const SubworkflowBoundaryEmitSubReason = "subworkflow_boundary_emit"
+
 // CrashWithoutOutcomeSubReason is the sub_reason field value the watcher MUST
 // include in the agent_failed payload when a subprocess exits (any exit code)
 // without having delivered outcome_emitted per HC-024.

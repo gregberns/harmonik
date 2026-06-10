@@ -61,16 +61,33 @@ A mistimed `/clear` during a deploy / crew-spawn / merge would strand state. Gua
   NO auto-clear, to dogfood the signal on the captain for a few cycles. Only after
   that, and after the crew abort-case + idle-gate tests PASS, arm Phase-2 full-cycle.
 
-## Enablement steps (do AFTER the crew keeper test passes)
+## Enablement steps
+
+**Crew keeper test: PASSED 2026-06-10** (abort / happy / idle-gate all green; the
+"never `/clear` without a confirmed handoff nonce" invariant held three ways). The
+mechanism is validated. Two findings gate the captain enablement:
+
+1. **`keeper enable --yes-destructive` rewrites the GLOBAL `~/.claude/settings.json`
+   statusLine** — a machine-wide change that side-effects EVERY claude session
+   (the captain, the churning gurney, future crews). This is why the test forged
+   markers directly instead. **Implication:** enabling the captain keeper is not a
+   private, captain-only act — do it deliberately (ideally when no crew is mid-task,
+   and with operator awareness), not unattended mid-churn. (Productization gap filed.)
+2. **The abort path can only be tested by making the agent REFUSE to write the
+   nonce** — a capable claude will defeat file-locks to produce the handoff (it owns
+   its files). Not a keeper bug; the keeper correctly confirms a genuinely-written
+   nonce. Means: the captain's own self-handoff will essentially always succeed.
 
 ```
-harmonik keeper enable captain --tmux captain --yes-destructive   # creates .managed, wires hooks
+harmonik keeper enable captain --tmux captain --yes-destructive   # ⚠ rewrites GLOBAL statusline
 harmonik keeper doctor captain                                     # expect all green
 harmonik keeper --agent captain --tmux captain                    # start watcher (warn-only Phase-1)
 ```
 
-Then verify a forged-gauge dry run aborts safely (no /clear without nonce) on the
-captain exactly as the crew test did, before trusting Phase-2.
+**Status: DEFERRED to operator-supervised.** Arming an auto-`/clear` on the captain
+itself, unattended, with a global-config side-effect, is the one step worth doing
+with the operator present (a misfire strands the orchestrator with no one to
+recover it). Until then the backstop below keeps the captain restartable.
 
 ## Open question for the operator
 

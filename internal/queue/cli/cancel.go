@@ -34,6 +34,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -114,8 +115,19 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		var loadErr error
 		existingQueue, loadErr = queue.Load(ctx, projectDir, queueName)
 		if loadErr != nil {
-			fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue file: %v\n", loadErr)
-			return 1
+			if !errors.Is(loadErr, queue.ErrCorrupt) {
+				fmt.Fprintf(errOut, "harmonik queue cancel: cannot read queue file: %v\n", loadErr)
+				return 1
+			}
+			// Corrupt/zero-value stub (e.g. schema_version:0 left by a half-completed
+			// session): archive by name even though we can't parse a queue_id (hk-9ztth).
+			archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queueName, time.Now())
+			if archiveErr != nil {
+				fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive corrupt queue file: %v\n", archiveErr)
+				return 1
+			}
+			fmt.Fprintf(out, "corrupt queue stub for %q archived to %s\n", queueName, archivePath)
+			return 0
 		}
 		if existingQueue == nil {
 			fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue file absent)")

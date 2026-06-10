@@ -319,10 +319,14 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 	// the name (hk-fkpb7); the fresh submit overwrites it with a new queue_id.
 	// paused-by-drain still blocks resubmit: it is a transient operator hold with
 	// its own active↔drain resume path, not a terminal failure to recover from.
+	// A zero-value/empty status ("") means the file is a corrupt stub left by a
+	// half-completed prior session — treat it as recoverable so submit can
+	// overwrite it (hk-9ztth).
 	if !req.IsAppend {
 		if req.ActiveQueue != nil &&
 			req.ActiveQueue.Status != QueueStatusCompleted &&
-			req.ActiveQueue.Status != QueueStatusPausedByFailure {
+			req.ActiveQueue.Status != QueueStatusPausedByFailure &&
+			req.ActiveQueue.Status != "" {
 			return []ValidationError{
 				{
 					Reason: ReasonQueueAlreadyActive,

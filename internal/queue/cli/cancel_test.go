@@ -301,6 +301,43 @@ func TestRunQueueCancel_QueueIDFlag_ArchivesByUUID(t *testing.T) {
 	}
 }
 
+// TestRunQueueCancel_CorruptStub_ArchivesByName verifies that a corrupt/zero-value
+// stub file (e.g. schema_version:0 left by a half-completed prior session) is
+// archived by queue name even when the file cannot be parsed (hk-9ztth).
+func TestRunQueueCancel_CorruptStub_ArchivesByName(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Zero-value stub: schema_version is 0 (not 1) so UnmarshalQueue returns
+	// ErrSchemaVersion and Load returns ErrCorrupt.
+	stubContent := `{"queue_id":"","status":"","groups":null,"workers":1}`
+	stubPath := filepath.Join(queuesDir, "chani-q.json")
+	if err := os.WriteFile(stubPath, []byte(stubContent), 0o644); err != nil { //nolint:gosec // G306: test-only
+		t.Fatalf("WriteFile stub: %v", err)
+	}
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "chani-q"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel corrupt stub: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	// Stub file must be gone (archived).
+	if _, err := os.Stat(stubPath); !os.IsNotExist(err) {
+		t.Errorf("RunQueueCancel corrupt stub: stub file still exists at %q", stubPath)
+	}
+	if !strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel corrupt stub: stdout %q does not mention 'archived'", out.String())
+	}
+}
+
 // TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero verifies that --queue-id
 // with a UUID that doesn't match any file exits 0 (nothing to cancel).
 func TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero(t *testing.T) {

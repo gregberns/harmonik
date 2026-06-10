@@ -131,6 +131,26 @@ func TestValidateQM027SingleActiveQueue(t *testing.T) {
 			t.Errorf("reason: got %q, want %q", errs[0].Reason, queue.ReasonQueueAlreadyActive)
 		}
 	})
+
+	// hk-9ztth: a zero-value stub (status="") must be treated as recoverable —
+	// submit must overwrite it, not return queue_already_active.
+	t.Run("pass_zero_value_stub", func(t *testing.T) {
+		t.Parallel()
+		req := validFixtureSingleGroup(idA)
+		req.ActiveQueue = &queue.Queue{
+			// schema_version and queue_id intentionally zero/empty — simulates a
+			// half-written stub left by a crashed prior session.
+			Status: "", // zero-value
+		}
+		ledger := validFixtureOpenLedger(idA)
+		errs, _, err := queue.Validate(context.Background(), req, ledger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(errs) != 0 {
+			t.Fatalf("expected pass for zero-value stub, got errors: %v", errs)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

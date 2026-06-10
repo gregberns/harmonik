@@ -926,6 +926,66 @@ func TestRunQueuePause_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRunQueuePause_QueueFlag verifies that --queue <name> is accepted as an
+// alternative to the positional argument (F4 regression guard: --queue was
+// previously leaked as the queue_name itself instead of its argument value).
+func TestRunQueuePause_QueueFlag(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueuePause(context.Background(), []string{"--project", projectDir, "--queue", "investigate"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueuePause --queue flag: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("RunQueuePause --queue flag: queue = %q, want %q (F4 regression)", capturedQueue, "investigate")
+	}
+}
+
+// TestRunQueuePause_QueueFlagEquals verifies the --queue=<name> equals form.
+func TestRunQueuePause_QueueFlagEquals(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueuePause(context.Background(), []string{"--project", projectDir, "--queue=flywheel"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueuePause --queue= form: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedQueue != "flywheel" {
+		t.Errorf("RunQueuePause --queue= form: queue = %q, want %q", capturedQueue, "flywheel")
+	}
+}
+
 // TestRunQueuePause_MissingName verifies exit 2 when no queue name is given.
 func TestRunQueuePause_MissingName(t *testing.T) {
 	t.Parallel()
@@ -998,6 +1058,36 @@ func TestRunQueueResume_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "resumed") {
 		t.Errorf("RunQueueResume: stdout %q does not contain 'resumed'", out.String())
+	}
+}
+
+// TestRunQueueResume_QueueFlag verifies that --queue <name> is accepted as an
+// alternative to the positional argument (F4 regression guard).
+func TestRunQueueResume_QueueFlag(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueResume(context.Background(), []string{"--project", projectDir, "--queue", "investigate"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueResume --queue flag: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("RunQueueResume --queue flag: queue = %q, want %q (F4 regression)", capturedQueue, "investigate")
 	}
 }
 

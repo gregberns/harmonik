@@ -115,6 +115,55 @@ func TmuxSessionName(hash core.ProjectHash, sessionName string) string {
 	return TmuxSessionPrefix(hash) + sessionName
 }
 
+// RelayGrandchildSubcmd is the argv[1] token that identifies a hook-bridge relay
+// subprocess (e.g. `harmonik hook-relay Stop`). Relay grandchildren are spawned by
+// agent subprocesses (Claude Code) invoking their configured hooks — they are NOT
+// direct daemon children and MUST NOT be targeted by the orphan-sweep (PL-017a(b))
+// or registered with the concurrency ceiling (PL-017a(a)).
+//
+// Spec ref: process-lifecycle.md §4.5 PL-017a — "relay-grandchild subprocesses are
+// grandchildren of the daemon, not direct children."
+const RelayGrandchildSubcmd = "hook-relay"
+
+// IsRelayGrandchild reports whether the process described by args is a hook-bridge
+// relay grandchild per PL-017a: argv[1] must equal "hook-relay".
+//
+// args is the full argv slice for the process (e.g. ["harmonik", "hook-relay", "Stop"]).
+// Returns false for nil or short slices so callers can treat any cmdline-read failure
+// as "not a relay grandchild, include in sweep."
+//
+// Spec ref: process-lifecycle.md §4.5 PL-017a(b) — "The orphan-sweep §PL-006 MUST NOT
+// target relay-grandchild subprocesses."
+func IsRelayGrandchild(args []string) bool {
+	return len(args) >= 2 && args[1] == RelayGrandchildSubcmd
+}
+
+// ReadProcessCmdlineArgs reads /proc/<pid>/cmdline and returns the argv tokens as
+// a slice. On platforms where /proc is absent (darwin) this returns (nil, error)
+// matching the behaviour of ReadProcessEnviron so callers can treat both unavailability
+// cases uniformly.
+//
+// The /proc/<pid>/cmdline file contains argv tokens separated by NUL bytes.
+// Empty tokens (adjacent NULs or trailing NUL) are filtered out.
+//
+// Spec ref: process-lifecycle.md §4.5 PL-017a(b) — relay grandchild exclusion from
+// orphan-sweep identifies hook-relay processes via their cmdline args.
+func ReadProcessCmdlineArgs(pid int) ([]string, error) {
+	path := fmt.Sprintf("/proc/%d/cmdline", pid)
+	//nolint:gosec // G304: path is /proc/<pid>/cmdline where pid is an integer; not user-controlled string
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var args []string
+	for _, tok := range splitNul(data) {
+		if tok != "" {
+			args = append(args, tok)
+		}
+	}
+	return args, nil
+}
+
 // MatchesProvenanceMarker reports whether the given process environment (as a
 // slice of "KEY=VALUE" strings) carries a valid project_hash provenance marker
 // matching wantHash.

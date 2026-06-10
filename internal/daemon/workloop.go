@@ -188,7 +188,13 @@ type workLoopDeps struct {
 	// the controller atomically each tick instead of this static field, enabling
 	// runtime adjustment via queue-set-concurrency RPC (hk-ohiaf).
 	//
+	// PL-017a(a): hook-bridge relay grandchildren (harmonik hook-relay ...) are
+	// spawned by agent subprocesses, never by the dispatch loop, so they are
+	// naturally excluded from this ceiling without any explicit gate.
+	//
 	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent configuration).
+	// Spec ref: specs/process-lifecycle.md §4.5 PL-017a(a) — relay grandchildren
+	// not subject to this ceiling.
 	// Bead ref: hk-e61c3.2.
 	maxConcurrent int
 

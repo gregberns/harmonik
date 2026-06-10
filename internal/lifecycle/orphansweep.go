@@ -258,9 +258,19 @@ func (OSHandlerProcessLister) ListOrphanHandlerPIDs(ctx context.Context, project
 			// /proc not available (darwin) or permission denied: skip.
 			continue
 		}
-		if MatchesProvenanceMarker(env, projectHash) {
-			matched = append(matched, pid)
+		if !MatchesProvenanceMarker(env, projectHash) {
+			continue
 		}
+		// PL-017a(b): relay grandchildren (harmonik hook-relay ...) are spawned by
+		// agent subprocesses and MUST NOT be targeted by the orphan-sweep.  They
+		// exit on their own when the agent completes its hook invocation; survivors
+		// (parent agent died mid-invocation) are reaped by OS init-reparenting at
+		// daemon death.  Identify them by argv[1] == "hook-relay" via /proc/cmdline.
+		args, cmdErr := ReadProcessCmdlineArgs(pid)
+		if cmdErr == nil && IsRelayGrandchild(args) {
+			continue
+		}
+		matched = append(matched, pid)
 	}
 	return matched, nil
 }

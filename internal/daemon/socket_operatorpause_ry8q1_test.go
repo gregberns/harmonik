@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"path/filepath"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -29,8 +28,12 @@ import (
 func socketOpFixtureStartListenerFull(t *testing.T, oh daemon.OperatorControlHandler) (sockPath string, cancel context.CancelFunc) {
 	t.Helper()
 
-	dir := t.TempDir()
-	sockPath = filepath.Join(dir, "daemon.sock")
+	// macOS enforces a 104-char limit on Unix-domain socket paths
+	// (sockaddr_un.sun_path). t.TempDir() yields a ~123-char
+	// /var/folders/... path that silently overflows the limit, so
+	// RunSocketListenerFull never binds and socketFixtureWaitReady times
+	// out at 5s. Use the shared short-path helper instead (Refs: hk-p258q).
+	sockPath = socketFixtureTempSockPath(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
@@ -168,4 +171,3 @@ func TestSocketRouting_OperatorResume_NilHandler_ReturnsError(t *testing.T) {
 		t.Fatal("expected Ok=false with nil OperatorControlHandler; got Ok=true")
 	}
 }
-

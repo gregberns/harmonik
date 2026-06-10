@@ -741,6 +741,18 @@ func dispatchDotAgenticNode(
 	// leaked slot, Launch returns an error below and launch_initiated never fires.
 	nodeLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, artifacts.preExecMsgs)
 
+	// hk-c73fs: emit reviewer_launched (§8.1a.2) for reviewer nodes before
+	// launch, matching the builtin review-loop path (reviewloop.go:922-923).
+	// After the 06-08 DOT-default deploy, all reviews ran via this function
+	// but reviewer_launched was never emitted, making verdict latency
+	// unmeasurable. Mint the session ID here so it can be reused in the
+	// post-run emitDotReviewerVerdict call below.
+	var reviewerSessionID core.SessionID
+	if isReviewer {
+		reviewerSessionID = handlercontract.NewSessionID()
+		emitReviewerLaunched(ctx, deps.bus, runID, reviewerSessionID, *claudeSessionID, iterationCount)
+	}
+
 	nodeLaunchedAt := time.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
@@ -939,10 +951,10 @@ func dispatchDotAgenticNode(
 			return core.Outcome{}, fmt.Errorf("%w (node %q)", errDotReviewerNoVerdict, node.ID)
 		}
 		// Emit reviewer_verdict matching the builtin review-loop path (reviewloop.go:932).
-		// WorkflowMode is DOT; session_id is a fresh handler-minted ID for this
-		// reviewer invocation; claude_session_id is the reviewer node's Claude session.
-		revSessionID := handlercontract.NewSessionID()
-		emitDotReviewerVerdict(ctx, deps.bus, runID, revSessionID, artifacts.claudeSessionID, iterationCount, verdict)
+		// WorkflowMode is DOT; session_id reuses the reviewerSessionID minted before
+		// launch (hk-c73fs: reviewer_launched uses the same ID so the two events
+		// are correlated); claude_session_id is the reviewer node's Claude session.
+		emitDotReviewerVerdict(ctx, deps.bus, runID, reviewerSessionID, artifacts.claudeSessionID, iterationCount, verdict)
 		label := verdict.Verdict
 		return core.Outcome{
 			Status:         core.OutcomeStatusSuccess,

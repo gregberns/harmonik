@@ -148,7 +148,8 @@ func TestHandlerPause_QueuePath_SkipOnPaused(t *testing.T) {
 		HandlerArgs:            []string{"-c", "exit 0"},
 		IntentLogDir:           filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:             qs,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:       NewEmptySealedAdapterRegistryForTest(t),
+		WorktreeFactory:        workloopFixturePreCommitWorktreeFactory,
 		HandlerPauseController: ctrl,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -246,7 +247,7 @@ func TestHandlerPause_HeldEventDedup(t *testing.T) {
 		HandlerArgs:            []string{"-c", "exit 0"},
 		IntentLogDir:           filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:             qs,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:       NewSealedAdapterRegistryForTest(t),
 		HandlerPauseController: ctrl,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
@@ -324,7 +325,8 @@ func TestHandlerPause_BrReadyPath_SkipOnPaused(t *testing.T) {
 		HandlerArgs:            []string{"-c", "exit 0"},
 		IntentLogDir:           filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		HandlerPauseController: ctrl,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:       NewEmptySealedAdapterRegistryForTest(t),
+		WorktreeFactory:        workloopFixturePreCommitWorktreeFactory,
 		// QueueStore: nil → br-ready path
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

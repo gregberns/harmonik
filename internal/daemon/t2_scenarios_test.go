@@ -51,6 +51,20 @@ func t2FixtureProjectDir(t *testing.T) string {
 	}
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+
+	// Create a bare clone as "origin" so that mergeRunBranchToMain's
+	// `git push origin main` step succeeds for tests whose handler produces a
+	// worktree commit (e.g. via workloopFixturePreCommitWorktreeFactory). Without
+	// an origin remote the merge step fails and the bead is reopened instead of
+	// closed — mirrors workloopFixtureGitRepo.
+	bareDir := dir + "-bare"
+	//nolint:gosec // G204: git args are test-internal literals; not user input
+	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--bare", dir, bareDir)
+	if cloneOut, cloneErr := cloneCmd.CombinedOutput(); cloneErr != nil {
+		t.Fatalf("t2Fixture: git clone --bare: %v\n%s", cloneErr, cloneOut)
+	}
+	run("remote", "add", "origin", bareDir)
+
 	for _, sub := range []string{".harmonik/events", ".harmonik/beads-intents"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatalf("t2Fixture: mkdir %s: %v", sub, err)
@@ -99,13 +113,13 @@ func TestT2_NonZeroExit(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinFail,
-		HandlerArgs:   nil,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinFail,
+		HandlerArgs:      nil,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -184,13 +198,13 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinHang,
-		HandlerArgs:   nil,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinHang,
+		HandlerArgs:      nil,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -295,13 +309,13 @@ exit 0
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{scriptPath},
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{scriptPath},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -373,13 +387,14 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{scriptPath},
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{scriptPath},
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -451,13 +466,13 @@ func TestT2_HangTwinCtxCancel(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinHang,
-		HandlerArgs:   nil,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinHang,
+		HandlerArgs:      nil,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	// Short context timeout — 3s gives the hang twin time to be launched,
@@ -512,12 +527,12 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinHang,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinHang,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	// Launch and wait until run_started is emitted (hang twin is alive).
@@ -598,12 +613,12 @@ func TestT2_RunFailedEventContainsExitCode(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinFail,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinFail,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -675,12 +690,12 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: twinFail,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    twinFail,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

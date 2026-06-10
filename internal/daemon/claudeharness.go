@@ -5,7 +5,9 @@
 // for C1).  T3 (hk-hj9ld) will route the registry + launchSpecBuilder lookup
 // through this struct; T12 (hk-xhawy) will route the full cascade through it.
 //
-// Spec: specs/harness-contract.md §2.  See also: handlercontract/harness.go.
+// Spec: specs/harness-contract.md §2; specs/handler-contract.md §4.10 HC-045a
+// (claude-code agent type governed by claude-hook-bridge spec).
+// See also: handlercontract/harness.go.
 package daemon
 
 import (

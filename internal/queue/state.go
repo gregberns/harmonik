@@ -273,7 +273,11 @@ func waveEligible(g *Group) []*Item {
 //   - pending, within attempt limit → return it (eligible for dispatch).
 //   - deferred-for-ledger-dep → skip; its own blocker is unresolved, but
 //     dep-free items later in the stream are not affected (hk-cb5ow).
-//   - dispatched / completed / failed → skip.
+//   - dispatched / completed / failed → skip; EXCEPTION: if a terminal item's
+//     bead_id has a later pending entry in the same group (re-appended after
+//     failure), that later pending entry is returned at the terminal item's
+//     stream position (hk-wifef). This preserves original stream ordering: the
+//     re-appended bead is dispatched before items that were queued after it.
 //
 // This out-of-order skipping of deferred items means a tail item whose own
 // ledger deps are clear can be dispatched before a deferred predecessor
@@ -281,8 +285,21 @@ func waveEligible(g *Group) []*Item {
 // entered dispatched") applies only to non-deferred peers.
 //
 // Spec ref: specs/queue-model.md §5.6 QM-035.
-// Bead ref: hk-9a27q, hk-cb5ow.
+// Bead ref: hk-9a27q, hk-cb5ow, hk-wifef.
 func streamEligible(g *Group) []*Item {
+	// Pre-scan: record the last index at which each bead_id appears as an
+	// eligible-pending entry (Attempts < MaxItemAttempts). This map is used
+	// below to implement re-append ordering: when a terminal entry for beadX
+	// exists at position p and a later pending entry for beadX exists at
+	// position q > p, the pending entry is returned at position p (preserving
+	// the bead's original stream order). Bead ref: hk-wifef.
+	lastEligiblePending := make(map[core.BeadID]int)
+	for i := range g.Items {
+		if g.Items[i].Status == ItemStatusPending && g.Items[i].Attempts < MaxItemAttempts {
+			lastEligiblePending[g.Items[i].BeadID] = i
+		}
+	}
+
 	for i := range g.Items {
 		switch g.Items[i].Status {
 		case ItemStatusPending:
@@ -297,6 +314,12 @@ func streamEligible(g *Group) []*Item {
 			continue
 		case ItemStatusDispatched, ItemStatusCompleted, ItemStatusFailed:
 			// In-flight or terminal: skip and scan for the next pending item.
+			// Exception (hk-wifef): if this bead_id was re-appended after
+			// reaching terminal status, a later pending entry exists — return
+			// it now so the bead dispatches at its original stream position.
+			if idx, ok := lastEligiblePending[g.Items[i].BeadID]; ok && idx > i {
+				return []*Item{&g.Items[idx]}
+			}
 			continue
 		}
 	}

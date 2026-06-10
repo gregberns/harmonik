@@ -1,0 +1,89 @@
+# .goreleaser.yaml — goreleaser v2 build matrix for harmonik and twins.
+#
+# Builds 4 binaries × 4 platforms = 16 artifacts.
+# Binaries: harmonik, harmonik-twin-claude, harmonik-twin-codex, harmonik-twin-generic.
+# Platforms: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64.
+#
+# Spec: specs/release-pipeline.md §3 (CREATE stage).
+# Refs: hk-t0yvy
+version: 2
+
+project_name: harmonik
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: harmonik
+    main: ./cmd/harmonik
+    binary: harmonik
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.commitHash={{ .Commit }}
+      - -X main.version={{ .Version }}
+
+  - id: harmonik-twin-claude
+    main: ./cmd/harmonik-twin-claude
+    binary: harmonik-twin-claude
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.commitHash={{ .Commit }}
+
+  - id: harmonik-twin-codex
+    main: ./cmd/harmonik-twin-codex
+    binary: harmonik-twin-codex
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.commitHash={{ .Commit }}
+
+  - id: harmonik-twin-generic
+    main: ./cmd/harmonik-twin-generic
+    binary: harmonik-twin-generic
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.commitHash={{ .Commit }}
+
+archives:
+  - formats: [binary]
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  prerelease: auto
+  draft: false

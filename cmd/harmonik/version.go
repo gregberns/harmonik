@@ -27,3 +27,13 @@ package main
 //
 // Cite: specs/event-model.md §8.7.1; bead hk-mz0x4.
 var commitHash = "unknown" //nolint:gochecknoglobals // build-time injection target
+
+// version is stamped at build time via:
+//
+//	-ldflags "-X main.version=$(git describe --tags --exact-match)"
+//
+// It defaults to "dev" so that binaries built without the stamp emit a
+// recognisable sentinel rather than an empty string.
+//
+// Cite: specs/release-pipeline.md §2.3; bead hk-t0yvy.
+var version = "dev" //nolint:gochecknoglobals // build-time injection target

@@ -299,6 +299,14 @@ func runReviewLoop(
 		// never blocks even if no one reads the channel.
 		sessionIDFromCapabilities := make(chan string, 1)
 
+		// contextCommitSHACh carries the SHA of the CHB-023 checkpoint commit (or the
+		// current HEAD when the persist was skipped due to idempotency). The no-commit
+		// guard uses this to distinguish "only the context-persist commit exists" from
+		// "the implementer made real code commits". Without it the guard compares against
+		// parentSHA and misses the CHB-023 commit, falsely treating the run as having
+		// made progress when the implementer exited without committing any code.
+		contextCommitSHACh := make(chan string, 1)
+
 		// Capture implSess so the ACK goroutine below can use it.
 		// The variable is set after Launch; the goroutine uses it only after the
 		// interceptor fires (which happens after Launch returns and the Watcher
@@ -311,6 +319,7 @@ func runReviewLoop(
 			capturedRunID := runID
 			capturedBus := deps.bus
 			capturedCtx := ctx
+			capturedContextCommitSHACh := contextCommitSHACh
 
 			implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
 				return newSessionIDInterceptor(r, func(id string) {
@@ -325,11 +334,22 @@ func runReviewLoop(
 								"daemon: reviewloop: persist claude_session_id: %v (continuing without persistence)\n", persistErr)
 							// Signal empty so the review loop falls back to synthesis.
 							sessionIDFromCapabilities <- ""
+							capturedContextCommitSHACh <- ""
 							return
 						}
 						if !res.Skipped {
 							// EM-025a: emit transition_event AFTER git commit.
 							emitClaudeSessionIDPersisted(capturedCtx, capturedBus, capturedRunID, res.CommitSHA, id)
+							capturedContextCommitSHACh <- res.CommitSHA
+						} else {
+							// Idempotent: CHB-023 commit already on the branch (daemon-restart +
+							// resume). Resolve the current HEAD so the no-commit guard has the
+							// correct post-context-commit baseline.
+							sha, resolveErr := resolveWorktreeHEAD(capturedCtx, capturedWtPath)
+							if resolveErr != nil {
+								sha = ""
+							}
+							capturedContextCommitSHACh <- sha
 						}
 						// CHB-023: ACK (version_selected) AFTER the git commit.
 						// implSess is read from the outer variable; this goroutine
@@ -629,6 +649,23 @@ func runReviewLoop(
 		// advance from the prior iteration's HEAD).
 		//
 		// Bead: hk-9c1v4.
+		//
+		// CHB-023 baseline: the CHB-023 checkpoint commit advances HEAD past
+		// parentSHA before the implementer runs. Without accounting for this,
+		// an implementer that exits without committing code would pass the
+		// headSHA==parentSHA check (HEAD is the CHB-023 commit, not parentSHA).
+		// Drain contextCommitSHACh — the goroutine sends the CHB-023 commit SHA
+		// (or current HEAD for the idempotent case) — and use it as the baseline
+		// when non-empty (hk-mdwh4).
+		var contextCommitSHA string
+		if state.iterationCount == 1 {
+			select {
+			case sha := <-contextCommitSHACh:
+				contextCommitSHA = sha
+			default:
+			}
+		}
+
 		if state.iterationCount == 1 {
 			headSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
 			if headErr != nil {
@@ -636,9 +673,16 @@ func runReviewLoop(
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 				return result
 			}
-			if headSHA == parentSHA {
+			// Use the CHB-023 commit SHA as the baseline if the context-persist
+			// goroutine fired; fall back to parentSHA when the interceptor never fired
+			// (tmux substrate, no handler_capabilities, or persist error).
+			noCommitBaseline := parentSHA
+			if contextCommitSHA != "" {
+				noCommitBaseline = contextCommitSHA
+			}
+			if headSHA == noCommitBaseline {
 				summary := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration %d exit=%d",
-					parentSHA, state.iterationCount, implEI.exitCode)
+					noCommitBaseline, state.iterationCount, implEI.exitCode)
 				// Surface stderr tail when available — helps diagnose silent
 				// implementer crashes where the agent produced no NDJSON output.
 				// Mirrors workloop.go:1428-1441 (hk-ajhqw single-mode fix).

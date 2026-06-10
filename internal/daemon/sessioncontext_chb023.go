@@ -114,8 +114,22 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 		return persistClaudeSessionIDResult{Skipped: true}, nil
 	}
 
-	// Build the context file directory.
+	// Build paths early so the idempotency check can read before writing.
 	contextDir := filepath.Join(wtPath, runContextDirPrefix, runID.String())
+	contextFilePath := filepath.Join(contextDir, runContextFileName)
+
+	// Idempotency: if context.json already exists with the same session_id, skip the
+	// commit. This handles daemon-restart + resume scenarios (EM-031) where the CHB-023
+	// checkpoint is already on the task branch — re-committing would produce a redundant
+	// commit with only a changed persisted_at timestamp, polluting the task branch and
+	// eventually main with no-op infrastructure commits.
+	if existingData, err := os.ReadFile(contextFilePath); err == nil {
+		var existing runContextFile
+		if json.Unmarshal(existingData, &existing) == nil && existing.ClaudeSessionID == sessionID {
+			return persistClaudeSessionIDResult{Skipped: true}, nil
+		}
+	}
+
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 	if err := os.MkdirAll(contextDir, 0o755); err != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
@@ -132,7 +146,6 @@ func persistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID
 		return persistClaudeSessionIDResult{}, fmt.Errorf(
 			"daemon: persistClaudeSessionID: marshal context file: %w", marshalErr)
 	}
-	contextFilePath := filepath.Join(contextDir, runContextFileName)
 	//nolint:gosec // G306: 0644 is correct for a readable git-tracked JSON file
 	if err := os.WriteFile(contextFilePath, data, 0o644); err != nil {
 		return persistClaudeSessionIDResult{}, fmt.Errorf(

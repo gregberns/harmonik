@@ -191,8 +191,9 @@ func TestPersistClaudeSessionID_CommitTrailers(t *testing.T) {
 }
 
 // TestPersistClaudeSessionID_Idempotent verifies that calling persistClaudeSessionID
-// twice with the same session ID produces two commits (not an error).
-// Each persist advances the task branch tip, satisfying the monotonic tip contract.
+// a second time with the same session ID is a no-op (Skipped=true, no new commit).
+// This prevents daemon-restart + resume scenarios from producing redundant CHB-023
+// commits on the task branch (hk-mdwh4).
 func TestPersistClaudeSessionID_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -201,16 +202,57 @@ func TestPersistClaudeSessionID_Idempotent(t *testing.T) {
 
 	const sid = "session-idem-test-01919abc"
 
-	sha1, _, err1 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid)
+	// First call: should commit and return a non-empty SHA.
+	sha1, skipped1, err1 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid)
 	if err1 != nil {
 		t.Fatalf("PersistClaudeSessionID first call: %v", err1)
 	}
-	sha2, _, err2 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid)
+	if skipped1 {
+		t.Error("PersistClaudeSessionID first call: got Skipped=true; expected commit")
+	}
+	if sha1 == "" {
+		t.Error("PersistClaudeSessionID first call: CommitSHA is empty")
+	}
+
+	// Second call with same session ID: should be skipped (idempotent).
+	sha2, skipped2, err2 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid)
 	if err2 != nil {
 		t.Fatalf("PersistClaudeSessionID second call: %v", err2)
 	}
-	if sha1 == sha2 {
-		t.Errorf("PersistClaudeSessionID idempotent: both calls produced the same SHA %q; expected distinct commits", sha1)
+	if !skipped2 {
+		t.Errorf("PersistClaudeSessionID second call (same ID): expected Skipped=true; got commit SHA %q", sha2)
+	}
+	if sha2 != "" {
+		t.Errorf("PersistClaudeSessionID second call (same ID): expected empty CommitSHA; got %q", sha2)
+	}
+}
+
+// TestPersistClaudeSessionID_IdempotentDifferentID verifies that calling
+// persistClaudeSessionID with a DIFFERENT session ID after a successful first
+// call produces a new commit (the file is overwritten with the new ID).
+func TestPersistClaudeSessionID_IdempotentDifferentID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	runID := sessionContextFixtureRunID(t)
+	sessionContextFixtureGitRepo(t, dir, runID.String())
+
+	const sid1 = "session-idem-first-01919abc"
+	const sid2 = "session-idem-second-deadbeef"
+
+	sha1, _, err1 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid1)
+	if err1 != nil {
+		t.Fatalf("PersistClaudeSessionID first call: %v", err1)
+	}
+
+	sha2, skipped2, err2 := daemon.ExportedPersistClaudeSessionID(t.Context(), dir, runID, sid2)
+	if err2 != nil {
+		t.Fatalf("PersistClaudeSessionID second call (different ID): %v", err2)
+	}
+	if skipped2 {
+		t.Error("PersistClaudeSessionID second call (different ID): got Skipped=true; expected new commit")
+	}
+	if sha2 == "" || sha2 == sha1 {
+		t.Errorf("PersistClaudeSessionID second call (different ID): expected distinct non-empty SHA; sha1=%q sha2=%q", sha1, sha2)
 	}
 }
 

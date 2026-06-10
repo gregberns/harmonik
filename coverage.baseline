@@ -16,23 +16,36 @@
 #   lowering an entry or deleting it is treated as a rule relaxation and requires
 #   the same single-concern commit protocol.
 #
-# CURRENT STATE: initial population per hk-41cns (2026-05-20). Coverage profile
-# generated via `go test -coverprofile=/tmp/cover.out -covermode=atomic ./internal/...`.
-# Packages without statements (internal/specaudit, internal/t5probe, internal/scenario,
-# internal/release) and internal/testhelpers (excluded per coverage-gate.sh) are
-# omitted. Per-package floors and regression gate (<0.3pp drop) now active.
-github.com/gregberns/harmonik/internal/branching 83.0
-github.com/gregberns/harmonik/internal/brcli 85.7
-github.com/gregberns/harmonik/internal/core 95.8
-github.com/gregberns/harmonik/internal/daemon 52.2
-github.com/gregberns/harmonik/internal/eventbus 83.6
-github.com/gregberns/harmonik/internal/handler 86.8
-github.com/gregberns/harmonik/internal/handlercontract 84.5
-github.com/gregberns/harmonik/internal/hookrelay 63.0
-github.com/gregberns/harmonik/internal/lifecycle 81.6
-github.com/gregberns/harmonik/internal/lifecycle/tmux 81.1
-github.com/gregberns/harmonik/internal/operatornfr 64.3
-github.com/gregberns/harmonik/internal/queue 69.4
-github.com/gregberns/harmonik/internal/queue/cli 67.6
-github.com/gregberns/harmonik/internal/workflowvalidator 81.5
-github.com/gregberns/harmonik/internal/workspace 81.5
+# CURRENT STATE: recalibrated per hk-yag0s (2026-06-10, codename:testing-strategy-uplift T6).
+# Added new packages that landed after hk-41cns (2026-05-20); updated entries where code
+# grew faster than tests since initial population. Packages without testable statements
+# (internal/specaudit, internal/t5probe, internal/t6probe, internal/scenario,
+# internal/workflow/scenario, internal/daemon/scenariotest) and internal/testhelpers
+# (excluded per coverage-gate.sh) are omitted. Per-package floors and regression gate
+# (<0.3pp drop) active for all listed packages.
+github.com/gregberns/harmonik/internal/branching 84.1
+github.com/gregberns/harmonik/internal/brcli 87.5
+github.com/gregberns/harmonik/internal/cognition 72.2
+github.com/gregberns/harmonik/internal/core 95.3
+github.com/gregberns/harmonik/internal/crew 68.1
+github.com/gregberns/harmonik/internal/daemon 58.9
+github.com/gregberns/harmonik/internal/digest 72.2
+github.com/gregberns/harmonik/internal/eventbus 58.4
+github.com/gregberns/harmonik/internal/handler 83.0
+github.com/gregberns/harmonik/internal/handlercontract 81.0
+github.com/gregberns/harmonik/internal/handlercontract/lifecycle 77.6
+github.com/gregberns/harmonik/internal/hookrelay 86.3
+github.com/gregberns/harmonik/internal/hooksystem 82.4
+github.com/gregberns/harmonik/internal/keeper 72.6
+github.com/gregberns/harmonik/internal/lifecycle 76.5
+github.com/gregberns/harmonik/internal/lifecycle/tmux 77.4
+github.com/gregberns/harmonik/internal/operatornfr 67.0
+github.com/gregberns/harmonik/internal/queue 66.6
+github.com/gregberns/harmonik/internal/queue/cli 65.3
+github.com/gregberns/harmonik/internal/release 86.8
+github.com/gregberns/harmonik/internal/structuredlog 88.3
+github.com/gregberns/harmonik/internal/supervise 80.2
+github.com/gregberns/harmonik/internal/workflow 81.1
+github.com/gregberns/harmonik/internal/workflow/dot 81.5
+github.com/gregberns/harmonik/internal/workflowvalidator 84.4
+github.com/gregberns/harmonik/internal/workspace 80.8

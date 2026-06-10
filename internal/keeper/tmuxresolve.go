@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os/exec"
@@ -54,10 +55,26 @@ func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn f
 }
 
 // tmuxSessionLive reports whether a tmux session with the given name is live by
-// running `tmux display-message -t <name> -p "#W"` — exits 0 only if the target
-// exists.
+// running `tmux has-session -t "=<name>"` — exits 0 only if a session whose
+// name EXACTLY equals sessionName exists.
+//
+// Two deliberate choices, both validated by the integration test in
+// tmuxresolve_integration_test.go (hk-2ojne):
+//
+//   - has-session, NOT display-message. `tmux display-message -t <name>` exits 0
+//     even for a NONEXISTENT target — it silently falls back to the current
+//     client's session — so it returns a false positive whenever a tmux server
+//     has any attached client (the normal daemon-under-supervisor environment).
+//     `has-session` exits non-zero for an absent session, which is the liveness
+//     signal we actually want.
+//   - the "=" exact-match anchor. Without it, tmux `-t <name>` does prefix/fuzzy
+//     matching (e.g. "captai" would match a live "captain"), so resolution could
+//     latch onto the wrong session. "=<name>" forces an exact name match.
 func tmuxSessionLive(sessionName string) bool {
+	// context.Background() is appropriate: this is a synchronous, sub-second
+	// liveness probe with no caller-supplied cancellation context (the public
+	// ResolveTmuxTarget signature does not thread one through).
 	//nolint:gosec // G204: sessionName is derived from projectDir (filepath-resolved) + validated agentName
-	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#W")
+	cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", "="+sessionName)
 	return cmd.Run() == nil
 }

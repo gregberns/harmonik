@@ -4,10 +4,10 @@ package daemon_test
 //
 // Acceptance criterion AC-5: buildCrewLaunchSpec produces
 //
-//	argv = [<claude> --remote-control "<name>" --session-id <uuid>]
+//	argv = [<claude> --dangerously-skip-permissions --remote-control "<name>" --session-id <uuid>]
 //
 // with the caller-supplied UUID, HARMONIK_AGENT/HARMONIK_PROJECT in env,
-// and NO worktree / NO --dangerously-skip-permissions.
+// --dangerously-skip-permissions present (hk-672di), and NO worktree.
 //
 // Run: go test ./internal/daemon/ -run CrewLaunchSpec
 // Bead: hk-kbqto.
@@ -38,21 +38,24 @@ func TestBuildCrewLaunchSpec_Argv(t *testing.T) {
 		t.Errorf("Binary = %q; want %q", spec.Binary, "claude")
 	}
 
-	// argv must be exactly [--remote-control <name> --session-id <uuid>]
-	if len(spec.Args) != 4 {
-		t.Fatalf("len(Args) = %d; want 4: got %v", len(spec.Args), spec.Args)
+	// argv must be exactly [--dangerously-skip-permissions --remote-control <name> --session-id <uuid>]
+	if len(spec.Args) != 5 {
+		t.Fatalf("len(Args) = %d; want 5: got %v", len(spec.Args), spec.Args)
 	}
-	if spec.Args[0] != "--remote-control" {
-		t.Errorf("Args[0] = %q; want --remote-control", spec.Args[0])
+	if spec.Args[0] != "--dangerously-skip-permissions" {
+		t.Errorf("Args[0] = %q; want --dangerously-skip-permissions", spec.Args[0])
 	}
-	if spec.Args[1] != "alpha" {
-		t.Errorf("Args[1] = %q; want %q (crew name)", spec.Args[1], "alpha")
+	if spec.Args[1] != "--remote-control" {
+		t.Errorf("Args[1] = %q; want --remote-control", spec.Args[1])
 	}
-	if spec.Args[2] != "--session-id" {
-		t.Errorf("Args[2] = %q; want --session-id", spec.Args[2])
+	if spec.Args[2] != "alpha" {
+		t.Errorf("Args[2] = %q; want %q (crew name)", spec.Args[2], "alpha")
 	}
-	if spec.Args[3] != rc.SessionID {
-		t.Errorf("Args[3] = %q; want caller-supplied UUID %q", spec.Args[3], rc.SessionID)
+	if spec.Args[3] != "--session-id" {
+		t.Errorf("Args[3] = %q; want --session-id", spec.Args[3])
+	}
+	if spec.Args[4] != rc.SessionID {
+		t.Errorf("Args[4] = %q; want caller-supplied UUID %q", spec.Args[4], rc.SessionID)
 	}
 }
 
@@ -90,7 +93,10 @@ func TestBuildCrewLaunchSpec_Env(t *testing.T) {
 	}
 }
 
-func TestBuildCrewLaunchSpec_NoWorktreeNoSkipPermissions(t *testing.T) {
+// TestBuildCrewLaunchSpec_SkipPermissionsNoWorktree verifies that
+// --dangerously-skip-permissions IS present (hk-672di: crew sessions must not
+// wedge on mid-loop permission prompts) and no worktree flag appears.
+func TestBuildCrewLaunchSpec_SkipPermissionsNoWorktree(t *testing.T) {
 	t.Parallel()
 
 	rc := daemon.ExportedCrewLaunchCtx{
@@ -104,13 +110,17 @@ func TestBuildCrewLaunchSpec_NoWorktreeNoSkipPermissions(t *testing.T) {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
 
+	hasSkipPerms := false
 	for _, arg := range spec.Args {
 		if strings.Contains(arg, "dangerously-skip-permissions") {
-			t.Errorf("argv must not contain --dangerously-skip-permissions; got %v", spec.Args)
+			hasSkipPerms = true
 		}
 		if strings.Contains(arg, "worktree") {
 			t.Errorf("argv must not contain a worktree flag; got %v", spec.Args)
 		}
+	}
+	if !hasSkipPerms {
+		t.Errorf("argv must contain --dangerously-skip-permissions; got %v", spec.Args)
 	}
 }
 
@@ -210,14 +220,17 @@ func TestBuildCrewLaunchSpec_ResumePath(t *testing.T) {
 		t.Fatalf("buildCrewLaunchSpec(resume): unexpected error: %v", err)
 	}
 
-	if len(spec.Args) != 4 {
-		t.Fatalf("len(Args) = %d; want 4: got %v", len(spec.Args), spec.Args)
+	if len(spec.Args) != 5 {
+		t.Fatalf("len(Args) = %d; want 5: got %v", len(spec.Args), spec.Args)
 	}
-	if spec.Args[2] != "--resume" {
-		t.Errorf("Args[2] = %q; want --resume (resume path)", spec.Args[2])
+	if spec.Args[0] != "--dangerously-skip-permissions" {
+		t.Errorf("Args[0] = %q; want --dangerously-skip-permissions", spec.Args[0])
 	}
-	if spec.Args[3] != uuid {
-		t.Errorf("Args[3] = %q; want %q (session UUID)", spec.Args[3], uuid)
+	if spec.Args[3] != "--resume" {
+		t.Errorf("Args[3] = %q; want --resume (resume path)", spec.Args[3])
+	}
+	if spec.Args[4] != uuid {
+		t.Errorf("Args[4] = %q; want %q (session UUID)", spec.Args[4], uuid)
 	}
 }
 

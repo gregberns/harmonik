@@ -44,13 +44,17 @@ type crewLaunchCtx struct {
 // buildCrewLaunchSpec constructs a handler.LaunchSpec for launching a
 // persistent interactive crew session:
 //
-//	argv = [<claudeBinary> --remote-control "<name>" --session-id <uuid>]
+//	argv = [<claudeBinary> --dangerously-skip-permissions --remote-control "<name>" --session-id <uuid>]
 //	env  = [HARMONIK_AGENT=<name>, HARMONIK_PROJECT=<projectDir>]
 //
-// No worktree, no --dangerously-skip-permissions. The caller mints and supplies
-// sessionID; this function does not generate one.
+// --dangerously-skip-permissions is required so crew sessions don't wedge on
+// mid-loop permission prompts (e.g. python3 monitor scripts) that would
+// otherwise require captain to approve via tmux.
+// No worktree. The caller mints and supplies sessionID; this function does not
+// generate one.
 //
 // Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.2, AC-5.
+// Bead ref: hk-672di.
 func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 	if rc.name == "" {
 		return handler.LaunchSpec{}, fmt.Errorf("buildCrewLaunchSpec: name must be non-empty")
@@ -66,9 +70,9 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 
 	var args []string
 	if rc.resume {
-		args = []string{"--remote-control", rc.name, "--resume", rc.sessionID}
+		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--resume", rc.sessionID}
 	} else {
-		args = []string{"--remote-control", rc.name, "--session-id", rc.sessionID}
+		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--session-id", rc.sessionID}
 	}
 
 	env := []string{

@@ -209,7 +209,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 func runScheduledClassBRepair(
 	ctx context.Context,
 	cfg ReconciliationSchedulerConfig,
-	adapter *brcli.Adapter,
+	resetter lifecycle.BeadResetter,
 	inFlight []core.BeadRecord,
 	logW io.Writer,
 ) {
@@ -275,7 +275,7 @@ func runScheduledClassBRepair(
 
 		// Repair: reset in_progress → open so the bead can be re-dispatched.
 		resetCtx, cancelReset := context.WithTimeout(ctx, 30*time.Second)
-		resetErr := adapter.ResetBead(
+		resetErr := resetter.ResetBead(
 			resetCtx,
 			intentLogDir,
 			brcli.TimeoutConfig{},

@@ -1635,7 +1635,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			beadRunOne(ctx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
-				evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runSucceeded)
+				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
+				// beadRunOne reopened the bead and returned without emitting
+				// run_failed. Leave the queue item as 'dispatched' so QM-002a at
+				// next startup reverts it to pending (bead is open) rather than
+				// permanently recording a false fail.
+				if ctx.Err() != nil {
+					// Item stays 'dispatched'; QM-002a handles recovery on restart.
+				} else {
+					evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runSucceeded)
+				}
 			}
 		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
 	}
@@ -1782,6 +1791,30 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
+
+	// hk-ly0hg Fix-2: pre-dispatch subsumed check — if this bead's commit is
+	// already on main (e.g. merged by a prior run that was interrupted by a
+	// daemon restart before CloseBead completed), close the bead without
+	// spawning an agent. This breaks the false-fail chain caused by the agent
+	// making no commit on re-dispatch (noCommitGuard would reopen; pre-screen
+	// prevents that cycle entirely).
+	//
+	// Runs after emitRunStarted so the event log has a matching run_started;
+	// worktree cleanup is handled by the deferred wtCleanup above.
+	{
+		preDispatchTID, _ := deps.tidGen.Next()
+		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, preDispatchTID, beadID, false); closeErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (pre-dispatch-subsumed) %s: %v\n", beadID, closeErr)
+				emitDone(false, fmt.Sprintf("close-error (pre-dispatch-subsumed): %v", closeErr))
+			} else {
+				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
+				emitDone(true, "pre-dispatch-subsumed: bead already in main")
+			}
+			return
+		}
+	}
 
 	// Pre-switch: for DOT mode, resolve and pre-load the graph source (hk-30vlb).
 	// Three-tier resolution:
@@ -2667,6 +2700,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitDone(false, "noChange-timeout: no commit in commitPollTimeout window")
 			}
 		default:
+			// hk-ly0hg Fix-1: context-cancel path — daemon is shutting down.
+			// Reopen the bead (with a background context so the write succeeds
+			// despite shutdown) and return without emitting run_failed. The queue
+			// item stays 'dispatched'; QM-002a at next startup will revert it to
+			// pending once it sees the bead is open again.
+			if ctx.Err() != nil {
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					"context_cancelled: daemon shutdown, requeue pending")
+				return
+			}
+
 			// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
 			// watcher failure (malformed NDJSON, panic, etc.).
 			var failReason string
@@ -2751,15 +2796,21 @@ func noCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, pare
 //
 // Bead: hk-trjef.
 func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B", "-20")
+	// hk-ly0hg: use --grep to pre-filter across the full main history rather
+	// than reading a fixed window of -20 commits. This prevents false negatives
+	// when a restart-interrupted run had its commit land >20 commits ago.
+	//
+	// --fixed-strings prevents regex interpretation of bead IDs.
+	// The line-exact check in Go prevents "Refs: hk-foo.1" from matching a
+	// commit whose message contains "Refs: hk-foo.10".
+	needle := "Refs: " + string(beadID)
+	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B",
+		"--fixed-strings", "--grep", needle)
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	// Use line-exact match to avoid false positives: "Refs: hk-foo.1" must not
-	// match a commit that only contains "Refs: hk-foo.10".
-	needle := "Refs: " + string(beadID)
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimRight(line, "\r") == needle {
 			return true

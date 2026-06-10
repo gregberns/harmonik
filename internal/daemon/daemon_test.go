@@ -17,6 +17,41 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
+// TestMain isolates the WHOLE daemon test package from the real ~/.claude.json
+// (hk-1o0cc de-flake). Many daemon tests boot ExportedRunWorkLoop /
+// ExportedRunReviewLoop, which call buildClaudeLaunchSpec → EnsureWorktreeTrust.
+// On a first-seen worktree path that call takes a BOUNDED LOCK_EX on the
+// ~/.claude.json.lock sidecar. When the tests run against the REAL user config
+// while a live harmonik daemon plus other test processes are also rewriting that
+// same 8 MB file, the bounded acquire times out (ErrTrustLockTimeout) — surfacing
+// as the intermittent -short reds "write-lock acquire timed out (contended ~/.claude.json)" /
+// "SpawnWindow: Start: context deadline exceeded" → the bead is reopened and the
+// test polls to its deadline and fails (TestWorkLoop_*, TestT2_MalformedNDJSON,
+// TestT4_CloseBeadError, TestScenario_ReviewLoop_*).
+//
+// Pointing HARMONIK_CLAUDE_CONFIG_PATH at a single process-local temp file moves
+// every test off the contended real config: the temp config has no external
+// writers, so the bounded lock acquires instantly. An outer value (e.g. from a CI
+// harness) is respected — we only set the default when the env var is unset.
+//
+// Per-test helpers that need their OWN isolated config (e.g. the non-parallel
+// scenario tests, rlIsolateClaudeConfig) override this with their own temp path
+// and RESTORE this default on cleanup, so the package-wide isolation is sticky.
+func TestMain(m *testing.M) {
+	var tmpDir string
+	if _, set := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH"); !set {
+		if dir, err := os.MkdirTemp("", "harmonik-daemon-test-claude-cfg-"); err == nil {
+			tmpDir = dir
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(dir, ".claude.json"))
+		}
+	}
+	code := m.Run()
+	if tmpDir != "" {
+		_ = os.RemoveAll(tmpDir)
+	}
+	os.Exit(code)
+}
+
 // TestDaemonStartCompiles verifies the package compiles and that Start can be
 // invoked with a zero-value Config without panicking. This is the smoke-test
 // sensor for hk-8mup.61: once this test is green the composition root

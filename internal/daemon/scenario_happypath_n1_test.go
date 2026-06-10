@@ -335,12 +335,18 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 	// a manual cleanup registration.  Each test gets a unique t.TempDir() path so
 	// parallel invocations do not race on the env var value.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("scenarioN1: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("scenarioN1: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		// hk-1o0cc: RESTORE the prior value (the TestMain package-wide temp default)
+		// rather than blindly unsetting, so the package-wide ~/.claude.json isolation
+		// stays in effect for tests that run after this one (esp. the parallel phase).
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
 		}
 	})
 

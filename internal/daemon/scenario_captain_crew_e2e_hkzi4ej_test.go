@@ -770,8 +770,16 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 	// Isolate EnsureWorktreeTrust from the live ~/.claude.json (and the running
 	// daemon's lock) — same as the other scenario tests.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	require.NoError(t, os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath), "cc14: Setenv HARMONIK_CLAUDE_CONFIG_PATH")
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+	t.Cleanup(func() {
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
 
 	twinWrapper := cc14TwinWrapperScript(t, twinPath)
 

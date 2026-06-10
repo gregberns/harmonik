@@ -405,8 +405,16 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	require.NoError(t, os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath))
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+	t.Cleanup(func() {
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
 
 	// Pre-create the QueueStore so the test holds the pointer for submit.
 	qs := daemon.ExportedNewQueueStore()
@@ -553,8 +561,16 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	require.NoError(t, os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath))
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+	t.Cleanup(func() {
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
 
 	qs := daemon.ExportedNewQueueStore()
 

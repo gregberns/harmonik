@@ -411,10 +411,18 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 	// Redirect EnsureWorktreeTrust to a test-local config path so the daemon
 	// does not try to read ~/.claude.json and fail in CI.
 	claudeConfigPath := filepath.Join(rrRecovEvalSymlinks(t, t.TempDir()), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("rrRecov: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+	t.Cleanup(func() {
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
 
 	// Wire daemon.Config.  No HandlerBinary: we cancel after reconciliation
 	// fires, well before any dispatch attempt.

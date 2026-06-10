@@ -257,10 +257,18 @@ func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
 
 	// Redirect EnsureWorktreeTrust to a test-local config path.
 	claudeConfigPath := filepath.Join(sweepQOEvalSymlinks(t, t.TempDir()), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("sweepQO: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH") })
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+	t.Cleanup(func() {
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
 
 	// Wire daemon.Config for the orphan-sweep integration test.
 	// No HandlerBinary: with no ready beads (the in_progress bead is reset to

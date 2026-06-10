@@ -437,7 +437,18 @@ exit 0
 //	    produces progress: the run completes APPROVE with no no_progress_detected
 //	    and no agent_ready_timeout.
 func TestScenario_ReviewLoop_ResumeSubmitReliable(t *testing.T) {
-	t.Parallel()
+	// NOT parallel (hk-1o0cc de-flake): two reasons.
+	//  1. This test mutates the package-level vars resumeSubmitRetryDelay /
+	//     resumeSubmitRetries (via the Exported* pointers) that production
+	//     pasteinject.go reads at runtime; running it concurrently with other
+	//     review-loop scenario tests that drive ExportedRunReviewLoop through that
+	//     same resume/submit path is a data race on those vars.
+	//  2. It contends on the process-global ~/.claude.json trust lock (see
+	//     rlIsolateClaudeConfig) — the dominant intermittent -short red.
+	// Running serially keeps both the global mutation window and the env-var
+	// isolation outside the parallel phase. (Go runs all non-parallel tests,
+	// including their Cleanups, to completion before the parallel phase begins.)
+	rlIsolateClaudeConfig(t)
 
 	// Shrink the submit-retry delay so the retry fires quickly (the fix path).
 	// resumeSubmitRetries stays at its default (≥1) so the retry actually runs;

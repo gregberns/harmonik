@@ -217,7 +217,10 @@ func reviewHangFixtureAdapterRegistry(t *testing.T) *handlercontract.AdapterRegi
 // Source: docs/scenario-test-gap-audit-2026-05-18.md #5.
 // Bead: hk-nfhqd.
 func TestScenario_ReviewLoop_AgentReadyTimeoutRequeues(t *testing.T) {
-	t.Parallel()
+	// NOT parallel (hk-1o0cc de-flake): isolates the process-global
+	// ~/.claude.json trust config so EnsureWorktreeTrust does not contend on the
+	// real config's lock under load. See rlIsolateClaudeConfig.
+	rlIsolateClaudeConfig(t)
 
 	projectDir := reviewHangFixtureProjectDir(t)
 	wtPath, parentSHA := reviewHangFixtureWorktree(t, projectDir)
@@ -243,10 +246,16 @@ func TestScenario_ReviewLoop_AgentReadyTimeoutRequeues(t *testing.T) {
 		// the reviewer phase. This is the adapterRegistry field on workLoopDeps
 		// (distinct from AdapterRegistry, which is the handler.NewHandler registry).
 		AdapterRegistry2: adapterReg,
-		// 100ms timeout as described in the bead body (hk-nfhqd): "a shortened
-		// agentReadyTimeout of 100ms" — the reviewer script hangs for 3600s, so
-		// the timeout fires long before the script would exit naturally.
-		AgentReadyTimeout: 100 * time.Millisecond,
+		// hk-1o0cc de-flake: timeout raised 100ms → 5s. The IMPLEMENTER phase (odd
+		// invocation) must commit a sentinel + exit 0 and have its watcher fire
+		// implReadyCancel BEFORE this timeout, so the run advances to the reviewer
+		// phase where the hang IS the thing under test. A real git commit + process
+		// exit + watcher reap routinely exceeds 100ms under load, so the original
+		// 100ms intermittently tripped the IMPLEMENTER's waitAgentReady (failing at
+		// iteration 1, reviewer_launched never emitted) — the hk-1o0cc -short red.
+		// 5s comfortably clears the implementer commit yet still fires well inside
+		// the 30s outer deadline for the 3600s reviewer hang.
+		AgentReadyTimeout: 5 * time.Second,
 		// Explicit hookSessionStore so SetAgentReadyCallback wires correctly;
 		// the reviewer script hangs and never emits agent_ready, so the
 		// AgentReadyTimeout path fires (hk-d8u1y, hk-ngw3d).

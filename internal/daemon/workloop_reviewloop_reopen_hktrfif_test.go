@@ -228,12 +228,16 @@ func TestWorkLoop_ReviewLoopFailure_ReopensBeadNotCloses_Hktrfif(t *testing.T) {
 	// Each test gets a unique t.TempDir() path so that if tests run in separate
 	// processes, there is no race on the env var value.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("rlReopenSc: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("rlReopenSc: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
 		}
 	})
 

@@ -338,7 +338,10 @@ exit 0
 //
 // Bead: hk-isq02.
 func TestScenario_ReviewLoop_ResumeImplementerReachesReady(t *testing.T) {
-	t.Parallel()
+	// NOT parallel (hk-1o0cc de-flake): isolates the process-global
+	// ~/.claude.json trust config so EnsureWorktreeTrust does not contend on the
+	// real config's lock under load. See rlIsolateClaudeConfig.
+	rlIsolateClaudeConfig(t)
 
 	projectDir := rlResumeReadyProjectDir(t)
 	wtPath, parentSHA := rlResumeReadyWorktree(t, projectDir)

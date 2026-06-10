@@ -519,12 +519,16 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	// Redirect EnsureWorktreeTrust to a test-local claude config so this test
 	// does not contend with the running harmonik daemon on ~/.claude.json.lock.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("cmq: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("cmq: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
 		}
 	})
 
@@ -770,12 +774,16 @@ func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
 
 	// Redirect EnsureWorktreeTrust to a test-local config.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("cmq MidRunKill: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
+	// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
 	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("cmq MidRunKill: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
 		}
 	})
 

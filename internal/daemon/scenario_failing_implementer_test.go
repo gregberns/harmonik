@@ -327,12 +327,16 @@ func TestScenario_FailingImplementer_RunFailed(t *testing.T) {
 
 	// Redirect EnsureWorktreeTrust to a test-local config path.
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
+	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
 	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
 		t.Fatalf("failImpl: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("failImpl: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+		// hk-1o0cc: restore prior value (TestMain package default) — see scenario_happypath_n1.
+		if hadClaudeCfg {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prevClaudeCfg)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
 		}
 	})
 

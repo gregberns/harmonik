@@ -546,6 +546,47 @@ func TestReviewLoop_NoProgress(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Config-path isolation (hk-1o0cc de-flake)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// rlIsolateClaudeConfig redirects EnsureWorktreeTrust's ~/.claude.json target to
+// a per-test temp file so the test never touches the REAL user config and never
+// contends on its ~/.claude.json.lock sidecar.
+//
+// Why this fixes the hk-1o0cc -short flakes: the review-loop scenario tests boot
+// ExportedRunReviewLoop, which calls buildClaudeLaunchSpec → EnsureWorktreeTrust.
+// On a first-seen worktree path that call takes a BOUNDED LOCK_EX on
+// <cfgPath>.lock. When the tests run unisolated against the real ~/.claude.json
+// while a live harmonik daemon plus other test processes are also rewriting that
+// same 8MB config, the bounded acquire times out (ErrTrustLockTimeout) and the
+// launch fails → the test reds intermittently ("write-lock acquire timed out
+// (contended ~/.claude.json)" / "SpawnWindow: Start: context deadline exceeded").
+// Pointing each test at its own temp config removes the cross-process contention.
+//
+// MUST be called from a NON-parallel test: HARMONIK_CLAUDE_CONFIG_PATH is a
+// process-global env var (t.Setenv forbids t.Parallel, and a racy os.Setenv from
+// concurrent parallel tests would clobber each other). This matches the existing
+// convention in the daemon scenario tests (e.g. scenariotest/concurrent_merge.go,
+// scenario_happypath_n1_test.go) which all set HARMONIK_CLAUDE_CONFIG_PATH and run
+// serially for exactly this reason. The cleanup RESTORES the prior value rather
+// than blindly unsetting, so a TestMain-level default (if ever added) survives.
+func rlIsolateClaudeConfig(t *testing.T) {
+	t.Helper()
+	cfgPath := filepath.Join(t.TempDir(), ".claude.json")
+	prev, had := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
+	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", cfgPath); err != nil {
+		t.Fatalf("rlIsolateClaudeConfig: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", prev)
+		} else {
+			_ = os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH")
+		}
+	})
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Assertion helpers
 // ─────────────────────────────────────────────────────────────────────────────
 

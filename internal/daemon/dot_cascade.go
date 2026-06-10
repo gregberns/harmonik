@@ -241,6 +241,15 @@ func driveDotWorkflow(
 	const dotMaxReviewerNoVerdictRetries = 1
 	reviewerNoVerdictRetries := 0
 
+	// lastImplementerReviewerHarness carries the reviewer_harness attr from the most
+	// recently dispatched implementer node (T14 hk-iv748). When non-empty it is passed
+	// to dispatchDotAgenticNode as reviewerHarnessOverride so the reviewer's specBuilder
+	// uses the implementer's declared reviewer harness rather than the reviewer node's
+	// own harness= attr (which is typically absent for the standard reviewer node).
+	// Reset on each new implementer dispatch so stale overrides do not bleed across
+	// implementer→reviewer cycles when the graph revisits implementer nodes.
+	var lastImplementerReviewerHarness core.AgentType
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -406,11 +415,16 @@ func driveDotWorkflow(
 			if !isReviewer {
 				iterationCount++
 				reviewerNoVerdictRetries = 0
+				// T14 hk-iv748: capture the reviewer_harness override from this
+				// implementer node. A new implementer dispatch resets the override so
+				// stale values from prior implementer cycles do not bleed into the next.
+				lastImplementerReviewerHarness = core.AgentType(node.ReviewerHarness)
 			}
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
-				resolvedModel, resolvedEffort, extraContext, baseBranch)
+				resolvedModel, resolvedEffort, extraContext, baseBranch,
+				lastImplementerReviewerHarness)
 			if nodeErr != nil {
 				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
 					return dotWorkflowResult{
@@ -595,6 +609,7 @@ func dispatchDotAgenticNode(
 	resolvedEffort string,
 	extraContext string,
 	baseBranch string,
+	reviewerHarnessOverride core.AgentType, // T14 hk-iv748: reviewer_harness from implementer node; empty = DEFAULT (same as implementer)
 ) (core.Outcome, error) {
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
@@ -686,15 +701,29 @@ func dispatchDotAgenticNode(
 	// captures tier-1 (bead labels) + tier-4 (global default). When the DOT node
 	// carries a harness= attribute (T5, hk-u67of), rebuild with the node's harness
 	// as nodeDefault (tier-3) so the four-tier precedence is fully honored (T12).
+	//
+	// T14 hk-iv748: for reviewer nodes, prefer reviewerHarnessOverride (the
+	// implementer node's reviewer_harness= attr) over the reviewer node's own
+	// harness= attr. This implements the OPTIONAL OVERRIDE precedence:
+	//   1. reviewerHarnessOverride (implementer's reviewer_harness= attr) — if valid
+	//   2. node.Harness (reviewer node's own harness= attr) — if valid
+	//   3. deps.launchSpecBuilder (DEFAULT: same resolved harness as the implementer)
 	specBuilder := deps.launchSpecBuilder
-	nodeHarness := core.AgentType(node.Harness)
-	if nodeHarness.Valid() && deps.harnessRegistry != nil {
+	var effectiveNodeHarness core.AgentType
+	if isReviewer && reviewerHarnessOverride.Valid() {
+		// Override: implementer declared a specific reviewer harness.
+		effectiveNodeHarness = reviewerHarnessOverride
+	} else {
+		// Default or non-reviewer: use the node's own harness= attr.
+		effectiveNodeHarness = core.AgentType(node.Harness)
+	}
+	if effectiveNodeHarness.Valid() && deps.harnessRegistry != nil {
 		specBuilder = routedLaunchSpecBuilder(
 			deps.harnessRegistry,
 			beadRecord,
-			core.AgentType(""), // queue default: hk-4x3rg
-			nodeHarness,        // tier-3: DOT node harness= attribute (T5/T12)
-			core.AgentType(""), // global default: built-in fallback = claude-code
+			core.AgentType(""),   // queue default: hk-4x3rg
+			effectiveNodeHarness, // tier-3: reviewer override or node harness attr (T5/T12/T14)
+			core.AgentType(""),   // global default: built-in fallback = claude-code
 			deps.bus,
 		)
 	}

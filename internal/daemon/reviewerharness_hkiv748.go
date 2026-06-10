@@ -7,22 +7,20 @@ package daemon
 //
 //   DEFAULT: reviewer uses the SAME resolved harness as the implementer for that run.
 //   OPTIONAL OVERRIDE: driven by the reviewer_harness DOT node attribute (parsed by
-//     T5 hk-u67of into dot.Node.ReviewerHarness). When present, the reviewer uses that
-//     harness even when the implementer used a different one (e.g. codex-implemented,
-//     claude-reviewed).
+//     T5 hk-u67of into dot.Node.ReviewerHarness). When present on the IMPLEMENTER node,
+//     the reviewer uses that harness even when the implementer used a different one
+//     (e.g. codex-implemented bead reviewed by claude).
 //
-// Precedence walk for the reviewer:
-//  1. reviewer_harness DOT node attribute (from the IMPLEMENTER node) → if valid, use it.
-//  2. Fallback: implementer's resolved agent type (same harness as implementer).
+// Precedence walk for the reviewer (DOT mode):
+//  1. reviewerHarnessOverride — implementer node's reviewer_harness= attr, if valid.
+//  2. node.Harness — reviewer node's own harness= attr, if valid.
+//  3. deps.launchSpecBuilder — DEFAULT: same resolved harness as the implementer.
 //
-// For an all-claude run (no reviewer_harness attr, no codex selection) the behaviour is
-// byte-identical to pre-T14: reviewer = claude.
-//
-// This file is a declaration anchor. The resolution logic is wired into:
-//   - dot_cascade.go (driveDotWorkflow + dispatchDotAgenticNode) for DOT-mode runs.
-//   - reviewloop.go (runReviewLoop) for review-loop-mode runs.
+// Review-loop mode (runReviewLoop):
+//   The reviewer specBuilder is built with nodeDefault = implArtifacts.resolvedAgentType
+//   (the implementer's resolved harness). For all-claude runs this is byte-identical to
+//   pre-T14 behaviour. No DOT reviewer_harness override is applicable in review-loop mode
+//   (no DOT node exists); that override is handled in dispatchDotAgenticNode.
 //
 // Spec ref: codex-harness C5, T14.
 // Bead: hk-iv748 [C5/T14]
-
-// WIP: full implementation in progress.

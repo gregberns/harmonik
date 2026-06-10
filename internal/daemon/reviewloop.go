@@ -863,7 +863,31 @@ func runReviewLoop(
 			extraContext:     extraContext, // hk-boiwe
 			baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
+		// T14 hk-iv748: reviewer harness resolution — DEFAULT path (review-loop mode).
+		//
+		// The reviewer uses the SAME resolved harness as the implementer for this run
+		// (implArtifacts.resolvedAgentType). Build a reviewer-specific specBuilder with
+		// nodeDefault (tier-3) pinned to the implementer's resolved agent type so the
+		// reviewer is always wired to the same harness even when deps.launchSpecBuilder
+		// was constructed without an explicit nodeDefault.
+		//
+		// For an all-claude run (resolvedAgentType = claude-code) this is byte-identical
+		// to pre-T14 behaviour: reviewer = claude.
+		//
+		// DOT reviewer_harness override is NOT applicable in review-loop mode because
+		// review-loop mode has no DOT node carrying the attribute; that override is
+		// threaded in dot_cascade.go (dispatchDotAgenticNode).
 		revSpecBuilder := deps.launchSpecBuilder
+		if deps.harnessRegistry != nil && implArtifacts.resolvedAgentType.Valid() {
+			revSpecBuilder = routedLaunchSpecBuilder(
+				deps.harnessRegistry,
+				core.BeadRecord{},                  // tier-1 absent: bead labels already resolved into resolvedAgentType
+				core.AgentType(""),                  // queue default: hk-4x3rg
+				implArtifacts.resolvedAgentType,     // tier-3: implementer's resolved harness (DEFAULT)
+				core.AgentType(""),                  // global default: built-in fallback = claude-code
+				deps.bus,
+			)
+		}
 		if revSpecBuilder == nil {
 			revSpecBuilder = buildClaudeLaunchSpec
 		}

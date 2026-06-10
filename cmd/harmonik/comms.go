@@ -743,11 +743,21 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 }
 
 // resolveSessionID returns the per-session opaque token for two-captains conflict
-// detection (hk-z0f02). Sources: $HARMONIK_SESSION_ID (set by the daemon for each
-// dispatched run). Returns empty string when the env var is absent, which disables
-// conflict detection gracefully (no false positives for sessions without a token).
+// detection (hk-z0f02).
+//
+// Resolution order:
+//  1. $HARMONIK_SESSION_ID — explicit operator-set token (interactive captain sessions).
+//  2. $HARMONIK_RUN_ID    — injected by the daemon per dispatched run
+//     (claudehandler_chb006_024.go:259); unique per run, covers daemon-dispatched agents
+//     such as crew members that might mis-claim a name.
+//
+// Returns empty string when neither variable is set, which disables conflict
+// detection gracefully (no false positives for sessions without a token).
 func resolveSessionID() string {
-	return os.Getenv("HARMONIK_SESSION_ID")
+	if id := os.Getenv("HARMONIK_SESSION_ID"); id != "" {
+		return id
+	}
+	return os.Getenv("HARMONIK_RUN_ID")
 }
 
 // checkCommsNameConflict returns a non-empty warning string when eventsPath

@@ -1551,6 +1551,13 @@ func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p WorkLoo
 // Bead: hk-fbydv.
 type PaneLivenessCheckerExported = paneLivenessChecker
 
+// PaneOutputSizerExported is an exported alias for the paneOutputSizer
+// interface so tests in package daemon_test can implement stubs without naming
+// the unexported type.
+//
+// Bead: hk-ue0u2.
+type PaneOutputSizerExported = paneOutputSizer
+
 // ExportedHasChildProcess exposes hasChildProcess for tests in package
 // daemon_test.
 //

@@ -140,6 +140,25 @@ type quitSender interface {
 	SendQuitToLastPane(ctx context.Context) error
 }
 
+// paneOutputSizer is an optional interface that quitSender implementations
+// may also satisfy to report the current pane output fingerprint (scrollback
+// history size + cursor position).  Used by the activity-aware launch
+// suppression (hk-az4fd, hk-ue0u2) to detect read-heavy implementers that
+// are actively reading files and planning without yet editing the worktree.
+// Such beads produce visible pane output (streaming LLM responses, tool
+// results) even though git status is clean, so the worktree-activity
+// fingerprint alone (hk-az4fd) cannot distinguish them from a genuinely-
+// wedged pane.
+//
+// Bead: hk-ue0u2.
+type paneOutputSizer interface {
+	// PaneOutputFingerprint returns a string that changes as the pane
+	// produces visible output (history size grows, cursor advances).
+	// Returns ("", false) on any error (conservative: treat unknown as
+	// no growth — the ceiling kill is allowed to proceed).
+	PaneOutputFingerprint(ctx context.Context) (string, bool)
+}
+
 // paneLivenessChecker is an optional interface that quitSender implementations
 // may also satisfy to report whether the tmux pane has an active child process
 // (i.e. claude is running under the shell).
@@ -577,6 +596,15 @@ func pasteInjectQuitOnCommit(
 	// hard budget) from "wedged at the ceiling" (kill — preserves hk-jgxqc).
 	lastActivityFingerprint, _ := worktreeActivityFingerprint(ctx, wtPath)
 
+	// hk-ue0u2: pane-output fingerprint baseline — initialised before the
+	// loop so the first tick has a reference to diff against.  Nil when qs
+	// does not implement paneOutputSizer (e.g. test stubs, nil substrate).
+	outputSizer, _ := qs.(paneOutputSizer)
+	lastPaneOutputFP := ""
+	if outputSizer != nil {
+		lastPaneOutputFP, _ = outputSizer.PaneOutputFingerprint(ctx)
+	}
+
 	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
 	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
 	livenessChecker, _ := qs.(paneLivenessChecker)
@@ -703,28 +731,53 @@ func pasteInjectQuitOnCommit(
 			// a heartbeat.  Reset lastHeartbeat and extend the launch deadline so
 			// the kill does not fire until the session actually goes dark.
 			if heartbeatProvided && !firstHeartbeatSeen && now.After(launchDeadline) {
-				// hk-az4fd: ACTIVITY-AWARE launch suppression.  Before applying the
-				// hk-jgxqc ceiling, check for demonstrable progress in the worktree
-				// (HEAD advanced, or working-tree changes churning) WHILE the pane
-				// has an active child.  A claude that is editing files but has not
-				// yet committed — and whose agent_heartbeat events were drained by a
-				// competing tapCh reader under concurrency, so firstHeartbeatSeen
-				// never flips — would otherwise be false-killed at the 12-minute
-				// ceiling mid-work.  Treating fresh activity as a heartbeat clears
-				// firstHeartbeatSeen, so the launch branch is permanently bypassed
-				// and the run defers to the per-progress commit budget bounded by
-				// the 90-minute hard ceiling (hk-9vp51) — NOT infinite.
+				// hk-az4fd / hk-ue0u2: ACTIVITY-AWARE launch suppression.  Before
+				// applying the hk-jgxqc ceiling, check for demonstrable progress
+				// using two complementary signals:
+				//
+				//  1. Worktree activity (hk-az4fd): HEAD advanced, or working-tree
+				//     changes churning.  Covers implementers that are EDITING files.
+				//
+				//  2. Pane output growth (hk-ue0u2): tmux scrollback history size or
+				//     cursor position advanced.  Covers READ-HEAVY implementers that
+				//     are reading/planning (streaming LLM responses, tool results)
+				//     without yet editing the worktree — the T12 codex-registration
+				//     false-kill scenario.
+				//
+				// Either signal alone is sufficient to treat the tick as a heartbeat:
+				// clear firstHeartbeatSeen so the launch branch is permanently bypassed
+				// and the run defers to the per-progress commit budget bounded by the
+				// 90-minute hard ceiling (hk-9vp51) — NOT infinite.
 				//
 				// hk-jgxqc intent preserved: a pane that reports an active child but
-				// produces NO progress (stable fingerprint) does NOT clear
-				// firstHeartbeatSeen, so the launch-suppression ceiling below still
-				// fires for the genuinely-wedged case.
+				// produces NO progress on EITHER signal (stable worktree + stable pane
+				// output) does NOT clear firstHeartbeatSeen, so the launch-suppression
+				// ceiling below still fires for the genuinely-wedged case.
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					if fp, ok := worktreeActivityFingerprint(ctx, wtPath); ok && fp != lastActivityFingerprint {
+					wtFP, wtOK := worktreeActivityFingerprint(ctx, wtPath)
+					worktreeProgressed := wtOK && wtFP != lastActivityFingerprint
+
+					paneOutputProgressed := false
+					if outputSizer != nil {
+						if fp, ok := outputSizer.PaneOutputFingerprint(ctx); ok && fp != lastPaneOutputFP {
+							paneOutputProgressed = true
+							lastPaneOutputFP = fp
+						}
+					}
+
+					if worktreeProgressed || paneOutputProgressed {
+						signal := "changed working tree"
+						if paneOutputProgressed && !worktreeProgressed {
+							signal = "pane output growth"
+						} else if paneOutputProgressed {
+							signal = "changed working tree + pane output growth"
+						}
 						fmt.Fprintf(os.Stderr,
-							"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: worktree progressing (active pane + changed working tree) in %s; treating as heartbeat, deferring to commit budget (hard ceiling %v)\n",
-							wtPath, hardCeiling)
-						lastActivityFingerprint = fp
+							"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout: worktree progressing (active pane + %s) in %s; treating as heartbeat, deferring to commit budget (hard ceiling %v)\n",
+							signal, wtPath, hardCeiling)
+						if worktreeProgressed {
+							lastActivityFingerprint = wtFP
+						}
 						firstHeartbeatSeen = true
 						lastHeartbeat = now
 						lastProgress = now

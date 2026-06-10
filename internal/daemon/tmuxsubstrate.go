@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -726,6 +727,7 @@ var _ pasteInjecter = (*perRunSubstrate)(nil)
 var _ enterSender = (*perRunSubstrate)(nil)
 var _ quitSender = (*perRunSubstrate)(nil)
 var _ paneLivenessChecker = (*perRunSubstrate)(nil)
+var _ paneOutputSizer = (*perRunSubstrate)(nil)
 
 // paneTargeter is an optional interface a SubstrateSession may implement to
 // expose its specific tmux pane target string (e.g. "%1964").  perRunSubstrate
@@ -1095,6 +1097,43 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 		return true
 	}
 	return commandMatchesLiveAgent(pid, p.agentCommandFragments)
+}
+
+// PaneOutputFingerprint returns a string encoding the current pane output
+// volume: the tmux scrollback history size combined with the cursor row
+// position.  The value changes as the pane produces visible output
+// (streaming LLM responses, file reads, tool results), so an implementer
+// that is actively reading/planning without yet editing the worktree
+// advances this fingerprint every tick.
+//
+// The format is `"<history_size> <cursor_y>"` as reported by
+// `tmux display-message -p "#{history_size} #{cursor_y}"`.
+//   - history_size increases as content scrolls into the scrollback buffer.
+//   - cursor_y increases as new output lines appear in the visible pane area
+//     before the first scroll.
+//
+// Returns ("", false) on any error (conservative: treat unknown as no
+// growth — the ceiling kill is allowed to proceed).
+//
+// Implements paneOutputSizer.
+//
+// Bead: hk-ue0u2.
+func (p *perRunSubstrate) PaneOutputFingerprint(ctx context.Context) (string, bool) {
+	target := p.paneTarget()
+	if target == "" {
+		return "", false
+	}
+	//nolint:gosec // G204: target is captured from tmux at spawn time, not user input
+	out, err := exec.CommandContext(ctx, "tmux", "display-message",
+		"-t", target, "-p", "#{history_size} #{cursor_y}").Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return "", false
+	}
+	return s, true
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

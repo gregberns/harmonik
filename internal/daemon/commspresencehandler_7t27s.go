@@ -30,16 +30,21 @@ import (
 // in "comms who" as long as it is actively sending or receiving messages even when
 // it does not emit explicit join/refresh beats.
 //
+// sessionID propagates the caller's per-session token (from $HARMONIK_SESSION_ID)
+// so the presence projection can detect two-captains conflicts (hk-z0f02). Pass ""
+// when no session token is available (e.g. comms-recv refresh beats).
+//
 // Errors are suppressed — a dropped refresh beat is harmless (O-class durability).
-func (h *commsSendHandlerImpl) emitRefreshBeat(ctx context.Context, agent string) {
+func (h *commsSendHandlerImpl) emitRefreshBeat(ctx context.Context, agent, sessionID string) {
 	if h.presEmitter == nil || agent == "" {
 		return
 	}
 	_, _ = h.presEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
-		Agent:    agent,
-		Status:   core.AgentPresenceStatusOnline,
-		LastSeen: time.Now().UTC().Format(time.RFC3339),
-		Reason:   core.AgentPresenceReasonRefresh,
+		Agent:     agent,
+		Status:    core.AgentPresenceStatusOnline,
+		LastSeen:  time.Now().UTC().Format(time.RFC3339),
+		Reason:    core.AgentPresenceReasonRefresh,
+		SessionID: sessionID,
 	})
 }
 
@@ -67,6 +72,10 @@ type CommsPresenceRequest struct {
 
 	// Reason is "join", "refresh", or "leave". OPTIONAL.
 	Reason core.AgentPresenceReason `json:"reason,omitempty"`
+
+	// SessionID is an optional opaque per-session token (from $HARMONIK_SESSION_ID).
+	// Forwarded into the agent_presence event for two-captains conflict detection (hk-z0f02).
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // CommsPresenceResult is the SocketResponse.Result payload for a successful comms-presence op.
@@ -106,10 +115,11 @@ func (h *commsSendHandlerImpl) HandleCommsPresence(ctx context.Context, payload 
 	}
 
 	presPayload := core.AgentPresencePayload{
-		Agent:    req.Agent,
-		Status:   req.Status,
-		LastSeen: time.Now().UTC().Format(time.RFC3339),
-		Reason:   req.Reason,
+		Agent:     req.Agent,
+		Status:    req.Status,
+		LastSeen:  time.Now().UTC().Format(time.RFC3339),
+		Reason:    req.Reason,
+		SessionID: req.SessionID,
 	}
 
 	eventID, err := h.presEmitter.EmitAgentPresence(ctx, presPayload)

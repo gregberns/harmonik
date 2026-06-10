@@ -218,24 +218,34 @@ func runCommsSendSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	// Resolve socket path.
-	sockPath := socketFlag
-	if sockPath == "" {
-		projectDir := projectFlag
-		if projectDir == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "harmonik comms send: cannot determine cwd: %v\n", err)
-				return 1
-			}
-			projectDir = wd
-		}
-		absProject, err := filepath.Abs(projectDir)
+	// Resolve project directory and socket path.
+	projectDir := projectFlag
+	if projectDir == "" {
+		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik comms send: cannot resolve project path: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harmonik comms send: cannot determine cwd: %v\n", err)
 			return 1
 		}
+		projectDir = wd
+	}
+	absProject, err := filepath.Abs(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms send: cannot resolve project path: %v\n", err)
+		return 1
+	}
+	sockPath := socketFlag
+	if sockPath == "" {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
+	}
+
+	// Two-captains conflict detection (hk-z0f02): warn when sending as a name that
+	// is already online under a different session.
+	sessionID := resolveSessionID()
+	if sessionID != "" {
+		eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
+		if warn := checkCommsNameConflict(eventsPath, from, sessionID); warn != "" {
+			fmt.Fprintf(os.Stderr, "harmonik comms send: WARNING: %s\n", warn)
+		}
 	}
 
 	// Build the CommsSendRequest payload.
@@ -249,6 +259,9 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 	if replyToFlag != "" {
 		commsSendPayload["in_reply_to"] = replyToFlag
+	}
+	if sessionID != "" {
+		commsSendPayload["session_id"] = sessionID
 	}
 
 	payloadBytes, err := json.Marshal(commsSendPayload)
@@ -604,6 +617,11 @@ type PresenceRecord struct {
 	// Incorporates activity-derived liveness so an agent sending messages stays online
 	// even when its explicit presence beat is stale (hk-6vwi3 fix #1).
 	EffectiveLastSeen time.Time
+	// SessionID is the session_id field from the most recent agent_presence beat
+	// that carried a non-empty session_id. Used for two-captains conflict detection
+	// (hk-z0f02): if a new session claims this name but reports a different session_id,
+	// the CLI warns before sending.
+	SessionID string
 }
 
 // PresenceState is the computed liveness state for a PresenceRecord.
@@ -680,10 +698,19 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 				continue
 			}
 			// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
+			// Carry forward SessionID from the previous record when the new beat omits it
+			// (e.g. recv-refresh beats never carry a session_id) so we don't lose the
+			// session binding established by the last explicit join/send beat.
+			prev := byAgent[p.Agent]
+			sessionID := p.SessionID
+			if sessionID == "" {
+				sessionID = prev.SessionID
+			}
 			byAgent[p.Agent] = PresenceRecord{
-				Agent:    p.Agent,
-				Status:   string(p.Status),
-				LastSeen: lastSeen,
+				Agent:     p.Agent,
+				Status:    string(p.Status),
+				LastSeen:  lastSeen,
+				SessionID: sessionID,
 				// EffectiveLastSeen filled in post-scan pass below.
 			}
 		case "agent_message":
@@ -715,6 +742,44 @@ func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
 	return byAgent
 }
 
+// resolveSessionID returns the per-session opaque token for two-captains conflict
+// detection (hk-z0f02). Sources: $HARMONIK_SESSION_ID (set by the daemon for each
+// dispatched run). Returns empty string when the env var is absent, which disables
+// conflict detection gracefully (no false positives for sessions without a token).
+func resolveSessionID() string {
+	return os.Getenv("HARMONIK_SESSION_ID")
+}
+
+// checkCommsNameConflict returns a non-empty warning string when eventsPath
+// records that name is currently online with a different session_id than sessionID.
+// Returns empty string (no warning) when:
+//   - sessionID is empty (conflict detection requires a session token)
+//   - name has no presence entry
+//   - name is offline or stale
+//   - name's last known session_id is empty or matches sessionID
+//
+// Reads events.jsonl directly; no daemon connection required.
+// Bead ref: hk-z0f02.
+func checkCommsNameConflict(eventsPath, name, sessionID string) string {
+	if sessionID == "" || name == "" {
+		return ""
+	}
+	registry := ComputePresenceRegistry(eventsPath)
+	rec, ok := registry[name]
+	if !ok {
+		return ""
+	}
+	if GetPresenceState(rec) == PresenceStateOffline {
+		return ""
+	}
+	if rec.SessionID == "" || rec.SessionID == sessionID {
+		return ""
+	}
+	return fmt.Sprintf(
+		"identity conflict: %q is already online under session %s — two sessions claiming the same name may send conflicting orders",
+		name, rec.SessionID,
+	)
+}
 
 // runCommsPresenceSubcommand implements `harmonik comms join` and `harmonik comms leave`.
 // verb is "join" or "leave". subArgs is os.Args[3:].
@@ -771,24 +836,35 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		reason = "leave"
 	}
 
-	// Resolve socket path.
-	sockPath := socketFlag
-	if sockPath == "" {
-		projectDir := projectFlag
-		if projectDir == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot determine cwd: %v\n", verb, err)
-				return 1
-			}
-			projectDir = wd
-		}
-		absProject, err := filepath.Abs(projectDir)
+	// Resolve socket path and project directory.
+	projectDir := projectFlag
+	if projectDir == "" {
+		wd, err := os.Getwd()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot resolve project path: %v\n", verb, err)
+			fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot determine cwd: %v\n", verb, err)
 			return 1
 		}
+		projectDir = wd
+	}
+	absProject, err := filepath.Abs(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik comms %s: cannot resolve project path: %v\n", verb, err)
+		return 1
+	}
+
+	sockPath := socketFlag
+	if sockPath == "" {
 		sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
+	}
+
+	// Two-captains conflict detection (hk-z0f02): warn when joining as a name that
+	// is already online under a different session. Only fires for "join" (not leave).
+	sessionID := resolveSessionID()
+	if verb == "join" {
+		eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
+		if warn := checkCommsNameConflict(eventsPath, name, sessionID); warn != "" {
+			fmt.Fprintf(os.Stderr, "harmonik comms join: WARNING: %s\n", warn)
+		}
 	}
 
 	// Build the comms-presence request payload.
@@ -796,6 +872,9 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		"agent":  name,
 		"status": status,
 		"reason": reason,
+	}
+	if sessionID != "" {
+		presencePayload["session_id"] = sessionID
 	}
 
 	payloadBytes, err := json.Marshal(presencePayload)

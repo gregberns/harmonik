@@ -207,8 +207,9 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 	}
 
 	// Refresh presence for the receiving agent so receive-only agents stay
-	// visible in "comms who" (hk-6vwi3 fix #2).
-	h.emitRefreshBeat(ctx, req.Agent)
+	// visible in "comms who" (hk-6vwi3 fix #2). No session_id for recv beats —
+	// comms-recv requests do not carry a session token.
+	h.emitRefreshBeat(ctx, req.Agent, "")
 
 	if messages == nil {
 		messages = []CommsRecvMessage{}

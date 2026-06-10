@@ -53,6 +53,11 @@ type CommsSendRequest struct {
 
 	// InReplyTo is the optional event_id of the message being replied to.
 	InReplyTo *string `json:"in_reply_to,omitempty"`
+
+	// SessionID is an optional opaque per-session token (from $HARMONIK_SESSION_ID).
+	// Forwarded to the implicit refresh beat so the presence projection can detect
+	// two-captains conflicts (hk-z0f02).
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // CommsSendResult is the SocketResponse.Result payload for a successful comms-send op.
@@ -148,7 +153,8 @@ func (h *commsSendHandlerImpl) HandleCommsSend(ctx context.Context, payload json
 
 	// Refresh presence for the sender so active agents stay visible in "comms who"
 	// without requiring explicit join/refresh beats (hk-6vwi3 fix #2).
-	h.emitRefreshBeat(ctx, req.From)
+	// Thread session_id so the projection can detect two-captains conflicts (hk-z0f02).
+	h.emitRefreshBeat(ctx, req.From, req.SessionID)
 
 	result := CommsSendResult{EventID: eventID.String()}
 	resultBytes, marshalErr := json.Marshal(result)

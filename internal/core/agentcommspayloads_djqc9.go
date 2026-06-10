@@ -136,10 +136,12 @@ func (p AgentMessagePayload) Valid() bool {
 //
 // # Payload fields (agent-comms spec §1.2)
 //
-//   - agent     — the agent's registered presence id (REQUIRED)
-//   - status    — "online" or "offline" (REQUIRED)
-//   - last_seen — RFC 3339 wall-clock timestamp of this beat (REQUIRED)
-//   - reason    — provenance: "join", "refresh", or "leave" (OPTIONAL)
+//   - agent      — the agent's registered presence id (REQUIRED)
+//   - status     — "online" or "offline" (REQUIRED)
+//   - last_seen  — RFC 3339 wall-clock timestamp of this beat (REQUIRED)
+//   - reason     — provenance: "join", "refresh", or "leave" (OPTIONAL)
+//   - session_id — opaque per-session token; enables two-captains conflict
+//     detection (OPTIONAL; hk-z0f02)
 type AgentPresencePayload struct {
 	// Agent is the agent's registered presence id. Required (non-empty).
 	Agent string `json:"agent"`
@@ -155,6 +157,13 @@ type AgentPresencePayload struct {
 	// Empty when the reason is not specified. When non-empty, must be a valid
 	// AgentPresenceReason constant.
 	Reason AgentPresenceReason `json:"reason,omitempty"`
+
+	// SessionID is an optional opaque token that identifies the specific process
+	// or Claude session that emitted this beat. Sourced from $HARMONIK_SESSION_ID
+	// when available. The presence projection tracks this field so the CLI can
+	// warn when two distinct sessions simultaneously claim the same agent name
+	// (two-captains conflict detection, hk-z0f02).
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // Valid reports whether p is a well-formed AgentPresencePayload.

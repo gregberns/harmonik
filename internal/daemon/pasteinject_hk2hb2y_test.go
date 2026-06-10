@@ -229,8 +229,11 @@ CNT=$(cat "$CNT_FILE")
 CNT=$((CNT + 1))
 printf '%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT % 2)) -eq 0 ]; then
-  # Reviewer: write APPROVE verdict.
-  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"spy test"}' > "$WTP/.harmonik/review.json"
+  # Reviewer: write APPROVE verdict to the reviewer's OWN cwd ($PWD), which is the
+  # daemon-created isolated reviewer worktree (revWtPath). The daemon reads the
+  # verdict via ReadReviewVerdict(revWtPath) — NOT the implementer worktree $WTP.
+  mkdir -p "$PWD/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"spy test"}' > "$PWD/.harmonik/review.json"
 else
   # Implementer: commit a file.
   printf '%d' "$CNT" > "$WTP/pi_impl_$CNT.txt"
@@ -282,7 +285,10 @@ func TestPasteInjectSubstrateWiring_ReviewLoopCallsSpawnWindowTwice(t *testing.T
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty sealed registry: ForAgent(claude-code) returns an error so
+		// waitAgentReady is skipped (the handler is a shell fixture that never
+		// delivers agent_ready via the hook relay). hk-ngw3d.
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		Substrate:           spy,
 	})
 
@@ -332,7 +338,10 @@ func TestPasteInjectSubstrateWiring_NilSubstrateFallback(t *testing.T) {
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty sealed registry: ForAgent(claude-code) returns an error so
+		// waitAgentReady is skipped (the handler is a shell fixture that never
+		// delivers agent_ready via the hook relay). hk-ngw3d.
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		// Substrate: nil (zero value) — exec.CommandContext path
 	})
 

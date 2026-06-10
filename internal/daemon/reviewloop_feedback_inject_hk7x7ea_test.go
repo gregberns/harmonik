@@ -280,9 +280,12 @@ case "$CNT" in
     git -C "$WTP" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter1 impl" --no-gpg-sign >/dev/null 2>&1
     ;;
   2)
-    # iter1 reviewer: REQUEST_CHANGES.
+    # iter1 reviewer: REQUEST_CHANGES. Write to the reviewer's OWN cwd ($PWD) —
+    # the daemon-created isolated reviewer worktree (revWtPath, fresh each
+    # iteration). The daemon reads via ReadReviewVerdict(revWtPath), NOT $WTP.
+    mkdir -p "$PWD/.harmonik"
     printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["test-flag"],"notes":"please address the test flag before proceeding"}' \
-      > "$WTP/.harmonik/review.json"
+      > "$PWD/.harmonik/review.json"
     ;;
   3)
     # iter2 implementer-resume: check feedback file then commit a DIFFERENT file.
@@ -301,9 +304,12 @@ case "$CNT" in
     git -C "$WTP" -c user.email=test@harmonik.local -c user.name=Test commit -m "iter2 impl" --no-gpg-sign >/dev/null 2>&1
     ;;
   *)
-    # iter2 reviewer: APPROVE.
+    # iter2 reviewer: APPROVE. Write to the reviewer's OWN cwd ($PWD) — a fresh
+    # isolated reviewer worktree (revWtPath) is created for this iteration, so
+    # writing $PWD/.harmonik/review.json materializes a fresh verdict per cycle.
+    mkdir -p "$PWD/.harmonik"
     printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"looks good now"}' \
-      > "$WTP/.harmonik/review.json"
+      > "$PWD/.harmonik/review.json"
     ;;
 esac
 exit 0
@@ -356,7 +362,10 @@ func TestScenario_ReviewLoop_FeedbackFileInjected(t *testing.T) {
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
-		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
+		// Empty sealed registry: ForAgent(claude-code) returns an error so
+		// waitAgentReady is skipped (the handler is a shell fixture that never
+		// delivers agent_ready via the hook relay). hk-ngw3d.
+		AdapterRegistry2:    NewEmptySealedAdapterRegistryForTest(t),
 		Substrate:           sub,
 		HookStore:           store,
 		// 8s > 2s resume fallback grace so fallback wins; pre-fix timeout fires at 8s.

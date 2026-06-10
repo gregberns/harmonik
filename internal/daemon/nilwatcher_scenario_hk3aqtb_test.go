@@ -245,7 +245,11 @@ CNT=$(cat "$CNT_FILE")
 CNT=$((CNT + 1))
 printf '%d' "$CNT" > "$CNT_FILE"
 if [ $((CNT % 2)) -eq 0 ]; then
-  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"nil-watcher test"}' > "$WTP/.harmonik/review.json"
+  # Reviewer: write the verdict to the reviewer's OWN cwd ($PWD), which is the
+  # daemon-created isolated reviewer worktree (revWtPath). The daemon reads the
+  # verdict via ReadReviewVerdict(revWtPath) — NOT the implementer worktree $WTP.
+  mkdir -p "$PWD/.harmonik"
+  printf '{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"nil-watcher test"}' > "$PWD/.harmonik/review.json"
 else
   printf '%d' "$CNT" > "$WTP/nw_impl_$CNT.txt"
   git -C "$WTP" add "nw_impl_$CNT.txt" >/dev/null 2>&1

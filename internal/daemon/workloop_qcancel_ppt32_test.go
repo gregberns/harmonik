@@ -28,6 +28,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,9 +70,15 @@ func queueCancelFixturePendingQueue(t *testing.T, beadIDs ...core.BeadID) *queue
 	}
 }
 
-// queueCancelFixtureQueuePath returns the canonical queue.json path under projectDir.
+// queueCancelFixtureQueuePath returns the canonical per-queue file path for the
+// "main" queue under projectDir: .harmonik/queues/main.json. This is the
+// post-NQ-A2 canonical path that production's CancelQueueOnShutdown archives
+// (queuePath(projectDir, "main") in internal/queue/persistence.go), NOT the
+// legacy top-level .harmonik/queue.json (used only by MigrateFromLegacy).
+//
+// Spec ref: specs/queue-model.md §2.9 (".harmonik/queues/<name>.json", NQ-A2).
 func queueCancelFixtureQueuePath(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queue.json")
+	return filepath.Join(projectDir, ".harmonik", "queues", queue.QueueNameMain+".json")
 }
 
 // queueCancelFixtureHasActiveQueue returns true when queue.json exists and
@@ -161,30 +168,32 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 		t.Fatal("workloop did not exit within 5s after immediate context cancel")
 	}
 
-	// (a) queue.json must be absent from the canonical path (archived by drainCancelledQueue).
+	// (a) The canonical main-queue file (.harmonik/queues/main.json) must be
+	// absent — CancelQueueOnShutdown renamed it to main.json.cancelled-<ts>.
 	canonicalPath := queueCancelFixtureQueuePath(projectDir)
 	if _, statErr := os.Stat(canonicalPath); statErr == nil {
-		t.Errorf("queue.json still exists at canonical path after cancel; expected it to be archived")
+		t.Errorf("%s still exists at canonical path after cancel; expected it to be archived", canonicalPath)
 	} else if !os.IsNotExist(statErr) {
-		t.Errorf("unexpected error checking queue.json: %v", statErr)
+		t.Errorf("unexpected error checking %s: %v", canonicalPath, statErr)
 	}
 
-	// Verify at least one .cancelled-* archive file was created.
-	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	entries, readDirErr := os.ReadDir(harmonikDir)
+	// Verify at least one main.json.cancelled-* archive file was created under
+	// .harmonik/queues/ (the post-NQ-A2 canonical per-queue dir; queue-model.md §2.9).
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	entries, readDirErr := os.ReadDir(queuesDir)
 	if readDirErr != nil {
-		t.Fatalf("ReadDir .harmonik: %v", readDirErr)
+		t.Fatalf("ReadDir %s: %v", queuesDir, readDirErr)
 	}
+	const archivePrefix = queue.QueueNameMain + ".json.cancelled-"
 	foundArchive := false
 	for _, e := range entries {
-		if len(e.Name()) > len("queue.json.cancelled-") &&
-			e.Name()[:len("queue.json.cancelled-")] == "queue.json.cancelled-" {
+		if strings.HasPrefix(e.Name(), archivePrefix) {
 			foundArchive = true
 			break
 		}
 	}
 	if !foundArchive {
-		t.Error("no queue.json.cancelled-* archive file found after cancel")
+		t.Errorf("no %s* archive file found in %s after cancel", archivePrefix, queuesDir)
 	}
 
 	// (b) In-memory QueueStore must be cleared.

@@ -20,6 +20,13 @@ type StatusResult struct {
 	StartedAt     string `json:"started_at,omitempty"`
 	DaemonID      string `json:"daemon_instance_id,omitempty"`
 	SentinelOK    bool   `json:"sentinel_ok"` // sentinel file present
+	// LoopStatus is the current cognition loop state per specs/cognition-loop.md §6.
+	// Present when the cognition loop has written loop-status.json; absent otherwise.
+	// Includes "budget-paused" and "circuit-tripped" pause-reason states per ON-008a.
+	//
+	// Spec ref: specs/operator-nfr.md §4.3 ON-008a.
+	LoopStatus  string `json:"loop_status,omitempty"`
+	PauseReason string `json:"pause_reason,omitempty"`
 }
 
 // RunStatus implements `harmonik supervise status`.
@@ -88,6 +95,12 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 	if result.DaemonID != "" {
 		fmt.Fprintf(stdout, "daemon_id:     %s\n", result.DaemonID)
 	}
+	if result.LoopStatus != "" {
+		fmt.Fprintf(stdout, "loop_status:   %s\n", result.LoopStatus)
+	}
+	if result.PauseReason != "" {
+		fmt.Fprintf(stdout, "pause_reason:  %s\n", result.PauseReason)
+	}
 	return 0
 }
 
@@ -109,6 +122,12 @@ func buildStatus(projectDir string) StatusResult {
 		result.RestartMax = cfg.RestartMax
 		result.StartedAt = cfg.StartedAt
 		result.DaemonID = cfg.DaemonInstanceID
+	}
+
+	// Read cognition loop status (ON-008a: budget-paused / circuit-tripped surfacing).
+	if ls, err := ReadLoopStatus(projectDir); err == nil && ls != nil {
+		result.LoopStatus = string(ls.Status)
+		result.PauseReason = ls.PauseReason
 	}
 
 	// Read pidfile and probe liveness.

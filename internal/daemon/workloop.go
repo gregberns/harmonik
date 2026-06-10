@@ -63,6 +63,24 @@ import (
 // re-query timer until a queue-submit wake signal or shutdown arrives.
 const workloopPollInterval = 2 * time.Second
 
+// shutdownDrainTimeout is the maximum time exitClean waits for in-flight bead
+// goroutines to complete their graceful shutdown sequence after the daemon
+// context is cancelled (SIGTERM / SIGINT).
+//
+// In-flight goroutines detect ctx cancellation and run cleanup code such as
+// ReopenBead(context.Background(), ...). The worst-case per-goroutine time is
+// brcli write-timeout (10 s) + sigtermGrace (5 s) = ~15 s per goroutine.
+// Without a bound, three concurrent beads can hold the process alive for ~45 s
+// (the original SIGTERM hang observed in hk-az4fd).
+//
+// This ceiling caps the total drain wait at a predictable window so SIGTERM
+// causes the daemon to exit promptly. Goroutines that have not finished within
+// the window leave their beads in the in_progress state; QM-002a on next
+// startup resets them to open and the queue item recovers to pending.
+//
+// Bead ref: hk-vlkh4.
+const shutdownDrainTimeout = 10 * time.Second
+
 // windowCleaner is the optional interface implemented by substrates that track
 // spawned tmux windows. exitClean probes deps.substrate for this interface and
 // calls KillAllWindows after wg.Wait() to clean up orphan tmux windows on wave
@@ -883,15 +901,35 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		dispatchCtx = deps.stopDispatchCtx
 	}
 
-	// exitClean terminates the loop cleanly: it waits for in-flight goroutines,
-	// kills any orphan tmux windows spawned by this daemon instance (hk-j6npz),
-	// then drains any still-active queue to QueueStatusCancelled so the next
-	// harmonik run can start without the QM-027 "already active" guard blocking
-	// it (hk-ppt32). The background context is intentional: by the time exitClean
-	// runs, ctx is always cancelled; queue.Persist and KillAllWindows need a live
-	// context.
+	// exitClean terminates the loop cleanly: it waits for in-flight goroutines
+	// (up to shutdownDrainTimeout), kills any orphan tmux windows spawned by this
+	// daemon instance (hk-j6npz), then drains any still-active queue to
+	// QueueStatusCancelled so the next harmonik run can start without the QM-027
+	// "already active" guard blocking it (hk-ppt32). The background context is
+	// intentional: by the time exitClean runs, ctx is always cancelled;
+	// queue.Persist and KillAllWindows need a live context.
 	exitClean := func() error {
-		wg.Wait()
+		// Wait for in-flight goroutines with a bounded timeout so SIGTERM always
+		// exits promptly (hk-vlkh4). Without a bound, goroutines that run
+		// ReopenBead(context.Background(), ...) can each block for up to
+		// brcli write-timeout + sigtermGrace (~15 s); with N concurrent beads
+		// the daemon hangs for N×15 s. The drain timeout caps the total wait.
+		// Goroutines that exceed the window leave beads in_progress; QM-002a
+		// at next startup resets them to open.
+		drainDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(drainDone)
+		}()
+		select {
+		case <-drainDone:
+			// All in-flight goroutines drained cleanly.
+		case <-time.After(shutdownDrainTimeout):
+			remaining := deps.runRegistry.Len()
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: shutdown: drain timeout after %v with %d run(s) still in-flight; exiting (QM-002a recovers on next start)\n",
+				shutdownDrainTimeout, remaining)
+		}
 		// Kill any tmux windows spawned during this run. deps.substrate is nil
 		// when tmux hosting is not used (exec.CommandContext path); the type
 		// assertion is a no-op in that case.

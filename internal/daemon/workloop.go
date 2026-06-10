@@ -3800,62 +3800,76 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		}
 	}
 
-	// Step 3: fast-forward check.  The target branch MUST be an ancestor of
-	// runTip.  git merge-base --is-ancestor <target> <runTip> exits 0 iff
-	// target ⊆ runTip.
-	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
-	isAncCmd.Dir = projectDir
-	if err := isAncCmd.Run(); err != nil {
-		// Non-FF: target branch has diverged from the run-branch.
-		return mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
-		}
-	}
-
-	// Step 3: fast-forward target branch to runTip.
-	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip)
-	updateRefCmd.Dir = projectDir
-	if out, err := updateRefCmd.CombinedOutput(); err != nil {
-		return mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
-		}
-	}
-
-	// Step 3b: post-merge build gate (hk-o68j3).
+	// Steps 3–4: FF-check → update-ref → build gate → push, with non-FF retry.
 	//
-	// Run go build+vet on the freshly fast-forwarded tree to catch compile
-	// errors introduced by the merged commit before the push makes them
-	// visible to other agents.  Only runs when a go.mod is present so
-	// non-Go projects and bare-repo test fixtures are unaffected.
-	// On failure, roll back the update-ref (same rollback pattern as the
-	// push-failed path below), skip the push, emit merge_build_failed, and
-	// return failure so the caller reopens the bead.
-	if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
-		for _, buildArgs := range [][]string{
-			{"build", "./..."},
-			{"vet", "./..."},
-		} {
-			buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
-			buildCmd.Dir = projectDir
-			if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
-				rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
-				rollbackCmd.Dir = projectDir
-				_ = rollbackCmd.Run()
-				emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
-				return mergeOutcome{
-					success: false,
-					reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
+	// On a non-fast-forward push rejection (origin/<targetBranch> advanced
+	// out-of-band, e.g. a captain cherry-pick deploy), roll back the local
+	// update-ref, fetch the new remote tip, rebase the run-branch onto it,
+	// and retry — up to maxPushAttempts times total.  Any other push failure,
+	// a rebase conflict on retry, or exhausted retries is terminal.
+	//
+	// Bead ref: hk-svieq.
+	const maxPushAttempts = 3
+	for pushAttempt := 1; pushAttempt <= maxPushAttempts; pushAttempt++ {
+		// Step 3: fast-forward check.  The target branch MUST be an ancestor of
+		// runTip.  git merge-base --is-ancestor <target> <runTip> exits 0 iff
+		// target ⊆ runTip.
+		isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
+		isAncCmd.Dir = projectDir
+		if err := isAncCmd.Run(); err != nil {
+			// Non-FF: target branch has diverged from the run-branch.
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
+			}
+		}
+
+		// Step 3a: fast-forward target branch to runTip.
+		updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip)
+		updateRefCmd.Dir = projectDir
+		if out, err := updateRefCmd.CombinedOutput(); err != nil {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
+			}
+		}
+
+		// Step 3b: post-merge build gate (hk-o68j3).
+		//
+		// Run go build+vet on the freshly fast-forwarded tree to catch compile
+		// errors introduced by the merged commit before the push makes them
+		// visible to other agents.  Only runs when a go.mod is present so
+		// non-Go projects and bare-repo test fixtures are unaffected.
+		// On failure, roll back the update-ref, emit merge_build_failed, and
+		// return failure so the caller reopens the bead.
+		if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
+			for _, buildArgs := range [][]string{
+				{"build", "./..."},
+				{"vet", "./..."},
+			} {
+				buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
+				buildCmd.Dir = projectDir
+				if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+					rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
+					rollbackCmd.Dir = projectDir
+					_ = rollbackCmd.Run()
+					emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
+					return mergeOutcome{
+						success: false,
+						reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
+					}
 				}
 			}
 		}
-	}
 
-	// Step 4: push origin <targetBranch>.
-	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
-	pushCmd.Dir = projectDir
-	if out, err := pushCmd.CombinedOutput(); err != nil {
+		// Step 4: push origin <targetBranch>.
+		pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
+		pushCmd.Dir = projectDir
+		pushOut, pushErr := pushCmd.CombinedOutput()
+		if pushErr == nil {
+			break // push succeeded; fall through to working-tree refresh
+		}
+
 		// Push failed — roll back the local update-ref so the repo is consistent.
 		// Best-effort rollback: if it fails the operator will see the target branch
 		// pointing to runTip without a matching remote; reconciliation (Cat 3 /
@@ -3863,10 +3877,80 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
 		rollbackCmd.Dir = projectDir
 		_ = rollbackCmd.Run()
-		return mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("push_failed: %v\n%s", err, out),
+
+		// Non-FF? If so, fetch the new remote tip, rebase the run-branch, and
+		// retry the whole sequence.  All other push errors are terminal.
+		pushOutStr := string(pushOut)
+		isNonFF := strings.Contains(pushOutStr, "non-fast-forward") ||
+			strings.Contains(pushOutStr, "[rejected]")
+		if !isNonFF || pushAttempt >= maxPushAttempts {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("push_failed: %v\n%s", pushErr, pushOut),
+			}
 		}
+
+		// Fetch to update refs/remotes/origin/<targetBranch>.
+		fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
+		fetchCmd.Dir = projectDir
+		if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("push_failed_fetch (attempt %d): %v\n%s", pushAttempt, fetchErr, fetchOut),
+			}
+		}
+
+		// Read the new remote tip.
+		remoteRef := "refs/remotes/origin/" + targetBranch
+		remoteRevCmd := exec.CommandContext(ctx, "git", "rev-parse", remoteRef)
+		remoteRevCmd.Dir = projectDir
+		remoteRevOut, remoteRevErr := remoteRevCmd.Output()
+		if remoteRevErr != nil {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("push_failed_rev_parse_remote (attempt %d): %v", pushAttempt, remoteRevErr),
+			}
+		}
+		newMainTip := strings.TrimRight(string(remoteRevOut), "\n")
+
+		// Advance local targetBranch to the fetched remote tip so the rebase
+		// and next iteration's FF check have a correct base.
+		updateToRemoteCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newMainTip)
+		updateToRemoteCmd.Dir = projectDir
+		if updateOut, updateErr := updateToRemoteCmd.CombinedOutput(); updateErr != nil {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("push_failed_update_to_remote (attempt %d): %v\n%s", pushAttempt, updateErr, updateOut),
+			}
+		}
+		mainTip = newMainTip
+
+		// Rebase the run-branch onto the updated local target (in the worktree).
+		if _, statErr := os.Stat(wtPath); statErr == nil {
+			discardDirtyChurn(ctx, wtPath)
+			commitResidualDelta(ctx, wtPath, runID)
+			retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
+			retryRebaseCmd.Dir = wtPath
+			if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
+				if _, autoResolved := mergeRebaseAutoResolveBeadsLedger(ctx, wtPath, out, rebaseErr); !autoResolved {
+					abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+					abortCmd.Dir = wtPath
+					_ = abortCmd.Run()
+					return mergeOutcome{
+						success: false,
+						reason:  fmt.Sprintf("rebase_conflict_on_push_retry (attempt %d): %v\n%s", pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
+					}
+				}
+			}
+		}
+
+		// Re-resolve runTip after the retry rebase.
+		retryRunTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
+		retryRunTipCmd.Dir = projectDir
+		if retryRunTipOut, retryRunTipErr := retryRunTipCmd.Output(); retryRunTipErr == nil {
+			runTip = strings.TrimRight(string(retryRunTipOut), "\n")
+		}
+		// Loop back: FF-check → update-ref → build gate → push with updated mainTip/runTip.
 	}
 
 	// Step 5: refresh project working tree to match HEAD (EM-054).

@@ -199,3 +199,125 @@ func TestRunQueueCancel_CompletedQueue_ForceArchives(t *testing.T) {
 		t.Errorf("RunQueueCancel completed --force: queue file still present at %q", queueFile)
 	}
 }
+
+// TestRunQueueCancel_QueueFlag_ArchivesNamedQueue verifies that --queue <name>
+// archives the named queue, freeing the name for a fresh submit (hk-fkpb7
+// problem (3): cancel must accept the flag form used by the other queue verbs).
+func TestRunQueueCancel_QueueFlag_ArchivesNamedQueue(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	mainPath := cancelFixtureWriteQueue(t, projectDir, "main")
+	fwkPath := cancelFixtureWriteQueue(t, projectDir, "fwkeeper")
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "fwkeeper"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel --queue fwkeeper: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if _, err := os.Stat(fwkPath); !os.IsNotExist(err) {
+		t.Errorf("RunQueueCancel --queue fwkeeper: fwkeeper queue file still exists at %q", fwkPath)
+	}
+	if _, err := os.Stat(mainPath); err != nil {
+		t.Errorf("RunQueueCancel --queue fwkeeper: main queue file unexpectedly gone: %v", err)
+	}
+	if !strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel --queue fwkeeper: stdout %q does not mention 'archived'", out.String())
+	}
+}
+
+// TestRunQueueCancel_QueueFlagEquals_ArchivesNamedQueue verifies the --queue=<name>
+// equals form.
+func TestRunQueueCancel_QueueFlagEquals_ArchivesNamedQueue(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	fwkPath := cancelFixtureWriteQueue(t, projectDir, "fwkeeper")
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue=fwkeeper"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel --queue=fwkeeper: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if _, err := os.Stat(fwkPath); !os.IsNotExist(err) {
+		t.Errorf("RunQueueCancel --queue=fwkeeper: fwkeeper queue file still exists at %q", fwkPath)
+	}
+}
+
+// TestRunQueueCancel_QueueIDFlag_ArchivesByUUID verifies that --queue-id <uuid>
+// locates the queue across all per-name files and archives the matching one,
+// leaving other queues untouched (hk-fkpb7).
+func TestRunQueueCancel_QueueIDFlag_ArchivesByUUID(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	mainPath := cancelFixtureWriteQueue(t, projectDir, "main")
+
+	// Write fwkeeper with a known queue_id.
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	fwkQueueID := "aaaabbbb-0000-7000-8000-fwkeeper00001"
+	fwkContent := `{
+  "schema_version": 1,
+  "queue_id": "` + fwkQueueID + `",
+  "name": "fwkeeper",
+  "status": "paused-by-failure",
+  "groups": []
+}`
+	fwkPath := filepath.Join(queuesDir, "fwkeeper.json")
+	if err := os.WriteFile(fwkPath, []byte(fwkContent), 0o644); err != nil { //nolint:gosec // G306: test-only
+		t.Fatalf("WriteFile fwkeeper: %v", err)
+	}
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", fwkQueueID}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel --queue-id: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	// fwkeeper queue file must be archived.
+	if _, err := os.Stat(fwkPath); !os.IsNotExist(err) {
+		t.Errorf("RunQueueCancel --queue-id: fwkeeper queue file still exists at %q", fwkPath)
+	}
+	// main queue file must be untouched.
+	if _, err := os.Stat(mainPath); err != nil {
+		t.Errorf("RunQueueCancel --queue-id: main queue file unexpectedly gone: %v", err)
+	}
+	if !strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel --queue-id: stdout %q does not mention 'archived'", out.String())
+	}
+	if !strings.Contains(out.String(), fwkQueueID) {
+		t.Errorf("RunQueueCancel --queue-id: stdout %q does not mention queue_id %s", out.String(), fwkQueueID)
+	}
+}
+
+// TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero verifies that --queue-id
+// with a UUID that doesn't match any file exits 0 (nothing to cancel).
+func TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "main")
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", "00000000-dead-7000-beef-000000000000"}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueCancel --queue-id not-found: exit = %d, want 0", got)
+	}
+	if !strings.Contains(out.String(), "no active queue found") {
+		t.Errorf("RunQueueCancel --queue-id not-found: stdout %q does not mention 'no active queue found'", out.String())
+	}
+}

@@ -22,10 +22,13 @@ package daemon_test
 // are OUT OF SCOPE for this bead.  Populating new event fields is separate work.
 // A follow-up bead should be filed if those fields are desired.
 //
-// Handler design: each bead handler sleeps 0.3 s before exiting 0. This keeps
-// at most 4 goroutines simultaneously in-flight (MaxConcurrent=4) and ensures
-// the parallel run is meaningfully faster than the sequential run (4 in-flight
-// × 0.3 s = 0.3 s per batch vs 0.3 s per bead × 10 = 3 s sequential).
+// Handler design: each bead handler sleeps 0.3 s, makes a minimal git commit,
+// then exits 0. The sleep keeps at most 4 goroutines simultaneously in-flight
+// (MaxConcurrent=4) and ensures the parallel run is meaningfully faster than the
+// sequential run (4 in-flight × 0.3 s = 0.3 s per batch vs 0.3 s per bead × 10 =
+// 3 s sequential). The commit is required so the no-commit guard does not reopen
+// the bead — both cfgs run in WorkflowModeSingle with a committing handler so the
+// beads actually reach "closed" (hk-6hzci).
 //
 // Helper prefix: throughputFixture (per implementer-protocol.md
 // §Helper-prefix discipline; bead hk-e61c3.6).
@@ -63,14 +66,34 @@ func throughputFixtureLocateBr(t *testing.T) string {
 }
 
 // throughputFixtureSleepHandlerScript writes a /bin/sh script to t.TempDir()
-// that sleeps 0.3 s then exits 0.  This ensures ≤MaxConcurrent goroutines are
-// simultaneously in-flight and the parallel run is measurably faster than the
-// sequential run.
+// that sleeps 0.3 s, makes a minimal git commit, then exits 0.
+//
+// The sleep ensures ≤MaxConcurrent goroutines are simultaneously in-flight and
+// the parallel run is measurably faster than the sequential run (that is the
+// throughput invariant under test).  The commit is required because the
+// no-commit guard fails any run where HEAD does not advance past parentSHA;
+// without it the run reopens the bead and the beads never reach "closed"
+// (hk-6hzci: review-loop + sleep-only handler mismatch caused a reopen storm
+// and the test timed out at "not all beads closed within 1m0s").  The commit
+// pattern mirrors smokeFixtureHandlerScript: read bead_id from
+// .harmonik/agent-task.md so the commit carries a proper Refs trailer, and
+// redirect git output to stderr so the daemon's NDJSON stdout parser is not
+// confused by non-JSON output.
 func throughputFixtureSleepHandlerScript(t *testing.T) string {
 	t.Helper()
 	scriptDir := t.TempDir()
 	scriptPath := filepath.Join(scriptDir, "handler.sh")
-	content := "#!/bin/sh\nsleep 0.3\nexit 0\n"
+	content := `#!/bin/sh
+set -e
+sleep 0.3
+bead_id=$(grep '^bead_id:' .harmonik/agent-task.md | awk '{print $2}') 2>/dev/null
+echo "throughput: ${bead_id}" > "throughput-${bead_id}.txt"
+git add "throughput-${bead_id}.txt" >&2
+git commit -m "throughput: handler commit for ${bead_id}
+
+Refs: ${bead_id}" >&2
+exit 0
+`
 	//nolint:gosec // G306: script is test-only, chmod 0755 required for execution
 	if err := os.WriteFile(scriptPath, []byte(content), 0o755); err != nil {
 		t.Fatalf("throughputFixtureSleepHandlerScript: WriteFile: %v", err)
@@ -331,7 +354,7 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       1,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 	parCfg := daemon.Config{
 		ProjectDir:          parProjectDir,
@@ -340,7 +363,7 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       4,
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
 	// ── Run sequential baseline and parallel run concurrently ─────────────────

@@ -152,15 +152,18 @@ func TestDotCascade_NoProgressDetected(t *testing.T) {
 	if !result.NeedsAttention {
 		t.Error("expected needs_attention=true on DOT no-progress path")
 	}
-	if !strings.Contains(result.Summary, "no-progress") {
-		t.Errorf("expected summary to mention no-progress; got %q", result.Summary)
+	// hk-m1wqp: summary now says "fix-up stalled" when prior verdict was REQUEST_CHANGES.
+	if !strings.Contains(result.Summary, "no-progress") && !strings.Contains(result.Summary, "fix-up stalled") {
+		t.Errorf("expected summary to mention no-progress or fix-up stalled; got %q", result.Summary)
 	}
 
 	// ── Event assertions ─────────────────────────────────────────────────────
 	eventTypes := collector.eventTypes()
 
-	// no_progress_detected MUST be emitted.
-	rlAssertEventPresent(t, eventTypes, string(core.EventTypeNoProgressDetected))
+	// hk-m1wqp: review_fixup_stalled replaces no_progress_detected when the
+	// prior verdict was REQUEST_CHANGES (the DOT fixture writes REQUEST_CHANGES
+	// on invocation 2 before the no-progress fires on invocation 3).
+	rlAssertEventPresent(t, eventTypes, string(core.EventTypeReviewFixupStalled))
 
 	// review_loop_cycle_complete MUST NOT be emitted in DOT mode (§8.1a ordering
 	// rule DOT exemption).
@@ -172,28 +175,31 @@ func TestDotCascade_NoProgressDetected(t *testing.T) {
 	}
 
 	// ── Payload assertion: workflow_mode MUST be "dot" ───────────────────────
-	var foundNoProgress bool
+	var foundEvent bool
 	for _, ev := range collector.allEvents() {
-		if ev.EventType != string(core.EventTypeNoProgressDetected) {
+		if ev.EventType != string(core.EventTypeReviewFixupStalled) {
 			continue
 		}
-		foundNoProgress = true
-		var pl core.NoProgressDetectedPayload
+		foundEvent = true
+		var pl core.ReviewFixupStalledPayload
 		if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-			t.Fatalf("unmarshal no_progress_detected payload: %v", err)
+			t.Fatalf("unmarshal review_fixup_stalled payload: %v", err)
 		}
 		if pl.WorkflowMode != core.WorkflowModeDot {
-			t.Errorf("no_progress_detected.workflow_mode = %q; want %q", pl.WorkflowMode, core.WorkflowModeDot)
+			t.Errorf("review_fixup_stalled.workflow_mode = %q; want %q", pl.WorkflowMode, core.WorkflowModeDot)
 		}
 		if !pl.Valid() {
-			t.Errorf("no_progress_detected payload is not Valid(): %+v", pl)
+			t.Errorf("review_fixup_stalled payload is not Valid(): %+v", pl)
 		}
 		if pl.IterationCount < 2 {
-			t.Errorf("no_progress_detected.iteration_count = %d; want ≥ 2", pl.IterationCount)
+			t.Errorf("review_fixup_stalled.iteration_count = %d; want ≥ 2", pl.IterationCount)
+		}
+		if pl.ReviewerFlags == nil {
+			t.Errorf("review_fixup_stalled.reviewer_flags is nil; want non-nil (MAY be empty)")
 		}
 		break
 	}
-	if !foundNoProgress {
-		t.Error("no_progress_detected event not found in emitted events")
+	if !foundEvent {
+		t.Error("review_fixup_stalled event not found in emitted events")
 	}
 }

@@ -359,10 +359,13 @@ func TestNoProgress_NegativeGuard_NoCommitAfterRequestChanges_hktogxq(t *testing
 	if !result.NeedsAttention {
 		t.Errorf("negative-guard: expected needs_attention=true; summary=%q", result.Summary)
 	}
-	if !strings.Contains(result.Summary, "no-progress") {
-		t.Errorf("negative-guard: expected summary to report no-progress; got %q", result.Summary)
+	// hk-m1wqp: summary now reports "fix-up stalled" (prior verdict was REQUEST_CHANGES).
+	if !strings.Contains(result.Summary, "no-progress") && !strings.Contains(result.Summary, "fix-up stalled") {
+		t.Errorf("negative-guard: expected summary to report no-progress or fix-up stalled; got %q", result.Summary)
 	}
-	rlAssertEventPresent(t, events, string(core.EventTypeNoProgressDetected))
+	// hk-m1wqp: review_fixup_stalled replaces no_progress_detected for the
+	// REQUEST_CHANGES → no-commit path.
+	rlAssertEventPresent(t, events, string(core.EventTypeReviewFixupStalled))
 }
 
 // togxqWriteScript writes a /bin/sh fixture script to a temp dir and returns its path.

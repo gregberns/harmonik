@@ -176,6 +176,7 @@ func rlcAssertCycleCompleteIsLastReviewEvent(t *testing.T, types []string) {
 		string(core.EventTypeReviewerVerdict):         true,
 		string(core.EventTypeIterationCapHit):         true,
 		string(core.EventTypeNoProgressDetected):      true,
+		string(core.EventTypeReviewFixupStalled):      true, // hk-m1wqp
 		string(core.EventTypeReviewLoopCycleComplete): true,
 	}
 
@@ -391,18 +392,21 @@ func TestReviewLoopCycleComplete_NoProgress(t *testing.T) {
 	if result.Success {
 		t.Error("expected success=false on no-progress path")
 	}
-	if result.CompletionReason != string(core.ReviewLoopCompletionReasonNoProgress) {
-		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonNoProgress)
+	// hk-m1wqp: review-loop no-progress after REQUEST_CHANGES now uses fixup_stalled.
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonFixupStalled) {
+		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonFixupStalled)
 	}
 	if !result.NeedsAttention {
 		t.Error("expected needs_attention=true on no-progress path")
 	}
 
 	eventTypes := collector.eventTypes()
-	rlAssertEventPresent(t, eventTypes, string(core.EventTypeNoProgressDetected))
+	// hk-m1wqp: review_fixup_stalled replaces no_progress_detected when the
+	// prior verdict was REQUEST_CHANGES (structural guarantee in review-loop mode).
+	rlAssertEventPresent(t, eventTypes, string(core.EventTypeReviewFixupStalled))
 	rlcAssertCycleCompleteExactlyOnce(t, eventTypes)
 	rlAssertEventSubsequence(t, eventTypes, []string{
-		string(core.EventTypeNoProgressDetected),
+		string(core.EventTypeReviewFixupStalled),
 		string(core.EventTypeReviewLoopCycleComplete),
 	})
 	rlcAssertCycleCompleteIsLastReviewEvent(t, eventTypes)

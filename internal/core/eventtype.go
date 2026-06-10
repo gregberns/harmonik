@@ -596,6 +596,18 @@ const (
 	// outcome is recorded in the run record).
 	// Bead ref: hk-81n9r.
 	EventTypeReviewBypassed EventType = "review_bypassed"
+
+	// EventTypeReviewFixupStalled is the review_fixup_stalled event type (§8.1a.7).
+	// Emitted when a REQUEST_CHANGES fix-up run advances HEAD by zero commits —
+	// the implementer was given reviewer feedback but produced no new commit.
+	// Carries the reviewer flags from the prior REQUEST_CHANGES verdict so triage
+	// can see the specific flag that the implementer failed to address.
+	// Durability class: O (ordinary — improvement-loop signal; emitted before
+	// review_loop_cycle_complete{completion_reason=fixup_stalled} in review-loop
+	// mode; terminates the DOT cascade directly per §8.1a ordering-rule DOT
+	// exemption).
+	// Bead ref: hk-m1wqp.
+	EventTypeReviewFixupStalled EventType = "review_fixup_stalled"
 )
 
 // ---------------------------------------------------------------------------

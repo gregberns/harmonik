@@ -514,8 +514,9 @@ func TestReviewLoop_NoProgress(t *testing.T) {
 	if result.Success {
 		t.Error("expected success=false on no-progress path")
 	}
-	if result.CompletionReason != string(core.ReviewLoopCompletionReasonNoProgress) {
-		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonNoProgress)
+	// hk-m1wqp: review-loop no-progress after REQUEST_CHANGES now uses fixup_stalled.
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonFixupStalled) {
+		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonFixupStalled)
 	}
 	if !result.NeedsAttention {
 		t.Error("expected needs_attention=true on no-progress path")
@@ -523,11 +524,12 @@ func TestReviewLoop_NoProgress(t *testing.T) {
 
 	eventTypes := collector.eventTypes()
 
-	// no_progress_detected must be emitted.
-	rlAssertEventPresent(t, eventTypes, string(core.EventTypeNoProgressDetected))
+	// hk-m1wqp: review_fixup_stalled replaces no_progress_detected when the
+	// prior verdict was REQUEST_CHANGES (structural guarantee in review-loop mode).
+	rlAssertEventPresent(t, eventTypes, string(core.EventTypeReviewFixupStalled))
 
 	// reviewer_launched appears exactly once (iteration 1 only — iteration 2
-	// reviewer must NOT be launched when no-progress is detected).
+	// reviewer must NOT be launched when fix-up stall is detected).
 	launchCount := 0
 	for _, et := range eventTypes {
 		if et == string(core.EventTypeReviewerLaunched) {
@@ -538,9 +540,9 @@ func TestReviewLoop_NoProgress(t *testing.T) {
 		t.Errorf("reviewer_launched emitted %d times; want 1 (no iter-2 reviewer)", launchCount)
 	}
 
-	// Ordering: no_progress_detected before review_loop_cycle_complete.
+	// Ordering: review_fixup_stalled before review_loop_cycle_complete.
 	rlAssertEventSubsequence(t, eventTypes, []string{
-		string(core.EventTypeNoProgressDetected),
+		string(core.EventTypeReviewFixupStalled),
 		string(core.EventTypeReviewLoopCycleComplete),
 	})
 }

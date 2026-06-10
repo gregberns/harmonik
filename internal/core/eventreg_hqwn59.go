@@ -357,6 +357,11 @@ func registerReviewLoopEvents() {
 	// resolves at tier-1, gating single-mode dispatch behind an observable audit event.
 	// Durability class: O.
 	mustRegister("review_bypassed", func() EventPayload { return &ReviewBypassedPayload{} })
+	// review_fixup_stalled (hk-m1wqp): emitted when a REQUEST_CHANGES fix-up run
+	// advances HEAD by zero commits; carries the reviewer flags from the prior
+	// REQUEST_CHANGES verdict so triage sees the specific flag the implementer
+	// failed to address. Durability class: O.
+	mustRegister("review_fixup_stalled", func() EventPayload { return &ReviewFixupStalledPayload{} })
 }
 
 // registerQueueEvents registers all §8.10 queue lifecycle event payload

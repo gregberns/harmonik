@@ -149,6 +149,13 @@ type reviewLoopState struct {
 	// `## Prior verdicts` section of review-target.md (EM-015d-RIA). Empty for
 	// iteration 1's reviewer; appended after each verdict is read. Bead: hk-0xmwq.
 	priorVerdicts []workspace.ReviewTargetPriorVerdict
+
+	// lastVerdictFlags is the flags slice from the most recent REQUEST_CHANGES
+	// verdict. Set in the REQUEST_CHANGES routing branch; read by the no-progress
+	// check to populate review_fixup_stalled. Non-nil after any REQUEST_CHANGES
+	// verdict (MAY be an empty slice when the reviewer emitted no flags).
+	// Bead ref: hk-m1wqp.
+	lastVerdictFlags []string
 }
 
 // runReviewLoop executes the review-loop dispatch cycle for a single bead run.
@@ -797,13 +804,20 @@ func runReviewLoop(
 		// advance since the prior iteration's reviewer launch — i.e. the
 		// implementer-resume produced no new commit in response to the prior
 		// REQUEST_CHANGES. Iteration 1 has no prior HEAD, so the check is skipped.
+		//
+		// hk-m1wqp: reaching iteration ≥ 2 here is structural proof that the
+		// prior verdict was REQUEST_CHANGES (APPROVE/BLOCK both return before
+		// incrementing), so we emit review_fixup_stalled (carrying the reviewer
+		// flags) instead of the generic no_progress_detected. This lets triage
+		// see the specific flag the implementer failed to address.
 		headAdvanced := state.lastIterHeadSHA == "" || currentHead != state.lastIterHeadSHA
 		if state.iterationCount >= 2 && !headAdvanced {
-			emitNoProgressDetected(ctx, deps.bus, runID, state.iterationCount, currentHash, state.lastDiffHash)
+			emitReviewFixupStalled(ctx, deps.bus, runID, core.WorkflowModeReviewLoop,
+				state.iterationCount, state.lastVerdictFlags, currentHash, state.lastDiffHash)
 			result := reviewLoopResult{
 				success:          false,
-				completionReason: core.ReviewLoopCompletionReasonNoProgress,
-				summary:          fmt.Sprintf("no-progress detected at iteration %d: HEAD unchanged after REQUEST_CHANGES", state.iterationCount),
+				completionReason: core.ReviewLoopCompletionReasonFixupStalled,
+				summary:          fmt.Sprintf("review fix-up stalled at iteration %d: HEAD unchanged after REQUEST_CHANGES", state.iterationCount),
 				needsAttention:   true,
 			}
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -1282,6 +1296,14 @@ func runReviewLoop(
 				// skip the feedback paste-inject (same as the pre-fix behaviour for
 				// this bead), but will not block the iteration from proceeding.
 			}
+			// hk-m1wqp: save the reviewer flags so the no-progress check at
+			// the next iteration can emit review_fixup_stalled with the specific
+			// flag the implementer failed to address.
+			flags := verdict.Flags
+			if flags == nil {
+				flags = []string{}
+			}
+			state.lastVerdictFlags = flags
 			// Iterations remaining: increment and continue to next iteration.
 			state.iterationCount++
 
@@ -1550,6 +1572,39 @@ func emitNoProgressDetected(
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeNoProgressDetected, b)
+}
+
+// emitReviewFixupStalled emits review_fixup_stalled (§8.1a.7) when a REQUEST_CHANGES
+// fix-up run advances HEAD by zero commits. Emitted BEFORE review_loop_cycle_complete
+// in review-loop mode per §8.1a ordering rule; in DOT mode the cascade terminates
+// directly without review_loop_cycle_complete. Bead ref: hk-m1wqp.
+func emitReviewFixupStalled(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	workflowMode core.WorkflowMode,
+	iterationCount int,
+	reviewerFlags []string,
+	diffHashCurrent string,
+	diffHashPrior string,
+) {
+	flags := reviewerFlags
+	if flags == nil {
+		flags = []string{}
+	}
+	pl := core.ReviewFixupStalledPayload{
+		RunID:           runID,
+		WorkflowMode:    workflowMode,
+		IterationCount:  iterationCount,
+		ReviewerFlags:   flags,
+		DiffHashCurrent: diffHashCurrent,
+		DiffHashPrior:   diffHashPrior,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewFixupStalled, b)
 }
 
 // emitReviewLoopCycleComplete emits review_loop_cycle_complete (§8.1a.6) exactly

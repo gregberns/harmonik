@@ -67,6 +67,7 @@ func TestReviewLoopCompletionReasonValid(t *testing.T) {
 		{"blocked", ReviewLoopCompletionReasonBlocked, true},
 		{"no_progress", ReviewLoopCompletionReasonNoProgress, true},
 		{"error", ReviewLoopCompletionReasonError, true},
+		{"fixup_stalled", ReviewLoopCompletionReasonFixupStalled, true}, // hk-m1wqp
 		{"empty", ReviewLoopCompletionReason(""), false},
 		{"unknown", ReviewLoopCompletionReason("unknown_reason"), false},
 	}

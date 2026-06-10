@@ -76,6 +76,14 @@ const (
 	// an error (e.g., malformed verdict file per §8.1a.3 reviewer-verdict
 	// schema-reuse rule).
 	ReviewLoopCompletionReasonError ReviewLoopCompletionReason = "error"
+
+	// ReviewLoopCompletionReasonFixupStalled indicates the cycle terminated
+	// because a REQUEST_CHANGES fix-up run advanced HEAD by zero commits — the
+	// implementer was given reviewer feedback but produced no new commit in
+	// response. Distinct from no_progress (the generic no-commit failure class)
+	// because it carries the reviewer flags from the prior REQUEST_CHANGES verdict.
+	// Bead ref: hk-m1wqp.
+	ReviewLoopCompletionReasonFixupStalled ReviewLoopCompletionReason = "fixup_stalled"
 )
 
 // Valid reports whether r is one of the declared ReviewLoopCompletionReason constants.
@@ -85,7 +93,8 @@ func (r ReviewLoopCompletionReason) Valid() bool {
 		ReviewLoopCompletionReasonCapHit,
 		ReviewLoopCompletionReasonBlocked,
 		ReviewLoopCompletionReasonNoProgress,
-		ReviewLoopCompletionReasonError:
+		ReviewLoopCompletionReasonError,
+		ReviewLoopCompletionReasonFixupStalled:
 		return true
 	default:
 		return false
@@ -502,6 +511,95 @@ func (p NoProgressDetectedPayload) Valid() bool {
 		return false
 	}
 	if p.IterationCount < 2 {
+		return false
+	}
+	if p.DiffHashCurrent == "" {
+		return false
+	}
+	if p.DiffHashPrior == "" {
+		return false
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// §8.1a.7 — review_fixup_stalled
+// ---------------------------------------------------------------------------
+
+// ReviewFixupStalledPayload is the typed event payload for the
+// review_fixup_stalled event (event-model.md §8.1a.7).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — improvement-loop signal; emitted before
+// review_loop_cycle_complete{completion_reason=fixup_stalled} in review-loop
+// mode; terminates the DOT cascade directly per §8.1a ordering-rule DOT
+// exemption; distinct from no_progress_detected because it carries the reviewer
+// flags from the prior REQUEST_CHANGES verdict).
+//
+// Emitted when a REQUEST_CHANGES fix-up run advances HEAD by zero commits —
+// the implementer was given reviewer feedback but produced no new commit.
+// Carrying the reviewer flags exposes the specific flag the implementer failed
+// to address, so triage can act without reading the full verdict text.
+//
+// # Payload fields
+//
+//   - run_id            — the umbrella run_id for this review-loop or DOT cycle
+//   - workflow_mode     — "review-loop" or "dot"
+//   - iteration_count   — the iteration at which the stall was detected (≥ 2)
+//   - reviewer_flags    — flags from the prior REQUEST_CHANGES verdict (MAY be empty)
+//   - diff_hash_current — SHA-256 hex of `git diff <parent>..<head>` at current iteration
+//   - diff_hash_prior   — SHA-256 hex of the prior iteration's diff
+//
+// Bead ref: hk-m1wqp.
+type ReviewFixupStalledPayload struct {
+	// RunID is the umbrella run identifier for this review-loop cycle.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// WorkflowMode is WorkflowModeReviewLoop or WorkflowModeDot.
+	// Required; must be a valid WorkflowMode constant.
+	WorkflowMode WorkflowMode `json:"workflow_mode"`
+
+	// IterationCount is the 1-based iteration at which the stall was detected.
+	// Required (must be ≥ 2; a fix-up stall requires at least one prior
+	// REQUEST_CHANGES verdict, which cannot occur before iteration 2).
+	IterationCount int `json:"iteration_count"`
+
+	// ReviewerFlags is the list of issue tags from the prior REQUEST_CHANGES
+	// reviewer verdict. Required (non-nil; MAY be an empty slice when the
+	// reviewer emitted no flags in the REQUEST_CHANGES verdict).
+	ReviewerFlags []string `json:"reviewer_flags"`
+
+	// DiffHashCurrent is the SHA-256 hex digest of `git diff <parent>..<head>` at
+	// the current iteration's worktree state. Required (non-empty; 64-char hex).
+	DiffHashCurrent string `json:"diff_hash_current"`
+
+	// DiffHashPrior is the SHA-256 hex digest of the prior iteration's diff.
+	// Required (non-empty; 64-char hex).
+	DiffHashPrior string `json:"diff_hash_prior"`
+}
+
+// Valid reports whether p is a well-formed ReviewFixupStalledPayload.
+//
+// Rules:
+//   - RunID must not be uuid.Nil.
+//   - WorkflowMode must be a valid WorkflowMode constant.
+//   - IterationCount must be ≥ 2.
+//   - ReviewerFlags must be non-nil.
+//   - DiffHashCurrent must be non-empty.
+//   - DiffHashPrior must be non-empty.
+func (p ReviewFixupStalledPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if !p.WorkflowMode.Valid() {
+		return false
+	}
+	if p.IterationCount < 2 {
+		return false
+	}
+	if p.ReviewerFlags == nil {
 		return false
 	}
 	if p.DiffHashCurrent == "" {

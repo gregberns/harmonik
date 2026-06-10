@@ -232,6 +232,13 @@ func driveDotWorkflow(
 	// committed, reviewer-approved work, NOT no_progress-fail and strand it.
 	priorVerdict := ""
 
+	// priorVerdictFlags is the flags slice from the most recent reviewer verdict,
+	// parallel to priorVerdict. Set alongside priorVerdict so the no-progress
+	// check can emit review_fixup_stalled with the specific REQUEST_CHANGES flags
+	// the implementer failed to address. Nil before any reviewer has run.
+	// Bead ref: hk-m1wqp.
+	var priorVerdictFlags []string
+
 	// reviewerNoVerdictRetries counts how many times the current reviewer node
 	// invocation was retried after producing no verdict (stall / hang).
 	// hk-bqf1q: when committed work exists, the caller retries the reviewer
@@ -395,6 +402,20 @@ func driveDotWorkflow(
 						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
 					}
 				}
+				// hk-m1wqp: emit review_fixup_stalled (carrying the reviewer flags)
+				// when the prior verdict was REQUEST_CHANGES and the implementer made
+				// no new commit. Fall back to no_progress_detected for the uncommon
+				// case where HEAD did not advance without any prior reviewer verdict
+				// (e.g. a commit_gate loop with no reviewer node).
+				if priorVerdict == workspace.ReviewVerdictRequestChanges {
+					emitReviewFixupStalled(ctx, deps.bus, runID, core.WorkflowModeDot,
+						iterationCount, priorVerdictFlags, currentHash, lastDiffHash)
+					return dotWorkflowResult{
+						success:        false,
+						needsAttention: true,
+						summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES", iterationCount),
+					}
+				}
 				emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
 				return dotWorkflowResult{
 					success:        false,
@@ -469,8 +490,15 @@ func driveDotWorkflow(
 			// (no_progress-fail). Only reviewer nodes carry a preferred_label.
 			// hk-bqf1q: also reset the stall retry counter — a real verdict
 			// means the reviewer is no longer stalled.
+			// hk-m1wqp: also capture flags from the verdict so review_fixup_stalled
+			// can carry the specific REQUEST_CHANGES flags to triage.
 			if isReviewer && nodeOutcome.PreferredLabel != nil {
 				priorVerdict = *nodeOutcome.PreferredLabel
+				flags := nodeOutcome.PreferredLabelFlags
+				if flags == nil {
+					flags = []string{}
+				}
+				priorVerdictFlags = flags
 				reviewerNoVerdictRetries = 0
 			}
 
@@ -985,9 +1013,14 @@ func dispatchDotAgenticNode(
 		// are correlated); claude_session_id is the reviewer node's Claude session.
 		emitDotReviewerVerdict(ctx, deps.bus, runID, reviewerSessionID, artifacts.claudeSessionID, iterationCount, verdict)
 		label := verdict.Verdict
+		flags := verdict.Flags
+		if flags == nil {
+			flags = []string{}
+		}
 		return core.Outcome{
-			Status:         core.OutcomeStatusSuccess,
-			PreferredLabel: &label,
+			Status:              core.OutcomeStatusSuccess,
+			PreferredLabel:      &label,
+			PreferredLabelFlags: flags, // hk-m1wqp: carries reviewer flags to driveDotWorkflow for review_fixup_stalled
 		}, nil
 	}
 

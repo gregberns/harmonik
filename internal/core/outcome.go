@@ -54,6 +54,14 @@ type Outcome struct {
 	// Nil means no hint; the cascade falls back to weight-ordered edges.
 	PreferredLabel *string
 
+	// PreferredLabelFlags is an optional list of issue-tag flags associated with
+	// the PreferredLabel. Set by reviewer nodes to carry the agent-reviewer schema
+	// v1 flags field alongside the verdict label so driveDotWorkflow can surface
+	// flags in review_fixup_stalled events without re-reading the verdict file.
+	// Nil means no flags; semantically equivalent to an empty slice.
+	// Bead ref: hk-m1wqp.
+	PreferredLabelFlags []string
+
 	// SuggestedNextIDs is an ordered list of node IDs the handler recommends as
 	// the next routing target (routing hint per §4.10.EM-041). NOT an override:
 	// the cascade MUST still evaluate edge conditions and labels; the hint only

@@ -190,6 +190,7 @@ type stubEventCollector struct {
 
 type stubEmittedEvent struct {
 	EventType string
+	EventID   core.EventID
 	Payload   json.RawMessage
 }
 
@@ -200,6 +201,21 @@ func (s *stubEventCollector) Emit(_ context.Context, eventType core.EventType, p
 	copy(raw, payload)
 	s.events = append(s.events, stubEmittedEvent{EventType: string(eventType), Payload: raw})
 	return nil
+}
+
+// collect records a full core.Event envelope (including EventID) as emitted by
+// the real event bus. Used by test fixtures that wire a bus subscription instead
+// of a direct EventEmitter stub.
+func (s *stubEventCollector) collect(evt core.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw := make(json.RawMessage, len(evt.Payload))
+	copy(raw, evt.Payload)
+	s.events = append(s.events, stubEmittedEvent{
+		EventType: evt.Type,
+		EventID:   evt.EventID,
+		Payload:   raw,
+	})
 }
 
 // EmitWithRunID records the event (run_id is stored in payload only for stub

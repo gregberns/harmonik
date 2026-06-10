@@ -22,19 +22,37 @@ import (
 )
 
 // newOpPauseController builds an OperatorPauseController backed by a real
-// sealed in-memory bus and a shared event collector.
+// sealed in-memory bus. Events are captured via a synchronous bus subscription
+// so the returned stubEventCollector carries full core.Event envelopes,
+// including the EventID stamped by the bus (hk-hggxx: N3 dedupe regression fix).
 func newOpPauseController(t *testing.T) (*daemon.OperatorPauseController, *stubEventCollector) {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
-	if err := bus.Seal(); err != nil {
-		t.Fatalf("bus.Seal: %v", err)
-	}
 	col := &stubEventCollector{}
-	// Wire the collector as a direct emitter facade: wrap bus calls through col.
-	// We use the bus as-is and observe events via col wired into it.
-	// Actually, pass col directly as the EventEmitter — stubEventCollector
-	// already records events and does not emit errors.
-	return daemon.ExportedNewOperatorPauseController(col), col
+	// Subscribe the collector BEFORE sealing so every bus emission is captured
+	// with its real EventID. Synchronous class ensures capture before Emit returns.
+	sub := core.Subscription{
+		ConsumerID:    "test-op-pause-collector-hk-hggxx",
+		ConsumerClass: core.ConsumerClassSynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[string]struct{}{
+				string(core.EventTypeOperatorPauseStatus): {},
+				string(core.EventTypeOperatorResuming):    {},
+			},
+		},
+		OnPanic: core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, evt core.Event) error {
+			col.collect(evt)
+			return nil
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("newOpPauseController: bus.Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("newOpPauseController: bus.Seal: %v", err)
+	}
+	return daemon.ExportedNewOperatorPauseController(bus), col
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +238,51 @@ func TestOperatorPauseController_PauseResumeCycle(t *testing.T) {
 	assertPauseStatus(t, pauseEvents[1], core.OperatorPauseStatusValuePaused)
 	assertPauseStatus(t, pauseEvents[2], core.OperatorPauseStatusValuePausing)
 	assertPauseStatus(t, pauseEvents[3], core.OperatorPauseStatusValuePaused)
+}
+
+// ---------------------------------------------------------------------------
+// TestOperatorPauseController_DistinctEventIDs (hk-hggxx)
+// ---------------------------------------------------------------------------
+
+// TestOperatorPauseController_DistinctEventIDs verifies that the pausing and
+// paused operator_pause_status events each receive a distinct, non-zero event_id
+// as stamped by the bus. This is the regression test for logmine F3: in 4 of 5
+// observed transitions the two events shared ONE event_id, causing N3-dedup
+// consumers to drop the paused record and stall in the pausing state.
+//
+// The fix: each call to bus.Emit produces a fresh UUIDv7 via EventIDGenerator.Next().
+// This test exercises that path end-to-end using the real event bus (not the
+// stubEventCollector emitter facade).
+//
+// Bead ref: hk-hggxx.
+func TestOperatorPauseController_DistinctEventIDs(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ctrl, col := newOpPauseController(t)
+
+	if err := ctrl.HandleOperatorPause(ctx, ""); err != nil {
+		t.Fatalf("HandleOperatorPause: %v", err)
+	}
+
+	events := collectEventsByType(col, string(core.EventTypeOperatorPauseStatus))
+	if len(events) != 2 {
+		t.Fatalf("expected 2 operator_pause_status events; got %d", len(events))
+	}
+
+	pausingID := events[0].EventID
+	pausedID := events[1].EventID
+
+	var zeroID core.EventID
+	if pausingID == zeroID {
+		t.Error("pausing event has zero event_id; bus must stamp a non-zero UUIDv7 per EV-002")
+	}
+	if pausedID == zeroID {
+		t.Error("paused event has zero event_id; bus must stamp a non-zero UUIDv7 per EV-002")
+	}
+	if pausingID == pausedID {
+		t.Errorf("pausing and paused events share event_id %v; N3 dedup will drop paused (logmine F3 regression)", pausingID)
+	}
 }
 
 // ---------------------------------------------------------------------------

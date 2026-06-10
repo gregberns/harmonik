@@ -57,6 +57,7 @@ func (a *hc056ReopenAdapter) DetectReady(_ core.EventEnvelope) bool { return fal
 func (a *hc056ReopenAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (a *hc056ReopenAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }

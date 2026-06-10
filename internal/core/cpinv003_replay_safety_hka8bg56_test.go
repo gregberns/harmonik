@@ -128,10 +128,12 @@ func (r *cpinv003HookReader) LookupHookVerdict(
 }
 
 // Compile-time interface satisfaction.
-var _ CognitionGateEvaluator = (*cpinv003GateEval)(nil)
-var _ GateVerdictReader = (*cpinv003GateReader)(nil)
-var _ CognitionHookEvaluator = (*cpinv003HookEval)(nil)
-var _ HookVerdictReader = (*cpinv003HookReader)(nil)
+var (
+	_ CognitionGateEvaluator = (*cpinv003GateEval)(nil)
+	_ GateVerdictReader      = (*cpinv003GateReader)(nil)
+	_ CognitionHookEvaluator = (*cpinv003HookEval)(nil)
+	_ HookVerdictReader      = (*cpinv003HookReader)(nil)
+)
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -769,7 +771,7 @@ func TestCPINV003_Sensor_Cat6aIsOnlyAuthorizedReInvocationCategory(t *testing.T)
 
 	// Cat 6a is the authorised category per reconciliation/spec.md §4.2.
 	if !ReconciliationCategoryCat6a.Valid() {
-		t.Errorf("CP-INV-003: ReconciliationCategoryCat6a is not a valid ReconciliationCategory — "+
+		t.Errorf("CP-INV-003: ReconciliationCategoryCat6a is not a valid ReconciliationCategory — " +
 			"the authorised re-invocation gate has no valid category (reconciliation/spec.md §4.2)")
 	}
 

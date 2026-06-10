@@ -114,9 +114,9 @@ func TestReviewerHarnessDefaultSameAsImplementer(t *testing.T) {
 	got := daemon.ExportedResolveHarness(
 		t.Context(),
 		bead,
-		core.AgentType(""),          // queue default absent
-		core.AgentTypeCodex,         // tier-3: implementer's resolvedAgentType = codex
-		core.AgentTypeClaudeCode,    // global default
+		core.AgentType(""),       // queue default absent
+		core.AgentTypeCodex,      // tier-3: implementer's resolvedAgentType = codex
+		core.AgentTypeClaudeCode, // global default
 		bus,
 	)
 	if got != core.AgentTypeCodex {
@@ -127,9 +127,9 @@ func TestReviewerHarnessDefaultSameAsImplementer(t *testing.T) {
 	got = daemon.ExportedResolveHarness(
 		t.Context(),
 		bead,
-		core.AgentType(""),          // queue default absent
-		core.AgentTypeClaudeCode,    // tier-3: implementer's resolvedAgentType = claude-code
-		core.AgentTypeClaudeCode,    // global default
+		core.AgentType(""),       // queue default absent
+		core.AgentTypeClaudeCode, // tier-3: implementer's resolvedAgentType = claude-code
+		core.AgentTypeClaudeCode, // global default
 		bus,
 	)
 	if got != core.AgentTypeClaudeCode {

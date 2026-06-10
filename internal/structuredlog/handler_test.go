@@ -394,9 +394,9 @@ func TestON035Handler_RotationByAge(t *testing.T) {
 	// Use a clock that starts 25 hours in the past.
 	epoch := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	ticks := []time.Time{
-		epoch,           // openFile() call
-		epoch,           // first Handle call (rotateIfNeeded)
-		epoch,           // second Handle call (rotateIfNeeded) — same instant
+		epoch,                     // openFile() call
+		epoch,                     // first Handle call (rotateIfNeeded)
+		epoch,                     // second Handle call (rotateIfNeeded) — same instant
 		epoch.Add(25 * time.Hour), // third Handle call — age exceeded
 	}
 	idx := 0

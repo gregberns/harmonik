@@ -68,7 +68,9 @@ func startFakeSocketServer(t *testing.T, dir string) string {
 			go func(c net.Conn) {
 				defer func() { _ = c.Close() }() //nolint:errcheck
 
-				var req struct{ Op string `json:"op"` }
+				var req struct {
+					Op string `json:"op"`
+				}
 				_ = json.NewDecoder(c).Decode(&req)
 
 				resp := fakeSocketResp{Ok: true}

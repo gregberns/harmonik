@@ -330,7 +330,7 @@ func buildNewSessionArgs(p NewWindowIn) []string {
 	args := []string{
 		"new-session",
 		"-P", "-F", "#{pane_id}", // capture pane ID atomically
-		"-d",          // detached
+		"-d", // detached
 		"-s", p.Session,
 		"-n", p.WindowName,
 	}

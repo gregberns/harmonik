@@ -234,9 +234,9 @@ func TestValidateAndApplyContextUpdates_MixedKeys(t *testing.T) {
 	bus, captured, mu := captureBus(t)
 
 	updates := map[string]any{
-		"pr_url":       "https://github.com/example/pr/2",
-		"unknown_key":  42.0,
-		"another_bad":  true,
+		"pr_url":      "https://github.com/example/pr/2",
+		"unknown_key": 42.0,
+		"another_bad": true,
 	}
 	registeredKeys := []string{"pr_url"}
 	nodeID := core.NodeID("node-reviewer")
@@ -322,9 +322,9 @@ func TestValidateAndApplyContextUpdates_ValueTypeCoverage(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		value     any
-		wantType  string
+		name     string
+		value    any
+		wantType string
 	}{
 		{"string", "hello", "string"},
 		{"number_float", 3.14, "number"},

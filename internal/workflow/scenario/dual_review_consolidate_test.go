@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -67,7 +68,9 @@ func drcOutcome(status core.OutcomeStatus, label string) core.Outcome {
 }
 
 // drcWalkSpine walks the unconditional spine of the dual-review-consolidate graph:
-//   start → implement → review_correctness → review_design
+//
+//	start → implement → review_correctness → review_design
+//
 // returning after review_design so the caller can exercise the consolidate branch.
 func drcWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.CycleCounter) {
 	t.Helper()

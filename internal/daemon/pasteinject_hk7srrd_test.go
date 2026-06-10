@@ -80,7 +80,7 @@ func hk7srrdWorktree(t *testing.T) (wtPath, headSHA string) {
 	hk7srrdGit(t, dir, "init", "--initial-branch=main")
 	hk7srrdGit(t, dir, "config", "user.email", "test@test.com")
 	hk7srrdGit(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	hk7srrdGit(t, dir, "add", ".")
@@ -353,7 +353,7 @@ func TestPasteInjectQuitOnCommit_NewCommitBeforeStaleness(t *testing.T) {
 	// Advance HEAD after 20 ms — well before the 500 ms staleness threshold.
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o600); err != nil {
 			return
 		}
 		hk7srrdGitBg(wtPath, "add", ".")

@@ -69,9 +69,11 @@ func sh015aFixtureLoadLines(t *testing.T, specFile string) []string {
 	return lines
 }
 
-var sh015aFixtureSH015aHeading = regexp.MustCompile(`^#### SH-015a —`)
-var sh015aFixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
-var sh015aFixtureTagsMechanism = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+var (
+	sh015aFixtureSH015aHeading     = regexp.MustCompile(`^#### SH-015a —`)
+	sh015aFixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
+	sh015aFixtureTagsMechanism     = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+)
 
 const sh015aFixtureBodyWindow = 30
 

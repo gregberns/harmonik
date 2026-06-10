@@ -802,13 +802,13 @@ func reapOrphanWorktreesFromArchives(
 //
 //  2. Pass 2 — evaluate the overall queue terminal state:
 //     - All groups complete-success → CompleteAndUnlink; return done=true.
-//       The caller should NOT add this queue to QueueStore.
+//     The caller should NOT add this queue to QueueStore.
 //     - All groups terminal (some complete-with-failures) → transition
-//       q.Status to paused-by-failure and persist. QM-027 allows a fresh
-//       submit to overwrite a paused-by-failure queue, so the queue name is
-//       unblocked without discarding the failure record. Return done=false.
+//     q.Status to paused-by-failure and persist. QM-027 allows a fresh
+//     submit to overwrite a paused-by-failure queue, so the queue name is
+//     unblocked without discarding the failure record. Return done=false.
 //     - Any group still pending or active → return done=false; the daemon
-//       resumes dispatching normally.
+//     resumes dispatching normally.
 //
 // Returns (true, nil)  when the queue was fully cleaned up.
 // Returns (false, nil) when the queue has pending/active work or was

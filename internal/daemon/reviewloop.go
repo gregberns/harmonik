@@ -939,10 +939,10 @@ func runReviewLoop(
 		if deps.harnessRegistry != nil && implArtifacts.resolvedAgentType.Valid() {
 			revSpecBuilder = routedLaunchSpecBuilder(
 				deps.harnessRegistry,
-				core.BeadRecord{},                  // tier-1 absent: bead labels already resolved into resolvedAgentType
-				core.AgentType(""),                  // queue default: hk-4x3rg
-				implArtifacts.resolvedAgentType,     // tier-3: implementer's resolved harness (DEFAULT)
-				core.AgentType(""),                  // global default: built-in fallback = claude-code
+				core.BeadRecord{},               // tier-1 absent: bead labels already resolved into resolvedAgentType
+				core.AgentType(""),              // queue default: hk-4x3rg
+				implArtifacts.resolvedAgentType, // tier-3: implementer's resolved harness (DEFAULT)
+				core.AgentType(""),              // global default: built-in fallback = claude-code
 				deps.bus,
 			)
 		}

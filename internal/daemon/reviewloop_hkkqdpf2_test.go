@@ -127,6 +127,7 @@ func (a *rlReadyTimeoutAdapter) DetectReady(_ core.EventEnvelope) bool { return 
 func (a *rlReadyTimeoutAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (a *rlReadyTimeoutAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }

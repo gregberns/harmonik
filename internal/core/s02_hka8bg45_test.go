@@ -19,8 +19,10 @@ import (
 
 // --- compile-time interface assertions ---
 
-var _ PolicyEngine = (*S02PolicyEngine)(nil)
-var _ PolicyEngine = NoOpPolicyEngine{}
+var (
+	_ PolicyEngine = (*S02PolicyEngine)(nil)
+	_ PolicyEngine = NoOpPolicyEngine{}
+)
 
 // TestS02PolicyEngine_ImplementsInterface verifies that S02PolicyEngine satisfies
 // the PolicyEngine interface at compile time.

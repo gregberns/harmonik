@@ -246,9 +246,9 @@ func TestWorkLoop_ReviewLoopFailure_ReopensBeadNotCloses_Hktrfif(t *testing.T) {
 	defer loopCancel()
 
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
-		BrPath:       brWrapper,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
 		HandlerBinary: handlerScript,
 		// WorkflowModeReviewLoop: the daemon dispatches the bead in review-loop
 		// mode. The handler exits 0 without committing, triggering the failure

@@ -107,7 +107,7 @@ func hktrjefWorktree(t *testing.T) (wtPath, headSHA string) {
 	hktrjefGit(t, dir, "init", "--initial-branch=main")
 	hktrjefGit(t, dir, "config", "user.email", "test@test.com")
 	hktrjefGit(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("initial"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("initial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hktrjefGit(t, dir, "add", ".")
@@ -169,7 +169,7 @@ func TestPasteInjectQuitOnCommit_NewCommitNoKill(t *testing.T) {
 	// would cause the goroutine's git calls to fail after test completion.
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o644); err != nil {
 			return
 		}
 		bgCtx := context.Background()
@@ -243,7 +243,7 @@ func TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace(t *testing.T) {
 	// post-commit branch is hit (which schedules the watchdog).
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o644); err != nil {
 			return
 		}
 		bgCtx := context.Background()
@@ -291,7 +291,7 @@ func TestBeadAlreadySubsumedInMain(t *testing.T) {
 	hktrjefGit(t, dir, "config", "user.email", "test@test.com")
 	hktrjefGit(t, dir, "config", "user.name", "Test")
 
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hktrjefGit(t, dir, "add", ".")
@@ -316,7 +316,7 @@ func TestBeadAlreadySubsumedInMainPrefixRegression(t *testing.T) {
 	hktrjefGit(t, dir, "config", "user.email", "test@test.com")
 	hktrjefGit(t, dir, "config", "user.name", "Test")
 
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hktrjefGit(t, dir, "add", ".")

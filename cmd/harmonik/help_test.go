@@ -292,7 +292,8 @@ func TestReconcileHelpFlag(t *testing.T) {
 // Parallel: safe — runConfirmVerdictSubcommand does not touch flag.CommandLine.
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-//           specs/operator-nfr.md §4.3 ON-014.
+//
+//	specs/operator-nfr.md §4.3 ON-014.
 func TestConfirmVerdictHelpFlag(t *testing.T) {
 	t.Parallel()
 
@@ -310,8 +311,8 @@ func TestConfirmVerdictHelpFlag(t *testing.T) {
 		"<run_id>",
 		"--project",
 		"EXIT CODES",
-		"16",  // operator-control-invalid-state
-		"17",  // daemon not running
+		"16", // operator-control-invalid-state
+		"17", // daemon not running
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("confirm-verdict --help output missing %q:\n%s", want, output)
@@ -326,8 +327,9 @@ func TestConfirmVerdictHelpFlag(t *testing.T) {
 // Parallel: safe — runVetoVerdictSubcommand does not touch flag.CommandLine.
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
-//           specs/operator-nfr.md §4.3 ON-014 —
-//           "harmonik veto-verdict <run_id> [--promote-to escalate-to-human]".
+//
+//	specs/operator-nfr.md §4.3 ON-014 —
+//	"harmonik veto-verdict <run_id> [--promote-to escalate-to-human]".
 func TestVetoVerdictHelpFlag(t *testing.T) {
 	t.Parallel()
 
@@ -347,8 +349,8 @@ func TestVetoVerdictHelpFlag(t *testing.T) {
 		"escalate-to-human",
 		"--project",
 		"EXIT CODES",
-		"16",  // operator-control-invalid-state
-		"17",  // daemon not running
+		"16", // operator-control-invalid-state
+		"17", // daemon not running
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("veto-verdict --help output missing %q:\n%s", want, output)

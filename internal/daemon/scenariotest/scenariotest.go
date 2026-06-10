@@ -7,10 +7,10 @@
 //
 // # Design contract
 //
-// - Helpers read observable surfaces: JSONL event log, queue.json, br status.
-// - No internal daemon seams are used; these helpers assert from the outside.
-// - tmux assertions use the injected tmux.Adapter; nil adapter skips the
-//   assertion (non-tmux test environments).
+//   - Helpers read observable surfaces: JSONL event log, queue.json, br status.
+//   - No internal daemon seams are used; these helpers assert from the outside.
+//   - tmux assertions use the injected tmux.Adapter; nil adapter skips the
+//     assertion (non-tmux test environments).
 //
 // Spec refs:
 //   - specs/scenario-harness.md §4 (assertion vocabulary)

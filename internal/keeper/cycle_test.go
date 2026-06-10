@@ -199,7 +199,7 @@ func newTestCyclerManaged(
 		CrispIdleFn:       func(_, _ string) bool { return crispIdle },
 		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:    jc.write,
-		AppendHandoffFn:   func(_, _ string) error { return nil }, // no-op in most tests
+		AppendHandoffFn:   func(_, _ string) error { return nil },                       // no-op in most tests
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil }, // no-op in most tests
 	}
 	return keeper.NewCycler(cfg, em)
@@ -1220,9 +1220,9 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
-		ActPct:         90.0,         // pct gate would NOT fire at 28%
+		ActPct:         90.0, // pct gate would NOT fire at 28%
 		WarnPct:        80.0,
-		ActAbsTokens:   280_000,      // absolute gate fires at exactly 280k
+		ActAbsTokens:   280_000, // absolute gate fires at exactly 280k
 		ActPctCeil:     0.85,
 		WarnAbsTokens:  220_000,
 		WarnPctCeil:    0.70,
@@ -1344,7 +1344,7 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
-		ActPct:         90.0,    // pct gate would NOT fire at 85%
+		ActPct:         90.0, // pct gate would NOT fire at 85%
 		WarnPct:        80.0,
 		ActAbsTokens:   280_000, // effective threshold = min(280k, 0.85*200k=170k) = 170k
 		ActPctCeil:     0.85,

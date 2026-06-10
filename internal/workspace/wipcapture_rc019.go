@@ -110,7 +110,7 @@ func writeFileIfNonEmpty(dir, name, content string) error {
 		return nil
 	}
 	//nolint:gosec // G306: 0644 is the standard mode for text evidence files.
-	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
+	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 }
 
 // extractUntrackedFiles parses `git status --porcelain` output and returns

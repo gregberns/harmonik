@@ -209,10 +209,10 @@ func TestBuildCrewLaunchSpec_ResumePath(t *testing.T) {
 
 	const uuid = "01930000-0000-7000-8000-000000000099"
 	rc := daemon.ExportedCrewLaunchCtx{
-		Name:      "resume-crew",
-		SessionID: uuid,
+		Name:       "resume-crew",
+		SessionID:  uuid,
 		ProjectDir: "/tmp/harmonik",
-		Resume:    true,
+		Resume:     true,
 	}
 
 	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)

@@ -67,9 +67,11 @@ func (a *hk9vp51FakeAdapter) killedSessions() []string {
 // --- no-op stubs to satisfy ltmux.Adapter ---
 
 func (a *hk9vp51FakeAdapter) ProbeTmux(_ context.Context) error { return nil }
+
 func (a *hk9vp51FakeAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hk9vp51FakeAdapter) NewWindowIn(_ context.Context, _ ltmux.NewWindowIn) ltmux.Outcome {
 	return ltmux.Outcome{}
 }
@@ -77,6 +79,7 @@ func (a *hk9vp51FakeAdapter) KillWindow(_ context.Context, _ ltmux.WindowHandle)
 func (a *hk9vp51FakeAdapter) WindowPanePID(_ context.Context, _ ltmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *hk9vp51FakeAdapter) WindowPaneID(_ context.Context, _ ltmux.WindowHandle) (string, error) {
 	return "", nil
 }

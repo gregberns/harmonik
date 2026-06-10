@@ -300,12 +300,12 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 		}
 
 		rc := daemon.ExportedClaudeRunCtx{
-			RunID:         core.RunID(runUID),
-			BeadID:        "chb009-test-bead",
-			WorkspacePath: workspacePath,
-			DaemonSocket:  "/tmp/harmonik-chb009-test.sock",
-			WorkflowMode:  core.WorkflowModeReviewLoop,
-			Phase:         "reviewer", // ReviewLoopPhaseReviewer
+			RunID:          core.RunID(runUID),
+			BeadID:         "chb009-test-bead",
+			WorkspacePath:  workspacePath,
+			DaemonSocket:   "/tmp/harmonik-chb009-test.sock",
+			WorkflowMode:   core.WorkflowModeReviewLoop,
+			Phase:          "reviewer", // ReviewLoopPhaseReviewer
 			IterationCount: 1,
 			// CHB-009: reviewer must NOT receive a prior session ID — omit PriorClaudeSessID.
 			HandlerBinary: "claude",
@@ -366,7 +366,7 @@ func TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh(t *testing.T) {
 			HandlerBinary:       "/bin/sh",
 			HandlerArgs:         []string{scriptPath},
 			IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-			AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+			AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 			WorkflowModeDefault: core.WorkflowModeReviewLoop,
 		})
 
@@ -434,7 +434,7 @@ func TestReviewLoopBridge_SpecErrorPath(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{"/dev/null"},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -498,7 +498,7 @@ func TestReviewLoopBridge_HookStore_PhaseIsolation(t *testing.T) {
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		HookStore:           hookStore,
 	})
 

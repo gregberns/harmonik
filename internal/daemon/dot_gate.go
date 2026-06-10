@@ -32,8 +32,8 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
-	"github.com/gregberns/harmonik/internal/workspace"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // gateExprEnv is the typed evaluation environment for mechanism-tagged Gate

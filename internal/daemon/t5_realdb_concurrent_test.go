@@ -153,22 +153,22 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	collectorB := &stubEventCollector{}
 
 	depsA := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     adapterA,
-		Bus:           collectorA,
-		ProjectDir:    projectDir,
-		HandlerBinary: handlerScript,
-		HandlerArgs:   nil,
+		BrAdapter:        adapterA,
+		Bus:              collectorA,
+		ProjectDir:       projectDir,
+		HandlerBinary:    handlerScript,
+		HandlerArgs:      nil,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 	depsB := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     adapterB,
-		Bus:           collectorB,
-		ProjectDir:    projectDir,
-		HandlerBinary: handlerScript,
-		HandlerArgs:   nil,
+		BrAdapter:        adapterB,
+		Bus:              collectorB,
+		ProjectDir:       projectDir,
+		HandlerBinary:    handlerScript,
+		HandlerArgs:      nil,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctxA, cancelA := context.WithTimeout(context.Background(), 30*time.Second)

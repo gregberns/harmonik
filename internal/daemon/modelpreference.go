@@ -176,7 +176,7 @@ const labelPrefixEffort = "effort:"
 //   - Tier 1:   per-bead model:<alias> and effort:<level> labels.
 //   - Tier 2:   per-project .harmonik/config.yaml (projectCfg.LookupAgent).
 //   - Tier 2.5: operator env vars HARMONIK_CLAUDE_MODEL / HARMONIK_CLAUDE_EFFORT
-//               (read at call time; invalid values silently skipped).
+//     (read at call time; invalid values silently skipped).
 //   - Tier 3:   compiled default map (defaultModelEntries).
 //   - Tier 4:   empty strings — handler applies its own tool default.
 //

@@ -120,7 +120,7 @@ func TestWorkLoop_ClaimRetryBoundedCount(t *testing.T) {
 
 	const (
 		beadA = core.BeadID("hk-6pspu-fail-a")   // permanent claim failure
-		beadB = core.BeadID("hk-6pspu-normal-b")  // should succeed
+		beadB = core.BeadID("hk-6pspu-normal-b") // should succeed
 	)
 
 	now := time.Now()

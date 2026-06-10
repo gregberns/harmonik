@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -383,14 +384,14 @@ func TestBuildClaudeLaunchSpec_CredentialKeysAbsentFromEnv(t *testing.T) {
 	// passes os.Environ() without pre-filtering. The values are test-only
 	// sentinels; no real credentials are used (CI-007).
 	rc := daemon.ExportedClaudeRunCtx{
-		RunID:         core.RunID(runUID),
-		BeadID:        "test-bead-ci003",
-		WorkspacePath: ws,
-		DaemonSocket:  "/tmp/harmonik-test-ci003.sock",
-		WorkflowMode:  core.WorkflowModeSingle,
-		Phase:         "",
+		RunID:          core.RunID(runUID),
+		BeadID:         "test-bead-ci003",
+		WorkspacePath:  ws,
+		DaemonSocket:   "/tmp/harmonik-test-ci003.sock",
+		WorkflowMode:   core.WorkflowModeSingle,
+		Phase:          "",
 		IterationCount: 0,
-		HandlerBinary: "claude",
+		HandlerBinary:  "claude",
 		BaseEnv: []string{
 			"HARMONIK_PROJECT_HASH=deadbeef123456",
 			"ANTHROPIC_API_KEY=ci003-sentinel-must-not-reach-child",

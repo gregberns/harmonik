@@ -128,8 +128,8 @@ func (s *rlFBInjectSubstrate) SpawnWindow(ctx context.Context, in handler.Substr
 	return &rlFBInjectExecSession{cmd: cmd}, nil
 }
 
-func (s *rlFBInjectSubstrate) spawnCalls() int    { return int(s.spawnCount.Load()) }
-func (s *rlFBInjectSubstrate) resumeCount() int   { return int(s.resumeLaunches.Load()) }
+func (s *rlFBInjectSubstrate) spawnCalls() int  { return int(s.spawnCount.Load()) }
+func (s *rlFBInjectSubstrate) resumeCount() int { return int(s.resumeLaunches.Load()) }
 
 var _ handler.Substrate = (*rlFBInjectSubstrate)(nil)
 
@@ -365,9 +365,9 @@ func TestScenario_ReviewLoop_FeedbackFileInjected(t *testing.T) {
 		// Empty sealed registry: ForAgent(claude-code) returns an error so
 		// waitAgentReady is skipped (the handler is a shell fixture that never
 		// delivers agent_ready via the hook relay). hk-ngw3d.
-		AdapterRegistry2:    NewEmptySealedAdapterRegistryForTest(t),
-		Substrate:           sub,
-		HookStore:           store,
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		Substrate:        sub,
+		HookStore:        store,
 		// 8s > 2s resume fallback grace so fallback wins; pre-fix timeout fires at 8s.
 		AgentReadyTimeout: 8 * time.Second,
 	})

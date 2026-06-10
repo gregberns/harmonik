@@ -2,6 +2,7 @@ package handlercontract
 
 import (
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 )
 

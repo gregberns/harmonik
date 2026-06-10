@@ -65,10 +65,10 @@ func exprEnvFixtureEdges(t *testing.T) []Edge {
 	cap := 3
 	return []Edge{
 		{
-			FromNode:     NodeID("node-a"),
-			ToNode:       NodeID("node-b"),
-			Weight:       10,
-			OrderingKey:  "a",
+			FromNode:       NodeID("node-a"),
+			ToNode:         NodeID("node-b"),
+			Weight:         10,
+			OrderingKey:    "a",
 			PreferredLabel: &label,
 			TraversalCap:   &cap,
 		},

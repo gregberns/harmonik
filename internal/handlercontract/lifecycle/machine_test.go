@@ -243,7 +243,6 @@ func TestConcurrentTransition(t *testing.T) {
 		_ = m.Transition(lifecycle.StateExecuting, lifecycle.ReasonCommandStarted, "", "")
 		_ = m.Transition(lifecycle.StateTerminating, lifecycle.ReasonTerminateRequested, "", "")
 		_ = m.Transition(lifecycle.StateTerminated, lifecycle.ReasonTerminateComplete, "", "")
-
 	}()
 
 	// Concurrent readers.

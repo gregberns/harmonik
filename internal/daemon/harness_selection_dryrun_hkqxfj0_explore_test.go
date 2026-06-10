@@ -49,7 +49,7 @@ func harnessSelectionDryRunFixtureBead(id string, labels []string) core.BeadReco
 // nullBus discards all emitted events (no conflict expected in the success path).
 type nullBus struct{}
 
-func (nullBus) Emit(_ context.Context, _ core.EventType, _ []byte) error        { return nil }
+func (nullBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
 func (nullBus) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }
@@ -81,8 +81,8 @@ func resolveHarnessPerItem(
 // formatDryRunHarnessLine produces the per-item line a dry-run harness summary
 // would display:
 //
-//	  hk-abc123  harness=codex    (label: harness:codex)
-//	  hk-def456  harness=claude-code  (global default)
+//	hk-abc123  harness=codex    (label: harness:codex)
+//	hk-def456  harness=claude-code  (global default)
 func formatDryRunHarnessLine(bead core.BeadRecord, resolved core.AgentType) string {
 	// Detect whether tier 1 (bead label) was the source.
 	labelSource := "(global default)"

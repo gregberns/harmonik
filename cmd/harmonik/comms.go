@@ -582,7 +582,7 @@ func runCommsLogSubcommand(subArgs []string) int {
 
 	// Parse --since: try as event_id UUID first, then as a duration.
 	var sinceID core.EventID // zero value = scan from beginning
-	var wallCutoff time.Time  // zero = no wall-time filter
+	var wallCutoff time.Time // zero = no wall-time filter
 	if sinceFlag != "" {
 		if err := sinceID.UnmarshalText([]byte(sinceFlag)); err == nil {
 			// Parsed as event_id — sinceID is set; ScanAfter will skip events ≤ sinceID.

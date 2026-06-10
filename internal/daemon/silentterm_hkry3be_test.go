@@ -121,15 +121,19 @@ func (a *silentTermFixturePidFirstThenGone) ProbeTmux(_ context.Context) error {
 func (a *silentTermFixturePidFirstThenGone) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	return tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win-silent")}
 }
+
 func (a *silentTermFixturePidFirstThenGone) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	n := a.callCount.Add(1)
 	if n == 1 {
@@ -139,27 +143,35 @@ func (a *silentTermFixturePidFirstThenGone) WindowPanePID(_ context.Context, _ t
 	// Subsequent calls: runWait secondary check — pane is gone.
 	return 0, errors.New("tmux: no such window (simulated kill-window)")
 }
+
 func (a *silentTermFixturePidFirstThenGone) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "%99", nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) KillSession(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) SendKeysEnter(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) SendKeysQuit(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixturePidFirstThenGone) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
@@ -251,39 +263,51 @@ func (a *silentTermFixtureHealthyAdapter) ProbeTmux(_ context.Context) error { r
 func (a *silentTermFixtureHealthyAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	return tmux.Outcome{Handle: tmux.WindowHandle("test-session:hk-win-success")}
 }
+
 func (a *silentTermFixtureHealthyAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return a.spawnPID, nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "%98", nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) KillSession(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) SendKeysEnter(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) SendKeysQuit(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *silentTermFixtureHealthyAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

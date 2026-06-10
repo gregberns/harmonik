@@ -85,7 +85,7 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 // Bead refs: hk-8mup.62, hk-8i31.83, hk-hqwn.19, hk-8mup.63, hk-fx6zl, hk-xvpwb, hk-2m3bq.
 type busImpl struct {
 	registry       *core.RedactionRegistry
-	jsonlWriter    jsonlAppender                  // never nil; nullJSONLWriter when no log path configured
+	jsonlWriter    jsonlAppender       // never nil; nullJSONLWriter when no log path configured
 	deadLetterSink core.DeadLetterSink // never nil; NoopDeadLetterSink when no sink configured
 	idGen          *core.EventIDGenerator
 	mu             sync.Mutex

@@ -160,7 +160,7 @@ func TestWorkLoop_CrossQueueDedup_FailsDuplicateItem(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:       qs,
-		NoAutoPull:       true,  // queue-only dispatch; no br-ready fallback
+		NoAutoPull:       true, // queue-only dispatch; no br-ready fallback
 		MaxConcurrent:    1,
 	})
 

@@ -701,8 +701,8 @@ func TestProp_SessionLogLocationPayload_EmptyBeadIDRejected(t *testing.T) {
 func TestProp_HandlerCapabilitiesPayload_AllValidAccepted(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := HandlerCapabilitiesPayload{
-			RunID:                    RunID(drawNonNilUUID(rt, "run_id")),
-			SessionID:                SessionID(drawNonEmptyString(rt, "session_id")),
+			RunID:                     RunID(drawNonNilUUID(rt, "run_id")),
+			SessionID:                 SessionID(drawNonEmptyString(rt, "session_id")),
 			ProtocolVersionsSupported: []string{drawNonEmptyString(rt, "proto_ver")},
 		}
 		if !p.Valid() {
@@ -714,8 +714,8 @@ func TestProp_HandlerCapabilitiesPayload_AllValidAccepted(t *testing.T) {
 func TestProp_HandlerCapabilitiesPayload_NilRunIDRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := HandlerCapabilitiesPayload{
-			RunID:                    RunID(uuid.Nil),
-			SessionID:                SessionID(drawNonEmptyString(rt, "session_id")),
+			RunID:                     RunID(uuid.Nil),
+			SessionID:                 SessionID(drawNonEmptyString(rt, "session_id")),
 			ProtocolVersionsSupported: []string{"v1"},
 		}
 		if p.Valid() {
@@ -727,8 +727,8 @@ func TestProp_HandlerCapabilitiesPayload_NilRunIDRejected(t *testing.T) {
 func TestProp_HandlerCapabilitiesPayload_EmptySessionIDRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := HandlerCapabilitiesPayload{
-			RunID:                    RunID(drawNonNilUUID(rt, "run_id")),
-			SessionID:                "",
+			RunID:                     RunID(drawNonNilUUID(rt, "run_id")),
+			SessionID:                 "",
 			ProtocolVersionsSupported: []string{"v1"},
 		}
 		if p.Valid() {
@@ -740,8 +740,8 @@ func TestProp_HandlerCapabilitiesPayload_EmptySessionIDRejected(t *testing.T) {
 func TestProp_HandlerCapabilitiesPayload_EmptyProtocolVersionsRejected(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		p := HandlerCapabilitiesPayload{
-			RunID:                    RunID(drawNonNilUUID(rt, "run_id")),
-			SessionID:                SessionID(drawNonEmptyString(rt, "session_id")),
+			RunID:                     RunID(drawNonNilUUID(rt, "run_id")),
+			SessionID:                 SessionID(drawNonEmptyString(rt, "session_id")),
 			ProtocolVersionsSupported: []string{},
 		}
 		if p.Valid() {

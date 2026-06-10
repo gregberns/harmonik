@@ -270,4 +270,3 @@ budgets: []
 		t.Errorf("ValidateSchemaVersion() = %v, want nil for schema_version=1", err)
 	}
 }
-

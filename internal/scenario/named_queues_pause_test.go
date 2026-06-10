@@ -236,7 +236,8 @@ func TestNamedQueuesPause_MainAdvancesGroupWhileInvestigatePaused(t *testing.T) 
 // item-b (pending) is still non-terminal (QM-030 all-terminal gate).
 //
 // Spec ref: specs/queue-model.md §8.5 QM-054 (in-flight runs continue);
-//            §5.2 QM-030 (all-terminal gate).
+//
+//	§5.2 QM-030 (all-terminal gate).
 func TestNamedQueuesPause_InFlightRunReachesTerminalWhilePaused(t *testing.T) {
 	t.Parallel()
 

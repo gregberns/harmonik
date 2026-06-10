@@ -53,10 +53,10 @@ type ContextUpdateUnregisteredKeyPayload struct {
 // Diff contains only the keys whose values changed (new value after update).
 // Keys in run.Context that were not touched by this update are absent.
 type ContextUpdatedPayload struct {
-	RunID      core.RunID         `json:"run_id"`
-	NodeID     core.NodeID        `json:"node_id"`
-	WorkflowID core.WorkflowID    `json:"workflow_id"`
-	Diff       map[string]any     `json:"diff"`
+	RunID      core.RunID      `json:"run_id"`
+	NodeID     core.NodeID     `json:"node_id"`
+	WorkflowID core.WorkflowID `json:"workflow_id"`
+	Diff       map[string]any  `json:"diff"`
 }
 
 // ValidateAndApplyContextUpdates implements the HC-062 context-update discipline.

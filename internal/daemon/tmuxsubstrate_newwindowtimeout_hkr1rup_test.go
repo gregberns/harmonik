@@ -67,6 +67,7 @@ func (a *hkr1rupBlockingAdapter) ProbeTmux(_ context.Context) error { return nil
 func (a *hkr1rupBlockingAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkr1rupBlockingAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -94,6 +95,7 @@ func (a *hkr1rupBlockingAdapter) KillWindow(_ context.Context, _ tmux.WindowHand
 func (a *hkr1rupBlockingAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *hkr1rupBlockingAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }

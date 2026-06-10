@@ -304,7 +304,7 @@ func TestPL017_SilentHangRouting(t *testing.T) {
 		// one via supervisionFixtureNewWaitOwner produces a ready channel.
 		// (We can't call Wait without a real process, but the structural check
 		// is sufficient for the routing-wiring assertion PL-017 requires.)
-		var zeroCmd = (*supervisionFixtureWaitOwner)(nil)
+		zeroCmd := (*supervisionFixtureWaitOwner)(nil)
 		if zeroCmd != nil {
 			t.Error("PL-017 routing: WaitOwner zero value expected nil")
 		}

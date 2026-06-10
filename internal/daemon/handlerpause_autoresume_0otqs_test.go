@@ -77,6 +77,7 @@ func (healthyAdapter) DetectReady(_ core.EventEnvelope) bool { return false }
 func (healthyAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (healthyAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }
@@ -92,6 +93,7 @@ func (unhealthyAdapter) DetectReady(_ core.EventEnvelope) bool { return false }
 func (unhealthyAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (unhealthyAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }
@@ -107,6 +109,7 @@ func (noopAdapter) DetectReady(_ core.EventEnvelope) bool { return false }
 func (noopAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (noopAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }
@@ -126,6 +129,7 @@ func (a *countingAdapter) DetectReady(_ core.EventEnvelope) bool { return false 
 func (a *countingAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (a *countingAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }
@@ -136,6 +140,7 @@ func (a *countingAdapter) Diagnose(_ context.Context) (handlercontract.Diagnosti
 	a.callCount++
 	return handlercontract.DiagnosticReport{Healthy: a.healthy}, nil
 }
+
 func (a *countingAdapter) calls() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

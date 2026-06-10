@@ -365,7 +365,8 @@ func (s *SessionIDInterceptor) checkBuffer() {
 // Spec: specs/handler-contract.md §4.11 (control message catalog), §7.2.
 func sendVersionSelectedACK(ctx context.Context, sess interface {
 	SendInput(ctx context.Context, line string) error
-}) error {
+},
+) error {
 	if sess == nil {
 		return nil
 	}

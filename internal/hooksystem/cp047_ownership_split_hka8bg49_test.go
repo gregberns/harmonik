@@ -118,8 +118,8 @@ func TestCP047_S05Dispatcher_DispatchesHookKindCPs(t *testing.T) {
 	reg := cp047FixtureNewRegistry(hookCP)
 
 	var (
-		mu          sync.Mutex
-		collected   []string
+		mu        sync.Mutex
+		collected []string
 	)
 	collector := func(_ context.Context, ev core.Event) error {
 		mu.Lock()

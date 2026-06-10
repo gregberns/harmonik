@@ -750,11 +750,11 @@ EXAMPLES
 		BrPath:                   brPath,
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrentFlag,
-		NoAutoPull:               !autoPullFlag,    // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
 		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
-		DaemonBinaryPath:         daemonBinaryPath, // absolute path for hook commands (hk-kqdpf.6)
-		BinaryCommitHash:         commitHash,       // stamped via -ldflags at build time (hk-mz0x4)
-		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag, // hk-ymav1: bandwidth auto-tuner
+		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
+		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)
+		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
 		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
 		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
 		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges

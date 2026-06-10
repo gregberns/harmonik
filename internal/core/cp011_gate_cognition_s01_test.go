@@ -58,8 +58,10 @@ func (r *cp011StubReader) LookupGateVerdict(_ context.Context, _ RunID, _ string
 }
 
 // Compile-time interface satisfaction checks.
-var _ CognitionGateEvaluator = (*cp011StubEval)(nil)
-var _ GateVerdictReader = (*cp011StubReader)(nil)
+var (
+	_ CognitionGateEvaluator = (*cp011StubEval)(nil)
+	_ GateVerdictReader      = (*cp011StubReader)(nil)
+)
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 

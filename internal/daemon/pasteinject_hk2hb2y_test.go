@@ -289,7 +289,7 @@ func TestPasteInjectSubstrateWiring_ReviewLoopCallsSpawnWindowTwice(t *testing.T
 		// waitAgentReady is skipped (the handler is a shell fixture that never
 		// delivers agent_ready via the hook relay). hk-ngw3d.
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
-		Substrate:           spy,
+		Substrate:        spy,
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

@@ -66,9 +66,11 @@ func sh013IsolatedLoadLines(t *testing.T, specFile string) []string {
 	return lines
 }
 
-var sh013IsolatedSH013Heading = regexp.MustCompile(`^#### SH-013 —`)
-var sh013IsolatedAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
-var sh013IsolatedTagsMechanism = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+var (
+	sh013IsolatedSH013Heading      = regexp.MustCompile(`^#### SH-013 —`)
+	sh013IsolatedAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
+	sh013IsolatedTagsMechanism     = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+)
 
 const sh013IsolatedBodyWindow = 30
 

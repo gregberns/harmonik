@@ -24,6 +24,7 @@ func (cancelBoundFixtureBlockingAdapter) DetectReady(_ core.EventEnvelope) bool 
 func (cancelBoundFixtureBlockingAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (cancelBoundFixtureBlockingAdapter) CleanExitSequence(ctx context.Context, _ handlercontract.Session) error {
 	<-ctx.Done()
 	return cancelBoundFixtureWrapCanceled(ctx.Err())

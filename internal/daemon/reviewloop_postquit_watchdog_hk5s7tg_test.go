@@ -346,7 +346,7 @@ func TestReviewLoop_LaunchAfterCommit_Hk5s7tg_WatchdogUnblocksStuckWait(t *testi
 		// adapter registered, the 30s default timeout would consume the entire
 		// test context before the implementer could commit.
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
-		Substrate:           stuck,
+		Substrate:        stuck,
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

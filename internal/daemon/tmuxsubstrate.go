@@ -722,12 +722,14 @@ type perRunSubstrate struct {
 }
 
 // Compile-time assertions for perRunSubstrate.
-var _ handler.Substrate = (*perRunSubstrate)(nil)
-var _ pasteInjecter = (*perRunSubstrate)(nil)
-var _ enterSender = (*perRunSubstrate)(nil)
-var _ quitSender = (*perRunSubstrate)(nil)
-var _ paneLivenessChecker = (*perRunSubstrate)(nil)
-var _ paneOutputSizer = (*perRunSubstrate)(nil)
+var (
+	_ handler.Substrate   = (*perRunSubstrate)(nil)
+	_ pasteInjecter       = (*perRunSubstrate)(nil)
+	_ enterSender         = (*perRunSubstrate)(nil)
+	_ quitSender          = (*perRunSubstrate)(nil)
+	_ paneLivenessChecker = (*perRunSubstrate)(nil)
+	_ paneOutputSizer     = (*perRunSubstrate)(nil)
+)
 
 // paneTargeter is an optional interface a SubstrateSession may implement to
 // expose its specific tmux pane target string (e.g. "%1964").  perRunSubstrate

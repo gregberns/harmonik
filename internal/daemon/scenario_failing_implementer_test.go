@@ -66,27 +66,32 @@ func (failImplNoOpTmuxAdapter) ProbeTmux(_ context.Context) error { return nil }
 func (failImplNoOpTmuxAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (failImplNoOpTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (failImplNoOpTmuxAdapter) NewWindowIn(_ context.Context, _ tmuxPkg.NewWindowIn) tmuxPkg.Outcome {
 	return tmuxPkg.Outcome{}
 }
+
 func (failImplNoOpTmuxAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) error {
 	return nil
 }
+
 func (failImplNoOpTmuxAdapter) WindowPanePID(_ context.Context, _ tmuxPkg.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (failImplNoOpTmuxAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
 	return "", nil
 }
-func (failImplNoOpTmuxAdapter) KillSession(_ context.Context, _ string) error { return nil }
+func (failImplNoOpTmuxAdapter) KillSession(_ context.Context, _ string) error          { return nil }
 func (failImplNoOpTmuxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
-func (failImplNoOpTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error { return nil }
-func (failImplNoOpTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
-func (failImplNoOpTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error { return nil }
-func (failImplNoOpTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error { return nil }
+func (failImplNoOpTmuxAdapter) PasteBuffer(_ context.Context, _, _ string) error       { return nil }
+func (failImplNoOpTmuxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error   { return nil }
+func (failImplNoOpTmuxAdapter) SendKeysEnter(_ context.Context, _ string) error        { return nil }
+func (failImplNoOpTmuxAdapter) SendKeysQuit(_ context.Context, _ string) error         { return nil }
 func (failImplNoOpTmuxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

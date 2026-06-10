@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -288,7 +289,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		HandlerArgs:            []string{"--scenario", "handler-fatal"},
 		IntentLogDir:           filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		RunRegistry:            reg,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:       NewSealedAdapterRegistryForTest(t),
 		HandlerPauseController: ctrl,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

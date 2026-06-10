@@ -72,9 +72,11 @@ func sh028FixtureLoadLines(t *testing.T, specFile string) []string {
 	return lines
 }
 
-var sh028FixtureSH028Heading = regexp.MustCompile(`^#### SH-028 —`)
-var sh028FixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
-var sh028FixtureTagsMechanism = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+var (
+	sh028FixtureSH028Heading      = regexp.MustCompile(`^#### SH-028 —`)
+	sh028FixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
+	sh028FixtureTagsMechanism     = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+)
 
 // sh028FixtureBodyWindow is larger than the standard 30 because SH-028 has
 // a two-paragraph body (prohibition + verification mechanism floor).

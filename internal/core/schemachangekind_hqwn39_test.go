@@ -16,8 +16,8 @@ import (
 // wantBreaking is the expected IsBreaking() result for each of the nine §6.4
 // change-kind rows.
 var ev030ChangeKindFixtures = []struct {
-	kind      core.SchemaChangeKind
-	breaking  bool
+	kind       core.SchemaChangeKind
+	breaking   bool
 	obligation string
 }{
 	// Row 1: Add optional field → non-breaking.

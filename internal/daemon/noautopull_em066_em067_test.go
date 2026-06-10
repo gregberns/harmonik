@@ -52,7 +52,7 @@ type countingLedger struct {
 	readyCalls  atomic.Int64
 	claimCalls  atomic.Int64
 	readyResult []core.BeadRecord // returned on every Ready() call
-	notifyReady chan struct{}      // closed or sent on first Ready() call (may be nil)
+	notifyReady chan struct{}     // closed or sent on first Ready() call (may be nil)
 }
 
 func (c *countingLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -276,8 +276,8 @@ func TestScenario_BrReadyOperatorPauseGate_EM067(t *testing.T) {
 		HandlerArgs:       []string{"-c", "exit 0"},
 		IntentLogDir:      filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2:  NewSealedAdapterRegistryForTest(t),
-		NoAutoPull:        false,  // fallback enabled so the pause gate is reachable
-		OperatorPauseCtrl: ctrl,   // operator-pause gate wired
+		NoAutoPull:        false, // fallback enabled so the pause gate is reachable
+		OperatorPauseCtrl: ctrl,  // operator-pause gate wired
 		// No QueueStore: no queue submitted, routes to br-ready path.
 	})
 

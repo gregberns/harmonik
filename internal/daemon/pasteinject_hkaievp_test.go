@@ -123,33 +123,43 @@ func (f *stalePaneFixtureSequentialAdapter) paneIDCallCount() int {
 
 // Stub implementations for unused Adapter methods.
 func (f *stalePaneFixtureSequentialAdapter) ProbeTmux(_ context.Context) error { return nil }
+
 func (f *stalePaneFixtureSequentialAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) KillSession(_ context.Context, _ string) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) SendKeysEnter(_ context.Context, _ string) error {
 	return nil
 }
+
 func (f *stalePaneFixtureSequentialAdapter) SendKeysQuit(_ context.Context, _ string) error {
 	return nil
 }

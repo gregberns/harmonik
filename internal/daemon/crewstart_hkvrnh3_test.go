@@ -28,6 +28,7 @@ type crewQueueLedger struct{}
 func (crewQueueLedger) LookupStatus(_ context.Context, _ core.BeadID) (queue.BeadStatus, error) {
 	return queue.BeadStatusOpen, nil
 }
+
 func (crewQueueLedger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, error) {
 	return false, nil
 }

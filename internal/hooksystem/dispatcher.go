@@ -55,8 +55,8 @@ type Dispatcher struct {
 	bus           eventbus.EventBus
 	eval          *core.PolicyExprEvaluator
 	cognitionEval CognitionHookEvaluator // nil when cognition support is not wired
-	verdictWriter VerdictFileWriter       // nil when cognition support is not wired
-	verdictReader VerdictReader           // nil when cognition support is not wired
+	verdictWriter VerdictFileWriter      // nil when cognition support is not wired
+	verdictReader VerdictReader          // nil when cognition support is not wired
 }
 
 // Registry is the read-only view of the ControlPoint registry consumed by S05.

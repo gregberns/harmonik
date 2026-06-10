@@ -152,10 +152,10 @@ func TestIntersectFreedomProfiles_ModelTierLessCapableWins(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		tierA     string
-		tierB     string
-		wantTier  string
+		name     string
+		tierA    string
+		tierB    string
+		wantTier string
 	}{
 		{"haiku vs sonnet → haiku", "haiku", "sonnet", "haiku"},
 		{"sonnet vs opus → sonnet", "sonnet", "opus", "sonnet"},

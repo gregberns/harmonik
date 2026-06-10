@@ -304,8 +304,8 @@ func TestPresenceWho_LeaveNotInWhoOutput(t *testing.T) {
 // TestGetPresenceState_Boundaries verifies the exact cutoffs between states.
 func TestGetPresenceState_Boundaries(t *testing.T) {
 	cases := []struct {
-		name     string
-		rec      PresenceRecord
+		name      string
+		rec       PresenceRecord
 		wantState PresenceState
 	}{
 		{

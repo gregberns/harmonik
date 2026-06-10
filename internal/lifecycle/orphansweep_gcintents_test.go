@@ -46,14 +46,14 @@ func gcIntentsFixtureWriteResetIntent(t *testing.T, intentsDir, key string, bead
 	}
 
 	entry := map[string]any{
-		"idempotency_key":    key,
-		"run_id":             "00000000-0000-0000-0000-000000000000",
-		"transition_id":      "00000000-0000-0000-0000-000000000000",
-		"op":                 "reset",
-		"bead_id":            string(beadID),
+		"idempotency_key":     key,
+		"run_id":              "00000000-0000-0000-0000-000000000000",
+		"transition_id":       "00000000-0000-0000-0000-000000000000",
+		"op":                  "reset",
+		"bead_id":             string(beadID),
 		"intended_post_state": "open",
-		"requested_at":       "2024-01-01T00:00:00Z",
-		"schema_version":     1,
+		"requested_at":        "2024-01-01T00:00:00Z",
+		"schema_version":      1,
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -181,14 +181,14 @@ func TestGCRetiredIntents_SkipsNewFiles(t *testing.T) {
 		t.Fatalf("GCRetiredIntents new: MkdirAll: %v", err)
 	}
 	entry := map[string]any{
-		"idempotency_key":    "proj_hk-test-new_reset_1",
-		"run_id":             "00000000-0000-0000-0000-000000000000",
-		"transition_id":      "00000000-0000-0000-0000-000000000000",
-		"op":                 "reset",
-		"bead_id":            string(beadID),
+		"idempotency_key":     "proj_hk-test-new_reset_1",
+		"run_id":              "00000000-0000-0000-0000-000000000000",
+		"transition_id":       "00000000-0000-0000-0000-000000000000",
+		"op":                  "reset",
+		"bead_id":             string(beadID),
 		"intended_post_state": "open",
-		"requested_at":       "2024-01-01T00:00:00Z",
-		"schema_version":     1,
+		"requested_at":        "2024-01-01T00:00:00Z",
+		"schema_version":      1,
 	}
 	data, jsonErr := json.Marshal(entry)
 	if jsonErr != nil {

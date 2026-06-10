@@ -125,7 +125,7 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			name:              "tier1 conflict multiple labels falls to tier4 when daemon default absent",
 			beadLabels:        []string{"workflow:review-loop", "workflow:dot"},
 			daemonDefault:     core.WorkflowMode(""), // invalid / absent
-			wantMode:          core.WorkflowModeDot, // hk-30vlb: tier4 fallback is now dot
+			wantMode:          core.WorkflowModeDot,  // hk-30vlb: tier4 fallback is now dot
 			wantConflictEvent: true,
 		},
 

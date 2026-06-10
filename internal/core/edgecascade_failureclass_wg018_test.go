@@ -21,12 +21,12 @@
 //
 // Three assertions per the bead spec (hk-aoz34):
 //
-//  (a) D2 top-level field — Outcome.FailureClass is populated at the top level
-//      and Outcome.Valid() passes for a FAIL outcome carrying budget_exhausted.
-//  (b) Cascade routing — the cascade selects the edge whose condition matches
-//      outcome.failure_class == "budget_exhausted" over a lower-weight generic
-//      FAIL edge and an unconditional fallback edge.
-//  (c) Terminal node — the selected edge leads to the expected terminal node ID.
+//	(a) D2 top-level field — Outcome.FailureClass is populated at the top level
+//	    and Outcome.Valid() passes for a FAIL outcome carrying budget_exhausted.
+//	(b) Cascade routing — the cascade selects the edge whose condition matches
+//	    outcome.failure_class == "budget_exhausted" over a lower-weight generic
+//	    FAIL edge and an unconditional fallback edge.
+//	(c) Terminal node — the selected edge leads to the expected terminal node ID.
 //
 // Test naming pattern:
 //

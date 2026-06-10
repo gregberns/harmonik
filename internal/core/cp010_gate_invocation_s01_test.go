@@ -327,7 +327,7 @@ func TestCP010_NonGateControlPoints_Ignored(t *testing.T) {
 
 	var called []string
 	fns := map[string]GateEvaluator{
-		gateName:    cp010RecordingFn(gateName, &called),
+		gateName:     cp010RecordingFn(gateName, &called),
 		"the-guard":  cp010RecordingFn("the-guard", &called),
 		"the-hook":   cp010RecordingFn("the-hook", &called),
 		"the-budget": cp010RecordingFn("the-budget", &called),

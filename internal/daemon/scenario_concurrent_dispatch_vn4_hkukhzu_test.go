@@ -166,6 +166,7 @@ func (a *vn4PaneFixtureAdapter) ProbeTmux(context.Context) error { return nil }
 func (a *vn4PaneFixtureAdapter) ListSessions(context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *vn4PaneFixtureAdapter) ListWindows(context.Context, string) ([]string, error) {
 	return nil, nil
 }

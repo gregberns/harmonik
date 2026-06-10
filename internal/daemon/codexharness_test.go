@@ -403,6 +403,7 @@ func (s *codexHarnessFakeSession) Kill(ctx context.Context) error {
 	s.killed = true
 	return nil
 }
+
 func (s *codexHarnessFakeSession) Wait(ctx context.Context) (core.Outcome, error) {
 	return core.Outcome{}, nil
 }

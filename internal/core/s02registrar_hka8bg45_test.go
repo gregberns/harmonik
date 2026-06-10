@@ -658,7 +658,7 @@ func TestS02Registrar_RegisterFromDocument_DivergentBodyFails(t *testing.T) {
 		Metadata: doc.Metadata,
 		Gates: []PolicyGate{
 			{
-				Name:        "deploy-gate",    // same name
+				Name:        "deploy-gate", // same name
 				Subtype:     "goal-gate",
 				AttachPoint: "node-post-exit", // different attach_point → different body
 				Evaluator: PolicyEvaluatorBlock{

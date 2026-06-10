@@ -19,6 +19,7 @@ func (sessionFixtureStub) ID() core.SessionID { return "" }
 func (sessionFixtureStub) SendInput(_ context.Context, _ string) error {
 	return nil
 }
+
 func (sessionFixtureStub) Attach(_ context.Context) (io.Reader, error) {
 	return nil, nil
 }

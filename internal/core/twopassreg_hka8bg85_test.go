@@ -714,9 +714,9 @@ func TestTwoPassReg_CP003_UnclassifiedEvaluatorRejected(t *testing.T) {
 	t.Parallel()
 
 	unclassifiedModes := []ModeTag{
-		ModeTag(""),        // empty — no classification
-		ModeTag("unknown"), // non-empty but not a declared constant
-		ModeTag("MECHANISM"), // wrong case
+		ModeTag(""),           // empty — no classification
+		ModeTag("unknown"),    // non-empty but not a declared constant
+		ModeTag("MECHANISM"),  // wrong case
 		ModeTag("cognition "), // trailing whitespace
 	}
 

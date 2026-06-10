@@ -58,8 +58,10 @@ func (r *cp017StubReader) LookupHookVerdict(_ context.Context, _ RunID, _ uuid.U
 }
 
 // Compile-time interface satisfaction checks.
-var _ CognitionHookEvaluator = (*cp017StubEval)(nil)
-var _ HookVerdictReader = (*cp017StubReader)(nil)
+var (
+	_ CognitionHookEvaluator = (*cp017StubEval)(nil)
+	_ HookVerdictReader      = (*cp017StubReader)(nil)
+)
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -107,7 +109,7 @@ func cp017FixtureCognitionHook(t *testing.T, name string) ControlPoint {
 		Trigger:       Trigger{Name: string(HookTriggerOnReviewRequired)},
 		Evaluator:     Evaluator{Mode: ModeTagCognition, DelegationPath: &dp},
 		OutcomeAction: OutcomeActionAllow,
-		Payload: KindPayload{Hook: &pl},
+		Payload:       KindPayload{Hook: &pl},
 		Axes:          BaselineAxisTags,
 		ModeTag:       ModeTagCognition,
 		SchemaVersion: 1,

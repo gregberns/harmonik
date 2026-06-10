@@ -30,9 +30,11 @@ func (a *turnBoundaryFixtureAdapter) DetectReady(_ core.EventEnvelope) bool { re
 func (a *turnBoundaryFixtureAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (a *turnBoundaryFixtureAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }
+
 func (a *turnBoundaryFixtureAdapter) RotateAccount(_ context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

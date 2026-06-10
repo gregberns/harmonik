@@ -288,10 +288,10 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 	t.Logf("T6-1: seeded %d beads", len(beadIDs))
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
@@ -391,10 +391,10 @@ func TestT6_1MBBeadBody(t *testing.T) {
 	// not that it is forwarded to the handler.
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
@@ -477,10 +477,10 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	t.Logf("T6-3: seeded no-body=%s whitespace-only=%s", noBodyID, whitespaceID)
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
@@ -580,10 +580,10 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 	}
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
@@ -645,10 +645,10 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 	t.Logf("T6-5: seeded bead ID = %s", beadIDs[0])
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
@@ -698,10 +698,10 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 	t.Logf("T6-6: initial bead = %s", initialIDs[0])
 
 	cfg := daemon.Config{
-		ProjectDir:          projectDir,
-		JSONLLogPath:        jsonlPath,
-		BrPath:              brWrapper,
-		HandlerBinary:       handlerScript,
+		ProjectDir:    projectDir,
+		JSONLLogPath:  jsonlPath,
+		BrPath:        brWrapper,
+		HandlerBinary: handlerScript,
 		// Single mode (hk-4f5ua): T6 is a scale/shape drain suite — each bead is a
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip

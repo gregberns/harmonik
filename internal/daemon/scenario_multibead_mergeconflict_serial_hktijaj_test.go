@@ -619,7 +619,7 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 	mergeCommits := 0
 	for _, ln := range strings.Split(strings.TrimSpace(logOut), "\n") {
 		fields := strings.Fields(ln) // fields[0]=commit; fields[1:]=parents
-		if len(fields) >= 3 {         // commit + ≥2 parents == merge commit
+		if len(fields) >= 3 {        // commit + ≥2 parents == merge commit
 			mergeCommits++
 		}
 	}

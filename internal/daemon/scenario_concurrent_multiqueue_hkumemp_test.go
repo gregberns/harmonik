@@ -460,19 +460,21 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 //  5. daemon.Start wired with MaxConcurrent=2 and a harmonik-twin-claude wrapper.
 //
 // Expected dispatch order (with round-robin + Workers=1 per queue):
-//   tick 1 — alpha dispatches dupBead (1 alpha in-flight, 1 global)
-//   tick 2 — beta tries dupBead → cross_queue_duplicate guard fires;
-//             beta then dispatches betaB (1 beta in-flight, 2 global)
-//   dupBead + betaB run concurrently (global at cap = 2)
-//   dupBead completes → alpha slot freed; alpha dispatches alphaA
-//   betaB completes → all done
+//
+//	tick 1 — alpha dispatches dupBead (1 alpha in-flight, 1 global)
+//	tick 2 — beta tries dupBead → cross_queue_duplicate guard fires;
+//	          beta then dispatches betaB (1 beta in-flight, 2 global)
+//	dupBead + betaB run concurrently (global at cap = 2)
+//	dupBead completes → alpha slot freed; alpha dispatches alphaA
+//	betaB completes → all done
 //
 // Assertions:
-//  (a) alphaA and betaB are closed in br; dupBead is closed by alpha.
-//  (b) Max concurrent runs observed ≤ MaxConcurrent=2 (QM-062).
-//  (c) Beta's dupBead item: status=failed, reason contains
-//      "cross_queue_duplicate" (hk-a11re).
-//  (d) implementer_escaped_worktree event is absent (hk-77q8e).
+//
+//	(a) alphaA and betaB are closed in br; dupBead is closed by alpha.
+//	(b) Max concurrent runs observed ≤ MaxConcurrent=2 (QM-062).
+//	(c) Beta's dupBead item: status=failed, reason contains
+//	    "cross_queue_duplicate" (hk-a11re).
+//	(d) implementer_escaped_worktree event is absent (hk-77q8e).
 //
 // Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 // EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
@@ -723,9 +725,9 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 // Phase 3: wait for daemon to exit cleanly.
 //
 // Assertions:
-//  - At least one run_started event is present (bead was dispatched).
-//  - run_completed is absent (no run finished before the kill).
-//  - Dispatched bead(s) are NOT closed in br (still open or in_progress).
+//   - At least one run_started event is present (bead was dispatched).
+//   - run_completed is absent (no run finished before the kill).
+//   - Dispatched bead(s) are NOT closed in br (still open or in_progress).
 //
 // Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 //

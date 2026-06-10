@@ -30,9 +30,11 @@ func (h harnessRegistryFixtureHarness) AgentType() core.AgentType { return h.age
 func (harnessRegistryFixtureHarness) LaunchSpec(_ handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
 	return handlercontract.SpawnSpec{}, nil
 }
+
 func (harnessRegistryFixtureHarness) Seed(_ handlercontract.Session, _ handlercontract.RunCtx) error {
 	return nil
 }
+
 func (harnessRegistryFixtureHarness) Retask(_ handlercontract.Session, _ string, _ handlercontract.RunCtx) error {
 	return nil
 }
@@ -40,9 +42,11 @@ func (harnessRegistryFixtureHarness) Teardown(_ handlercontract.Session) error {
 func (harnessRegistryFixtureHarness) DetectReady(_ handlercontract.EventEnvelope) bool {
 	return false
 }
+
 func (harnessRegistryFixtureHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 	return handlercontract.SessionIDMinted
 }
+
 func (harnessRegistryFixtureHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionEventStreamThenQuit
 }

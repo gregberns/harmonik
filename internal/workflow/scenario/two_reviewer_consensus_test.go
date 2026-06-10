@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -67,7 +68,9 @@ func trcOutcome(status core.OutcomeStatus, label string) core.Outcome {
 }
 
 // trcWalkSpine walks the unconditional spine of the two-reviewer-consensus graph:
-//   start → implement → reviewer_a → reviewer_b
+//
+//	start → implement → reviewer_a → reviewer_b
+//
 // returning after reviewer_b so the caller can exercise the consolidate branch.
 func trcWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.CycleCounter) {
 	t.Helper()

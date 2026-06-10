@@ -105,7 +105,7 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 // transcriptRecord is a minimal parse target for a single line in a
 // ~/.claude/projects/*/*.jsonl transcript file.
 type transcriptRecord struct {
-	Timestamp string              `json:"timestamp"`
+	Timestamp string             `json:"timestamp"`
 	Message   *transcriptMessage `json:"message"`
 }
 

@@ -45,10 +45,10 @@ func TestDotNodeRoleSurfacedIntoExtraContext(t *testing.T) {
 	t.Parallel()
 
 	const (
-		wantRole        = "design&idioms"
-		wantRolePrefix  = "Role: design&idioms"
-		beadID          = core.BeadID("hk-m5lmo-role-test-001")
-		additionalCtx   = "predecessor: hk-jyqxe"
+		wantRole       = "design&idioms"
+		wantRolePrefix = "Role: design&idioms"
+		beadID         = core.BeadID("hk-m5lmo-role-test-001")
+		additionalCtx  = "predecessor: hk-jyqxe"
 	)
 
 	// Stand up a minimal git repo (required for the production worktree factory
@@ -152,8 +152,8 @@ func TestDotNodeNoRoleExtraContextUnchanged(t *testing.T) {
 	t.Parallel()
 
 	const (
-		beadID      = core.BeadID("hk-m5lmo-norole-test-001")
-		baseCtx     = "predecessor: hk-jyqxe"
+		beadID  = core.BeadID("hk-m5lmo-norole-test-001")
+		baseCtx = "predecessor: hk-jyqxe"
 	)
 
 	projectDir := t.TempDir()

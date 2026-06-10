@@ -119,9 +119,9 @@ func TestNodeTierHarnessFromParsedDOT(t *testing.T) {
 	got := daemon.ExportedResolveHarness(
 		t.Context(),
 		bead,
-		core.AgentType(""),         // queueDefault absent
+		core.AgentType(""),           // queueDefault absent
 		core.AgentType(work.Harness), // nodeDefault from parsed DOT
-		core.AgentTypeClaudeCode,   // globalDefault
+		core.AgentTypeClaudeCode,     // globalDefault
 		bus,
 	)
 	if got != core.AgentTypeCodex {
@@ -154,9 +154,9 @@ func TestNodeTierAbsentFallsThroughToGlobal(t *testing.T) {
 	got := daemon.ExportedResolveHarness(
 		t.Context(),
 		bead,
-		core.AgentType(""),                 // queueDefault absent
-		core.AgentType(closeNode.Harness),  // nodeDefault empty → tier 3 absent
-		core.AgentTypeClaudeCode,           // globalDefault
+		core.AgentType(""),                // queueDefault absent
+		core.AgentType(closeNode.Harness), // nodeDefault empty → tier 3 absent
+		core.AgentTypeClaudeCode,          // globalDefault
 		bus,
 	)
 	if got != core.AgentTypeClaudeCode {

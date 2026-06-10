@@ -80,10 +80,10 @@ type handlerStateDiskDaemon struct {
 
 // handlerEntryDiskDaemon is one handler-type entry in handler-state.json.
 type handlerEntryDiskDaemon struct {
-	Status          string                           `json:"status"`
-	Cause           *handlerCauseDiskDaemon          `json:"cause"`
-	InFlightAtPause []inFlightRunDiskDaemon          `json:"in_flight_at_pause"`
-	PausedEpoch     int                              `json:"paused_epoch"`
+	Status          string                              `json:"status"`
+	Cause           *handlerCauseDiskDaemon             `json:"cause"`
+	InFlightAtPause []inFlightRunDiskDaemon             `json:"in_flight_at_pause"`
+	PausedEpoch     int                                 `json:"paused_epoch"`
 	Accounts        map[string]handlerAccountDiskDaemon `json:"accounts,omitempty"` // v2+
 }
 

@@ -248,7 +248,7 @@ func TestReviewLoop_HappyPath_APPROVE(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -308,7 +308,7 @@ func TestReviewLoop_RequestChangesThenAPPROVE(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -378,7 +378,7 @@ func TestReviewLoop_CapHit(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -497,7 +497,7 @@ func TestReviewLoop_NoProgress(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 
@@ -649,7 +649,7 @@ func TestReviewLoop_RunIDPropagation(t *testing.T) {
 		HandlerBinary:       "/bin/sh",
 		HandlerArgs:         []string{scriptPath},
 		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	})
 

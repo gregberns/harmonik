@@ -171,9 +171,9 @@ func TestAttractionParityUniformSubstitution(t *testing.T) {
 
 	// All three must contain wantValue and must not contain the raw token.
 	for site, val := range map[string]string{
-		"goal":         goalVal,
-		"impl.prompt":  promptVal,
-		"verify.cmd":   cmdVal,
+		"goal":        goalVal,
+		"impl.prompt": promptVal,
+		"verify.cmd":  cmdVal,
 	} {
 		if !strings.Contains(val, wantValue) {
 			t.Errorf("%s: substituted value %q does not contain %q", site, val, wantValue)

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -77,7 +78,6 @@ func claudeHarnessFixtureRunCtx(
 
 // TestClaudeHarness_LaunchSpec_Single verifies SpawnSpec parity for single-mode.
 func TestClaudeHarness_LaunchSpec_Single(t *testing.T) {
-
 	ws := claudeHarnessFixtureWorkspace(t)
 	rc := claudeHarnessFixtureRunCtx(t, ws, "", nil, 0)
 

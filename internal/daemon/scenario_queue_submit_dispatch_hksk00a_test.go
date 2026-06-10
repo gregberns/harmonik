@@ -640,7 +640,7 @@ func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
 	// deferred-for-ledger-dep immediately after HandleQueueSubmit returns.
 	scenariotest.AssertQueueJSON(t, projectDir, scenariotest.QueueExpectation{
 		ItemStatuses: []string{
-			string(queue.ItemStatusPending),           // A: pending (eligible head)
+			string(queue.ItemStatusPending),              // A: pending (eligible head)
 			string(queue.ItemStatusDeferredForLedgerDep), // B: deferred behind A
 		},
 	})

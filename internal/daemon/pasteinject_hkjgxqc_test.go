@@ -58,11 +58,11 @@ func hkjgxqcShortCeiling(pollInterval, launchWindow, staleness, totalTimeout, ki
 // timeout and Kill would never be called.
 func TestPasteInjectLaunchSuppressionTerminates_ActivePaneForever(t *testing.T) {
 	restore := hkjgxqcShortCeiling(
-		5*time.Millisecond,  // poll interval
-		20*time.Millisecond, // launch window (fires repeatedly; would reset forever)
-		5*time.Second,       // staleness (irrelevant — no heartbeat, launch branch owns it)
-		10*time.Second,      // total timeout (must NOT be what frees us — ceiling is shorter)
-		5*time.Millisecond,  // kill delay
+		5*time.Millisecond,   // poll interval
+		20*time.Millisecond,  // launch window (fires repeatedly; would reset forever)
+		5*time.Second,        // staleness (irrelevant — no heartbeat, launch branch owns it)
+		10*time.Second,       // total timeout (must NOT be what frees us — ceiling is shorter)
+		5*time.Millisecond,   // kill delay
 		150*time.Millisecond, // launch-suppression ceiling (the bound under test)
 	)
 	defer restore()

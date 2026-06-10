@@ -208,8 +208,8 @@ func TestAffectedScenarioPkgs(t *testing.T) {
 
 	changed := []string{
 		"internal/daemon/scenario_foo_test.go",
-		"internal/daemon/workloop.go",       // not scenario-touching
-		"test/scenario/bar_test.go",          // path-prefix touching
+		"internal/daemon/workloop.go", // not scenario-touching
+		"test/scenario/bar_test.go",   // path-prefix touching
 	}
 
 	pkgs := affectedScenarioPkgs(dir, changed)

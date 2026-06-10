@@ -43,10 +43,10 @@ import (
 
 // Scenario name constants — use these in tests and --scenario flag values.
 const (
-	ScenarioTrailerCommit  = "trailer-commit"
-	ScenarioEditsNoCommit  = "edits-no-commit"
-	ScenarioNoEdits        = "no-edits"
-	ScenarioTurnFailed     = "turn-failed"
+	ScenarioTrailerCommit = "trailer-commit"
+	ScenarioEditsNoCommit = "edits-no-commit"
+	ScenarioNoEdits       = "no-edits"
+	ScenarioTurnFailed    = "turn-failed"
 )
 
 // threadIDForScenario returns a deterministic thread_id for the given scenario

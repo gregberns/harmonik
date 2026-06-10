@@ -327,8 +327,10 @@ var oninv006FixtureSocketOpLine = regexp.MustCompile(`^\s*case\s+"([^"]+)":`)
 // signal.NotifyContext call. Because multiple signals may appear on a single
 // line we extract all syscall.SIG* tokens from any line containing
 // "NotifyContext".
-var oninv006FixtureSignalNotifyLine = regexp.MustCompile(`signal\.NotifyContext\b`)
-var oninv006FixtureSyscallSigToken = regexp.MustCompile(`\bsyscall\.(SIG[A-Z]+)\b`)
+var (
+	oninv006FixtureSignalNotifyLine = regexp.MustCompile(`signal\.NotifyContext\b`)
+	oninv006FixtureSyscallSigToken  = regexp.MustCompile(`\bsyscall\.(SIG[A-Z]+)\b`)
+)
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 

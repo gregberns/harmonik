@@ -42,7 +42,7 @@ type brShowItem struct {
 	ID           string       `json:"id"`
 	Title        string       `json:"title"`
 	Description  string       `json:"description"` // always "description" in JSON; --body is a br create alias only
-	Design       string       `json:"design"`       // enrichment/re-impl notes; appended to Description when non-empty
+	Design       string       `json:"design"`      // enrichment/re-impl notes; appended to Description when non-empty
 	Status       string       `json:"status"`
 	IssueType    string       `json:"issue_type"`
 	Labels       []string     `json:"labels"`

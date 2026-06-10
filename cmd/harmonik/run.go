@@ -62,6 +62,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -108,19 +109,19 @@ func runBeadSubcommand(subArgs []string) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
-	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
-	reviewLoop := true     // default ON per hk-g0ckv; --no-review-loop opts out
-	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
+	beadsFlag := ""    // --beads id1,id2,... (hk-w3cp1)
+	maxConcurrent := 1 // --max-concurrent N (hk-w3cp1); default 1 for back-compat
+	contextFlag := ""  // --context <inline|@file> (hk-boiwe)
+	reviewLoop := true // default ON per hk-g0ckv; --no-review-loop opts out
+	notifyStream := "" // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
-	workflowModeFlag := "" // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
-	workflowRefFlag := ""  // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
-	noNotifyStream := false // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
+	workflowModeFlag := ""                // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
+	workflowRefFlag := ""                 // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot
+	noNotifyStream := false               // --no-notify-stream: opt out of auto-enable on multi-bead runs (hk-ze3op)
 	templateParams := map[string]string{} // --param KEY=VALUE (hk-55zv2 / WG-045); repeatable
-	dryRun := false        // --dry-run / --plan-only: print plan without launching (hk-cebjc)
-	targetBranchFlag := ""   // --target-branch (hk-mkxw1)
-	var protectBranchesFlag []string // --protect-branch repeatable (hk-mkxw1)
+	dryRun := false                       // --dry-run / --plan-only: print plan without launching (hk-cebjc)
+	targetBranchFlag := ""                // --target-branch (hk-mkxw1)
+	var protectBranchesFlag []string      // --protect-branch repeatable (hk-mkxw1)
 	forbidUnprotectedDefaultFlag := false // --forbid-default-main (hk-mkxw1)
 	// waveMode is resolved at queue-build time via resolveGroupKind(subArgs) (hk-7nbey)
 	positional := []string{}
@@ -692,13 +693,13 @@ func runBeadSubcommand(subArgs []string) int {
 		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
 		DaemonBinaryPath:         daemonBinaryPath,
 		BinaryCommitHash:         commitHash,
-		CancelOnQueueDrain:       cancelStopDispatch,         // stop dispatch on success (hk-icecw, hk-2o2i9)
-		CancelOnQueueExit:        cancelStopDispatch,         // stop dispatch on failure (hk-8jh26, hk-2o2i9)
-		StopDispatchCtx:          stopDispatchCtx,            // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
-		QueueStore:               qs,                         // retained for post-Start status inspection (hk-8jh26 Fix 2)
-		NotifyStream:             notifyWriter,               // hk-ibilr: per-bead completion lines
-		TargetBranch:             targetBranchFlag,           // hk-mkxw1: merge target branch
-		ProtectBranches:          protectBranchesFlag,        // hk-mkxw1: branches protected from daemon merges
+		CancelOnQueueDrain:       cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)
+		CancelOnQueueExit:        cancelStopDispatch,           // stop dispatch on failure (hk-8jh26, hk-2o2i9)
+		StopDispatchCtx:          stopDispatchCtx,              // dispatch-halt ctx separate from in-flight ctx (hk-2o2i9)
+		QueueStore:               qs,                           // retained for post-Start status inspection (hk-8jh26 Fix 2)
+		NotifyStream:             notifyWriter,                 // hk-ibilr: per-bead completion lines
+		TargetBranch:             targetBranchFlag,             // hk-mkxw1: merge target branch
+		ProtectBranches:          protectBranchesFlag,          // hk-mkxw1: branches protected from daemon merges
 		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag, // hk-mkxw1: guard against unprotected default branch
 	}
 

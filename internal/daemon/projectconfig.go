@@ -45,8 +45,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/gregberns/harmonik/internal/core"
 	"gopkg.in/yaml.v3"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // projectConfigRelPath is the path of the config file relative to the project root.

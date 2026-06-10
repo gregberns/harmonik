@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -67,7 +68,9 @@ func triplercOutcome(status core.OutcomeStatus, label string) core.Outcome {
 }
 
 // triplercWalkSpine walks the unconditional spine of the triple-review-consolidate graph:
-//   start → implement → review_correctness → review_design → review_tests → consolidate
+//
+//	start → implement → review_correctness → review_design → review_tests → consolidate
+//
 // returning after reaching consolidate so the caller can exercise the branch edges.
 func triplercWalkSpine(t *testing.T, graph *dot.Graph, run *core.Run, cycles *core.CycleCounter) {
 	t.Helper()

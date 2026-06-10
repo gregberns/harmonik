@@ -51,9 +51,11 @@ func (a *spawnCapFixtureAdapter) ProbeTmux(_ context.Context) error { return nil
 func (a *spawnCapFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *spawnCapFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *spawnCapFixtureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -63,15 +65,18 @@ func (a *spawnCapFixtureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindow
 	}
 	return tmux.Outcome{Handle: tmux.WindowHandle("test-session:win" + string(rune('0'+a.windowCallCount)))}
 }
+
 func (a *spawnCapFixtureAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.killCallCount++
 	return nil
 }
+
 func (a *spawnCapFixtureAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *spawnCapFixtureAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }

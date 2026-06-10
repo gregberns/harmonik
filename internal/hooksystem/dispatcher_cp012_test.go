@@ -84,11 +84,11 @@ func cp012FixtureMakeHookCPWithFilter(
 		OutcomeAction: core.OutcomeActionSideEffect,
 		Payload: core.KindPayload{
 			Hook: &core.HookPayload{
-				TriggerEvent:      triggerEvent,
+				TriggerEvent:       triggerEvent,
 				SubscriptionFilter: &filterExpr,
-				SideEffectKind:    sideEffectKind,
-				HaltOnFailure:     false,
-				SubsystemPriority: 0,
+				SideEffectKind:     sideEffectKind,
+				HaltOnFailure:      false,
+				SubsystemPriority:  0,
 			},
 		},
 		Axes:          core.BaselineAxisTags,

@@ -80,10 +80,10 @@ type handlerStateDisk struct {
 // source_run_id, source_bead_id, tripped_at) per specs/handler-pause.md §5.1.
 // core.FailureClass is type string so serialisation is identical to a bare string field.
 type handlerEntryDisk struct {
-	Status          string                   `json:"status"`
-	Cause           *core.HandlerPauseCause  `json:"cause"`
-	InFlightAtPause []inFlightRunDisk        `json:"in_flight_at_pause"`
-	PausedEpoch     int                      `json:"paused_epoch"`
+	Status          string                  `json:"status"`
+	Cause           *core.HandlerPauseCause `json:"cause"`
+	InFlightAtPause []inFlightRunDisk       `json:"in_flight_at_pause"`
+	PausedEpoch     int                     `json:"paused_epoch"`
 }
 
 // inFlightRunDisk is a single entry in in_flight_at_pause.

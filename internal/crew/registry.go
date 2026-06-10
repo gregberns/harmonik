@@ -100,14 +100,14 @@ func Write(projectDir string, r Record) error {
 	}
 
 	if _, err := f.Write(data); err != nil {
-		_ = f.Close()                  //nolint:errcheck // cleanup; primary error returned below
-		_ = os.Remove(tmpPath)         //nolint:errcheck // cleanup on write failure
+		_ = f.Close()          //nolint:errcheck // cleanup; primary error returned below
+		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on write failure
 		return fmt.Errorf("%w: write temp %q: %w", ErrWriteFailed, tmpPath, err)
 	}
 
 	if err := f.Sync(); err != nil {
-		_ = f.Close()                  //nolint:errcheck // cleanup; primary error returned below
-		_ = os.Remove(tmpPath)         //nolint:errcheck // cleanup on sync failure
+		_ = f.Close()          //nolint:errcheck // cleanup; primary error returned below
+		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup on sync failure
 		return fmt.Errorf("%w: fsync temp %q: %w", ErrWriteFailed, tmpPath, err)
 	}
 	if err := f.Close(); err != nil {
@@ -126,7 +126,7 @@ func Write(projectDir string, r Record) error {
 		return fmt.Errorf("%w: open parent dir %q: %w", ErrWriteFailed, dir, err)
 	}
 	if err := d.Sync(); err != nil {
-		_ = d.Close()          //nolint:errcheck // cleanup; primary error returned below
+		_ = d.Close() //nolint:errcheck // cleanup; primary error returned below
 		return fmt.Errorf("%w: fsync parent dir %q: %w", ErrWriteFailed, dir, err)
 	}
 	if err := d.Close(); err != nil {

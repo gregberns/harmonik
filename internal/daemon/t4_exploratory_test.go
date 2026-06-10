@@ -47,12 +47,12 @@ func t4FixtureSetup(t *testing.T) string {
 func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handlerBinary string, handlerArgs []string) daemon.WorkLoopDepsParams {
 	t.Helper()
 	return daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           &stubEventCollector{},
-		ProjectDir:    projectDir,
-		HandlerBinary: handlerBinary,
-		HandlerArgs:   handlerArgs,
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              &stubEventCollector{},
+		ProjectDir:       projectDir,
+		HandlerBinary:    handlerBinary,
+		HandlerArgs:      handlerArgs,
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 	}
 }
@@ -102,6 +102,7 @@ func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 func (s *t4StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
 }
+
 func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -248,13 +249,13 @@ func TestT4_ClaimConflict(t *testing.T) {
 
 	collector := &stubEventCollector{}
 	depsParams := daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	}
 	deps := daemon.ExportedWorkLoopDeps(depsParams)
 
@@ -481,13 +482,13 @@ func TestT4_CloseBeadError(t *testing.T) {
 
 	collector := &stubEventCollector{}
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -586,22 +587,22 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 	collector2 := &stubEventCollector{}
 
 	deps1 := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     sharedLedger,
-		Bus:           collector1,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		BrAdapter:        sharedLedger,
+		Bus:              collector1,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 	deps2 := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     sharedLedger,
-		Bus:           collector2,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
+		BrAdapter:        sharedLedger,
+		Bus:              collector2,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)

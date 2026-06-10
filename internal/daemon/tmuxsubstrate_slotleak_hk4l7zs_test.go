@@ -57,9 +57,11 @@ func (a *slotLeakFixtureAdapter) ProbeTmux(_ context.Context) error { return nil
 func (a *slotLeakFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *slotLeakFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *slotLeakFixtureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -70,6 +72,7 @@ func (a *slotLeakFixtureAdapter) KillWindow(_ context.Context, _ tmux.WindowHand
 func (a *slotLeakFixtureAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *slotLeakFixtureAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }
@@ -77,10 +80,10 @@ func (a *slotLeakFixtureAdapter) KillSession(_ context.Context, _ string) error 
 func (a *slotLeakFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
-func (a *slotLeakFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error      { return nil }
-func (a *slotLeakFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error  { return nil }
-func (a *slotLeakFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error       { return nil }
-func (a *slotLeakFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error        { return nil }
+func (a *slotLeakFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error     { return nil }
+func (a *slotLeakFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
+func (a *slotLeakFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error      { return nil }
+func (a *slotLeakFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error       { return nil }
 func (a *slotLeakFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

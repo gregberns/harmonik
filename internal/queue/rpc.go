@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 )
 
@@ -764,8 +765,10 @@ func NewHandlerAdapter(ledger BeadLedger, projectDir string, qs QueueSetter, bus
 func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueSubmitRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)},
+		}
 	}
 	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir, a.globalMaxConcurrent)
 	if rpcErr != nil {
@@ -825,8 +828,10 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-submit response: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-submit response: %v", err)},
+		}
 	}
 	return data, nil
 }
@@ -841,8 +846,10 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueAppendRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("decode queue-append request: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-append request: %v", err)},
+		}
 	}
 	resp, mutated, events, rpcErr := HandleQueueAppend(ctx, req, a.ledger, a.projectDir)
 	if rpcErr != nil {
@@ -853,8 +860,10 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 	// in-memory QueueStore so the workloop sees the appended items (hk-lzs8r).
 	if mutated != nil {
 		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
-			return nil, &RPCError{Code: -32099, Message: "internal_error",
-				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)}}
+			return nil, &RPCError{
+				Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
+			}
 		}
 		if a.qs != nil {
 			a.qs.SetQueue(mutated)
@@ -874,8 +883,10 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-append response: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-append response: %v", err)},
+		}
 	}
 	return data, nil
 }
@@ -889,8 +900,10 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawM
 	var req QueueStatusRequest
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &req); err != nil {
-			return nil, &RPCError{Code: -32099, Message: "internal_error",
-				Detail: map[string]any{"error": fmt.Sprintf("decode queue-status request: %v", err)}}
+			return nil, &RPCError{
+				Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("decode queue-status request: %v", err)},
+			}
 		}
 	}
 	resp, rpcErr := HandleQueueStatus(ctx, a.projectDir, req)
@@ -908,8 +921,10 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawM
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-status response: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-status response: %v", err)},
+		}
 	}
 	return data, nil
 }
@@ -919,8 +934,10 @@ func (a *HandlerAdapter) HandleQueueStatus(ctx context.Context, params json.RawM
 func (a *HandlerAdapter) HandleQueueDryRun(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueDryRunRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("decode queue-dry-run request: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-dry-run request: %v", err)},
+		}
 	}
 	resp, rpcErr := HandleQueueDryRun(ctx, req, a.ledger, a.projectDir)
 	if rpcErr != nil {
@@ -928,8 +945,10 @@ func (a *HandlerAdapter) HandleQueueDryRun(ctx context.Context, params json.RawM
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-dry-run response: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-dry-run response: %v", err)},
+		}
 	}
 	return data, nil
 }
@@ -954,8 +973,10 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-list response: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-list response: %v", err)},
+		}
 	}
 	return data, nil
 }
@@ -971,23 +992,31 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueSetConcurrencyRequest
 	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)},
+		}
 	}
 	if a.concurrencySet == nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"},
+		}
 	}
 	oldN, err := a.concurrencySet(req.N)
 	if err != nil {
-		return nil, &RPCError{Code: -32099, Message: "invalid_concurrency",
-			Detail: map[string]any{"error": err.Error()}}
+		return nil, &RPCError{
+			Code: -32099, Message: "invalid_concurrency",
+			Detail: map[string]any{"error": err.Error()},
+		}
 	}
 	resp := QueueSetConcurrencyResponse{OldN: oldN, NewN: req.N}
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
-		return nil, &RPCError{Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("encode queue-set-concurrency response: %v", marshalErr)}}
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-set-concurrency response: %v", marshalErr)},
+		}
 	}
 	return data, nil
 }

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
@@ -43,7 +44,8 @@ func subwfFixturePin(ref string, ver string) core.SubWorkflowExpansionPin {
 }
 
 // subwfFixtureSubGraph builds a minimal two-node sub-workflow dot.Graph:
-//   start → end (unconditional, no condition).
+//
+//	start → end (unconditional, no condition).
 func subwfFixtureSubGraph() *dot.Graph {
 	return &dot.Graph{
 		StartNodeID:     "start",
@@ -97,11 +99,13 @@ func (b *recordingBus) Emit(_ context.Context, eventType core.EventType, payload
 	return nil
 }
 
-func (b *recordingBus) Subscribe(_ core.Subscription) (core.Subscription, error) { return core.Subscription{}, nil }
-func (b *recordingBus) Seal() error                                               { return nil }
-func (b *recordingBus) ReplayFrom(_ string, _ core.EventID) error                { return nil }
-func (b *recordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error    { return nil }
-func (b *recordingBus) Drain(_ context.Context) error                            { return nil }
+func (b *recordingBus) Subscribe(_ core.Subscription) (core.Subscription, error) {
+	return core.Subscription{}, nil
+}
+func (b *recordingBus) Seal() error                                           { return nil }
+func (b *recordingBus) ReplayFrom(_ string, _ core.EventID) error             { return nil }
+func (b *recordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
+func (b *recordingBus) Drain(_ context.Context) error                         { return nil }
 
 // ── ExpandSubWorkflowGraph ────────────────────────────────────────────────────
 

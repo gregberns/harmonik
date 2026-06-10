@@ -59,6 +59,7 @@ func (a *tmuxCleanupFixtureAdapter) ProbeTmux(_ context.Context) error { return 
 func (a *tmuxCleanupFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *tmuxCleanupFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -96,10 +97,10 @@ func (a *tmuxCleanupFixtureAdapter) KillSession(_ context.Context, _ string) err
 func (a *tmuxCleanupFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
-func (a *tmuxCleanupFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error { return nil }
-func (a *tmuxCleanupFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error        { return nil }
-func (a *tmuxCleanupFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error         { return nil }
-func (a *tmuxCleanupFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error   { return nil }
+func (a *tmuxCleanupFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error     { return nil }
+func (a *tmuxCleanupFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error      { return nil }
+func (a *tmuxCleanupFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error       { return nil }
+func (a *tmuxCleanupFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
 func (a *tmuxCleanupFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

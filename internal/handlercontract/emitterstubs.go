@@ -67,6 +67,8 @@ func (NoopWatcherDeadLetter) Append(_ core.EventType, _ []byte, _ string) error 
 type NoopDeadLetterSink = core.NoopDeadLetterSink
 
 // Compile-time interface checks.
-var _ EventEmitter = (*CollectingEmitter)(nil)
-var _ WatcherDeadLetterSink = NoopWatcherDeadLetter{}
-var _ DeadLetterSink = NoopDeadLetterSink{}
+var (
+	_ EventEmitter          = (*CollectingEmitter)(nil)
+	_ WatcherDeadLetterSink = NoopWatcherDeadLetter{}
+	_ DeadLetterSink        = NoopDeadLetterSink{}
+)

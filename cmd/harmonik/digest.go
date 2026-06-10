@@ -12,9 +12,10 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+
+	digestcmd "github.com/gregberns/harmonik/cmd/harmonik/digest"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
-	digestcmd "github.com/gregberns/harmonik/cmd/harmonik/digest"
 )
 
 // runDigestSubcommand implements `harmonik digest` per CL-030..CL-033 and

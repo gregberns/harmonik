@@ -21,7 +21,7 @@ package core
 //   - budgetRef:      the name of the budget being checked
 //   - limit:          the declared budget ceiling (from BudgetPayload.Limit)
 //   - accrued:        the total accrued units since run_started (reconstructed
-//                     from budget_accrual replay per CP-026a)
+//     from budget_accrual replay per CP-026a)
 //   - attemptedCost:  the estimated cost of the pending dispatch
 //
 // Returns (BudgetExhaustedEventPayload, true) when the dispatch is DENIED —

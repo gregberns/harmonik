@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/hooksystem"
@@ -80,9 +81,11 @@ func (r *cp017StubVerdictReader) LookupVerdict(_ context.Context, _ core.RunID, 
 }
 
 // Compile-time interface satisfaction checks.
-var _ hooksystem.CognitionHookEvaluator = (*cp017StubCognitionEval)(nil)
-var _ hooksystem.VerdictFileWriter = (*cp017StubVerdictWriter)(nil)
-var _ hooksystem.VerdictReader = (*cp017StubVerdictReader)(nil)
+var (
+	_ hooksystem.CognitionHookEvaluator = (*cp017StubCognitionEval)(nil)
+	_ hooksystem.VerdictFileWriter      = (*cp017StubVerdictWriter)(nil)
+	_ hooksystem.VerdictReader          = (*cp017StubVerdictReader)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // Fixtures

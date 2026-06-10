@@ -91,7 +91,7 @@ func TestCP001_KindPayloadDiscriminatorAfterRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		kind    Kind
+		kind                                      Kind
 		wantGate, wantHook, wantGuard, wantBudget bool
 	}{
 		{KindGate, true, false, false, false},

@@ -30,12 +30,12 @@ import (
 // for a specific bead and ShowBead returns CoarseStatusBlocked for that bead.
 // All other beads behave normally.  claimedIDs records every successful claim.
 type blockedBeadLedger struct {
-	mu               sync.Mutex
-	blockedBead      core.BeadID
-	showBlockedAsOpen bool // when true, ShowBead returns Open status for the blocked bead
-	claimed          []core.BeadID // beads where ClaimBead was called and succeeded
-	closed           []core.BeadID
-	reopened         []core.BeadID
+	mu                sync.Mutex
+	blockedBead       core.BeadID
+	showBlockedAsOpen bool          // when true, ShowBead returns Open status for the blocked bead
+	claimed           []core.BeadID // beads where ClaimBead was called and succeeded
+	closed            []core.BeadID
+	reopened          []core.BeadID
 }
 
 func (b *blockedBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {

@@ -523,13 +523,13 @@ func TestClaudeEnvVars_CredentialDenyList_ScrubbedFromBaseEnv(t *testing.T) {
 	t.Parallel()
 
 	cfg := handler.ClaudeEnvConfig{
-		RunID:         "run-ci004a",
-		DaemonSocket:  "/tmp/ci004a.sock",
-		WorkspacePath: "/ws/ci004a",
+		RunID:            "run-ci004a",
+		DaemonSocket:     "/tmp/ci004a.sock",
+		WorkspacePath:    "/ws/ci004a",
 		HandlerSessionID: "h-ci004a",
 		ClaudeSessionID:  "c-ci004a",
-		WorkflowID:    "wf-ci004a",
-		NodeID:        "n-ci004a",
+		WorkflowID:       "wf-ci004a",
+		NodeID:           "n-ci004a",
 		BaseEnv: []string{
 			// Credential deny-list keys that must be scrubbed.
 			"ANTHROPIC_API_KEY=sk-ant-real-secret",

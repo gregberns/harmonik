@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/hooksystem"
@@ -50,7 +51,7 @@ func (w *cp040PersistFileWriter) WriteAndCommit(_ context.Context, relPath strin
 
 // cp040PersistBus is a stub EventBus that records emitted events.
 type cp040PersistBus struct {
-	events []cp040PersistEvent
+	events  []cp040PersistEvent
 	emitErr error
 }
 

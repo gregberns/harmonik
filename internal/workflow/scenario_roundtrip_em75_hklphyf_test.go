@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -129,7 +130,7 @@ func TestScenarioEM75_DispatchTable_HandlerRefPerNodeType(t *testing.T) {
 		handlerRef string
 	}
 	expect := map[string]nodeExpect{
-		"start":                  {core.NodeTypeNonAgentic, "noop"},
+		"start":                 {core.NodeTypeNonAgentic, "noop"},
 		"implementer":           {core.NodeTypeAgentic, "claude-implementer"},
 		"reviewer":              {core.NodeTypeAgentic, "claude-reviewer"},
 		"close":                 {core.NodeTypeNonAgentic, "noop"},

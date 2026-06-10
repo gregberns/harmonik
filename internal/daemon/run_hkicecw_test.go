@@ -192,7 +192,7 @@ func TestRunBead_CancelNotCalledOnFailure(t *testing.T) {
 		HandlerArgs:        []string{"-c", "exit 1"}, // handler fails
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueDrain: cancelOnDrain,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

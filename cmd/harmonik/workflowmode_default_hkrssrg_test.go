@@ -180,5 +180,7 @@ func TestWfDefaultNoReviewLoopOptOut(t *testing.T) {
 
 // Ensure core and daemon packages are imported (suppresses "imported and not used"
 // if the compiler sees only indirect usage through the test helpers).
-var _ = os.DevNull
-var _ = daemon.Config{}
+var (
+	_ = os.DevNull
+	_ = daemon.Config{}
+)

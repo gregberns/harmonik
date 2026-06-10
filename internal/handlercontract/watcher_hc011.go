@@ -491,10 +491,10 @@ func (w *Watcher) emitBudgetAccrualForChunk(ctx context.Context, chunkLine []byt
 	// Decode only the fields needed to construct the budget_accrual payload.
 	// Use core types directly so RunID.UnmarshalText handles UUID parsing.
 	var msg struct {
-		RunID        core.RunID      `json:"run_id"`
-		SessionID    core.SessionID  `json:"session_id"`
-		ChunkIndex   int             `json:"chunk_index"`
-		BytesEmitted int             `json:"bytes_emitted"`
+		RunID        core.RunID     `json:"run_id"`
+		SessionID    core.SessionID `json:"session_id"`
+		ChunkIndex   int            `json:"chunk_index"`
+		BytesEmitted int            `json:"bytes_emitted"`
 	}
 	_ = json.Unmarshal(chunkLine, &msg) // best-effort; partial results used below
 

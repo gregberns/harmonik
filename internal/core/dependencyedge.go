@@ -10,9 +10,9 @@ package core
 // "unknown" rather than "closed". T2 epic-completion checks use this field to
 // determine whether every child bead is closed without a second br show round-trip.
 type DependencyEdge struct {
-	FromBeadID     BeadID      // source bead
-	ToBeadID       BeadID      // target bead
-	EdgeKind       EdgeKind    // one of {parent-child, blocks, conditional-blocks, waits-for}
+	FromBeadID     BeadID       // source bead
+	ToBeadID       BeadID       // target bead
+	EdgeKind       EdgeKind     // one of {parent-child, blocks, conditional-blocks, waits-for}
 	EndpointStatus CoarseStatus // status of the endpoint bead; zero = unknown (not closed)
 }
 

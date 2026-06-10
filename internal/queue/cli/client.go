@@ -52,8 +52,10 @@ const exitDaemonDown = 17
 
 // validationErrorCodeMin and validationErrorCodeMax bound the reserved
 // JSON-RPC error code range for queue validation errors per QM-029b.
-const validationErrorCodeMin = -32019
-const validationErrorCodeMax = -32010
+const (
+	validationErrorCodeMin = -32019
+	validationErrorCodeMax = -32010
+)
 
 // socketRequest is the wire envelope sent to the daemon socket for all
 // queue operations. The "op" field selects the handler; the remaining

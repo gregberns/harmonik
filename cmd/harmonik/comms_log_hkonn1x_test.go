@@ -107,7 +107,6 @@ func captureCommsLog(t *testing.T, args []string) (string, int) {
 
 // TestCommsLogNoEvents verifies that an empty events.jsonl exits 0 with no output.
 func TestCommsLogNoEvents(t *testing.T) {
-
 	dir := commsLogFixture(t, nil)
 	out, code := captureCommsLog(t, []string{"--project", dir})
 	if code != 0 {
@@ -120,7 +119,6 @@ func TestCommsLogNoEvents(t *testing.T) {
 
 // TestCommsLogFiltersType verifies that non-agent_message events are excluded.
 func TestCommsLogFiltersType(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogNonCommsEvent("01965b00-0000-7000-8000-000000000001", ts),
@@ -142,7 +140,6 @@ func TestCommsLogFiltersType(t *testing.T) {
 
 // TestCommsLogFromFilter verifies --from filters by sender.
 func TestCommsLogFromFilter(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "from alice"),
@@ -164,7 +161,6 @@ func TestCommsLogFromFilter(t *testing.T) {
 
 // TestCommsLogToFilter verifies --to filters by recipient, including broadcast.
 func TestCommsLogToFilter(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "to bob"),
@@ -191,7 +187,6 @@ func TestCommsLogToFilter(t *testing.T) {
 
 // TestCommsLogTopicFilter verifies --topic filters by topic.
 func TestCommsLogTopicFilter(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "pong"),
@@ -213,7 +208,6 @@ func TestCommsLogTopicFilter(t *testing.T) {
 
 // TestCommsLogSinceEventID verifies --since with an event_id skips events at or before it.
 func TestCommsLogSinceEventID(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "first"),
@@ -240,7 +234,6 @@ func TestCommsLogSinceEventID(t *testing.T) {
 
 // TestCommsLogSinceDuration verifies --since with a duration skips events outside the window.
 func TestCommsLogSinceDuration(t *testing.T) {
-
 	// "old" event is 2 hours ago; "recent" event is 5 minutes ago.
 	old := time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	recent := time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)
@@ -265,7 +258,6 @@ func TestCommsLogSinceDuration(t *testing.T) {
 
 // TestCommsLogJSONOutput verifies --json emits one valid JSON object per matched event.
 func TestCommsLogJSONOutput(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "status", "hello"),
@@ -294,7 +286,6 @@ func TestCommsLogJSONOutput(t *testing.T) {
 
 // TestCommsLogHumanReadableFormat verifies the human-readable output includes expected fields.
 func TestCommsLogHumanReadableFormat(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "orchestrator", "worker", "task", "do the thing"),
@@ -315,7 +306,6 @@ func TestCommsLogHumanReadableFormat(t *testing.T) {
 
 // TestCommsLogUnknownFlagError verifies that an unknown flag exits with code 1.
 func TestCommsLogUnknownFlagError(t *testing.T) {
-
 	dir := commsLogFixture(t, nil)
 	_, code := captureCommsLog(t, []string{"--project", dir, "--unknown-flag"})
 	if code != 1 {
@@ -325,7 +315,6 @@ func TestCommsLogUnknownFlagError(t *testing.T) {
 
 // TestCommsLogInvalidSince verifies that a non-UUID, non-duration --since value exits 1.
 func TestCommsLogInvalidSince(t *testing.T) {
-
 	dir := commsLogFixture(t, nil)
 	_, code := captureCommsLog(t, []string{"--project", dir, "--since", "not-a-uuid-or-duration"})
 	if code != 1 {
@@ -336,7 +325,6 @@ func TestCommsLogInvalidSince(t *testing.T) {
 // TestCommsLogDoesNotAdvanceCursor verifies that running comms log leaves no cursor state.
 // Cursors live at .harmonik/comms/cursors/<name>; that directory must remain absent.
 func TestCommsLogDoesNotAdvanceCursor(t *testing.T) {
-
 	ts := "2026-06-01T10:00:00Z"
 	lines := []string{
 		commsLogEvent("01965b00-0000-7000-8000-000000000001", ts, "alice", "bob", "", "hello"),

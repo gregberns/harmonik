@@ -21,7 +21,8 @@ func writeTestJSONL(t *testing.T, dir string, records []struct {
 	input  int64
 	output int64
 	create int64
-}) string {
+},
+) string {
 	t.Helper()
 	path := filepath.Join(dir, "transcript.jsonl")
 	f, err := os.Create(path)
@@ -38,10 +39,10 @@ func writeTestJSONL(t *testing.T, dir string, records []struct {
 			"timestamp": ts,
 			"message": map[string]interface{}{
 				"usage": map[string]interface{}{
-					"input_tokens":               r.input,
-					"output_tokens":              r.output,
+					"input_tokens":                r.input,
+					"output_tokens":               r.output,
 					"cache_creation_input_tokens": r.create,
-					"cache_read_input_tokens":    9999, // should be excluded
+					"cache_read_input_tokens":     9999, // should be excluded
 				},
 			},
 		}

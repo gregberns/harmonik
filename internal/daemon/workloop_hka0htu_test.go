@@ -133,10 +133,10 @@ func TestWorkLoop_LabelsHydratedFromShowBead(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
 		HandlerArgs:      []string{"-c", "exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),

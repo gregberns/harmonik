@@ -34,18 +34,22 @@ type hkrnsjs_showLedger struct {
 func (l *hkrnsjs_showLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	return nil, nil
 }
+
 func (l *hkrnsjs_showLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	if r, ok := l.records[id]; ok {
 		return r, nil
 	}
 	return core.BeadRecord{}, brcli.ErrBeadNotFound
 }
+
 func (l *hkrnsjs_showLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }
+
 func (l *hkrnsjs_showLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	return nil
 }
+
 func (l *hkrnsjs_showLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
 	return nil
 }
@@ -251,7 +255,7 @@ func hkrnsjs_gitSetup(t *testing.T, dir string, beadID string) {
 	hkrnsjs_git(t, dir, "init", "--initial-branch=main")
 	hkrnsjs_git(t, dir, "config", "user.email", "test@test.com")
 	hkrnsjs_git(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hkrnsjs_git(t, dir, "add", ".")
@@ -265,7 +269,7 @@ func hkrnsjs_gitSetupEmpty(t *testing.T, dir string) {
 	hkrnsjs_git(t, dir, "init", "--initial-branch=main")
 	hkrnsjs_git(t, dir, "config", "user.email", "test@test.com")
 	hkrnsjs_git(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hkrnsjs_git(t, dir, "add", ".")

@@ -82,10 +82,10 @@ func TestRFDA7c_WorkspaceState_ValidRejectsNonConstants(t *testing.T) {
 	t.Parallel()
 
 	invalidValues := []string{
-		"",             // zero value — "initial" sentinel, not a legal state
-		"setup",        // retired in WM v0.3.0 per §12
+		"",      // zero value — "initial" sentinel, not a legal state
+		"setup", // retired in WM v0.3.0 per §12
 		"unknown",
-		"CREATED",      // case-sensitive
+		"CREATED",       // case-sensitive
 		"merge_pending", // wrong separator
 		"in-flight",
 		"terminal",
@@ -224,8 +224,8 @@ func TestRFDA7c_IsTerminalIsInFlight_InvalidStateReturnsFalse(t *testing.T) {
 	t.Parallel()
 
 	invalidValues := []core.WorkspaceState{
-		"",        // zero value
-		"setup",   // retired
+		"",      // zero value
+		"setup", // retired
 		"unknown",
 	}
 
@@ -265,9 +265,9 @@ func TestRFDA7c_InterruptState_ValidRejectsNonConstants(t *testing.T) {
 	t.Parallel()
 
 	invalidValues := []string{
-		"",                      // zero value
-		"paused",                // abbreviated form
-		"operator_paused",       // wrong separator
+		"",                       // zero value
+		"paused",                 // abbreviated form
+		"operator_paused",        // wrong separator
 		"DAEMON-CRASH-SUSPECTED", // wrong case
 		"interrupted",
 		"stopped",

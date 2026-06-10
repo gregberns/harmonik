@@ -349,7 +349,6 @@ func TestNodeValid_SubWorkflowWithHandlerRef(t *testing.T) {
 	}
 }
 
-
 // TestNodeTimeoutJSONRoundTrip verifies that Timeout serialises as an integer
 // number of seconds (not nanoseconds) per execution-model.md §6.1
 // ("Integer | None — positive seconds").

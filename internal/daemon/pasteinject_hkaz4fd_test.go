@@ -82,7 +82,7 @@ func TestPasteInjectActivityAware_ProgressingPaneSurvivesCeiling(t *testing.T) {
 			_ = os.WriteFile(
 				filepath.Join(wtPath, "work.txt"),
 				[]byte("progress "+time.Now().String()),
-				0600,
+				0o600,
 			)
 			time.Sleep(25 * time.Millisecond)
 		}

@@ -70,9 +70,11 @@ func sh032FixtureLoadLines(t *testing.T, specFile string) []string {
 	return lines
 }
 
-var sh032FixtureSH032Heading = regexp.MustCompile(`^#### SH-032 —`)
-var sh032FixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
-var sh032FixtureTagsMechanism = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+var (
+	sh032FixtureSH032Heading      = regexp.MustCompile(`^#### SH-032 —`)
+	sh032FixtureAnySectionHeading = regexp.MustCompile(`^#{1,4} `)
+	sh032FixtureTagsMechanism     = regexp.MustCompile(`^Tags:.*\bmechanism\b`)
+)
 
 // sh032FixtureBodyWindow is larger because SH-032 has a multi-table body.
 const sh032FixtureBodyWindow = 50

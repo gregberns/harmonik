@@ -303,18 +303,18 @@ func TestFreedomProfile_Valid_Table(t *testing.T) {
 		valid bool
 	}{
 		{
-			name: "empty_name_invalid",
-			fp:   FreedomProfile{Name: "", MaxIterations: 1},
+			name:  "empty_name_invalid",
+			fp:    FreedomProfile{Name: "", MaxIterations: 1},
 			valid: false,
 		},
 		{
-			name: "zero_max_iterations_invalid",
-			fp:   FreedomProfile{Name: "x", MaxIterations: 0},
+			name:  "zero_max_iterations_invalid",
+			fp:    FreedomProfile{Name: "x", MaxIterations: 0},
 			valid: false,
 		},
 		{
-			name: "negative_max_iterations_invalid",
-			fp:   FreedomProfile{Name: "x", MaxIterations: -5},
+			name:  "negative_max_iterations_invalid",
+			fp:    FreedomProfile{Name: "x", MaxIterations: -5},
 			valid: false,
 		},
 		{
@@ -424,9 +424,9 @@ func TestSchemaChangeKind_IsBreaking_UnknownKindIsConservative(t *testing.T) {
 	unknown := []SchemaChangeKind{
 		"",
 		"unknown",
-		"add_optional",    // close but not exact
-		"RENAME_FIELD",    // wrong case
-		"remove-field",    // wrong separator
+		"add_optional", // close but not exact
+		"RENAME_FIELD", // wrong case
+		"remove-field", // wrong separator
 	}
 
 	for _, k := range unknown {

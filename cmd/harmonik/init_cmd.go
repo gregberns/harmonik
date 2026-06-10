@@ -62,13 +62,13 @@ func runInitSubcommand(args []string) int {
 // runInit is the testable core of the init subcommand.
 func runInit(args []string, stdout, stderr io.Writer) int {
 	var (
-		projectDir    string
-		targetBranch  string
-		prefix        string
-		doctorOnly    bool
-		force         bool
-		smoke         bool
-		noSupervise   bool
+		projectDir   string
+		targetBranch string
+		prefix       string
+		doctorOnly   bool
+		force        bool
+		smoke        bool
+		noSupervise  bool
 	)
 
 	for i := 0; i < len(args); i++ {

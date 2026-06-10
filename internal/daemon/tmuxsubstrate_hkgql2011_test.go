@@ -62,14 +62,17 @@ func (f *fakeTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { re
 func (f *fakeTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (f *fakeTmuxAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
 	f.newWindowInParams = params
 	return f.newWindowInOutcome
 }
+
 func (f *fakeTmuxAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	f.killWindowCalled++
 	return f.killWindowErr
 }
+
 func (f *fakeTmuxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	if f.panePIDErr != nil {
 		return 0, f.panePIDErr

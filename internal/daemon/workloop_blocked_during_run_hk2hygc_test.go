@@ -36,12 +36,12 @@ import (
 // with a "blocked" error for a specific bead, simulating a dependency added
 // mid-run. All other operations behave normally.
 type blockedDuringRunLedger struct {
-	mu              sync.Mutex
-	closeBlockedID  core.BeadID
-	claimed         []core.BeadID
-	closed          []core.BeadID
-	reopened        []core.BeadID
-	closeCallCount  int // number of CloseBead calls for closeBlockedID
+	mu             sync.Mutex
+	closeBlockedID core.BeadID
+	claimed        []core.BeadID
+	closed         []core.BeadID
+	reopened       []core.BeadID
+	closeCallCount int // number of CloseBead calls for closeBlockedID
 }
 
 func (b *blockedDuringRunLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {

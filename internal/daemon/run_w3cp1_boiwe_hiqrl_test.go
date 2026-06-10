@@ -447,7 +447,7 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 		IntentLogDir:       filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:         qs,
 		CancelOnQueueDrain: cancelExit, // success path (APPROVE)
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueExit:  cancelExit, // failure/error path (BLOCK/error)
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

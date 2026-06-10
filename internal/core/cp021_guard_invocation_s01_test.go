@@ -301,9 +301,9 @@ func TestCP021_NonGuardControlPoints_Ignored(t *testing.T) {
 	var called []string
 	// Provide evaluators for ALL names; only guardName should be called.
 	fns := map[string]GuardEvaluator{
-		guardName:   cp021RecordingFn(guardName, &called),
-		"the-gate":  cp021RecordingFn("the-gate", &called),
-		"the-hook":  cp021RecordingFn("the-hook", &called),
+		guardName:    cp021RecordingFn(guardName, &called),
+		"the-gate":   cp021RecordingFn("the-gate", &called),
+		"the-hook":   cp021RecordingFn("the-hook", &called),
 		"the-budget": cp021RecordingFn("the-budget", &called),
 	}
 

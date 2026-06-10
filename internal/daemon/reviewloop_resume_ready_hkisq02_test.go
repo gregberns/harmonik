@@ -76,7 +76,7 @@ type rlResumeReadySubstrate struct {
 
 	spawnCount atomic.Int64
 
-	mu            sync.Mutex
+	mu             sync.Mutex
 	resumeLaunches int // count of --resume launches observed
 }
 

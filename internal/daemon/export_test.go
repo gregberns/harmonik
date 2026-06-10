@@ -1659,6 +1659,7 @@ func (n *noopTmuxAdapter) ListSessions(_ context.Context) ([]string, error) { re
 func (n *noopTmuxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (n *noopTmuxAdapter) NewWindowIn(_ context.Context, _ tmuxPkg.NewWindowIn) tmuxPkg.Outcome {
 	return tmuxPkg.Outcome{}
 }
@@ -1666,6 +1667,7 @@ func (n *noopTmuxAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) 
 func (n *noopTmuxAdapter) WindowPanePID(_ context.Context, _ tmuxPkg.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (n *noopTmuxAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
 	return "", nil
 }

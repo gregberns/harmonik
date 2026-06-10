@@ -149,13 +149,13 @@ func TestEvaluateGroupAdvance_WakesLoopOnRunCompleted_hknbjht(t *testing.T) {
 // behind A)] on a live QueueStore. The test reproduces the exact two steps the
 // dispatch loop performs around a run completion:
 //
-//	1. A's run completes → ExportedEvaluateGroupAdvanceWithOutcome marks A
-//	   terminal in the queue AND fires the wake (Gap 2). On main the no-wake
-//	   LockedQueueStore.SetQueue means the idle loop would never tick again.
-//	2. The woken loop re-runs queue.ReevaluateDeferred over the active group —
-//	   the same call the production Phase-1 dispatch tick now makes (Gap 1).
-//	   A is now terminal in the queue, so B un-defers to pending and
-//	   EligibleItems surfaces B for dispatch.
+//  1. A's run completes → ExportedEvaluateGroupAdvanceWithOutcome marks A
+//     terminal in the queue AND fires the wake (Gap 2). On main the no-wake
+//     LockedQueueStore.SetQueue means the idle loop would never tick again.
+//  2. The woken loop re-runs queue.ReevaluateDeferred over the active group —
+//     the same call the production Phase-1 dispatch tick now makes (Gap 1).
+//     A is now terminal in the queue, so B un-defers to pending and
+//     EligibleItems surfaces B for dispatch.
 //
 // On main step 1 does not wake and step 2's un-defer code does not exist, so B
 // would sit deferred forever and the stream would HOL-block permanently.

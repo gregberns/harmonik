@@ -25,8 +25,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gregberns/harmonik/internal/core"
 	"go.uber.org/goleak"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // subscribeTestMakeEvent constructs a minimal core.Event with the given type.
@@ -693,7 +694,9 @@ func TestSubscribe_ReplayEmptyLog(t *testing.T) {
 		t.Fatalf("unexpected error from replay on missing JSONL: %s", errResp.Error)
 	}
 	// Live event or heartbeat proves the stream is active after empty replay.
-	var hb struct{ Type string `json:"type"` }
+	var hb struct {
+		Type string `json:"type"`
+	}
 	if json.Unmarshal(line, &hb) == nil && (hb.Type != "") {
 		// Got a typed line (event or heartbeat) — stream is live.
 		return

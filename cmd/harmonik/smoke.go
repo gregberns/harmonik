@@ -79,11 +79,11 @@ func runSmokeSubcommand(args []string) int {
 // runSmoke is the testable core of the smoke subcommand.
 func runSmoke(args []string, stdout, stderr io.Writer) int {
 	var (
-		projectFlag  string
-		timeoutFlag  = smokeDefaultTimeout
-		branchFlag   string
-		queueFlag    string
-		beadIDFlag   string
+		projectFlag string
+		timeoutFlag = smokeDefaultTimeout
+		branchFlag  string
+		queueFlag   string
+		beadIDFlag  string
 	)
 
 	for i := 0; i < len(args); i++ {

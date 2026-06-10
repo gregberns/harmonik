@@ -386,7 +386,7 @@ func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeReviewLoop,
 	}
 
@@ -412,7 +412,7 @@ func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
@@ -439,7 +439,7 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 		ProjectDir:          t.TempDir(),
 		HandlerBinary:       "echo",
 		IntentLogDir:        t.TempDir(),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
 		WorkflowModeDefault: "", // zero value
 	}
 
@@ -570,12 +570,15 @@ func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) { re
 func (s *wmdStubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
 }
+
 func (s *wmdStubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }
+
 func (s *wmdStubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	return nil
 }
+
 func (s *wmdStubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
 	return nil
 }

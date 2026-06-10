@@ -236,9 +236,9 @@ func TestContextKeysExplore_MultipleRegisteredKeys(t *testing.T) {
 	bus, captured, mu := ctxKeysExplCaptureBus(t)
 
 	updates := map[string]any{
-		"key_alpha":   "alpha_val",
-		"key_beta":    "beta_val",
-		"key_rogue":   "should_be_dropped",
+		"key_alpha": "alpha_val",
+		"key_beta":  "beta_val",
+		"key_rogue": "should_be_dropped",
 	}
 
 	if err := workflow.ValidateAndApplyContextUpdates(

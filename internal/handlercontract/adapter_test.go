@@ -20,6 +20,7 @@ func (adapterFixtureStub) DetectReady(_ core.EventEnvelope) bool { return false 
 func (adapterFixtureStub) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (adapterFixtureStub) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }

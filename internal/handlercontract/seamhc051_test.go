@@ -195,6 +195,7 @@ func (seamFixtureNoHandlerImportStub) DetectReady(_ core.EventEnvelope) bool { r
 func (seamFixtureNoHandlerImportStub) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (seamFixtureNoHandlerImportStub) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }

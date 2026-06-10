@@ -107,14 +107,14 @@ func TestWorkingTreeRefresh_AfterSuccessfulMerge(t *testing.T) {
 	// The worktreeFactory commits "work.txt" onto the run-branch so the merge
 	// is non-trivial and git reset --hard HEAD must update the working tree.
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:       ledger,
-		Bus:             collector,
-		ProjectDir:      projectDir,
-		HandlerBinary:   "/bin/sh",
-		HandlerArgs:     []string{"-c", "exit 0"},
-		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory: mergeToMainCommittingFactory(t),
+		WorktreeFactory:  mergeToMainCommittingFactory(t),
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

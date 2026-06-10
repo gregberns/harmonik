@@ -150,11 +150,11 @@ func viaSubmitOrAppend(
 	// the entire SocketRequest JSON as a QueueSubmitRequest, so the op, schema_version,
 	// and groups fields must be at the top level.
 	type wireGroup struct {
-		GroupIndex int              `json:"group_index"`
-		Kind       queue.GroupKind  `json:"kind"`
+		GroupIndex int               `json:"group_index"`
+		Kind       queue.GroupKind   `json:"kind"`
 		Status     queue.GroupStatus `json:"status"`
-		Items      []queue.Item     `json:"items"`
-		CreatedAt  time.Time        `json:"created_at"`
+		Items      []queue.Item      `json:"items"`
+		CreatedAt  time.Time         `json:"created_at"`
 	}
 	type submitEnvelope struct {
 		Op            string      `json:"op"`
@@ -321,11 +321,11 @@ func viaWatchGroupCompletion(
 		switch envelope.Type {
 		case "queue_group_completed":
 			var payload struct {
-				QueueID     string `json:"queue_id"`
-				GroupIndex  int    `json:"group_index"`
-				FinalStatus string `json:"final_status"`
-				SuccessCount int   `json:"success_count"`
-				FailCount   int    `json:"fail_count"`
+				QueueID      string `json:"queue_id"`
+				GroupIndex   int    `json:"group_index"`
+				FinalStatus  string `json:"final_status"`
+				SuccessCount int    `json:"success_count"`
+				FailCount    int    `json:"fail_count"`
 			}
 			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
 				continue

@@ -74,8 +74,10 @@ func (q *hkue0u2PaneOutputQuitSender) PaneOutputFingerprint(_ context.Context) (
 }
 
 // Compile-time checks: satisfies both exported aliases.
-var _ daemon.PaneLivenessCheckerExported = (*hkue0u2PaneOutputQuitSender)(nil)
-var _ daemon.PaneOutputSizerExported = (*hkue0u2PaneOutputQuitSender)(nil)
+var (
+	_ daemon.PaneLivenessCheckerExported = (*hkue0u2PaneOutputQuitSender)(nil)
+	_ daemon.PaneOutputSizerExported     = (*hkue0u2PaneOutputQuitSender)(nil)
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // tests
@@ -104,7 +106,7 @@ func TestPasteInjectPaneOutputGrowth_ReadHeavyBeadSurvivesCeiling(t *testing.T) 
 	wtPath, headSHA := hk7srrdWorktree(t)
 
 	qs := &hkue0u2PaneOutputQuitSender{}
-	qs.alive.Store(true)    // pane always has an active child
+	qs.alive.Store(true)     // pane always has an active child
 	qs.outputFP.Store("0 0") // initial fingerprint
 
 	kl := &hkfbydvKiller{}
@@ -127,7 +129,7 @@ func TestPasteInjectPaneOutputGrowth_ReadHeavyBeadSurvivesCeiling(t *testing.T) 
 		}
 		// Worktree is NOT touched during the planning phase — only commit at end.
 		hk7srrdGitBg(wtPath, "add", ".")
-		_ = os.WriteFile(filepath.Join(wtPath, "plan.md"), []byte("plan"), 0600)
+		_ = os.WriteFile(filepath.Join(wtPath, "plan.md"), []byte("plan"), 0o600)
 		hk7srrdGitBg(wtPath, "add", ".")
 		hk7srrdGitBg(wtPath, "commit", "-m", "read-heavy bead landed")
 	}()

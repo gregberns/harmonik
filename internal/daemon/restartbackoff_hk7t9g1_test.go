@@ -18,15 +18,15 @@ func TestComputeRestartBackoffDelay(t *testing.T) {
 		n    int
 		want time.Duration
 	}{
-		{0, 0},                    // first boot — no delay
-		{-1, 0},                   // guard: negative n treated as 0
-		{1, 30 * time.Second},     // base × 2^0
-		{2, 60 * time.Second},     // base × 2^1
-		{3, 2 * time.Minute},      // base × 2^2
-		{4, 4 * time.Minute},      // base × 2^3
-		{5, 8 * time.Minute},      // base × 2^4
-		{6, cap},                  // base × 2^5 = 960s > cap → capped
-		{100, cap},                // large n → capped
+		{0, 0},                // first boot — no delay
+		{-1, 0},               // guard: negative n treated as 0
+		{1, 30 * time.Second}, // base × 2^0
+		{2, 60 * time.Second}, // base × 2^1
+		{3, 2 * time.Minute},  // base × 2^2
+		{4, 4 * time.Minute},  // base × 2^3
+		{5, 8 * time.Minute},  // base × 2^4
+		{6, cap},              // base × 2^5 = 960s > cap → capped
+		{100, cap},            // large n → capped
 	}
 
 	for _, tt := range tests {

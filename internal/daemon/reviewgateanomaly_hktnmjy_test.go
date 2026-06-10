@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 )
@@ -151,9 +152,9 @@ func (b *reviewGateAnomalyFakeBus) Emit(ctx context.Context, eventType core.Even
 	for _, sub := range subs {
 		if _, ok := sub.EventPattern.Types[string(eventType)]; ok {
 			evt := core.Event{
-				EventID:   core.EventID(uuid.New()),
-				Type:      string(eventType),
-				Payload:   payload,
+				EventID: core.EventID(uuid.New()),
+				Type:    string(eventType),
+				Payload: payload,
 			}
 			if err := sub.Handler(ctx, evt); err != nil {
 				return err
@@ -167,10 +168,10 @@ func (b *reviewGateAnomalyFakeBus) EmitWithRunID(_ context.Context, _ core.RunID
 	return b.Emit(context.Background(), eventType, payload)
 }
 
-func (b *reviewGateAnomalyFakeBus) Seal() error                                                     { return nil }
-func (b *reviewGateAnomalyFakeBus) ReplayFrom(_ string, _ core.EventID) error                       { return nil }
-func (b *reviewGateAnomalyFakeBus) DeadLetterReplay(_ string, _ *core.EventPattern) error           { return nil }
-func (b *reviewGateAnomalyFakeBus) Drain(_ context.Context) error                                   { return nil }
+func (b *reviewGateAnomalyFakeBus) Seal() error                                           { return nil }
+func (b *reviewGateAnomalyFakeBus) ReplayFrom(_ string, _ core.EventID) error             { return nil }
+func (b *reviewGateAnomalyFakeBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
+func (b *reviewGateAnomalyFakeBus) Drain(_ context.Context) error                         { return nil }
 
 // emittedAnomalyCount returns the number of review_gate_anomaly events recorded.
 func (b *reviewGateAnomalyFakeBus) emittedAnomalyCount() int {
@@ -222,9 +223,9 @@ func sendReviewerVerdict(t *testing.T, bus *reviewGateAnomalyFakeBus) {
 	t.Helper()
 	runID := core.RunID(uuid.New())
 	p := core.ReviewerVerdictPayload{
-		RunID:         runID,
-		WorkflowMode:  core.WorkflowModeReviewLoop,
-		SessionID:     "sess-test",
+		RunID:           runID,
+		WorkflowMode:    core.WorkflowModeReviewLoop,
+		SessionID:       "sess-test",
 		ClaudeSessionID: "claude-test",
 		IterationCount:  1,
 		SchemaVersion:   1,

@@ -59,7 +59,7 @@ func TestDotWorkNodeAndSiblingReviewNodeModelEffortDiverge(t *testing.T) {
 		t.Parallel()
 
 		const (
-			wantModel = "claude-opus-4-8"
+			wantModel  = "claude-opus-4-8"
 			wantEffort = "high"
 		)
 

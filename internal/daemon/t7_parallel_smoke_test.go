@@ -307,8 +307,7 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 	t.Parallel()
 
-	projectDir, jsonlPath, brWrapper, beadID1, beadID2 :=
-		parallelSmokeFixtureSetup(t)
+	projectDir, jsonlPath, brWrapper, beadID1, beadID2 := parallelSmokeFixtureSetup(t)
 
 	handlerScript := parallelSmokeFixtureSleepHandlerScript(t)
 

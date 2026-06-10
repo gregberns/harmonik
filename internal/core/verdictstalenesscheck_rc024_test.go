@@ -199,7 +199,7 @@ func TestCheckVerdictStaleness_SiblingBeadsAndJSONLDoNotTriggerStaleness(t *test
 	result := CheckVerdictStaleness(snapshot, "abc123", "audit-001")
 
 	if result.Stale {
-		t.Errorf("RC-024: staleness check returned Stale=true when both target-scoped values match; "+
+		t.Errorf("RC-024: staleness check returned Stale=true when both target-scoped values match; " +
 			"sibling changes must not propagate to CheckVerdictStaleness arguments")
 	}
 }

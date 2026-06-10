@@ -63,15 +63,19 @@ func (a *pasteInjectFixtureAdapter) ProbeTmux(_ context.Context) error { return 
 func (a *pasteInjectFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *pasteInjectFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *pasteInjectFixtureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	return a.newWindowInOutcome
 }
+
 func (a *pasteInjectFixtureAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (a *pasteInjectFixtureAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 1234, nil
 }

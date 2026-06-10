@@ -76,6 +76,7 @@ func (a *pidTargetFixtureAdapter) ProbeTmux(context.Context) error { return nil 
 func (a *pidTargetFixtureAdapter) ListSessions(context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *pidTargetFixtureAdapter) ListWindows(context.Context, string) ([]string, error) {
 	return nil, nil
 }

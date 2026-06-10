@@ -76,6 +76,7 @@ func (a *hkoihnfOverlapAdapter) ProbeTmux(_ context.Context) error { return nil 
 func (a *hkoihnfOverlapAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkoihnfOverlapAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -106,6 +107,7 @@ func (a *hkoihnfOverlapAdapter) KillWindow(_ context.Context, _ tmux.WindowHandl
 func (a *hkoihnfOverlapAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *hkoihnfOverlapAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }

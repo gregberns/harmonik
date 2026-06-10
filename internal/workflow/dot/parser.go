@@ -981,8 +981,10 @@ func parseCondition(raw string, line int) (*Condition, *ParseError) {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
-			return nil, &ParseError{Line: line,
-				Message: fmt.Sprintf("condition: empty clause in %q", raw)}
+			return nil, &ParseError{
+				Line:    line,
+				Message: fmt.Sprintf("condition: empty clause in %q", raw),
+			}
 		}
 		eq, err := parseEquality(part, line, raw)
 		if err != nil {
@@ -1007,8 +1009,10 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 		op = "=="
 		opIdx = i
 	} else {
-		return Equality{}, &ParseError{Line: line,
-			Message: fmt.Sprintf("condition: clause %q has no == or != operator (full condition: %q)", s, fullCond)}
+		return Equality{}, &ParseError{
+			Line:    line,
+			Message: fmt.Sprintf("condition: clause %q has no == or != operator (full condition: %q)", s, fullCond),
+		}
 	}
 
 	lhs := strings.TrimSpace(s[:opIdx])
@@ -1016,11 +1020,13 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 
 	// Validate LHS against WG-014 whitelist.
 	if !lhsWhitelist[lhs] && !strings.HasPrefix(lhs, "context.") {
-		return Equality{}, &ParseError{Line: line,
+		return Equality{}, &ParseError{
+			Line: line,
 			Message: fmt.Sprintf(
 				"condition: LHS %q is not in the WG-014 whitelist "+
 					"(allowed: outcome.status, outcome.preferred_label, outcome.failure_class, outcome.kind, context.<key>)",
-				lhs)}
+				lhs),
+		}
 	}
 
 	// Validate / normalise RHS per WG-015.
@@ -1052,25 +1058,31 @@ func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseErro
 	switch lhs {
 	case "outcome.status":
 		if !closedStatusValues[rhs] {
-			return "", &ParseError{Line: line,
+			return "", &ParseError{
+				Line: line,
 				Message: fmt.Sprintf(
 					"condition: RHS %q for outcome.status is not a valid status value "+
 						"(must be one of SUCCESS, FAIL, RETRY, PARTIAL_SUCCESS) in condition %q",
-					rhs, fullCond)}
+					rhs, fullCond),
+			}
 		}
 	case "outcome.failure_class":
 		if !closedFailureClassValues[rhs] {
-			return "", &ParseError{Line: line,
+			return "", &ParseError{
+				Line: line,
 				Message: fmt.Sprintf(
 					"condition: RHS %q for outcome.failure_class is not a valid failure class value in condition %q",
-					rhs, fullCond)}
+					rhs, fullCond),
+			}
 		}
 	case "outcome.kind":
 		if !closedKindValues[rhs] {
-			return "", &ParseError{Line: line,
+			return "", &ParseError{
+				Line: line,
 				Message: fmt.Sprintf(
 					"condition: RHS %q for outcome.kind is not a valid OutcomeKind value in condition %q",
-					rhs, fullCond)}
+					rhs, fullCond),
+			}
 		}
 	default:
 		// outcome.preferred_label and context.<key>: any bare identifier is valid.

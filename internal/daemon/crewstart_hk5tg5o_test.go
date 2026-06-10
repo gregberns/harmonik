@@ -58,12 +58,12 @@ type fakeSession struct {
 	handle string
 }
 
-func (s *fakeSession) Kill(_ context.Context) error   { return nil }
-func (s *fakeSession) Wait(_ context.Context) error   { return nil }
-func (s *fakeSession) Outcome() handler.Outcome       { return handler.Outcome{} }
-func (s *fakeSession) PID() int                       { return 0 }
-func (s *fakeSession) Stdout() io.Reader              { return nil }
-func (s *fakeSession) WindowHandle() string           { return s.handle }
+func (s *fakeSession) Kill(_ context.Context) error { return nil }
+func (s *fakeSession) Wait(_ context.Context) error { return nil }
+func (s *fakeSession) Outcome() handler.Outcome     { return handler.Outcome{} }
+func (s *fakeSession) PID() int                     { return 0 }
+func (s *fakeSession) Stdout() io.Reader            { return nil }
+func (s *fakeSession) WindowHandle() string         { return s.handle }
 
 // fakePauseCtrl records HandleOperatorPause calls.
 type fakePauseCtrl struct {

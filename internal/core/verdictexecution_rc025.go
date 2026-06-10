@@ -213,10 +213,10 @@ func PlanForVerdict(v Verdict) VerdictExecutionPlan {
 		}
 	case VerdictEscalateToHuman:
 		return VerdictExecutionPlan{
-			Verdict:              v,
-			ActionKind:           VerdictActionKindEscalateToHuman,
-			ActionSummary:        "emitted operator_escalation_required; outer run left in current state pending operator action",
-			IdempotencyMechanism: "deduplicated-by-target-run-id-subsequent-emissions-are-nops",
+			Verdict:                 v,
+			ActionKind:              VerdictActionKindEscalateToHuman,
+			ActionSummary:           "emitted operator_escalation_required; outer run left in current state pending operator action",
+			IdempotencyMechanism:    "deduplicated-by-target-run-id-subsequent-emissions-are-nops",
 			EmitsOperatorEscalation: true,
 		}
 	default:

@@ -15,10 +15,10 @@ func TestEffectiveSkillSet(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		nodeSkills    []string
-		roleDefaults  []core.SkillName
-		wantSkills    []string
+		name         string
+		nodeSkills   []string
+		roleDefaults []core.SkillName
+		wantSkills   []string
 	}{
 		{
 			name:         "both empty",

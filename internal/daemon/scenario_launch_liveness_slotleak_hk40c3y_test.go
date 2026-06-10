@@ -141,6 +141,7 @@ func (a *llslFixtureAdapter) ProbeTmux(_ context.Context) error { return nil }
 func (a *llslFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *llslFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }

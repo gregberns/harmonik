@@ -78,7 +78,7 @@ func hk3gq0bWorktree(t *testing.T) (wtPath, headSHA string) {
 	hk3gq0bGit(t, dir, "init", "--initial-branch=main")
 	hk3gq0bGit(t, dir, "config", "user.email", "test@test.com")
 	hk3gq0bGit(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	hk3gq0bGit(t, dir, "add", ".")
@@ -229,7 +229,7 @@ func TestPasteInjectLaunchVerification_CommitBeforeLaunchWindow_NoKill(t *testin
 	// Advance HEAD after 40 ms — well before the 200ms launch window.
 	go func() {
 		time.Sleep(40 * time.Millisecond)
-		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o600); err != nil {
 			return
 		}
 		hk3gq0bGitBg(wtPath, "add", ".")

@@ -37,14 +37,14 @@ import (
 // through), while subsequent calls return CoarseStatusBlocked with dependency
 // edges (so autoCloseStaleBlockersOnClaimFailure can find the stale blocker).
 type hk5t0s6Ledger struct {
-	mu               sync.Mutex
-	targetID         core.BeadID
-	blockerID        core.BeadID
-	claimAttempts    int
-	showBeadCalls    int // calls to ShowBead for targetID
-	claimed          []core.BeadID
-	closed           []core.BeadID
-	reopened         []core.BeadID
+	mu            sync.Mutex
+	targetID      core.BeadID
+	blockerID     core.BeadID
+	claimAttempts int
+	showBeadCalls int // calls to ShowBead for targetID
+	claimed       []core.BeadID
+	closed        []core.BeadID
+	reopened      []core.BeadID
 }
 
 func (l *hk5t0s6Ledger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -284,7 +284,7 @@ func hk5t0s6GitSetup(t *testing.T, dir string, beadID string) {
 	hk5t0s6Git(t, dir, "init", "--initial-branch=main")
 	hk5t0s6Git(t, dir, "config", "user.email", "test@test.com")
 	hk5t0s6Git(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "init.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "init.txt"), []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hk5t0s6Git(t, dir, "add", ".")

@@ -36,10 +36,10 @@ func TestResolveDaemonSpawnSession_NormalSessionUsedVerbatim(t *testing.T) {
 
 	projectDir := t.TempDir()
 	cases := []string{
-		"harmonik",                       // ambient session the daemon ran inside (live evidence)
-		"harmonik-abc123def456-default",  // operator's hk tmux-start session
-		"my-custom-session",              // operator launched the daemon by hand
-		"  harmonik  ",                   // leading/trailing whitespace is trimmed
+		"harmonik",                      // ambient session the daemon ran inside (live evidence)
+		"harmonik-abc123def456-default", // operator's hk tmux-start session
+		"my-custom-session",             // operator launched the daemon by hand
+		"  harmonik  ",                  // leading/trailing whitespace is trimmed
 	}
 	for _, live := range cases {
 		live := live

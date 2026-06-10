@@ -904,8 +904,10 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 
 	// All four children must be closed.
 	for _, c := range []struct{ id, label string }{
-		{epicA.ChildA, "alphaA"}, {epicA.ChildB, "alphaB"},
-		{epicB.ChildA, "betaA"}, {epicB.ChildB, "betaB"},
+		{epicA.ChildA, "alphaA"},
+		{epicA.ChildB, "alphaB"},
+		{epicB.ChildA, "betaA"},
+		{epicB.ChildB, "betaB"},
 	} {
 		require.Truef(t, cc14PollBeadClosed(t, brWrapper, c.id, 5*time.Second),
 			"cc14: child %s (%s) not closed after run completion", c.label, c.id)
@@ -1052,6 +1054,6 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 		30*time.Second,
 	)
 
-	t.Logf("cc14 PASS: 2 crew on distinct queues, both epics assignee-mirrored + own-queue dispatched (main absent), "+
+	t.Logf("cc14 PASS: 2 crew on distinct queues, both epics assignee-mirrored + own-queue dispatched (main absent), " +
 		"progress feeds present, epic_completed once-per-epic surfaced-and-awaited, restart a non-event")
 }

@@ -198,8 +198,8 @@ func (s *hk68pvlFakeSubstrateSession) Kill(_ context.Context) error {
 	return nil
 }
 
-func (s *hk68pvlFakeSubstrateSession) PID() int                { return s.pid }
-func (s *hk68pvlFakeSubstrateSession) Stdout() io.Reader       { return nil } // nil = no watcher (tmux-path)
+func (s *hk68pvlFakeSubstrateSession) PID() int                 { return s.pid }
+func (s *hk68pvlFakeSubstrateSession) Stdout() io.Reader        { return nil } // nil = no watcher (tmux-path)
 func (s *hk68pvlFakeSubstrateSession) Outcome() handler.Outcome { return handler.Outcome{ExitCode: 1} }
 
 var _ handler.SubstrateSession = (*hk68pvlFakeSubstrateSession)(nil)
@@ -316,8 +316,8 @@ func TestBeadRunOne_DeferOrdering_WorktreeCleanupAfterSessionTeardown(t *testing
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter: ledger,
-		Bus:       collector,
+		BrAdapter:  ledger,
+		Bus:        collector,
 		ProjectDir: projectDir,
 		// /bin/sh -c "sleep 60" runs a real OS process that the fake substrate
 		// will NOT kill on ctx cancel, reproducing the hk-68pvl racy scenario.

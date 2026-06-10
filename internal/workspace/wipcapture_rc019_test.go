@@ -188,14 +188,14 @@ func TestRC019_CaptureWIP_DirtyWorktreeHasWIP(t *testing.T) {
 
 	// Write a file, add and commit it, then modify it to create WIP.
 	filePath := filepath.Join(repoDir, "tracked.go")
-	if err := os.WriteFile(filePath, []byte("package main\n"), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte("package main\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile tracked.go: %v", err)
 	}
 	wipCaptureTestGitCmd(t, repoDir, "add", "tracked.go")
 	wipCaptureTestGitCmd(t, repoDir, "commit", "-m", "initial commit")
 
 	// Modify the file without staging to create WIP.
-	if err := os.WriteFile(filePath, []byte("package main // modified\n"), 0644); err != nil {
+	if err := os.WriteFile(filePath, []byte("package main // modified\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile tracked.go (modify): %v", err)
 	}
 
@@ -219,7 +219,7 @@ func TestRC019_CaptureWIP_UntrackedFileDetected(t *testing.T) {
 
 	// Create an untracked file.
 	untrackedPath := filepath.Join(repoDir, "untracked.go")
-	if err := os.WriteFile(untrackedPath, []byte("package main\n"), 0644); err != nil {
+	if err := os.WriteFile(untrackedPath, []byte("package main\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile untracked.go: %v", err)
 	}
 

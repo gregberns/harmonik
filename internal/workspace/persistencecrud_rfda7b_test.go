@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 )
 
@@ -226,9 +227,9 @@ func TestRFDA7b_PersistenceCRUD_InterruptStateIntegration(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
-		initial core.InterruptState
-		cause   InterruptStateClearCause
+		name     string
+		initial  core.InterruptState
+		cause    InterruptStateClearCause
 		runIDSfx string
 	}{
 		{

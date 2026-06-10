@@ -142,9 +142,9 @@ func TestDotNodeModelEffortRunLevelDefaultWhenAbsent(t *testing.T) {
 	t.Parallel()
 
 	const (
-		runModel   = "claude-sonnet-4-6"
-		runEffort  = "medium"
-		beadID     = core.BeadID("hk-q8nqr-default-test-001")
+		runModel  = "claude-sonnet-4-6"
+		runEffort = "medium"
+		beadID    = core.BeadID("hk-q8nqr-default-test-001")
 	)
 
 	projectDir := t.TempDir()

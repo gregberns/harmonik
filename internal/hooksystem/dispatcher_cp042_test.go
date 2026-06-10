@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/hooksystem"
@@ -89,9 +90,11 @@ func (r *cp042StubReader) LookupVerdict(_ context.Context, _ core.RunID, _ strin
 }
 
 // Compile-time interface satisfaction checks.
-var _ hooksystem.CognitionHookEvaluator = (*cp042StubEval)(nil)
-var _ hooksystem.VerdictFileWriter = (*cp042StubVerdictWriter)(nil)
-var _ hooksystem.VerdictReader = (*cp042StubReader)(nil)
+var (
+	_ hooksystem.CognitionHookEvaluator = (*cp042StubEval)(nil)
+	_ hooksystem.VerdictFileWriter      = (*cp042StubVerdictWriter)(nil)
+	_ hooksystem.VerdictReader          = (*cp042StubReader)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -448,8 +451,8 @@ func TestCP042_WriterNotCalledOnReplay(t *testing.T) {
 		ProducedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 
-	eval := &cp042StubEval{}                                   // MUST NOT be called on replay
-	writer := &cp042StubVerdictWriter{returnSHA: "no-write"}   // MUST NOT be called on replay
+	eval := &cp042StubEval{}                                 // MUST NOT be called on replay
+	writer := &cp042StubVerdictWriter{returnSHA: "no-write"} // MUST NOT be called on replay
 	reader := &cp042StubReader{found: true, verdict: persistedVerdict}
 
 	collector := &cp012FixtureEventCollector{}

@@ -692,13 +692,13 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 
 	intentDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           bus,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "sleep 30"},
+		BrAdapter:        ledger,
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "sleep 30"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:  intentDir,
+		IntentLogDir:     intentDir,
 	})
 
 	err := daemon.ExportedRunWorkLoop(ctx, deps)
@@ -736,21 +736,25 @@ func (s *t3StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	}
 	return records, nil
 }
+
 func (s *t3StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
 }
+
 func (s *t3StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	s.mu.Lock()
 	s.claims++
 	s.mu.Unlock()
 	return nil
 }
+
 func (s *t3StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	s.mu.Lock()
 	s.closes++
 	s.mu.Unlock()
 	return nil
 }
+
 func (s *t3StubLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
 	s.mu.Lock()
 	s.reopens++

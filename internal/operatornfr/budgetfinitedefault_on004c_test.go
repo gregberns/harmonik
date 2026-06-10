@@ -48,10 +48,10 @@ const budgetFiniteDefaultFixtureUnlimitedSentinel = "unlimited"
 // (highest-to-lowest): (1) runtime flag `--budget-usd-per-day`; (2)
 // `FLYWHEEL_BUDGET_USD_PER_DAY` env; (3) finite built-in default."
 type budgetFiniteDefaultFixturePrecedenceTier struct {
-	Rank        int    // 1 = highest precedence
-	Source      string // human-readable source description
-	IsFinite    bool   // whether this tier produces a finite cap when absent/unset
-	SpecRef     string
+	Rank     int    // 1 = highest precedence
+	Source   string // human-readable source description
+	IsFinite bool   // whether this tier produces a finite cap when absent/unset
+	SpecRef  string
 }
 
 // budgetFiniteDefaultFixturePrecedenceChain is the authoritative fixture

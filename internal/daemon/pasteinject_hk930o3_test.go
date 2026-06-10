@@ -117,7 +117,7 @@ func hk930o3Worktree(t *testing.T) (wtPath, headSHA string) {
 	hk930o3Git(t, dir, "init", "--initial-branch=main")
 	hk930o3Git(t, dir, "config", "user.email", "test@test.com")
 	hk930o3Git(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("initial"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("initial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hk930o3Git(t, dir, "add", ".")
@@ -164,7 +164,7 @@ func TestPasteInjectQuitOnCommit_NoBriefDeliveredBlocksCommitPoll(t *testing.T) 
 	noChangeCh := make(chan struct{})
 
 	// Land a new commit BEFORE starting the watcher, so HEAD != initialSHA.
-	if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hk930o3AddCommit(wtPath)
@@ -215,7 +215,7 @@ func TestPasteInjectQuitOnCommit_BriefDeliveredGateOpensOnClose(t *testing.T) {
 	// Land a new commit in the background after a short delay.
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("done"), 0o644); err != nil {
 			return
 		}
 		hk930o3AddCommit(wtPath)

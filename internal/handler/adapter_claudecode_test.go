@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
@@ -335,7 +336,6 @@ func TestClaudeCodeAdapter_Diagnose_ReturnsMVHMinimalReport(t *testing.T) {
 
 	adapter := handler.NewClaudeCodeAdapter()
 	report, err := adapter.Diagnose(context.Background())
-
 	if err != nil {
 		t.Fatalf("Diagnose returned unexpected error: %v (want nil)", err)
 	}

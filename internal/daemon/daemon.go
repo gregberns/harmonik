@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/branching"
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -1067,8 +1067,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			} else {
 				beadLedger = brAdapter
 				beadResetter = brAdapter
-				beadCat3cCloser = brAdapter    // Cat 3c auto-reconciler (hk-lgtq2)
-				intentGCLedger = brAdapter     // GCRetiredIntents ledger (hk-cizvu)
+				beadCat3cCloser = brAdapter // Cat 3c auto-reconciler (hk-lgtq2)
+				intentGCLedger = brAdapter  // GCRetiredIntents ledger (hk-cizvu)
 				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 			}
 		}
@@ -1158,11 +1158,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 					ProjectDir:   cfg.ProjectDir,
 					TargetBranch: "", // defaults to "main" inside the scanner
 				},
-				IntentLogDir:    intentLogDir,
-				DaemonStartNS:   daemonStartTime.UnixNano(),
-				QueueDispatched:   queueDispatched,
-				QueueOwned:        queueOwned,
-				TmuxAdapter:       sweepTmuxAdapter,  // hk-xb5yi: reap orphan windows from prior crash
+				IntentLogDir:       intentLogDir,
+				DaemonStartNS:      daemonStartTime.UnixNano(),
+				QueueDispatched:    queueDispatched,
+				QueueOwned:         queueOwned,
+				TmuxAdapter:        sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
 				DaemonSpawnSession: daemonOwnSession, // hk-9vp51: never sweep the daemon's own spawn-target session
 			},
 		)
@@ -1505,11 +1505,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		//
 		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
 		deps.queueStore = qs
-			// Wire the wake channel so queue-submit RPCs immediately unblock the
-			// workloop's idle sleep (hk-24xn1).
-			deps.submitWakeC = qs.WakeCh()
+		// Wire the wake channel so queue-submit RPCs immediately unblock the
+		// workloop's idle sleep (hk-24xn1).
+		deps.submitWakeC = qs.WakeCh()
 
-			// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
+		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
 		// (hk-kac8g) can consult pause state before claiming each item.
 		// nil → gate disabled; pre-hk-kac8g behaviour preserved for callers that
 		// don't set the field.

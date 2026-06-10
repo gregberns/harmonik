@@ -177,7 +177,7 @@ func TestPerQueueRR_AllAtCapSelectsNothing(t *testing.T) {
 	qs.SetQueueByName("investigate", perQueueRRWaveQueue("investigate", "qid-inv", 1, 1))
 
 	reg := NewRunRegistry()
-	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-m-running", "main"))       // main at cap (workers=1)
+	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-m-running", "main"))        // main at cap (workers=1)
 	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-i-running", "investigate")) // investigate at cap
 
 	lq := qs.LockForMutation()

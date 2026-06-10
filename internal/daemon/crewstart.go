@@ -99,8 +99,8 @@ type crewPaneStopper interface {
 type crewHandlerImpl struct {
 	claudeBinary string
 	projectDir   string
-	substrate    handler.Substrate       // spawns crew windows
-	opPauseCtrl  OperatorControlHandler  // for --pause-queue in crew-stop; may be nil
+	substrate    handler.Substrate      // spawns crew windows
+	opPauseCtrl  OperatorControlHandler // for --pause-queue in crew-stop; may be nil
 }
 
 // NewCrewHandler constructs a CrewHandler implementation.
@@ -381,7 +381,7 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 // directly to a specific pane target using the tmux adapter, bypassing the
 // perRunSubstrate (which routes via shared spawn state in the daemon session).
 type crewPasteInjector struct {
-	adapter    interface {
+	adapter interface {
 		WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error
 		SendKeysEnter(ctx context.Context, paneTarget string) error
 	}

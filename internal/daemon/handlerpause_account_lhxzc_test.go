@@ -261,11 +261,11 @@ func TestAccountPause_V1BackwardsCompat(t *testing.T) {
 			"claude-code": map[string]interface{}{
 				"status": "paused",
 				"cause": map[string]interface{}{
-					"failure_class": "transient",
-					"sub_reason":    "rate_limit",
-					"source_run_id": "run-v1-001",
+					"failure_class":  "transient",
+					"sub_reason":     "rate_limit",
+					"source_run_id":  "run-v1-001",
 					"source_bead_id": "hk-v1a",
-					"tripped_at":    time.Now().UTC().Format(time.RFC3339Nano),
+					"tripped_at":     time.Now().UTC().Format(time.RFC3339Nano),
 				},
 				"in_flight_at_pause": []interface{}{},
 				"paused_epoch":       1,

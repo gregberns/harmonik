@@ -84,6 +84,7 @@ func (a *concurrentPaneFixtureAdapter) ProbeTmux(_ context.Context) error { retu
 func (a *concurrentPaneFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *concurrentPaneFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -130,9 +131,11 @@ func (a *concurrentPaneFixtureAdapter) KillSession(_ context.Context, _ string) 
 func (a *concurrentPaneFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *concurrentPaneFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *concurrentPaneFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
@@ -330,16 +333,16 @@ func TestConcurrentDispatch_PerRunSubstrate_PaneIsolation(t *testing.T) {
 	}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:       ledger,
-		Bus:             collector,
-		ProjectDir:      projectDir,
-		HandlerBinary:   "/bin/sh",
-		HandlerArgs:     []string{"-c", "sleep 0.1; exit 0"},
-		IntentLogDir:    filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		MaxConcurrent:   2,
-		Substrate:       substrate,
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "sleep 0.1; exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		MaxConcurrent:    2,
+		Substrate:        substrate,
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
-		WorktreeFactory: worktreeFactory,
+		WorktreeFactory:  worktreeFactory,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

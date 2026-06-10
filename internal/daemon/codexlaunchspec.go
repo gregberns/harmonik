@@ -33,9 +33,8 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/handlercontract"
-
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // codexCredentialDenyKeys lists the credential environment variable names that

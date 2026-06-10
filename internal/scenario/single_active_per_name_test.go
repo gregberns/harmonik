@@ -33,9 +33,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
-	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,7 @@ type singleActiveNameLedger struct{}
 func (singleActiveNameLedger) LookupStatus(_ context.Context, _ core.BeadID) (queue.BeadStatus, error) {
 	return queue.BeadStatusOpen, nil
 }
+
 func (singleActiveNameLedger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, error) {
 	return false, nil
 }

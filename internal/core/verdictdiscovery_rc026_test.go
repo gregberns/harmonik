@@ -384,8 +384,8 @@ func TestReconciliationClassificationGate_EmptyFieldsAreInvalid(t *testing.T) {
 	base := DefaultReconciliationClassificationGate()
 
 	cases := []struct {
-		name    string
-		mutate  func(*ReconciliationClassificationGate)
+		name   string
+		mutate func(*ReconciliationClassificationGate)
 	}{
 		{
 			name:   "empty ClassificationPassBeforeReady",
@@ -499,14 +499,14 @@ func TestRC026_ResolvedStateRequiresBothCommits(t *testing.T) {
 	withVerdictOnly := BranchVerdictEvidence{HasVerdictCommit: true, HasVerdictExecutedCommit: false}
 	stateVerdictOnly, _ := DiscoverVerdictExecution(withVerdictOnly)
 	if stateVerdictOnly == VerdictDiscoveryStateResolved {
-		t.Errorf("RC-026: verdict commit only → state = %q (resolved); " +
+		t.Errorf("RC-026: verdict commit only → state = %q (resolved); "+
 			"resolved MUST require both commits", stateVerdictOnly)
 	}
 
 	withNeither := BranchVerdictEvidence{HasVerdictCommit: false, HasVerdictExecutedCommit: false}
 	stateNeither, _ := DiscoverVerdictExecution(withNeither)
 	if stateNeither == VerdictDiscoveryStateResolved {
-		t.Errorf("RC-026: neither commit → state = %q (resolved); " +
+		t.Errorf("RC-026: neither commit → state = %q (resolved); "+
 			"resolved MUST require both commits", stateNeither)
 	}
 }

@@ -25,6 +25,7 @@ func (adapterRegistryFixtureAdapter) DetectReady(_ core.EventEnvelope) bool { re
 func (adapterRegistryFixtureAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {
 	return false, 0
 }
+
 func (adapterRegistryFixtureAdapter) CleanExitSequence(_ context.Context, _ handlercontract.Session) error {
 	return nil
 }

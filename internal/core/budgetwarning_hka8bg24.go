@@ -22,9 +22,9 @@ package core
 //   - budgetRef:         the name of the budget being checked
 //   - limit:             the declared budget ceiling (from BudgetPayload.Limit)
 //   - warningThreshold:  the fraction in [0, 1] at which the warning fires
-//                        (BudgetPayload.WarningThreshold; default 0.8 per CP-022)
+//     (BudgetPayload.WarningThreshold; default 0.8 per CP-022)
 //   - accrued:           the total accrued units since run_started (sum of all
-//                        budget_accrual CostUnits for this budget)
+//     budget_accrual CostUnits for this budget)
 //
 // Returns (BudgetWarningPayload, true) when the warning threshold has been
 // crossed — the caller MUST emit the payload as a budget_warning event per

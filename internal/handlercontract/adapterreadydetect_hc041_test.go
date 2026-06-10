@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
@@ -87,6 +88,7 @@ func (readyDetectFixtureAdapter) CleanExitSequence(_ context.Context, _ handlerc
 func (readyDetectFixtureAdapter) RotateAccount(_ context.Context) error {
 	return nil
 }
+
 func (readyDetectFixtureAdapter) Diagnose(_ context.Context) (handlercontract.DiagnosticReport, error) {
 	return handlercontract.DiagnosticReport{}, handlercontract.ErrDeterministic
 }

@@ -16,6 +16,7 @@ package main
 //	--from NAME                Sender identity (default: $HARMONIK_AGENT env var).
 //	--topic T                  Optional free-text filter key.
 //	--reply-to ID              Optional event_id of the message being replied to.
+//	--wake                     After sending, nudge the recipient's tmux pane to wake an idle crew.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
 //	--                         End of flags; remaining args are the message body.
@@ -70,6 +71,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -77,6 +79,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
@@ -118,6 +121,7 @@ func runCommsSendSubcommand(subArgs []string) int {
 	fromFlag := ""
 	topicFlag := ""
 	replyToFlag := ""
+	wakeFlag := false
 	socketFlag := ""
 	projectFlag := ""
 	var bodyParts []string
@@ -157,6 +161,8 @@ func runCommsSendSubcommand(subArgs []string) int {
 			replyToFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--reply-to="):
 			replyToFlag = strings.TrimPrefix(arg, "--reply-to=")
+		case arg == "--wake":
+			wakeFlag = true
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -182,6 +188,11 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 	if toFlag == "" && !broadcastFlag {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: one of --to NAME or --broadcast is required\n")
+		return 1
+	}
+	// --wake requires a directed recipient (not broadcast).
+	if wakeFlag && broadcastFlag {
+		fmt.Fprintf(os.Stderr, "harmonik comms send: --wake requires --to (cannot wake a broadcast)\n")
 		return 1
 	}
 
@@ -328,7 +339,72 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 
 	fmt.Println(result.EventID)
+
+	// --wake: nudge the recipient's tmux pane after the message is delivered.
+	// Best-effort: a wake failure does not affect the exit code.
+	if wakeFlag && to != "*" {
+		if wakeErr := commsWakePaneForAgent(context.Background(), absProject, to); wakeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik comms send: --wake: %v\n", wakeErr)
+		}
+	}
+
 	return 0
+}
+
+// commsWakePaneForAgent nudges the tmux pane for the named crew agent so that
+// an idle Claude session wakes and processes the newly-delivered message.
+//
+// Resolution order for the pane target:
+//  1. crew registry: loads .harmonik/crew/<agentName>.json and uses Handle+".0"
+//     (independent crew session pane, format "hk-crew-<n>:hk-crew-<n>.0").
+//  2. convention fallback: "hk-crew-<agentName>" (session name, targets first pane).
+//
+// Best-effort: errors are returned but the caller treats them as non-fatal so that
+// message delivery is not affected by wake failures (e.g. no tmux running).
+//
+// Bead ref: hk-37ra4.
+func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
+	var paneTarget string
+	rec, loadErr := crew.Load(projectDir, agentName)
+	if loadErr == nil && rec.Handle != "" {
+		// handle format: "hk-crew-alpha:hk-crew-alpha" → pane = handle + ".0"
+		paneTarget = rec.Handle + ".0"
+	} else {
+		// Fall back to the deterministic crew session naming convention.
+		paneTarget = "hk-crew-" + agentName
+	}
+	nudgeMsg := "You have a new comms message. Please check your inbox."
+	return commsInjectTmuxPane(ctx, paneTarget, nudgeMsg)
+}
+
+// commsInjectTmuxPane delivers text into a tmux pane via the bracketed-paste
+// mechanism (tmux load-buffer → paste-buffer → send-keys Enter), the same
+// approach used by keeper.InjectText. The named buffer "hk-comms-wake" is
+// overwritten on each call; it is not shared with the daemon's own paste-inject
+// buffers (which use "hk-<run_id>" names).
+//
+// Returns an error if any tmux invocation fails (e.g. pane does not exist,
+// tmux not running). Callers treat this error as non-fatal.
+func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {
+	const buf = "hk-comms-wake"
+
+	loadCmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
+	loadCmd.Stdin = strings.NewReader(text)
+	if out, err := loadCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux load-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
+	}
+
+	pasteCmd := exec.CommandContext(ctx, "tmux", "paste-buffer", "-b", buf, "-t", paneTarget, "-d")
+	if out, err := pasteCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux paste-buffer -t %s: %w (stderr: %s)", paneTarget, err, strings.TrimSpace(string(out)))
+	}
+
+	enterCmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", paneTarget, "Enter")
+	if out, err := enterCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys Enter -t %s: %w (stderr: %s)", paneTarget, err, strings.TrimSpace(string(out)))
+	}
+
+	return nil
 }
 
 // commsIsSocketAbsent reports whether err indicates a missing socket file.
@@ -376,6 +452,7 @@ EXIT CODES
 
 EXAMPLES
   harmonik comms send --to other-agent -- Hello
+  harmonik comms send --to crew-alpha --wake -- New task for you
   harmonik comms send --broadcast --from myagent -- Status update
   harmonik comms recv --agent myagent
   harmonik comms recv --agent myagent --follow
@@ -393,7 +470,7 @@ func commsSendUsage() {
 	fmt.Print(`harmonik comms send — send an agent_message via the daemon
 
 USAGE
-  harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T] [--reply-to ID] [flags] [--] <body>
+  harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T] [--reply-to ID] [--wake] [flags] [--] <body>
 
 FLAGS
   --to NAME       Directed recipient agent name. Mutually exclusive with --broadcast.
@@ -401,6 +478,11 @@ FLAGS
   --from NAME     Sender identity (default: $HARMONIK_AGENT env var). Required.
   --topic T       Optional free-text filter key.
   --reply-to ID   Optional event_id of the message being replied to (threading hint).
+  --wake          After sending, nudge the recipient's tmux pane to wake an idle crew
+                  member. Requires --to (not --broadcast). The pane target is resolved
+                  from the crew registry handle, falling back to "hk-crew-<name>".
+                  Best-effort: wake failures are reported to stderr but do not affect
+                  the exit code.
   --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR   Project directory (default: cwd).
   --              End of flags; remaining args form the body.
@@ -414,6 +496,7 @@ EXIT CODES
 EXAMPLES
   harmonik comms send --to alice -- Hello from bob
   harmonik comms send --to alice --from bob --topic status -- ready
+  harmonik comms send --to alice --wake -- You have work to do
   harmonik comms send --broadcast --from orchestrator -- Batch complete
   echo "body text" | harmonik comms send --to alice --from me -
 `)

@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -360,6 +361,149 @@ func SweepOrphanHandlers(
 	}
 
 	return killed, nil
+}
+
+// IntentGCLedger is the read surface consumed by [GCRetiredIntents] to check
+// whether the operation described by a stale intent file has already landed in
+// the Beads ledger.
+//
+// The production implementation is *brcli.Adapter (satisfies ShowBead via
+// brcli.Adapter.ShowBead). Tests inject a deterministic fake.
+type IntentGCLedger interface {
+	// ShowBead returns the current BeadRecord for the given bead ID.
+	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
+}
+
+// GCRetiredIntentsResult reports the outcome of a [GCRetiredIntents] pass.
+type GCRetiredIntentsResult struct {
+	// Removed is the count of stale intent files deleted because the bead
+	// has already reached its IntendedPostState (the op landed in a prior run;
+	// the file is a leftover from a crash between BI-030 step 5 success and
+	// step 6 delete).
+	Removed int
+	// Retained is the count of stale intent files left on disk because the
+	// bead has NOT yet reached its IntendedPostState — the Cat 3a detector
+	// may need to re-drive the br operation.
+	Retained int
+}
+
+// GCRetiredIntents walks projectDir/.harmonik/beads-intents/, identifies
+// intent files with mtime before daemonStartTime, and for each checks whether
+// the target bead has already reached its IntendedPostState via
+// ledger.ShowBead.
+//
+// If the bead IS already in its IntendedPostState the intent file is deleted:
+// the br operation landed in a prior daemon run and the file is a leftover
+// from a crash between BI-030 step 5 (br success) and step 6 (intent delete).
+// Removing these files prevents the stale_intents_observed counter from
+// growing unboundedly across daemon restarts (hk-cizvu F10).
+//
+// If the bead is NOT yet in its IntendedPostState the file is retained for the
+// Cat 3a detector to re-drive the br operation.
+//
+// Per-file errors (unreadable / malformed entry, ShowBead failure) are logged
+// and the file is conservatively retained (not removed). The returned error is
+// non-nil only when the intent-log directory itself cannot be enumerated.
+//
+// Returns (zero-value, nil) when the intent-log directory does not exist.
+//
+// Spec ref: specs/beads-integration.md §4.10 BI-031 — status-check-before-
+// reissue idempotency recovery: "if the bead is already in the intended state,
+// delete the intent file."
+// Bead ref: hk-cizvu — orphan-sweep stale_intents_observed GC.
+func GCRetiredIntents(
+	ctx context.Context,
+	projectDir string,
+	daemonStartTime time.Time,
+	ledger IntentGCLedger,
+	logger *log.Logger,
+) (GCRetiredIntentsResult, error) {
+	var result GCRetiredIntentsResult
+
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	entries, err := os.ReadDir(intentsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return result, nil
+		}
+		return result, fmt.Errorf("lifecycle: GCRetiredIntents: ReadDir %q: %w", intentsDir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if strings.Contains(name, ".tmp-") {
+			// BI-030 mid-rename temp file; skip.
+			continue
+		}
+
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			orphanLog(logger, "GCRetiredIntents: skipping %q: stat error: %v", name, infoErr)
+			result.Retained++
+			continue
+		}
+		if !info.ModTime().Before(daemonStartTime) {
+			// Not stale — created after daemon start; not a GC target.
+			continue
+		}
+
+		// Stale file: read intent entry to determine the bead and intended state.
+		intentPath := filepath.Join(intentsDir, name)
+		intentEntry, readErr := core.ReadIntentLogEntry(intentPath)
+		if readErr != nil {
+			// Malformed or unreadable — conservative: retain for Cat 3a.
+			orphanLog(logger, "GCRetiredIntents: %q unreadable (%v); retaining for Cat 3a", name, readErr)
+			result.Retained++
+			continue
+		}
+
+		// Query the ledger for the current bead status.
+		record, showErr := ledger.ShowBead(ctx, intentEntry.BeadID)
+		if showErr != nil {
+			// ShowBead failure — conservative: retain for Cat 3a.
+			orphanLog(logger, "GCRetiredIntents: ShowBead(%s) failed (%v); retaining intent for Cat 3a", intentEntry.BeadID, showErr)
+			result.Retained++
+			continue
+		}
+
+		if record.Status != intentEntry.IntendedPostState {
+			// Bead is NOT in the intended state — op may not have landed.
+			// Leave the file for Cat 3a recovery.
+			orphanLog(logger, "GCRetiredIntents: bead %s status=%s (want %s); retaining for Cat 3a",
+				intentEntry.BeadID, record.Status, intentEntry.IntendedPostState)
+			result.Retained++
+			continue
+		}
+
+		// Bead IS in the intended state — the op landed; this file is a
+		// leftover from a crash after step 5 success but before step 6 delete.
+		// Remove it per BI-031 GC path.
+		if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			orphanLog(logger, "GCRetiredIntents: remove %q failed (%v); retaining", name, removeErr)
+			result.Retained++
+			continue
+		}
+		orphanLog(logger, "GCRetiredIntents: removed retired intent %q (bead %s already %s)",
+			name, intentEntry.BeadID, record.Status)
+		result.Removed++
+	}
+
+	// fsync the parent directory once after all removals to ensure deletions are
+	// durable (mirrors the discipline in DeleteIntentLogAndSyncParent per BI-030).
+	if result.Removed > 0 {
+		if dirFd, openErr := os.Open(intentsDir); openErr == nil {
+			_ = dirFd.Sync()  //nolint:errcheck // fsync error after successful removes is non-fatal
+			_ = dirFd.Close() //nolint:errcheck
+		}
+	}
+
+	return result, nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

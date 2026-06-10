@@ -766,10 +766,20 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// Required (must be >= 0).
 	ReconciliationLocksRemoved int `json:"reconciliation_locks_removed"`
 
-	// StaleIntentsObserved is the count of stale intent files enumerated under
-	// .harmonik/beads-intents/ but left on disk for the reconciliation Cat 3a
-	// detector (RC-013). Required (must be >= 0).
+	// StaleIntentsObserved is the count of stale intent files retained on disk
+	// for the reconciliation Cat 3a detector (RC-013) — i.e. files where the
+	// bead has NOT yet reached its IntendedPostState. When IntentGCLedger is
+	// not wired, this is the raw count of all stale files (legacy behavior).
+	// Required (must be >= 0).
 	StaleIntentsObserved int `json:"stale_intents_observed"`
+
+	// IntentsGCd is the count of stale intent files removed during this sweep
+	// because the target bead had already reached its IntendedPostState (op
+	// landed in a prior run; file was a BI-030 step-6 leftover). Zero when
+	// IntentGCLedger is not wired. Required (must be >= 0).
+	//
+	// Bead ref: hk-cizvu — stale_intents_observed GC fix.
+	IntentsGCd int `json:"intents_gc_d"`
 
 	// BeadInProgressReset is the count of stale `in_progress` beads reset to
 	// `open` by the PL-006 sixth-bullet bead-reset sweep (BI-010d). Required

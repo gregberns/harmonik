@@ -53,9 +53,20 @@ type OrphanSweepResult struct {
 	// pass per specs/reconciliation/spec.md §4.1 RC-002b.
 	Cat3bRunIDs []string
 
-	// StaleIntentsObserved is the count of stale intent files enumerated.
-	// These are left on disk for the reconciliation Cat 3a detector.
+	// StaleIntentsObserved is the count of stale intent files that were
+	// retained on disk for the reconciliation Cat 3a detector (i.e. the bead
+	// has NOT yet reached its IntendedPostState). Does not include files that
+	// were GC'd by GCRetiredIntents (see IntentsGCd). When IntentGCLedger is
+	// nil (no ledger configured), this is the raw count of all stale files.
 	StaleIntentsObserved int
+
+	// IntentsGCd is the count of stale intent files removed by GCRetiredIntents
+	// because the target bead has already reached its IntendedPostState
+	// (the op landed in a prior run; the file was a BI-030 step-6 leftover).
+	// Zero when IntentGCLedger is nil.
+	//
+	// Bead ref: hk-cizvu — stale_intents_observed GC.
+	IntentsGCd int
 
 	// BeadInProgressReset is the count of stale `in_progress` beads reset to
 	// `open` by the PL-006 sixth-bullet bead-reset sweep (BI-010d).
@@ -118,6 +129,7 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		BrSubprocessesKilled:       r.BrSubprocessesKilled,
 		ReconciliationLocksRemoved: r.ReconciliationLocksRemoved,
 		StaleIntentsObserved:       r.StaleIntentsObserved,
+		IntentsGCd:                 r.IntentsGCd,
 		BeadInProgressReset:        r.BeadInProgressReset,
 		BeadCat3cClosed:            r.BeadCat3cClosed,
 		CoordinatorSessionsSkipped: r.CoordinatorSessionsSkipped,
@@ -195,6 +207,18 @@ type OrphanSweepConfig struct {
 	//
 	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
 	BeadCat3cCloser lifecycle.BeadCat3cCloser
+
+	// IntentGCLedger, when non-nil, enables GCRetiredIntents: stale intent
+	// files whose bead has already reached IntendedPostState are deleted rather
+	// than accumulated indefinitely. When nil, the GC pass is skipped and
+	// StaleIntentsObserved counts all stale files (old behavior).
+	//
+	// Production callers SHOULD supply this (typically the same *brcli.Adapter
+	// that backs BeadLedger / BeadResetter). Unit-test callers that do not
+	// exercise the GC path may leave it nil.
+	//
+	// Bead ref: hk-cizvu — stale_intents_observed grows unbounded without GC.
+	IntentGCLedger lifecycle.IntentGCLedger
 
 	// IntentLogDir is the absolute path of .harmonik/beads-intents/ — read by
 	// the bead-reset sweep to compute exclusion conditions (a) and (b).
@@ -555,12 +579,29 @@ func RunOrphanSweep(
 	// pair for exact accounting.
 	_ = brSurvived // survival tracked for Cat 0 precondition, not used in count here
 
-	// (d) Stale intent files (enumerate only, do NOT remove).
-	staleIntents, err := lifecycle.EnumerateStaleIntents(projectDir, daemonStartTime)
-	if err != nil {
-		errs = append(errs, fmt.Sprintf("intents: %v", err))
+	// (d) Stale intent files.
+	//
+	// When IntentGCLedger is wired: call GCRetiredIntents to delete intent
+	// files whose op has already landed (BI-031 GC path). StaleIntentsObserved
+	// is set to the retained count; IntentsGCd is set to the removed count.
+	// This prevents stale_intents_observed from growing unboundedly (hk-cizvu).
+	//
+	// When IntentGCLedger is nil: fall back to EnumerateStaleIntents (count
+	// only, no removal — the legacy behavior).
+	if cfg.IntentGCLedger != nil {
+		gcResult, gcErr := lifecycle.GCRetiredIntents(ctx, projectDir, daemonStartTime, cfg.IntentGCLedger, cfg.Logger)
+		if gcErr != nil {
+			errs = append(errs, fmt.Sprintf("intents-gc: %v", gcErr))
+		}
+		result.StaleIntentsObserved = gcResult.Retained
+		result.IntentsGCd = gcResult.Removed
+	} else {
+		staleIntents, err := lifecycle.EnumerateStaleIntents(projectDir, daemonStartTime)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("intents: %v", err))
+		}
+		result.StaleIntentsObserved = staleIntents
 	}
-	result.StaleIntentsObserved = staleIntents
 
 	// (e) Stale reconciliation locks (RC-002b discrimination).
 	reconResult, err := lifecycle.SweepStaleReconciliationLocks(projectDir, cfg.Logger)

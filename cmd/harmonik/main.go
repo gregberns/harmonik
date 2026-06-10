@@ -70,6 +70,20 @@ func run() int {
 		return 0
 	}
 
+	// harmonik version  (or --version / -version): print semver + commit and exit 0.
+	//
+	// Output format (normative, specs/release-pipeline.md §2.3):
+	//   harmonik v0.y.z (commit: <sha>)
+	//
+	// Dispatched before flag.Parse so the global flag set does not reject
+	// the positional "version" argument.
+	//
+	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
+	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Printf("harmonik %s (commit: %s)\n", version, commitHash)
+		return 0
+	}
+
 	// hk tmux-start — operator-facing tmux session bootstrap.
 	// Parses its own --session-name flag and must run before flag.Parse so
 	// that the global flag set does not reject the subcommand-specific flag.

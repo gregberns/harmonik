@@ -22,9 +22,12 @@ package main
 // Bead: hk-kqdpf.4, hk-mz0x4.
 
 import (
+	"bytes"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -348,5 +351,96 @@ func TestCommitHashVar_DefaultIsUnknown(t *testing.T) {
 		// In an unstamped test build it must be the sentinel "unknown".
 		// A blank string here means version.go lost its initialiser.
 		t.Errorf("commitHash = %q; want %q (unstamped build sentinel)", commitHash, want)
+	}
+}
+
+// TestVersionVar_DefaultIsDev verifies the package-level version variable
+// declared in version.go has the sentinel value "dev" in an unstamped build
+// (i.e., when -ldflags "-X main.version=v0.y.z" is NOT passed at build time).
+//
+// Acceptance: specs/release-pipeline.md §2.3 — version default is "dev".
+//
+// Parallel: safe — reads a package-level variable but does not modify it.
+func TestVersionVar_DefaultIsDev(t *testing.T) {
+	t.Parallel()
+
+	const want = "dev"
+	if version != want {
+		// In a stamped build the value will be a semver string (e.g. "v0.2.0").
+		// In an unstamped test build it must be the sentinel "dev".
+		// A blank string here means version.go lost its initialiser.
+		t.Errorf("version = %q; want %q (unstamped build sentinel)", version, want)
+	}
+}
+
+// TestVersionSubcommand_ExitsZeroAndPrintsVersionLine is a smoke test that
+// verifies `harmonik version` exits 0 and prints a line matching the normative
+// format from specs/release-pipeline.md §2.3:
+//
+//	harmonik <version> (commit: <commitHash>)
+//
+// The version subcommand is dispatched before flag.Parse, so this test does
+// not need mainFixtureResetFlags. It MUST NOT be parallel because it modifies
+// os.Args and os.Stdout.
+//
+// Acceptance: bead hk-ww7ee — `harmonik version` exits 0 and prints version line.
+func TestVersionSubcommand_ExitsZeroAndPrintsVersionLine(t *testing.T) {
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "version"})
+
+	// Capture stdout by replacing os.Stdout with a pipe.
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() { os.Stdout = origStdout })
+
+	exitCode := run()
+
+	// Close the write-end so the reader sees EOF.
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	_ = r.Close()
+
+	if exitCode != 0 {
+		t.Errorf("run() with 'version' subcommand: exit code %d, want 0", exitCode)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	if !strings.HasPrefix(got, "harmonik ") {
+		t.Errorf("version output %q does not start with %q", got, "harmonik ")
+	}
+	if !strings.Contains(got, "(commit: ") {
+		t.Errorf("version output %q missing %q", got, "(commit: ")
+	}
+}
+
+// TestVersionFlagLong_ExitsZero verifies that `harmonik --version` is handled
+// identically to `harmonik version` — exits 0 without entering flag.Parse.
+//
+// Not parallel: modifies os.Args and os.Stdout.
+//
+// Acceptance: bead hk-ww7ee — --version flag alias exits 0.
+func TestVersionFlagLong_ExitsZero(t *testing.T) {
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--version"})
+
+	origStdout := os.Stdout
+	_, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	t.Cleanup(func() {
+		_ = w.Close()
+		os.Stdout = origStdout
+	})
+
+	exitCode := run()
+
+	if exitCode != 0 {
+		t.Errorf("run() with '--version' flag: exit code %d, want 0", exitCode)
 	}
 }

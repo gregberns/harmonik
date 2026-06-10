@@ -197,28 +197,44 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 			Argv:       argv,
 		}
 
-		// Prefer perRunSubstrate (paste-inject capable) when substrate is a *tmuxSubstrate.
-		// Falls back to direct SpawnWindow for test doubles where newPerRunSubstrate returns nil.
-		prs := newPerRunSubstrate(h.substrate, h.claudeBinary)
-		var sess handler.SubstrateSession
-		if prs != nil {
-			sess, err = prs.SpawnWindow(ctx, spawn)
+		if css, ok := h.substrate.(crewSessionSpawner); ok {
+			// ── Independent-session path (hk-mmlqt) ──
+			// Crew lives in its own tmux session so daemon SIGTERM / supervisor-revive
+			// does not kill running crew windows.
+			var sess handler.SubstrateSession
+			sess, err = css.SpawnCrewSession(ctx, req.Name, spawn)
+			if err != nil {
+				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
+				return nil, fmt.Errorf("crew-start: spawn crew session: %w", err)
+			}
+			if wh, ok2 := sess.(windowHandleExposer); ok2 {
+				windowHandle = wh.WindowHandle()
+			}
+			// ── Step 5: paste mission kick-off line (best-effort) ──
+			if req.MissionPath != "" {
+				h.pasteCrewMissionToSession(ctx, sess, sessionID, req.MissionPath)
+			}
 		} else {
-			sess, err = h.substrate.SpawnWindow(ctx, spawn)
-		}
-		if err != nil {
-			_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
-			return nil, fmt.Errorf("crew-start: spawn window: %w", err)
-		}
-
-		// Capture the window handle from the session for registry storage.
-		if wh, ok := sess.(windowHandleExposer); ok {
-			windowHandle = wh.WindowHandle()
-		}
-
-		// ── Step 5: paste mission kick-off line (best-effort) ──
-		if prs != nil && req.MissionPath != "" {
-			h.pasteCrewMission(ctx, prs, sessionID, req.MissionPath)
+			// ── Fallback: window inside the daemon's session ──
+			// Used by test doubles that don't implement crewSessionSpawner.
+			prs := newPerRunSubstrate(h.substrate, h.claudeBinary)
+			var sess handler.SubstrateSession
+			if prs != nil {
+				sess, err = prs.SpawnWindow(ctx, spawn)
+			} else {
+				sess, err = h.substrate.SpawnWindow(ctx, spawn)
+			}
+			if err != nil {
+				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
+				return nil, fmt.Errorf("crew-start: spawn window: %w", err)
+			}
+			if wh, ok2 := sess.(windowHandleExposer); ok2 {
+				windowHandle = wh.WindowHandle()
+			}
+			// ── Step 5: paste mission kick-off line (best-effort) ──
+			if prs != nil && req.MissionPath != "" {
+				h.pasteCrewMission(ctx, prs, sessionID, req.MissionPath)
+			}
 		}
 	}
 
@@ -360,6 +376,49 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	}
 }
 
+// crewPasteInjector implements pasteInjecter and enterSender for the crew
+// independent-session spawn path (hk-mmlqt). It delivers paste operations
+// directly to a specific pane target using the tmux adapter, bypassing the
+// perRunSubstrate (which routes via shared spawn state in the daemon session).
+type crewPasteInjector struct {
+	adapter    interface {
+		WriteToPane(ctx context.Context, bufferName, paneTarget string, payload []byte) error
+		SendKeysEnter(ctx context.Context, paneTarget string) error
+	}
+	paneTarget string
+}
+
+func (c *crewPasteInjector) WriteLastPane(ctx context.Context, bufferName string, payload []byte) error {
+	return c.adapter.WriteToPane(ctx, bufferName, c.paneTarget, payload)
+}
+
+func (c *crewPasteInjector) SendEnterToLastPane(ctx context.Context) error {
+	return c.adapter.SendKeysEnter(ctx, c.paneTarget)
+}
+
+// pasteCrewMissionToSession delivers the mission kick-off line to the crew pane
+// using the pane target captured from sess (independent-session path, hk-mmlqt).
+//
+// It builds a crewPasteInjector from the substrate's tmux adapter and the
+// session's pane target, then delegates to pasteCrewMission. Best-effort: if
+// the adapter or pane target is unavailable, the paste is silently skipped.
+func (h *crewHandlerImpl) pasteCrewMissionToSession(ctx context.Context, sess handler.SubstrateSession, sessionID, handoffPath string) {
+	pt, ok := sess.(paneTargeter)
+	if !ok {
+		return
+	}
+	target := pt.PaneTarget()
+	if target == "" {
+		return
+	}
+	sa, ok := h.substrate.(substrateWithAdapter)
+	if !ok {
+		return
+	}
+	inj := &crewPasteInjector{adapter: sa.tmuxAdapter(), paneTarget: target}
+	h.pasteCrewMission(ctx, inj, sessionID, handoffPath)
+}
+
 // createCrewManagedMarker creates .harmonik/keeper/<name>.managed so the keeper
 // recognises this crew member as managed (keeper.IsManaged returns true).
 // Idempotent: succeeds when the file already exists.
@@ -407,12 +466,20 @@ func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMe
 		return nil, fmt.Errorf("crew-stop: load record for %q: %w", req.Name, err)
 	}
 
-	// ── Quit→grace→kill the pane ──
-	if rec.Handle != "" && h.substrate != nil {
-		if stopper, ok := h.substrate.(crewPaneStopper); ok {
-			if stopErr := stopper.StopWindowByHandle(ctx, rec.Handle); stopErr != nil {
-				// Non-fatal: continue cleanup regardless.
-				fmt.Fprintf(os.Stderr, "daemon: crew-stop: stop window %q for %q: %v\n", rec.Handle, req.Name, stopErr)
+	// ── Quit→grace→kill the pane / session (hk-mmlqt) ──
+	// Use crewSessionStopper (kills the whole independent session) when available.
+	// Fall back to crewPaneStopper (kills the window inside the daemon session)
+	// for substrates that don't implement the independent-session path.
+	if h.substrate != nil {
+		if css, ok := h.substrate.(crewSessionStopper); ok {
+			if stopErr := css.StopCrewSession(ctx, req.Name, rec.Handle); stopErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: crew-stop: stop crew session for %q: %v\n", req.Name, stopErr)
+			}
+		} else if rec.Handle != "" {
+			if stopper, ok2 := h.substrate.(crewPaneStopper); ok2 {
+				if stopErr := stopper.StopWindowByHandle(ctx, rec.Handle); stopErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: crew-stop: stop window %q for %q: %v\n", rec.Handle, req.Name, stopErr)
+				}
 			}
 		}
 	}

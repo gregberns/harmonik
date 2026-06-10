@@ -285,6 +285,67 @@ func (OSAdapter) EnsureSession(ctx context.Context, name, workDir string) error 
 	return nil
 }
 
+// NewSessionIn creates a new detached tmux session named params.Session with
+// the first window named params.WindowName running params.Command.
+//
+// This is the crew independent-session creation path (hk-mmlqt): crew sessions
+// must live in their own sessions so that a daemon SIGTERM/supervisor-revive
+// does not kill crew windows.
+//
+// Unlike NewWindowIn (which creates a window inside an existing session),
+// NewSessionIn creates the session itself. The returned Outcome.Handle is
+// "<session>:<windowName>" and Outcome.PaneID is the stable pane identifier
+// captured atomically via `-P -F "#{pane_id}"`.
+//
+// Returns Outcome{Err: ErrWindowCollision} when a session named params.Session
+// already exists (the crew survived a daemon restart and is still running).
+// Returns Outcome{Err: *ErrTmuxFailure} on other tmux errors.
+//
+// NOTE: NewSessionIn is intentionally NOT part of the Adapter interface to
+// avoid breaking existing test doubles. It is accessed via the unexported
+// sessionCreator interface in the daemon package.
+func (OSAdapter) NewSessionIn(ctx context.Context, params NewWindowIn) Outcome {
+	args := buildNewSessionArgs(params)
+	//nolint:gosec // G204: args are constructed from validated caller-supplied parameters
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if isDuplicateSessionErr(out) {
+			return Outcome{Err: ErrWindowCollision}
+		}
+		return Outcome{Err: &ErrTmuxFailure{Op: "new-session", ExitCode: exitCodeOf(err), Stderr: outStr}}
+	}
+	handle := WindowHandle(params.Session + ":" + params.WindowName)
+	paneID := strings.TrimSpace(string(out))
+	return Outcome{Handle: handle, PaneID: paneID}
+}
+
+// buildNewSessionArgs constructs the argument slice for `tmux new-session` from
+// a NewWindowIn. The session is created with params.Session as the session name
+// and params.WindowName as the first window name.
+//
+//	new-session -P -F "#{pane_id}" -d -s <session> -n <windowName> [-c <cwd>] [-e K=V...] [-- <cmd>]
+func buildNewSessionArgs(p NewWindowIn) []string {
+	args := []string{
+		"new-session",
+		"-P", "-F", "#{pane_id}", // capture pane ID atomically
+		"-d",          // detached
+		"-s", p.Session,
+		"-n", p.WindowName,
+	}
+	if p.WorkDir != "" {
+		args = append(args, "-c", p.WorkDir)
+	}
+	for _, kv := range p.Env {
+		args = append(args, "-e", kv)
+	}
+	if p.Command != "" {
+		args = append(args, "--", p.Command)
+	}
+	return args
+}
+
 // LoadBuffer loads payload into the named tmux buffer via
 // `tmux load-buffer -b <bufferName> -` (reading payload from stdin).
 //

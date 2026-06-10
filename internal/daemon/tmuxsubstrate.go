@@ -826,6 +826,134 @@ func (s *tmuxSubstrate) StopWindowByHandle(ctx context.Context, handle string) e
 // a crew window in StopWindowByHandle (C2 crew-stop path).
 const crewStopQuitGrace = 30 * time.Second
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Crew independent-session support (hk-mmlqt)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// sessionCreator is an optional interface a tmux.Adapter may implement to
+// create a new independent tmux session atomically with a running command.
+//
+// Implemented by tmux.OSAdapter (NewSessionIn method). NOT added to the
+// tmux.Adapter interface to avoid breaking existing test doubles (hk-mmlqt).
+type sessionCreator interface {
+	NewSessionIn(ctx context.Context, params tmux.NewWindowIn) tmux.Outcome
+}
+
+// crewSessionSpawner is an optional interface a Substrate may implement to
+// spawn a crew member in its own independent tmux session (hk-mmlqt).
+//
+// When the substrate implements this interface, HandleCrewStart uses
+// SpawnCrewSession instead of SpawnWindow so crew sessions are independent of
+// the daemon's session and survive daemon SIGTERM / supervisor-revive cycles.
+//
+// *tmuxSubstrate implements crewSessionSpawner.
+type crewSessionSpawner interface {
+	// SpawnCrewSession creates an independent tmux session for crewName and runs
+	// spawn.Argv inside it. The session name is derived via crewSessionName.
+	SpawnCrewSession(ctx context.Context, crewName string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error)
+}
+
+// crewSessionStopper is an optional interface a Substrate may implement to
+// kill the independent tmux session for a named crew member (hk-mmlqt).
+//
+// When the substrate implements this interface, HandleCrewStop uses
+// StopCrewSession instead of StopWindowByHandle so the whole independent
+// session is cleanly torn down.
+//
+// *tmuxSubstrate implements crewSessionStopper.
+type crewSessionStopper interface {
+	// StopCrewSession sends /quit to the crew pane (best-effort), waits a grace
+	// period, then kills the crew's dedicated tmux session.
+	StopCrewSession(ctx context.Context, crewName string, handle string) error
+}
+
+// crewSessionName returns the deterministic tmux session name for crewName.
+// The name has the form "hk-crew-<crewName>".
+func crewSessionName(name string) string {
+	return "hk-crew-" + name
+}
+
+// SpawnCrewSession creates an independent tmux session named "hk-crew-<crewName>"
+// and runs spawn.Argv inside it. The session is decoupled from the daemon's own
+// session so that daemon restarts do not kill running crew windows (hk-mmlqt).
+//
+// Implements crewSessionSpawner. Called by HandleCrewStart when the substrate
+// supports this interface (production path with OSAdapter).
+//
+// When the session already exists (ErrWindowCollision — the crew survived a
+// prior daemon restart), SpawnCrewSession returns an error so the caller can
+// decide whether to stop-and-restart or leave the existing crew running.
+func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	sc, ok := s.adapter.(sessionCreator)
+	if !ok {
+		return nil, fmt.Errorf("daemon: SpawnCrewSession: adapter does not support session creation: %w", handler.ErrStructural)
+	}
+
+	sessName := crewSessionName(crewName)
+	windowName := spawn.WindowName
+	if windowName == "" {
+		windowName = "hk-crew-" + crewName
+	}
+	command := ""
+	if len(spawn.Argv) > 0 {
+		command = strings.Join(spawn.Argv, " ")
+	}
+
+	params := tmux.NewWindowIn{
+		Session:    sessName,
+		WindowName: windowName,
+		Env:        spawn.Env,
+		WorkDir:    spawn.Cwd,
+		Command:    command,
+	}
+
+	outcome := sc.NewSessionIn(ctx, params)
+	if outcome.Err != nil {
+		return nil, fmt.Errorf("daemon: SpawnCrewSession: new-session for crew %q: %w", crewName, outcome.Err)
+	}
+
+	paneID := outcome.PaneID
+	pidTarget := outcome.Handle
+	if paneID != "" {
+		pidTarget = tmux.WindowHandle(paneID)
+	}
+	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+
+	sess := &tmuxSubstrateSession{
+		adapter:     s.adapter,
+		handle:      outcome.Handle,
+		paneID:      paneID,
+		pidTarget:   pidTarget,
+		pid:         pid,
+		waitDone:    make(chan struct{}),
+		releaseSlot: func() {}, // crew sessions are outside the daemon spawn-cap
+	}
+	return sess, nil
+}
+
+// StopCrewSession sends /quit to the crew's pane (best-effort), waits a grace
+// period, then kills the crew's independent tmux session (hk-mmlqt).
+//
+// handle is the window handle stored in the crew registry (e.g.
+// "hk-crew-alpha:hk-crew-alpha"). The pane target for /quit is handle+".0".
+//
+// Implements crewSessionStopper (crewstart.go).
+func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, handle string) error {
+	// Best-effort /quit to the first pane of the crew window.
+	if handle != "" {
+		paneTarget := handle + ".0"
+		_ = s.adapter.SendKeysQuit(ctx, paneTarget) //nolint:errcheck // best-effort; session kill is authoritative
+	}
+
+	// Grace period before hard kill.
+	select {
+	case <-ctx.Done():
+	case <-time.After(crewStopQuitGrace):
+	}
+
+	return s.adapter.KillSession(ctx, crewSessionName(crewName))
+}
+
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to
 // sub and captures the spawned pane target from the returned SubstrateSession.
 //

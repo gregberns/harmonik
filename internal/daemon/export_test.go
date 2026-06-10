@@ -985,6 +985,14 @@ type EnterSenderExported = enterSender
 // Bead: hk-7rgqs.
 var ExportedReviewerReseedGrace = &reviewerReseedGrace
 
+// ExportedImplementerReseedGrace is a pointer to the package-level
+// implementerReseedGrace var.  Tests set *ExportedImplementerReseedGrace to a
+// short duration to exercise the hk-76n5g one-shot reseed-Enter path in
+// pasteInjectQuitOnCommit without waiting the production 75 s.
+//
+// Bead: hk-76n5g.
+var ExportedImplementerReseedGrace = &implementerReseedGrace
+
 // ExportedSplashDismissDelay is a pointer to the package-level splashDismissDelay
 // var.  Tests set *ExportedSplashDismissDelay to a short duration so the
 // splash-dismiss wait inside the paste-inject helpers does not slow unit tests.

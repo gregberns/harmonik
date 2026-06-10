@@ -444,6 +444,29 @@ var launchSuppressionCeiling = 12 * time.Minute
 // Bead: hk-trjef.
 var noChangeKillDelay = 30 * time.Second
 
+// implementerReseedGrace is the window after brief delivery within which
+// pasteInjectQuitOnCommit expects a commit to land.  When this window elapses
+// without a new commit AND qs also implements enterSender, a one-shot
+// "reseed Enter" is sent to submit any pending unsubmitted input in the pane.
+//
+// The targeted failure mode (hk-76n5g): the brief was pasted into the input
+// bar and all retry Enters (hk-ip33d: 3 total, over ~800 ms) were swallowed
+// because the TUI was still absorbing the paste when they fired.  The seed
+// then sits typed-but-unsubmitted; the implementer never reads agent-task.md;
+// the run hangs until the 30-minute commitPollTimeout fires.  Sending one
+// additional Enter ~75 s later submits the pending input and restores normal
+// flow — long before the 30-minute kill that was the only prior recovery.
+//
+// 75 s is short enough to recover a wedged-at-unsubmitted seed quickly, yet
+// long enough that a fast implementer (committed in < 75 s) never sees a
+// spurious empty-line Enter.  A redundant Enter at an already-clear prompt is
+// a harmless no-op.
+//
+// Declared as var so tests can override it without waiting real wall time.
+//
+// Bead: hk-76n5g.
+var implementerReseedGrace = 75 * time.Second
+
 // postQuitKillGrace is the grace period between the post-commit /quit send and
 // the forced sess.Kill call on the substrate-path session.  Without this kill,
 // sess.Wait (which polls the tmux pane PID for liveness) can hang indefinitely
@@ -563,6 +586,9 @@ func pasteInjectQuitOnCommit(
 	// longer suppress on an active pane — it fires the kill so the watchdog
 	// always terminates.
 	launchSuppressCeil := launchSuppressionCeiling
+	// hk-76n5g: snapshot the reseed-Enter grace so a test that restores the
+	// package var after the run returns does not race with the in-flight read.
+	reseedGrace := implementerReseedGrace
 
 	loopStart := time.Now()
 	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on every
@@ -613,6 +639,17 @@ func pasteInjectQuitOnCommit(
 	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
 	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
 	livenessChecker, _ := qs.(paneLivenessChecker)
+
+	// hk-76n5g: one-shot reseed-Enter setup.  When qs also implements
+	// enterSender (production: perRunSubstrate; test stubs that combine both),
+	// fire one Enter after reseedGrace if no commit has appeared — submits any
+	// pending unsubmitted input from a dropped paste-inject seed Enter.  A
+	// redundant Enter at an already-submitted REPL is a harmless empty line.
+	// Disable when qs has no enterSender capability (reseedEnterFired=true
+	// short-circuits the check on every tick).
+	reseedES, _ := qs.(enterSender)
+	reseedEnterDeadline := loopStart.Add(reseedGrace)
+	reseedEnterFired := reseedES == nil
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -847,6 +884,24 @@ func pasteInjectQuitOnCommit(
 						stalenessThreshold,
 					), "heartbeat-stale", true)
 					return
+				}
+			}
+
+			// hk-76n5g: one-shot reseed-Enter. After reseedGrace with no new
+			// commit, send one Enter to submit any pending unsubmitted input in
+			// the pane (brief typed but Enter dropped on all paste-inject retry
+			// attempts). Fires at most once per run. A redundant Enter at an
+			// already-submitted REPL is a harmless empty line; it will not
+			// re-submit a previously-processed prompt because the REPL is clear
+			// after a submission is handled.
+			if !reseedEnterFired && now.After(reseedEnterDeadline) {
+				reseedEnterFired = true
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-commit: reseed-enter: %v elapsed in %s; sending Enter to submit any pending input\n",
+					reseedGrace, wtPath)
+				if reseedErr := reseedES.SendEnterToLastPane(ctx); reseedErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: reseed-enter: SendEnterToLastPane: %v\n", reseedErr)
 				}
 			}
 
@@ -1085,6 +1140,15 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 		return reason
 	}
+	// Settle after the paste before submitting (hk-76n5g, mirrors hk-jzpqo).
+	//
+	// The bracketed paste is still being absorbed by the TUI when the submit
+	// Enter fires; all retry Enters (hk-ip33d: up to 3, over ~800 ms) can land
+	// inside the absorption window and be swallowed, leaving the brief typed-
+	// but-unsubmitted.  Waiting splashDismissDelay gives the REPL time to finish
+	// absorbing the paste and return to an input-ready state before the first
+	// retry Enter arrives.
+	splashDismissWait(ctx)
 	// Send Enter after paste to submit the message regardless of terminal
 	// bracketed-paste mode (hk-8cq23).  Under a concurrent cold-boot the splash
 	// can outlast the fixed splashDismissDelay, so a single submit Enter lands on
@@ -1158,6 +1222,19 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 		return reason
 	}
+	// Settle after the paste before submitting (hk-76n5g).
+	//
+	// Root cause of the iter-2 not-submitted seed (observed in production on
+	// 2026-06-10, even with the hk-ip33d retry fix in place): the TUI is still
+	// absorbing the bracketed-paste content when the first retry Enter fires,
+	// and ALL retry Enters (3 total, over ~800 ms) land within the absorption
+	// window and are swallowed.  The brief then sits typed-but-unsubmitted;
+	// the resumed implementer stays idle and the bead wedges until the 30-min
+	// commitPollTimeout fires.  Waiting splashDismissDelay gives the REPL time
+	// to finish absorbing the paste and return to an input-ready state, shifting
+	// the first retry Enter to ~750 ms post-paste where the input handler is
+	// reliably accepting keystrokes.  Mirrors the hk-jzpqo crew path fix.
+	splashDismissWait(ctx)
 	// Send Enter after paste to submit the message regardless of terminal
 	// bracketed-paste mode (hk-8cq23).  On the resume path the freshly-resumed
 	// REPL is intermittently not yet input-ready when this fires, so the single

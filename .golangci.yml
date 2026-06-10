@@ -315,22 +315,33 @@ linters:
         #     - "github.com/gregberns/harmonik/internal/hook"
         #     - "github.com/gregberns/harmonik/internal/adapter/br"
   
-        # Composition root: may import every subsystem.
+        # Composition root: may import every harmonik subsystem.
         # Also subject to llm-sdk-ban (see above).
-        # daemon:
-        #   files: ["**/internal/daemon/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/..."
-  
-        # cmd: daemon + core only.
+        # uuid and yaml.v3 are direct deps of daemon production code.
+        # depguard allow-list uses trailing-slash prefix matching (not Go-module "...").
+        daemon:
+          files: ["**/internal/daemon/**"]
+          allow:
+            - "$gostd"
+            - "go/"
+            - "github.com/gregberns/harmonik/internal/"
+            - "github.com/google/uuid"
+            - "gopkg.in/yaml.v3"
+            - "github.com/stretchr/testify/"
+            - "go.uber.org/goleak"
+
+        # CLI entry-point: composition root — may import every harmonik subsystem
+        # plus cmd subpackages and external utility deps.
         # Also subject to llm-sdk-ban (see above).
-        # cmd:
-        #   files: ["**/cmd/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/daemon"
+        # depguard allow-list uses trailing-slash prefix matching (not Go-module "...").
+        cmd:
+          files: ["**/cmd/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/"
+            - "github.com/gregberns/harmonik/cmd/"
+            - "github.com/google/uuid"
+            - "gopkg.in/yaml.v3"
     exhaustive:
       default-signifies-exhaustive: true
     testifylint:

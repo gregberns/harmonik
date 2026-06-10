@@ -298,10 +298,15 @@ func (h *crewHandlerImpl) ensureQueue(ctx context.Context, queueName string) err
 	if q != nil {
 		return nil // already exists
 	}
+	// Status is set to QueueStatusCompleted so the QM-027 single-active guard
+	// permits the first queue-submit to this name. An empty/zero status is not
+	// "completed", so the guard would incorrectly reject the submit with
+	// queue_already_active (-32010) — hk-vrnh3.
 	minimal := &queue.Queue{
 		SchemaVersion: 1,
 		Name:          queueName,
 		Workers:       1,
+		Status:        queue.QueueStatusCompleted,
 	}
 	if err := queue.Persist(ctx, h.projectDir, minimal); err != nil {
 		return fmt.Errorf("persist queue %q: %w", queueName, err)

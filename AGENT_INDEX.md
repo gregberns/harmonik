@@ -72,7 +72,7 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 | Component | Purpose |
 |-----------|---------|
 | [ntm](docs/components/external/ntm.md) | Tmux-based agent process management. Swarm orchestration. |
-| [agent-mail](docs/components/external/agent-mail.md) | Agent communication. File reservations. Identity. MCP tools. |
+| ~~agent-mail~~ | ~~Agent communication (MCP server)~~ — **UNINSTALLED 2026-06-08** (runaway 18 GB log caused disk-full wedges). Replaced by `harmonik comms` bus. |
 | [CASS](docs/components/external/cass.md) | Session search. Episodic memory. Cross-agent knowledge. |
 | [CASS Memory](docs/components/external/cass-memory.md) | Institutional memory. Three-layer cognition. Playbook rules. |
 | [Kilroy](docs/components/external/kilroy.md) | Workflow execution engine. DOT graph pipelines. |
@@ -110,9 +110,13 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 [docs/log/INDEX.md](docs/log/INDEX.md)
 
 Most recent entries:
-- [2026-04-24: Spec Corpus Foundation Pass](docs/log/2026-04-24-spec-corpus-foundation.md) -- 10 specs authored; 5 reviewed
-- [2026-04-24: Round-2 Foundation Amendments](docs/log/2026-04-24-round-2-foundation-amendments.md) -- Phase 3 findings applied across six clusters
-- [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture
+- [2026-06-09: Captain & Crew lands](docs/plans/captain/SESSION.md) -- 15/15 tasks on main; crew system live via `claude --remote-control`; tapCh race (18h incident) fixed
+- [2026-06-03: Productization P0 gate](docs/INITIATIVES.md) -- Integration-branch enforcement landed; `harmonik init` / operating-manual in progress
+- [2026-06-01: harmonik comms bus](docs/orchestration-protocol-v2.md) -- `harmonik comms send/recv/who/log`; file-outbox convention retired
+- [2026-05-30: Persistent daemon model](docs/orchestration-protocol-v2.md) -- `harmonik --project` + supervisor; `harmonik run` → legacy/solo path
+- [2026-05-14: Phase 1 operational milestone](docs/dogfood-smoke-run-2026-05-14-operational-green.md) -- Harmonik runs Claude end-to-end on a bead; zero human input
+- [2026-04-24: Spec Corpus Foundation Pass](docs/log/2026-04-24-spec-corpus-foundation.md) -- 10 specs authored; 5 reviewed *(historical)*
+- [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture *(historical)*
 
 ### Specs (normative)
 - [specs/](specs/) — 10 foundation specs + `_registry.yaml` prefix reservations
@@ -135,10 +139,39 @@ Most recent entries:
 ## Plans
 - [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)
 
+## Major Features Landed (2026-06)
+
+### Captain & Crew system (landed 2026-06-09)
+A long-lived **captain** orchestrator that spawns and coordinates a pool of long-lived **crew** agents — each owning one epic and its own named work queue — wired together by the `harmonik comms` bus plus `epic_completed` events.
+
+- **Design:** [docs/plans/captain/SPEC.md](docs/plans/captain/SPEC.md), [docs/plans/captain/SESSION.md](docs/plans/captain/SESSION.md)
+- **CLI:** `harmonik crew start/stop/list`; crew launch = `claude --remote-control "<name>" --session-id <uuid>`
+- **Skills:** `captain` (captain operating context), `crew-launch` (crew boot sequence)
+- **Status:** 15/15 tasks on main (`57c6fd94`); production crew: chani / duncan / liet / stilgar
+
+### Session-keeper (mechanism done; testing = priority)
+Per-orchestrator context-watcher that injects a context-warning at ~80% and triggers handoff-clear-resume at ~90%. Hosted as a standalone `harmonik keeper` process.
+
+- **Design:** kerf work `hk-ekap1`; bench artifacts at `~/.kerf/projects/.../session-keeper/`
+- **Status:** mechanism complete; Phase-1 warn-only ships first; test plan ready — exec on throwaway `kk-test` crew is the immediate priority
+
+### Validation-net (CORE landed 2026-06-09)
+Scenario/test coverage infrastructure from the `hk-37giq` wedge postmortem. Flagship infra at `8cfc75f8`; `make-target` + postmortem; 3 daemon fixes deployed.
+
+- VN4 revert-demo found **structurally infeasible** in-process (guard=tap keystone); filed `hk-d5twq`
+- VN9 CI parked on workflow-scope permission (needs `gh auth refresh -s workflow`)
+
+### Named queues — parked
+`hk-tigaf` (12-bead epic) **parked as of 2026-06-10** — superseded by captain/crew-per-epic model.
+
 ## Operational Protocols
 - [docs/orchestrator-rules.md](docs/orchestrator-rules.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)
+- [docs/INITIATIVES.md](docs/INITIATIVES.md) -- Live initiatives board: epic IDs, status, done/total counts, blocked items
 - [docs/major-issue-fanout-protocol.md](docs/major-issue-fanout-protocol.md) -- Major-issue fan-out diagnosis protocol: when a wedge survives ≥2 fix attempts, fan out 10–15 agents at distinct angles + ≥2 adversarial verifiers; never hand-grep events.jsonl by run_id
 - [docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md](docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md) -- tapCh competing-consumer race; 18h incident; 6 refuted hypotheses; fix + process lessons (motivating source for major-issue-fanout protocol)
+- [docs/captain-restart.md](docs/captain-restart.md) -- Captain self-restart design (session-keeper on the captain session)
+- [docs/orchestration-protocol-v2.md](docs/orchestration-protocol-v2.md) -- Persistent-daemon + queue-submit daily loop; harmonik comms bus; stream/wave queue semantics
+- [docs/known-workarounds.md](docs/known-workarounds.md) -- Active workaround registry: worktree bugs, harness quirks, spawn-semaphore wedge mitigation
 
 ## Deep References
 - [AlphaGo-Modeled Orchestration System](refs/AlphaGo-modeled-orch-system.md) -- 800+ line architectural reference document

@@ -750,7 +750,7 @@ func dispatchDotAgenticNode(
 	var reviewerSessionID core.SessionID
 	if isReviewer {
 		reviewerSessionID = handlercontract.NewSessionID()
-		emitReviewerLaunched(ctx, deps.bus, runID, reviewerSessionID, *claudeSessionID, iterationCount)
+		emitDotReviewerLaunched(ctx, deps.bus, runID, reviewerSessionID, *claudeSessionID, iterationCount)
 	}
 
 	nodeLaunchedAt := time.Now()
@@ -1213,6 +1213,32 @@ func emitNodeDispatchDecided(ctx context.Context, bus handlercontract.EventEmitt
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, payload.RunID, core.EventTypeNodeDispatchDecided, b)
+}
+
+// emitDotReviewerLaunched emits reviewer_launched (§8.1a.2) for a DOT reviewer
+// node, matching the builtin review-loop path (reviewloop.go emitReviewerLaunched).
+// WorkflowMode is WorkflowModeDot so consumers filtering on workflow_mode=dot
+// see a consistent launched/verdict pair (hk-c73fs).
+func emitDotReviewerLaunched(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	sessionID core.SessionID,
+	claudeSessionID string,
+	iterationCount int,
+) {
+	pl := core.ReviewerLaunchedPayload{
+		RunID:           runID,
+		WorkflowMode:    core.WorkflowModeDot,
+		SessionID:       sessionID,
+		ClaudeSessionID: claudeSessionID,
+		IterationCount:  iterationCount,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, b)
 }
 
 // emitDotReviewerVerdict emits reviewer_verdict for a DOT reviewer node,

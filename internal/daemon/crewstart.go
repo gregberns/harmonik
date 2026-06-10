@@ -142,13 +142,13 @@ func NewCrewHandler(claudeBinary, projectDir string, substrate handler.Substrate
 func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
 	var req CrewStartRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, fmt.Errorf("crew-start: decode request: %w", err)
+		return nil, fmt.Errorf("decode request: %w", err)
 	}
 	if req.Name == "" {
-		return nil, fmt.Errorf("crew-start: name is required")
+		return nil, fmt.Errorf("name is required")
 	}
 	if req.Queue == "" {
-		return nil, fmt.Errorf("crew-start: queue is required")
+		return nil, fmt.Errorf("queue is required")
 	}
 
 	// ── Step 1: collision check + resolve session_id ──
@@ -165,13 +165,13 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		StartedAt: time.Now().UTC(),
 	}
 	if writeErr := crew.Write(h.projectDir, rec); writeErr != nil {
-		return nil, fmt.Errorf("crew-start: write registry: %w", writeErr)
+		return nil, fmt.Errorf("write registry: %w", writeErr)
 	}
 
 	// ── Step 3: ensure named queue ──
 	if qErr := h.ensureQueue(ctx, req.Queue); qErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback; primary error returned
-		return nil, fmt.Errorf("crew-start: ensure queue: %w", qErr)
+		return nil, fmt.Errorf("ensure queue: %w", qErr)
 	}
 
 	// ── Step 4: build launch spec + spawn ──
@@ -184,7 +184,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	})
 	if buildErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
-		return nil, fmt.Errorf("crew-start: build launch spec: %w", buildErr)
+		return nil, fmt.Errorf("build launch spec: %w", buildErr)
 	}
 
 	var windowHandle string
@@ -205,7 +205,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 			sess, err = css.SpawnCrewSession(ctx, req.Name, spawn)
 			if err != nil {
 				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
-				return nil, fmt.Errorf("crew-start: spawn crew session: %w", err)
+				return nil, fmt.Errorf("spawn crew session: %w", err)
 			}
 			if wh, ok2 := sess.(windowHandleExposer); ok2 {
 				windowHandle = wh.WindowHandle()
@@ -226,7 +226,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 			}
 			if err != nil {
 				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
-				return nil, fmt.Errorf("crew-start: spawn window: %w", err)
+				return nil, fmt.Errorf("spawn window: %w", err)
 			}
 			if wh, ok2 := sess.(windowHandleExposer); ok2 {
 				windowHandle = wh.WindowHandle()
@@ -260,7 +260,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	}
 	out, marshalErr := json.Marshal(result)
 	if marshalErr != nil {
-		return nil, fmt.Errorf("crew-start: encode result: %w", marshalErr)
+		return nil, fmt.Errorf("encode result: %w", marshalErr)
 	}
 	return out, nil
 }
@@ -280,7 +280,7 @@ func (h *crewHandlerImpl) resolveSessionID(name, wantQueue string) (sessionID st
 		return uuid.New().String(), false, nil
 	}
 	if loadErr != nil {
-		return "", false, fmt.Errorf("crew-start: load existing record for %q: %w", name, loadErr)
+		return "", false, fmt.Errorf("load existing record for %q: %w", name, loadErr)
 	}
 	// Record exists → treat as stale re-launch: reuse the recorded session_id
 	// and launch with --resume so the crew continues the same conversation.
@@ -294,11 +294,11 @@ func (h *crewHandlerImpl) resolveSessionID(name, wantQueue string) (sessionID st
 func (h *crewHandlerImpl) checkQueueConflict(name, wantQueue string) error {
 	records, err := crew.List(h.projectDir)
 	if err != nil {
-		return fmt.Errorf("crew-start: list crew for queue conflict: %w", err)
+		return fmt.Errorf("list crew for queue conflict: %w", err)
 	}
 	for _, r := range records {
 		if r.Queue == wantQueue && r.Name != name {
-			return fmt.Errorf("crew-start: queue %q already bound to crew %q", wantQueue, r.Name)
+			return fmt.Errorf("queue %q already bound to crew %q", wantQueue, r.Name)
 		}
 	}
 	return nil
@@ -452,18 +452,18 @@ func createCrewManagedMarker(projectDir, name string) error {
 func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
 	var req CrewStopRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
-		return nil, fmt.Errorf("crew-stop: decode request: %w", err)
+		return nil, fmt.Errorf("decode request: %w", err)
 	}
 	if req.Name == "" {
-		return nil, fmt.Errorf("crew-stop: name is required")
+		return nil, fmt.Errorf("name is required")
 	}
 
 	rec, err := crew.Load(h.projectDir, req.Name)
 	if errors.Is(err, crew.ErrNotFound) {
-		return nil, fmt.Errorf("crew-stop: crew %q not found", req.Name)
+		return nil, fmt.Errorf("crew %q not found", req.Name)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("crew-stop: load record for %q: %w", req.Name, err)
+		return nil, fmt.Errorf("load record for %q: %w", req.Name, err)
 	}
 
 	// ── Quit→grace→kill the pane / session (hk-mmlqt) ──
@@ -492,13 +492,13 @@ func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMe
 
 	// ── Remove registry record ──
 	if removeErr := crew.Remove(h.projectDir, req.Name); removeErr != nil && !errors.Is(removeErr, crew.ErrNotFound) {
-		return nil, fmt.Errorf("crew-stop: remove registry for %q: %w", req.Name, removeErr)
+		return nil, fmt.Errorf("remove registry for %q: %w", req.Name, removeErr)
 	}
 
 	// ── Optional --pause-queue ──
 	if req.PauseQueue && h.opPauseCtrl != nil && rec.Queue != "" {
 		if pauseErr := h.opPauseCtrl.HandleOperatorPause(ctx, rec.Queue); pauseErr != nil {
-			return nil, fmt.Errorf("crew-stop: pause queue %q: %w", rec.Queue, pauseErr)
+			return nil, fmt.Errorf("pause queue %q: %w", rec.Queue, pauseErr)
 		}
 	}
 
@@ -506,7 +506,7 @@ func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMe
 		Name string `json:"name"`
 	}{Name: req.Name})
 	if marshalErr != nil {
-		return nil, fmt.Errorf("crew-stop: encode result: %w", marshalErr)
+		return nil, fmt.Errorf("encode result: %w", marshalErr)
 	}
 	return out, nil
 }

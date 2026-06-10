@@ -459,6 +459,10 @@ USAGE
 Sends a crew-stop op to the daemon. The daemon stops the session pane, removes
 the registry record, and removes the keeper .managed marker.
 
+NOTE: teardown is synchronous for the registry record and tmux window, but the
+underlying 'claude --remote-control' process may take ~10s to fully exit
+(graceful shutdown). This is not a leak — the process will exit on its own.
+
 ARGS
   <name>          Crew member name. Required.
 
@@ -489,7 +493,11 @@ Reads .harmonik/crew/*.json directly. No daemon connection required.
 Records are sorted by name. An absent .harmonik/crew/ directory returns an empty list.
 
 FLAGS
-  --json          Emit one JSON object per record (NDJSON). Includes all fields.
+  --json          Emit one JSON object per record (NDJSON — one object per line,
+                  not a JSON array). Includes all fields.
+                  Pipe to 'jq -s' to collect into an array, or process line-by-line:
+                    harmonik crew list --json | jq -s '.'
+                    harmonik crew list --json | while IFS= read -r line; do ...; done
   --project DIR   Project directory (default: cwd).
 
 EXIT CODES
@@ -499,6 +507,7 @@ EXIT CODES
 EXAMPLES
   harmonik crew list
   harmonik crew list --json
+  harmonik crew list --json | jq -s '.'
   harmonik crew list --project /path/to/project
 `)
 }

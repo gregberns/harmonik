@@ -1075,8 +1075,11 @@ agent_presence beat has status="online" and last_seen is within 120s of now.
 Read-only: emits nothing, advances no cursor. No daemon connection required.
 
 FLAGS
-  --json          Emit one JSON object per online agent (NDJSON).
-                  Fields: agent (string), last_seen (RFC3339).
+  --json          Emit one JSON object per online agent (NDJSON — one object per
+                  line, not a JSON array). Fields: agent (string), last_seen (RFC3339).
+                  Pipe to 'jq -s' to collect into an array, or process line-by-line:
+                    harmonik comms who --json | jq -s '.'
+                    harmonik comms who --json | while IFS= read -r line; do ...; done
   --project DIR   Project directory (default: cwd). Used to locate
                   .harmonik/events/events.jsonl.
 
@@ -1087,6 +1090,7 @@ EXIT CODES
 EXAMPLES
   harmonik comms who                  # human-readable list of online agents
   harmonik comms who --json           # machine-readable NDJSON
+  harmonik comms who --json | jq -s '.'  # collect into a JSON array
   harmonik comms who --project /path  # specify project directory
 `)
 }

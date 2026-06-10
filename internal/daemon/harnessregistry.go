@@ -1,45 +1,48 @@
 package daemon
 
 // harnessregistry.go — daemon-side HarnessRegistry wiring + registry-routed
-// launchSpecBuilder (codex-harness C1/T3, hk-hj9ld).
+// launchSpecBuilder (codex-harness C1/T3 hk-hj9ld; C5/T12 hk-xhawy).
 //
 // This file closes the first of the two declared harness seam points
 // (harness.go §"the two declared seam points"): the launchSpecBuilder lookup is
 // routed through resolveHarness (the four-tier precedence walk, harnessresolve.go)
 // and HarnessRegistry.ForAgent (the per-agent-type route table).
 //
-// CLAUDE-ONLY, NO BEHAVIOR CHANGE: only ClaudeHarness is registered (codex is
-// added by a later bead, hk-m57va C2/T8). The default precedence resolution lands
-// on core.AgentTypeClaudeCode, so for the existing claude path the routed builder
-// resolves to ClaudeHarness and produces a LaunchSpec byte-identical to calling
-// buildClaudeLaunchSpec directly — it delegates straight to buildClaudeLaunchSpec
-// to preserve the claudeRunArtifacts (session IDs, preExecMsgs) the workloop and
-// review-loop require alongside the LaunchSpec.
+// T12 wires the codex path: CodexHarness is now registered alongside ClaudeHarness,
+// and routedLaunchSpecBuilder produces a handler.LaunchSpec + claudeRunArtifacts for
+// the codex harness (previously it failed closed). The claude path retains its
+// byte-identical delegation to buildClaudeLaunchSpec.
 //
 // Spec: specs/harness-contract.md §2 N5.
 // See also: handlercontract/harnessregistry.go (the registry type),
-// claudeharness.go (the ClaudeHarness adapter), harnessresolve.go (resolveHarness).
+// claudeharness.go, codexharness.go, harnessresolve.go.
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+
+	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// newHarnessRegistry builds the daemon's HarnessRegistry with the claude harness
-// registered for core.AgentTypeClaudeCode.
+// newHarnessRegistry builds the daemon's HarnessRegistry with ClaudeHarness and
+// CodexHarness registered.
 //
-// CLAUDE-ONLY: only ClaudeHarness is registered. Codex is added by a later bead.
 // Returns a non-nil error only if Register fails (a duplicate or sealed-registry
-// defect), which is impossible for the single registration here but surfaced so
-// callers fail-closed if this grows.
+// defect), which is impossible for these two distinct registrations but surfaced
+// so callers fail-closed if this grows.
 func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()
 	if err := reg.Register(core.AgentTypeClaudeCode, NewClaudeHarness()); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register claude harness: %w", err)
+	}
+	if err := reg.Register(core.AgentTypeCodex, NewCodexHarness("", "")); err != nil {
+		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
 	return reg, nil
 }
@@ -53,14 +56,16 @@ func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 // an unregistered type returns a well-defined error (the routed builder fails the
 // run rather than silently launching claude for an unknown type).
 //
-// NO BEHAVIOR CHANGE for the claude path: when the resolved harness is the claude
-// harness (the default, and the only registered one in T3), the builder delegates
-// directly to buildClaudeLaunchSpec(ctx, rc) so the returned LaunchSpec and
-// claudeRunArtifacts are byte-identical to the pre-T3 direct call. The Harness
-// interface's LaunchSpec returns only a SpawnSpec (no artifacts), so the routed
-// builder cannot go through Harness.LaunchSpec for the claude path without losing
-// the artifacts the workloop needs — hence the type-asserted direct delegation.
-// The registry lookup is the seam; the build itself is unchanged.
+// Claude path: delegates to buildClaudeLaunchSpec directly so the returned
+// LaunchSpec and claudeRunArtifacts are byte-identical to the pre-T3 call.
+// Harness.LaunchSpec returns only a SpawnSpec, so routing the claude build
+// through it would drop the artifacts the workloop/review-loop consume.
+//
+// Codex path (T12): writes agent-task.md, calls CodexHarness.LaunchSpec for the
+// SpawnSpec, and assembles claudeRunArtifacts with a tracking session ID and
+// pre-exec bus messages. The claudeSessionID field is a harmonic-internal tracking
+// ID (not used for codex resume; resume uses the captured thread_id via
+// RunCtx.PriorSessionID / claudeRunCtx.priorClaudeSessID).
 //
 // The bead argument carries the labels resolveHarness reads for the tier-1
 // harness:<agent-type> override. Production passes the dispatch-time BeadRecord;
@@ -85,18 +90,145 @@ func routedLaunchSpecBuilder(
 
 		// Claude path: delegate to buildClaudeLaunchSpec directly so the returned
 		// LaunchSpec AND claudeRunArtifacts are byte-identical to the pre-T3 call.
-		// Harness.LaunchSpec returns only a SpawnSpec, so routing the claude build
-		// through it would drop the artifacts the workloop/review-loop consume.
+		// buildClaudeLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
 		if _, ok := h.(*ClaudeHarness); ok {
 			return buildClaudeLaunchSpec(ctx, rc)
 		}
 
-		// Non-claude harnesses are not wired into the claudeRunArtifacts seam in
-		// T3 (codex lands in a later bead with its own artifacts threading). Fail
-		// closed rather than silently mis-launch.
-		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
-			"daemon: routedLaunchSpecBuilder: harness %q resolved but not wired into the "+
-				"claudeRunArtifacts launch path in C1/T3 (claude-only); a later bead adds it",
-			agentType)
+		// Codex path (T12): write agent-task.md, call harness.LaunchSpec for the
+		// SpawnSpec, then build claudeRunArtifacts with a tracking session ID.
+		return buildCodexRoutedLaunchSpec(ctx, rc, h, agentType)
 	}
+}
+
+// buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + claudeRunArtifacts
+// for non-claude harnesses (currently only CodexHarness).
+//
+// Steps:
+//  1. Write agent-task.md (codex reads it via the seed-prompt argv).
+//  2. Convert claudeRunCtx → handlercontract.RunCtx; call h.LaunchSpec.
+//  3. Mint tracking session ID + handler session ID.
+//  4. Render pre-exec bus messages (CHB-018 subset).
+//  5. Return LaunchSpec + claudeRunArtifacts{resolvedAgentType: agentType}.
+func buildCodexRoutedLaunchSpec(
+	_ context.Context,
+	rc claudeRunCtx,
+	h handlercontract.Harness,
+	agentType core.AgentType,
+) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	// Step 1: write agent-task.md.
+	taskBody := rc.nodePrompt
+	if taskBody == "" {
+		taskBody = rc.beadDescription
+	}
+	if taskBody == "" {
+		taskBody = rc.beadID
+	}
+	taskTitle := rc.beadTitle
+	if taskTitle == "" {
+		taskTitle = rc.beadID
+	}
+	agentTaskPayload := workspace.AgentTaskPayload{
+		BeadID:              rc.beadID,
+		Title:               taskTitle,
+		Phase:               string(rc.phase),
+		Iteration:           rc.iterationCount,
+		RunID:               core.RunID(rc.runID).String(),
+		WorkspacePath:       rc.workspacePath,
+		Body:                taskBody,
+		PriorVerdictFile:    rc.priorVerdictFile,
+		PriorVerdictSummary: rc.priorVerdictSummary,
+		ReviewBaseSHA:       rc.reviewBaseSHA,
+		ReviewHeadSHA:       rc.reviewHeadSHA,
+		ReAttach:            rc.agentTaskReAttach,
+		ExtraContext:        rc.extraContext,
+		BaseBranch:          rc.baseBranch,
+	}
+	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildCodexRoutedLaunchSpec: WriteAgentTask: %w", err)
+	}
+
+	// Step 2: convert to RunCtx and call harness.LaunchSpec.
+	hrc := handlercontract.RunCtx{
+		RunID:               core.RunID(rc.runID),
+		BeadID:              rc.beadID,
+		WorkspacePath:       rc.workspacePath,
+		DaemonSocket:        rc.daemonSocket,
+		WorkflowMode:        rc.workflowMode,
+		Phase:               rc.phase,
+		IterationCount:      rc.iterationCount,
+		HandlerBinary:       rc.handlerBinary,
+		DaemonBinaryPath:    rc.daemonBinaryPath,
+		BaseEnv:             rc.baseEnv,
+		BeadTitle:           rc.beadTitle,
+		BeadDescription:     rc.beadDescription,
+		NodePrompt:          rc.nodePrompt,
+		PriorVerdictFile:    rc.priorVerdictFile,
+		PriorVerdictSummary: rc.priorVerdictSummary,
+		ReviewBaseSHA:       rc.reviewBaseSHA,
+		ReviewHeadSHA:       rc.reviewHeadSHA,
+		Model:               rc.model,
+		Effort:              rc.effort,
+		WorktreeRootPath:    rc.worktreeRootPath,
+		ExtraContext:        rc.extraContext,
+		BaseBranch:          rc.baseBranch,
+		PriorSessionID:      rc.priorClaudeSessID,
+	}
+	spawnSpec, err := h.LaunchSpec(hrc)
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildCodexRoutedLaunchSpec: harness.LaunchSpec: %w", err)
+	}
+
+	// Step 3: mint tracking session ID and handler session ID.
+	handlerSessUID, err := uuid.NewV7()
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildCodexRoutedLaunchSpec: mint handlerSessionID: %w", err)
+	}
+	handlerSessionID := handlerSessUID.String()
+
+	trackingUID, err := uuid.NewV7()
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildCodexRoutedLaunchSpec: mint trackingSessionID: %w", err)
+	}
+	trackingSessionID := trackingUID.String()
+
+	// Step 4: render pre-exec bus messages (CHB-018 subset).
+	nodeID := "bead/" + rc.beadID
+	runIDStr := core.RunID(rc.runID).String()
+	rawMsgs, err := handler.PreExecMessages(
+		runIDStr,
+		handlerSessionID,
+		nodeID,
+		trackingSessionID,
+		"", // no session log path for codex
+		nil,
+	)
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildCodexRoutedLaunchSpec: PreExecMessages: %w", err)
+	}
+	preExecMsgs := make([]json.RawMessage, len(rawMsgs))
+	for i, b := range rawMsgs {
+		preExecMsgs[i] = json.RawMessage(b)
+	}
+
+	// Step 5: assemble handler.LaunchSpec and claudeRunArtifacts.
+	spec := handler.LaunchSpec{
+		Binary:  spawnSpec.Binary,
+		Args:    spawnSpec.Args,
+		Env:     spawnSpec.Env,
+		WorkDir: spawnSpec.WorkDir,
+		Role:    string(rc.phase),
+	}
+	artifacts := claudeRunArtifacts{
+		claudeSessionID:   trackingSessionID,
+		handlerSessionID:  handlerSessionID,
+		preExecMsgs:       preExecMsgs,
+		resolvedAgentType: agentType,
+	}
+	return spec, artifacts, nil
 }

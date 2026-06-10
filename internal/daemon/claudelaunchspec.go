@@ -420,11 +420,12 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 
 	artifacts := claudeRunArtifacts{
-		claudeSessionID:  mintRes.ClaudeSessionID,
-		sessionLogPath:   sessionLogPath,
-		handlerSessionID: handlerSessionID,
-		preExecMsgs:      preExecMsgs,
-		substrate:        nil,
+		claudeSessionID:   mintRes.ClaudeSessionID,
+		sessionLogPath:    sessionLogPath,
+		handlerSessionID:  handlerSessionID,
+		preExecMsgs:       preExecMsgs,
+		substrate:         nil,
+		resolvedAgentType: core.AgentTypeClaudeCode,
 	}
 
 	return spec, artifacts, nil

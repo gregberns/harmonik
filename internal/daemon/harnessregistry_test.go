@@ -98,37 +98,47 @@ func TestHarnessRegistry_ForAgent_Claude(t *testing.T) {
 	}
 }
 
-// TestHarnessRegistry_RegisteredTypes_ClaudeOnly verifies that in C1/T3 only the
-// claude harness is registered (codex is added by a later bead).
-func TestHarnessRegistry_RegisteredTypes_ClaudeOnly(t *testing.T) {
+// TestHarnessRegistry_RegisteredTypes_BothHarnesses verifies that after T12 both
+// claude-code and codex harnesses are registered in newHarnessRegistry.
+func TestHarnessRegistry_RegisteredTypes_BothHarnesses(t *testing.T) {
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
 		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
 	}
 
 	types := reg.RegisteredTypes()
-	if len(types) != 1 {
-		t.Fatalf("RegisteredTypes = %v; want exactly [claude-code] (claude-only in T3)", types)
+	if len(types) != 2 {
+		t.Fatalf("RegisteredTypes = %v; want exactly [claude-code codex] (T12 adds codex)", types)
 	}
-	if types[0] != core.AgentTypeClaudeCode {
-		t.Errorf("RegisteredTypes[0] = %q; want %q", types[0], core.AgentTypeClaudeCode)
+	typeSet := make(map[core.AgentType]bool, len(types))
+	for _, at := range types {
+		typeSet[at] = true
+	}
+	if !typeSet[core.AgentTypeClaudeCode] {
+		t.Errorf("RegisteredTypes missing claude-code; got %v", types)
+	}
+	if !typeSet[core.AgentTypeCodex] {
+		t.Errorf("RegisteredTypes missing codex; got %v", types)
 	}
 }
 
-// TestHarnessRegistry_ForAgent_Codex_Unregistered verifies that codex is NOT yet
-// registered in T3: ForAgent(codex) errors (claude-only).
-func TestHarnessRegistry_ForAgent_Codex_Unregistered(t *testing.T) {
+// TestHarnessRegistry_ForAgent_Codex_Registered verifies that after T12 codex IS
+// registered: ForAgent(codex) succeeds and returns a *CodexHarness.
+func TestHarnessRegistry_ForAgent_Codex_Registered(t *testing.T) {
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
 		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
 	}
 
 	h, err := reg.ForAgent(core.AgentTypeCodex)
-	if err == nil {
-		t.Error("ForAgent(codex): expected error (codex not registered in T3), got nil")
+	if err != nil {
+		t.Fatalf("ForAgent(codex): expected success after T12 registration, got %v", err)
 	}
-	if h != nil {
-		t.Errorf("ForAgent(codex): expected nil harness, got %v", h)
+	if h == nil {
+		t.Fatal("ForAgent(codex): expected non-nil harness")
+	}
+	if _, ok := h.(*daemon.CodexHarness); !ok {
+		t.Errorf("ForAgent(codex) returned %T; want *daemon.CodexHarness", h)
 	}
 }
 

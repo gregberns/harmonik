@@ -196,7 +196,11 @@ func runReviewLoop(
 			emitImplementerResumed(ctx, deps.bus, runID, state.claudeSessionID, state.iterationCount, priorSummary)
 		}
 
-		// Build the implementer LaunchSpec via buildClaudeLaunchSpec (hk-gql20.15).
+		// Build the implementer LaunchSpec via the routed spec builder (T12, hk-xhawy).
+		// deps.launchSpecBuilder is pre-built by beadRunOne (workloop.go) using the
+		// harness registry + bead labels; it routes to the correct harness (claude or
+		// codex) and populates artifacts.resolvedAgentType. Falls back to
+		// buildClaudeLaunchSpec when nil (legacy test fixtures).
 		//
 		// Iteration 1: phase=implementer-initial, priorClaudeSessID=nil.
 		// Iteration ≥ 2: phase=implementer-resume, priorClaudeSessID=&prior.
@@ -239,7 +243,11 @@ func runReviewLoop(
 			extraContext: extraContext, // hk-boiwe
 			baseBranch:   baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
-		implSpec, implArtifacts, implSpecErr := buildClaudeLaunchSpec(ctx, implRC)
+		implSpecBuilder := deps.launchSpecBuilder
+		if implSpecBuilder == nil {
+			implSpecBuilder = buildClaudeLaunchSpec
+		}
+		implSpec, implArtifacts, implSpecErr := implSpecBuilder(ctx, implRC)
 		if implSpecErr != nil {
 			result := rlErrorResult(fmt.Sprintf("implementer spec error at iteration %d: %v", state.iterationCount, implSpecErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -470,11 +478,11 @@ func runReviewLoop(
 		//
 		// Pattern mirrors reviewer phase and single-mode beadRunOne
 		// (workloop.go lines 1265-1337).
-		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
-			// No adapter for claude-code — non-fatal; skip ready-wait.
-			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) implementer bead %s iter %d: %v (skipping ready-wait)\n",
-				beadID, state.iterationCount, implAdapterErr)
+			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
+			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) implementer bead %s iter %d: %v (skipping ready-wait)\n",
+				artifactAgentType(implArtifacts), beadID, state.iterationCount, implAdapterErr)
 		} else {
 			// Derive a child context that cancels when the implementer watcher
 			// finishes (handler exit), preventing a full-timeout block on crash.
@@ -855,7 +863,11 @@ func runReviewLoop(
 			extraContext:     extraContext, // hk-boiwe
 			baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 		}
-		revSpec, revArtifacts, revSpecErr := buildClaudeLaunchSpec(ctx, revRC)
+		revSpecBuilder := deps.launchSpecBuilder
+		if revSpecBuilder == nil {
+			revSpecBuilder = buildClaudeLaunchSpec
+		}
+		revSpec, revArtifacts, revSpecErr := revSpecBuilder(ctx, revRC)
 		if revSpecErr != nil {
 			result := rlErrorResult(fmt.Sprintf("reviewer spec error at iteration %d: %v", state.iterationCount, revSpecErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -965,11 +977,11 @@ func runReviewLoop(
 		// hk-d8u1y deleted the nil-guard). When ErrAgentReadyTimeout fires: kill,
 		// reap, emit rlErrorResult so the caller (workloop) can reopen the bead via
 		// the same error envelope shape as the implementer phase.
-		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(revArtifacts))
 		if revAdapterErr != nil {
-			// No adapter for claude-code — non-fatal; skip ready-wait.
-			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(claude-code) bead %s iter %d: %v (skipping ready-wait)\n",
-				beadID, state.iterationCount, revAdapterErr)
+			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
+			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) bead %s iter %d: %v (skipping ready-wait)\n",
+				artifactAgentType(revArtifacts), beadID, state.iterationCount, revAdapterErr)
 		} else {
 			// Derive a child context that cancels when the reviewer watcher finishes
 			// (handler exit), preventing a full-timeout block on reviewer crash.

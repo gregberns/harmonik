@@ -136,6 +136,7 @@ func driveDotWorkflow(
 	deps workLoopDeps,
 	runID core.RunID,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
 	wtPath string,
@@ -343,7 +344,7 @@ func driveDotWorkflow(
 			if !isReviewer {
 				iterationCount++
 			}
-			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID,
+			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch)
@@ -483,6 +484,7 @@ func dispatchDotAgenticNode(
 	deps workLoopDeps,
 	runID core.RunID,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
 	wtPath string,
@@ -583,7 +585,22 @@ func dispatchDotAgenticNode(
 		baseBranch:        baseBranch,
 	}
 
+	// Resolve the per-node spec builder. The pre-built deps.launchSpecBuilder
+	// captures tier-1 (bead labels) + tier-4 (global default). When the DOT node
+	// carries a harness= attribute (T5, hk-u67of), rebuild with the node's harness
+	// as nodeDefault (tier-3) so the four-tier precedence is fully honored (T12).
 	specBuilder := deps.launchSpecBuilder
+	nodeHarness := core.AgentType(node.Harness)
+	if nodeHarness.Valid() && deps.harnessRegistry != nil {
+		specBuilder = routedLaunchSpecBuilder(
+			deps.harnessRegistry,
+			beadRecord,
+			core.AgentType(""), // queue default: hk-4x3rg
+			nodeHarness,        // tier-3: DOT node harness= attribute (T5/T12)
+			core.AgentType(""), // global default: built-in fallback = claude-code
+			deps.bus,
+		)
+	}
 	if specBuilder == nil {
 		specBuilder = buildClaudeLaunchSpec
 	}
@@ -696,12 +713,11 @@ func dispatchDotAgenticNode(
 	//
 	// Spec ref: specs/handler-contract.md §4.9 HC-056;
 	//           specs/process-lifecycle.md §4.7 PL-021d.
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
 	if adapterErr != nil {
-		// No adapter for claude-code — non-fatal; skip ready-wait (matches the
-		// other two dispatch paths).
-		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(claude-code) node %q: %v (skipping ready-wait)\n",
-			node.ID, adapterErr)
+		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
+		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(%s) node %q: %v (skipping ready-wait)\n",
+			artifactAgentType(artifacts), node.ID, adapterErr)
 	} else {
 		readyCtx, readyCancel := context.WithCancel(ctx)
 		if watcher != nil {

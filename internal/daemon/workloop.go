@@ -1810,6 +1810,29 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
+	// Pre-build the routed launchSpecBuilder once (T12 hk-xhawy) so ALL workflow
+	// modes (review-loop, DOT cascade, single) share the same harness-resolved
+	// builder. deps.launchSpecBuilder may be pre-injected by test fixtures; leave
+	// it untouched in that case. For production (nil), build from harnessRegistry +
+	// beadRecord (tier-1 labels) now — before the mode switch — so runReviewLoop and
+	// driveDotWorkflow can read deps.launchSpecBuilder instead of calling
+	// buildClaudeLaunchSpec directly.
+	if deps.launchSpecBuilder == nil {
+		if deps.harnessRegistry != nil {
+			deps.launchSpecBuilder = routedLaunchSpecBuilder(
+				deps.harnessRegistry,
+				beadRecord,
+				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
+				core.AgentType(""), // global default: built-in fallback resolves to claude-code
+				deps.bus,
+			)
+		} else {
+			// No registry (legacy test fixtures): fall back to direct claude builder.
+			deps.launchSpecBuilder = buildClaudeLaunchSpec
+		}
+	}
+
 	// Mode-dispatch: route to the mode-specific driver.
 	//
 	// review-loop mode (EM-015d): multi-iteration implementer→reviewer cycle
@@ -1982,7 +2005,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// Drive the cascade: walk start → … → terminal, dispatching each node by
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
-		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description,
+		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
 			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch)
 
 		transitionTID, _ := deps.tidGen.Next()
@@ -2079,30 +2102,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
 		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
-	// Resolve the launch-spec builder. Test fixtures may inject one directly via
-	// deps.launchSpecBuilder; that takes precedence. Otherwise the production path
-	// routes the lookup through the harness route registry (codex-harness C1/T3,
-	// hk-hj9ld): resolveHarness picks the agent_type (default = claude-code) and
-	// HarnessRegistry.ForAgent selects the concrete Harness. CLAUDE-ONLY in T3 —
-	// the routed builder delegates to buildClaudeLaunchSpec for the claude harness,
-	// so the resolved LaunchSpec is byte-identical to the pre-T3 direct call.
+	// Use the pre-built routed specBuilder (set above, before the mode switch).
+	// deps.launchSpecBuilder is always non-nil here: the pre-build block ensures it
+	// (T12, hk-xhawy). specBuilder is a local alias for clarity.
 	specBuilder := deps.launchSpecBuilder
-	if specBuilder == nil {
-		if deps.harnessRegistry != nil {
-			specBuilder = routedLaunchSpecBuilder(
-				deps.harnessRegistry,
-				beadRecord,
-				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
-				core.AgentType(""), // node default: DOT node harness attr not yet landed (hk-u67of)
-				core.AgentType(""), // global default: built-in fallback resolves to claude-code
-				deps.bus,
-			)
-		} else {
-			// No injected builder and no registry (legacy test fixtures): fall
-			// straight back to the direct claude builder.
-			specBuilder = buildClaudeLaunchSpec
-		}
-	}
 	spec, artifacts, specErr := specBuilder(ctx, rc)
 	if specErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: buildClaudeLaunchSpec bead %s run %s: %v (reopening)\n",
@@ -2290,11 +2293,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// context.Canceled — in that case we skip the reopen and fall through to
 	// the normal waitWithSocketGrace path which handles the exit correctly per
 	// CHB-020 branch 3.
-	adapter, adapterErr := deps.adapterRegistry.ForAgent(core.AgentTypeClaudeCode)
+	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
 	if adapterErr != nil {
-		// No adapter for claude-code — non-fatal; skip ready-wait.
-		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(claude-code) bead %s: %v (skipping ready-wait)\n",
-			beadID, adapterErr)
+		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
+		fmt.Fprintf(os.Stderr, "daemon: workloop: ForAgent(%s) bead %s: %v (skipping ready-wait)\n",
+			artifactAgentType(artifacts), beadID, adapterErr)
 	} else {
 		// Derive a child context that cancels when the watcher finishes (handler
 		// exit). This prevents waitAgentReady from blocking for the full timeout
@@ -4482,6 +4485,20 @@ func emitTmuxNewWindowTimeout(ctx context.Context, bus handlercontract.EventEmit
 // emitAgentReadyTimeout emits an agent_ready_timeout event (hk-5cox8) when
 // the HC-056 timeout fires — no agent_ready relay message arrived within the
 // configured deadline. The event carries run_id, claude_session_id, and
+// artifactAgentType returns the resolved agent type from claudeRunArtifacts,
+// falling back to core.AgentTypeClaudeCode when the field is empty (e.g. from a
+// legacy test fixture that builds artifacts directly without going through
+// routedLaunchSpecBuilder).
+//
+// Used to look up the correct Adapter via adapterRegistry.ForAgent instead of
+// hardcoding core.AgentTypeClaudeCode (T12, hk-xhawy).
+func artifactAgentType(a claudeRunArtifacts) core.AgentType {
+	if a.resolvedAgentType.Valid() {
+		return a.resolvedAgentType
+	}
+	return core.AgentTypeClaudeCode
+}
+
 // timeout_ms so post-hoc analysis can correlate which runs never became ready.
 //
 // effectiveTimeout: zero is replaced by defaultAgentReadyTimeout (30s) to

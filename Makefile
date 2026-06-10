@@ -124,13 +124,42 @@ secret-scan:  ## Scan staged diff for API keys / credentials / .env files
 	scripts/secret-scan.sh
 
 # ---------------------------------------------------------------------------
+# Format write + fail-closed format check
+#
+# fmt: write gofumpt + gci formatting in-place (used by pre-commit hook and
+#      manually to fix a dirty tree).
+# fmt-check: fail with a non-zero exit code if any file is unformatted (used
+#            by check-fast, check, and CI). gofumpt -l and gci diff both exit 0
+#            on format drift, so we wrap them with explicit output checks here.
+# ---------------------------------------------------------------------------
+.PHONY: fmt
+fmt:  ## Auto-format all Go files with gofumpt + gci (writes in-place)
+	$(TOOLS_DIR)/gofumpt -w .
+	$(TOOLS_DIR)/gci write -s standard -s default -s 'prefix($(MODULE))' .
+
+.PHONY: fmt-check
+fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 'make fmt' to fix)
+	@UNFORMATTED=$$($(TOOLS_DIR)/gofumpt -l .); \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "gofumpt: unformatted files (run 'make fmt' to fix):"; \
+		echo "$$UNFORMATTED"; \
+		$(TOOLS_DIR)/gofumpt -d .; \
+		exit 1; \
+	fi
+	@GCI_DIFF=$$($(TOOLS_DIR)/gci diff -s standard -s default -s 'prefix($(MODULE))' .); \
+	if [ -n "$$GCI_DIFF" ]; then \
+		echo "gci: import order drift detected (run 'make fmt' to fix):"; \
+		echo "$$GCI_DIFF"; \
+		exit 1; \
+	fi
+
+# ---------------------------------------------------------------------------
 # Tier 1 — check-fast (<15s target)
 # Author-iteration speed.  Pre-commit hook runs this on staged files.
 # ---------------------------------------------------------------------------
 .PHONY: check-fast
-check-fast:  ## Tier 1: gofumpt+gci diff, go vet, go build, golangci-lint --new-from-rev, go test -short
-	$(TOOLS_DIR)/gofumpt -l -d .
-	$(TOOLS_DIR)/gci diff -s standard -s default -s 'prefix($(MODULE))' .
+check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint --new-from-rev, go test -short
+	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
@@ -146,9 +175,8 @@ check-fast:  ## Tier 1: gofumpt+gci diff, go vet, go build, golangci-lint --new-
 # Default pre-push + work-in-progress verification.
 # ---------------------------------------------------------------------------
 .PHONY: check
-check:  ## Tier 2: full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck
-	$(TOOLS_DIR)/gofumpt -l -d .
-	$(TOOLS_DIR)/gci diff -s standard -s default -s 'prefix($(MODULE))' .
+check:  ## Tier 2: fmt-check (fail-closed), full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck
+	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run

@@ -16,9 +16,19 @@ pre-commit:
       run: scripts/secret-scan.sh
       # Blocks commits that add API keys, credential patterns, or .env files.
       # Runs first so a secret is caught before any build work starts.
+    fmt:
+      run: make fmt
+      stage_fixed: true
+      # Auto-formats all Go files with gofumpt + gci before the check-fast gate.
+      # stage_fixed: true re-stages any files that were modified by the formatter
+      # so the commit includes the formatted result. This prevents gofumpt/gci
+      # drift from accumulating: formatting is applied at commit time, not just
+      # detected. Runs before check-fast so the fmt-check inside check-fast
+      # always sees a clean tree.
     check-fast:
       run: make check-fast
-      # Runs gofumpt, gci, go vet, go build, delta-lint, go test -short.
+      # Runs fmt-check (fail-closed), go vet, go build, delta-lint, go test -short.
+      # fmt-check now exits non-zero on format drift (fail-closed, not fail-open).
       # Scoped to staged files where possible; must stay under 15s.
     agent-review:
       run: make agent-review

@@ -117,7 +117,17 @@ func queueDispatchFixtureDeps(t *testing.T, projectDir string, bus *stubEventCol
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:    qs,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty registry: the handler is a /bin/sh exit-0 fixture, not real
+		// Claude Code, so it never delivers agent_ready via the hook relay.
+		// NewEmptySealedAdapterRegistryForTest bypasses the waitAgentReady gate
+		// so the run proceeds on process exit code alone (hk-ngw3d; hk-6hzci).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		// Pre-commit factory advances worktree HEAD past the parent so the
+		// no-commit guard (hk-mmh8f) does not reopen the bead. Without it the
+		// /bin/sh exit-0 handler produces no commit and the bead is never
+		// closed (hk-6hzci Sub-group A: the empty registry clears the
+		// waitAgentReady hang, the factory clears the no-commit reopen).
+		WorktreeFactory: workloopFixturePreCommitWorktreeFactory,
 	}
 }
 
@@ -304,12 +314,12 @@ func TestQueueDispatch_EM015f_GroupAdvanceGate(t *testing.T) {
 
 	bus := &stubEventCollector{}
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:    &stubBeadLedger{},
-		Bus:          bus,
-		ProjectDir:   projectDir,
-		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        &stubBeadLedger{},
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		QueueStore:   qs,
+		QueueStore:       qs,
 	})
 
 	// Advance item 0 only (beadA success) — group should stay active.
@@ -370,12 +380,12 @@ func TestQueueDispatch_FailurePath_QueuePaused(t *testing.T) {
 
 	bus := &stubEventCollector{}
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:    &stubBeadLedger{},
-		Bus:          bus,
-		ProjectDir:   projectDir,
-		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        &stubBeadLedger{},
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		QueueStore:   qs,
+		QueueStore:       qs,
 	})
 
 	// Simulate a failed run outcome.
@@ -449,7 +459,12 @@ func TestQueueDispatch_BackwardCompat_BrReadyFallback(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		// Empty registry: /bin/sh exit-0 handler never delivers agent_ready, so
+		// bypass the waitAgentReady gate (hk-ngw3d; hk-6hzci).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		// Pre-commit factory advances worktree HEAD past the parent so the
+		// no-commit guard (hk-mmh8f) does not reopen the bead (hk-6hzci).
+		WorktreeFactory: workloopFixturePreCommitWorktreeFactory,
 		// QueueStore: nil — intentionally absent
 	})
 
@@ -528,12 +543,12 @@ func TestQueueDispatch_QueuePausedState_NoDispatch(t *testing.T) {
 	bus := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:    ledger,
-		Bus:          bus,
-		ProjectDir:   projectDir,
-		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		QueueStore:   qs,
+		QueueStore:       qs,
 	})
 
 	// Run the loop for a short window and verify no dispatch occurred.

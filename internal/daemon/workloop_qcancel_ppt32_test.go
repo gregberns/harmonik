@@ -138,8 +138,10 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		QueueStore:    qs,
+		// Empty registry: /bin/sh exit-0 handler never delivers agent_ready, so
+		// bypass the waitAgentReady gate (hk-ngw3d; hk-6hzci).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		QueueStore:       qs,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
 
@@ -242,14 +244,14 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	bus := &stubEventCollector{}
 
 	p := daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		Bus:           bus,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		BrAdapter:        ledger,
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		QueueStore:    qs,
+		QueueStore:       qs,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)
 
@@ -288,9 +290,10 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 //
 // The test simulates a daemon shutdown with a named queue "cp" still active
 // (no items dispatched). After the workloop exits it asserts:
-//   (a) .harmonik/queues/cp.json is absent (archived by drainCancelledQueue).
-//   (b) QueueStore.QueueByName("cp") is nil after exit.
-//   (c) queue.Load for "cp" returns nil so QM-027 is not tripped on resubmit.
+//
+//	(a) .harmonik/queues/cp.json is absent (archived by drainCancelledQueue).
+//	(b) QueueStore.QueueByName("cp") is nil after exit.
+//	(c) queue.Load for "cp" returns nil so QM-027 is not tripped on resubmit.
 //
 // Bead ref: hk-u6m4l.
 func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
@@ -341,13 +344,15 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 	bus := &stubEventCollector{}
 
 	p := daemon.WorkLoopDepsParams{
-		BrAdapter:        ledger,
-		Bus:              bus,
-		ProjectDir:       projectDir,
-		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		BrAdapter:     ledger,
+		Bus:           bus,
+		ProjectDir:    projectDir,
+		HandlerBinary: "/bin/sh",
+		HandlerArgs:   []string{"-c", "exit 0"},
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		// Empty registry: /bin/sh exit-0 handler never delivers agent_ready, so
+		// bypass the waitAgentReady gate (hk-ngw3d; hk-6hzci).
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		QueueStore:       qs,
 	}
 	deps := daemon.ExportedWorkLoopDeps(p)

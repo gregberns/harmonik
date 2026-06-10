@@ -12,10 +12,12 @@ DATE="$(date '+%Y%m%d')"
 PREFIX="daemon-${DATE}"
 
 # Highest existing sequence for today, default 00.
-LAST="$(git -C "$REPO" tag --list "${PREFIX}.*" \
-        | sed -n "s/^${PREFIX}\.//p" | sort -n | tail -1)"
+# Separator is '-' (not '.') so the tag doubles as a valid br label
+# (found-in:<tag>); br rejects periods in labels.
+LAST="$(git -C "$REPO" tag --list "${PREFIX}-*" \
+        | sed -n "s/^${PREFIX}-//p" | sort -n | tail -1)"
 NEXT="$(printf '%02d' "$((10#${LAST:-0} + 1))")"
-TAG="${PREFIX}.${NEXT}"
+TAG="${PREFIX}-${NEXT}"
 
 SHORT="$(git -C "$REPO" rev-parse --short HEAD)"
 NOTE="${1:-}"

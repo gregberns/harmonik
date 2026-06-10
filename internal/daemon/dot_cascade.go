@@ -865,14 +865,27 @@ func dispatchDotAgenticNode(
 		if isReviewer {
 			go pasteInjectQuitOnReviewFile(ctx, qs, sess, wtPath, briefDelivered)
 		} else {
-			// hk-37giq: give the watchdog its OWN independent subscription
-			// (tap.Subscribe()) rather than sharing tapCh with waitAgentReady.
-			// Sharing one channel let waitAgentReady's drain goroutine steal every
-			// heartbeat under concurrent dispatch, wedging this watchdog in the
-			// launch-suppression branch forever. The fan-out tap delivers each
-			// consumer its own copy of every event.
-			watchdogCh := tap.Subscribe()
-			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
+			// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
+			// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
+			// commitHardCeiling detect completion without a /quit injection. Only launch the
+			// watchdog for PasteInjectQuit harnesses (claude — the default when the registry is
+			// absent or the agent type is unregistered).
+			completionMode := handlercontract.CompletionEventStreamThenQuit
+			if deps.harnessRegistry != nil {
+				if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+					completionMode = h.Completion()
+				}
+			}
+			if completionMode != handlercontract.CompletionProcessExit {
+				// hk-37giq: give the watchdog its OWN independent subscription
+				// (tap.Subscribe()) rather than sharing tapCh with waitAgentReady.
+				// Sharing one channel let waitAgentReady's drain goroutine steal every
+				// heartbeat under concurrent dispatch, wedging this watchdog in the
+				// launch-suppression branch forever. The fan-out tap delivers each
+				// consumer its own copy of every event.
+				watchdogCh := tap.Subscribe()
+				go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
+			}
 		}
 	}
 

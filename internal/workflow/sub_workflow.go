@@ -33,12 +33,19 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
+
+// subWorkflowEmitter is the minimal event-emission interface required by
+// DispatchSubWorkflow. Both handlercontract.EventEmitter and eventbus.EventBus
+// satisfy this interface, so callers may pass either.
+type subWorkflowEmitter interface {
+	EmitWithRunID(ctx context.Context, runID core.RunID, eventType core.EventType, payload []byte) error
+}
 
 // SubWorkflowNodeRunner is the function type the daemon provides to execute
 // individual nodes within a sub-workflow expansion.
@@ -193,7 +200,7 @@ func DispatchSubWorkflow(
 	subGraph *dot.Graph,
 	cycles *core.CycleCounter,
 	nodeRunner SubWorkflowNodeRunner,
-	bus eventbus.EventBus,
+	emitter subWorkflowEmitter,
 ) (core.Outcome, error) {
 	// Step 1 — emit sub_workflow_entered (EM-036).
 	entered := core.SubWorkflowEnteredPayload{
@@ -202,7 +209,7 @@ func DispatchSubWorkflow(
 		SubWorkflowName:    expansion.Pin.SubWorkflowRef,
 		SubWorkflowVersion: expansion.Pin.SubWorkflowVersion,
 	}
-	if err := emitJSON(ctx, bus, run.RunID, core.EventTypeSubWorkflowEntered, entered); err != nil {
+	if err := emitSubWfJSON(ctx, emitter, run.RunID, core.EventTypeSubWorkflowEntered, entered); err != nil {
 		return core.Outcome{}, fmt.Errorf("DispatchSubWorkflow: emit sub_workflow_entered: %w", err)
 	}
 
@@ -245,7 +252,7 @@ func DispatchSubWorkflow(
 		SubWorkflowVersion:    expansion.Pin.SubWorkflowVersion,
 		TerminalOutcomeStatus: terminalOutcome.Status,
 	}
-	if err := emitJSON(ctx, bus, run.RunID, core.EventTypeSubWorkflowExited, exited); err != nil {
+	if err := emitSubWfJSON(ctx, emitter, run.RunID, core.EventTypeSubWorkflowExited, exited); err != nil {
 		return core.Outcome{}, fmt.Errorf("DispatchSubWorkflow: emit sub_workflow_exited: %w", err)
 	}
 
@@ -308,4 +315,14 @@ func subWorkflowLookupNodeType(expansion *core.SubWorkflowExpansion, nodeID core
 		}
 	}
 	return ""
+}
+
+// emitSubWfJSON marshals payload to JSON and calls emitter.EmitWithRunID.
+// Used internally by DispatchSubWorkflow for sub_workflow_entered / sub_workflow_exited.
+func emitSubWfJSON(ctx context.Context, emitter subWorkflowEmitter, runID core.RunID, eventType core.EventType, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("emitSubWfJSON: marshal: %w", err)
+	}
+	return emitter.EmitWithRunID(ctx, runID, eventType, b)
 }

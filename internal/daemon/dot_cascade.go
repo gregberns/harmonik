@@ -28,8 +28,11 @@ package daemon
 //     cognition-tagged gates as a fresh subprocess analogous to the reviewer
 //     path, and reads gate-verdict.json. When cpRegistry is nil (no policy YAML
 //     loaded) the node returns a structural eval-failure Outcome.
-//   - sub-workflow: OUT OF SCOPE (separate bead). Same deterministic-failure
-//     treatment.
+//   - sub-workflow: expanded in place within the parent run (SW-001..SW-010).
+//     dotSubWorkflowRunner resolves the target graph (three-tier), checks
+//     acyclicity (EM-034b), builds the namespaced SubWorkflowExpansion
+//     (EM-034a), emits entered/exited events (EM-036), and returns the
+//     terminal Outcome verbatim (EM-036a). Bead: hk-oe6.
 //
 // # Terminal handling
 //
@@ -521,13 +524,38 @@ func driveDotWorkflow(
 			outcome = gateOutcome
 
 		case core.NodeTypeSubWorkflow:
-			// OUT OF SCOPE (separate bead): deterministic needs-attention failure.
-			return dotWorkflowResult{
-				success:        false,
-				needsAttention: true,
-				summary: fmt.Sprintf("dot: sub-workflow node %q dispatch is out of "+
-					"scope (separate bead)", currentNodeID),
+			// Sub-workflow dispatch: resolve graph, check acyclicity, expand in
+			// place, and run the nested cascade within the parent run (SW-001..SW-010).
+			// Per SW-007, we build a dotSubWorkflowRunner and call Run.
+			runner := newDotSubWorkflowRunner(
+				deps, runID, beadID, beadRecord, beadTitle, beadDescription,
+				wtPath, parentSHA, daemonSocket,
+				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
+				extraContext, baseBranch, run, cycles, graph,
+			)
+			swSpec := handler.SubWorkflowRunSpec{
+				Run:                run,
+				ParentNodeID:       core.NodeID(currentNodeID),
+				SubWorkflowRef:     core.SubWorkflowRef(node.SubWorkflowRef),
+				SubWorkflowVersion: core.WorkflowVersion(node.WorkflowVersion),
 			}
+			if !swSpec.Valid() {
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: true,
+					summary: fmt.Sprintf("dot: sub-workflow node %q: invalid spec (missing sub_workflow_ref or workflow_version)", currentNodeID),
+				}
+			}
+			swOutcome, swErr := runner.Run(ctx, swSpec)
+			if swErr != nil {
+				// Infrastructure failure → run_failed (not needs-attention).
+				return dotWorkflowResult{
+					success:        false,
+					needsAttention: false,
+					summary:        fmt.Sprintf("dot: sub-workflow node %q: infrastructure error: %v", currentNodeID, swErr),
+				}
+			}
+			outcome = swOutcome
 
 		default:
 			return dotWorkflowResult{

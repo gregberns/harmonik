@@ -639,6 +639,10 @@ EXAMPLES
 	// work loop (existing nil-path guard at daemon.go:251 is preserved).
 	brPath, _ := exec.LookPath("br")
 
+	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
+	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
+	kerfPath, _ := exec.LookPath("kerf")
+
 	// hk-keul6: default JSONL log path to <ProjectDir>/.harmonik/events/events.jsonl
 	// per event-model.md §6.2 EV-020.
 	jsonlLogPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
@@ -748,6 +752,7 @@ EXAMPLES
 	cfg := daemon.Config{
 		ProjectDir:               projectDir,
 		BrPath:                   brPath,
+		KerfPath:                 kerfPath,                            // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrentFlag,
 		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain

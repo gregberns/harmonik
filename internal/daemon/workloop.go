@@ -131,6 +131,14 @@ type workLoopDeps struct {
 	// projectDir is the absolute path of the harmonik project root.
 	projectDir string
 
+	// kerfPath is the absolute path to the `kerf` CLI binary, or empty when
+	// kerf is not installed. When empty, eagerRefillEval returns immediately
+	// without calling kerf next (EM-062 disabled for this daemon instance).
+	//
+	// Spec ref: specs/execution-model.md §4.13 EM-062, EM-063.
+	// Bead ref: hk-9321v.
+	kerfPath string
+
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
 
@@ -638,6 +646,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		queueStore:          nil,                            // populated by daemon.Start after wiring QueueStore (hk-45ude)
 		queueLedger:         newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:  adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
+		kerfPath:            cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		noAutoPull:          cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
 		mergeMu:             &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
 		emittedEpics:        make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
@@ -982,6 +991,15 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 			continue
 		}
+
+		// EM-062: eager-refill fires on every poll tick (as well as after every
+		// run_terminal event in evaluateGroupAdvanceWithOutcome). This ensures
+		// that a deficit opened by a run completion is filled promptly even when
+		// the workloop was already idle between terminal events.
+		//
+		// Spec ref: specs/execution-model.md §4.13 EM-062.
+		// Bead ref: hk-9321v.
+		eagerRefillEval(ctx, deps)
 
 		// Step 3: dispatch source — queue-pull or br-ready fallback.
 		//
@@ -3663,6 +3681,14 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		}
 		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
 	}
+
+	// EM-062: eager-refill fires AFTER all terminal-event processing (merge,
+	// reviewer-launch, CloseBead, group-advance evaluation) completes for this
+	// run. Finishing in-flight work takes priority over pulling new work.
+	//
+	// Spec ref: specs/execution-model.md §4.13 EM-062.
+	// Bead ref: hk-9321v.
+	eagerRefillEval(ctx, deps)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

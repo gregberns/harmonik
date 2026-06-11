@@ -847,3 +847,24 @@ const (
 	// Refs: hk-tnmjy.
 	EventTypeReviewGateAnomaly EventType = "review_gate_anomaly"
 )
+
+// ---------------------------------------------------------------------------
+// §4.13 Eager-refill provenance event types (hk-9321v)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeStaleOpenBeadDetected is the stale_open_bead_detected event type.
+	// Emitted by the daemon's eager-refill pre-screen (EM-063 Phase 2) when
+	// git log origin/main finds a commit carrying a "Refs: <bead_id>" trailer
+	// for a candidate bead that is still open in the Beads ledger. This indicates
+	// the bead was landed without its ledger entry being closed (stale-open bead).
+	//
+	// The pre-screen skips the bead so it is not re-dispatched; this event is the
+	// informative notification to the operator.
+	//
+	// Payload fields: bead_id, commit_sha (first hit on origin/main).
+	// Durability class: O (informative / observability).
+	// Spec ref: specs/execution-model.md §4.13 EM-063.
+	// Bead ref: hk-9321v.
+	EventTypeStaleOpenBeadDetected EventType = "stale_open_bead_detected"
+)

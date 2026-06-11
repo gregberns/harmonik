@@ -89,6 +89,20 @@ type Config struct {
 	// Bead ref: hk-ecrxy.
 	BrPath string
 
+	// KerfPath is the absolute path to the `kerf` CLI binary.
+	//
+	// When non-empty the eager-refill path (EM-062/EM-063) calls
+	// `kerf next --format=json --only=bead` to obtain refill candidates.
+	// When empty or when kerf is not installed, eager-refill is disabled and
+	// the daemon relies solely on items already in the queue.
+	//
+	// Production callers resolve it via exec.LookPath("kerf") at startup.
+	// Tests that do not exercise eager-refill leave this field empty.
+	//
+	// Spec ref: specs/execution-model.md §4.13 EM-062, EM-063.
+	// Bead ref: hk-9321v.
+	KerfPath string
+
 	// HandlerBinary is the executable to spawn for each bead dispatch.
 	//
 	// When empty the work loop defaults to "claude". The exploratory-testing wave

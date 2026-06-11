@@ -153,24 +153,33 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > lane map to verify against live state in the boot sequence (§0.5 Step 1–3) — NOT
 > as gospel. Re-derive the live lanes from `crew list` + `kerf next` every boot.
 
-### Current lanes (status snapshot: 2026-06-10 — fleet CONSOLIDATED)
+### Current lanes (status snapshot: 2026-06-11 ~10:25 PDT — fleet FULLY PARKED)
 
-> Consolidated to **2 live crews** on the operator's "run fewer" directive
-> (2026-06-10): the queue-bug, daemon/infra, and validation-net lanes completed, so
-> **duncan** and **stilgar** were stood down (clean `crew stop`; mission files persist
-> for respawn). Both live crews are PARKED on an operator action (gh `workflow` scope
-> re-auth). **Do NOT auto-re-establish the stood-down crews** — re-derive live lanes
-> from `crew list` + `kerf next` every boot.
+> **No live crews.** The 2-crew (chani/liet) state below was 2026-06-10; the fleet
+> was further consolidated to a single **gurney** churn crew, which was STOOD DOWN
+> overnight (2026-06-11 ~02:18 PDT) once its lane completed — clean `crew stop`,
+> mission files persist for respawn. Daemon is UP + idle (-c4, supervisor running);
+> the operator is AWAKE and deliberately running the fleet PARKED ("run fewer").
+> **Do NOT auto-re-establish the fleet** — re-spawning from zero against the standing
+> wind-down is the operator's call; re-derive live lanes from `crew list` +
+> `kerf next` every boot. In progress: captain session-keeper enablement (gauge LIVE
+> on a fresh `captain` session, doctor green except the intentionally-off `.managed`;
+> full auto-cycle pending operator go-ahead).
 
-| crew | lane (initiative) | epic | live state (2026-06-10) |
+| crew | lane (initiative) | epic | live state (2026-06-11) |
 |---|---|---|---|
-| **chani** | release-pipeline | `hk-brc3z` | LIVE — blocked: release.yml/validate push-reject on missing gh `workflow` scope |
-| **liet** | test / CI restoration | `hk-kjkbw` | LIVE — lane done except `hk-jzepv` (held on same gh re-auth); `tijaj` banked |
-| ~~duncan~~ | ~~codex-harness `hk-w4tmz`~~ | — | STOOD DOWN — codex-harness 8/8 + queue-bug 3/3 complete |
-| ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra beads + session-keeper + logmine complete |
+| _(none live)_ | — | — | fleet wound down; daemon idle awaiting operator re-spawn/ranking |
+| ~~gurney~~ | ~~churn / loose-beads~~ | ~~`hk-9gkwa`~~ | STOOD DOWN overnight — lane complete (~10 wins) |
+| ~~chani~~ | ~~release-pipeline `hk-brc3z`~~ | — | STOOD DOWN (2026-06-10 consolidation) |
+| ~~liet~~ | ~~test/CI `hk-kjkbw`~~ | — | STOOD DOWN (2026-06-10 consolidation) |
+| ~~duncan~~ | ~~codex-harness `hk-w4tmz`~~ | — | STOOD DOWN — codex 8/8 + queue-bug 3/3 complete |
+| ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra + session-keeper + logmine complete |
 
-**Operator blocker:** `gh auth refresh -s workflow` → then daemon redeploy (picks up
-the new credential + ~20 banked daemon fixes on main-but-not-live) unblocks both crews.
+**Pending operator (do NOT auto-resolve):** (1) re-spawn the fleet? on which lane(s)?;
+(2) next-initiative ranking — `standard-bead-dot` is the top KNOWN candidate; (3) arm
+keeper Phase-2 (`.managed` + watcher) on the fresh captain after warn dogfood. The gh
+`workflow`-scope beads remain externally-gated (operator is remote-only — do NOT
+recommend `gh auth refresh`).
 
 ### Prioritized NEXT work (what to feed the fleet next)
 

@@ -644,6 +644,16 @@ const (
 	// <mode> value is not in {single, review-loop, dot}. In either case, tier-1
 	// is treated as absent and the precedence walk continues.
 	EventTypeBeadLabelConflict EventType = "bead_label_conflict"
+
+	// EventTypeBeadClaimSkipped is the bead_claim_skipped event type
+	// (beads-integration.md §4.5a BI-013c).
+	// Durability class: O (ordinary — observational evidence; the queue item
+	// is transitioned to deferred-for-ledger-dep and will be retried).
+	//
+	// Emitted when the pre-claim status re-read (BI-013c) observes a non-open
+	// bead status between the dispatcher's selection of a queue item and the
+	// claim write to Beads. Carries bead_id, observed_status, and reason.
+	EventTypeBeadClaimSkipped EventType = "bead_claim_skipped"
 )
 
 // ---------------------------------------------------------------------------

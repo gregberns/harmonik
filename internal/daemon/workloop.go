@@ -1203,16 +1203,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					continue
 				}
 
-				// Pre-claim status guard for queue-path: a bead's ledger status can
-				// change after it is enqueued.  Three cases are handled here before
-				// Phase 3 stamps the item as dispatched:
+				// Pre-claim status guard for queue-path (BI-013c): between the
+				// dispatcher's selection of a queue item and the claim write to Beads,
+				// re-read the bead's status via br show and confirm status = open.
 				//
-				//   deferred (hk-6ri5k): operator deferred the bead; hold without
-				//     Attempts increment so it is retried once the bead is re-opened.
-				//
-				//   closed / draft (hk-febd6): terminal or unworkable statuses;
-				//     ClaimBead would fail and retrying would loop forever.  Fail
-				//     the queue item immediately so the group can advance.
+				// If the re-read returns a non-open status, skip the claim, emit
+				// bead_claim_skipped, and return the item to its group with status
+				// deferred-for-ledger-dep per queue-model.md §6 QM-022.
 				//
 				//   blocked (hk-n91y0): deps-blocked beads fall through to Phase 3
 				//     and ClaimBead, where the dedicated guard handles them.
@@ -1228,16 +1225,50 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 						continue
 					}
-					switch preClaimRecord.Status {
-					case core.CoarseStatusDeferred:
-						fmt.Fprintf(os.Stderr, "daemon: workloop: bead_queue_path_held %s status=deferred — holding without Attempts increment (hk-6ri5k)\n", snapItemBeadID)
+					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
+						// BI-013c: non-open status observed — skip claim, emit
+						// bead_claim_skipped, set item to deferred-for-ledger-dep.
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: bead_claim_skipped %s observed_status=%s reason=status_changed_between_select_and_claim (BI-013c)\n",
+							snapItemBeadID, preClaimRecord.Status)
+						skipPayload := core.BeadClaimSkippedPayload{
+							BeadID:         string(snapItemBeadID),
+							ObservedStatus: string(preClaimRecord.Status),
+							Reason:         "status_changed_between_select_and_claim",
+							DetectedAt:     time.Now().UTC().Format(time.RFC3339),
+						}
+						if raw, mErr := json.Marshal(skipPayload); mErr == nil {
+							_ = deps.bus.Emit(ctx, core.EventTypeBeadClaimSkipped, raw)
+						}
+						// Set the queue item to deferred-for-ledger-dep under the write lock.
+						if deps.queueStore != nil {
+							lq := deps.queueStore.LockForMutation()
+							liveQ := lq.LockedQueueByName(snapQueueName)
+							if liveQ != nil {
+								for gi := range liveQ.Groups {
+									if liveQ.Groups[gi].Status != queue.GroupStatusActive {
+										continue
+									}
+									if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
+										continue
+									}
+									if snapItemIdx < len(liveQ.Groups[gi].Items) &&
+										liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
+										liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
+										liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDeferredForLedgerDep
+									}
+								}
+								lq.LockedSetQueueByName(snapQueueName, liveQ)
+								if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+									fmt.Fprintf(os.Stderr, "daemon: workloop: Persist bead_claim_skipped deferred-for-ledger-dep queueID=%s: %v\n",
+										liveQ.QueueID, persistErr)
+								}
+							}
+							lq.Done()
+						}
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
-						continue
-					case core.CoarseStatusClosed, core.CoarseStatusDraft:
-						fmt.Fprintf(os.Stderr, "daemon: workloop: bead_queue_path_skip %s status=%s — failing queue item (hk-febd6)\n", snapItemBeadID, preClaimRecord.Status)
-						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						continue
 					}
 				}

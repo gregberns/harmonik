@@ -223,6 +223,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "metric", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "redaction_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "bead_label_conflict", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "bead_claim_skipped", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.10 Queue lifecycle ───────────────────────────────────────────────
 	{TypeName: "queue_submitted", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

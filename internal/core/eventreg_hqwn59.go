@@ -331,6 +331,10 @@ func registerBusEvents() {
 	mustRegister("dead_letter_enqueued", func() EventPayload { return &DeadLetterEnqueuedPayload{} })
 	mustRegister("bus_overflow", func() EventPayload { return &BusOverflowPayload{} })
 	mustRegister("redaction_failed", func() EventPayload { return &RedactionFailedPayload{} })
+	// bead_claim_skipped (BI-013c): emitted by the pre-claim status re-read guard
+	// when the bead's status is not open between dispatcher selection and claim write.
+	// Durability class: O.
+	mustRegister("bead_claim_skipped", func() EventPayload { return &BeadClaimSkippedPayload{} })
 }
 
 // registerReviewLoopEvents registers all §8.1a review-loop cycle and §8.8.6

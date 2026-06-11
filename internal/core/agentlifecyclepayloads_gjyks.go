@@ -543,3 +543,68 @@ func (p MergeBuildFailedPayload) Valid() bool {
 	}
 	return true
 }
+
+// ---------------------------------------------------------------------------
+// beads-integration.md §4.5a BI-013c — bead_claim_skipped
+// ---------------------------------------------------------------------------
+
+// BeadClaimSkippedPayload is the typed event payload for the bead_claim_skipped
+// event (beads-integration.md §4.5a BI-013c).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — the queue item is transitioned to
+// deferred-for-ledger-dep; the skip is observational evidence, not a
+// routing-gating decision).
+//
+// Emitted by the daemon's pre-claim status re-read guard (BI-013c) when the
+// bead's status is not open between the dispatcher's selection of a queue item
+// and the claim write to Beads. The queue item is returned to the group with
+// status deferred-for-ledger-dep per queue-model.md §6 QM-022.
+//
+// # Payload fields (beads-integration.md §4.5a BI-013c)
+//
+//   - bead_id         — the bead whose status was observed as non-open
+//   - observed_status — the CoarseStatus value returned by br show at re-read time
+//   - reason          — always "status_changed_between_select_and_claim"
+//   - detected_at     — RFC 3339 wall-clock timestamp at detection
+type BeadClaimSkippedPayload struct {
+	// BeadID is the opaque bead identifier per beads-integration.md §4.3 BI-008.
+	// Required (non-empty).
+	BeadID string `json:"bead_id"`
+
+	// ObservedStatus is the CoarseStatus value returned by br show at re-read
+	// time. Required (non-empty).
+	ObservedStatus string `json:"observed_status"`
+
+	// Reason is the reason the claim was skipped. Required (non-empty).
+	// The value is always "status_changed_between_select_and_claim" per BI-013c.
+	Reason string `json:"reason"`
+
+	// DetectedAt is the RFC 3339 wall-clock timestamp at detection.
+	// Required (non-empty).
+	DetectedAt string `json:"detected_at"`
+}
+
+// Valid reports whether p is a well-formed BeadClaimSkippedPayload.
+//
+// Rules per beads-integration.md §4.5a BI-013c:
+//   - BeadID must be non-empty.
+//   - ObservedStatus must be non-empty.
+//   - Reason must be non-empty.
+//   - DetectedAt must be non-empty.
+func (p BeadClaimSkippedPayload) Valid() bool {
+	if p.BeadID == "" {
+		return false
+	}
+	if p.ObservedStatus == "" {
+		return false
+	}
+	if p.Reason == "" {
+		return false
+	}
+	if p.DetectedAt == "" {
+		return false
+	}
+	return true
+}

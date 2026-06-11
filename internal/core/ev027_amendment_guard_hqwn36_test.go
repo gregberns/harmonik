@@ -69,7 +69,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 113 // +1 for epic_completed (§8.13, hk-w6y70 EV-027 amendment)
+	const wantCount = 114 // +1 for bead_claim_skipped (BI-013c, hk-79x3v EV-027 amendment)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

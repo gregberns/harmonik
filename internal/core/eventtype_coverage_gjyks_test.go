@@ -151,6 +151,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeDeadLetterEnqueued, func() EventPayload { return &DeadLetterEnqueuedPayload{} }},
 	{EventTypeBusOverflow, func() EventPayload { return &BusOverflowPayload{} }},
 	{EventTypeRedactionFailed, func() EventPayload { return &RedactionFailedPayload{} }},
+	{EventTypeBeadClaimSkipped, func() EventPayload { return &BeadClaimSkippedPayload{} }},
 
 	// §8.11 Handler-pause lifecycle
 	{EventTypeHandlerPaused, func() EventPayload { return &HandlerPausedPayload{} }},

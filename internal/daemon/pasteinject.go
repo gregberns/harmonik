@@ -1317,7 +1317,11 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		" CRITICAL: when the bead body's '## Implementation Notes' section names exact field/struct names" +
 		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
 		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
-		" a field-name violation, re-check that EXACT field name in the new diff before approving.\n"
+		" a field-name violation, re-check that EXACT field name in the new diff before approving." +
+		// hk-805f7: explicit read-only constraint — reviewer MUST NOT run git state-changing commands.
+		" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
+		" git push, git rebase, or any other state-mutating git command. You are on a detached-HEAD" +
+		" reviewer worktree; mutating git state can corrupt the implementer's task branch.\n"
 	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
 		reason := fmt.Sprintf("reviewer WriteLastPane: %v", err)
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)

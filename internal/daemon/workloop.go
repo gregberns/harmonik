@@ -336,6 +336,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
 
+	// postAgentReadyHangTimeout is the duration the review-loop's post-agent_ready
+	// hang detector waits for any activity after agent_ready before declaring the
+	// implementer hung and failing fast (hk-a2okh). Zero → defaultPostAgentReadyHangTimeout
+	// (7 min). Only active on the exec path (implWatcher != nil).
+	//
+	// Bead ref: hk-a2okh.
+	postAgentReadyHangTimeout time.Duration
+
 	// projectCfg is the decoded .harmonik/config.yaml loaded once at startup
 	// (EM-012b tier-2). The zero value is safe: LookupAgent returns ("","") for
 	// all agent types. Passed to ResolveModelPreference at claim time.

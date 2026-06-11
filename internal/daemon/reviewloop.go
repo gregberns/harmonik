@@ -505,6 +505,11 @@ func runReviewLoop(
 		//
 		// Pattern mirrors reviewer phase and single-mode beadRunOne
 		// (workloop.go lines 1265-1337).
+		// hk-a2okh: hang-detector state, set inside the else branch when
+		// agent_ready is observed on the exec path.
+		var implHangDetectedCh <-chan struct{}
+		var implHangCancel context.CancelFunc = func() {}
+
 		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
@@ -562,6 +567,30 @@ func runReviewLoop(
 			}
 			// implReadyErr == nil (agent_ready observed) OR context.Canceled
 			// (watcher exited first or ctx cancelled). Fall through to paste-inject.
+
+			// hk-a2okh: post-agent_ready hang detector — exec path only.
+			// If agent_ready was observed (not just a context cancel) and we have a
+			// watcher (exec path), subscribe to implTap AFTER agent_ready to watch
+			// for the next event.  If none arrives within postAgentReadyHangTimeout
+			// the session is declared hung and we fail fast.
+			//
+			// tmux path (implWatcher == nil) is intentionally excluded: the only
+			// post-ready signal there would be unconditional daemon heartbeats which
+			// cannot distinguish a hung agent from a working one.
+			if implWatcher != nil && implReadyErr == nil {
+				implHangCh := make(chan struct{})
+				implHangDetectedCh = implHangCh
+				hangCtx, cancelFn := context.WithCancel(ctx)
+				implHangCancel = cancelFn
+				postReadyCh := implTap.Subscribe()
+				go func() {
+					defer cancelFn()
+					if err := waitPostAgentReadyProgress(hangCtx, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
+						close(implHangCh)
+						_ = implSess.Kill(hangCtx)
+					}
+				}()
+			}
 		}
 
 		// Paste-inject: deliver the kick-off message to the implementer pane (hk-zrj83).
@@ -630,6 +659,23 @@ func runReviewLoop(
 		// must not bleed into the next phase (reviewer or implementer-resume).
 		if deps.hookStore != nil {
 			deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+		}
+
+		// hk-a2okh: stop the hang-detector goroutine promptly (idempotent).
+		implHangCancel()
+
+		// hk-a2okh: check whether the hang detector fired.
+		if implHangDetectedCh != nil {
+			select {
+			case <-implHangDetectedCh:
+				emitPostAgentReadyHang(ctx, deps.bus, runID, implArtifacts.claudeSessionID,
+					deps.postAgentReadyHangTimeout, state.iterationCount, string(implPhase))
+				result := rlErrorResult(fmt.Sprintf("post_agent_ready_hang: implementer made no observable progress within %v at iteration %d",
+					deps.postAgentReadyHangTimeout, state.iterationCount))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			default:
+			}
 		}
 
 		if ctx.Err() != nil {

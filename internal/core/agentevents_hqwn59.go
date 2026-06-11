@@ -246,6 +246,64 @@ func (p AgentReadyTimeoutPayload) Valid() bool {
 	return true
 }
 
+// PostAgentReadyHangPayload is the typed event payload for the
+// post_agent_ready_hang event (hk-a2okh).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — fail-fast observability for hung implementers).
+//
+// Emitted when an implementer session emits agent_ready but then makes no
+// observable progress within postAgentReadyHangTimeout, allowing the daemon
+// to fail fast rather than burning the full commitPollTimeout budget.
+//
+// # Payload fields
+//
+//   - run_id            — the run in whose context the hang was detected
+//   - claude_session_id — the Claude session that hung after becoming ready
+//   - timeout_ms        — the effective hang-detection timeout in milliseconds
+//   - iteration_count   — which review-loop iteration detected the hang
+//   - phase             — the review-loop phase (e.g. "implementer-initial")
+//
+// Refs: hk-a2okh.
+type PostAgentReadyHangPayload struct {
+	// RunID is the run in whose context the hang was detected.
+	// Required (must not be uuid.Nil).
+	RunID RunID `json:"run_id"`
+
+	// ClaudeSessionID is the Claude session that became ready but then hung.
+	// Required (non-empty).
+	ClaudeSessionID string `json:"claude_session_id"`
+
+	// TimeoutMs is the effective hang-detection timeout in milliseconds.
+	// Required (positive).
+	TimeoutMs int64 `json:"timeout_ms"`
+
+	// IterationCount is the review-loop iteration in which the hang was detected.
+	// Required (positive).
+	IterationCount int `json:"iteration_count"`
+
+	// Phase is the review-loop phase string (e.g. "implementer-initial").
+	Phase string `json:"phase,omitempty"`
+}
+
+// Valid reports whether p is a well-formed PostAgentReadyHangPayload.
+func (p PostAgentReadyHangPayload) Valid() bool {
+	if uuid.UUID(p.RunID) == uuid.Nil {
+		return false
+	}
+	if p.ClaudeSessionID == "" {
+		return false
+	}
+	if p.TimeoutMs <= 0 {
+		return false
+	}
+	if p.IterationCount <= 0 {
+		return false
+	}
+	return true
+}
+
 // AgentOutputChunkPayload is the typed event payload for the agent_output_chunk
 // event (event-model.md §8.3.3).
 //

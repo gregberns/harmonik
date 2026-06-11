@@ -170,6 +170,9 @@ func registerAgentEvents() {
 	// agent_ready_timeout (hk-5cox8): emitted by the daemon workloop when HC-056
 	// fires — no agent_ready arrived within the timeout window. Durability class: O.
 	mustRegister("agent_ready_timeout", func() EventPayload { return &AgentReadyTimeoutPayload{} })
+	// post_agent_ready_hang (hk-a2okh): emitted when an implementer becomes ready
+	// but makes no observable progress within the hang-detection timeout. Durability class: O.
+	mustRegister("post_agent_ready_hang", func() EventPayload { return &PostAgentReadyHangPayload{} })
 	// lifecycle_transition (§8.3.14, hk-xrygh): emitted by the watcher and
 	// workloop on every LifecycleState machine transition per HC-064..HC-067.
 	// Durability class: O.

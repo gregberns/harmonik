@@ -113,6 +113,13 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-gql20.14.
 	AgentReadyTimeout time.Duration
 
+	// PostAgentReadyHangTimeout is the hang-detection timeout for the
+	// post-agent_ready progress detector (hk-a2okh).
+	// Zero → defaultPostAgentReadyHangTimeout (7 min).
+	//
+	// Bead ref: hk-a2okh.
+	PostAgentReadyHangTimeout time.Duration
+
 	// CPRegistry, when non-nil, is the ControlPoint registry used to resolve
 	// gate_ref values during DOT workflow gate-node dispatch (hk-karlz). When
 	// nil, gate nodes return a structural eval-failure Outcome without crashing.
@@ -348,7 +355,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		worktreeFactory:        wtf,
 		adapterRegistry:        p.AdapterRegistry2,
 		substrate:              p.Substrate,
-		agentReadyTimeout:      p.AgentReadyTimeout,
+		agentReadyTimeout:         p.AgentReadyTimeout,
+		postAgentReadyHangTimeout: p.PostAgentReadyHangTimeout,
 		projectCfg:             p.ProjectCfg,
 		queueStore:             p.QueueStore,
 		queueLedger:            p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
@@ -886,6 +894,17 @@ func ExportedNewDaemonHeartbeatEmitter(bus handlercontract.EventEmitter, runID c
 //
 // Bead ref: hk-gql20.18.
 var ExportedErrAgentReadyTimeout = ErrAgentReadyTimeout
+
+// ExportedErrPostAgentReadyHang exposes ErrPostAgentReadyHang for tests (hk-a2okh).
+var ExportedErrPostAgentReadyHang = ErrPostAgentReadyHang
+
+// ExportedDefaultPostAgentReadyHangTimeout exposes defaultPostAgentReadyHangTimeout
+// for tests (hk-a2okh).
+var ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
+
+// ExportedWaitPostAgentReadyProgress exposes waitPostAgentReadyProgress for
+// unit tests (hk-a2okh).
+var ExportedWaitPostAgentReadyProgress = waitPostAgentReadyProgress
 
 // AgentEventSourceExported is the exported alias for agentEventSource so that
 // test stubs in package daemon_test can satisfy the interface.

@@ -263,6 +263,15 @@ const (
 	// Refs: hk-5cox8.
 	EventTypeAgentReadyTimeout EventType = "agent_ready_timeout"
 
+	// EventTypePostAgentReadyHang is the post_agent_ready_hang event type.
+	// Emitted by the daemon review-loop when an implementer session emits
+	// agent_ready but then makes no observable progress (no further events)
+	// within deps.postAgentReadyHangTimeout. Allows fail-fast detection of a
+	// hung-claude rather than burning the full 30-min commitPollTimeout budget.
+	// Durability class: O.
+	// Refs: hk-a2okh.
+	EventTypePostAgentReadyHang EventType = "post_agent_ready_hang"
+
 	// EventTypeLifecycleTransition is the lifecycle_transition event type (§8.3.14).
 	// Emitted by the watcher goroutine on every LifecycleState machine transition
 	// per handler-contract.md §4.13 HC-064..HC-067.

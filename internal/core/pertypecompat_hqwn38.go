@@ -149,6 +149,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "agent_hard_terminating", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "launch_initiated", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_ready_timeout", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-a2okh: post-agent_ready hang-detector (fail-fast when implementer hangs after becoming ready).
+	{TypeName: "post_agent_ready_hang", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "lifecycle_transition", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-fra5l: launch-diagnostic events (pasteinject_failed, launch_stall_detected).
 	{TypeName: "pasteinject_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

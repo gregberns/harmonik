@@ -162,9 +162,12 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > the operator is AWAKE and deliberately running the fleet PARKED ("run fewer").
 > **Do NOT auto-re-establish the fleet** — re-spawning from zero against the standing
 > wind-down is the operator's call; re-derive live lanes from `crew list` +
-> `kerf next` every boot. In progress: captain session-keeper enablement (gauge LIVE
-> on a fresh `captain` session, doctor green except the intentionally-off `.managed`;
-> full auto-cycle pending operator go-ahead).
+> `kerf next` every boot. **Captain session-keeper is ARMED** (operator-approved
+> 2026-06-11 ~12:29 PDT): full auto-cycle at **warn 25% / act 30%** on the fresh
+> `captain` session (watcher in detached tmux `hk-keeper-captain`; THIS session may be
+> `captain-old`). First handoff→/clear→resume at 30% (~296k tokens) is the validation
+> event. Always relaunch the watcher with `--warn-pct 25 --act-pct 30` (bare defaults
+> 80/90 defeat the intent on a 1M window).
 
 | crew | lane (initiative) | epic | live state (2026-06-11) |
 |---|---|---|---|
@@ -176,8 +179,8 @@ on its own named queue. Two crews never share an epic or touch the same files.
 | ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra + session-keeper + logmine complete |
 
 **Pending operator (do NOT auto-resolve):** (1) re-spawn the fleet? on which lane(s)?;
-(2) next-initiative ranking — `standard-bead-dot` is the top KNOWN candidate; (3) arm
-keeper Phase-2 (`.managed` + watcher) on the fresh captain after warn dogfood. The gh
+(2) next-initiative ranking — `standard-bead-dot` is the top KNOWN candidate. (Keeper
+arming — formerly item 3 — DONE 2026-06-11.) The gh
 `workflow`-scope beads remain externally-gated (operator is remote-only — do NOT
 recommend `gh auth refresh`).
 

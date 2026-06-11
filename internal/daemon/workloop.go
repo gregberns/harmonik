@@ -459,6 +459,16 @@ type workLoopDeps struct {
 	// Bead ref: hk-ry8q1.
 	operatorPauseCtrl *OperatorPauseController
 
+	// decisionBlocker, when non-nil, is checked at every dispatch attempt to
+	// gate dispatch for beads blocked by an unacknowledged decision_required
+	// event (EV-043).  Populated at startup by LoadDecisionAckState (EV-043a).
+	// When nil the gate is disabled (backward-compat for tests that do not
+	// exercise decision-blocking behaviour).
+	//
+	// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
+	// Bead ref: hk-pbmsq.
+	decisionBlocker *DecisionBlocker
+
 	// noAutoPull, when true, disables the br-ready fallback poll path so the
 	// work loop only dispatches items that arrive via the queue surface.
 	// Sourced from Config.NoAutoPull; see that field's godoc for rationale.
@@ -1177,6 +1187,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
+				// Decision-required dispatch-blocking gate (EV-043, queue path):
+				// if the bead has an unacknowledged decision_required pending,
+				// hold it without claiming and retry on the next poll tick.
+				//
+				// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
+				// Bead ref: hk-pbmsq.
+				if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(snapItemBeadID) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043) — holding\n",
+						snapItemBeadID)
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+
 				// Pre-claim status guard for queue-path: a bead's ledger status can
 				// change after it is enqueued.  Three cases are handled here before
 				// Phase 3 stamps the item as dispatched:
@@ -1444,6 +1470,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 					continue
 				}
+			}
+
+			// Decision-required dispatch-blocking gate (EV-043, br-ready path):
+			// mirror the check applied in the queue path above.
+			//
+			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
+			// Bead ref: hk-pbmsq.
+			if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043, br-ready path) — holding\n",
+					beadRecord.BeadID)
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
 			}
 		}
 		beadID = beadRecord.BeadID

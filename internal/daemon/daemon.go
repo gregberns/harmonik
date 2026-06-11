@@ -1341,6 +1341,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 	}
 
+	// decisionBlocker is the daemon-singleton DecisionBlocker populated by
+	// LoadDecisionAckState (EV-043a).  Declared here so the socket listener
+	// (future: decision-ack handler) and the workloop share the same instance.
+	//
+	// Spec ref: specs/event-model.md §4.12 EV-043a.
+	// Bead ref: hk-pbmsq.
+	decisionBlocker := NewDecisionBlocker()
+	if cfg.ProjectDir != "" {
+		if loadErr := LoadDecisionAckState(context.Background(), cfg.ProjectDir, decisionBlocker); loadErr != nil {
+			return fmt.Errorf("daemon.Start: decision_acks load: %w", loadErr)
+		}
+	}
+
 	// opPauseCtrl is the daemon-singleton OperatorPauseController. Constructed
 	// inside the ProjectDir block (where the bus is available and Sealed) and
 	// consumed by both the socket listener (handles operator-pause/resume ops)
@@ -1538,6 +1551,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// dispatch when an operator pause is active (hk-ry8q1). nil when
 		// ProjectDir was not set (unit-test mode without a socket).
 		deps.operatorPauseCtrl = opPauseCtrl
+
+		// Inject the DecisionBlocker so the workloop can gate dispatch for beads
+		// blocked by an unacknowledged decision_required event (EV-043, EV-043a).
+		// Always non-nil in production; unit-test callers that do not exercise
+		// decision-blocking leave this at the always-unblocked default.
+		//
+		// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
+		// Bead ref: hk-pbmsq.
+		deps.decisionBlocker = decisionBlocker
 
 		// Inject the ConcurrencyController so the dispatch gate reads the live
 		// ceiling on every tick (hk-ohiaf). nil falls back to the static

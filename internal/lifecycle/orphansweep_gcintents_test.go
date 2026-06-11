@@ -3,10 +3,12 @@ package lifecycle
 // orphansweep_gcintents_test.go — unit tests for GCRetiredIntents.
 //
 // Bead ref: hk-cizvu — orphan-sweep stale_intents_observed GC.
+// Bead ref: hk-hf9i8 — retain/remove compare fix + per-boot cap.
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,7 +131,13 @@ func TestGCRetiredIntents_RemovesWhenLanded(t *testing.T) {
 }
 
 // TestGCRetiredIntents_RetainsWhenPending verifies that a stale intent file is
-// NOT deleted when the bead has NOT yet reached its IntendedPostState.
+// NOT deleted when the op has not yet landed.
+//
+// For a reset op (IntendedPostState=open), the bead being "closed" is the
+// ambiguous case: the reset may not have run yet (or it ran and the bead was
+// re-closed, but that is indistinguishable).  The conservative decision is to
+// retain for Cat 3a.  (Note: "in_progress" would mean the reset landed and the
+// bead was subsequently claimed — that is a remove case after hk-hf9i8.)
 func TestGCRetiredIntents_RetainsWhenPending(t *testing.T) {
 	t.Parallel()
 
@@ -139,10 +147,12 @@ func TestGCRetiredIntents_RetainsWhenPending(t *testing.T) {
 
 	intentPath := gcIntentsFixtureWriteResetIntent(t, intentsDir, "proj_hk-test-retain_reset_1", beadID)
 
-	// Ledger reports bead as "in_progress" (NOT the intended "open" for reset).
+	// Ledger reports bead as "closed" — the reset (→ open) has NOT landed yet
+	// (or it ran and the bead was re-closed, which is ambiguous).  Either way,
+	// the conservative path retains the file for Cat 3a.
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			beadID: {BeadID: beadID, Status: core.CoarseStatusInProgress},
+			beadID: {BeadID: beadID, Status: core.CoarseStatusClosed},
 		},
 	}
 
@@ -307,9 +317,11 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			landedA:  {BeadID: landedA, Status: core.CoarseStatusOpen},
-			landedB:  {BeadID: landedB, Status: core.CoarseStatusOpen},
-			pendingC: {BeadID: pendingC, Status: core.CoarseStatusInProgress},
+			landedA: {BeadID: landedA, Status: core.CoarseStatusOpen},
+			landedB: {BeadID: landedB, Status: core.CoarseStatusOpen},
+			// pendingC: reset (→ open) with bead "closed" — ambiguous/not-landed;
+			// "in_progress" would now be treated as landed (hk-hf9i8).
+			pendingC: {BeadID: pendingC, Status: core.CoarseStatusClosed},
 			// noLedgerD intentionally absent → ShowBead error → retained
 		},
 	}
@@ -324,6 +336,204 @@ func TestGCRetiredIntents_Mixed(t *testing.T) {
 	}
 	if result.Retained != 2 {
 		t.Errorf("GCRetiredIntents mixed: Retained = %d, want 2", result.Retained)
+	}
+}
+
+// gcIntentsFixtureWriteIntent writes a valid IntentLogEntry of the given op
+// to intentsDir/<key>.json with mtime set to past (before daemonStartTime).
+// Returns the path of the created file.
+func gcIntentsFixtureWriteIntent(t *testing.T, intentsDir, key string, beadID core.BeadID, op string, intendedPostState string) string {
+	t.Helper()
+
+	if err := os.MkdirAll(intentsDir, 0o755); err != nil { //nolint:gosec
+		t.Fatalf("gcIntentsFixtureWriteIntent: MkdirAll: %v", err)
+	}
+
+	// For reset op, run_id and transition_id must be zero-valued per BI-010d.
+	// For other ops, use non-nil UUIDs.
+	runID := "01900000-0000-7000-0000-000000000001"
+	transID := "01900000-0000-7000-0000-000000000002"
+	if op == "reset" {
+		runID = "00000000-0000-0000-0000-000000000000"
+		transID = "00000000-0000-0000-0000-000000000000"
+	}
+
+	entry := map[string]any{
+		"idempotency_key":     key,
+		"run_id":              runID,
+		"transition_id":       transID,
+		"op":                  op,
+		"bead_id":             string(beadID),
+		"intended_post_state": intendedPostState,
+		"requested_at":        "2024-01-01T00:00:00Z",
+		"schema_version":      1,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("gcIntentsFixtureWriteIntent: marshal: %v", err)
+	}
+
+	path := filepath.Join(intentsDir, key+".json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("gcIntentsFixtureWriteIntent: WriteFile: %v", err)
+	}
+
+	past := time.Now().Add(-30 * time.Minute)
+	if err := os.Chtimes(path, past, past); err != nil {
+		t.Fatalf("gcIntentsFixtureWriteIntent: Chtimes: %v", err)
+	}
+	return path
+}
+
+// TestGCRetiredIntents_ClaimBeadAdvancedToClosed is the primary regression test
+// for hk-hf9i8: a claim intent (IntendedPostState=in_progress) whose bead has
+// since advanced to closed was wrongly RETAINED by the old exact-equality
+// check.  After the fix, gcIntentOpLanded returns true for claim+closed and
+// the file must be REMOVED.
+func TestGCRetiredIntents_ClaimBeadAdvancedToClosed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	beadID := core.BeadID("hk-claim-closed")
+
+	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-claim-closed", beadID, "claim", "in_progress")
+
+	// Ledger reports bead as "closed" — it was claimed then closed.
+	ledger := &fakeIntentGCLedger{
+		records: map[core.BeadID]core.BeadRecord{
+			beadID: {BeadID: beadID, Status: core.CoarseStatusClosed},
+		},
+	}
+
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("Removed = %d, want 1 (claim intent, bead advanced to closed → should remove)", result.Removed)
+	}
+	if result.Retained != 0 {
+		t.Errorf("Retained = %d, want 0", result.Retained)
+	}
+	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
+		t.Errorf("intent file still exists at %q; should have been deleted", intentPath)
+	}
+}
+
+// TestGCRetiredIntents_ClaimBeadStillOpen verifies that a claim intent where
+// the bead is still open (op has NOT landed) is RETAINED.
+func TestGCRetiredIntents_ClaimBeadStillOpen(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	beadID := core.BeadID("hk-claim-open")
+
+	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-claim-open", beadID, "claim", "in_progress")
+
+	ledger := &fakeIntentGCLedger{
+		records: map[core.BeadID]core.BeadRecord{
+			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
+		},
+	}
+
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Removed != 0 {
+		t.Errorf("Removed = %d, want 0 (bead still open → claim not landed, must retain)", result.Removed)
+	}
+	if result.Retained != 1 {
+		t.Errorf("Retained = %d, want 1", result.Retained)
+	}
+	if _, statErr := os.Stat(intentPath); os.IsNotExist(statErr) {
+		t.Errorf("intent file was removed; must be retained (claim not yet landed)")
+	}
+}
+
+// TestGCRetiredIntents_Cap verifies that when more than gcRetiredIntentsMaxScan
+// stale files exist, the excess are deferred (result.Skipped) and left on disk.
+func TestGCRetiredIntents_Cap(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+
+	// Create gcRetiredIntentsMaxScan + 5 stale intent files, all "landed"
+	// (claim op, bead = closed).  The first gcRetiredIntentsMaxScan must be
+	// removed; the remaining 5 must be skipped (deferred to next boot).
+	total := gcRetiredIntentsMaxScan + 5
+	ledgerRecords := make(map[core.BeadID]core.BeadRecord, total)
+	for i := 0; i < total; i++ {
+		id := core.BeadID(fmt.Sprintf("hk-cap-%04d", i))
+		key := fmt.Sprintf("key-cap-%04d", i)
+		gcIntentsFixtureWriteIntent(t, intentsDir, key, id, "claim", "in_progress")
+		ledgerRecords[id] = core.BeadRecord{BeadID: id, Status: core.CoarseStatusClosed}
+	}
+
+	ledger := &fakeIntentGCLedger{records: ledgerRecords}
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Removed != gcRetiredIntentsMaxScan {
+		t.Errorf("Removed = %d, want %d", result.Removed, gcRetiredIntentsMaxScan)
+	}
+	if result.Skipped != 5 {
+		t.Errorf("Skipped = %d, want 5", result.Skipped)
+	}
+	if result.Retained != 0 {
+		t.Errorf("Retained = %d, want 0", result.Retained)
+	}
+}
+
+// TestGcIntentOpLanded covers all op/status combinations for gcIntentOpLanded.
+func TestGcIntentOpLanded(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		op                string
+		currentStatus     core.CoarseStatus
+		intendedPostState core.CoarseStatus
+		wantLanded        bool
+	}{
+		// claim (→ in_progress): landed if bead ≠ open
+		{"claim", core.CoarseStatusInProgress, core.CoarseStatusInProgress, true},  // exact match
+		{"claim", core.CoarseStatusClosed, core.CoarseStatusInProgress, true},      // advanced past
+		{"claim", core.CoarseStatusTombstone, core.CoarseStatusInProgress, true},   // advanced past
+		{"claim", core.CoarseStatusOpen, core.CoarseStatusInProgress, false},       // not claimed yet
+		// close (→ closed): landed if status = closed or tombstone
+		{"close", core.CoarseStatusClosed, core.CoarseStatusClosed, true},          // exact match
+		{"close", core.CoarseStatusTombstone, core.CoarseStatusClosed, true},       // advanced past
+		{"close", core.CoarseStatusOpen, core.CoarseStatusClosed, false},           // ambiguous
+		{"close", core.CoarseStatusInProgress, core.CoarseStatusClosed, false},     // not closed yet
+		// reopen (→ open): landed if status = open, in_progress, or tombstone
+		{"reopen", core.CoarseStatusOpen, core.CoarseStatusOpen, true},             // exact match
+		{"reopen", core.CoarseStatusInProgress, core.CoarseStatusOpen, true},       // advanced past
+		{"reopen", core.CoarseStatusTombstone, core.CoarseStatusOpen, true},        // advanced past
+		{"reopen", core.CoarseStatusClosed, core.CoarseStatusOpen, false},          // ambiguous
+		// reset (→ open): same rules as reopen
+		{"reset", core.CoarseStatusOpen, core.CoarseStatusOpen, true},
+		{"reset", core.CoarseStatusInProgress, core.CoarseStatusOpen, true},
+		{"reset", core.CoarseStatusTombstone, core.CoarseStatusOpen, true},
+		{"reset", core.CoarseStatusClosed, core.CoarseStatusOpen, false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(fmt.Sprintf("op=%s/status=%s", tc.op, tc.currentStatus), func(t *testing.T) {
+			t.Parallel()
+			got := gcIntentOpLanded(core.TerminalOp(tc.op), tc.currentStatus, tc.intendedPostState)
+			if got != tc.wantLanded {
+				t.Errorf("gcIntentOpLanded(op=%q, status=%q, intended=%q) = %v, want %v",
+					tc.op, tc.currentStatus, tc.intendedPostState, got, tc.wantLanded)
+			}
+		})
 	}
 }
 

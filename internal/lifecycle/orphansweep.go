@@ -384,6 +384,13 @@ type IntentGCLedger interface {
 	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
 }
 
+// gcRetiredIntentsMaxScan is the maximum number of stale intent files that
+// GCRetiredIntents will query via ShowBead in a single daemon-startup pass.
+// Each ShowBead call shells out to `br show` (~0.24 s); capping prevents a
+// startup hang when hundreds of files accumulate (hk-hf9i8).  Files beyond
+// the cap are left on disk and picked up on subsequent boots.
+const gcRetiredIntentsMaxScan = 250
+
 // GCRetiredIntentsResult reports the outcome of a [GCRetiredIntents] pass.
 type GCRetiredIntentsResult struct {
 	// Removed is the count of stale intent files deleted because the bead
@@ -395,21 +402,30 @@ type GCRetiredIntentsResult struct {
 	// bead has NOT yet reached its IntendedPostState — the Cat 3a detector
 	// may need to re-drive the br operation.
 	Retained int
+	// Skipped is the count of stale intent files that were not queried this
+	// pass because the per-boot cap (gcRetiredIntentsMaxScan) was reached.
+	// These files remain on disk and will be processed on subsequent boots.
+	Skipped int
 }
 
 // GCRetiredIntents walks projectDir/.harmonik/beads-intents/, identifies
 // intent files with mtime before daemonStartTime, and for each checks whether
-// the target bead has already reached its IntendedPostState via
-// ledger.ShowBead.
+// the target bead has already landed its op via ledger.ShowBead.
 //
-// If the bead IS already in its IntendedPostState the intent file is deleted:
-// the br operation landed in a prior daemon run and the file is a leftover
-// from a crash between BI-030 step 5 (br success) and step 6 (intent delete).
-// Removing these files prevents the stale_intents_observed counter from
-// growing unboundedly across daemon restarts (hk-cizvu F10).
+// "Landed" means the bead has reached or advanced past the op's
+// IntendedPostState — see gcIntentOpLanded for the per-op decision.  If the
+// op has landed the intent file is deleted: it is a leftover from a crash
+// between BI-030 step 5 (br success) and step 6 (intent delete).  Removing
+// these files prevents stale_intents_observed from growing unboundedly across
+// daemon restarts (hk-cizvu F10, hk-hf9i8).
 //
-// If the bead is NOT yet in its IntendedPostState the file is retained for the
-// Cat 3a detector to re-drive the br operation.
+// If the op has NOT landed the file is retained for the Cat 3a detector to
+// re-drive the br operation.
+//
+// To bound startup latency (each ShowBead call shells out to `br show` at
+// ~0.24 s), at most gcRetiredIntentsMaxScan stale files are queried per boot.
+// Files beyond the cap are left on disk (result.Skipped) and processed on
+// subsequent boots.
 //
 // Per-file errors (unreadable / malformed entry, ShowBead failure) are logged
 // and the file is conservatively retained (not removed). The returned error is
@@ -421,6 +437,7 @@ type GCRetiredIntentsResult struct {
 // reissue idempotency recovery: "if the bead is already in the intended state,
 // delete the intent file."
 // Bead ref: hk-cizvu — orphan-sweep stale_intents_observed GC.
+// Bead ref: hk-hf9i8 — retain/remove compare fix + per-boot cap.
 func GCRetiredIntents(
 	ctx context.Context,
 	projectDir string,
@@ -439,6 +456,7 @@ func GCRetiredIntents(
 		return result, fmt.Errorf("lifecycle: GCRetiredIntents: ReadDir %q: %w", intentsDir, err)
 	}
 
+	scanned := 0
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -463,6 +481,14 @@ func GCRetiredIntents(
 			continue
 		}
 
+		// Per-boot cap: bound the number of ShowBead calls to prevent a
+		// startup hang when many stale files have accumulated (hk-hf9i8).
+		if scanned >= gcRetiredIntentsMaxScan {
+			result.Skipped++
+			continue
+		}
+		scanned++
+
 		// Stale file: read intent entry to determine the bead and intended state.
 		intentPath := filepath.Join(intentsDir, name)
 		intentEntry, readErr := core.ReadIntentLogEntry(intentPath)
@@ -482,26 +508,29 @@ func GCRetiredIntents(
 			continue
 		}
 
-		if record.Status != intentEntry.IntendedPostState {
-			// Bead is NOT in the intended state — op may not have landed.
-			// Leave the file for Cat 3a recovery.
-			orphanLog(logger, "GCRetiredIntents: bead %s status=%s (want %s); retaining for Cat 3a",
-				intentEntry.BeadID, record.Status, intentEntry.IntendedPostState)
+		if !gcIntentOpLanded(intentEntry.Op, record.Status, intentEntry.IntendedPostState) {
+			// Op has NOT landed — leave the file for Cat 3a recovery.
+			orphanLog(logger, "GCRetiredIntents: bead %s status=%s (want op=%s to land); retaining for Cat 3a",
+				intentEntry.BeadID, record.Status, intentEntry.Op)
 			result.Retained++
 			continue
 		}
 
-		// Bead IS in the intended state — the op landed; this file is a
-		// leftover from a crash after step 5 success but before step 6 delete.
-		// Remove it per BI-031 GC path.
+		// Op has landed — the file is a leftover from a crash after step 5
+		// success but before step 6 delete.  Remove it per BI-031 GC path.
 		if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			orphanLog(logger, "GCRetiredIntents: remove %q failed (%v); retaining", name, removeErr)
 			result.Retained++
 			continue
 		}
-		orphanLog(logger, "GCRetiredIntents: removed retired intent %q (bead %s already %s)",
-			name, intentEntry.BeadID, record.Status)
+		orphanLog(logger, "GCRetiredIntents: removed retired intent %q (bead %s op=%s landed, now %s)",
+			name, intentEntry.BeadID, intentEntry.Op, record.Status)
 		result.Removed++
+	}
+
+	if result.Skipped > 0 {
+		orphanLog(logger, "GCRetiredIntents: cap reached (%d); deferred %d stale files to next boot",
+			gcRetiredIntentsMaxScan, result.Skipped)
 	}
 
 	// fsync the parent directory once after all removals to ensure deletions are
@@ -514,6 +543,49 @@ func GCRetiredIntents(
 	}
 
 	return result, nil
+}
+
+// gcIntentOpLanded reports whether the op described by an intent file has
+// definitely completed, given the bead's current status.
+//
+// "Landed" means the bead is in the IntendedPostState OR has advanced past it
+// in the lifecycle — either way re-driving the op is not needed.
+//
+// The hk-hf9i8 fix: the original code used exact equality
+// (record.Status == IntendedPostState), which retained claim intents when
+// beads had advanced from in_progress to closed.  With 991 such files on
+// disk, every daemon restart called br show 991 times (~4 min hang).
+//
+// Per-op rules (conservative — retain on any ambiguity):
+//
+//	claim  (→ in_progress): landed if status ≠ open (bead left the pre-claim state)
+//	close  (→ closed):      landed if status = closed or tombstone
+//	reopen (→ open):        landed if status = open, in_progress, or tombstone
+//	reset  (→ open):        same as reopen
+func gcIntentOpLanded(op core.TerminalOp, currentStatus, intendedPostState core.CoarseStatus) bool {
+	if currentStatus == intendedPostState {
+		return true
+	}
+	switch op {
+	case core.TerminalOpClaim:
+		// claim: open → in_progress.
+		// If the bead is no longer open it was claimed; it may have since
+		// advanced to closed or tombstone.
+		return currentStatus != core.CoarseStatusOpen
+	case core.TerminalOpClose:
+		// close: in_progress → closed.
+		// tombstone is the only state reachable after closed.
+		return currentStatus == core.CoarseStatusTombstone
+	case core.TerminalOpReopen, core.TerminalOpReset:
+		// reopen/reset: closed → open.
+		// If the bead is in_progress the reopen ran and the bead was claimed.
+		// If the bead is tombstone the reopen ran and the bead was eventually
+		// purged.  If the bead is still closed the situation is ambiguous
+		// (op may not have run yet) — retain conservatively.
+		return currentStatus == core.CoarseStatusInProgress ||
+			currentStatus == core.CoarseStatusTombstone
+	}
+	return false
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

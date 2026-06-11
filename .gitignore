@@ -9,10 +9,15 @@
 !.kerf/jigs/
 !.kerf/jigs/*.md
 
-# Beads task ledger — track only the JSONL export and test fixtures; ignore SQLite DB / WAL / locks
+# Beads task ledger — ignore SQLite DB / WAL / locks / backups; track only test fixtures
+# issues.jsonl is gitignored: `br sync --flush-only` writes it continuously, so tracking it
+# creates a perpetually dirty working tree that triggers implementer_escaped_worktree false-fails
+# when the daemon runs. Same fix applied to HANDOFF.md (15382e4f). Refs: hk-yru
 .beads/*
-!.beads/issues.jsonl
 !.beads/queue-test-fixtures/
+
+# Beads ledger backup directories created by ledger-archive-runbook.md rollback step
+.beads.bak*/
 
 # Go build outputs and test artifacts (build-practices.md §Git hygiene)
 /bin/
@@ -61,4 +66,11 @@ HANDOFF-*.md
 
 # Claude Code session scheduler lock
 .claude/scheduled_tasks.lock
+
+# Claude Code PID file written to repo root by `claude --dangerously-skip-permissions` runs
+.claude-pid
+
+# Scratch/exploratory docs not intended for permanent tracking
+docs/qa-scratch/
+
 HANDOFF.md

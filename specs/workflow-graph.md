@@ -124,9 +124,9 @@ Tags: mechanism, normative
 
 ### WG-006 — `sub-workflow` node attribute set
 
-A node with `type=sub-workflow` MUST carry `sub_workflow_ref` (a target workflow's `name` per [execution-model.md §4.1 EM-001]) and `workflow_version` (a target workflow version per [execution-model.md §4.1 EM-001]). It MAY carry `input_mapping` (a typed key→key mapping that projects parent-run context into the inner run's context per [execution-model.md §4.10 EM-034a]) and `axis_tags`.
+A node with `type=sub-workflow` MUST carry `sub_workflow_ref` (a target workflow's `name` per [execution-model.md §4.1 EM-001]) and `workflow_version` (a target workflow version per [execution-model.md §4.1 EM-001]). It MAY carry `input_mapping` (a typed key→key mapping that projects parent-run context into the inner run's context per [execution-model.md §4.8 EM-034a]) and `axis_tags`.
 
-Expansion semantics are owned by [execution-model.md §4.10 EM-034]: a `sub-workflow` node MUST be expanded in the parent run's checkpoint trail (single-run expansion); node-ID namespacing on expansion is per [execution-model.md §4.10 EM-034b]; expansion-graph acyclicity is per the same anchor.
+Expansion semantics are owned by [execution-model.md §4.8 EM-034]: a `sub-workflow` node MUST be expanded in the parent run's checkpoint trail (single-run expansion); node-ID namespacing on expansion is per [execution-model.md §4.8 EM-034a]; expansion-graph acyclicity is per [execution-model.md §4.8 EM-034b].
 
 Tags: mechanism, normative
 
@@ -614,6 +614,7 @@ Specifications cited by this document:
 - [execution-model.md §4.2 EM-009] — idempotency-class enum (cited).
 - [execution-model.md §4.2 EM-010] — idempotency-class requirement (cited).
 - [execution-model.md §4.2 EM-011] — four-axis tags (cited).
+- [execution-model.md §4.3 EM-012a] — workflow-mode resolution precedence; tier-4 built-in fallback maps `dot` mode to a canonical default `.dot` artifact (cited; see §17 WG-051).
 - [execution-model.md §4.3 EM-015d] — review-loop terminal reservation (cited; generalized in §8 WG-022).
 - [execution-model.md §4.9 EM-040] — compilation-loop detection.
 - [execution-model.md §4.9 EM-043] — per-edge traversal caps and counter storage.
@@ -626,6 +627,7 @@ Specifications cited by this document:
 - [execution-model.md §6.1] — `start_node` (DOT attribute) / `start_node_id` (parsed record field) and `terminal_node_ids` declaration.
 - [execution-model.md §6.4] — schema-version N-1 readability contract.
 - [execution-model.md §7.5] — `workflow_mode=dot` dispatcher (consumes this spec).
+- [execution-model.md §7.5.1 EM-055] — `dot` input contract; canonical-default-artifact location for the tier-4 fallback (cited by §17 WG-051).
 - [execution-model.md §8] — failure-class taxonomy (six-class enum).
 - [handler-contract.md §4.1] — `Handler` interface.
 - [handler-contract.md §4.2a HC-058] — `failure_class` OPTIONAL on FAIL (handler-side).
@@ -645,6 +647,7 @@ Specifications cited by this document:
 - [operator-nfr.md §4.3] — needs-attention close-path semantics.
 - [scenario-harness.md] — two-layer testing of canonical examples (C5 of `phase-3-dot`).
 - [reconciliation/spec.md §8] — reconciliation classification driven by idempotency class.
+- [sub-workflow-dispatch.md] — planned companion spec for sub-workflow dispatch and the standard-bead default-binding surface (cited by §17 WG-051; spec not yet on disk — forward cross-ref, unverified).
 
 ## 15. Examples
 
@@ -714,6 +717,7 @@ This fragment exercises: §6 WG-013 (`&&` conjunction), §6 WG-014 (`outcome.fai
 | §4 WG-044 graph-level goal attr | New normative content per component E (attractor-parity); goal was previously an unknown permissive graph attr, now a typed reserved field threaded via ExtraContext. |
 | §4 WG-045/WG-046 template-param substitution | New normative content per component E (attractor-parity); pre-parse source-text substitution + residual-token launch error + ordering invariant. OQ-1 resolved: substitution point is LAUNCH, over raw source, before parse. |
 | §4 WG-039 `transient_exit_codes` reservation | attractor-parity v2 (hk-9j49t): `transient_exit_codes` reserved-and-warning at v1; added to §10 reserved attribute set (node-level, non-agentic only); see [handler-contract.md §4.1 HC-063] companion. |
+| §17 WG-047..WG-052 standard-bead.dot exemplar | New normative content per kerf work `standard-bead-dot` (epic hk-o7j); pins `specs/examples/standard-bead.dot` as the canonical default DOT workflow that EM-012a tier-4 dispatches; SOLE-inbound-edge-to-`close` review-floor invariant promoted to a normative requirement (WG-050). |
 
 ### 16.2 Rationale for the control-point node-type removal
 
@@ -724,3 +728,107 @@ The collapse is a documentation change: no in-tree workflow references `control-
 ### 16.3 Why two edge-condition dialects
 
 The dialect of §6 (restricted equality) is intentionally narrower than the policy-expression language of [control-points.md §4.7]. The split is motivated by author frequency and cognitive load: workflow authors write edge conditions every time they declare a route (high frequency); policy authors write guard predicates when they define a ControlPoint (lower frequency, higher expressive needs). Forcing both onto the same dialect would either underserve guard predicates (if the edge dialect were chosen) or overserve edge conditions (if the guard dialect were chosen). Keeping them distinct preserves each surface's affordances. The trade-off is the cost of two grammars to learn; the affordance gain is that an edge condition is unambiguously a route directive (no side effects, no nested expressions) and a guard predicate is unambiguously a policy check.
+
+## 17. Canonical exemplar: standard-bead.dot
+
+This section is normative. It pins the canonical **standard-bead** workflow topology that `workflow_mode = dot` beads run by default. The graph lives at `specs/examples/standard-bead.dot` (per §12 WG-036) with its sidecar `specs/examples/standard-bead.md` (per §12 WG-037). standard-bead.dot is the artifact the tier-4 built-in fallback of [execution-model.md §4.3 EM-012a] resolves a `dot`-mode run to when no per-daemon `.dot` artifact is configured (see WG-051); every requirement of §4–§13 governs it. This section adds no new vocabulary — it constrains a specific graph to a fixed shape so that the default DOT lifecycle is itself a normative artifact, not merely an example.
+
+The graph unions the implement-review-fix and green-build-merge-gate reference topologies ([docs/sdlc-workflow-corpus.md §1, §15]) into one complete bead lifecycle: `implement → commit_gate → review → close`, with review **APPROVE** as the SOLE inbound edge to `close`.
+
+### WG-047 — standard-bead.dot node catalog
+
+The standard-bead graph MUST declare exactly the following six nodes; a graph claiming to be standard-bead.dot (resolved as the tier-4 default per WG-051) that omits, renames, or adds a node MUST NOT be accepted as the canonical default.
+
+| node ID | §4 `type` | category (WG-002) | agentic? | terminal? | required binding |
+|---|---|---|---|---|---|
+| `start` | `non-agentic` | deterministic | no | no | `handler_ref="noop"`, `idempotency_class="idempotent"` |
+| `implement` | `agentic` | LLM-driven | yes (implementer-class) | no | `agent_type="implementer"`, `handler_ref="claude-implementer"`, `idempotency_class="non-idempotent"` |
+| `commit_gate` | `non-agentic` | deterministic (**tool node**, §4 WG-039) | no | no | `handler_ref="shell"`, `tool_command` (build + vet + affected-package gate), `timeout`, `idempotency_class="idempotent"` |
+| `review` | `agentic` | LLM-driven | yes (reviewer-class) | no | `agent_type="reviewer"`, `handler_ref="claude-reviewer"`, `idempotency_class="idempotent"` |
+| `close` | `non-agentic` | deterministic | no | **yes** (reserved, §8 WG-022) | `handler_ref="noop"`, `idempotency_class="idempotent"` |
+| `close-needs-attention` | `non-agentic` | deterministic | no | **yes** (reserved, §8 WG-022) | `handler_ref="noop"`, `idempotency_class="idempotent"` |
+
+Bindings are constrained as follows:
+
+- `start` and `commit_gate` are **non-agentic** (deterministic) nodes; `commit_gate` is specifically a **tool node** per §4 WG-039 (it carries `tool_command` and `handler_ref="shell"`). Neither dispatches an LLM.
+- `implement` and `review` are **agentic** nodes (§4 WG-002 `agentic` row); `implement` is implementer-class and `review` is reviewer-class, distinguished by `agent_type` (§4 WG-003) and bound to the `claude-implementer` / `claude-reviewer` handler classes respectively ([handler-contract.md §4.3]).
+- `close` and `close-needs-attention` are the two reserved **terminal** node IDs of §8 WG-022, both `non-agentic` with `handler_ref="noop"`.
+
+The graph-level attributes MUST be: `schema_version="1"` (§11 WG-033), `version="1.0"` (§11 WG-035), `start_node="start"` (§9 WG-027), `terminal_node_ids="close,close-needs-attention"` (§8 WG-022 / §9 WG-027), and `context_keys="bead_id"` (§10 WG-031a).
+
+Tags: mechanism, normative
+
+### WG-048 — standard-bead.dot edge set and conditions
+
+The standard-bead graph MUST declare exactly the following ten edges, with the conditions (§6 dialect) and traversal caps (§9 WG-028) shown. Edge ordering MUST place each node's unconditional fallback edge LAST among that node's outgoing edges (the §5 WG-011 fallback is selected only when no conditional edge matches; ordering is asserted by the golden test of WG-052).
+
+| # | from → to | `condition` | traversal cap | basis |
+|---|---|---|---|---|
+| 1 | `start` → `implement` | (none — unconditional entry) | — | §5 WG-011 |
+| 2 | `implement` → `commit_gate` | (none — unconditional) | — | §5 WG-011 |
+| 3 | `commit_gate` → `review` | `outcome.status == 'SUCCESS'` | — | §6 WG-013 |
+| 4 | `commit_gate` → `implement` | `outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'` | `3` | §6 WG-013, §7 WG-018 |
+| 5 | `commit_gate` → `commit_gate` (self-loop) | `outcome.status == 'FAIL' && outcome.failure_class == 'transient'` | `2` | §6 WG-013, §7 WG-018 |
+| 6 | `commit_gate` → `close-needs-attention` | (none — unconditional fallback, declared LAST) | — | §5 WG-011 |
+| 7 | `review` → `close` | `outcome.preferred_label == 'APPROVE'` | — | §6 WG-013, §7 WG-019 |
+| 8 | `review` → `implement` | `outcome.preferred_label == 'REQUEST_CHANGES'` | `3` | §6 WG-013, §7 WG-019, [execution-model.md §4.3 EM-015e] |
+| 9 | `review` → `close-needs-attention` | `outcome.preferred_label == 'BLOCK'` | — | §6 WG-013, §7 WG-019 |
+| 10 | `review` → `close-needs-attention` | (none — unconditional fallback, declared LAST) | — | §5 WG-011 |
+
+Traversal caps:
+
+- The `commit_gate → implement` deterministic fix-loop (edge 4) is capped at **3**: at most three fix attempts before the cascade exhausts the capped edge and falls through to the unconditional fallback (edge 6 → `close-needs-attention`) per §9 WG-028 / [execution-model.md §4.9 EM-043].
+- The `commit_gate → commit_gate` transient self-loop (edge 5) is capped at **2**: transient retries are bounded to avoid masking a real failure.
+- The `review → implement` REQUEST_CHANGES fix-loop (edge 8) is capped at **3**, consistent with the review-loop iteration cap of [execution-model.md §4.3 EM-015e].
+- Both unconditional fallback edges (6, 10) MUST carry no condition, MUST be declared last among their node's outgoing edges, and exist to satisfy the §5 WG-011 unconditional-edge-fallback invariant — guaranteeing a route exists for any outcome that matches no conditional edge (e.g. `canceled`, `structural`, or an unrecognized `preferred_label`).
+
+Tags: mechanism, normative
+
+### WG-049 — Verdict and failure-class routing inputs
+
+The standard-bead graph routes exclusively on the §7 routing inputs already locked by this spec; it introduces no new routing surface:
+
+- `commit_gate` routes on `outcome.status` (§6 WG-014) and `outcome.failure_class` (§7 WG-018) — `SUCCESS` advances to review; a `deterministic` FAIL loops back to `implement`; a `transient` FAIL self-loops. The gate is a tool node, so its Outcome status/failure-class are derived from the shell command's exit state per §4 WG-039 / [handler-contract.md §4.1 HC-063] (every non-zero exit is `deterministic` at v1 unless the gate's own classifier maps it to `transient`).
+- `review` routes on `outcome.preferred_label` (§7 WG-019) — the reviewer surfaces its verdict (`APPROVE` / `REQUEST_CHANGES` / `BLOCK`) via `preferred_label`; no first-class `verdict` field is used. `gate`-node Outcome `kind=gate_decision` is NOT used here — `commit_gate` is a `non-agentic` tool node (Outcome `kind=handler_outcome`), not a `gate`-type node.
+
+Tags: mechanism, normative
+
+### WG-050 — SOLE-inbound-edge-to-`close` invariant (review-floor guarantee)
+
+The `close` terminal node MUST be reachable by EXACTLY ONE inbound edge: `review → close` carrying `condition="outcome.preferred_label == 'APPROVE'"` (edge 7 of WG-048). No other node in the standard-bead graph MAY declare an edge whose `to_node` is `close`.
+
+This is the **review-floor guarantee**: a standard-bead run can reach normal completion (`close`) ONLY after the reviewer emits an `APPROVE` verdict. Every other terminal path — a `commit_gate` fallback, a deterministic-fix cap exhaustion, a `BLOCK`, a REQUEST_CHANGES cap exhaustion, or any unrecognized outcome — routes to `close-needs-attention` (the operator-attention close path of §8 WG-022), never to `close`. There is no path from `start`, `implement`, or `commit_gate` directly to `close`.
+
+A graph claiming to be the standard-bead default (resolved per WG-051) that declares a second inbound edge to `close`, or that reaches `close` from any node other than `review` on the APPROVE condition, MUST NOT be accepted as the canonical default; the invariant is a precondition of the default-binding of WG-051 and is asserted structurally and behaviorally by the golden test cited in WG-052.
+
+Tags: mechanism, normative, invariant
+
+### WG-051 — standard-bead.dot is the canonical default DOT workflow
+
+`specs/examples/standard-bead.dot`, constrained by WG-047–WG-050, is the **canonical default** `workflow_mode = dot` workflow. When a `dot`-mode run's workflow-mode resolution reaches tier-4 (built-in fallback) of [execution-model.md §4.3 EM-012a] — i.e. no per-bead label, no project config, and no per-daemon `.dot` artifact selects a different graph — the daemon MUST resolve the run to the standard-bead topology (the canonical-default-artifact location of [execution-model.md §7.5.1 EM-055]). This is the graph that gives the dispatch-default flip (hk-30vlb) a complete, review-gated bead lifecycle: implement → build/vet/affected-package-test gate → independent review → close-on-APPROVE.
+
+A daemon MAY override the default by per-daemon configuration (tier 3) or a future per-bead override (tier 1, deferred per [execution-model.md §7.5.1 EM-055]); when it does, the overriding graph is NOT subject to WG-047–WG-050 (those constrain the canonical default only). The constraints of §4–§13 apply to every `dot`-mode graph regardless.
+
+Cross-references for the default-binding surface:
+
+- [execution-model.md §4.3 EM-012a] (tier-4 mode-resolution fallback) and [execution-model.md §7.5.1 EM-055] (canonical-default-artifact location) — the resolution path that selects standard-bead.dot.
+- [sub-workflow-dispatch.md] — the planned companion spec for sub-workflow dispatch and the standard-bead default-binding surface. **Forward cross-ref: this spec is not yet on disk at `specs/` (unverified); pass-6 integration is expected to land it or re-anchor this reference to [execution-model.md §7.5].**
+
+Tags: mechanism, normative
+
+### WG-052 — Golden-test obligation for the standard-bead invariants
+
+The invariants of WG-047–WG-050 MUST be asserted by a golden/scenario test that drives `specs/examples/standard-bead.dot` through the real parser → validator → loader → cascade dispatcher pipeline. The asserting test at the time of this spec is `internal/workflow/scenario_standard_bead_hkp0kum_test.go` (bead ref hk-p0kum), which asserts:
+
+- **Invariant A (WG-050) — single-inbound-edge-to-`close`:** the `close` node has exactly one inbound edge, originating from `review` with the raw condition `outcome.preferred_label == 'APPROVE'` (`TestSB_SingleInboundEdgeToClose`).
+- **Invariant B — the seven cascade routes (WG-048):** happy-path (`TestSB_HappyPath`: start→implement→commit_gate[SUCCESS]→review[APPROVE]→close); gate deterministic fix-loop (`TestSB_GateDeterministicFixLoop`); gate transient self-loop (`TestSB_GateTransientSelfLoop`); gate fallback → `close-needs-attention` (`TestSB_GateFallback`); review REQUEST_CHANGES → `implement` (`TestSB_ReviewRequestChanges`); review BLOCK → `close-needs-attention` (`TestSB_ReviewBlock`); review unconditional fallback → `close-needs-attention` (`TestSB_ReviewFallback`).
+
+A re-author or relocation of this test MUST preserve these assertions. If the test is removed or renamed without an equivalent replacement, the standard-bead invariants become a **test obligation** that the next implementer MUST re-satisfy before standard-bead.dot is accepted as the canonical default per WG-051.
+
+Tags: mechanism, normative
+
+## 18. Revision history
+
+| date | version | author | change |
+|---|---|---|---|
+| 2026-06-11 | 0.2.0 | kerf work `standard-bead-dot` (epic hk-o7j) | **Canonical standard-bead exemplar.** New §17 (WG-047–WG-052) pins `specs/examples/standard-bead.dot` as the canonical default `workflow_mode = dot` workflow: WG-047 (six-node catalog with type/category/handler bindings), WG-048 (ten-edge set with conditions + traversal caps), WG-049 (verdict + failure-class routing inputs), WG-050 (SOLE-inbound-edge-to-`close` review-floor invariant), WG-051 (default-binding via [execution-model.md §4.3 EM-012a] tier-4 + [execution-model.md §7.5.1 EM-055]; forward cross-ref to the planned `sub-workflow-dispatch.md`), WG-052 (golden-test obligation, cited test `internal/workflow/scenario_standard_bead_hkp0kum_test.go`, bead hk-p0kum). §14 Cross-references gains EM-012a, EM-055, and the (unverified) `sub-workflow-dispatch.md` forward reference. §16.1 vocabulary-diff table gains the §17 row. No prior requirement IDs renumbered or retired; strictly additive over v0.1.0. Refs: kerf work `standard-bead-dot`, epic hk-o7j, hk-p0kum, hk-30vlb. |

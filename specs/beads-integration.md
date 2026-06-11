@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.6.2
+version: 0.6.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-20
+last-updated: 2026-06-11
 depends-on:
   - architecture
   - execution-model
@@ -153,7 +153,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-009a — Workflow-mode label
 
-A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, review-loop, dot}`. The label's presence asserts a per-task workflow-mode override; its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`). The bead-level label is the highest-precedence input in the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3].
+A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, review-loop, dot}`. The label's presence asserts a per-task workflow-mode override; its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]). The built-in fallback carries a hard review-floor (EM-012a-FLOOR): on embedded-artifact load failure (parse failure, missing artifact, or schema-version incompatibility) the daemon MUST fall back to `review-loop`, NEVER to `single`. `single` (the no-review one-handler-per-node shape) is reachable ONLY via an explicit tier-1 per-bead `workflow:single` label (audited via `review_bypassed` per [execution-model.md §4.3 EM-012a]); a bead resolved at the per-project, daemon-level, or built-in-fallback tiers MUST NEVER be dispatched under `single`. The bead-level label is the highest-precedence input in the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3].
 
 A bead carrying two or more `workflow:<...>` labels is malformed. The `br`-CLI adapter (§4.8) MUST treat this as a hard read-error on the ready-work query (BI-013), the bead-detail query (BI-015), and the submit-time validation read (§4.5a BI-013b): the adapter MUST emit a `bead_label_conflict` observability event per [event-model.md §8.8.6] (with structured-log fallback per [operator-nfr.md §4.9 ON-035]: on event-bus emission failure the adapter MUST emit a structured-log record with `subsystem=beads-adapter`, level=error, naming the offending `bead_id` and the colliding label set), MUST surface the bead with `workflow_mode = <unresolved>`, and the daemon MUST fall back to the next-lower precedence tier rather than dispatch under an ambiguous mode.
 
@@ -918,6 +918,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-11 | 0.6.3 | agent (kerf work `standard-bead-dot` / epic hk-o7j) | **BI-009a workflow-mode resolution-chain tail flipped `single` → `dot` (embedded `standard-bead.dot`) with a `review-loop` review-floor, syncing to the EM-012a tier-4 default flip.** Amended **BI-009a**: the label-absence fall-through tail changed from "→ daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `single`" to "→ daemon-level → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]." Added the review-floor note (EM-012a-FLOOR): on embedded-artifact load failure the daemon MUST fall back to `review-loop`, NEVER `single`; `single` is reachable ONLY via an explicit tier-1 per-bead `workflow:single` label (audited via `review_bypassed`), and a bead resolved at the per-project / daemon-level / built-in-fallback tiers MUST NEVER dispatch under `single`. This corrects BI-009a's contradiction with the now-NORMATIVE EM-012a default flip (execution-model v0.9.0). The allowed-mode enum `{single, review-loop, dot}` and the four-tier resolution chain remain owned by [execution-model.md §4.3] and cited by reference; only the tail of the precedence narrative changed. No requirement IDs renumbered or retired; BI IDs frozen at v0.6.3 (text-only amendment of BI-009a). Refs: hk-o7j, hk-30vlb. |
 | 2026-05-20 | 0.6.2 | foundation-author | **hk-uhvjo — BI-013d NEW: `--sort priority` adapter discipline for br-ready fallback.** Added BI-013d to §4.5 documenting the normative requirement that the adapter MUST pass `--sort priority` when invoking `br ready`. Rationale: the daemon's br-ready fallback path selects `readyRecords[0]` as the claim candidate and requires strict priority ordering; the default `hybrid` sort can promote an older lower-priority bead above a higher-priority bead (regression hk-rp48p). Spec-debt item: the constraint was previously carried only in the `brReadySortPriority` Go constant comment; no spec text existed. BI-013d is additive; BI IDs frozen at v0.6.2. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft from components.md §10 + round 2 amendment §10.8a. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes). Migrated legacy architecture.md citation anchor to the §4.N map per the v0.2 NOTE: §1.5→§4.6 (×1 in §4.1.BI-003 no-MCP-server clause). No requirement IDs, invariants, or schemas were touched. |

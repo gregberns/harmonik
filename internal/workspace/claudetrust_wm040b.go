@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,6 +35,17 @@ const trustLockRetryInterval = 50 * time.Millisecond
 // launch failure as structural (reopen-the-bead) rather than hanging. The
 // already-trusted fast path NEVER returns this error — it takes no write lock.
 var ErrTrustLockTimeout = fmt.Errorf("workspace: EnsureWorktreeTrust: %w: write-lock acquire timed out (contended ~/.claude.json)", handlercontract.ErrStructural)
+
+// trustWriteMu serializes in-process write operations on the global trust config
+// (hk-z16). At -c8 all 8 implementers start simultaneously with NEW worktree
+// paths; without this mutex all 8 spin on the LOCK_EX flock concurrently. Under
+// a bloated ~/.claude.json (~8MB, slow per-call JSON marshal+atomic-write), the
+// cumulative hold time of 7 serial flock holders can exceed
+// defaultTrustLockTimeout, starving the 8th and causing ErrTrustLockTimeout.
+// By serializing in-process first, only one goroutine ever waits on the flock;
+// the flock is held for just one write cycle, so the external-process boundary
+// is still protected while in-process starvation is impossible.
+var trustWriteMu sync.Mutex
 
 // defaultClaudeGlobalConfigPath returns the path to Claude Code's user-level
 // JSON config file. Precedence (first match wins):
@@ -161,11 +173,26 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 		return nil
 	}
 
-	// Slow path: a mutation is needed. Acquire the bounded exclusive flock on the
-	// sidecar lockfile (LOCK_EX|LOCK_NB + deadline) so a pathologically-contended
-	// config cannot wedge the launch for minutes. The sidecar pattern (rather than
-	// locking cfgPath directly) keeps the lock independent of the target file's
-	// inode across atomic renames.
+	// Slow path: a mutation is needed. Serialize in-process first (hk-z16): hold
+	// trustWriteMu so only one goroutine within this daemon process attempts the
+	// flock at a time. Without this, -c8 concurrent new-worktree launches all spin
+	// on the flock simultaneously, and under a bloated ~/.claude.json the
+	// cumulative flock hold time can exceed defaultTrustLockTimeout. Re-check the
+	// trusted state after acquiring the mutex: a predecessor in this process may
+	// have just written the entry.
+	trustWriteMu.Lock()
+	defer trustWriteMu.Unlock()
+
+	if trusted2, err2 := alreadyTrustedAt(worktreePath, cfgPath); err2 != nil {
+		return err2
+	} else if trusted2 {
+		return nil
+	}
+
+	// Acquire the bounded exclusive flock on the sidecar lockfile (LOCK_EX|LOCK_NB
+	// + deadline) to guard against OTHER PROCESSES rewriting ~/.claude.json
+	// concurrently. The sidecar pattern keeps the lock independent of the target
+	// file's inode across atomic renames.
 	lockPath := cfgPath + ".lock"
 	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: sidecar lockfile path is derived from user's own config path
 	if err != nil {
@@ -336,6 +363,11 @@ func PruneWorktreeTrust(worktreePath string) error {
 
 // pruneWorktreeTrustAt is the testable inner implementation of PruneWorktreeTrust.
 func pruneWorktreeTrustAt(worktreePath, cfgPath string) error {
+	// Serialize in-process writes (hk-z16): hold trustWriteMu alongside the flock
+	// so prune and ensure never contend within the daemon process.
+	trustWriteMu.Lock()
+	defer trustWriteMu.Unlock()
+
 	lockPath := cfgPath + ".lock"
 	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: sidecar lockfile path is derived from user's own config path
 	if err != nil {

@@ -75,7 +75,6 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -345,8 +344,7 @@ func TestScenario_OperatorNFR_PauseWithRunInFlight(t *testing.T) {
 
 	ctrl := daemon.ExportedNewOperatorPauseController(bus)
 
-	sockDir := t.TempDir()
-	sockPath := filepath.Join(sockDir, "daemon.sock")
+	sockPath := socketFixtureTempSockPath(t)
 
 	sockCtx, sockCancel := context.WithCancel(context.Background())
 	t.Cleanup(sockCancel)

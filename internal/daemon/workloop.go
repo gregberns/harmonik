@@ -3767,6 +3767,8 @@ func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir 
 //  2. Rebase run-branch onto main (hk-j1aq5; rebase_conflict → EM-053 reopen path).
 //  3. Fast-forward check (non-FF → EM-053 reopen path).
 //  4. git update-ref refs/heads/main <tip>.
+//  4a. Post-merge build gate: go build+vet in wtPath (hk-o68j3/hk-ycp62;
+//      merge_build_failed → EM-053 reopen path).
 //  5. git push origin main.
 //  6. git reset --hard HEAD (working-tree refresh, EM-054).
 //
@@ -3938,21 +3940,30 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 			}
 		}
 
-		// Step 3b: post-merge build gate (hk-o68j3).
+		// Step 3b: post-merge build gate (hk-o68j3 / hk-ycp62).
 		//
-		// Run go build+vet on the freshly fast-forwarded tree to catch compile
-		// errors introduced by the merged commit before the push makes them
-		// visible to other agents.  Only runs when a go.mod is present so
-		// non-Go projects and bare-repo test fixtures are unaffected.
-		// On failure, roll back the update-ref, emit merge_build_failed, and
+		// Run go build+vet on the MERGED tree to catch compile errors introduced
+		// by the merged commit before the push makes them visible to other agents.
+		// Build runs in the run-branch worktree (wtPath) when it is still on disk
+		// — after the rebase (step 2) the worktree reflects the combined
+		// main+agent content, so cross-bead conflicts such as redeclared
+		// package-level helpers are caught here.  Falls back to projectDir for
+		// runs where the worktree was already removed.
+		// Only active when a go.mod is present in the build directory so non-Go
+		// projects and bare-repo test fixtures are unaffected.
+		// On failure: roll back the update-ref, emit merge_build_failed, and
 		// return failure so the caller reopens the bead.
-		if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
+		buildDir := projectDir
+		if _, statErr := os.Stat(wtPath); statErr == nil {
+			buildDir = wtPath
+		}
+		if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr == nil {
 			for _, buildArgs := range [][]string{
 				{"build", "./..."},
 				{"vet", "./..."},
 			} {
 				buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
-				buildCmd.Dir = projectDir
+				buildCmd.Dir = buildDir
 				if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
 					rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
 					rollbackCmd.Dir = projectDir

@@ -1116,19 +1116,24 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 	// most useful thing to feed that re-entering implementer. Previously cmd.Run()
 	// threw the output away, so a re-entering implementer had no signal about what
 	// to fix and tended to re-commit nothing — the no-escape loop. We retain the
-	// tail in Outcome.Notes (observability surface, opaque to the cascade) and log
-	// it so the failure is never silent.
+	// tail in Outcome.Notes (observability surface, opaque to the cascade) and write
+	// the full output to a dedicated gate log file so the daemon log stays clean.
 	combined, err := cmd.CombinedOutput()
 	if err == nil {
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 	}
+
+	// F30: write full gate output to a dedicated file; never tee go test / scenario
+	// output into the daemon log. The daemon log gets a one-line pointer instead.
+	gateLogPath := filepath.Join(wtPath, ".harmonik", "commit-gate.log")
+	_ = os.WriteFile(gateLogPath, combined, 0o644)
 
 	outputTail := tailString(string(combined), dotGateOutputTailBytes)
 
 	// Timeout-killed: parent deadline exceeded first.
 	if execCtx.Err() == context.DeadlineExceeded {
 		fc := core.FailureClassTransient
-		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q timed out after %ds; output tail:\n%s\n", node.ID, timeoutSecs, outputTail)
+		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q timed out after %ds; gate log: %s\n", node.ID, timeoutSecs, gateLogPath)
 		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 	}
 
@@ -1141,7 +1146,7 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 	// Non-zero exit code (1..255) → deterministic failure. This is the gate-FAIL
 	// case that drives the commit_gate→implement back-edge; surface the diagnostic.
 	fc := core.FailureClassDeterministic
-	fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v); output tail:\n%s\n", node.ID, err, outputTail)
+	fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v); gate log: %s\n", node.ID, err, gateLogPath)
 	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 }
 

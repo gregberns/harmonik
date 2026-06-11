@@ -612,9 +612,9 @@ func pasteInjectQuitOnCommit(
 	// longer permitted and the kill fires even on an active pane.
 	launchSuppressDeadline := loopStart.Add(launchSuppressCeil)
 	firstHeartbeatSeen := false
-	// lastLaunchSuppressLog / lastStalenessLog throttle the high-frequency
-	// "suppressed" diagnostic lines (F21: x347/x142 occurrences per session).
-	// Both log at most once per 10 minutes per run to keep stderr readable.
+	// lastLaunchSuppressLog / lastStalenessLog were throttle variables for
+	// "suppressed" diagnostic lines (F21). Log lines removed — the suppression
+	// behavior (clock reset) is the observable effect; no log needed.
 	var lastLaunchSuppressLog time.Time
 	var lastStalenessLog time.Time
 
@@ -840,14 +840,9 @@ func pasteInjectQuitOnCommit(
 				// phase suppression is preserved unchanged.
 				if now.Before(launchSuppressDeadline) &&
 					livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					// F21: rate-limit to ≤1/10min — fires every launchWindow (~3min)
-					// otherwise, generating hundreds of entries per session.
-					if now.Sub(lastLaunchSuppressLog) >= 10*time.Minute {
-						fmt.Fprintf(os.Stderr,
-							"daemon: pasteinject: quit-on-commit: launch-heartbeat-timeout suppressed: pane has active child process in %s; resetting staleness clock\n",
-							wtPath)
-						lastLaunchSuppressLog = now
-					}
+					// F21: suppression log removed — fires per-run from a zero-time
+					// baseline; the clock reset is the behavior, no log needed.
+					_ = lastLaunchSuppressLog
 					lastHeartbeat = now
 					launchDeadline = now.Add(launchWindow)
 				} else {
@@ -870,13 +865,9 @@ func pasteInjectQuitOnCommit(
 			// lastHeartbeat so the staleness clock restarts from now.
 			if heartbeatProvided && now.Sub(lastHeartbeat) > stalenessThreshold {
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					// F21: rate-limit same as launch-heartbeat-timeout suppressed.
-					if now.Sub(lastStalenessLog) >= 10*time.Minute {
-						fmt.Fprintf(os.Stderr,
-							"daemon: pasteinject: quit-on-commit: heartbeat-staleness suppressed: pane has active child process in %s; resetting staleness clock\n",
-							wtPath)
-						lastStalenessLog = now
-					}
+					// F21: suppression log removed — same as launch-heartbeat suppression;
+					// fires per-run from a zero baseline; clock reset is the behavior.
+					_ = lastStalenessLog
 					lastHeartbeat = now
 				} else {
 					fireNoChangePath(fmt.Sprintf(

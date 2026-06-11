@@ -880,8 +880,12 @@ func runReviewLoop(
 		// before launching the iteration-N reviewer. Non-fatal on failure.
 		if state.iterationCount >= 2 {
 			if archErr := workspace.ArchiveVerdict(wtPath, state.iterationCount-1); archErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict prior iter %d: %v (non-fatal)\n",
-					state.iterationCount-1, archErr)
+				// F21: ErrNotFound is expected (reviewer didn't produce a verdict on
+				// the prior iter) — suppress the log to keep the daemon log clean.
+				if !errors.Is(archErr, workspace.ErrNotFound) {
+					fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict prior iter %d: %v (non-fatal)\n",
+						state.iterationCount-1, archErr)
+				}
 			}
 		}
 
@@ -1264,8 +1268,12 @@ func runReviewLoop(
 
 		// Archive this iteration's verdict to review.iter-N.json per EM-015d.
 		if archErr := workspace.ArchiveVerdict(wtPath, state.iterationCount); archErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict iter %d: %v (non-fatal)\n",
-				state.iterationCount, archErr)
+			// F21: ErrNotFound is expected when the reviewer session ended without
+			// writing review.json — suppress to keep the daemon log clean.
+			if !errors.Is(archErr, workspace.ErrNotFound) {
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict iter %d: %v (non-fatal)\n",
+					state.iterationCount, archErr)
+			}
 		}
 
 		// Record verdict notes for use as prior_verdict_summary on next implementer resume.

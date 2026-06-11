@@ -1,5 +1,23 @@
 # Release Pipeline Specification
 
+```yaml
+---
+title: Release Pipeline Specification
+spec-id: release-pipeline
+requirement-prefix: RP
+status: draft
+spec-category: foundation-cross-cutting
+spec-shape: requirements-first
+version: 0.1.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-10
+depends-on:
+  - architecture
+  - operator-nfr
+---
+```
+
 > **Status:** normative — 2026-06-10
 > **Bead:** hk-81h4d (spec anchor)
 > **Epic:** hk-brc3z (label `codename:release-pipeline`)

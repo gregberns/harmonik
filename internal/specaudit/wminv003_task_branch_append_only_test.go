@@ -392,6 +392,18 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// calls in the production or test binary. Self-exempting this file prevents
 	// the scanner from flagging its own synthetic test payload.
 	"internal/specaudit/wminv003_task_branch_append_only_test.go": "self-exemption: synthetic violation strings are string literal payloads for temp-file tests, not actual exec calls",
+
+	// internal/daemon/codexcommit.go — the codex harness amends the most recent
+	// HEAD commit on the run/* worktree branch ONLY to append the "Refs: <bead>"
+	// trailer when codex's one-shot process did not include it at commit time.
+	// This is the authorised post-exit trailer-guarantee for the codex harness
+	// (codex-harness C2/T9, hk-bpxci); it mirrors the claude pre-commit hook's
+	// trailer injection but as a deterministic post-process amend. The amend
+	// targets the worktree HEAD before the branch is observed by any other process
+	// (workspace_leased is not yet emitted at this point), so it does NOT violate
+	// the append-only guarantee on an observed task branch.
+	// Authorised: codex-harness spec C2/T9 (hk-bpxci); pre-observation amend only.
+	"internal/daemon/codexcommit.go": "codex-harness C2/T9 (hk-bpxci); post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
 }
 
 // wmInv003FixtureScanGoSource walks all .go files under the given root (up to

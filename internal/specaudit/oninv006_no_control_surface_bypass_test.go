@@ -238,6 +238,14 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// hk-1qrty: status-sheet builder; snapshot mode reads .harmonik/ with no
 	// daemon. Read-only reporting, no run impact.
 	"digest": "operator-nfr.md §4.9 ON-055; read-only status sheet, no run impact",
+	// hk-ww7ee: prints semver + commit hash to stdout and exits 0. No daemon
+	// connection, no state mutation, no in-flight run impact.
+	// Spec ref: release-pipeline.md §2.3.
+	"version": "release-pipeline.md §2.3; version info to stdout, no run impact",
+	// hk-n7ofb: release ledger management (ledger list, certify, yank). Operates
+	// on the ledger JSON file directly; no daemon required, no in-flight run impact.
+	// Spec ref: release-pipeline.md §4, §6, §7.1.
+	"release": "release-pipeline.md §4/§6/§7.1; offline ledger management, no run impact",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

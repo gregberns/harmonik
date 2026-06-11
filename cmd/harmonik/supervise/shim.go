@@ -13,6 +13,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/release"
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
@@ -188,9 +189,11 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 	// project directory known to the shim.
 	if daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent); len(daemonCmd) > 0 {
 		dw := supervise.NewDaemonWatchdog(supervise.DaemonWatchdogSpec{
-			SocketPath: lifecycle.SocketPath(projectDir),
-			Command:    daemonCmd,
-			WorkDir:    projectDir,
+			SocketPath:   lifecycle.SocketPath(projectDir),
+			Command:      daemonCmd,
+			WorkDir:      projectDir,
+			LedgerPath:   release.LedgerPath(projectDir),
+			LastGoodPath: release.DefaultLastGoodStatePath(),
 		}, log)
 		go func() {
 			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {

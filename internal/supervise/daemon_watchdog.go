@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/release"
 )
 
 // DaemonWatchdogSpec configures the daemon revival watchdog.
@@ -37,6 +41,21 @@ type DaemonWatchdogSpec struct {
 	// daemon's maximum possible boot-backoff delay (restartBackoffCap = 10m).
 	// Default: 15m.
 	ReviveWindow time.Duration
+
+	// LedgerPath is the path to the release ledger JSON file used to check
+	// yanked status before adopting a newly-installed binary. Empty disables
+	// the yanked check.
+	//
+	// Spec ref: specs/release-pipeline.md §7.2 — supervisor yanked-binary guard.
+	LedgerPath string
+
+	// LastGoodPath is the path to the last-good-binary state file managed by
+	// release.WriteLastGoodBinary / release.ReadLastGoodBinary. Empty disables
+	// last-good tracking and yanked fallback.
+	//
+	// Spec ref: specs/release-pipeline.md §7.2 — "persist path to last
+	// known-good binary in a state file".
+	LastGoodPath string
 }
 
 func (s *DaemonWatchdogSpec) applyDefaults() {
@@ -77,6 +96,14 @@ func NewDaemonWatchdog(spec DaemonWatchdogSpec, log *slog.Logger) *DaemonWatchdo
 // Run is the main blocking loop. It exits when ctx is cancelled or the revival
 // cap is reached. Safe to run concurrently with a Supervisor.Run on the same
 // context — when the supervisor stops, ctx cancellation terminates the watchdog.
+//
+// Last-good pin: after each successful revival, the watchdog starts a health
+// window equal to CheckInterval. On the next alive tick after the window
+// expires, the binary is pinned as the last-good binary (spec §7.2).
+//
+// Yanked-binary guard: before each revival, the watchdog checks the release
+// ledger for the binary's commit hash. If the binary is yanked and a last-good
+// binary is available, it is used as the revive command instead (spec §7.2).
 func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 	if dw.spec.SocketPath == "" {
 		return fmt.Errorf("daemon-watchdog: SocketPath is required")
@@ -86,6 +113,15 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 	}
 
 	revives := 0
+	// activeCommand is the command used for the next revival. It starts as the
+	// configured command but may be switched to the last-good binary when the
+	// configured binary is yanked.
+	activeCommand := dw.spec.Command
+	// adoptDeadline is non-zero when we are tracking a health window after a
+	// revival. When time.Now() >= adoptDeadline and the daemon is still alive,
+	// the binary is pinned as last-good.
+	var adoptDeadline time.Time
+
 	ticker := time.NewTicker(dw.spec.CheckInterval)
 	defer ticker.Stop()
 
@@ -101,8 +137,17 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			if dw.isDaemonAlive(ctx) {
+				// Daemon alive: check if the health window has elapsed.
+				if !adoptDeadline.IsZero() && !time.Now().Before(adoptDeadline) {
+					dw.pinLastGood(activeCommand[0])
+					adoptDeadline = time.Time{}
+				}
 				continue
 			}
+
+			// Daemon dead: reset the health window tracking.
+			adoptDeadline = time.Time{}
+
 			dw.log.Warn("daemon-watchdog: daemon not reachable",
 				"socket", dw.spec.SocketPath, "revives_so_far", revives)
 
@@ -112,10 +157,14 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 				return fmt.Errorf("daemon-watchdog: revival cap reached after %d attempts", dw.spec.MaxRevives)
 			}
 
+			// Before reviving: check if the active binary is yanked.
+			// If so, fall back to the last-good binary.
+			activeCommand = dw.resolveReviveCommand(activeCommand)
+
 			revives++
 			dw.log.Warn("daemon-watchdog: spawning daemon",
-				"attempt", revives, "cmd", dw.spec.Command)
-			spawnErr := dw.revive()
+				"attempt", revives, "cmd", activeCommand)
+			spawnErr := dw.reviveWith(activeCommand)
 			if spawnErr != nil {
 				dw.log.Error("daemon-watchdog: spawn failed",
 					"attempt", revives, "err", spawnErr)
@@ -132,14 +181,101 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 			// revive slot before it has had a chance to bind.
 			// If the daemon comes alive within the window, reset the windowed
 			// counter so isolated clean revivals spread over days do not accumulate
-			// toward the lifetime cap.
+			// toward the lifetime cap. Then start the health window.
 			if dw.pollUntilAlive(ctx, dw.spec.ReviveWindow, dw.spec.ReviveBackoff) {
 				revives = 0
-				dw.log.Info("daemon-watchdog: daemon confirmed alive after revival — windowed counter reset")
+				adoptDeadline = time.Now().Add(dw.spec.CheckInterval)
+				dw.log.Info("daemon-watchdog: daemon confirmed alive after revival — health window started",
+					"adopt_after", adoptDeadline.Format(time.RFC3339))
 			}
 		}
 	}
 }
+
+// resolveReviveCommand returns the command to use for the next revival. If the
+// configured binary is yanked in the ledger, it attempts to fall back to the
+// last-good binary. Returns the input command unchanged if no yank is detected
+// or if no fallback is available.
+func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
+	if dw.spec.LedgerPath == "" || len(current) == 0 {
+		return current
+	}
+	hash := commitHashOf(current[0])
+	if hash == "" {
+		return current
+	}
+	entries, err := release.LoadLedgerFile(dw.spec.LedgerPath)
+	if err != nil {
+		return current
+	}
+	for _, e := range entries {
+		if e.CommitHash != hash || !e.Yanked {
+			continue
+		}
+		dw.log.Warn("daemon-watchdog: refused_yank — binary is yanked in ledger",
+			"semver", e.Semver,
+			"commit", hash,
+			"reason", e.YankedReason)
+		fmt.Fprintf(os.Stderr,
+			"daemon-watchdog: refused_yank: %s %s — %s\n",
+			e.Semver, hash[:min(12, len(hash))], e.YankedReason)
+
+		if dw.spec.LastGoodPath == "" {
+			fmt.Fprintf(os.Stderr, "daemon-watchdog: no last-good path configured — cannot fall back\n")
+			return current
+		}
+		lastGood, lgErr := release.ReadLastGoodBinary(dw.spec.LastGoodPath)
+		if lgErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon-watchdog: no last-good binary available: %v\n", lgErr)
+			return current
+		}
+		dw.log.Info("daemon-watchdog: falling back to last-good binary", "last_good", lastGood)
+		result := make([]string, len(current))
+		copy(result, current)
+		result[0] = lastGood
+		return result
+	}
+	return current
+}
+
+// pinLastGood copies binPath to binPath+".last-good" and updates the state
+// file. Logs at Warn on failure (non-fatal: the daemon is still running).
+func (dw *DaemonWatchdog) pinLastGood(binPath string) {
+	if dw.spec.LastGoodPath == "" {
+		return
+	}
+	if err := release.PinLastGoodBinary(dw.spec.LastGoodPath, binPath); err != nil {
+		dw.log.Warn("daemon-watchdog: failed to pin last-good binary", "bin", binPath, "err", err)
+		return
+	}
+	dw.log.Info("daemon-watchdog: pinned last-good binary",
+		"bin", binPath,
+		"last_good", binPath+".last-good",
+		"state", dw.spec.LastGoodPath)
+}
+
+// commitHashOf runs "$bin version" and extracts the commit hash from the
+// output. Output format (normative): "harmonik v0.y.z (commit: <sha>)".
+// Returns empty string on any error.
+func commitHashOf(binPath string) string {
+	out, err := exec.Command(binPath, "version").Output() //nolint:gosec // G204: binPath is operator-controlled
+	if err != nil {
+		return ""
+	}
+	s := string(out)
+	const prefix = "(commit: "
+	i := strings.Index(s, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(prefix):]
+	j := strings.Index(rest, ")")
+	if j < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:j])
+}
+
 
 // isDaemonAlive probes the daemon Unix socket. Returns true when the daemon is
 // reachable; false on any error (absent, ECONNREFUSED, timeout, etc.).
@@ -181,12 +317,16 @@ func (dw *DaemonWatchdog) pollUntilAlive(ctx context.Context, window, interval t
 	}
 }
 
-// revive spawns the daemon as a detached process (setsid) so it can outlive
-// the supervisor/shim pane. Stdout and stderr are not inherited (connected to
-// os.DevNull); the daemon writes its own events to .harmonik/events/events.jsonl.
-func (dw *DaemonWatchdog) revive() error {
-	//nolint:gosec // command comes from operator-controlled config
-	cmd := exec.Command(dw.spec.Command[0], dw.spec.Command[1:]...)
+// reviveWith spawns the daemon using argv as a detached process (setsid) so
+// it can outlive the supervisor/shim pane. Stdout and stderr are not inherited
+// (connected to os.DevNull); the daemon writes its own events to
+// .harmonik/events/events.jsonl.
+func (dw *DaemonWatchdog) reviveWith(argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("daemon-watchdog: reviveWith: empty argv")
+	}
+	//nolint:gosec // G204: argv comes from operator-controlled config or last-good state
+	cmd := exec.Command(argv[0], argv[1:]...)
 	// Detach from shim's process group and session so SIGTERM to the flywheel
 	// pane does not cascade to the revived daemon.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

@@ -41,6 +41,7 @@ VERBS
   ledger               List all release ledger entries
   certify <semver>     Certify a pre-release (flip prerelease:false, stamp certified_at)
   yank    <semver>     Yank a certified release (requires --reason)
+  rollback             Restore the last-good binary (supervisor last-good pin)
 
 FLAGS (all verbs)
   --project DIR        Project directory (default: current working directory)
@@ -48,17 +49,23 @@ FLAGS (all verbs)
 FLAGS (yank only)
   --reason TEXT        Human-readable reason for the yank (required)
 
+FLAGS (rollback only)
+  --bin PATH           Target binary path to restore (default: current executable)
+
 EXIT CODES
   0  Success
   1  Argument / flag error
   2  Ledger invariant violation (already certified, already yanked, not found, etc.)
   3  File I/O error
+  4  No last-good binary recorded
 
 EXAMPLES
   harmonik release ledger
   harmonik release certify v0.2.0
   harmonik release yank v0.2.0 --reason "critical regression in merge logic"
   harmonik release ledger --project /path/to/project
+  harmonik release rollback
+  harmonik release rollback --bin /usr/local/bin/harmonik
 `
 
 // runReleaseSubcommand dispatches `harmonik release <verb> [args]`.
@@ -79,8 +86,10 @@ func runReleaseSubcommand(subArgs []string) int {
 		return runReleaseCertify(rest)
 	case "yank":
 		return runReleaseYank(rest)
+	case "rollback":
+		return runReleaseRollback(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik release: unrecognised verb %q; verbs are: ledger, certify, yank\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik release: unrecognised verb %q; verbs are: ledger, certify, yank, rollback\n", verb)
 		return 1
 	}
 }
@@ -101,6 +110,11 @@ func parseReleaseFlags(args []string) (projectDir string, positional []string, e
 			extraFlags["reason"] = args[i]
 		case strings.HasPrefix(args[i], "--reason="):
 			extraFlags["reason"] = strings.TrimPrefix(args[i], "--reason=")
+		case args[i] == "--bin" && i+1 < len(args):
+			i++
+			extraFlags["bin"] = args[i]
+		case strings.HasPrefix(args[i], "--bin="):
+			extraFlags["bin"] = strings.TrimPrefix(args[i], "--bin=")
 		case args[i] == "--help" || args[i] == "-h":
 			extraFlags["help"] = "1"
 		case strings.HasPrefix(args[i], "-"):
@@ -277,6 +291,82 @@ FLAGS
 	}
 
 	fmt.Printf("harmonik release yank: %s yanked — %s\n", semver, reason)
+	return 0
+}
+
+// runReleaseRollback implements `harmonik release rollback [--bin PATH] [--project DIR]`.
+//
+// Reads the last-good binary path from the supervisor state file and copies it
+// to --bin (default: current executable). Useful for operator-driven rollback
+// when the supervisor has not yet auto-recovered.
+//
+// Exit codes:
+//
+//	0  success
+//	1  argument / flag error
+//	3  file I/O error
+//	4  no last-good binary recorded
+//
+// Spec ref: specs/release-pipeline.md §7 — ROLLBACK stage.
+// Bead ref: hk-ya51z.
+func runReleaseRollback(args []string) int {
+	_, _, flags, err := parseReleaseFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release rollback: %v\n", err)
+		return 1
+	}
+	if flags["help"] != "" {
+		fmt.Print(`harmonik release rollback — restore the last-good binary
+
+USAGE
+  harmonik release rollback [--bin PATH] [--project DIR]
+
+FLAGS
+  --bin PATH     Target binary path to restore (default: current executable)
+  --project DIR  Project directory (default: current working directory)
+
+EXIT CODES
+  0  Success — last-good binary restored
+  1  Argument or flag error
+  3  File I/O error
+  4  No last-good binary has been recorded yet
+
+NOTES
+  The last-good binary state is stored at /tmp/hk-last-good-binary (pre-1.0).
+  The supervisor pins a new last-good after the daemon has been healthy for >=30s.
+  After rollback, restart the daemon to load the restored binary.
+
+EXAMPLES
+  harmonik release rollback
+  harmonik release rollback --bin /usr/local/bin/harmonik
+`)
+		return 0
+	}
+
+	// Resolve target binary path.
+	binPath := flags["bin"]
+	if binPath == "" {
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik release rollback: cannot determine current executable: %v\n", exeErr)
+			return 1
+		}
+		binPath = exe
+	}
+
+	statePath := release.DefaultLastGoodStatePath()
+	if restoreErr := release.RestoreLastGoodBinary(statePath, binPath); restoreErr != nil {
+		if errors.Is(restoreErr, release.ErrNoLastGood) {
+			fmt.Fprintln(os.Stderr, "harmonik release rollback: no last-good binary recorded; the supervisor pins one after >=30s of healthy daemon runtime")
+			return 4
+		}
+		fmt.Fprintf(os.Stderr, "harmonik release rollback: %v\n", restoreErr)
+		return 3
+	}
+
+	lastGood, _ := release.ReadLastGoodBinary(statePath)
+	fmt.Printf("harmonik release rollback: restored %s from %s\n", binPath, lastGood)
+	fmt.Println("harmonik release rollback: restart the daemon to use the restored binary")
 	return 0
 }
 

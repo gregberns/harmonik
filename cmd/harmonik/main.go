@@ -47,6 +47,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
+	"github.com/gregberns/harmonik/internal/release"
 )
 
 func main() {
@@ -766,6 +767,37 @@ EXAMPLES
 		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
 		DefaultHarness:           core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
 		CodexBinary:              codexBinaryFlag,                     // hk-y01k6: codex executable path
+	}
+
+	// Yanked-binary check (specs/release-pipeline.md §7.2 point 4).
+	//
+	// Belt-and-suspenders over the supervisor guard: if the compiled-in ledger or
+	// the on-disk ledger marks this binary's commit hash as yanked, exit 9 with a
+	// clear FATAL message so operators know immediately why the daemon refused to start.
+	//
+	// Only applies to the daemon path (after subcommand dispatch), so operator
+	// tools like `harmonik release rollback` remain usable even on a yanked binary.
+	//
+	// Exit code 9 = yanked-binary per spec §7.2.4.
+	if commitHash != "unknown" && commitHash != "" {
+		// Check compiled-in ledger.
+		for _, e := range release.Ledger {
+			if e.CommitHash == commitHash && e.Yanked {
+				fmt.Fprintf(os.Stderr, "FATAL: this binary (%s, %s) has been yanked: %s\n",
+					e.Semver, commitHash, e.YankedReason)
+				return 9
+			}
+		}
+		// Check on-disk (mutable) ledger.
+		if onDiskEntries, ldErr := release.LoadLedgerFile(release.LedgerPath(projectDir)); ldErr == nil {
+			for _, e := range onDiskEntries {
+				if e.CommitHash == commitHash && e.Yanked {
+					fmt.Fprintf(os.Stderr, "FATAL: this binary (%s, %s) has been yanked: %s\n",
+						e.Semver, commitHash, e.YankedReason)
+					return 9
+				}
+			}
+		}
 	}
 
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.

@@ -145,11 +145,14 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 				continue
 			}
 
-			// Daemon dead: reset the health window tracking.
+			// Daemon dead: note whether it crashed within the health window
+			// before clearing adoptDeadline.
+			crashedInHealthWindow := !adoptDeadline.IsZero()
 			adoptDeadline = time.Time{}
 
 			dw.log.Warn("daemon-watchdog: daemon not reachable",
-				"socket", dw.spec.SocketPath, "revives_so_far", revives)
+				"socket", dw.spec.SocketPath, "revives_so_far", revives,
+				"crashed_in_health_window", crashedInHealthWindow)
 
 			if dw.spec.MaxRevives >= 0 && revives >= dw.spec.MaxRevives {
 				dw.log.Error("daemon-watchdog: revival cap reached — giving up",
@@ -157,8 +160,16 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 				return fmt.Errorf("daemon-watchdog: revival cap reached after %d attempts", dw.spec.MaxRevives)
 			}
 
-			// Before reviving: check if the active binary is yanked.
-			// If so, fall back to the last-good binary.
+			// §7.2.3: if the daemon crashed before being adopted (within the
+			// health window), fall back to the last-good binary for the next
+			// revival attempt so a crash-looping non-yanked binary does not
+			// keep replacing a known-good one.
+			if crashedInHealthWindow {
+				activeCommand = dw.applyLastGoodFallback(activeCommand, "crash within health window")
+			}
+
+			// §7.2.1: if the active binary is yanked in the ledger, fall back
+			// to the last-good binary.
 			activeCommand = dw.resolveReviveCommand(activeCommand)
 
 			revives++
@@ -193,9 +204,11 @@ func (dw *DaemonWatchdog) Run(ctx context.Context) error {
 }
 
 // resolveReviveCommand returns the command to use for the next revival. If the
-// configured binary is yanked in the ledger, it attempts to fall back to the
-// last-good binary. Returns the input command unchanged if no yank is detected
-// or if no fallback is available.
+// configured binary is yanked in the ledger, it falls back to the last-good
+// binary. Returns current unchanged if no yank is detected or no fallback is
+// available.
+//
+// Spec ref: specs/release-pipeline.md §7.2.1 — supervisor yanked-binary guard.
 func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
 	if dw.spec.LedgerPath == "" || len(current) == 0 {
 		return current
@@ -220,30 +233,66 @@ func (dw *DaemonWatchdog) resolveReviveCommand(current []string) []string {
 			"daemon-watchdog: refused_yank: %s %s — %s\n",
 			e.Semver, hash[:min(12, len(hash))], e.YankedReason)
 
-		if dw.spec.LastGoodPath == "" {
-			fmt.Fprintf(os.Stderr, "daemon-watchdog: no last-good path configured — cannot fall back\n")
-			return current
-		}
-		lastGood, lgErr := release.ReadLastGoodBinary(dw.spec.LastGoodPath)
-		if lgErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon-watchdog: no last-good binary available: %v\n", lgErr)
-			return current
-		}
-		dw.log.Info("daemon-watchdog: falling back to last-good binary", "last_good", lastGood)
-		result := make([]string, len(current))
-		copy(result, current)
-		result[0] = lastGood
-		return result
+		return dw.applyLastGoodFallback(current, "yanked binary")
 	}
 	return current
 }
 
+// applyLastGoodFallback replaces current[0] with the last-good binary path
+// when one is available. Returns current unchanged when LastGoodPath is unset
+// or no last-good binary has been recorded. reason is used for log messages.
+//
+// Spec ref: specs/release-pipeline.md §7.2.3 (crash fallback) and §7.2.1
+// (yanked fallback).
+func (dw *DaemonWatchdog) applyLastGoodFallback(current []string, reason string) []string {
+	if dw.spec.LastGoodPath == "" || len(current) == 0 {
+		fmt.Fprintf(os.Stderr, "daemon-watchdog: last-good fallback unavailable (%s): no LastGoodPath configured\n", reason)
+		return current
+	}
+	lastGood, err := release.ReadLastGoodBinary(dw.spec.LastGoodPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon-watchdog: last-good fallback unavailable (%s): %v\n", reason, err)
+		return current
+	}
+	// Don't switch if we are already running the last-good binary.
+	if current[0] == lastGood {
+		dw.log.Warn("daemon-watchdog: already running last-good binary; staying with it",
+			"reason", reason, "bin", lastGood)
+		return current
+	}
+	dw.log.Info("daemon-watchdog: falling back to last-good binary",
+		"reason", reason, "last_good", lastGood, "was", current[0])
+	result := make([]string, len(current))
+	copy(result, current)
+	result[0] = lastGood
+	return result
+}
+
 // pinLastGood copies binPath to binPath+".last-good" and updates the state
 // file. Logs at Warn on failure (non-fatal: the daemon is still running).
+//
+// §2.4 MUST NOT: pre-release binaries are never adopted as last-good.
 func (dw *DaemonWatchdog) pinLastGood(binPath string) {
 	if dw.spec.LastGoodPath == "" {
 		return
 	}
+
+	// §2.4: refuse to adopt pre-release binaries as last-good.
+	if dw.spec.LedgerPath != "" {
+		hash := commitHashOf(binPath)
+		if hash != "" {
+			if entries, err := release.LoadLedgerFile(dw.spec.LedgerPath); err == nil {
+				for _, e := range entries {
+					if e.CommitHash == hash && e.Prerelease {
+						dw.log.Info("daemon-watchdog: skipping last-good pin — binary is pre-release",
+							"bin", binPath, "semver", e.Semver, "commit", hash)
+						return
+					}
+				}
+			}
+		}
+	}
+
 	if err := release.PinLastGoodBinary(dw.spec.LastGoodPath, binPath); err != nil {
 		dw.log.Warn("daemon-watchdog: failed to pin last-good binary", "bin", binPath, "err", err)
 		return

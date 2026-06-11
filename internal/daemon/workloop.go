@@ -1909,7 +1909,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if wtFactory == nil {
 		wtFactory = productionWorktreeFactory
 	}
+	// Serialize 'git worktree add' under mergeMu so concurrent beadRunOne
+	// goroutines do not race on projectDir/.git/index.lock (hk-h8u7p).
+	// mergeMu already guards all git operations on the main repo
+	// (merge/rebase/push); worktree creation touches the same index.lock,
+	// so it belongs under the same serialisation boundary.
+	if deps.mergeMu != nil {
+		deps.mergeMu.Lock()
+	}
 	wtPath, wtCleanup, wtErr := wtFactory(ctx, deps.projectDir, runID.String(), headSHA)
+	if deps.mergeMu != nil {
+		deps.mergeMu.Unlock()
+	}
 	if wtErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
 		reopenTID, _ := deps.tidGen.Next()

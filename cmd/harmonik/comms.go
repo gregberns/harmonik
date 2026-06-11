@@ -1588,6 +1588,7 @@ func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID s
 			var env struct {
 				Type          string          `json:"type"`
 				EventID       string          `json:"event_id"`
+				LastEventID   string          `json:"last_event_id"` // heartbeat payload field; EV-037a
 				TimestampWall string          `json:"timestamp_wall"`
 				Payload       json.RawMessage `json:"payload"`
 			}
@@ -1618,7 +1619,16 @@ func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID s
 				return 1
 			}
 
-			// Skip non-message events (heartbeats, etc.).
+			// EV-037a: advance lastSeen from heartbeat.last_event_id even when no
+			// actionable message was processed — prevents watermark regression across
+			// reconnects in quiet periods. max() invariant: only advance forward.
+			if env.Type == "heartbeat" && env.LastEventID != "" {
+				if lastSeen == "" || env.LastEventID > lastSeen {
+					lastSeen = env.LastEventID
+				}
+			}
+
+			// Skip non-message events.
 			if env.Type != "agent_message" {
 				continue
 			}

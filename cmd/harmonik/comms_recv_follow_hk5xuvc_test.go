@@ -1,19 +1,23 @@
 package main
 
 // comms_recv_follow_hk5xuvc_test.go — tests for `comms recv --follow`
-// reconnect behaviour (F12 fix, bead hk-5xuvc).
+// reconnect behaviour (F12 fix, bead hk-5xuvc) and EV-037a watermark invariant.
 //
 // The tests verify:
 //   1. First-dial failure (daemon absent) → exit 17 (old behaviour preserved).
 //   2. Connection-drop after first messages → reconnect, deliver messages from
 //      the second server without gaps or duplicates (F12 fix).
+//   3. Heartbeat last_event_id advances lastSeen watermark so reconnects use
+//      max(prior, heartbeat.last_event_id) as since_event_id (EV-037a).
 
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,5 +212,118 @@ func TestCommsFollowReconnect(t *testing.T) {
 	// No duplicate: message A event_id should appear at most once.
 	if n := strings.Count(combined, msgAID); n > 1 {
 		t.Errorf("message A event_id appeared %d times (want ≤1, reconnect caused duplicate)\noutput=%q", n, combined)
+	}
+}
+
+// TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat verifies EV-037a:
+// a heartbeat carrying last_event_id must advance lastSeen so that the
+// subsequent reconnect supplies since_event_id=max(prior, heartbeat.last_event_id).
+// Without this fix, a quiet period with no agent_message events would leave
+// the watermark anchored at its initial value, forcing the daemon to replay
+// all events from the beginning on every reconnect.
+//
+// Note: uses a short sockPath under /tmp to stay within the 104-byte macOS
+// Unix socket path limit (struct sockaddr_un sun_path).
+func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := "/tmp/hku2ko5.sock"
+	_ = os.Remove(sockPath)
+	t.Cleanup(func() { _ = os.Remove(sockPath) })
+
+	// A UUIDv7 that the heartbeat will report as last_event_id.
+	heartbeatID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid: %v", err)
+	}
+	heartbeatLastEventID := heartbeatID.String()
+
+	// reconnectSinceID captures the since_event_id from the second subscribe request.
+	reconnectSinceID := make(chan string, 1)
+
+	// Raw Unix socket listener — gives us control over the exact JSON sent.
+	ln, lnErr := net.Listen("unix", sockPath)
+	if lnErr != nil {
+		t.Fatalf("listen: %v", lnErr)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var connCount int32
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return // listener closed
+			}
+			n := atomic.AddInt32(&connCount, 1)
+			go func(c net.Conn, num int32) {
+				defer func() { _ = c.Close() }()
+
+				// Read the subscribe request the client sends.
+				var req map[string]any
+				if decErr := json.NewDecoder(c).Decode(&req); decErr != nil {
+					return
+				}
+
+				switch num {
+				case 1:
+					// First connection: emit heartbeat with last_event_id, then close.
+					// The follow loop must advance lastSeen to heartbeatLastEventID.
+					hb := map[string]any{
+						"type":          "heartbeat",
+						"ts":            time.Now().UTC().Format(time.RFC3339),
+						"last_event_id": heartbeatLastEventID,
+						"active_runs":   []any{},
+					}
+					_ = json.NewEncoder(c).Encode(hb)
+					// c closed on return → triggers reconnect.
+
+				case 2:
+					// Second connection: capture since_event_id from the reconnect request.
+					sinceID, _ := req["since_event_id"].(string)
+					reconnectSinceID <- sinceID
+
+					// Send one agent_message so the follow loop has output to write
+					// (avoids a silent-exit race before the test reads the channel).
+					mid, _ := uuid.NewV7()
+					payload, _ := json.Marshal(map[string]any{"from": "srv", "to": "alice", "body": "ok"})
+					ev := map[string]any{
+						"type":     "agent_message",
+						"event_id": mid.String(),
+						"payload":  json.RawMessage(payload),
+					}
+					_ = json.NewEncoder(c).Encode(ev)
+					// c closed on return; follow loop will retry — that's fine.
+				}
+			}(conn, n)
+		}
+	}()
+
+	// Redirect stdout so follow-loop message output does not pollute test output.
+	outFile, _ := os.CreateTemp(dir, "watermark-hb-*.txt")
+	oldOut := os.Stdout
+	os.Stdout = outFile
+	t.Cleanup(func() {
+		os.Stdout = oldOut
+		_ = outFile.Close()
+	})
+
+	// Run the follow loop; no initial since_event_id (cold start).
+	go func() {
+		runCommsRecvFollow(sockPath, "alice", "", "", "" /* sinceEventID */, true /*jsonOut*/)
+	}()
+
+	// Wait for the second connection's captured since_event_id.
+	// Allow up to 15 s to cover the 1 s initial reconnect backoff.
+	select {
+	case captured := <-reconnectSinceID:
+		os.Stdout = oldOut
+		_ = outFile.Close()
+		if captured != heartbeatLastEventID {
+			t.Errorf("reconnect since_event_id=%q, want %q (heartbeat.last_event_id — EV-037a)", captured, heartbeatLastEventID)
+		}
+	case <-time.After(15 * time.Second):
+		os.Stdout = oldOut
+		_ = outFile.Close()
+		t.Fatal("timed out waiting for second reconnect; watermark may not be advancing from heartbeat")
 	}
 }

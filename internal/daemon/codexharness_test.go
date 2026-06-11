@@ -106,7 +106,7 @@ func TestCodexHarness_DetectReady_OtherEvent(t *testing.T) {
 
 // TestCodexHarness_LaunchSpec_InitialDelegates verifies the harness LaunchSpec
 // produces the same initial-turn argv as buildCodexLaunchSpec: codex exec --json
-// --sandbox workspace-write -a never -C <wt> <seed>, with no "resume".
+// --sandbox workspace-write -C <wt> <seed>, with no "resume".
 func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 	t.Parallel()
 

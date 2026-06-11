@@ -4,7 +4,7 @@ package daemon_test
 //
 // Key invariants tested:
 //
-//   - AC2.1: initial run argv = codex exec --json --sandbox workspace-write -a never -C <wt> <seed>
+//   - AC2.1: initial run argv = codex exec --json --sandbox workspace-write -C <wt> <seed>
 //   - AC2.2: resume run argv includes "resume <thread_id>" prefix
 //   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present),
 //     including when inherited from the real process env via os.Environ() (C3/T10, hk-jxgnp)

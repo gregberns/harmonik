@@ -148,7 +148,7 @@ type WatcherConfig struct {
 	// WarnAbsTokens is the absolute-token warn threshold. The effective threshold
 	// is min(WarnAbsTokens, WarnPctCeil * WindowSize). Used when the gauge file
 	// contains both Tokens and WindowSize (i.e. keeper-statusline.sh is current).
-	// Falls back to WarnPct when Tokens or WindowSize are zero. Default: 220000.
+	// Falls back to WarnPct when Tokens or WindowSize are zero. Default: 240000.
 	// Refs: hk-cl74g.
 	WarnAbsTokens int64
 
@@ -196,7 +196,7 @@ func (c *WatcherConfig) applyDefaults() {
 		c.WarnPct = 80.0
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 220_000
+		c.WarnAbsTokens = 240_000
 	}
 	if c.WarnPctCeil <= 0 {
 		c.WarnPctCeil = 0.70

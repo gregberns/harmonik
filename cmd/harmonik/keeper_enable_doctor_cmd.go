@@ -410,6 +410,11 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				if !strings.Contains(cmd, "HARMONIK_AGENT=") {
 					check("statusLine.envvar", false, "statusLine.command missing HARMONIK_AGENT= — run: harmonik keeper enable to normalize")
 				}
+				// Sub-check: required "type":"command" field (hk-hs1). Without it
+				// Claude Code rejects the whole settings.json and disables all hooks.
+				if !statusLineTypeIsCommand(settings) {
+					check("statusLine.type", false, `statusLine missing "type":"command" — Claude Code will reject settings.json; run: harmonik keeper enable to normalize`)
+				}
 			}
 		}
 	}
@@ -577,18 +582,23 @@ func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string)
 	existing := getStatusLineCommand(settings)
 
 	if strings.Contains(existing, "keeper-statusline.sh") {
-		if existing == canonicalCmd {
+		if existing == canonicalCmd && statusLineTypeIsCommand(settings) {
 			return "unchanged"
 		}
-		// Stale or non-normalized — update in place.
+		// Stale, non-normalized, or missing the required "type":"command" — update
+		// in place. The "type" field is mandatory: Claude Code rejects the entire
+		// settings.json (disabling ALL hooks) if statusLine lacks it (hk-hs1).
 		sl := getOrCreateStatusLine(settings)
+		sl["type"] = "command"
 		sl["command"] = canonicalCmd
 		settings["statusLine"] = sl
 		return "updated (normalized)"
 	}
 
-	// Add new stanza.
+	// Add new stanza. "type":"command" is required alongside "command" — Claude
+	// Code rejects a statusLine missing it and disables all hooks (hk-hs1).
 	sl := getOrCreateStatusLine(settings)
+	sl["type"] = "command"
 	sl["command"] = canonicalCmd
 	settings["statusLine"] = sl
 	return "added"
@@ -626,6 +636,23 @@ func getStatusLineCommand(settings map[string]interface{}) string {
 	}
 	cmd, _ := slMap["command"].(string)
 	return cmd
+}
+
+// statusLineTypeIsCommand reports whether the statusLine stanza already carries
+// the required "type":"command" field. Claude Code rejects a statusLine that
+// lacks it (disabling ALL hooks), so enable must normalize any stanza missing
+// it even when the command string is otherwise canonical (hk-hs1).
+func statusLineTypeIsCommand(settings map[string]interface{}) bool {
+	sl, ok := settings["statusLine"]
+	if !ok || sl == nil {
+		return false
+	}
+	slMap, ok := sl.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	t, _ := slMap["type"].(string)
+	return t == "command"
 }
 
 // getOrCreateStatusLine returns the statusLine map, creating it if absent.

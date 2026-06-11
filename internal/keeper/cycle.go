@@ -39,11 +39,11 @@ type CyclerConfig struct {
 	// available). The effective act threshold is min(ActAbsTokens, ActPctCeil *
 	// WindowSize); similarly for warn. This handles both 200k and 1M windows:
 	// on a 200k window the pct-ceil wins (~170k); on a 1M window the abs cap
-	// wins (280k) — preventing the 90%-pct gate from firing at ~900k tokens.
+	// wins (300k) — preventing the 90%-pct gate from firing at ~900k tokens.
 	// Refs: hk-cl74g.
-	ActAbsTokens  int64   // absolute cycle threshold; default 280000
+	ActAbsTokens  int64   // absolute cycle threshold; default 300000
 	ActPctCeil    float64 // pct-of-window cap for cycle gate; default 0.85
-	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 220000
+	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 240000
 	WarnPctCeil   float64 // pct-of-window cap for warn gate; default 0.70
 
 	// Pct-based fallbacks used when CtxFile.Tokens == 0 or WindowSize == 0
@@ -84,13 +84,13 @@ type CyclerConfig struct {
 
 func (c *CyclerConfig) applyDefaults() {
 	if c.ActAbsTokens <= 0 {
-		c.ActAbsTokens = 280_000
+		c.ActAbsTokens = 300_000
 	}
 	if c.ActPctCeil <= 0 {
 		c.ActPctCeil = 0.85
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 220_000
+		c.WarnAbsTokens = 240_000
 	}
 	if c.WarnPctCeil <= 0 {
 		c.WarnPctCeil = 0.70

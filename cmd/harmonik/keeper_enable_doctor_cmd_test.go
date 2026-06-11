@@ -86,6 +86,11 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !strings.Contains(cmd, "HARMONIK_AGENT=orchestrator") {
 		t.Errorf("statusLine.command does not contain HARMONIK_AGENT=orchestrator: %q", cmd)
 	}
+	// hk-hs1: statusLine MUST carry "type":"command". Without it Claude Code
+	// rejects the entire settings.json and disables ALL hooks.
+	if got, _ := sl["type"].(string); got != "command" {
+		t.Errorf(`statusLine.type = %q; want "command" (hk-hs1)`, got)
+	}
 
 	// Stop hook.
 	found, stopCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
@@ -587,6 +592,32 @@ func TestMergeStatusLineStanza_Add(t *testing.T) {
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("command not set: %q", cmd)
 	}
+	// hk-hs1: a freshly-added stanza must carry "type":"command".
+	if !statusLineTypeIsCommand(settings) {
+		t.Error(`added statusLine missing "type":"command" (hk-hs1)`)
+	}
+}
+
+// TestMergeStatusLineStanza_NormalizesMissingType verifies that a stanza whose
+// command is already canonical but which lacks "type":"command" gets normalized
+// rather than reported "unchanged" (hk-hs1). This is the exact end-to-end defect:
+// without the type field Claude Code rejects settings.json and disables all hooks.
+func TestMergeStatusLineStanza_NormalizesMissingType(t *testing.T) {
+	t.Parallel()
+
+	canonicalCmd := "HARMONIK_PROJECT=/proj HARMONIK_AGENT=x /scripts/keeper-statusline.sh"
+	settings := map[string]interface{}{
+		"statusLine": map[string]interface{}{
+			"command": canonicalCmd, // canonical command, but no "type" field
+		},
+	}
+	action := mergeStatusLineStanza(settings, canonicalCmd)
+	if action != "updated (normalized)" {
+		t.Errorf("want \"updated (normalized)\", got %q", action)
+	}
+	if !statusLineTypeIsCommand(settings) {
+		t.Error(`statusLine still missing "type":"command" after normalize (hk-hs1)`)
+	}
 }
 
 // TestMergeStatusLineStanza_Unchanged verifies idempotency.
@@ -619,6 +650,10 @@ func TestMergeStatusLineStanza_Update(t *testing.T) {
 	got := getStatusLineCommand(settings)
 	if got != newCmd {
 		t.Errorf("command not updated: want %q, got %q", newCmd, got)
+	}
+	// hk-hs1: normalization must also add the required "type":"command".
+	if !statusLineTypeIsCommand(settings) {
+		t.Error(`updated statusLine missing "type":"command" (hk-hs1)`)
 	}
 }
 

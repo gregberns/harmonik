@@ -6,9 +6,9 @@ package daemon
 // phase:
 //
 //   - Initial turn (priorThreadID == nil):
-//       codex exec --json --sandbox workspace-write -a never -C <worktree> <seed-prompt>
+//       codex exec --json --sandbox workspace-write -C <worktree> <seed-prompt>
 //   - Resume turn (priorThreadID != nil):
-//       codex exec resume <thread_id> --json --sandbox workspace-write -a never -C <worktree> <seed-prompt>
+//       codex exec resume <thread_id> --json --sandbox workspace-write -C <worktree> <seed-prompt>
 //
 // The seed prompt instructs codex to read .harmonik/agent-task.md, implement
 // the task, and commit with a "Refs: <beadID>" trailer.
@@ -138,8 +138,11 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	}
 
 	// Build argv.
-	// Initial:  codex exec --json --sandbox workspace-write -a never -C <wt> <seed>
-	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write -a never -C <wt> <seed>
+	// Initial:  codex exec --json --sandbox workspace-write -C <wt> <seed>
+	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write -C <wt> <seed>
+	//
+	// Note: codex 0.139.0 removed the -a/--ask-for-approval flag. Sandboxing is
+	// controlled exclusively by --sandbox/-s. Do not add -a back.
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorThreadID != nil {
@@ -147,7 +150,6 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"exec", "resume", *rc.priorThreadID,
 			"--json",
 			"--sandbox", "workspace-write",
-			"-a", "never",
 			"-C", rc.workspacePath,
 			seedPrompt,
 		}
@@ -156,7 +158,6 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"exec",
 			"--json",
 			"--sandbox", "workspace-write",
-			"-a", "never",
 			"-C", rc.workspacePath,
 			seedPrompt,
 		}

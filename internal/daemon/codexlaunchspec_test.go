@@ -48,13 +48,12 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, rc.WorkspacePath)
 	}
 
-	// argv: codex exec --json --sandbox workspace-write -a never -C <wt> <seed>
+	// argv: codex exec --json --sandbox workspace-write -C <wt> <seed>
+	// Note: -a/--ask-for-approval was removed in codex 0.139.0.
 	codexLaunchSpecAssertArgv(t, spec.Args, false, "")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--sandbox")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--sandbox", "workspace-write")
-	codexLaunchSpecAssertArgContains(t, spec.Args, "-a")
-	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "-a", "never")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "-C", rc.WorkspacePath)
 

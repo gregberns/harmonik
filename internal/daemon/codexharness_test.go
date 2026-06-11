@@ -130,7 +130,6 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 	}
 	codexHarnessAssertArgContainsSeq(t, spawn.Args, "exec", "--json")
 	codexHarnessAssertArgValue(t, spawn.Args, "--sandbox", "workspace-write")
-	codexHarnessAssertArgValue(t, spawn.Args, "-a", "never")
 	codexHarnessAssertArgValue(t, spawn.Args, "-C", rc.WorkspacePath)
 	if codexHarnessArgsContain(spawn.Args, "resume") {
 		t.Errorf("initial-turn argv must not contain \"resume\": %v", spawn.Args)

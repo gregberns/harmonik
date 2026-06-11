@@ -370,6 +370,25 @@ separate spec-edit decision, not a code change here.)
 
 ## 5. Acceptance criteria (concrete / testable)
 
+> **Deployment note (2026-06-09) — AC-1 keeper-attach component WEAKENED:**
+> The live captain & crew deployment ships **without** the session-keeper gauge.
+> As of 2026-06-09:
+> - `statusLine.command` is **absent** from both `~/.claude/settings.json` (global)
+>   and `.claude/settings*.json` (project) — no gauge `.ctx` files are being written.
+> - No keeper watcher process is running for any crew.
+> - Consequently, **§6 Step 0 preflight unknown #2** ("statusLine hook fires under
+>   `--remote-control`, writing a `.ctx` gauge") is **unvalidated**.
+> - The AC-1 `.ctx` gauge bullet therefore does **not** apply to the current
+>   deployment: keeper inputs reduce to env-vars-set + `.managed` marker present.
+>
+> **Decision:** keeper enablement is deferred to an operator-supervised session
+> (see `docs/captain-restart.md §Enablement steps`). Crews run correctly without
+> it (fleet + sandbox smokes all booted and idled); the cost is no automated
+> context-clear — crews require manual `crew stop` + `crew start` when context fills.
+> Do NOT rely on keeper-restart continuity until the enablement procedure in
+> `docs/retro/2026-06-10/A6-session-keeper-enable.md` is completed with operator
+> presence. (Refs: hk-ekap1, hk-njetn.)
+
 AC-1 (**#6 + #1**): `harmonik crew start alpha --queue alpha-q --mission
 /tmp/alpha-handoff.md` against a running daemon:
   - exits 0 and prints the minted `session_id`;
@@ -389,6 +408,8 @@ AC-1 (**#6 + #1**): `harmonik crew start alpha --queue alpha-q --mission
     `.harmonik/keeper/alpha.ctx` is written within a few ticks reporting the same
     `session_id`; otherwise the asserted keeper inputs are just the env-vars-set +
     `.managed` marker present.
+    **[Current deployment: the §6 preflight is unvalidated (see deployment note above);
+    only env-vars-set + `.managed` marker apply.]**
 
 AC-2 (**#1**): two `crew start` invocations (`alpha`, `beta`) each produce a
 distinct registry record + distinct named queue; `harmonik crew list` shows both;

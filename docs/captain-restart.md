@@ -61,6 +61,34 @@ A mistimed `/clear` during a deploy / crew-spawn / merge would strand state. Gua
   NO auto-clear, to dogfood the signal on the captain for a few cycles. Only after
   that, and after the crew abort-case + idle-gate tests PASS, arm Phase-2 full-cycle.
 
+## Current deployment state (2026-06-09)
+
+**Captain & crew ships WITHOUT the session-keeper gauge.** The following are
+confirmed absent on the live 2026-06-09 deployment:
+
+- `statusLine.command` not wired in `~/.claude/settings.json` (global) — no `.ctx`
+  gauge files are being written for any crew (chani / duncan / liet / stilgar).
+- No Stop or PreCompact hook stanzas wired.
+- No keeper watcher process running.
+
+**Implication:** c2-spec §6 Step 0 "preflight unknown #2" (does the statusLine hook
+fire under `--remote-control`?) is **unvalidated**. AC-1's keeper-attach
+sub-criterion is correspondingly weakened — only the env-vars-set + `.managed`
+marker components apply to the current fleet.
+
+**Operational consequence:** crews have no automated context-clear. When a crew's
+context fills (~200k tokens), it stops accepting keystrokes and requires manual
+restart: `harmonik crew stop <name>` followed by `crew start <name>` with a fresh
+mission file. This is the current captain operating cost documented in the
+2026-06-10 retrospective (Pattern 6).
+
+**Decision (logged hk-njetn):** keeper enablement is deferred to an
+operator-supervised session. Crews run correctly without it — fleet and sandbox
+smokes all booted and idled. Refer to `docs/retro/2026-06-10/A6-session-keeper-enable.md`
+for the exact enablement procedure and rollout sequence.
+
+---
+
 ## Enablement steps
 
 **Crew keeper test: PASSED 2026-06-10** (abort / happy / idle-gate all green; the

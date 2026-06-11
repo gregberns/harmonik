@@ -52,6 +52,14 @@ The script runs *outside* tmux, launches the daemon in a `hkdkeeper` tmux sessio
 
 ---
 
+## Crew context management
+
+**SESSION-KEEPER NOT DEPLOYED FOR CREWS (first seen 2026-06-09, ongoing).**
+Symptom: when a crew's context fills (~200k tokens), the pane stops accepting keystrokes — `harmonik keeper` auto-clear/reseed cycle does NOT fire because the statusLine hook is not wired.
+Resolution: manual restart — `harmonik crew stop <name>` followed by `crew start <name>` with a fresh mission file. Full enablement procedure: `docs/retro/2026-06-10/A6-session-keeper-enable.md`. Decision to defer: `docs/captain-restart.md §Current deployment state`. Refs: hk-ekap1, hk-njetn.
+
+---
+
 ## Harness issues
 
 **HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (first seen v47).**

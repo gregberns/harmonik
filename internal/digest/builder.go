@@ -123,7 +123,84 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		addErr("kerf_next", kerfErr)
 	}
 
+	// --- pending decision_required events (EV-044) ---
+	// Scanned from the beginning of events.jsonl, ignoring SinceEventID, so
+	// that unacknowledged decisions surface even during quiet periods where the
+	// watermark has advanced past the event.
+	out.PendingDecisions = buildPendingDecisions(eventsPath)
+
 	return out, nil
+}
+
+// buildPendingDecisions scans the full events.jsonl (from the beginning, ignoring
+// SinceEventID) and returns every decision_required event whose ack_token has no
+// matching decision_acknowledged event (EV-044).
+//
+// "Quiet" suppression — where a watermark-advancing consumer would skip old events
+// — MUST NOT apply to decision_required: they must appear in every digest until
+// explicitly acknowledged.
+func buildPendingDecisions(eventsPath string) []DecisionRequiredSummary {
+	type decisionRequiredPayload struct {
+		Subject struct {
+			Kind string `json:"kind"`
+			ID   string `json:"id"`
+		} `json:"subject"`
+		Reason          string `json:"reason"`
+		SuggestedAction string `json:"suggested_action"`
+		AckToken        string `json:"ack_token"`
+	}
+	type decisionAcknowledgedPayload struct {
+		AckToken string `json:"ack_token"`
+	}
+
+	// First pass: collect all decision_required and decision_acknowledged events.
+	var decisions []struct {
+		eventID string
+		payload decisionRequiredPayload
+	}
+	ackedTokens := make(map[string]struct{})
+
+	for ev := range eventbus.ScanAfter(eventsPath, ZeroEventID) {
+		switch ev.Type {
+		case "decision_required":
+			var p decisionRequiredPayload
+			if err := json.Unmarshal(ev.Payload, &p); err != nil {
+				continue
+			}
+			if p.AckToken == "" {
+				continue
+			}
+			decisions = append(decisions, struct {
+				eventID string
+				payload decisionRequiredPayload
+			}{eventID: ev.EventID.String(), payload: p})
+		case "decision_acknowledged":
+			var p decisionAcknowledgedPayload
+			if err := json.Unmarshal(ev.Payload, &p); err != nil {
+				continue
+			}
+			if p.AckToken != "" {
+				ackedTokens[p.AckToken] = struct{}{}
+			}
+		}
+	}
+
+	// Second pass: filter to unacknowledged decisions.
+	var out []DecisionRequiredSummary
+	for _, d := range decisions {
+		if _, acked := ackedTokens[d.payload.AckToken]; acked {
+			continue
+		}
+		out = append(out, DecisionRequiredSummary{
+			EventID:         d.eventID,
+			AckToken:        d.payload.AckToken,
+			SubjectKind:     d.payload.Subject.Kind,
+			SubjectID:       d.payload.Subject.ID,
+			Reason:          d.payload.Reason,
+			SuggestedAction: d.payload.SuggestedAction,
+		})
+	}
+	return out
 }
 
 // ensureTruncation returns tr, allocating a fresh TruncationReport when tr is nil.

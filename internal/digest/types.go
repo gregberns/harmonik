@@ -47,6 +47,12 @@ type DigestJSON struct {
 	// when kerf is not installed or returns an error.
 	KerfNext interface{} `json:"kerf_next,omitempty"`
 
+	// PendingDecisions lists every unacknowledged decision_required event (EV-044).
+	// Surfaced unconditionally — not filtered by SinceEventID — so that quiet
+	// periods (watermark advanced past the event) cannot suppress them. An entry
+	// is removed only after the matching decision_acknowledged is observed.
+	PendingDecisions []DecisionRequiredSummary `json:"pending_decisions,omitempty"`
+
 	// Truncated reports what was truncated per CL-032 size budget.
 	Truncated *TruncationReport `json:"truncated,omitempty"`
 
@@ -113,6 +119,18 @@ type NoteSummary struct {
 	ToolCallID string    `json:"tool_call_id,omitempty"`
 	SessionID  string    `json:"session_id,omitempty"`
 	Refs       []string  `json:"refs,omitempty"`
+}
+
+// DecisionRequiredSummary is an unacknowledged decision_required event (EV-044).
+// Surfaced in the digest regardless of the SinceEventID watermark so that
+// consumers cannot silently suppress it during quiet periods.
+type DecisionRequiredSummary struct {
+	EventID         string `json:"event_id"`
+	AckToken        string `json:"ack_token"`
+	SubjectKind     string `json:"subject_kind"`
+	SubjectID       string `json:"subject_id"`
+	Reason          string `json:"reason"`
+	SuggestedAction string `json:"suggested_action,omitempty"`
 }
 
 // TruncationReport describes what was omitted per CL-032.

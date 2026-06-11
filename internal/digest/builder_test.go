@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestBuildMissingHarmonikDir verifies that Build returns ErrNoHarmonikDir
@@ -355,6 +359,153 @@ func TestApplyNoteTruncation_Cap(t *testing.T) {
 	}
 }
 
+// TestBuildPendingDecisionsUnacknowledged verifies EV-044: an unacknowledged
+// decision_required event MUST appear in PendingDecisions even when it is before
+// the SinceEventID watermark (i.e. in a "quiet" period where no recent events exist).
+func TestBuildPendingDecisionsUnacknowledged(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// Write a decision_required event with an "old" event_id.
+	decisionEventID := "01900000-0000-7000-8000-000000000001"
+	watermarkEventID := "01900000-0000-7000-8000-000000000099"
+	writeDecisionEvents(t, dir, []testDecisionEvent{
+		{
+			eventID: decisionEventID,
+			evType:  "decision_required",
+			ackToken: "tok-aaa",
+			subjectKind: "bead",
+			subjectID:   "hk-test1",
+			reason:      "bead_double_failure",
+		},
+	})
+
+	// Parse watermarkEventID as an EventID for SinceEventID.
+	watermarkUUID, err := uuid.Parse(watermarkEventID)
+	if err != nil {
+		t.Fatalf("parse watermark uuid: %v", err)
+	}
+	sinceID := core.EventID(watermarkUUID)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir:   dir,
+		Limits:       DefaultLimits(),
+		SinceEventID: sinceID,
+		Now:          time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	// RecentEvents should be empty (decision is before the watermark).
+	if len(d.RecentEvents) != 0 {
+		t.Errorf("expected no recent events (all before watermark); got %d", len(d.RecentEvents))
+	}
+
+	// PendingDecisions MUST surface the unacknowledged decision regardless.
+	if len(d.PendingDecisions) != 1 {
+		t.Fatalf("expected 1 pending decision (EV-044); got %d", len(d.PendingDecisions))
+	}
+	pd := d.PendingDecisions[0]
+	if pd.AckToken != "tok-aaa" {
+		t.Errorf("ack_token: got %q, want %q", pd.AckToken, "tok-aaa")
+	}
+	if pd.SubjectKind != "bead" {
+		t.Errorf("subject_kind: got %q, want %q", pd.SubjectKind, "bead")
+	}
+	if pd.SubjectID != "hk-test1" {
+		t.Errorf("subject_id: got %q, want %q", pd.SubjectID, "hk-test1")
+	}
+	if pd.Reason != "bead_double_failure" {
+		t.Errorf("reason: got %q, want %q", pd.Reason, "bead_double_failure")
+	}
+}
+
+// TestBuildPendingDecisionsAcknowledged verifies EV-044: a decision_required event
+// that has a matching decision_acknowledged MUST NOT appear in PendingDecisions.
+func TestBuildPendingDecisionsAcknowledged(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	writeDecisionEvents(t, dir, []testDecisionEvent{
+		{
+			eventID:     "01900000-0000-7000-8000-000000000001",
+			evType:      "decision_required",
+			ackToken:    "tok-bbb",
+			subjectKind: "bead",
+			subjectID:   "hk-test2",
+			reason:      "bead_double_failure",
+		},
+		{
+			eventID:  "01900000-0000-7000-8000-000000000002",
+			evType:   "decision_acknowledged",
+			ackToken: "tok-bbb",
+		},
+	})
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if len(d.PendingDecisions) != 0 {
+		t.Errorf("expected 0 pending decisions after acknowledgement; got %d", len(d.PendingDecisions))
+	}
+}
+
+// TestBuildPendingDecisionsMixed verifies EV-044 with multiple decisions where
+// some are acknowledged and some are not.
+func TestBuildPendingDecisionsMixed(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	writeDecisionEvents(t, dir, []testDecisionEvent{
+		// Unacknowledged
+		{
+			eventID:     "01900000-0000-7000-8000-000000000001",
+			evType:      "decision_required",
+			ackToken:    "tok-pending",
+			subjectKind: "bead",
+			subjectID:   "hk-pend",
+			reason:      "bead_double_failure",
+		},
+		// Acknowledged: decision_required followed by decision_acknowledged
+		{
+			eventID:     "01900000-0000-7000-8000-000000000002",
+			evType:      "decision_required",
+			ackToken:    "tok-acked",
+			subjectKind: "queue",
+			subjectID:   "q-1",
+			reason:      "queue_group_failure",
+		},
+		{
+			eventID:  "01900000-0000-7000-8000-000000000003",
+			evType:   "decision_acknowledged",
+			ackToken: "tok-acked",
+		},
+	})
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if len(d.PendingDecisions) != 1 {
+		t.Fatalf("expected 1 pending decision; got %d", len(d.PendingDecisions))
+	}
+	if d.PendingDecisions[0].AckToken != "tok-pending" {
+		t.Errorf("expected tok-pending; got %q", d.PendingDecisions[0].AckToken)
+	}
+}
+
 // --- helpers ---
 
 func makeMinimalProject(t *testing.T) string {
@@ -426,6 +577,71 @@ func writeQueueJSON(t *testing.T, dir string, n int) {
 	}
 	if err := os.WriteFile(filepath.Join(queuesDir, "main.json"), data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// testDecisionEvent describes one event line to write into events.jsonl.
+// For decision_required: fill ackToken, subjectKind, subjectID, reason.
+// For decision_acknowledged: fill ackToken only.
+type testDecisionEvent struct {
+	eventID     string
+	evType      string
+	ackToken    string
+	subjectKind string
+	subjectID   string
+	reason      string
+}
+
+// writeDecisionEvents writes the given events to .harmonik/events/events.jsonl.
+func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
+	t.Helper()
+	eventsDir := filepath.Join(dir, ".harmonik", "events")
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(eventsDir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	enc := json.NewEncoder(f)
+	for _, ev := range events {
+		var payload map[string]interface{}
+		switch ev.evType {
+		case "decision_required":
+			payload = map[string]interface{}{
+				"subject":          map[string]interface{}{"kind": ev.subjectKind, "id": ev.subjectID},
+				"reason":           ev.reason,
+				"suggested_action": "",
+				"ack_required":     true,
+				"ack_token":        ev.ackToken,
+				"triggering_event_id": "00000000-0000-7000-8000-000000000000",
+			}
+		case "decision_acknowledged":
+			payload = map[string]interface{}{
+				"ack_token":  ev.ackToken,
+				"subject":    map[string]interface{}{"kind": "bead", "id": ""},
+				"ack_method": "operator",
+				"acked_at":   "2026-01-01T00:00:00Z",
+			}
+		default:
+			t.Fatalf("unsupported test event type %q", ev.evType)
+		}
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := map[string]interface{}{
+			"event_id":         ev.eventID,
+			"schema_version":   1,
+			"type":             ev.evType,
+			"timestamp_wall":   "2026-01-01T00:00:00Z",
+			"source_subsystem": "test",
+			"payload":          json.RawMessage(payloadBytes),
+		}
+		if err := enc.Encode(line); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

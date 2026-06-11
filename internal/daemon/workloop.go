@@ -3925,6 +3925,23 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		}
 	}
 
+	// hk-4je: strip .harmonik/run-context/** from the run-branch before the
+	// fast-forward update-ref.  CHB-023 force-commits context.json to the task
+	// branch for crash-recovery (EM-031); those paths must not land on the
+	// merge target.  The strip commit is created in the run-branch worktree so
+	// the subsequent update-ref picks up a clean tree.
+	if stripped, stripErr := stripRunContextFromMerge(ctx, wtPath); stripErr != nil {
+		return mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("strip_run_context_failed: %v", stripErr),
+		}
+	} else if stripped {
+		// Strip commit advanced run-branch HEAD — re-resolve runTip.
+		if newTip, resolveErr := resolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
+			runTip = newTip
+		}
+	}
+
 	// Steps 3–4: FF-check → update-ref → build gate → push, with non-FF retry.
 	//
 	// On a non-fast-forward push rejection (origin/<targetBranch> advanced

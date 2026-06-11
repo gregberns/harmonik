@@ -191,6 +191,11 @@ func registerAgentEvents() {
 	// when an implementer session is force-killed for exhausting its commit
 	// budget (hard ceiling reached, or progress went stale). Durability class: O.
 	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
+	// reviewer_budget_exceeded (hk-da3rr): emitted by the builtin review-loop
+	// and the DOT reviewer-node path when pasteInjectQuitOnReviewFile
+	// force-kills a reviewer session that exhausted its diff-scaled verdict
+	// budget. Durability class: O.
+	mustRegister("reviewer_budget_exceeded", func() EventPayload { return &ReviewerBudgetExceededPayload{} })
 	// tmux_new_window_timeout (hk-r1rup): emitted by the daemon when
 	// tmuxSubstrate.SpawnWindow's underlying `tmux new-window` shell call hangs
 	// past the bounded new-window timeout — the observable signature of a hung

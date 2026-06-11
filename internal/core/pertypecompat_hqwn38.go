@@ -159,6 +159,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "spawn_cap_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-9vp51: implementer-budget-exceeded diagnostic (commit-budget kill).
 	{TypeName: "implementer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-da3rr: reviewer-budget-exceeded diagnostic (diff-scaled verdict-budget kill).
+	{TypeName: "reviewer_budget_exceeded", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-r1rup: tmux-new-window-timeout diagnostic (hung `tmux new-window`).
 	{TypeName: "tmux_new_window_timeout", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-tu48u: codex positive billing guard (C3/T11) — forced ChatGPT login.

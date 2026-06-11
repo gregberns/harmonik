@@ -190,3 +190,51 @@ type ImplementerBudgetExceededPayload struct {
 func (p ImplementerBudgetExceededPayload) Valid() bool {
 	return p.RunID != "" && p.ElapsedMS > 0 && p.SinceLastProgressMS >= 0 && p.Reason != ""
 }
+
+// ReviewerBudgetExceededPayload is the event-bus payload for the
+// reviewer_budget_exceeded event type (hk-da3rr).
+//
+// Emitted when pasteInjectQuitOnReviewFile force-kills a hosted reviewer
+// session that exhausted its diff-scaled verdict budget without writing a
+// verdict file. Both the builtin review-loop path (reviewloop.go) and the DOT
+// reviewer-node path (dot_cascade.go) read the marker file written by
+// writeReviewerBudgetSentinel and emit this event in place of the generic
+// "verdict absent" error.
+//
+// The payload makes a previously-silent no-verdict self-explaining: operators
+// see how large the diff was (changed_lines), what the diff-scaled budget was
+// (budget_ms), how long the reviewer actually ran (elapsed_ms), and a
+// human-readable kill reason.
+//
+// # Payload fields
+//
+//   - run_id        — the killed run (required, non-empty)
+//   - budget_ms     — diff-scaled verdict budget in milliseconds (> 0)
+//   - elapsed_ms    — milliseconds the reviewer ran before the kill (> 0)
+//   - changed_lines — number of changed lines in the diff used to scale the
+//     budget (>= 0)
+//   - reason        — short human-readable kill reason (required, non-empty)
+type ReviewerBudgetExceededPayload struct {
+	// RunID is the killed run. Required (non-empty).
+	RunID string `json:"run_id"`
+
+	// BudgetMS is the diff-scaled verdict budget in milliseconds. Always positive.
+	BudgetMS int64 `json:"budget_ms"`
+
+	// ElapsedMS is the number of milliseconds the reviewer ran before the kill.
+	// Always positive.
+	ElapsedMS int64 `json:"elapsed_ms"`
+
+	// ChangedLines is the number of changed lines in the diff used to scale the
+	// budget. Non-negative.
+	ChangedLines int `json:"changed_lines"`
+
+	// Reason is a short human-readable description of why the budget was
+	// exceeded (e.g. "reviewer-budget-hard-ceiling"). Required (non-empty).
+	Reason string `json:"reason"`
+}
+
+// Valid reports whether p is a well-formed ReviewerBudgetExceededPayload.
+func (p ReviewerBudgetExceededPayload) Valid() bool {
+	return p.RunID != "" && p.BudgetMS > 0 && p.ElapsedMS > 0 && p.ChangedLines >= 0 && p.Reason != ""
+}

@@ -1238,6 +1238,7 @@ func runReviewLoop(
 				fmt.Fprintf(os.Stderr,
 					"daemon: reviewloop: reviewer budget exceeded at iteration %d (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
+				emitReviewerBudgetExceeded(ctx, deps.bus, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
 				result := rlErrorResult(fmt.Sprintf(
 					"reviewer budget exceeded at iteration %d (%s; budget=%dms, changed_lines=%d) — verdict absent",
 					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ChangedLines))
@@ -1673,4 +1674,29 @@ func emitReviewLoopCycleComplete(
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewLoopCycleComplete, b)
+}
+
+// emitReviewerBudgetExceeded emits a reviewer_budget_exceeded event (hk-da3rr)
+// when a reviewer session is force-killed for exhausting its diff-scaled verdict
+// budget. Non-fatal: a nil bus or marshal error is silently discarded.
+func emitReviewerBudgetExceeded(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, budgetMS, elapsedMS int64, changedLines int, reason string) {
+	if bus == nil {
+		return
+	}
+	if reason == "" {
+		reason = "reviewer-budget-exceeded"
+	}
+	pl := core.ReviewerBudgetExceededPayload{
+		RunID:        runID.String(),
+		BudgetMS:     budgetMS,
+		ElapsedMS:    elapsedMS,
+		ChangedLines: changedLines,
+		Reason:       reason,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: reviewloop: emitReviewerBudgetExceeded: marshal: %v\n", err)
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerBudgetExceeded, b)
 }

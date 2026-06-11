@@ -353,6 +353,24 @@ const (
 	// surfaced via the buildCodexLaunchSpec error to the caller).
 	// Refs: hk-tu48u.
 	EventTypeCodexBillingGuard EventType = "codex_billing_guard"
+
+	// EventTypeReviewerBudgetExceeded is the reviewer_budget_exceeded event
+	// type. Emitted when pasteInjectQuitOnReviewFile force-kills a hosted
+	// reviewer session that exhausted its diff-scaled verdict budget without
+	// writing a verdict file. The marker file (reviewer-budget-exceeded.json)
+	// written by writeReviewerBudgetSentinel is the out-of-band signal read by
+	// both the builtin review-loop path (reviewloop.go) and the DOT reviewer-node
+	// path (dot_cascade.go) to emit this distinct event instead of the generic
+	// "verdict absent" error.
+	//
+	// Before this diagnostic, a budget-killed reviewer surfaced only as a silent
+	// no-verdict failure with no record of how long the review ran or how large
+	// the diff was.
+	//
+	// Payload: run_id, budget_ms, elapsed_ms, changed_lines, reason.
+	// Durability class: O.
+	// Refs: hk-da3rr.
+	EventTypeReviewerBudgetExceeded EventType = "reviewer_budget_exceeded"
 )
 
 // ---------------------------------------------------------------------------

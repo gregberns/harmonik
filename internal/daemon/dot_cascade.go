@@ -1002,6 +1002,15 @@ func dispatchDotAgenticNode(
 			return core.Outcome{}, fmt.Errorf("read reviewer verdict for node %q: %w", node.ID, verdictErr)
 		}
 		if verdict == nil {
+			// hk-da3rr: distinguish a BUDGET kill from a true no-verdict, mirroring
+			// the builtin review-loop path (reviewloop.go). The marker file is written
+			// into the reviewer's worktree by writeReviewerBudgetSentinel.
+			if sentinel, sErr := ReadReviewerBudgetSentinel(wtPath); sErr == nil && sentinel != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
+					node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
+				emitReviewerBudgetExceeded(ctx, deps.bus, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
+			}
 			// hk-bqf1q: return the typed sentinel so driveDotWorkflow can detect
 			// a reviewer stall and retry when committed work exists, rather than
 			// hard-failing and stranding the valid impl commit.

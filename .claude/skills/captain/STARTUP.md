@@ -235,26 +235,55 @@ the operator).
 
 ---
 
-## Step 6 — Arm watchers, THEN enter the monitor loop
+## Step 6 — Arm the HEALTH watchers, THEN enter the SPARSE monitor loop
 
-Only after the full fleet is verified (Step 5) do you arm the persistent watchers.
+> **The captain watches HEALTH + LANES + DECISIONS — never RUNS.** Run-level
+> telemetry (per-bead `run_stale`, `heartbeat` with `active_runs`, every
+> `run_completed`) is the CREWS' job. A prior captain armed
+> `subscribe --types ...,run_stale,heartbeat --heartbeat 60s`; that 60s keepalive
+> carries `active_runs` ages and re-invoked the captain every minute, training it
+> to react to individual runs and burning the context the captain role exists to
+> protect (the "observe everything" failure, operator-flagged 2026-06-11). Do NOT
+> re-create that. Arm EXACTLY the two watchers below, nothing more.
 
 ```bash
-# Watcher 1 — operator direction + crew status/error feed (Monitor tool; --follow):
-harmonik comms recv --follow --json
-#   dedupe on event_id (N3, at-least-once). Re-arm on Monitor timeout.
-
-# Watcher 2 — structural completion + run health (Monitor tool):
-harmonik subscribe --types epic_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json
-#   epic_completed → attribute via `br show <epic> --format json` (.assignee), SURFACE + AWAIT.
-#   run_failed/run_stale → attribute (bead→parent→assignee), SURFACE + AWAIT (do NOT recover).
+# Watcher 1 — operator direction + crew milestones/errors/epic_completed feed.
+#   The SPARSE, ACTIONABLE feed: crews post status here, the operator directs here.
+#   (Monitor tool; --follow.) Dedupe on event_id (N3, at-least-once). Re-arm on timeout.
+harmonik comms recv --follow --from captain --json
 ```
 
-Then run the captain operating loop (captain skill §5–§9): watch, attribute,
-surface-and-await. Re-run a lightweight version of Step 2 (`comms who` +
-`crew list` + a `capture-pane` spot-check) on a periodic cadence so a crew going
-silent is caught — do NOT assume a crew that was verified at boot is still alive
-an hour later.
+```text
+# Watcher 2 — a SPARSE health tick via /loop (NOT a short-heartbeat subscribe).
+#   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
+/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (3) drain comms for epic_completed/errors/operator and act. Else report one-line green. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
+```
+
+If you keep a `subscribe` for lane completion, request **ONLY** `epic_completed`
+and set `--heartbeat 600s` (liveness keepalive only) — and treat any heartbeat
+payload as NON-actionable. NEVER arm `run_stale`/`heartbeat` with a short interval.
+
+The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon +
+`comms who` + a spot `capture-pane`, so a crew going silent is caught without
+staring at runs. **Between ticks, idle** — a verified crew self-manages its beads,
+wedges, and failures. React only to: `epic_completed` (re-task the crew to its
+next lane), crew error posts (investigate/decide), operator messages (answer), or
+a FAILED health tick (daemon down / crew silent). Everything else is the crews' job.
+
+> **Idle-crew wake (load-bearing):** a `comms send` does NOT wake an idle crew that
+> isn't running `comms recv --follow`. After re-tasking an idle crew, NUDGE its pane
+> (`tmux send-keys -t hk-crew-<name> -l "..."` then a separate `Enter`) and tell it
+> to `comms recv` + arm `--follow`. Verify it woke via `capture-pane`, don't assume.
+
+> **SLOW-RECOVERY vs GENUINE-WEDGE guard (load-bearing):** `run_stale` at ~10min is
+> a benign slow-recovery warning, not a wedge — the implementer works silently
+> between `launch_initiated` and commit. Do NOT call a launch wedge before
+> launch+30min (hk-7rgqs). A GENUINE wedge needs DURABLE evidence past launch+30:
+> pristine worktree (no implementer work) AND no live tmux session for the run AND
+> ≥2 `run_stale` (emit_count≥2), with the daemon re-emitting stale instead of
+> `run_failed` (stuck on `sess.Wait`, dead session). Only then is a captain reap
+> (rebuild+restart in a lull, announce HOLD→GREEN) warranted. Crews surface; the
+> captain decides and owns the restart (directive #4).
 
 ---
 
@@ -318,8 +347,9 @@ The fleet is healthy when, for the plan's intended set of lanes, ALL hold:
    status, which is healthy-idle, not zombie).
 5. **No ZOMBIE / GHOST records** in `crew list` (every record maps to an online
    crew with a live pane).
-6. **The daemon is up** (`queue status` ≠ exit 17) and **both watchers are armed**
-   (`comms recv --follow` + `subscribe --types epic_completed,run_failed,...`).
+6. **The daemon is up** (`queue status` ≠ exit 17) and the HEALTH watchers are
+   armed: `comms recv --follow` + the `/loop 12m` health tick (NOT a
+   short-heartbeat run-level subscribe — see Step 6, "observe everything" fix).
 
 Quick one-liner to spot the #1 zombie signature (registered but not online):
 

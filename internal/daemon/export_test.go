@@ -212,6 +212,14 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-ry8q1.
 	OperatorPauseCtrl *OperatorPauseController
 
+	// DecisionBlocker, when non-nil, is checked at every dispatch attempt to
+	// gate dispatch for beads blocked by an unacknowledged decision_required
+	// event (EV-043). When nil the gate is disabled (backward-compat default).
+	//
+	// Spec ref: specs/event-model.md §4.12 EV-043.
+	// Bead ref: hk-a6e24.
+	DecisionBlocker *DecisionBlocker
+
 	// NoAutoPull, when true, disables the br-ready fallback poll path so the
 	// work loop only dispatches via the queue surface (EM-066). The zero value
 	// (false) preserves the existing test default: br-ready fallback enabled.
@@ -351,6 +359,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		handlerPauseController: p.HandlerPauseController,
 		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
 		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
+		decisionBlocker:        p.DecisionBlocker,    // hk-a6e24 EV-043
 		noAutoPull:             p.NoAutoPull,         // hk-h5lv2 / EM-066
 		concurrencyCtrl:        p.ConcurrencyCtrl,    // hk-ohiaf
 		targetBranch:           resolveTargetBranch(p.TargetBranch),

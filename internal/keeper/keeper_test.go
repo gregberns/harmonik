@@ -158,3 +158,99 @@ func TestIsManaged_PresentReturnsTrue(t *testing.T) {
 		t.Error("IsManaged: expected true when .managed marker is present")
 	}
 }
+
+// TestReadManagedSessionID_AbsentFileReturnsEmpty verifies that a missing .managed
+// file returns ("", nil) rather than an error. (Refs: hk-igt)
+func TestReadManagedSessionID_AbsentFileReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	sid, err := keeper.ReadManagedSessionID(projectDir, "no-agent")
+	if err != nil {
+		t.Fatalf("ReadManagedSessionID absent: unexpected error: %v", err)
+	}
+	if sid != "" {
+		t.Errorf("ReadManagedSessionID absent: got %q; want empty string", sid)
+	}
+}
+
+// TestReadManagedSessionID_EmptyFileReturnsEmpty verifies that an empty .managed
+// marker (old-style, no session_id content) returns ("", nil). (Refs: hk-igt)
+func TestReadManagedSessionID_EmptyFileReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(keeperDir, "my-agent.managed"), []byte{}, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	sid, err := keeper.ReadManagedSessionID(projectDir, "my-agent")
+	if err != nil {
+		t.Fatalf("ReadManagedSessionID empty: unexpected error: %v", err)
+	}
+	if sid != "" {
+		t.Errorf("ReadManagedSessionID empty: got %q; want empty string", sid)
+	}
+}
+
+// TestWriteAndReadManagedSessionID verifies round-trip write then read of a
+// session_id in .managed, and that IsManaged still returns true afterward.
+// (Refs: hk-igt)
+func TestWriteAndReadManagedSessionID(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "round-trip-agent"
+	want := "sess-abc123"
+
+	if err := keeper.WriteManagedSessionID(projectDir, agent, want); err != nil {
+		t.Fatalf("WriteManagedSessionID: %v", err)
+	}
+
+	// IsManaged must still return true (file exists).
+	if !keeper.IsManaged(projectDir, agent) {
+		t.Error("IsManaged: expected true after WriteManagedSessionID")
+	}
+
+	got, err := keeper.ReadManagedSessionID(projectDir, agent)
+	if err != nil {
+		t.Fatalf("ReadManagedSessionID: %v", err)
+	}
+	if got != want {
+		t.Errorf("ReadManagedSessionID = %q; want %q", got, want)
+	}
+}
+
+// TestWriteManagedSessionID_ClearBinding verifies that passing an empty sessionID
+// clears the binding while preserving the .managed marker. (Refs: hk-igt)
+func TestWriteManagedSessionID_ClearBinding(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "clear-binding-agent"
+
+	// Write a session_id then clear it.
+	if err := keeper.WriteManagedSessionID(projectDir, agent, "sess-to-clear"); err != nil {
+		t.Fatalf("WriteManagedSessionID: %v", err)
+	}
+	if err := keeper.WriteManagedSessionID(projectDir, agent, ""); err != nil {
+		t.Fatalf("WriteManagedSessionID clear: %v", err)
+	}
+
+	// File must still exist (IsManaged = true).
+	if !keeper.IsManaged(projectDir, agent) {
+		t.Error("IsManaged: expected true after clearing binding")
+	}
+	// Binding must be empty.
+	sid, err := keeper.ReadManagedSessionID(projectDir, agent)
+	if err != nil {
+		t.Fatalf("ReadManagedSessionID after clear: %v", err)
+	}
+	if sid != "" {
+		t.Errorf("ReadManagedSessionID after clear: got %q; want empty string", sid)
+	}
+}

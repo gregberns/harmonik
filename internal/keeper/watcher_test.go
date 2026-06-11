@@ -353,3 +353,126 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 		t.Errorf("want ≥2 session_keeper_warn after two upward crossings; got %d", len(warns))
 	}
 }
+
+// TestWatcher_IgnoresForeignSessionGauge verifies that when the managed session
+// binding in .managed is "sess-expected" and the gauge carries "sess-foreign",
+// the watcher treats the gauge as absent and emits NO warn event.
+// Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).
+func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "binding-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// Pre-set binding to "sess-expected".
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-expected", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+
+	// Write gauge with a DIFFERENT session_id — foreign session.
+	writeCtxFile(t, projectDir, agent, 90.0, "sess-foreign")
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// No warn — gauge belongs to a different session.
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn for foreign session; got %d", len(warns))
+	}
+}
+
+// TestWatcher_LatchesFirstSessionID verifies that when .managed has no session_id
+// binding and the gauge has one, the watcher calls WriteManagedSessionFn to latch
+// the first-seen session_id.
+// Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).
+func TestWatcher_LatchesFirstSessionID(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "latch-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var latchedSID string
+	latchCalled := 0
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// No binding yet.
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return "", nil },
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			latchedSID = sessionID
+			latchCalled++
+			return nil
+		},
+	}
+
+	writeCtxFile(t, projectDir, agent, 85.0, "sess-first")
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	if latchCalled == 0 {
+		t.Error("WriteManagedSessionFn never called; want latch on first valid session_id")
+	}
+	if latchedSID != "sess-first" {
+		t.Errorf("latched session_id = %q; want %q", latchedSID, "sess-first")
+	}
+}
+
+// TestWatcher_AcceptsManagedSession verifies that when .managed has a session_id
+// that matches the gauge, normal warn behaviour fires as expected.
+// Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).
+func TestWatcher_AcceptsManagedSession(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "match-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// Binding already set to the same session as the gauge.
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-mine", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+
+	writeCtxFile(t, projectDir, agent, 90.0, "sess-mine")
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
+	if len(warns) != 1 {
+		t.Errorf("want exactly 1 session_keeper_warn for matching session; got %d", len(warns))
+	}
+}

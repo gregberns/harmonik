@@ -1380,6 +1380,81 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 	}
 }
 
+// TestCycler_UpdatesManagedSessionAfterCycle verifies that SetManagedSessionFn is
+// called with the new session_id after a successful cycle so the watcher's session
+// binding advances to the resumed session. (Refs: hk-igt — session_id clobber fix)
+func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "managed-update-agent"
+		cycleID = "cyc-managed-001"
+		prevSID = "sess-before"
+		newSID  = "sess-after"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+
+	var gotProjectDir, gotAgent, gotSessionID string
+	setManagedCalled := 0
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    200 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil },
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(projectDir, agent, sessionID string) error {
+			gotProjectDir = projectDir
+			gotAgent = agent
+			gotSessionID = sessionID
+			setManagedCalled++
+			return nil
+		},
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	// SetManagedSessionFn must be called once with the new session_id.
+	if setManagedCalled != 1 {
+		t.Errorf("SetManagedSessionFn called %d times; want 1", setManagedCalled)
+	}
+	if gotSessionID != newSID {
+		t.Errorf("SetManagedSessionFn session_id = %q; want %q", gotSessionID, newSID)
+	}
+	if gotAgent != agent {
+		t.Errorf("SetManagedSessionFn agent = %q; want %q", gotAgent, agent)
+	}
+	_ = gotProjectDir // verified it was called; project dir value varies per test run
+}
+
 // containsSubstr is a helper to check substring presence.
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && func() bool {

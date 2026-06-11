@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,12 @@ type CyclerConfig struct {
 	// the resumed agent reads the correct name rather than guessing from context.
 	// Nil → default OS append.
 	AppendHandoffFn func(path, text string) error
+
+	// SetManagedSessionFn writes the new session_id into .managed after a cycle
+	// observes a fresh session_id post-/clear. This unblocks the watcher's
+	// session_id binding so it resumes monitoring the resumed session. Nil →
+	// WriteManagedSessionID. No-op when newSID is empty. (Refs: hk-igt)
+	SetManagedSessionFn func(projectDir, agent, sessionID string) error
 
 	// SetTmuxEnvFn sets a key=value in the tmux session that owns TmuxTarget.
 	// Called after nonce confirmation so HARMONIK_AGENT is inherited by the
@@ -148,6 +155,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.AppendHandoffFn == nil {
 		c.AppendHandoffFn = defaultAppendHandoff
+	}
+	if c.SetManagedSessionFn == nil {
+		c.SetManagedSessionFn = WriteManagedSessionID
 	}
 	if c.SetTmuxEnvFn == nil {
 		c.SetTmuxEnvFn = SetTmuxEnv
@@ -465,6 +475,18 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	newSID := c.waitForNewSessionID(ctx, cf.SessionID)
 	if newSID == "" {
 		c.emitClearUnconfirmed(ctx, cycleID, cf.SessionID)
+	}
+
+	// Step 5b: update the .managed session binding so the watcher accepts the
+	// new session's gauge data after /clear. Without this update the watcher would
+	// continue filtering the new session as "foreign". (Refs: hk-igt)
+	if newSID != "" {
+		if err := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, newSID); err != nil {
+			slog.WarnContext(ctx, "keeper: update managed session_id after cycle",
+				"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)
+			// Non-fatal: watcher falls back to accepting the session_id via
+			// the latch path on the next tick.
+		}
 	}
 
 	// Step 6: inject /session-resume.

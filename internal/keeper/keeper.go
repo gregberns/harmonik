@@ -111,3 +111,62 @@ func IsManaged(projectDir, agent string) bool {
 	_, err := os.Stat(markerPath)
 	return err == nil
 }
+
+// ReadManagedSessionID reads the session_id stored in the .managed marker file
+// for the given agent. The .managed file format is: first non-empty line is the
+// session_id; subsequent lines (if any) are ignored. Returns ("", nil) when the
+// file is absent, empty, or contains only whitespace — all indicate no session
+// binding is in effect. Returns ("", ErrInvalidAgent) for path-traversal names.
+//
+// Refs: hk-igt (session_id clobber fix — two same-agent sessions writing to .ctx).
+func ReadManagedSessionID(projectDir, agent string) (string, error) {
+	if err := validateAgent(agent); err != nil {
+		return "", err
+	}
+	path := filepath.Join(projectDir, ".harmonik", "keeper", agent+".managed")
+	//nolint:gosec // G304: path derived from operator-controlled projectDir and agent validated above
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("keeper: read managed session_id %q: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line, nil
+		}
+	}
+	return "", nil // empty or whitespace-only file — no binding in effect
+}
+
+// WriteManagedSessionID writes sessionID into the .managed marker file for the
+// given agent, establishing or updating the session binding. The .managed file
+// is created if absent (which also makes IsManaged return true). Passing an
+// empty sessionID clears the binding while preserving the managed marker.
+//
+// Called by the watcher when it latches the first observed session_id, and by
+// the cycler after a cycle completes to bind to the resumed session.
+//
+// Refs: hk-igt (session_id clobber fix — two same-agent sessions writing to .ctx).
+func WriteManagedSessionID(projectDir, agent, sessionID string) error {
+	if err := validateAgent(agent); err != nil {
+		return err
+	}
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		return fmt.Errorf("keeper: create keeper dir: %w", err)
+	}
+	path := filepath.Join(keeperDir, agent+".managed")
+	content := sessionID
+	if content != "" {
+		content += "\n"
+	}
+	//nolint:gosec // G304,G306: path from validated operator-controlled inputs; 0600 keeper-owned
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("keeper: write managed session_id %q: %w", path, err)
+	}
+	return nil
+}

@@ -185,6 +185,18 @@ type WatcherConfig struct {
 	// keeper without a real gauge writer. Without this flag such sessions produce
 	// x66+ no_gauge events per session (F21).
 	SuppressNoGauge bool
+
+	// ReadManagedSessionFn, when non-nil, is called on each fresh-gauge tick to
+	// read the expected session_id from .managed. When nil, ReadManagedSessionID
+	// is used. Set in tests to control the managed binding without filesystem I/O.
+	// Refs: hk-igt (session_id clobber fix).
+	ReadManagedSessionFn func(projectDir, agent string) (string, error)
+
+	// WriteManagedSessionFn, when non-nil, is called when the watcher latches the
+	// first observed session_id into .managed. When nil, WriteManagedSessionID is
+	// used. Set to a no-op in unit tests that do not need latch side-effects.
+	// Refs: hk-igt (session_id clobber fix).
+	WriteManagedSessionFn func(projectDir, agent, sessionID string) error
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -206,6 +218,12 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.Staleness <= 0 {
 		c.Staleness = 120 * time.Second
+	}
+	if c.ReadManagedSessionFn == nil {
+		c.ReadManagedSessionFn = ReadManagedSessionID
+	}
+	if c.WriteManagedSessionFn == nil {
+		c.WriteManagedSessionFn = WriteManagedSessionID
 	}
 }
 
@@ -321,8 +339,38 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			}
 
-			// Gauge is fresh: reset the no_gauge tracking so it will re-emit
-			// if the gauge goes stale again later.
+			// ── session_id binding ────────────────────────────────────────────
+			// Validate that the gauge belongs to the session this keeper is bound to.
+			// If .managed contains an expected session_id and the gauge carries a
+			// DIFFERENT non-empty session_id, this is a foreign-session write — two
+			// concurrent same-agent Claude Code processes both with HARMONIK_AGENT=<X>
+			// would otherwise clobber each other's session_id in this state machine.
+			// Treat a foreign gauge as absent so the warn/cycle logic stays consistent.
+			// On first valid gauge (no binding yet), latch the session_id into .managed
+			// so subsequent foreign-session writes are filtered. (Refs: hk-igt)
+			if managedSID, managedErr := w.cfg.ReadManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName); managedErr != nil {
+				slog.WarnContext(ctx, "keeper: read managed session_id", "err", managedErr)
+				// Fall through on read error to avoid silent monitoring gaps.
+			} else if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
+				// Foreign session — treat as absent.
+				slog.DebugContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
+					"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
+				w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+				noGaugeEmittedAtBoot = true
+				warnArmed = true
+				warnFired = false
+				pendingInject = false
+				continue
+			} else if managedSID == "" && ctxFile.SessionID != "" {
+				// Latch: first valid gauge seen — bind its session_id into .managed.
+				if latchErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ctxFile.SessionID); latchErr != nil {
+					slog.WarnContext(ctx, "keeper: latch managed session_id", "agent", w.cfg.AgentName, "err", latchErr)
+					// Non-fatal: continue monitoring without persisting the binding.
+				}
+			}
+
+			// Gauge is fresh (and belongs to the managed session): reset no_gauge
+			// tracking so it will re-emit if the gauge goes absent or stale again.
 			noGaugeEmittedAtBoot = false
 			lastNoGaugeEmit = time.Time{}
 

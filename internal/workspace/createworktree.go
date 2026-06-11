@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // ReviewerWorktreePath returns the canonical path for a reviewer's isolated
@@ -120,6 +122,20 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 //   - workspace-model.md §4.1 WM-002 — canonical path convention.
 //   - workspace-model.md §4.2 WM-005 — task branch naming.
 //   - workspace-model.md §4.a WM-ENV-002 — git minimum version.
+// worktreeAddMaxRetries is the maximum number of retries for a transient
+// git worktree add failure caused by the macOS/APFS commondir race.
+const worktreeAddMaxRetries = 3
+
+// isTransientWorktreeAddRace reports whether git output indicates the known
+// macOS/APFS race that occurs when multiple concurrent "git worktree add"
+// calls race to read each other's in-progress .git/worktrees/<id>/commondir
+// metadata. The signature is: "failed to read .git/worktrees/<id>/commondir:
+// Undefined error: 0" (errno=0 on APFS under concurrent creates).
+func isTransientWorktreeAddRace(output []byte) bool {
+	s := string(output)
+	return strings.Contains(s, "commondir") && strings.Contains(s, "Undefined error")
+}
+
 func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, cfg WorktreeRootConfig) error {
 	worktreePath := WorktreePath(repoRoot, runID, cfg)
 	branch := TaskBranchName(runID)
@@ -131,16 +147,46 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 		return fmt.Errorf("workspace: CreateWorktree: MkdirAll %q: %w", parentDir, err)
 	}
 
-	// Issue `git worktree add -b <branch> <path> <parentCommit>`.
-	// exec.Command is forbidden (noctx); use exec.CommandContext.
-	cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", branch, worktreePath, parentCommit)
-	cmd.Dir = repoRoot
+	// Issue `git worktree add -b <branch> <path> <parentCommit>` with bounded
+	// retry for the transient macOS/APFS commondir race (hk-gq3my).
+	var (
+		out []byte
+		err error
+	)
+	for attempt := 0; attempt <= worktreeAddMaxRetries; attempt++ {
+		cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", branch, worktreePath, parentCommit)
+		cmd.Dir = repoRoot
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			// Context cancelled; do not retry.
+			break
+		}
+		if attempt < worktreeAddMaxRetries && isTransientWorktreeAddRace(out) {
+			// Clean up any partial state so the next attempt starts fresh.
+			_ = os.RemoveAll(worktreePath)
+			// Remove the branch if git created it before failing.
+			delBranch := exec.CommandContext(ctx, "git", "branch", "-D", branch)
+			delBranch.Dir = repoRoot
+			_ = delBranch.Run()
+			// Prune stale worktree metadata entries.
+			pruneCmd := exec.CommandContext(ctx, "git", "worktree", "prune")
+			pruneCmd.Dir = repoRoot
+			_ = pruneCmd.Run()
 
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: git worktree add -b %q %q %q: %v\ngit output: %s",
-			ErrWorktreeCreationFailed, branch, worktreePath, parentCommit, err, out)
+			delay := time.Duration(50*(1<<attempt)) * time.Millisecond // 50ms, 100ms, 200ms
+			select {
+			case <-ctx.Done():
+				break
+			case <-time.After(delay):
+			}
+			continue
+		}
+		break
 	}
 
-	return nil
+	return fmt.Errorf("%w: git worktree add -b %q %q %q: %v\ngit output: %s",
+		ErrWorktreeCreationFailed, branch, worktreePath, parentCommit, err, out)
 }

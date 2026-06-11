@@ -240,6 +240,15 @@ type ValidationRequest struct {
 	// this per-name slot, not a global singleton.
 	ActiveQueue *Queue
 
+	// OtherQueues holds all active queues OTHER than the target queue, loaded
+	// by the caller for the EM-065 cross-queue double-queue guard. When
+	// non-nil, Validate checks submitted/appended beads against non-terminal
+	// items in these queues and rejects with ReasonBeadAlreadyDispatched if
+	// any bead is already pending/dispatched elsewhere.
+	//
+	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
+	OtherQueues []*Queue
+
 	// QueueName is the normalised (non-empty) queue name being submitted.
 	// Set by the caller after applying NormaliseQueueName. Used by the
 	// QM-002/2.1 name-validity pre-check inserted before QM-027.
@@ -476,6 +485,68 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 					},
 				},
 			}, nil, nil
+		}
+	}
+
+	// --- EM-065: cross-queue / cross-group double-queue guard ----------------
+	// Extends QM-022 (Beads-ledger in_progress check) to the pre-claim window:
+	// a bead that is non-terminally present in any active queue slot is already
+	// "claimed by the queue" even before the Beads atomic claim fires. Accepting
+	// it again would cause duplicate runs.
+	//
+	// Two sub-cases:
+	//   (a) Cross-group (append only): a bead in a group OTHER than the append
+	//       target is non-terminal. QM-023 already guards the target group.
+	//   (b) Cross-queue (submit and append): a bead appears non-terminally in a
+	//       named queue other than the one being targeted.
+	//
+	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
+	{
+		em065Queued := make(map[core.BeadID]string)
+
+		// (a) Cross-group scan — append path only: check all groups of the active
+		// queue except the append target. The target group is already checked by
+		// QM-023; duplicating it here would be redundant.
+		if req.IsAppend && req.ActiveQueue != nil {
+			for gi, g := range req.ActiveQueue.Groups {
+				if gi == req.AppendGroupIndex {
+					continue
+				}
+				for _, item := range g.Items {
+					if item.Status != ItemStatusCompleted && item.Status != ItemStatusFailed {
+						em065Queued[item.BeadID] = fmt.Sprintf("queue %q group %d", req.ActiveQueue.Name, gi)
+					}
+				}
+			}
+		}
+
+		// (b) Cross-queue scan — both submit and append: check non-terminal items
+		// in every other named queue supplied by the caller.
+		for _, oq := range req.OtherQueues {
+			if oq == nil {
+				continue
+			}
+			for _, g := range oq.Groups {
+				for _, item := range g.Items {
+					if item.Status != ItemStatusCompleted && item.Status != ItemStatusFailed {
+						if _, exists := em065Queued[item.BeadID]; !exists {
+							em065Queued[item.BeadID] = fmt.Sprintf("queue %q", oq.Name)
+						}
+					}
+				}
+			}
+		}
+
+		for _, id := range allBeadIDs {
+			if source, dup := em065Queued[id]; dup {
+				return []ValidationError{{
+					Reason: ReasonBeadAlreadyDispatched,
+					Detail: map[string]any{
+						"bead_id":        string(id),
+						"existing_queue": source,
+					},
+				}}, nil, nil
+			}
 		}
 	}
 

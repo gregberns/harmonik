@@ -56,6 +56,7 @@ func AppendItems(
 	groupIndex int,
 	beadIDs []string,
 	ledger BeadLedger,
+	otherQueues ...*Queue,
 ) (*Queue, []core.Event, error) {
 	if q == nil {
 		return nil, nil, ErrAppendQueueNil
@@ -77,7 +78,8 @@ func AppendItems(
 	}
 
 	// Run the validation pipeline (IsAppend=true covers QM-024, QM-020..QM-026,
-	// QM-025 informational).
+	// QM-025 informational). OtherQueues carries cross-queue candidates for the
+	// EM-065 double-queue guard (passed in by the caller via variadic param).
 	vreq := ValidationRequest{
 		Groups: []Group{
 			{
@@ -90,6 +92,7 @@ func AppendItems(
 		ActiveQueue:      q,
 		IsAppend:         true,
 		AppendGroupIndex: groupIndex,
+		OtherQueues:      otherQueues,
 	}
 
 	verrs, deferredPairs, err := Validate(ctx, vreq, ledger)

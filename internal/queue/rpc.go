@@ -153,6 +153,18 @@ func HandleQueueSubmit(
 	}
 	vreq.ActiveQueue = existing
 
+	// Load other active queues for the EM-065 cross-queue double-queue guard.
+	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
+	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, queueName)
+	if oqErr != nil {
+		return QueueSubmitResponse{}, nil, nil, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": oqErr.Error()},
+		}
+	}
+	vreq.OtherQueues = otherQueues
+
 	verrs, deferredPairs, err := Validate(ctx, vreq, ledger)
 	if err != nil {
 		return QueueSubmitResponse{}, nil, nil, &RPCError{
@@ -345,7 +357,18 @@ func HandleQueueAppend(
 		beadIDStrs[i] = string(id)
 	}
 
-	mutated, events, appendErr := AppendItems(ctx, q, req.GroupIndex, beadIDStrs, ledger)
+	// Load other active queues for the EM-065 cross-queue double-queue guard.
+	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
+	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, NormaliseQueueName(q.Name))
+	if oqErr != nil {
+		return QueueAppendResponse{}, nil, nil, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": oqErr.Error()},
+		}
+	}
+
+	mutated, events, appendErr := AppendItems(ctx, q, req.GroupIndex, beadIDStrs, ledger, otherQueues...)
 	if appendErr != nil {
 		if IsValidationError(appendErr) {
 			ve := appendErr.(*ValidationError)
@@ -470,11 +493,23 @@ func HandleQueueDryRun(
 		}
 	}
 
+	// Load other active queues for the EM-065 cross-queue double-queue guard.
+	// Spec ref: specs/execution-model.md §4.14 EM-065. Bead ref: hk-xizhl.
+	otherQueues, oqErr := loadOtherQueues(ctx, projectDir, queueName)
+	if oqErr != nil {
+		return QueueDryRunResponse{}, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": oqErr.Error()},
+		}
+	}
+
 	vreq := ValidationRequest{
 		Groups:      req.Groups,
 		ActiveQueue: existing,
 		QueueName:   queueName,
 		IsAppend:    false,
+		OtherQueues: otherQueues,
 	}
 
 	verrs, deferredPairs, err := Validate(ctx, vreq, ledger)
@@ -1019,6 +1054,42 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		}
 	}
 	return data, nil
+}
+
+// ---------------------------------------------------------------------------
+// loadOtherQueues — EM-065 cross-queue helper
+// ---------------------------------------------------------------------------
+
+// loadOtherQueues returns all active queues under projectDir whose name
+// differs from excludeName. Used by the EM-065 cross-queue double-queue guard
+// (specs/execution-model.md §4.14) in HandleQueueSubmit, HandleQueueAppend,
+// and HandleQueueDryRun to populate ValidationRequest.OtherQueues.
+//
+// Returns nil when no other queues exist (empty queues dir or only the
+// excluded name is present). Individual per-queue load failures (e.g., a
+// corrupt json file for a different queue) are silently skipped: the EM-065
+// guard is a best-effort pre-flight; the Beads atomic claim (BI-009) is the
+// final barrier. The returned error covers only directory-level I/O failures
+// (EnumerateQueueNames failure).
+//
+// Bead ref: hk-xizhl.
+func loadOtherQueues(ctx context.Context, projectDir, excludeName string) ([]*Queue, error) {
+	names, err := EnumerateQueueNames(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("loadOtherQueues: enumerate: %w", err)
+	}
+	var others []*Queue
+	for _, name := range names {
+		if name == excludeName {
+			continue
+		}
+		q, loadErr := Load(ctx, projectDir, name)
+		if loadErr != nil || q == nil {
+			continue
+		}
+		others = append(others, q)
+	}
+	return others, nil
 }
 
 // ---------------------------------------------------------------------------

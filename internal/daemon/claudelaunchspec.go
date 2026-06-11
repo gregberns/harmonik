@@ -257,7 +257,9 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// Step 3b — Write per-launch task artifact (CHB-028).
 	// MUST be after MaterializeClaudeSettings + EnsureWorktreeTrust and BEFORE SubstrateSpawn.
 	// The file carries the bead description for the phase. When rc.beadDescription is empty
-	// (e.g. bead has no body), use the bead title so the file is never structurally empty.
+	// or whitespace-only (e.g. bead has no body, or --body " "), use the bead title so the
+	// file is never structurally empty (hk-lpbu7: TrimSpace closes the whitespace-body livelock
+	// where a " " description was non-empty at this layer but rejected by WriteAgentTask).
 	taskBody := rc.beadDescription
 	// When the DOT node carries an inline prompt= and the phase is implementer,
 	// replace the bead-derived body with the prompt verbatim (WG-040 §I.3,
@@ -266,7 +268,7 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	if rc.nodePrompt != "" && rc.phase != handlercontract.ReviewLoopPhaseReviewer {
 		taskBody = rc.nodePrompt
 	}
-	if taskBody == "" {
+	if strings.TrimSpace(taskBody) == "" {
 		taskBody = rc.beadTitle
 	}
 	if taskBody == "" {

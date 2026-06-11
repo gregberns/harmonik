@@ -162,6 +162,19 @@ func TestResolveWorkflowModePrecedence(t *testing.T) {
 			daemonDefault: core.WorkflowModeReviewLoop,
 			wantMode:      core.WorkflowModeReviewLoop,
 		},
+		{
+			// EM-012a / hk-30vlb: when the daemon is configured with dot as the
+			// default (the v1.0 production default per PL-004a), an unlabeled bead
+			// resolves to dot at tier 3 and will be dispatched via the embedded
+			// standard-bead.dot graph (standardgraph.go).  This is the "unlabeled
+			// bead → dot over standard-bead.dot" case normalised at the mode-
+			// resolution layer; the embedded-artifact path itself is pinned by
+			// TestStandardBeadDotEmbedValidAndInSync (standardgraph_sync_test.go).
+			name:          "tier3 daemon default dot when no bead label (v1.0 production default)",
+			beadLabels:    nil,
+			daemonDefault: core.WorkflowModeDot,
+			wantMode:      core.WorkflowModeDot,
+		},
 
 		// ── Tier 4: hard fallback → dot (hk-30vlb) ───────────────────────────
 		{

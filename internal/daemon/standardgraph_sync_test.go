@@ -6,6 +6,41 @@ import (
 	"testing"
 )
 
+// TestStandardBeadDotLoadFailureReturnsError pins the EM-012a-FLOOR review-floor
+// guarantee: loadStandardGraph MUST return a non-nil error when the embedded
+// bytes are invalid so that the pre-switch block in workloop.go (lines ~1985-1992)
+// can demote workflowMode from dot to review-loop, NEVER to single.
+//
+// This test verifies the failure half of the safety contract: when
+// standardBeadDotSrc is corrupt, loadStandardGraph fails.  The positive half
+// (the embedded graph is always valid in production) is covered by
+// TestStandardBeadDotEmbedValidAndInSync above.
+//
+// The workloop pre-switch block that catches this error and sets
+//
+//	workflowMode = core.WorkflowModeReviewLoop
+//
+// is at internal/daemon/workloop.go (look for "Safety floor (hk-30vlb §REVIEW
+// FLOOR item b)").  The two tests together pin the full chain:
+//
+//	valid embedded bytes   → loadStandardGraph succeeds → dot dispatch
+//	invalid embedded bytes → loadStandardGraph fails   → workloop → review-loop (NEVER single)
+func TestStandardBeadDotLoadFailureReturnsError(t *testing.T) {
+	// Save the real embedded bytes so we can restore them after the test.
+	orig := standardBeadDotSrc
+	t.Cleanup(func() { standardBeadDotSrc = orig })
+
+	// Corrupt the embedded bytes — any invalid DOT content is sufficient.
+	standardBeadDotSrc = []byte("this is not valid DOT graph syntax #@!")
+
+	_, err := loadStandardGraph(nil)
+	if err == nil {
+		t.Fatal("loadStandardGraph: expected an error for invalid DOT bytes; got nil — " +
+			"the EM-012a-FLOOR review-floor in workloop.go relies on this error to " +
+			"demote workflowMode from dot to review-loop")
+	}
+}
+
 // TestStandardBeadDotEmbedValidAndInSync guards the invariant documented in
 // standardgraph.go: the embedded internal/daemon/standard-bead.dot — the bytes the
 // daemon actually //go:embed's and runs in DOT mode — must (1) parse+validate and

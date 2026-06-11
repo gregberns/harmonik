@@ -169,7 +169,9 @@ type workLoopDeps struct {
 	// four-tier resolution chain (execution-model.md §4.3 EM-012a); the claim
 	// path (T-WM-009) reads this field when neither a per-bead label nor a
 	// per-project override is present.  Always a valid WorkflowMode value; zero
-	// value is never stored (Start normalises it to WorkflowModeSingle).
+	// value is never stored — daemon.Start fails closed (returns an error) if
+	// this field would be empty or invalid (PL-004a); the tier-4 hard fallback
+	// is dot, NEVER single (EM-012a / EM-012a-FLOOR; hk-30vlb).
 	//
 	// Bead ref: hk-7om2q.8.
 	workflowModeDefault core.WorkflowMode

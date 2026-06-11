@@ -463,6 +463,13 @@ func writeCognitionGateTask(
 
 	content := fmt.Sprintf(`# Gate Evaluation Task
 
+## Gate Evaluator Constraint (CRITICAL — read before acting)
+
+You are a READ-ONLY gate evaluator. You MUST NOT run any git command that changes repository state.
+Forbidden commands: `+"`git reset`, `git checkout`, `git cherry-pick`, `git merge`, `git branch -d`, `git push`, `git rebase`"+`, or any other state-mutating git operation.
+You operate on a reviewer worktree. The only file you may write is `+"`%s`"+` (your verdict) and any analysis scratch files under .harmonik/.
+Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.
+
 ## Gate Identity
 
 - **gate_name**: %s
@@ -504,6 +511,7 @@ The **decision** field MUST be exactly one of:
 
 Write the JSON file now, then exit with /quit.
 `,
+		gateVerdictRelPath,
 		cp.Name,
 		nodeID,
 		dp.Role,
@@ -589,6 +597,10 @@ func pasteInjectCognitionGate(
 			" Evaluate the gate and write your decision to " + gateVerdictRelPath +
 			" as JSON: {\"schema_version\":1,\"decision\":\"allow|deny|escalate-to-human\",\"reason\":\"...\"}." +
 			" The decision field MUST be exactly one of: allow, deny, escalate-to-human." +
+			// hk-ppw: explicit read-only constraint — gate evaluator MUST NOT run git state-changing commands.
+			" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
+			" git push, git rebase, or any other state-mutating git command. You are on a reviewer" +
+			" worktree; mutating git state can corrupt the implementer's task branch." +
 			" After writing the verdict file, exit with /quit.\n"
 
 		if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {

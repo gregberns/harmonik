@@ -577,6 +577,74 @@ func TestKeeperDoctor_RejectsPathTraversal(t *testing.T) {
 	_ = code
 }
 
+// TestKeeperDoctor_StatusLineTypeMissing verifies that doctor reports a failure
+// on the "statusLine.type" sub-check (hk-hs1) when the statusLine stanza has the
+// correct command (containing keeper-statusline.sh + HARMONIK_AGENT=) but is
+// missing the required "type":"command" field. Without that field Claude Code
+// rejects the entire settings.json and disables ALL hooks.
+func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+
+	// Write a settings.json whose statusLine command is otherwise canonical but
+	// deliberately omits the "type":"command" field.
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=orchestrator /scripts/keeper-statusline.sh"
+	settings := map[string]interface{}{
+		"statusLine": map[string]interface{}{
+			// "type" intentionally absent — this is the defect that hk-hs1 fixed.
+			"command": statusLineCmd,
+		},
+	}
+	raw, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	// Doctor must exit non-zero (gap found).
+	if code == 0 {
+		t.Errorf("want non-zero exit (statusLine.type gap), got 0\nstdout: %s", stdout.String())
+	}
+	// The "statusLine.type" check key must appear in the output.
+	if !strings.Contains(stdout.String(), "statusLine.type") {
+		t.Errorf("doctor output missing statusLine.type check; stdout: %s", stdout.String())
+	}
+}
+
+// TestKeeperDoctor_StatusLineTypePresent verifies that doctor does NOT report a
+// statusLine.type failure when both the command and the "type":"command" field are
+// present (the normalized state after `harmonik keeper enable`).
+func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+
+	// Write a fully-normalized statusLine stanza with "type":"command".
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=orchestrator /scripts/keeper-statusline.sh"
+	settings := map[string]interface{}{
+		"statusLine": map[string]interface{}{
+			"type":    "command",
+			"command": statusLineCmd,
+		},
+	}
+	raw, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stderr)
+
+	// The statusLine.type check must NOT appear as a failure in the output.
+	out := stdout.String()
+	if strings.Contains(out, "statusLine.type") && strings.Contains(out, "FAIL") {
+		t.Errorf("doctor should not report statusLine.type FAIL when type is present; stdout: %s", out)
+	}
+}
+
 // ── Settings merge helpers tests ──────────────────────────────────────────────
 
 // TestMergeStatusLineStanza_Add verifies adding a fresh stanza.

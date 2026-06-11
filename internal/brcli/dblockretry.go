@@ -75,9 +75,10 @@ const UnavailableRetryCap = 15 * time.Second
 //     intent-log protocol: the intent file is retained across the retry and
 //     the deterministic idempotency key prevents double-application.
 //
-// This is the BI-025e concurrent-invocation retry path: the adapter MAY
-// invoke `br` concurrently; SQLite WAL serializes writes; no adapter-side
-// mutex is used.
+// Terminal-transition writes (ClaimBead, CloseBead, ReopenBead, ResetBead,
+// SweepCloseBead) are additionally serialized via Adapter.terminalMu to prevent
+// concurrent br invocations from racing on the SQLite .write.lock (hk-hdbls).
+// Read paths (ShowBead, ListByStatus) are not gated and remain concurrent.
 //
 // On every retry the full RunWithTimeout discipline applies: per-invocation
 // wall-clock timeout, SIGTERM-then-SIGKILL termination per HC-018, and

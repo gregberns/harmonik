@@ -476,7 +476,11 @@ Tags: mechanism
 
 #### BI-025e — Concurrent `br` invocation discipline
 
-The adapter MAY invoke `br` concurrently from multiple daemon goroutines. SQLite WAL mode (the default for the pinned Beads SQLite fork) accommodates concurrent processes; SQLite itself serializes writes via WAL discipline. The adapter MUST NOT introduce additional serialization (no adapter-side mutex on `br` invocations) — concurrent reads (BI-013, BI-014, BI-015, BI-016, BI-013b, BI-013c) and writes (BI-010 claim/close/reopen) are permitted in parallel. On concurrent-write contention, `br` returns `BrDbLocked`; the adapter retries per BI-025c retry policy.
+The adapter MAY invoke `br` concurrently from multiple daemon goroutines for read operations. SQLite WAL mode accommodates concurrent readers without contention.
+
+**Terminal-transition writes (BI-010 claim/close/reopen/reset/sweep-close) MUST be serialized** via an adapter-internal mutex (`Adapter.terminalMu`). Dogfood incident hk-hdbls showed that ≥3 simultaneous `br close` calls exhaust the SQLite `.write.lock` (30 s busy timeout), producing `"OpenWrite could not open storage cursor root page"` failures and beads stuck `in_progress` even when the underlying merge succeeded. Serializing write-side `br` invocations within the daemon process eliminates the thundering-herd on the write lock. The intent-log idempotency (BI-029/BI-030) remains correct across the serialized writes.
+
+Read operations (BI-013, BI-014, BI-015, BI-016, BI-013b, BI-013c) are NOT gated by the mutex — reads remain concurrent. On concurrent-write contention after the mutex (e.g. from an external process such as `captain`), `br` returns `BrDbLocked`; the adapter retries per BI-025c retry policy.
 
 Operators running multiple harmonik daemons against the SAME Beads SQLite store is unsupported per [process-lifecycle.md §4.1] (per-project daemon model); detection of multi-daemon-same-Beads is tracked as OQ-BI-012.
 

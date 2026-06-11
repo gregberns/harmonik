@@ -194,6 +194,11 @@ func (a *Adapter) ClaimBead(
 	transitionID core.TransitionID,
 	beadID core.BeadID,
 ) error {
+	// Serialize terminal-transition writes to prevent concurrent `br` invocations
+	// from racing on the SQLite .write.lock (hk-hdbls).
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+
 	claimErr := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
@@ -270,6 +275,13 @@ func (a *Adapter) CloseBead(
 	beadID core.BeadID,
 	needsAttention bool,
 ) error {
+	// Serialize terminal-transition writes to prevent concurrent `br` invocations
+	// from racing on the SQLite .write.lock (hk-hdbls). The lock covers both the
+	// close write and the needs-attention label write so the two br calls are
+	// atomic from a contention perspective.
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+
 	if err := a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
@@ -348,6 +360,11 @@ func (a *Adapter) ReopenBead(
 	beadID core.BeadID,
 	reason string,
 ) error {
+	// Serialize terminal-transition writes to prevent concurrent `br` invocations
+	// from racing on the SQLite .write.lock (hk-hdbls).
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+
 	args := []string{"update", string(beadID), "--status", "open"}
 	if reason != "" {
 		args = append(args, "--notes", reason)
@@ -407,6 +424,11 @@ func (a *Adapter) ResetBead(
 	projectHash core.ProjectHash,
 	daemonStartNS int64,
 ) error {
+	// Serialize terminal-transition writes to prevent concurrent `br` invocations
+	// from racing on the SQLite .write.lock (hk-hdbls).
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+
 	ikey := core.ResetBeadIdempotencyKey(projectHash, beadID, daemonStartNS)
 
 	// BI-030 step 1: build IntentLogEntry for reset.
@@ -501,6 +523,11 @@ func (a *Adapter) SweepCloseBead(
 	cfg TimeoutConfig,
 	beadID core.BeadID,
 ) error {
+	// Serialize terminal-transition writes to prevent concurrent `br` invocations
+	// from racing on the SQLite .write.lock (hk-hdbls).
+	a.terminalMu.Lock()
+	defer a.terminalMu.Unlock()
+
 	result, err := a.RunWithDBLockedRetry(
 		ctx, cfg, CommandKindWrite,
 		DBLockedRetryMax, DBLockedRetryBase, DBLockedRetryCap,

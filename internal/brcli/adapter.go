@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync"
 )
 
 // Adapter is the sole translation layer between harmonik and the Beads `br`
@@ -38,6 +39,13 @@ import (
 type Adapter struct {
 	brPath     string
 	projectDir string // cmd.Dir for every br subprocess; empty = inherit process CWD
+
+	// terminalMu serializes all terminal-transition writes (claim/close/reopen/reset/sweep-close).
+	// Concurrent `br` writes from multiple daemon goroutines can exhaust the SQLite .write.lock
+	// (30s busy timeout) when N completions fire simultaneously, causing "OpenWrite could not open
+	// storage cursor root page" failures and beads stuck in_progress (hk-hdbls).
+	// Reads (ShowBead, ListByStatus, etc.) are NOT gated — only writes are serialized.
+	terminalMu sync.Mutex
 }
 
 // New returns an Adapter that invokes the `br` binary at brPath with no fixed
@@ -134,8 +142,8 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
 	// low-level primitive used by higher-level methods that add their own timeout wrapping.
 	// TODO(hk-872.31): enforce 1 MiB stderr cap and classify captured stderr.
-	// NOTE(hk-872.32): no adapter-side mutex — Adapter has no sync.Mutex field; SQLite WAL
-	// serializes concurrent writes per BI-025e. On BrDbLocked, callers MUST use
+	// NOTE(hk-872.32): terminal-transition writes are serialized via Adapter.terminalMu
+	// (hk-hdbls); reads are concurrent. On BrDbLocked, callers MUST use
 	// RunWithDBLockedRetry (dblockretry.go) which implements the BI-025c retry policy.
 
 	//nolint:gosec // G204: brPath is resolved from PATH at startup by the production caller; args are typed harmonik-internal values, not user input.

@@ -1455,6 +1455,178 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 	_ = gotProjectDir // verified it was called; project dir value varies per test run
 }
 
+// TestCycler_ClearSettleTimeout_ClearsManagedSessionID verifies that when
+// waitForNewSessionID times out (ClearSettle deadline expires without a new
+// session_id), SetManagedSessionFn is still called — with an empty string —
+// so the watcher's stale binding is cleared and the watcher can re-latch on
+// the new session's first valid gauge tick. (Refs: hk-uxu)
+func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "settle-timeout-agent"
+		cycleID = "cyc-settle-001"
+		prevSID = "sess-before-timeout"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+
+	// Gauge always returns prevSID — new session_id never arrives; ClearSettle times out.
+	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}, time.Now(), nil
+	}
+
+	var gotSessionID string
+	setManagedCalled := 0
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond, // short so the test is fast
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil },
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, sessionID string) error {
+			gotSessionID = sessionID
+			setManagedCalled++
+			return nil
+		},
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	// SetManagedSessionFn must be called once, with empty string (timeout case).
+	if setManagedCalled != 1 {
+		t.Errorf("SetManagedSessionFn called %d times; want 1", setManagedCalled)
+	}
+	if gotSessionID != "" {
+		t.Errorf("SetManagedSessionFn session_id = %q; want empty string (timeout path)", gotSessionID)
+	}
+}
+
+// TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct verifies that when
+// lastFiredSID matches the current session_id but the context has dropped below
+// WarnPct (real /clear happened; ClearSettle timed out so SID didn't change),
+// the anti-loop state is reset so the keeper can re-arm on subsequent ticks.
+// (Refs: hk-uxu)
+func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "escape-hatch-agent"
+		cycleID = "cyc-escape-001"
+		sid     = "sess-persistent"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce) // nonce present immediately
+
+	// Gauge always returns the same SID (timeout path), starting at high pct.
+	var gaugePct float64 = 95.0
+	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: gaugePct, SessionID: sid}, time.Now(), nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    20 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:         readHandoff,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         readGaugeFn,
+		CrispIdleFn:         func(_, _ string) bool { return true },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Step 1: first MaybeRun at high pct → cycle fires; lastFiredSID = sid.
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun (step 1): %v", err)
+	}
+	want1 := 1
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
+		t.Errorf("after step 1: cycle_complete events = %d; want %d", got, want1)
+	}
+
+	// Step 2: same session, same high pct → anti-loop suppresses.
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun (step 2): %v", err)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
+		t.Errorf("after step 2: cycle_complete events = %d; want %d (anti-loop suppressed)", got, want1)
+	}
+
+	// Step 3: same session, but pct drops below WarnPct — escape hatch fires.
+	// At low pct the act gate rejects the cycle, but lastFiredSID is now reset.
+	gaugePct = 70.0
+	lowCF := &keeper.CtxFile{Pct: 70.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), lowCF); err != nil {
+		t.Fatalf("MaybeRun (step 3): %v", err)
+	}
+	// Still no new cycle (below ActPct).
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want1 {
+		t.Errorf("after step 3: cycle_complete events = %d; want %d (below ActPct)", got, want1)
+	}
+
+	// Step 4: pct climbs back above ActPct on the same session — should fire again
+	// because the escape hatch reset lastFiredSID in step 3.
+	gaugePct = 95.0
+	cf2 := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf2); err != nil {
+		t.Fatalf("MaybeRun (step 4): %v", err)
+	}
+	want4 := 2
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != want4 {
+		t.Errorf("after step 4: cycle_complete events = %d; want %d (escape hatch should allow re-fire)", got, want4)
+	}
+}
+
 // containsSubstr is a helper to check substring presence.
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && func() bool {

@@ -77,9 +77,11 @@ type CyclerConfig struct {
 	AppendHandoffFn func(path, text string) error
 
 	// SetManagedSessionFn writes the new session_id into .managed after a cycle
-	// observes a fresh session_id post-/clear. This unblocks the watcher's
-	// session_id binding so it resumes monitoring the resumed session. Nil →
-	// WriteManagedSessionID. No-op when newSID is empty. (Refs: hk-igt)
+	// completes post-/clear. This unblocks the watcher's session_id binding so it
+	// resumes monitoring the resumed session. Called unconditionally: an empty
+	// sessionID clears the binding so the watcher re-latches on the next valid
+	// gauge tick (IsManaged stays true; only the binding is cleared). Nil →
+	// WriteManagedSessionID. (Refs: hk-igt, hk-uxu)
 	SetManagedSessionFn func(projectDir, agent, sessionID string) error
 
 	// SetTmuxEnvFn sets a key=value in the tmux session that owns TmuxTarget.
@@ -361,6 +363,17 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		c.seenLowPctAfterLastFire = true
 	}
 
+	// Anti-loop escape hatch: if the session_id hasn't changed since the last
+	// cycle (ClearSettle timeout — no new SID observed) but the context has
+	// genuinely dropped below WarnPct, a real /clear happened and the keeper
+	// must be allowed to re-arm. Reset lastFiredSID so subsequent ticks on the
+	// same session_id can pass Gate 6 once the context climbs again.
+	// (Refs: hk-uxu)
+	if c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
+		c.lastFiredSID = ""
+		c.seenLowPctAfterLastFire = false
+	}
+
 	// Gate 3: context must reach the act threshold.
 	// Uses absolute tokens when available (min(ActAbsTokens, ActPctCeil*window));
 	// falls back to percentage when Tokens/WindowSize are absent (old .ctx files).
@@ -479,14 +492,14 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 
 	// Step 5b: update the .managed session binding so the watcher accepts the
 	// new session's gauge data after /clear. Without this update the watcher would
-	// continue filtering the new session as "foreign". (Refs: hk-igt)
-	if newSID != "" {
-		if err := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, newSID); err != nil {
-			slog.WarnContext(ctx, "keeper: update managed session_id after cycle",
-				"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)
-			// Non-fatal: watcher falls back to accepting the session_id via
-			// the latch path on the next tick.
-		}
+	// continue filtering the new session as "foreign". Called unconditionally:
+	// when newSID=="" (ClearSettle timeout), writing "" clears the stale binding
+	// so the watcher re-latches on the next valid gauge tick. (Refs: hk-igt, hk-uxu)
+	if err := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, newSID); err != nil {
+		slog.WarnContext(ctx, "keeper: update managed session_id after cycle",
+			"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)
+		// Non-fatal: watcher falls back to accepting the session_id via
+		// the latch path on the next tick.
 	}
 
 	// Step 6: inject /session-resume.
@@ -623,6 +636,14 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 	// Observe context level for re-arm tracking (mirrors MaybeRun side-effect).
 	if cf != nil && c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
 		c.seenLowPctAfterLastFire = true
+	}
+
+	// Anti-loop escape hatch (mirrors MaybeRun): same-session + below WarnPct
+	// means a real /clear happened with ClearSettle timeout; reset so re-arm
+	// is possible. (Refs: hk-uxu)
+	if cf != nil && c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
+		c.lastFiredSID = ""
+		c.seenLowPctAfterLastFire = false
 	}
 
 	// Gate 3: HoldingDispatch — fail-closed; skip cycle.

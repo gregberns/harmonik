@@ -147,10 +147,18 @@ type WatcherConfig struct {
 
 	// WarnAbsTokens is the absolute-token warn threshold. The effective threshold
 	// is min(WarnAbsTokens, WarnPctCeil * WindowSize). Used when the gauge file
-	// contains both Tokens and WindowSize (i.e. keeper-statusline.sh is current).
-	// Falls back to WarnPct when Tokens or WindowSize are zero. Default: 240000.
-	// Refs: hk-cl74g.
+	// contains Tokens (i.e. keeper-statusline.sh is current). When WindowSize is
+	// zero, FallbackWindowSize is used to cap the threshold. Falls back to WarnPct
+	// only when Tokens is also zero. Default: 240000.
+	// Refs: hk-cl74g, hk-kgn.
 	WarnAbsTokens int64
+
+	// FallbackWindowSize is the assumed context-window size used for the
+	// WarnPctCeil cap when the gauge file reports WindowSize==0 (e.g. [1m]-class
+	// models whose window size cannot be inferred). Default: 200000. Set via
+	// --window-size.
+	// Refs: hk-kgn.
+	FallbackWindowSize int64
 
 	// WarnPctCeil caps the warn threshold as a fraction of the context window,
 	// preventing late warnings on large windows. Default: 0.70.
@@ -210,6 +218,9 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.WarnAbsTokens <= 0 {
 		c.WarnAbsTokens = 240_000
 	}
+	if c.FallbackWindowSize <= 0 {
+		c.FallbackWindowSize = 200_000
+	}
 	if c.WarnPctCeil <= 0 {
 		c.WarnPctCeil = 0.70
 	}
@@ -228,13 +239,18 @@ func (c *WatcherConfig) applyDefaults() {
 }
 
 // belowWarnThreshold reports whether the gauge reading is below the warn
-// threshold. Uses absolute tokens when both Tokens and WindowSize are available;
-// otherwise falls back to Pct vs WarnPct.
+// threshold. Uses absolute tokens when Tokens>0, even if WindowSize==0 (using
+// FallbackWindowSize for the pct-ceil cap). Falls back to Pct vs WarnPct only
+// when Tokens is also zero.
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
-	if cf.Tokens > 0 && cf.WindowSize > 0 {
+	if cf.Tokens > 0 {
+		windowSize := cf.WindowSize
+		if windowSize == 0 {
+			windowSize = c.FallbackWindowSize
+		}
 		threshold := c.WarnAbsTokens
-		if c.WarnPctCeil > 0 {
-			pctBased := int64(c.WarnPctCeil * float64(cf.WindowSize))
+		if c.WarnPctCeil > 0 && windowSize > 0 {
+			pctBased := int64(c.WarnPctCeil * float64(windowSize))
 			if pctBased < threshold {
 				threshold = pctBased
 			}

@@ -16,10 +16,12 @@ import (
 //
 // Flags:
 //
-//	--agent <name>   agent name (required); identifies the lockfile and .managed marker
-//	--tmux <target>  tmux pane target (optional; injected into on warn/act crossing)
-//	--warn-pct N     context-use percentage that triggers a warning (default 80)
-//	--act-pct N      context-use percentage that triggers handoff action (default 90; .managed-gated)
+//	--agent <name>        agent name (required); identifies the lockfile and .managed marker
+//	--tmux <target>       tmux pane target (optional; injected into on warn/act crossing)
+//	--warn-pct N          context-use percentage that triggers a warning (default 80)
+//	--act-pct N           context-use percentage that triggers handoff action (default 90; .managed-gated)
+//	--window-size N       assumed context-window token size when gauge reports WindowSize==0 (default 200000)
+//	--warn-abs-tokens N   absolute-token warn threshold (default 240000)
 //
 // Behaviour (Phase-2, .managed-gated):
 //  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
@@ -43,16 +45,20 @@ func runKeeperSubcommand(args []string) int {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		agentFlag   string
-		tmuxFlag    string
-		warnPctFlag int
-		actPctFlag  int
+		agentFlag          string
+		tmuxFlag           string
+		warnPctFlag        int
+		actPctFlag         int
+		windowSizeFlag     int64
+		warnAbsTokensFlag  int64
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
 	fs.StringVar(&tmuxFlag, "tmux", "", "tmux pane target (optional; injected into on warn crossing)")
 	fs.IntVar(&warnPctFlag, "warn-pct", 80, "context-use percentage that triggers a warning")
 	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action (.managed-gated)")
+	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
+	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 240000)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -127,11 +133,13 @@ func runKeeperSubcommand(args []string) int {
 	}
 
 	cfg := keeper.WatcherConfig{
-		AgentName:  agentFlag,
-		ProjectDir: projectDir,
-		WarnPct:    float64(warnPctFlag),
-		TmuxTarget: resolvedTmux,
-		Cycler:     cycler,
+		AgentName:          agentFlag,
+		ProjectDir:         projectDir,
+		WarnPct:            float64(warnPctFlag),
+		TmuxTarget:         resolvedTmux,
+		Cycler:             cycler,
+		FallbackWindowSize: windowSizeFlag,
+		WarnAbsTokens:      warnAbsTokensFlag,
 	}
 	w := keeper.NewWatcher(cfg, emitter)
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {

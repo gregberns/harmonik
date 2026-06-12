@@ -571,6 +571,21 @@ func buildReviewTargetContent(p ReviewTargetPayload) string {
 	sb.WriteString("You operate on a detached-HEAD reviewer worktree. The only files you may write are `.harmonik/review.json` (your verdict) and any analysis scratch files under `.harmonik/`.\n")
 	sb.WriteString("Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.\n\n")
 
+	// hk-hay: coverage-check instruction — detect "claims ALL, missed one" gaps.
+	sb.WriteString("## Coverage Check (CRITICAL — all-X completeness)\n\n")
+	sb.WriteString("If the bead title or body uses all-inclusive language — 'all X', 'all sites', 'every X',\n")
+	sb.WriteString("'all callers', 'all handlers', 'all usages', 'all implementations', or any similar claim\n")
+	sb.WriteString("of complete coverage — you MUST perform the following check before approving:\n\n")
+	sb.WriteString("1. Identify the specific identifier, pattern, or construct the bead claims to update everywhere.\n")
+	sb.WriteString("2. Grep the worktree for every occurrence: e.g. `grep -rn <pattern> . --include='*.go'` (exclude `.harmonik/`).\n")
+	sb.WriteString("3. Obtain the diff: `git diff <base>..<head>` (base and head SHAs are in the Diff range section below).\n")
+	sb.WriteString("4. For each occurrence found in step 2, verify it appears in the diff from step 3.\n")
+	sb.WriteString("5. If ANY occurrence is absent from the diff, the change is INCOMPLETE:\n")
+	sb.WriteString("   - Set `flags: [\"incomplete-coverage\"]` in `.harmonik/review.json`.\n")
+	sb.WriteString("   - Use `REQUEST_CHANGES` verdict (or `BLOCK` if the missed site is load-bearing).\n")
+	sb.WriteString("   - Name every missed file path and line number in your `notes`.\n\n")
+	sb.WriteString("Approving a partial 'all-X' change without running this grep check is a reviewer failure.\n\n")
+
 	sb.WriteString("## Bead\n\n")
 	sb.WriteString(fmt.Sprintf("id: %s\n", p.BeadID))
 	sb.WriteString(fmt.Sprintf("title: %s\n\n", p.BeadTitle))

@@ -1134,3 +1134,63 @@ func TestEM015dRIA_MultiplePriorVerdictsWithNilFlags(t *testing.T) {
 		t.Errorf("multi-verdict: missing verdict file path for iter 2 (%s)", verdictPath2)
 	}
 }
+
+// TestEM015dRIA_CoverageCheckSection verifies that WriteReviewTarget always
+// includes the Coverage Check section instructing the reviewer to detect
+// partial 'all-X' changes (hk-hay).
+func TestEM015dRIA_CoverageCheckSection(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	workspacePath := filepath.Join(dir, "workspace")
+	harmonikDir := filepath.Join(workspacePath, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	payload := ReviewTargetPayload{
+		WorkspacePath: workspacePath,
+		BeadID:        "hk-hay",
+		Iteration:     1,
+		BeadTitle:     "update all handlers for new interface",
+		BeadBody:      "Update all call sites to use the new interface.",
+		BaseSHA:       "base001",
+		HeadSHA:       "head001",
+	}
+
+	if err := WriteReviewTarget(payload); err != nil {
+		t.Fatalf("WriteReviewTarget: %v", err)
+	}
+
+	data, err := os.ReadFile(ReviewTargetPath(workspacePath))
+	if err != nil {
+		t.Fatalf("ReadFile review-target.md: %v", err)
+	}
+	content := string(data)
+
+	// Coverage Check section must be present.
+	checks := []string{
+		"## Coverage Check",
+		"all-inclusive language",
+		"incomplete-coverage",
+		"REQUEST_CHANGES",
+		"grep",
+	}
+	for _, check := range checks {
+		if !strings.Contains(content, check) {
+			t.Errorf("coverage-check section: missing %q; content:\n%s", check, content)
+		}
+	}
+
+	// Coverage Check must appear before the Bead section so it is read first.
+	coverageIdx := strings.Index(content, "## Coverage Check")
+	beadIdx := strings.Index(content, "## Bead")
+	if coverageIdx == -1 {
+		t.Fatal("coverage-check section not found")
+	}
+	if beadIdx == -1 {
+		t.Fatal("bead section not found")
+	}
+	if coverageIdx > beadIdx {
+		t.Error("coverage-check section must appear before the Bead section")
+	}
+}

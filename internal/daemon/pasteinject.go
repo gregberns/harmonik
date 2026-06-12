@@ -1309,6 +1309,12 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
 		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
 		" a field-name violation, re-check that EXACT field name in the new diff before approving." +
+		// hk-hay: all-X coverage check — reviewer must not approve a partial 'all-sites'/'all-X' change.
+		" COVERAGE CHECK: if the bead title or body uses all-inclusive language ('all X', 'all sites'," +
+		" 'every X', 'all callers', 'all handlers', 'all usages', etc.), grep the worktree for every" +
+		" occurrence of the targeted pattern and verify each one appears in the diff. If any occurrence" +
+		" is absent from the diff, emit flags: [\"incomplete-coverage\"] and REQUEST_CHANGES naming the" +
+		" missed file paths and line numbers in notes — do NOT approve a partial 'all-X' change." +
 		// hk-805f7: explicit read-only constraint — reviewer MUST NOT run git state-changing commands.
 		" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
 		" git push, git rebase, or any other state-mutating git command. You are on a detached-HEAD" +

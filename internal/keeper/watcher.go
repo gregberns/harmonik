@@ -379,6 +379,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 				continue
 			} else if managedSID == "" && ctxFile.SessionID != "" {
 				// Latch: first valid gauge seen — bind its session_id into .managed.
+				// Reject UUIDv7 SIDs: daemon-spawned implementers use UUIDv7;
+				// interactive captain sessions use UUIDv4. After a clear->resume
+				// cycle that timed out and cleared .managed, latching a UUIDv7 would
+				// bind the keeper to the wrong session, causing no_gauge:foreign_session
+				// on every subsequent tick. (Refs: hk-lap)
+				if isUUIDv7(ctxFile.SessionID) {
+					slog.DebugContext(ctx, "keeper: skipping latch of UUIDv7 (daemon implementer) session",
+						"agent", w.cfg.AgentName, "sid", ctxFile.SessionID)
+					w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+					noGaugeEmittedAtBoot = true
+					warnArmed = true
+					warnFired = false
+					pendingInject = false
+					continue
+				}
 				if latchErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ctxFile.SessionID); latchErr != nil {
 					slog.WarnContext(ctx, "keeper: latch managed session_id", "agent", w.cfg.AgentName, "err", latchErr)
 					// Non-fatal: continue monitoring without persisting the binding.

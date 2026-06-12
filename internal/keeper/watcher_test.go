@@ -440,6 +440,109 @@ func TestWatcher_LatchesFirstSessionID(t *testing.T) {
 	}
 }
 
+// TestWatcher_SkipsUUIDv7LatchWhenManagedEmpty verifies that when .managed has no
+// session_id binding, the watcher does NOT latch a UUIDv7 session_id (daemon
+// implementer) into .managed. Instead it emits no_gauge events until a UUIDv4
+// session_id appears. (Refs: hk-lap — clear->resume latch race fix)
+func TestWatcher_SkipsUUIDv7LatchWhenManagedEmpty(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "uuid7-skip-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	latchCalled := 0
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// No binding — simulates cleared state after a clear->resume timeout.
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return "", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error {
+			latchCalled++
+			return nil
+		},
+	}
+
+	// UUIDv7 gauge (daemon implementer — version digit '7' at index 14).
+	writeCtxFile(t, projectDir, agent, 50.0, "019ebb07-0000-7000-8000-000000000001")
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	if latchCalled != 0 {
+		t.Errorf("WriteManagedSessionFn called %d time(s); want 0 — UUIDv7 must not be latched", latchCalled)
+	}
+	noGaugeEvents := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
+	if len(noGaugeEvents) == 0 {
+		t.Error("want at least one session_keeper_no_gauge for UUIDv7 skip; got none")
+	}
+}
+
+// TestWatcher_LatchesUUIDv4AfterSkippingUUIDv7 verifies that the watcher
+// correctly latches the first UUIDv4 session_id it sees after previously
+// ignoring UUIDv7 gauges. (Refs: hk-lap)
+func TestWatcher_LatchesUUIDv4AfterSkippingUUIDv7(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "uuid4-latch-after-uuid7-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var latchedSID string
+	latchCalled := 0
+	em := &keeper.RecordingEmitter{}
+
+	// Gauge sequence: first write a UUIDv7, then a UUIDv4. The test relies on
+	// the watcher looping long enough to see both gauges.
+	const v7SID = "019ebb07-0000-7000-8000-000000000001"
+	const v4SID = "f7e7210d-1234-4abc-8000-000000000002"
+
+	writeCtxFile(t, projectDir, agent, 50.0, v7SID)
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return "", nil },
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			latchedSID = sessionID
+			latchCalled++
+			return nil
+		},
+	}
+
+	// Switch gauge to UUIDv4 after a brief delay so watcher sees UUIDv7 first.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		writeCtxFile(t, projectDir, agent, 50.0, v4SID)
+	}()
+
+	runWatcherFor(context.Background(), cfg, em, 120*time.Millisecond)
+
+	if latchCalled == 0 {
+		t.Error("WriteManagedSessionFn never called; want latch on first valid UUIDv4 session_id")
+	}
+	if latchedSID != v4SID {
+		t.Errorf("latched session_id = %q; want %q (UUIDv4)", latchedSID, v4SID)
+	}
+}
+
 // TestWatcher_AcceptsManagedSession verifies that when .managed has a session_id
 // that matches the gauge, normal warn behaviour fires as expected.
 // Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).

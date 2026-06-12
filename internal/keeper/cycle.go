@@ -726,7 +726,10 @@ func (c *Cycler) waitForNewSessionID(parentCtx context.Context, prevSID string) 
 			return ""
 		case <-ticker.C:
 			cf, _, err := c.cfg.ReadGaugeFn(c.cfg.ProjectDir, c.cfg.AgentName)
-			if err == nil && cf.SessionID != "" && cf.SessionID != prevSID {
+			// Skip UUIDv7: daemon-spawned implementers write UUIDv7 session IDs.
+			// Binding to one after /clear would make the watcher treat the
+			// captain's real UUIDv4 session as foreign. (Refs: hk-lap)
+			if err == nil && cf.SessionID != "" && cf.SessionID != prevSID && !isUUIDv7(cf.SessionID) {
 				return cf.SessionID
 			}
 		}

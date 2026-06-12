@@ -2210,14 +2210,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 		transitionTID, _ := deps.tidGen.Next()
 		if dotResult.success {
-			// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
-			if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
-				emitDone(false, sgr.reason)
-				return
-			}
+			// Scenario gate: the DOT cascade engine (dispatchDotToolNode) already
+			// maps exit codes to outcomes correctly — timeout→transient (commit_gate
+			// self-loop retry), non-zero→deterministic (fix-loop back to implement).
+			// No separate runScenarioGateIfNeeded call is needed on the DOT path;
+			// the gate lives inside standard-bead.dot's commit_gate tool_command.
 			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
 			// single-mode and review-loop merge path).
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)

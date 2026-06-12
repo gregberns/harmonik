@@ -22,6 +22,7 @@ import (
 //	--act-pct N           context-use percentage that triggers handoff action (default 90; .managed-gated)
 //	--window-size N       assumed context-window token size when gauge reports WindowSize==0 (default 200000)
 //	--warn-abs-tokens N   absolute-token warn threshold (default 240000)
+//	--act-abs-tokens N    absolute-token act threshold (default 300000)
 //
 // Behaviour (Phase-2, .managed-gated):
 //  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
@@ -45,12 +46,13 @@ func runKeeperSubcommand(args []string) int {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		agentFlag          string
-		tmuxFlag           string
-		warnPctFlag        int
-		actPctFlag         int
-		windowSizeFlag     int64
-		warnAbsTokensFlag  int64
+		agentFlag         string
+		tmuxFlag          string
+		warnPctFlag       int
+		actPctFlag        int
+		windowSizeFlag    int64
+		warnAbsTokensFlag int64
+		actAbsTokensFlag  int64
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
@@ -59,6 +61,7 @@ func runKeeperSubcommand(args []string) int {
 	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action (.managed-gated)")
 	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
 	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 240000)")
+	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 300000)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -120,10 +123,12 @@ func runKeeperSubcommand(args []string) int {
 	emitter := keeper.NewFileEmitter(projectDir)
 
 	cycler := keeper.NewCycler(keeper.CyclerConfig{
-		AgentName:  agentFlag,
-		ProjectDir: projectDir,
-		TmuxTarget: resolvedTmux,
-		ActPct:     float64(actPctFlag),
+		AgentName:     agentFlag,
+		ProjectDir:    projectDir,
+		TmuxTarget:    resolvedTmux,
+		ActPct:        float64(actPctFlag),
+		ActAbsTokens:  actAbsTokensFlag,
+		WarnAbsTokens: warnAbsTokensFlag,
 	}, emitter)
 
 	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
@@ -234,7 +239,7 @@ func runKeeperClearDispatching(args []string) int {
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
 
 USAGE
-  harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N]
+  harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N] [--warn-abs-tokens N] [--act-abs-tokens N]
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
   harmonik keeper doctor <agent> [--project DIR]
   harmonik keeper set-dispatching <agent> [--project DIR]
@@ -257,10 +262,12 @@ VERBS
                      Call when all in-flight queue work has completed. Idempotent.
 
 FLAGS (watcher mode)
-  --agent <name>    Agent name (required); identifies the lockfile and .managed marker
-  --tmux <target>   tmux pane target (optional; injected into on warn/act-pct crossing)
-  --warn-pct N      Context-use percentage that triggers a warning (default 80)
-  --act-pct N       Context-use percentage that triggers handoff action (default 90; .managed-gated)
+  --agent <name>         Agent name (required); identifies the lockfile and .managed marker
+  --tmux <target>        tmux pane target (optional; injected into on warn/act-pct crossing)
+  --warn-pct N           Context-use percentage that triggers a warning (default 80)
+  --act-pct N            Context-use percentage that triggers handoff action (default 90; .managed-gated)
+  --warn-abs-tokens N    Absolute-token warn threshold (default 240000); effective = min(warn-abs-tokens, warn-pct% * window)
+  --act-abs-tokens N     Absolute-token act threshold (default 300000); effective = min(act-abs-tokens, act-pct% * window)
 
 BEHAVIOUR (Phase-2, .managed-gated)
   1. Acquires .harmonik/keeper/<agent>.lock; exits 2 if another keeper is live.

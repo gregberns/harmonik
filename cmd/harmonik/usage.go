@@ -25,6 +25,7 @@ SUBCOMMANDS
   confirm-verdict  Confirm a pending reconciliation verdict (daemon must be running)
   veto-verdict     Veto a pending reconciliation verdict (daemon must be running)
   graph            Workflow graph utilities (validate, etc.)
+  promote          Cherry-pick banked SHA(s) to target with build gate + push, or open a PR (--pr)
   release          Release ledger management (ledger, certify, yank)
   supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
   keeper           Context watcher for a managed agent pane (session-keeper Phase-1)

@@ -482,6 +482,18 @@ EXAMPLES
 		return runGraphSubcommand(os.Args[2:])
 	}
 
+	// harmonik promote <sha>... | --pr — banked-commit cherry-pick to target with
+	// build gate + non-ff-safe push (push-mode), or PR opener (PR-mode).
+	// No daemon required; operates directly on git and gh.
+	// Spec ref: specs/promote.md. Bead ref: hk-pk3p1 (reconciles hk-gax8v).
+	if len(os.Args) >= 2 && os.Args[1] == "promote" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runPromoteSubcommand(subArgs)
+	}
+
 	// harmonik release <verb> — release ledger management (hk-n7ofb).
 	// ledger: list entries; certify: flip prerelease:false + stamp certified_at;
 	// yank: mark yanked. No daemon required; operates on the ledger JSON file.

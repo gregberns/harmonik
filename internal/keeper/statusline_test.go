@@ -236,6 +236,104 @@ func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
 	}
 }
 
+// TestKeeperStatuslineScript_1MModelObjectFormInference verifies that the script infers
+// window_size=1000000 when .model is a nested {id, display_name} object and the id
+// contains "[1m]" (the object form used by newer Claude Code versions).
+func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// Nested-object model form: Claude Code emits .model as {id, display_name}.
+	// context_window_size is absent (Claude Code omits it for [1m] models in this format).
+	sampleJSON := `{"session_id":"opus-obj-session","model":{"id":"claude-opus-4-8[1m]","display_name":"Opus"},"context_window":{"used_percentage":12.0,"total_input_tokens":120000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=obj-agent",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "obj-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	if cf.WindowSize != 1000000 {
+		t.Errorf("window_size = %d; want 1000000 (inferred from nested model.id containing [1m])", cf.WindowSize)
+	}
+	if cf.Tokens != 120000 {
+		t.Errorf("tokens = %d; want 120000", cf.Tokens)
+	}
+}
+
+// TestKeeperStatuslineScript_NestedContextWindowSize verifies that the script reads
+// context_window_size from .context_window.context_window_size (nested path used by
+// some Claude Code versions) when the top-level .context_window_size is absent.
+func TestKeeperStatuslineScript_NestedContextWindowSize(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// context_window_size is nested under .context_window (documented schema path),
+	// not at the top level. No top-level .context_window_size field is present.
+	sampleJSON := `{"session_id":"nested-ws-session","context_window":{"used_percentage":25.0,"total_input_tokens":250000,"context_window_size":1000000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=nested-agent",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "nested-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	if cf.WindowSize != 1000000 {
+		t.Errorf("window_size = %d; want 1000000 (from .context_window.context_window_size)", cf.WindowSize)
+	}
+	if cf.Tokens != 250000 {
+		t.Errorf("tokens = %d; want 250000", cf.Tokens)
+	}
+}
+
 // TestKeeperStatuslineScript_SkipsOnMissingPct verifies that the script does
 // not write a .ctx file when the percentage field is absent from the input JSON.
 func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {

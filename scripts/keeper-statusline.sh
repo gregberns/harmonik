@@ -29,7 +29,8 @@
 #     {"pct":<float>,"tokens":<int>,"window_size":<int>,"session_id":<string>,"ts":"<RFC3339>"}
 #
 # Refs: hk-8vzek (session-keeper Phase-1), hk-cl74g (absolute-token gate fix),
-#       hk-67c (infer window_size from model id for [1m] models).
+#       hk-67c (infer window_size from model id for [1m] models),
+#       hk-whd (robust .model extraction — handles nested {id,display_name} object form).
 set -euo pipefail
 
 AGENT="${HARMONIK_AGENT:-default}"
@@ -57,7 +58,9 @@ TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # Extract absolute token counts — default to 0 when absent (older Claude Code).
 TOKENS="$(printf '%s' "${INPUT}" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null || echo '0')"
-WINDOW_SIZE="$(printf '%s' "${INPUT}" | jq -r '.context_window_size // 0' 2>/dev/null || echo '0')"
+# context_window_size appears at the top level in some Claude Code versions and nested under
+# .context_window in others (per the documented schema). Try both paths; the first non-zero wins.
+WINDOW_SIZE="$(printf '%s' "${INPUT}" | jq -r '(.context_window_size // .context_window.context_window_size // 0)' 2>/dev/null || echo '0')"
 
 # Sanitise: replace non-integer values with 0.
 if ! printf '%s' "${TOKENS}" | grep -qE '^[0-9]+$'; then TOKENS=0; fi
@@ -69,8 +72,15 @@ if [ "${WINDOW_SIZE}" -eq 0 ]; then
     if [ "${KEEPER_WINDOW_SIZE_OVERRIDE}" -gt 0 ] 2>/dev/null; then
         WINDOW_SIZE="${KEEPER_WINDOW_SIZE_OVERRIDE}"
     else
-        MODEL="$(printf '%s' "${INPUT}" | jq -r '.model // ""' 2>/dev/null || true)"
-        if printf '%s' "${MODEL}" | grep -qF '[1m]'; then
+        # Claude Code may emit .model as a flat string ("claude-opus-4-8 [1m]") or as a
+        # nested object ({id, display_name}). Build a single candidate string from all
+        # available paths so the [1m] check works regardless of format.
+        MODEL_STR="$(printf '%s' "${INPUT}" | jq -r '
+            if .model == null then ""
+            elif (.model | type) == "string" then .model
+            else ((.model.id // "") + " " + (.model.display_name // ""))
+            end' 2>/dev/null || true)"
+        if printf '%s' "${MODEL_STR}" | grep -qF '[1m]'; then
             WINDOW_SIZE=1000000
         fi
     fi

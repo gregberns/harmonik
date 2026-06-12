@@ -447,6 +447,8 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_cycle_recovered", func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
 	// hk-aalsm: PreCompact backstop hook.
 	mustRegister("session_keeper_precompact_blocked", func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
+	// hk-3w2: supervised respawn path.
+	mustRegister("session_keeper_respawn_attempted", func() EventPayload { return &SessionKeeperRespawnAttemptedPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

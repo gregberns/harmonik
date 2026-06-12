@@ -831,6 +831,14 @@ const (
 	// Durability class: O (ordinary — observability).
 	// Refs: hk-aalsm.
 	EventTypeSessionKeeperPrecompactBlocked EventType = "session_keeper_precompact_blocked"
+
+	// EventTypeSessionKeeperRespawnAttempted is the session_keeper_respawn_attempted
+	// event type. Emitted by the keeper watcher when it runs --respawn-cmd after
+	// detecting that the managed pane has gone idle (agent exited). Carries the
+	// outcome: "ok" or "error".
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-3w2.
+	EventTypeSessionKeeperRespawnAttempted EventType = "session_keeper_respawn_attempted"
 )
 
 // ---------------------------------------------------------------------------

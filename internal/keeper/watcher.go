@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -205,6 +206,32 @@ type WatcherConfig struct {
 	// used. Set to a no-op in unit tests that do not need latch side-effects.
 	// Refs: hk-igt (session_id clobber fix).
 	WriteManagedSessionFn func(projectDir, agent, sessionID string) error
+
+	// RespawnCmd, when non-empty, enables the supervised respawn path. After the
+	// gauge goes stale for at least RespawnGrace and the tmux pane is idle (agent
+	// has exited), the keeper runs this command via "sh -c <RespawnCmd>" to
+	// re-launch the agent. A cooldown of RespawnCooldown prevents tight loops.
+	// Requires TmuxTarget to be non-empty; ignored when TmuxTarget is "".
+	// Refs: hk-3w2.
+	RespawnCmd string
+
+	// RespawnGrace is the minimum duration the gauge must be stale before a
+	// respawn is attempted. Prevents premature respawn when the agent briefly
+	// stops writing gauge data. Default: 20s.
+	// Refs: hk-3w2.
+	RespawnGrace time.Duration
+
+	// RespawnCooldown is the minimum duration between consecutive respawn
+	// attempts. Prevents tight respawn loops when the agent exits immediately
+	// after each launch. Default: 90s.
+	// Refs: hk-3w2.
+	RespawnCooldown time.Duration
+
+	// IsPaneIdleFn reports whether the tmux pane at target is running a shell
+	// (indicating the agent has exited). When nil, IsPaneIdle is used.
+	// Set in tests to control the check without real tmux commands.
+	// Refs: hk-3w2.
+	IsPaneIdleFn func(ctx context.Context, target string) bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -235,6 +262,15 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.WriteManagedSessionFn == nil {
 		c.WriteManagedSessionFn = WriteManagedSessionID
+	}
+	if c.RespawnGrace <= 0 {
+		c.RespawnGrace = 20 * time.Second
+	}
+	if c.RespawnCooldown <= 0 {
+		c.RespawnCooldown = 90 * time.Second
+	}
+	if c.IsPaneIdleFn == nil {
+		c.IsPaneIdleFn = IsPaneIdle
 	}
 }
 
@@ -306,6 +342,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 		// noGaugeEmittedAtBoot tracks the boot-time no_gauge emission.
 		noGaugeEmittedAtBoot = false
+
+		// gaugeStaleSince is the time when the gauge first became stale/absent
+		// in the current stale streak. Zero when the gauge is fresh. Used by the
+		// respawn path to enforce RespawnGrace. (Refs: hk-3w2)
+		gaugeStaleSince time.Time
+
+		// lastRespawnAt is the time of the most recent respawn attempt. Used to
+		// enforce RespawnCooldown. Zero when no respawn has occurred. (Refs: hk-3w2)
+		lastRespawnAt time.Time
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -334,6 +379,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				if gaugeStaleSince.IsZero() {
+					gaugeStaleSince = time.Now()
+				}
+				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				continue
 			}
 			if err != nil {
@@ -342,6 +391,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit)
 				noGaugeEmittedAtBoot = true
 				pendingInject = false
+				if gaugeStaleSince.IsZero() {
+					gaugeStaleSince = time.Now()
+				}
+				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				continue
 			}
 
@@ -352,6 +405,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				if gaugeStaleSince.IsZero() {
+					gaugeStaleSince = time.Now()
+				}
+				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				continue
 			}
 
@@ -417,9 +474,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 
 			// Gauge is fresh (and belongs to the managed session): reset no_gauge
-			// tracking so it will re-emit if the gauge goes absent or stale again.
+			// and respawn tracking so they re-arm if the gauge goes stale again.
 			noGaugeEmittedAtBoot = false
 			lastNoGaugeEmit = time.Time{}
+			gaugeStaleSince = time.Time{}
 
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not
@@ -571,4 +629,64 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 		"agent", w.cfg.AgentName, "pct", cf.Pct, "warn_pct", w.cfg.WarnPct)
 	fmt.Printf("keeper: warn — agent %q context window at %.1f%% (threshold %.1f%%)\n",
 		w.cfg.AgentName, cf.Pct, w.cfg.WarnPct)
+}
+
+// maybeRespawn fires the respawn command if all gates pass:
+//   - RespawnCmd is non-empty
+//   - TmuxTarget is non-empty
+//   - staleSince has been set for at least RespawnGrace
+//   - cooldown since last attempt has elapsed
+//   - the tmux pane is idle (agent has exited)
+//
+// On success it updates *lastRespawnAt and emits session_keeper_respawn_attempted.
+// Refs: hk-3w2.
+func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRespawnAt *time.Time) {
+	if w.cfg.RespawnCmd == "" || w.cfg.TmuxTarget == "" {
+		return
+	}
+	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.RespawnGrace {
+		return
+	}
+	if !lastRespawnAt.IsZero() && time.Since(*lastRespawnAt) < w.cfg.RespawnCooldown {
+		return
+	}
+	if !w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget) {
+		return
+	}
+
+	slog.InfoContext(ctx, "keeper: respawning agent via --respawn-cmd",
+		"agent", w.cfg.AgentName, "cmd", w.cfg.RespawnCmd)
+	fmt.Printf("keeper: respawn — agent %q exited; re-launching via respawn-cmd\n", w.cfg.AgentName)
+
+	//nolint:gosec // G204: RespawnCmd is operator-supplied via --respawn-cmd flag, not user input.
+	cmd := exec.CommandContext(ctx, "sh", "-c", w.cfg.RespawnCmd)
+	runErr := cmd.Run()
+
+	*lastRespawnAt = time.Now()
+	outcome := "ok"
+	errMsg := ""
+	if runErr != nil {
+		outcome = "error"
+		errMsg = runErr.Error()
+		slog.WarnContext(ctx, "keeper: respawn command failed",
+			"agent", w.cfg.AgentName, "err", runErr)
+	}
+	w.emitRespawnAttempted(ctx, outcome, errMsg)
+}
+
+// emitRespawnAttempted emits the session_keeper_respawn_attempted event.
+func (w *Watcher) emitRespawnAttempted(ctx context.Context, outcome, errMsg string) {
+	payload := core.SessionKeeperRespawnAttemptedPayload{
+		AgentName: w.cfg.AgentName,
+		Outcome:   outcome,
+		Error:     errMsg,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: marshal respawn_attempted payload", "err", err)
+		return
+	}
+	if emitErr := w.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperRespawnAttempted, raw); emitErr != nil {
+		slog.WarnContext(ctx, "keeper: emit session_keeper_respawn_attempted", "err", emitErr)
+	}
 }

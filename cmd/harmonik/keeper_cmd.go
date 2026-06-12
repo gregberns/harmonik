@@ -53,6 +53,7 @@ func runKeeperSubcommand(args []string) int {
 		windowSizeFlag    int64
 		warnAbsTokensFlag int64
 		actAbsTokensFlag  int64
+		respawnCmdFlag    string
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
@@ -62,6 +63,7 @@ func runKeeperSubcommand(args []string) int {
 	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
 	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 240000)")
 	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 300000)")
+	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -145,6 +147,7 @@ func runKeeperSubcommand(args []string) int {
 		Cycler:             cycler,
 		FallbackWindowSize: windowSizeFlag,
 		WarnAbsTokens:      warnAbsTokensFlag,
+		RespawnCmd:         respawnCmdFlag,
 	}
 	w := keeper.NewWatcher(cfg, emitter)
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
@@ -268,6 +271,11 @@ FLAGS (watcher mode)
   --act-pct N            Context-use percentage that triggers handoff action (default 90; .managed-gated)
   --warn-abs-tokens N    Absolute-token warn threshold (default 240000); effective = min(warn-abs-tokens, warn-pct% * window)
   --act-abs-tokens N     Absolute-token act threshold (default 300000); effective = min(act-abs-tokens, act-pct% * window)
+  --respawn-cmd <cmd>    Shell command to re-launch the agent when it exits (supervised respawn; hk-3w2).
+                         After the gauge goes stale for 20s and the tmux pane is idle (shell prompt),
+                         the keeper runs "sh -c <cmd>" to respawn the agent. Requires --tmux.
+                         A 90s cooldown prevents tight respawn loops.
+                         Example: --respawn-cmd '~/.claude/captain-tools/captain-launch.sh'
 
 BEHAVIOUR (Phase-2, .managed-gated)
   1. Acquires .harmonik/keeper/<agent>.lock; exits 2 if another keeper is live.

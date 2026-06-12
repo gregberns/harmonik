@@ -163,3 +163,23 @@ type SessionKeeperCycleRecoveredPayload struct {
 	// PhaseAtCrash is the journal phase at the time of the crash.
 	PhaseAtCrash string `json:"phase_at_crash"`
 }
+
+// SessionKeeperRespawnAttemptedPayload is the payload for
+// session_keeper_respawn_attempted (event-model.md §8.13.9).
+//
+// Emitted by the keeper watcher when it detects that the managed pane has
+// gone idle (agent exited after a /quit injection) and fires --respawn-cmd
+// to re-launch the agent.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-3w2.
+type SessionKeeperRespawnAttemptedPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// Outcome is "ok" when the respawn command exited 0, or "error" otherwise.
+	Outcome string `json:"outcome"`
+
+	// Error is the error message when Outcome is "error". Omitted on success.
+	Error string `json:"error,omitempty"`
+}

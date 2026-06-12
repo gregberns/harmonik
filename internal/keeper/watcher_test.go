@@ -647,3 +647,137 @@ func TestWatcher_AcceptsManagedSession(t *testing.T) {
 		t.Errorf("want exactly 1 session_keeper_warn for matching session; got %d", len(warns))
 	}
 }
+
+// TestWatcher_RespawnFiredWhenGaugeAbsentAndPaneIdle verifies that the respawn
+// command is executed once the gauge has been absent for at least RespawnGrace
+// and the pane-idle check returns true.
+// Refs: hk-3w2.
+func TestWatcher_RespawnFiredWhenGauseAbsentAndPaneIdle(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "respawn-agent"
+
+	// Track respawn attempts via the spy pane-idle fn and a channel.
+	respawnCh := make(chan struct{}, 5)
+
+	em := &keeper.RecordingEmitter{}
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		Staleness:    5 * time.Millisecond, // very short so gauge is immediately stale
+		RespawnGrace: 5 * time.Millisecond, // very short for test speed
+		// RespawnCooldown left at default (90s) — only one attempt expected.
+		RespawnCmd: "true", // sh -c true always succeeds
+		TmuxTarget: "dummy-pane",
+		// Pane is always idle in this test.
+		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
+		// Spy InjectFn to suppress real tmux calls on warn.
+		InjectFn: func(_ context.Context, _ string) error { return nil },
+	}
+
+	// Deliberately write NO gauge file so the gauge is immediately absent.
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Replace respawn command with one that signals via a temp file. Since
+	// we can't easily intercept exec.Command("sh","-c","true"), we verify
+	// via the emitted event instead.
+	_ = respawnCh // not used — events are the observable
+
+	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+
+	events := em.EventsOfType(core.EventTypeSessionKeeperRespawnAttempted)
+	if len(events) == 0 {
+		t.Fatal("want at least 1 session_keeper_respawn_attempted event; got 0")
+	}
+	var payload core.SessionKeeperRespawnAttemptedPayload
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.AgentName != agent {
+		t.Errorf("payload.AgentName = %q; want %q", payload.AgentName, agent)
+	}
+	if payload.Outcome != "ok" {
+		t.Errorf("payload.Outcome = %q; want \"ok\" (respawn cmd was 'true')", payload.Outcome)
+	}
+}
+
+// TestWatcher_RespawnSkippedWhenPaneNotIdle verifies that the respawn command
+// is NOT fired when the pane-idle check returns false (agent is still running).
+// Refs: hk-3w2.
+func TestWatcher_RespawnSkippedWhenPaneNotIdle(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "respawn-skip-agent"
+
+	em := &keeper.RecordingEmitter{}
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		Staleness:    5 * time.Millisecond,
+		RespawnGrace: 5 * time.Millisecond,
+		RespawnCmd:   "true",
+		TmuxTarget:   "dummy-pane",
+		// Pane is NOT idle — agent is still running.
+		IsPaneIdleFn: func(_ context.Context, _ string) bool { return false },
+		InjectFn:     func(_ context.Context, _ string) error { return nil },
+	}
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+
+	events := em.EventsOfType(core.EventTypeSessionKeeperRespawnAttempted)
+	if len(events) != 0 {
+		t.Errorf("want 0 session_keeper_respawn_attempted events (pane not idle); got %d", len(events))
+	}
+}
+
+// TestWatcher_RespawnCooldownPreventsDoubleSpawn verifies that only one respawn
+// fires during a run even across multiple stale ticks (cooldown holds).
+// Refs: hk-3w2.
+func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "respawn-cooldown-agent"
+
+	em := &keeper.RecordingEmitter{}
+
+	cfg := keeper.WatcherConfig{
+		AgentName:       agent,
+		ProjectDir:      projectDir,
+		PollInterval:    10 * time.Millisecond,
+		Staleness:       5 * time.Millisecond,
+		RespawnGrace:    5 * time.Millisecond,
+		RespawnCooldown: 10 * time.Second, // long cooldown — only one attempt allowed
+		RespawnCmd:      "true",
+		TmuxTarget:      "dummy-pane",
+		IsPaneIdleFn:    func(_ context.Context, _ string) bool { return true },
+		InjectFn:        func(_ context.Context, _ string) error { return nil },
+	}
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Run for 300ms — many poll ticks but cooldown should hold to 1 attempt.
+	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
+
+	events := em.EventsOfType(core.EventTypeSessionKeeperRespawnAttempted)
+	if len(events) != 1 {
+		t.Errorf("want exactly 1 session_keeper_respawn_attempted (cooldown); got %d", len(events))
+	}
+}

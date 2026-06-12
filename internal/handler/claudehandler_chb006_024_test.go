@@ -379,6 +379,55 @@ func TestClaudeEnvVars_OptionalVars_AbsentWhenEmpty(t *testing.T) {
 	}
 }
 
+// TestClaudeEnvVars_HarmonikAgent_SetWhenNonEmpty verifies that HARMONIK_AGENT
+// is emitted when HarmonikAgent is set (hk-4hk: daemon implementers must carry
+// "impl-<runID>" so keeper-statusline writes impl-*.ctx, not captain.ctx).
+func TestClaudeEnvVars_HarmonikAgent_SetWhenNonEmpty(t *testing.T) {
+	t.Parallel()
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-agent-01",
+		DaemonSocket:     "/tmp/d.sock",
+		WorkspacePath:    "/ws",
+		HandlerSessionID: "h-sess",
+		ClaudeSessionID:  "c-sess",
+		WorkflowID:       "wf-agent-01",
+		NodeID:           "n-agent-01",
+		HarmonikAgent:    "impl-run-agent-01",
+	}
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	got, ok := envMap["HARMONIK_AGENT"]
+	if !ok {
+		t.Fatal("HARMONIK_AGENT missing from env; want \"impl-run-agent-01\"")
+	}
+	if got != "impl-run-agent-01" {
+		t.Errorf("HARMONIK_AGENT = %q; want \"impl-run-agent-01\"", got)
+	}
+}
+
+// TestClaudeEnvVars_HarmonikAgent_AbsentWhenEmpty verifies that HARMONIK_AGENT
+// is not emitted when HarmonikAgent is empty (hk-4hk).
+func TestClaudeEnvVars_HarmonikAgent_AbsentWhenEmpty(t *testing.T) {
+	t.Parallel()
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-agent-02",
+		DaemonSocket:     "/tmp/d.sock",
+		WorkspacePath:    "/ws",
+		HandlerSessionID: "h-sess",
+		ClaudeSessionID:  "c-sess",
+		WorkflowID:       "wf-agent-02",
+		NodeID:           "n-agent-02",
+		// HarmonikAgent intentionally empty
+	}
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	if _, ok := envMap["HARMONIK_AGENT"]; ok {
+		t.Error("HARMONIK_AGENT present but should be absent when HarmonikAgent is empty")
+	}
+}
+
 // TestClaudeEnvVars_SecretVars_Included verifies HARMONIK_SECRET_* vars from
 // SecretVars appear in the env.
 func TestClaudeEnvVars_SecretVars_Included(t *testing.T) {

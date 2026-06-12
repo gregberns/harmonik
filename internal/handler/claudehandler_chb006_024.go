@@ -174,6 +174,11 @@ type ClaudeEnvConfig struct {
 	Phase          string // HARMONIK_PHASE          (optional)
 	IterationCount string // HARMONIK_ITERATION_COUNT (optional; string form of int)
 	BeadID         string // HARMONIK_BEAD_ID        (optional)
+	// HarmonikAgent is the logical identity of the spawned agent on the keeper
+	// bus (e.g. "impl-<runID>" for daemon implementers, "<name>" for crew agents).
+	// When set, it is emitted as HARMONIK_AGENT so the statusLine helper writes
+	// <agent>.ctx instead of defaulting to "captain.ctx" (hk-4hk).
+	HarmonikAgent string // HARMONIK_AGENT          (optional)
 
 	// SecretVars carries HARMONIK_SECRET_* key-value pairs per HC-028.
 	// Keys MUST be prefixed with "HARMONIK_SECRET_".
@@ -311,6 +316,9 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	}
 	if cfg.BeadID != "" {
 		env = append(env, "HARMONIK_BEAD_ID="+cfg.BeadID)
+	}
+	if cfg.HarmonikAgent != "" {
+		env = append(env, "HARMONIK_AGENT="+cfg.HarmonikAgent)
 	}
 
 	// Credential env deny-list empty overrides (CI-003, CI-INV-002).

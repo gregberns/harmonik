@@ -343,7 +343,10 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		Phase:            phaseStr,
 		IterationCount:   iterCountStr,
 		BeadID:           rc.beadID,
-		BaseEnv:          rc.baseEnv,
+		// HarmonikAgent distinguishes this implementer on the keeper bus so the
+		// statusLine helper writes impl-<runID>.ctx rather than captain.ctx (hk-4hk).
+		HarmonikAgent: "impl-" + core.RunID(rc.runID).String(),
+		BaseEnv:       rc.baseEnv,
 	}
 	env := handler.ClaudeEnvVars(cfg)
 

@@ -15,11 +15,14 @@ import "github.com/google/uuid"
 //
 // # Payload fields (event-model.md §8.1.2)
 //
-//   - run_id            — the run that completed (required)
-//   - terminal_state_id — StateID of the terminal node reached (required)
-//   - ended_at          — RFC 3339 wall-clock timestamp (required)
-//   - summary           — optional human-readable completion note
-//   - workflow_mode     — optional resolved dispatch shape (backward-compat per §8.1)
+//   - run_id                — the run that completed (required)
+//   - terminal_state_id     — StateID of the terminal node reached (required)
+//   - ended_at              — RFC 3339 wall-clock timestamp (required)
+//   - summary               — optional human-readable completion note
+//   - workflow_mode         — optional resolved dispatch shape (backward-compat per §8.1)
+//   - bead_id               — optional bead being executed (logmine F13 / hk-7evda)
+//   - owning_epic_id        — optional parent epic bead ID (logmine F13 / hk-7evda)
+//   - owning_epic_assignee  — optional crew name on the parent epic (logmine F13 / hk-7evda)
 type RunCompletedPayload struct {
 	// RunID identifies the run that completed. Required (must not be uuid.Nil).
 	RunID RunID `json:"run_id"`
@@ -56,6 +59,18 @@ type RunCompletedPayload struct {
 	// was dispatched per queue-model.md §4.3 QM-012 and event-model.md §6.3.
 	// Nil under the same conditions as QueueID.
 	QueueGroupIndex *int `json:"queue_group_index,omitempty"`
+
+	// BeadID is the bead being executed in this run. Optional for backward
+	// compatibility; populated by the daemon since hk-7evda (logmine F13).
+	BeadID string `json:"bead_id,omitempty"`
+
+	// OwningEpicID is the bead ID of the parent epic. Optional; present when the
+	// bead is a child of an epic (logmine F13 / hk-7evda).
+	OwningEpicID *string `json:"owning_epic_id,omitempty"`
+
+	// OwningEpicAssignee is the crew name assigned to the parent epic. Optional;
+	// present when OwningEpicID is set and the epic has an assignee (logmine F13 / hk-7evda).
+	OwningEpicAssignee *string `json:"owning_epic_assignee,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunCompletedPayload.
@@ -104,16 +119,19 @@ func (p RunCompletedPayload) Valid() bool {
 //
 // # Payload fields (event-model.md §8.1.3 + execution-model.md §4.5.EM-025)
 //
-//   - run_id              — the run that failed (required)
-//   - terminal_state_id   — StateID of the node at failure; nil when failure
+//   - run_id                — the run that failed (required)
+//   - terminal_state_id     — StateID of the node at failure; nil when failure
 //     occurs before any node is entered (e.g., budget_exhausted at dispatch)
-//   - failure_class       — coarse failure bucket per execution-model.md §8 (required)
-//   - error_category      — narrow sentinel from handler-contract.md §4.5; absent
+//   - failure_class         — coarse failure bucket per execution-model.md §8 (required)
+//   - error_category        — narrow sentinel from handler-contract.md §4.5; absent
 //     for orchestrator-originated failures (e.g., compilation_loop)
-//   - ended_at            — RFC 3339 wall-clock timestamp (required)
-//   - reason              — human-readable failure description (required)
-//   - last_checkpoint     — SHA of the last successful checkpoint commit per
+//   - ended_at              — RFC 3339 wall-clock timestamp (required)
+//   - reason                — human-readable failure description (required)
+//   - last_checkpoint       — SHA of the last successful checkpoint commit per
 //     EM-025; empty string when no checkpoint exists (first-node failure)
+//   - bead_id               — optional bead being executed (logmine F13 / hk-7evda)
+//   - owning_epic_id        — optional parent epic bead ID (logmine F13 / hk-7evda)
+//   - owning_epic_assignee  — optional crew name on the parent epic (logmine F13 / hk-7evda)
 type RunFailedPayload struct {
 	// RunID identifies the run that failed. Required (must not be uuid.Nil).
 	RunID RunID `json:"run_id"`
@@ -167,6 +185,18 @@ type RunFailedPayload struct {
 	// was dispatched per queue-model.md §4.3 QM-012 and event-model.md §6.3.
 	// Nil under the same conditions as QueueID.
 	QueueGroupIndex *int `json:"queue_group_index,omitempty"`
+
+	// BeadID is the bead being executed in this run. Optional for backward
+	// compatibility; populated by the daemon since hk-7evda (logmine F13).
+	BeadID string `json:"bead_id,omitempty"`
+
+	// OwningEpicID is the bead ID of the parent epic. Optional; present when the
+	// bead is a child of an epic (logmine F13 / hk-7evda).
+	OwningEpicID *string `json:"owning_epic_id,omitempty"`
+
+	// OwningEpicAssignee is the crew name assigned to the parent epic. Optional;
+	// present when OwningEpicID is set and the epic has an assignee (logmine F13 / hk-7evda).
+	OwningEpicAssignee *string `json:"owning_epic_assignee,omitempty"`
 }
 
 // Valid reports whether p is a well-formed RunFailedPayload.

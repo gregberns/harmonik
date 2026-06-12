@@ -51,7 +51,8 @@ type brShowItem struct {
 	// Parent field is intentionally not used for edge construction — its
 	// parent-child entry is already present in Dependencies. Parsing it here
 	// allows us to unmarshal the full JSON without unknown-field errors.
-	Parent string `json:"parent"`
+	Parent   string `json:"parent"`
+	Assignee string `json:"assignee"`
 }
 
 // brShowEdge represents a single entry in either the dependencies or
@@ -221,6 +222,7 @@ func (a *Adapter) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord
 		Labels:        item.Labels,
 		Edges:         edges,
 		AuditTrailRef: string(id),
+		Assignee:      item.Assignee,
 	}
 
 	return record, nil

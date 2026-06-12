@@ -64,6 +64,18 @@ type RunHandle struct {
 	// before a cancel function was available.
 	Cancel context.CancelFunc //nolint:containedctx // CancelFunc is not a Context; stored for operator signal routing
 
+	// OwningEpicID is the BeadID of the parent epic for this run's bead (hk-7evda).
+	// Empty when the bead has no parent epic. Set at run start by beadRunOne via
+	// resolveOwningEpicFromRecord; read by StaleWatcher and terminal event emitters
+	// to denormalize attribution and eliminate br round-trips (logmine F13).
+	OwningEpicID string
+
+	// OwningEpicAssignee is the crew name assigned to OwningEpicID (hk-7evda).
+	// Empty when OwningEpicID is empty or the epic has no assignee. Mirrors the
+	// captain's `br update <epic> --assignee <crew>` attribution durable marker so
+	// operators can attribute run events without additional br show calls.
+	OwningEpicAssignee string
+
 	// machine is the per-session lifecycle FSM (HC-064..HC-067). Set atomically
 	// by beadRunOne after a successful handler.Launch; nil before the handler
 	// is launched. Use SetMachine / GetMachine for race-free access.

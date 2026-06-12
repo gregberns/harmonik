@@ -71,7 +71,7 @@ func TestRunFailedPayload_WorktreeTipSHA_OmittedWhenNil(t *testing.T) {
 	bus := &payloadCollector{}
 	runID := core.RunID(uuid.New())
 
-	emitRunCompleted(context.Background(), bus, runID, false, "no-progress", nil, nil, nil)
+	emitRunCompleted(context.Background(), bus, runID, "", "", "", false, "no-progress", nil, nil, nil)
 
 	if len(bus.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(bus.events))
@@ -93,7 +93,7 @@ func TestRunFailedPayload_WorktreeTipSHA_PresentWhenHeadAdvanced(t *testing.T) {
 	runID := core.RunID(uuid.New())
 	tipSHA := "abc123def456"
 
-	emitRunCompleted(context.Background(), bus, runID, false, "no-progress", nil, nil, &tipSHA)
+	emitRunCompleted(context.Background(), bus, runID, "", "", "", false, "no-progress", nil, nil, &tipSHA)
 
 	if len(bus.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(bus.events))
@@ -132,7 +132,7 @@ func TestRunCompletedPayload_WorktreeTipSHA_AbsentOnSuccess(t *testing.T) {
 
 	// Even if tipSHA were passed (miscall), run_completed does not carry it.
 	// In practice runTipSHA is only set in the non-success branch of beadRunOne.
-	emitRunCompleted(context.Background(), bus, runID, true, "approved", nil, nil, &tipSHA)
+	emitRunCompleted(context.Background(), bus, runID, "", "", "", true, "approved", nil, nil, &tipSHA)
 
 	if len(bus.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(bus.events))

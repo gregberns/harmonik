@@ -15,6 +15,7 @@ package core
 //   - Labels:        raw label strings from Beads (optional); includes workflow:<mode> per BI-009a
 //   - Edges:         typed dependency edges connecting this bead to others (§6.1 RECORD DependencyEdge)
 //   - AuditTrailRef: opaque handle used for `br audit-log` retrieval (§4.10 BI-029 / BI-031 step 3)
+//   - Assignee:      crew or agent name assigned to this bead (optional; empty = unassigned)
 type BeadRecord struct {
 	BeadID        BeadID           // stable identifier for the bead's lifetime
 	Title         string           // human-readable title (required)
@@ -24,6 +25,7 @@ type BeadRecord struct {
 	Labels        []string         // raw label strings from Beads; nil and empty are equivalent (optional)
 	Edges         []DependencyEdge // typed dependency edges; may be empty for a freshly created bead
 	AuditTrailRef string           // opaque handle for `br` audit-log retrieval
+	Assignee      string           // crew/agent assignee (optional; empty = unassigned)
 }
 
 // Valid reports whether r is a well-formed BeadRecord.  A record is valid iff:

@@ -368,13 +368,26 @@ func (w *StaleWatcher) checkRun(
 	// The probe is best-effort: errors leave the field empty.
 	worktreeCommitSHA := probeWorktreeHEAD(ctx, handle.WorktreePath)
 
+	// Denormalize owning-epic attribution from RunHandle (hk-7evda, logmine F13).
+	var owningEpicIDPtr, owningEpicAssigneePtr *string
+	if handle.OwningEpicID != "" {
+		id := handle.OwningEpicID
+		owningEpicIDPtr = &id
+	}
+	if handle.OwningEpicAssignee != "" {
+		a := handle.OwningEpicAssignee
+		owningEpicAssigneePtr = &a
+	}
+
 	pl := core.RunStalePayload{
-		RunID:         runID.String(),
-		BeadID:        string(beadID),
-		AgeSeconds:    ageSeconds,
-		LastEventType: lastEventType,
-		LastEventAt:   lastEventAtStr,
-		EmitCount:     emitCount,
+		RunID:              runID.String(),
+		BeadID:             string(beadID),
+		AgeSeconds:         ageSeconds,
+		LastEventType:      lastEventType,
+		LastEventAt:        lastEventAtStr,
+		EmitCount:          emitCount,
+		OwningEpicID:       owningEpicIDPtr,
+		OwningEpicAssignee: owningEpicAssigneePtr,
 		Snapshot: &core.RunStaleSnapshot{
 			ActiveRunCount:     activeRunCount,
 			GoroutineCount:     goroutineCount,

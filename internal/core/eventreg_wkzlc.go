@@ -30,13 +30,15 @@ func registerStalenessEvents() {
 //
 // # Payload fields (§8.12.1)
 //
-//   - run_id:          the stale run (required)
-//   - bead_id:         the bead being executed (required)
-//   - age_seconds:     seconds since the run produced any event (required, >0)
-//   - last_event_type: EventType of the most recent event seen, or "" if none
-//   - last_event_at:   RFC 3339 timestamp of the most recent event, or "" if none
-//   - emit_count:      1-based count of run_stale emissions for this run (≥1)
-//   - snapshot:        lightweight daemon health snapshot at emission time
+//   - run_id:               the stale run (required)
+//   - bead_id:              the bead being executed (required)
+//   - age_seconds:          seconds since the run produced any event (required, >0)
+//   - last_event_type:      EventType of the most recent event seen, or "" if none
+//   - last_event_at:        RFC 3339 timestamp of the most recent event, or "" if none
+//   - emit_count:           1-based count of run_stale emissions for this run (≥1)
+//   - snapshot:             lightweight daemon health snapshot at emission time
+//   - owning_epic_id:       bead ID of the parent epic (optional; logmine F13 / hk-7evda)
+//   - owning_epic_assignee: crew name assigned to the parent epic (optional; logmine F13 / hk-7evda)
 type RunStalePayload struct {
 	// RunID identifies the stale run. Required (non-empty string).
 	RunID string `json:"run_id"`
@@ -68,6 +70,16 @@ type RunStalePayload struct {
 	// time. Nil when the snapshot could not be populated (e.g. registry not
 	// available in test contexts).
 	Snapshot *RunStaleSnapshot `json:"snapshot,omitempty"`
+
+	// OwningEpicID is the bead ID of the parent epic for the stale bead.
+	// Nil when the bead has no parent epic. Denormalized from RunHandle to
+	// eliminate captain br round-trips for attribution (logmine F13 / hk-7evda).
+	OwningEpicID *string `json:"owning_epic_id,omitempty"`
+
+	// OwningEpicAssignee is the crew name assigned to the parent epic.
+	// Nil when OwningEpicID is nil or the epic has no assignee. Mirrors the
+	// captain's `br update <epic> --assignee <crew>` durable marker.
+	OwningEpicAssignee *string `json:"owning_epic_assignee,omitempty"`
 }
 
 // RunStaleSnapshot is the embedded health snapshot in RunStalePayload.

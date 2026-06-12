@@ -1822,6 +1822,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// can salvage the stranded run-branch commit (hk-8b35c orphan-salvage).
 	var runTipSHA *string
 
+	// Resolve owning-epic attribution (hk-7evda, logmine F13): find the parent
+	// epic from the bead's edges and look up its assignee (the crew name) so
+	// terminal events carry it directly, eliminating captain br round-trips.
+	// Best-effort: errors leave the fields empty (non-fatal).
+	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, deps.brAdapter, beadRecord)
+	// Propagate to RunHandle so StaleWatcher can read the attribution without
+	// its own br calls.
+	if handle, ok := deps.runRegistry.Get(runID); ok {
+		handle.OwningEpicID = owningEpicID
+		handle.OwningEpicAssignee = owningEpicAssignee
+	}
+
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
 	// every run_completed / run_failed event emitted from this function. Using a
 	// closure avoids threading the optional queue fields through every call site.
@@ -1833,7 +1845,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if runSucceeded != nil {
 			*runSucceeded = success
 		}
-		emitRunCompleted(ctx, deps.bus, runID, success, summary, queueID, queueGroupIndex, runTipSHA)
+		emitRunCompleted(ctx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
 	}
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
@@ -3308,14 +3320,21 @@ type workloopRunStartedPayload struct {
 // the parent (a commit was produced) but the run still failed — e.g. when the
 // commit_gate bounced a valid commit into a no-progress loop. Operators can use
 // this SHA to salvage the committed work from the stranded run branch (hk-8b35c).
+//
+// BeadID, OwningEpicID, and OwningEpicAssignee are denormalized attribution fields
+// (hk-7evda, logmine F13) that eliminate captain br round-trips after observing a
+// terminal event.
 type workloopRunCompletedPayload struct {
-	RunID           string  `json:"run_id"`
-	Success         bool    `json:"success"`
-	Summary         string  `json:"summary"`
-	EndedAt         string  `json:"ended_at"`
-	QueueID         *string `json:"queue_id,omitempty"`
-	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
-	WorktreeTipSHA  *string `json:"worktree_tip_sha,omitempty"`
+	RunID              string  `json:"run_id"`
+	BeadID             string  `json:"bead_id"`
+	Success            bool    `json:"success"`
+	Summary            string  `json:"summary"`
+	EndedAt            string  `json:"ended_at"`
+	OwningEpicID       *string `json:"owning_epic_id,omitempty"`
+	OwningEpicAssignee *string `json:"owning_epic_assignee,omitempty"`
+	QueueID            *string `json:"queue_id,omitempty"`
+	QueueGroupIndex    *int    `json:"queue_group_index,omitempty"`
+	WorktreeTipSHA     *string `json:"worktree_tip_sha,omitempty"`
 }
 
 func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int) {
@@ -3334,15 +3353,25 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
 }
 
-func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, success bool, summary string, queueID *string, queueGroupIndex *int, worktreeTipSHA *string) {
+func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID, owningEpicID, owningEpicAssignee string, success bool, summary string, queueID *string, queueGroupIndex *int, worktreeTipSHA *string) {
+	var epicIDPtr, epicAssigneePtr *string
+	if owningEpicID != "" {
+		epicIDPtr = &owningEpicID
+	}
+	if owningEpicAssignee != "" {
+		epicAssigneePtr = &owningEpicAssignee
+	}
 	pl := workloopRunCompletedPayload{
-		RunID:           runID.String(),
-		Success:         success,
-		Summary:         summary,
-		EndedAt:         time.Now().UTC().Format(time.RFC3339),
-		QueueID:         queueID,
-		QueueGroupIndex: queueGroupIndex,
-		WorktreeTipSHA:  worktreeTipSHA,
+		RunID:              runID.String(),
+		BeadID:             beadID,
+		Success:            success,
+		Summary:            summary,
+		EndedAt:            time.Now().UTC().Format(time.RFC3339),
+		OwningEpicID:       epicIDPtr,
+		OwningEpicAssignee: epicAssigneePtr,
+		QueueID:            queueID,
+		QueueGroupIndex:    queueGroupIndex,
+		WorktreeTipSHA:     worktreeTipSHA,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {
@@ -3353,6 +3382,29 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 		eventType = core.EventTypeRunFailed
 	}
 	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+}
+
+// resolveOwningEpicFromRecord scans beadRecord.Edges for a parent-child edge
+// where the bead is the child and returns the parent epic's bead ID and assignee.
+// Returns ("", "") when no parent-child edge is found.
+// Returns (epicID, "") when the epic exists but the br show call fails or the
+// epic has no assignee. Best-effort: errors are silently swallowed.
+// Bead ref: hk-7evda (logmine F13 — kill attribution round-trips).
+func resolveOwningEpicFromRecord(ctx context.Context, br beadLedger, record core.BeadRecord) (epicID, assignee string) {
+	for _, e := range record.Edges {
+		if e.EdgeKind == core.EdgeKindParentChild && e.FromBeadID == record.BeadID {
+			epicID = string(e.ToBeadID)
+			break
+		}
+	}
+	if epicID == "" {
+		return "", ""
+	}
+	epicRecord, err := br.ShowBead(ctx, core.BeadID(epicID))
+	if err != nil {
+		return epicID, ""
+	}
+	return epicID, epicRecord.Assignee
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

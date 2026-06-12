@@ -307,6 +307,207 @@ func TestReviewerNoVerdict_StallTwice_Fails_hkbqf1q(t *testing.T) {
 	}
 }
 
+// bqf1qScenarioDScript — iter-2 reviewer stall then APPROVE on retry (hk-ycxfa).
+//
+// Invocation sequence:
+//  1. implement (iter 1): commits a file → HEAD advances.
+//  2. review (iter 1):    writes REQUEST_CHANGES → back-edge to implement.
+//  3. implement (iter 2): commits a second file → HEAD advances.
+//  4. review (iter 2, attempt 1): exits WITHOUT writing review.json → stall.
+//     The hk-bqf1q retry fires BUT the no-progress check must NOT fire first
+//     (that is the hk-ycxfa bug: priorVerdict==REQUEST_CHANGES, iter>=2,
+//     HEAD unchanged → review_fixup_stalled fires prematurely).
+//  5. review (iter 2, attempt 2): writes APPROVE → run completes.
+func bqf1qScenarioDScript(t *testing.T, wtPath string) string {
+	t.Helper()
+	wtpEsc := strings.ReplaceAll(wtPath, "'", "'\\''")
+	reqChanges := strings.ReplaceAll(rlFixtureVerdictJSON("REQUEST_CHANGES"), "'", "'\\''")
+	approve := strings.ReplaceAll(rlFixtureVerdictJSON("APPROVE"), "'", "'\\''")
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
+CNT_FILE="$WTP/.harmonik/bqf1q_d_count"
+if [ ! -f "$CNT_FILE" ]; then printf '0' > "$CNT_FILE"; fi
+CNT=$(cat "$CNT_FILE"); CNT=$((CNT + 1)); printf '%%d' "$CNT" > "$CNT_FILE"
+case "$CNT" in
+  1)
+    # Implementer iter 1: commit real work -> HEAD advances.
+    printf 'bqf1q-d work iter1' > "$WS/bqf1q_d_1.txt"
+    git -C "$WS" add "bqf1q_d_1.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
+        commit -m "bqf1q-d impl iter1" --no-gpg-sign >/dev/null 2>&1
+    ;;
+  2)
+    # Reviewer iter 1: write REQUEST_CHANGES -> back-edge to implement.
+    mkdir -p "$WS/.harmonik"
+    printf '%%s' '%s' > "$WS/.harmonik/review.json"
+    ;;
+  3)
+    # Implementer iter 2 (resume): commit more work -> HEAD advances.
+    printf 'bqf1q-d work iter2' > "$WS/bqf1q_d_2.txt"
+    git -C "$WS" add "bqf1q_d_2.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
+        commit -m "bqf1q-d impl iter2" --no-gpg-sign >/dev/null 2>&1
+    ;;
+  4)
+    # Reviewer iter 2, attempt 1: exits WITHOUT writing review.json -> stall.
+    # hk-bqf1q retry should fire; hk-ycxfa: no-progress must NOT fire first.
+    ;;
+  5)
+    # Reviewer iter 2, attempt 2 (retry): write APPROVE -> run completes.
+    mkdir -p "$WS/.harmonik"
+    printf '%%s' '%s' > "$WS/.harmonik/review.json"
+    ;;
+  *)
+    exit 1 ;;
+esac
+exit 0
+`, wtpEsc, reqChanges, approve)
+	scriptPath := filepath.Join(t.TempDir(), "bqf1q_d_handler.sh")
+	//nolint:gosec // G306: test-only fixture
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("bqf1qScenarioDScript: WriteFile: %v", err)
+	}
+	return scriptPath
+}
+
+// bqf1qScenarioEScript — iter-2 reviewer stalls twice (retry exhausted) (hk-ycxfa).
+//
+// Invocation sequence:
+//  1. implement (iter 1): commits a file.
+//  2. review (iter 1):    writes REQUEST_CHANGES.
+//  3. implement (iter 2): commits a second file.
+//  4. review (iter 2, attempt 1): exits WITHOUT writing review.json → stall.
+//  5. review (iter 2, attempt 2): exits WITHOUT writing review.json → retry exhausted → hard-fail.
+func bqf1qScenarioEScript(t *testing.T, wtPath string) string {
+	t.Helper()
+	wtpEsc := strings.ReplaceAll(wtPath, "'", "'\\''")
+	reqChanges := strings.ReplaceAll(rlFixtureVerdictJSON("REQUEST_CHANGES"), "'", "'\\''")
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
+CNT_FILE="$WTP/.harmonik/bqf1q_e_count"
+if [ ! -f "$CNT_FILE" ]; then printf '0' > "$CNT_FILE"; fi
+CNT=$(cat "$CNT_FILE"); CNT=$((CNT + 1)); printf '%%d' "$CNT" > "$CNT_FILE"
+case "$CNT" in
+  1)
+    # Implementer iter 1: commit real work.
+    printf 'bqf1q-e work iter1' > "$WS/bqf1q_e_1.txt"
+    git -C "$WS" add "bqf1q_e_1.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
+        commit -m "bqf1q-e impl iter1" --no-gpg-sign >/dev/null 2>&1
+    ;;
+  2)
+    # Reviewer iter 1: write REQUEST_CHANGES.
+    mkdir -p "$WS/.harmonik"
+    printf '%%s' '%s' > "$WS/.harmonik/review.json"
+    ;;
+  3)
+    # Implementer iter 2 (resume): commit more work.
+    printf 'bqf1q-e work iter2' > "$WS/bqf1q_e_2.txt"
+    git -C "$WS" add "bqf1q_e_2.txt" >/dev/null 2>&1
+    git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" \
+        commit -m "bqf1q-e impl iter2" --no-gpg-sign >/dev/null 2>&1
+    ;;
+  4|5)
+    # Reviewer iter 2, attempts 1 and 2: both stall -> retry exhausted -> hard-fail.
+    ;;
+  *)
+    exit 1 ;;
+esac
+exit 0
+`, wtpEsc, reqChanges)
+	scriptPath := filepath.Join(t.TempDir(), "bqf1q_e_handler.sh")
+	//nolint:gosec // G306: test-only fixture
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("bqf1qScenarioEScript: WriteFile: %v", err)
+	}
+	return scriptPath
+}
+
+// TestReviewerNoVerdict_Iter2StallThenApprove_Completes_hkycxfa — scenario D (hk-ycxfa):
+// iter-1 REQUEST_CHANGES → iter-2 implementer commits → reviewer stalls → retry APPROVE → completes.
+// This is the core regression for hk-ycxfa: before the fix, the no-progress check fired on
+// the reviewer retry (priorVerdict==REQUEST_CHANGES, iterationCount>=2, HEAD unchanged).
+func TestReviewerNoVerdict_Iter2StallThenApprove_Completes_hkycxfa(t *testing.T) {
+	t.Parallel()
+	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)
+	scriptPath := bqf1qScenarioDScript(t, wtPath)
+	graph := bqf1qWriteDOT(t, bqf1qReviewLoopDOT())
+
+	collector := &stubEventCollector{}
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           &stubBeadLedger{},
+		Bus:                 collector,
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
+		WorkflowModeDefault: core.WorkflowModeDot,
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	result := daemon.ExportedDriveDotWorkflow(ctx, deps, rlFixtureRunID(t),
+		core.BeadID("dot-ycxfa-iter2-stall-then-approve"), wtPath, parentSHA, graph)
+
+	events := collector.eventTypes()
+	t.Logf("iter2-stall-then-approve: result=%+v events=%v", result, events)
+
+	if !result.Success {
+		t.Errorf("hk-ycxfa scenario D: expected success=true (iter-2 reviewer retried after stall and APPROVED); summary=%q", result.Summary)
+	}
+	if result.NeedsAttention {
+		t.Errorf("hk-ycxfa scenario D: expected needs_attention=false; summary=%q", result.Summary)
+	}
+	rlAssertEventPresent(t, events, string(core.EventTypeReviewerVerdict))
+	// review_fixup_stalled must NOT have fired — the no-progress check must be suppressed on retry.
+	for _, et := range events {
+		if et == string(core.EventTypeReviewFixupStalled) {
+			t.Errorf("hk-ycxfa scenario D: review_fixup_stalled false-fired on reviewer retry; events=%v summary=%q", events, result.Summary)
+		}
+	}
+}
+
+// TestReviewerNoVerdict_Iter2StallTwice_Fails_hkycxfa — scenario E (hk-ycxfa):
+// iter-1 REQUEST_CHANGES → iter-2 implementer commits → reviewer stalls twice → retry exhausted → hard-fail.
+func TestReviewerNoVerdict_Iter2StallTwice_Fails_hkycxfa(t *testing.T) {
+	t.Parallel()
+	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)
+	scriptPath := bqf1qScenarioEScript(t, wtPath)
+	graph := bqf1qWriteDOT(t, bqf1qReviewLoopDOT())
+
+	collector := &stubEventCollector{}
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           &stubBeadLedger{},
+		Bus:                 collector,
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
+		WorkflowModeDefault: core.WorkflowModeDot,
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	result := daemon.ExportedDriveDotWorkflow(ctx, deps, rlFixtureRunID(t),
+		core.BeadID("dot-ycxfa-iter2-stall-twice"), wtPath, parentSHA, graph)
+
+	events := collector.eventTypes()
+	t.Logf("iter2-stall-twice: result=%+v events=%v", result, events)
+
+	if result.Success {
+		t.Errorf("hk-ycxfa scenario E: expected success=false (iter-2 reviewer stall retry exhausted); summary=%q", result.Summary)
+	}
+	if !result.NeedsAttention {
+		t.Errorf("hk-ycxfa scenario E: expected needs_attention=true; summary=%q", result.Summary)
+	}
+}
+
 // TestReviewerNoVerdict_NoCommit_Fails_hkbqf1q — scenario C:
 // iter-1 implementer makes no commit → cascade fails before reviewer runs.
 // This verifies the existing iter-1 no-commit hard-fail is preserved (the

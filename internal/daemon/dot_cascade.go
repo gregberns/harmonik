@@ -371,7 +371,14 @@ func driveDotWorkflow(
 				}
 			}
 			headAdvanced := priorIterHeadSHA == "" || currentHead != priorIterHeadSHA
-			if iterationCount >= 2 && !headAdvanced {
+			// hk-ycxfa: suppress the no-progress check when retrying a stalled reviewer
+			// (hk-bqf1q follow-up). A reviewer retry does not advance HEAD (reviewers
+			// never commit), so the check would fire prematurely when iterationCount >= 2
+			// and priorVerdict == REQUEST_CHANGES — exactly the scenario hk-bqf1q was
+			// meant to rescue. The retry is already gated by reviewerNoVerdictRetries <
+			// dotMaxReviewerNoVerdictRetries; if the retry also stalls, hard-fail fires
+			// below via the exhausted-budget branch.
+			if iterationCount >= 2 && !headAdvanced && !(isReviewer && reviewerNoVerdictRetries > 0) {
 				// hk-8ps7q — approved-and-done is COMPLETION, not no-progress.
 				//
 				// The no-progress condition (iter ≥ 2 + HEAD unchanged) is met by
@@ -674,6 +681,13 @@ func dispatchDotAgenticNode(
 		if headErr != nil {
 			return core.Outcome{}, fmt.Errorf("resolve HEAD before reviewer node %q: %w", node.ID, headErr)
 		}
+		// hk-ycxfa: remove any prior review.json before launching the reviewer so a
+		// stalled reviewer (exits without writing a verdict) correctly produces a nil
+		// verdict. Without this, a stall at iter-2+ would pick up the stale verdict
+		// from the prior iteration's reviewer, making ReadReviewVerdict return the old
+		// verdict instead of nil — bypassing errDotReviewerNoVerdict and the retry
+		// logic added by hk-bqf1q. Non-fatal: if the file doesn't exist, ignore.
+		_ = os.Remove(workspace.ReviewVerdictPath(wtPath))
 		rtErr := workspace.WriteReviewTarget(workspace.ReviewTargetPayload{
 			WorkspacePath: wtPath,
 			BeadID:        string(beadID),

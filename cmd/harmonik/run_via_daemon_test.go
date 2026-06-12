@@ -20,6 +20,21 @@ import (
 	"testing"
 )
 
+// socketSafeTempDir returns a temporary directory whose path is short enough
+// for a Unix domain socket (macOS limit: 104 chars).  The socket will live at
+// <dir>/.harmonik/daemon.sock (+17 chars), so the dir itself must be ≤87 chars.
+// t.TempDir() on macOS produces paths under /var/folders/… that exceed this
+// limit.  Using /tmp as the base always stays well within it.
+func socketSafeTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hkt-*")
+	if err != nil {
+		t.Fatalf("socketSafeTempDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // ---------------------------------------------------------------------------
 // isDaemonUp
 // ---------------------------------------------------------------------------
@@ -34,7 +49,7 @@ func TestIsDaemonUp_SocketAbsent(t *testing.T) {
 
 func TestIsDaemonUp_SocketPresent(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a .harmonik subdir and bind a Unix listener on daemon.sock.
 	harmonikDir := filepath.Join(dir, ".harmonik")
@@ -180,7 +195,7 @@ func TestViaWatchGroupCompletion_UnexpectedEOF(t *testing.T) {
 
 func TestViaSendRequest_SocketAbsent(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	// Do NOT create daemon.sock — send should return exitViaDaemonDown.
 	_, code := viaSendRequest(t.Context(), harmonikDir, []byte(`{"op":"queue-status"}`))
@@ -191,7 +206,7 @@ func TestViaSendRequest_SocketAbsent(t *testing.T) {
 
 func TestViaSendRequest_ValidResponse(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	harmonikDir := filepath.Join(dir, ".harmonik")
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)

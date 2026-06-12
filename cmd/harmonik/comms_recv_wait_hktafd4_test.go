@@ -28,7 +28,7 @@ import (
 // events.jsonl path and (optional) cursor store. Returns the socket path.
 func waitTestStartHub(t *testing.T, eventsPath string, cs *daemon.CursorStore) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	sockPath := filepath.Join(dir, "daemon.sock")
 
 	hub := daemon.NewSubscribeHub(daemon.SubscribeHubConfig{

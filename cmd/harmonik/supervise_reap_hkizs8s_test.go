@@ -83,7 +83,7 @@ func TestSupervise_StartRefuses_FlywheelSessionExists(t *testing.T) {
 		t.Skip("tmux not available")
 	}
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
@@ -131,7 +131,7 @@ func TestSupervise_StartDoesNotCorruptExistingSentinel(t *testing.T) {
 		t.Skip("tmux not available")
 	}
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"

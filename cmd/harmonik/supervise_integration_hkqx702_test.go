@@ -120,7 +120,7 @@ func TestSupervise_StartRefuses_DaemonDown(t *testing.T) {
 // TestSupervise_StartRefuses_LockHeld verifies that RunStart exits 25 when
 // supervisor.lock is already held by another process.
 func TestSupervise_StartRefuses_LockHeld(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
@@ -205,7 +205,7 @@ func TestSupervise_CommandFlagPropagatestoConfig(t *testing.T) {
 // Since the test cannot actually create a tmux session, we verify the config
 // written to disk contains the expected Command field.
 func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
@@ -250,7 +250,7 @@ func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
 // TestSupervise_StartDoubleDashCommand verifies the `-- CMD ARGS` separator
 // form also populates Config.Command correctly.
 func TestSupervise_StartDoubleDashCommand(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	// Create a mock Unix socket.
 	harmonikDir := dir + "/.harmonik"
@@ -297,7 +297,7 @@ func TestSupervise_StartHoldsLockDuringSessionCreation(t *testing.T) {
 	//
 	// The race-window fix is structural (defer-based hold until after tmux call);
 	// this test confirms the flock probe path still exits 25 correctly.
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	harmonikDir := dir + "/.harmonik"
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
 		t.Fatal(err)

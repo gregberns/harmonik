@@ -30,6 +30,21 @@ import (
 	"testing"
 )
 
+// socketSafeTempDir returns a temporary directory whose path is short enough
+// for a Unix domain socket (macOS limit: 104 chars).  The socket will live at
+// <dir>/.harmonik/daemon.sock (+17 chars), so the dir itself must be ≤87 chars.
+// t.TempDir() on macOS produces paths under /var/folders/… that exceed this
+// limit.  Using /tmp as the base always stays well within it.
+func socketSafeTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hkt-*")
+	if err != nil {
+		t.Fatalf("socketSafeTempDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // ---------------------------------------------------------------------------
 // helpers — minimal fake daemon socket
 // ---------------------------------------------------------------------------
@@ -98,7 +113,7 @@ func startFakeSocketServer(t *testing.T, dir string) string {
 func TestON056_AgentAndHumanSameCommandSurface_Pause(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	startFakeSocketServer(t, dir)
 
 	var stdout, stderr bytes.Buffer
@@ -129,7 +144,7 @@ func TestON056_AgentAndHumanSameCommandSurface_Pause(t *testing.T) {
 func TestON056_AgentAndHumanSameCommandSurface_Resume(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	startFakeSocketServer(t, dir)
 
 	var stdout, stderr bytes.Buffer
@@ -161,7 +176,7 @@ func TestON056_AgentAndHumanSameCommandSurface_Resume(t *testing.T) {
 func TestON056_DaemonNotRunning_Exit17_Pause(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 	// Do NOT start a socket server; the socket file is absent.
 
 	var stdout, stderr bytes.Buffer
@@ -184,7 +199,7 @@ func TestON056_DaemonNotRunning_Exit17_Pause(t *testing.T) {
 func TestON056_DaemonNotRunning_Exit17_Resume(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := socketSafeTempDir(t)
 
 	var stdout, stderr bytes.Buffer
 	code := RunResume([]string{"--project", dir}, &stdout, &stderr)

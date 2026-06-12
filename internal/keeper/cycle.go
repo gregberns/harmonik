@@ -47,10 +47,20 @@ type CyclerConfig struct {
 	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 240000
 	WarnPctCeil   float64 // pct-of-window cap for warn gate; default 0.70
 
+	// ForceActAbsTokens / ForceActPctCeil define the hard upper threshold above
+	// which the cycle fires unconditionally, bypassing the CrispIdle gate. This
+	// ensures a perpetually-busy crew (one that never satisfies CrispIdle) still
+	// gets cleared before context exhaustion. Effective threshold is
+	// min(ForceActAbsTokens, ForceActPctCeil * WindowSize).
+	// Refs: hk-0uu.
+	ForceActAbsTokens int64   // default 380000
+	ForceActPctCeil   float64 // default 0.95
+
 	// Pct-based fallbacks used when CtxFile.Tokens == 0 or WindowSize == 0
 	// (older Claude Code versions that do not emit absolute token counts).
-	ActPct  float64 // threshold to fire; default 90
-	WarnPct float64 // re-arm threshold; default 80
+	ActPct      float64 // threshold to fire; default 90
+	WarnPct     float64 // re-arm threshold; default 80
+	ForceActPct float64 // forced-clear fallback pct; default 95
 
 	HandoffTimeout time.Duration // wait for handoff nonce; default 180s
 	ClearSettle    time.Duration // best-effort wait for new session_id; default 3s
@@ -109,6 +119,15 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.WarnPct <= 0 {
 		c.WarnPct = 80.0
+	}
+	if c.ForceActAbsTokens <= 0 {
+		c.ForceActAbsTokens = 380_000
+	}
+	if c.ForceActPctCeil <= 0 {
+		c.ForceActPctCeil = 0.95
+	}
+	if c.ForceActPct <= 0 {
+		c.ForceActPct = 95.0
 	}
 	if c.HandoffTimeout <= 0 {
 		c.HandoffTimeout = 180 * time.Second
@@ -210,6 +229,28 @@ func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 		return cf.Tokens < c.warnThreshold(cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
+}
+
+// forceActThreshold returns the effective absolute-token forced-clear threshold
+// using the same min(abs, pct*window) formula as actThreshold.
+func (c *CyclerConfig) forceActThreshold(windowSize int64) int64 {
+	if windowSize > 0 {
+		pctBased := int64(c.ForceActPctCeil * float64(windowSize))
+		if pctBased < c.ForceActAbsTokens {
+			return pctBased
+		}
+	}
+	return c.ForceActAbsTokens
+}
+
+// aboveForceThreshold reports whether cf is at or above the hard forced-clear
+// threshold. Uses absolute tokens when available; falls back to ForceActPct.
+// Refs: hk-0uu.
+func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
+		return cf.Tokens >= c.forceActThreshold(cf.WindowSize)
+	}
+	return cf.Pct >= c.ForceActPct
 }
 
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
@@ -380,9 +421,16 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if c.cfg.belowActThreshold(cf) {
 		return nil
 	}
-	// Gate 4: agent must be at a crisp await-input boundary.
+	// Gate 4: agent must be at a crisp await-input boundary — UNLESS context
+	// has breached the hard force-act threshold. Above that threshold the cycle
+	// fires unconditionally so a perpetually-busy crew (one that never satisfies
+	// CrispIdle) is still cleared before context exhaustion. (Refs: hk-0uu)
 	if !c.cfg.CrispIdleFn(c.cfg.ProjectDir, c.cfg.AgentName) {
-		return nil
+		if !c.cfg.aboveForceThreshold(cf) {
+			return nil
+		}
+		slog.WarnContext(ctx, "keeper: forced-clear: bypassing CrispIdle above hard threshold",
+			"agent", c.cfg.AgentName, "pct", cf.Pct, "tokens", cf.Tokens)
 	}
 	// Gate 5: no in-flight queue work (fail-closed via HoldingDispatchFn).
 	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {

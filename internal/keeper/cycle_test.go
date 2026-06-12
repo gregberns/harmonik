@@ -398,7 +398,8 @@ func TestCycler_Gating(t *testing.T) {
 		holdingDispatch bool
 	}{
 		{"below_act_pct", 85.0, true, false},
-		{"not_crisp_idle", 95.0, false, false},
+		// pct=92: above ActPct (90) but below ForceActPct (95) — CrispIdle still gates.
+		{"not_crisp_idle", 92.0, false, false},
 		{"holding_dispatch", 95.0, true, true},
 	}
 
@@ -1718,4 +1719,152 @@ func containsSubstr(s, sub string) bool {
 		}
 		return false
 	}()
+}
+
+// TestCycler_ForcedClear_BypassesCrispIdle verifies that a perpetually-busy
+// agent (CrispIdle always false) still gets cleared when context is at or above
+// the forced-clear threshold (ForceActPct). Refs: hk-0uu.
+func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "busy-agent"
+		cycleID = "cyc-force-001"
+		prevSID = "sess-busy-before"
+		newSID  = "sess-busy-after"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0, // hard threshold
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    200 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		AppendHandoffFn:   func(_, _ string) error { return nil },
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Context at exactly the force threshold — cycle MUST fire despite CrispIdle=false.
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	phases := jc.snapshot()
+	wantPhases := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
+	if len(phases) != len(wantPhases) {
+		t.Fatalf("journal phases = %v; want %v", phases, wantPhases)
+	}
+	for i, p := range phases {
+		if p != wantPhases[i] {
+			t.Errorf("phase[%d] = %q; want %q", i, p, wantPhases[i])
+		}
+	}
+
+	// Inject sequence: [0] /session-handoff, [1] /clear, [2] /session-resume
+	texts := spy.texts()
+	if len(texts) < 3 {
+		t.Fatalf("inject calls = %d; want >=3 (/session-handoff + /clear + /session-resume)", len(texts))
+	}
+	if !containsSubstr(texts[0], "/session-handoff") {
+		t.Errorf("inject[0] = %q; want /session-handoff", texts[0])
+	}
+	if !containsSubstr(texts[1], "/clear") {
+		t.Errorf("inject[1] = %q; want /clear", texts[1])
+	}
+	if !containsSubstr(texts[2], "/session-resume") {
+		t.Errorf("inject[2] = %q; want /session-resume", texts[2])
+	}
+
+	completes := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
+	if len(completes) != 1 {
+		t.Fatalf("cycle_complete events = %d; want 1", len(completes))
+	}
+}
+
+// TestCycler_ForcedClear_BelowThreshold_StillBlocked verifies that when context
+// is above ActPct but below ForceActPct, a non-idle agent (CrispIdle=false) is
+// still blocked (normal behavior unchanged). Refs: hk-0uu.
+func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "busy-agent-below"
+		cycleID = "cyc-force-002"
+		prevSID = "sess-below"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 100 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       func(_ string) (string, error) { return "", nil },
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}, time.Now(), nil
+		},
+		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Context above ActPct (90) but below ForceActPct (95) with CrispIdle=false.
+	// Cycle must NOT fire.
+	cf := &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	if len(jc.snapshot()) != 0 {
+		t.Errorf("journal phases = %v; want none (cycle should be blocked)", jc.snapshot())
+	}
+	if len(spy.texts()) != 0 {
+		t.Errorf("inject calls = %v; want none", spy.texts())
+	}
 }

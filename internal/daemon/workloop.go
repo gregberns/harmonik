@@ -494,6 +494,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-exd7m.
 	noAutoPull bool
 
+	// skipBrHistoryRotation, when true, disables the pre-close .br_history trim
+	// performed by closeBeadWithHistoryTrim before every CloseBead call (hk-hypbi).
+	// Mirrors Config.SkipBrHistoryRotation; set to true for tests that operate on
+	// temp directories where .beads/.br_history is absent or controlled by fixtures.
+	//
+	// Bead ref: hk-hypbi.
+	skipBrHistoryRotation bool
+
 	// targetBranch is the git branch that completed bead branches are merged
 	// into.  Sourced from Config.TargetBranch; normalised to "main" when the
 	// config field is empty.  Threaded into lockedMergeRunBranchToMain so the
@@ -510,6 +518,37 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-6r6xv.
 	protectBranches []string
+}
+
+// closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
+// entries before calling CloseBead, preventing in-session history bloat from
+// pushing br close past the 10 s write timeout (hk-hypbi).
+//
+// Root cause (hk-hypbi): the startup rotation (hk-5dewt) trims to
+// brHistoryRotationDefaultKeep (20) entries, but each subsequent br write adds
+// a new ~1.2 MB snapshot.  After ~20 dispatches the history reaches 40+ entries
+// and br close again takes >10 s, triggering BrUnavailable retry exhaustion and
+// leaving the bead stuck in_progress.  Trimming to brHistoryCloseTrimKeep (5)
+// before every close caps the scan cost at sub-second latency.
+//
+// The trim is non-fatal: a failure is logged and the CloseBead proceeds regardless.
+// Skipped when skipBrHistoryRotation is true (tests) or projectDir is empty.
+//
+// On BrUnavailable after retry exhaustion callers SHOULD check
+// errors.Is(err, brcli.BrUnavailable) and emit run_completed rather than
+// run_failed — the merge already landed; the intent file is retained for BI-031
+// recovery on next daemon startup (hk-hypbi).
+func (deps *workLoopDeps) closeBeadWithHistoryTrim(
+	ctx context.Context,
+	runID core.RunID,
+	tid core.TransitionID,
+	beadID core.BeadID,
+	needsAttention bool,
+) error {
+	if !deps.skipBrHistoryRotation && deps.projectDir != "" {
+		_ = runBrHistoryRotationPreflight(ctx, deps.projectDir, brHistoryCloseTrimKeep)
+	}
+	return deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, tid, beadID, needsAttention)
 }
 
 // beadLedger is the subset of brcli.Adapter used by the work loop.  It is
@@ -657,8 +696,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		queueLedger:         newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:  adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
 		kerfPath:            cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		noAutoPull:          cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
-		mergeMu:             &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
+		noAutoPull:            cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
+		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,     // hk-hypbi: per-close .br_history trim
+		mergeMu:               &sync.Mutex{},                 // hk-yyso7: global merge-serialisation across all queues
 		emittedEpics:        make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:      &sync.Mutex{},
 		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
@@ -1972,9 +2012,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		preDispatchTID, _ := deps.tidGen.Next()
 		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, preDispatchTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, preDispatchTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (pre-dispatch-subsumed) %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error (pre-dispatch-subsumed): %v", closeErr))
+				// hk-hypbi: transient BrUnavailable after merge-already-on-main →
+				// emit success; intent file retained for BI-031 recovery on next startup.
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (pre-dispatch-subsumed)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error (pre-dispatch-subsumed): %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "pre-dispatch-subsumed: bead already in main")
@@ -2070,9 +2116,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				return
 			}
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				// hk-hypbi: transient BrUnavailable after successful merge → emit
+				// success; intent file retained for BI-031 recovery on next startup.
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (review-loop APPROVE)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, rlResult.summary)
@@ -2130,11 +2182,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					beadID, runID.String())
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", exhaustedSummary)
 				budgetTID, _ := deps.tidGen.Next()
-				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, budgetTID, beadID, true); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop budget-exhausted) %s: %v (falling back to reopen)\n",
+				if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, budgetTID, beadID, true); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop budget-exhausted) %s: %v\n",
 						beadID, closeErr)
-					reopenTID, _ := deps.tidGen.Next()
-					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, exhaustedSummary)
+					// hk-hypbi: on transient BrUnavailable, leave bead in_progress for
+					// BI-031 recovery — do NOT reopen, which would re-dispatch the bead
+					// and bypass the operator-triage needs-attention requirement.
+					if !errors.Is(closeErr, brcli.BrUnavailable) {
+						reopenTID, _ := deps.tidGen.Next()
+						_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, exhaustedSummary)
+					}
 				} else {
 					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				}
@@ -2227,9 +2284,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				return
 			}
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot success) %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				// hk-hypbi: transient BrUnavailable after successful merge → emit success.
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (dot success)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, dotResult.summary)
@@ -2240,9 +2302,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// (mirrors the builtin noChange-subsumed path in the default switch,
 			// workloop.go:1831-1843). No merge needed — no new commits. Bead: hk-9v5yo.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot noChange-subsumed) %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				// hk-hypbi: transient BrUnavailable after merge-already-on-main → emit success.
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (dot noChange-subsumed)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "noChange-subsumed: bead found in main")
@@ -2800,9 +2867,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		} else {
 			// Merge succeeded (or no-change); proceed with CloseBead.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (agent_completed) %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				// hk-hypbi: transient BrUnavailable after successful merge → emit success.
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (agent_completed)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "agent_completed: stop-hook outcome")
@@ -2835,9 +2907,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		} else {
 			// Merge succeeded (or no-change); proceed with CloseBead.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", beadID, closeErr)
-				emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				if errors.Is(closeErr, brcli.BrUnavailable) {
+					emitDone(true, "close-transient-merged (auto-close)")
+				} else {
+					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+				}
 			} else {
 				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 				emitDone(true, "auto-close: exit=0")
@@ -2852,9 +2928,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		case <-noChangeTimeoutCh:
 			if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-				if closeErr := deps.brAdapter.CloseBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, false); closeErr != nil {
+				if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (noChange-subsumed) %s: %v\n", beadID, closeErr)
-					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+					if errors.Is(closeErr, brcli.BrUnavailable) {
+						emitDone(true, "close-transient-merged (noChange-subsumed)")
+					} else {
+						emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
+					}
 				} else {
 					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
 					emitDone(true, "noChange-subsumed: bead found in main")

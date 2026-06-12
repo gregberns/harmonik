@@ -47,6 +47,17 @@ import (
 // this constant; it is exported only for test readability.
 const brHistoryRotationDefaultKeep = 20
 
+// brHistoryCloseTrimKeep is the tighter per-close trim threshold applied
+// immediately before each CloseBead call (hk-hypbi).  Smaller than
+// brHistoryRotationDefaultKeep (20) so that in-session growth — each br write
+// appends ~1.2 MB — never pushes br close past the 10 s write timeout.
+//
+// Root cause (hk-hypbi / hk-5dewt): startup rotation trims to 20 entries, but
+// subsequent bead closes add new entries.  By ~20 dispatches the history is
+// back to 40+ entries, and br close again exceeds 10 s.  Trimming to 5 before
+// every close caps the scan cost at sub-second latency regardless of session length.
+const brHistoryCloseTrimKeep = 5
+
 // runBrHistoryRotationPreflight checks whether .beads/.br_history/ contains
 // more than keepLatest entries and, if so, archives the oldest entries to a
 // sibling .beads/.br_history-archive/ directory.

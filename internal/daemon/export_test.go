@@ -370,6 +370,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		decisionBlocker:        p.DecisionBlocker,    // hk-a6e24 EV-043
 		noAutoPull:             p.NoAutoPull,         // hk-h5lv2 / EM-066
 		concurrencyCtrl:        p.ConcurrencyCtrl,    // hk-ohiaf
+		skipBrHistoryRotation:  true,                 // hk-hypbi: tests use temp dirs without real .br_history
 		targetBranch:           resolveTargetBranch(p.TargetBranch),
 		protectBranches:        p.ProtectBranches,
 		mergeMu:                mergeMu,

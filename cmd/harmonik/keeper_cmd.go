@@ -131,6 +131,7 @@ func runKeeperSubcommand(args []string) int {
 		ActPct:        float64(actPctFlag),
 		ActAbsTokens:  actAbsTokensFlag,
 		WarnAbsTokens: warnAbsTokensFlag,
+		SendEscapeFn:  keeper.SendEscapeKey,
 	}, emitter)
 
 	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before

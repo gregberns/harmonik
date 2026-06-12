@@ -1808,6 +1808,293 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 	}
 }
 
+// TestCycler_ForcedClear_RetryAfterInterval verifies the hk-qoz catch-22 fix:
+// after a forced-clear abort (handoff_timeout above ForceActPct), the cycle
+// must NOT fire again immediately (DEFECT-4 guard), but MUST fire again once
+// ForceRetryInterval has elapsed. Without this fix, a session stuck above the
+// force threshold after one abort is permanently blocked by Gate 6.
+func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "stuck-agent"
+		cycleID = "cyc-force-retry"
+		sid     = "sess-stuck"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
+	}
+
+	// Short ForceRetryInterval for test speed.
+	const forceRetryInterval = 60 * time.Millisecond
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		ForceRetryInterval: forceRetryInterval,
+		HandoffTimeout: 30 * time.Millisecond, // short → quick abort
+		ClearSettle:    10 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:         handoffNeverReturnsNonce, // always abort
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         noopGauge,
+		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Call 1: fires (above force), aborts (nonce timeout).
+	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun #1: %v", err)
+	}
+	abortedAfter1 := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if abortedAfter1 != 1 {
+		t.Fatalf("want 1 cycle_aborted after first call; got %d", abortedAfter1)
+	}
+
+	// Call 2 (immediately): Gate 6 must suppress — ForceRetryInterval not elapsed.
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun #2 (immediate): %v", err)
+	}
+	abortedAfter2 := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if abortedAfter2 != abortedAfter1 {
+		t.Errorf("want no new cycle_aborted immediately after abort; got %d total", abortedAfter2)
+	}
+
+	// Wait for ForceRetryInterval to elapse.
+	time.Sleep(forceRetryInterval + 10*time.Millisecond)
+
+	// Call 3 (after interval): must retry the forced-clear, abort again.
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun #3 (after interval): %v", err)
+	}
+	abortedAfter3 := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if abortedAfter3 != 2 {
+		t.Errorf("want 2 cycle_aborted after retry (interval elapsed); got %d", abortedAfter3)
+	}
+}
+
+// TestCycler_ForcedClear_EscapeInjected verifies that when SendEscapeFn is set,
+// it is called before the /session-handoff inject. The Escape must precede the
+// handoff to preempt any in-progress input on a busy pane. Refs: hk-qoz.
+func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "escape-agent"
+		cycleID = "cyc-escape-001"
+		prevSID = "sess-busy-esc"
+		newSID  = "sess-clear-esc"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	jc := &journalCapture{}
+
+	var mu sync.Mutex
+	var callOrder []string // records "escape" or "inject" in order
+
+	escapeFn := func(_ context.Context, _ string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		callOrder = append(callOrder, "escape")
+		return nil
+	}
+	injectFn := func(_ context.Context, _, text string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		callOrder = append(callOrder, "inject:"+text[:min(len(text), 20)])
+		return nil
+	}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    100 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:         readHandoff,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            injectFn,
+		ReadGaugeFn:         readGaugeFn,
+		CrispIdleFn:         func(_, _ string) bool { return false }, // busy pane
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		SendEscapeFn:        escapeFn,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Context at force threshold with CrispIdle=false → forced-clear fires.
+	cf := &keeper.CtxFile{Pct: 97.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	mu.Lock()
+	order := make([]string, len(callOrder))
+	copy(order, callOrder)
+	mu.Unlock()
+
+	// There must be at least one "escape" entry.
+	foundEscape := false
+	firstHandoffIdx := -1
+	for i, e := range order {
+		if e == "escape" && !foundEscape {
+			foundEscape = true
+		}
+		if containsSubstr(e, "inject:/session-handoff") && firstHandoffIdx == -1 {
+			firstHandoffIdx = i
+		}
+	}
+	if !foundEscape {
+		t.Errorf("want SendEscapeFn called; callOrder = %v", order)
+	}
+	// Escape must appear before the /session-handoff inject.
+	firstEscapeIdx := -1
+	for i, e := range order {
+		if e == "escape" {
+			firstEscapeIdx = i
+			break
+		}
+	}
+	if firstEscapeIdx != -1 && firstHandoffIdx != -1 && firstEscapeIdx >= firstHandoffIdx {
+		t.Errorf("Escape (idx=%d) must precede /session-handoff inject (idx=%d); order=%v",
+			firstEscapeIdx, firstHandoffIdx, order)
+	}
+}
+
+// min is a local helper for the escape test above (avoids importing math).
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// TestCycler_ForcedClear_EscalatesAfterNTimeouts verifies that after
+// MaxHandoffTimeouts consecutive handoff timeouts above the force threshold,
+// ForceRestartFn is called to hard-restart the agent. Refs: hk-qoz.
+func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "escalate-agent"
+		cycleID = "cyc-escalate-001"
+		sid     = "sess-escalate"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	var restartCalled int
+	var mu sync.Mutex
+	forceRestartFn := func(_ context.Context, _ string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		restartCalled++
+		return nil
+	}
+
+	const maxTimeouts = 3
+	// ForceRetryInterval very short so each retry fires immediately in test.
+	const forceRetryInterval = 20 * time.Millisecond
+
+	cfg := keeper.CyclerConfig{
+		AgentName:          agent,
+		ProjectDir:         t.TempDir(),
+		TmuxTarget:         "fake-pane",
+		ActPct:             90.0,
+		WarnPct:            80.0,
+		ForceActPct:        95.0,
+		MaxHandoffTimeouts: maxTimeouts,
+		ForceRetryInterval: forceRetryInterval,
+		HandoffTimeout:     10 * time.Millisecond, // short for test speed
+		ClearSettle:        5 * time.Millisecond,
+		PollInterval:       2 * time.Millisecond,
+		CycleIDGen:         func() string { return cycleID },
+		IsManagedFn:        func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:         handoffNeverReturnsNonce,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
+		},
+		CrispIdleFn:         func(_, _ string) bool { return false },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ForceRestartFn:      forceRestartFn,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
+
+	// Fire maxTimeouts cycles; each aborts (nonce never arrives).
+	// Between each we sleep forceRetryInterval so Gate 6 allows re-fire.
+	for i := 0; i < maxTimeouts; i++ {
+		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+			t.Fatalf("MaybeRun #%d: %v", i+1, err)
+		}
+		if i < maxTimeouts-1 {
+			time.Sleep(forceRetryInterval + 5*time.Millisecond)
+		}
+	}
+
+	mu.Lock()
+	rc := restartCalled
+	mu.Unlock()
+
+	if rc != 1 {
+		t.Errorf("ForceRestartFn called %d times; want 1 (after %d timeouts)", rc, maxTimeouts)
+	}
+
+	aborted := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
+	if aborted != maxTimeouts {
+		t.Errorf("cycle_aborted events = %d; want %d", aborted, maxTimeouts)
+	}
+}
+
 // TestCycler_ForcedClear_BelowThreshold_StillBlocked verifies that when context
 // is above ActPct but below ForceActPct, a non-idle agent (CrispIdle=false) is
 // still blocked (normal behavior unchanged). Refs: hk-0uu.

@@ -99,6 +99,31 @@ type CyclerConfig struct {
 	// new Claude process started after /clear. Nil → default tmux setenv call.
 	// No-op when TmuxTarget is empty.
 	SetTmuxEnvFn func(ctx context.Context, target, key, value string) error
+
+	// ForceRetryInterval is the minimum duration after a forced-clear attempt
+	// (above ForceActPct) before the keeper retries on the same session_id.
+	// After an abort (handoff_timeout) or a completed forced cycle, the
+	// same-session Gate 6 suppression is lifted only after this interval.
+	// Prevents tight retry loops while still guaranteeing eventual clearance.
+	// Default: 120s. Refs: hk-qoz (forced-clear catch-22 fix).
+	ForceRetryInterval time.Duration
+
+	// MaxHandoffTimeouts is the number of consecutive handoff timeouts above
+	// the force threshold before escalating to ForceRestartFn. Zero disables
+	// escalation. Default: 3. Refs: hk-qoz.
+	MaxHandoffTimeouts int
+
+	// ForceRestartFn, when non-nil, is called after MaxHandoffTimeouts
+	// consecutive handoff timeouts while above the force threshold. Expected
+	// to kill and restart the agent (e.g. via the respawn path). Non-fatal:
+	// a failure is logged but does not stop the keeper loop. Refs: hk-qoz.
+	ForceRestartFn func(ctx context.Context, agentName string) error
+
+	// SendEscapeFn, when non-nil, is called before injecting /session-handoff
+	// to preempt any in-progress input on a busy pane. Nil → no Escape sent.
+	// Set to keeper.SendEscapeKey in production; leave nil in tests.
+	// Refs: hk-qoz (forced-clear busy-pane fix).
+	SendEscapeFn func(ctx context.Context, target string) error
 }
 
 func (c *CyclerConfig) applyDefaults() {
@@ -128,6 +153,12 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ForceActPct <= 0 {
 		c.ForceActPct = 95.0
+	}
+	if c.ForceRetryInterval <= 0 {
+		c.ForceRetryInterval = 120 * time.Second
+	}
+	if c.MaxHandoffTimeouts <= 0 {
+		c.MaxHandoffTimeouts = 3
 	}
 	if c.HandoffTimeout <= 0 {
 		c.HandoffTimeout = 180 * time.Second
@@ -357,6 +388,18 @@ type Cycler struct {
 	// below WarnPct on that new session_id.
 	lastFiredSID            string // session_id of the last completed or aborted cycle
 	seenLowPctAfterLastFire bool   // true once pct < WarnPct is observed on the new session
+
+	// Forced-clear retry state (Refs: hk-qoz).
+	// lastForcedAttemptAt is set at the start of any runCycle call when
+	// aboveForceThreshold. Gate 6 uses it to rate-limit same-session forced
+	// retries after an abort without permanently blocking them.
+	lastForcedAttemptAt time.Time
+
+	// consecutiveHandoffTimeouts counts consecutive handoff timeouts while
+	// above the force threshold. Reset to 0 on a successful cycle or on a
+	// below-force-threshold abort. When it reaches MaxHandoffTimeouts,
+	// ForceRestartFn is called to hard-restart the agent.
+	consecutiveHandoffTimeouts int
 }
 
 // NewCycler constructs a Cycler. Defaults are applied to zero-valued config fields.
@@ -437,13 +480,25 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 	// Gate 6: full anti-loop suppression (only applies after the first fire).
+	//
+	// Forced-clear exception (Refs: hk-qoz): when above the hard force threshold
+	// and the same session_id is still present (DEFECT-4 abort set lastFiredSID),
+	// allow a retry once ForceRetryInterval has elapsed from the last forced
+	// attempt. This breaks the catch-22 where an aborted forced-clear permanently
+	// blocks further attempts on a session whose context never drops below WarnPct.
 	if c.lastFiredSID != "" {
-		// Suppress if still on the same session as the last cycle.
 		if cf.SessionID == c.lastFiredSID {
-			return nil
-		}
-		// Suppress on the new session until pct has been observed below WarnPct.
-		if !c.seenLowPctAfterLastFire {
+			if !c.cfg.aboveForceThreshold(cf) {
+				// Normal path: same session always suppressed until context drops.
+				return nil
+			}
+			// Above force threshold: allow retry after ForceRetryInterval.
+			if !c.lastForcedAttemptAt.IsZero() && time.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
+				return nil
+			}
+			// Fall through: retry the forced-clear.
+		} else if !c.seenLowPctAfterLastFire {
+			// Different session: suppress until pct has been seen below WarnPct.
 			return nil
 		}
 	}
@@ -458,6 +513,13 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	now := time.Now().UTC()
 	journalPath := c.journalPath()
 	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
+
+	// Record forced-attempt timestamp BEFORE injecting so Gate 6 can rate-limit
+	// same-session retries after this cycle completes or aborts. Set regardless
+	// of CrispIdle path so any forced-threshold cycle is rate-limited. (hk-qoz)
+	if c.cfg.aboveForceThreshold(cf) {
+		c.lastForcedAttemptAt = time.Now().UTC()
+	}
 
 	// Step 1: open journal BEFORE any injection.
 	j := &CycleJournal{
@@ -479,7 +541,12 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	_ = c.cfg.TruncateHandoffFn(handoffPath) //nolint:errcheck // non-fatal; poll will fail gracefully
 
 	// Step 2b: inject /session-handoff with nonce directive.
+	// Send Escape first to preempt any in-progress input on a busy pane so the
+	// injected command lands cleanly at the REPL prompt. (Refs: hk-qoz)
 	if c.cfg.TmuxTarget != "" {
+		if c.cfg.SendEscapeFn != nil {
+			_ = c.cfg.SendEscapeFn(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
+		}
 		handoffCmd := fmt.Sprintf(
 			"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
 			handoffPath, nonceMarker(cycleID),
@@ -504,6 +571,26 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		// DEFECT-4: record suppression on abort to prevent re-fire on next tick.
 		c.lastFiredSID = cf.SessionID
 		c.seenLowPctAfterLastFire = false
+
+		// Escalation path: track consecutive timeouts above the force threshold
+		// and call ForceRestartFn after MaxHandoffTimeouts. This handles the case
+		// where the pane is permanently unresponsive (process loop, frozen REPL).
+		// Refs: hk-qoz.
+		if c.cfg.aboveForceThreshold(cf) {
+			c.consecutiveHandoffTimeouts++
+			if c.cfg.ForceRestartFn != nil && c.cfg.MaxHandoffTimeouts > 0 &&
+				c.consecutiveHandoffTimeouts >= c.cfg.MaxHandoffTimeouts {
+				slog.WarnContext(ctx, "keeper: escalating to hard restart after repeated handoff timeouts",
+					"agent", c.cfg.AgentName, "timeouts", c.consecutiveHandoffTimeouts)
+				if restartErr := c.cfg.ForceRestartFn(ctx, c.cfg.AgentName); restartErr != nil {
+					slog.WarnContext(ctx, "keeper: hard restart failed",
+						"agent", c.cfg.AgentName, "err", restartErr)
+				}
+				c.consecutiveHandoffTimeouts = 0
+			}
+		} else {
+			c.consecutiveHandoffTimeouts = 0
+		}
 		return nil
 	}
 
@@ -568,6 +655,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// a new session_id is observed AND pct drops below WarnPct on it.
 	c.lastFiredSID = cf.SessionID
 	c.seenLowPctAfterLastFire = false
+
+	// Successful cycle: reset the consecutive-timeout counter.
+	c.consecutiveHandoffTimeouts = 0
 
 	return nil
 }

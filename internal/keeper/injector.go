@@ -110,6 +110,22 @@ func sendEnter(ctx context.Context, tmuxTarget string) error {
 	return nil
 }
 
+// SendEscapeKey sends an Escape keypress to the tmux pane at tmuxTarget.
+// The cycle core calls this before injecting /session-handoff to preempt any
+// in-progress input on a busy pane (e.g. partial text, a tool-call response
+// being typed). Escape is harmless at a clean prompt and clears partial input
+// in most REPL implementations. Refs: hk-qoz (forced-clear busy-pane fix).
+func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
+	if tmuxTarget == "" {
+		return fmt.Errorf("keeper: send-escape: tmuxTarget is empty")
+	}
+	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", tmuxTarget, "Escape")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("keeper: tmux send-keys Escape: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // sleepCtx waits for d or until ctx is cancelled. Returns true if the full
 // duration elapsed, false if ctx was cancelled first.
 func sleepCtx(ctx context.Context, d time.Duration) bool {

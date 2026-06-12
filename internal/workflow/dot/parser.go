@@ -697,16 +697,24 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				})
 			}
 		case "auto_status":
-			// Reserved-and-rejected per WG-041 §I.4 (spec §4 reserved-set note).
-			// auto_status is NOT accepted at v1; authors porting external auto_status=true
-			// semantics MUST use non_committing="true" instead.
-			errs = append(errs, &ParseError{
-				Line: pair.line,
-				Message: fmt.Sprintf(
-					"node %q: attribute \"auto_status\" is reserved-and-rejected at v1 (WG-041 §I.4); "+
-						"use non_committing=\"true\" instead",
-					rn.id),
-			})
+			// Agentic-only per WG-041 §I.4. Accepted as "true" or "false" (boolean);
+			// retained on reviewer/non-agentic/gate nodes with a v1 WARNING (WG-031).
+			// Any non-boolean value (policy name/mode) is rejected — reserved for a
+			// future step. Sibling to non_committing.
+			switch pair.val {
+			case "true":
+				node.AutoStatus = true
+			case "false":
+				node.AutoStatus = false
+			default:
+				errs = append(errs, &ParseError{
+					Line: pair.line,
+					Message: fmt.Sprintf(
+						"node %q: auto_status %q must be \"true\" or \"false\" (WG-041 §I.4); "+
+							"non-boolean policy values are reserved for a future step",
+						rn.id, pair.val),
+				})
+			}
 		case "axis_tags":
 			node.AxisTags = pair.val
 		case "hook_ref":
@@ -829,6 +837,18 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 			Line: node.Line,
 			Message: fmt.Sprintf(
 				"node %q: attribute \"non_committing\" is agentic-only; on type %q it is retained but ignored at v1 (WG-041 §I.4)",
+				rn.id, node.RawType),
+		})
+	}
+	// Post-loop: auto_status= is agentic-only. Emit a v1 WARNING when it
+	// appears on a reviewer-class, non-agentic, or gate node (WG-041 §I.4,
+	// WG-031 permissive-retain). Only warn when node.Type is resolved and is
+	// not agentic. The value is retained in the AST and ignored at dispatch.
+	if node.AutoStatus && node.Type != "" && node.Type != core.NodeTypeAgentic {
+		warns = append(warns, ParseWarning{
+			Line: node.Line,
+			Message: fmt.Sprintf(
+				"node %q: attribute \"auto_status\" is agentic-only; on type %q it is retained but ignored at v1 (WG-041 §I.4)",
 				rn.id, node.RawType),
 		})
 	}

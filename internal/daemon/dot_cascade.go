@@ -1108,7 +1108,54 @@ func dispatchDotAgenticNode(
 		// the next reviewer dispatch will detect no-progress and terminate.
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
 	}
+	// auto_status: when auto_status="true" on the implementer node, run a
+	// deterministic work-product inspection before finalizing SUCCESS.
+	// On pass: unchanged SUCCESS path. On fail: FAIL+deterministic.
+	// AR-006-clean — see runAutoStatusInspection for the mechanism-tag guarantee.
+	if node.AutoStatus {
+		if outcome, pass := runAutoStatusInspection(ctx, wtPath); !pass {
+			return outcome, nil
+		}
+	}
 	return core.Outcome{Status: core.OutcomeStatusSuccess}, nil
+}
+
+// runAutoStatusInspection runs the deterministic work-product inspection for
+// auto_status="true" implementer nodes. It mirrors the merge-build-gate
+// (workloop.go:4127) against the implementer's worktree (wtPath) immediately
+// after the implementer exits, before the SUCCESS outcome is finalized.
+//
+// AR-006 mechanism-tag: this function is wholly deterministic — it executes
+// go build ./... and go vet ./... (exit-code evaluation only) with ZERO LLM
+// calls. Any new signal added here MUST remain deterministic and LLM-free.
+// This is a mechanism-tagged evaluation point per execution-model.md §4.2.
+//
+// Only active when a go.mod is present in wtPath (mirrors merge-build-gate;
+// non-Go projects and bare-repo fixtures are unaffected).
+//
+// Returns (outcome, false) on inspection failure — caller should return the
+// outcome. Returns (zero, true) on pass — caller continues to SUCCESS.
+func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, bool) {
+	if _, err := os.Stat(filepath.Join(wtPath, "go.mod")); err != nil {
+		return core.Outcome{}, true // no go.mod: pass through
+	}
+	fc := core.FailureClassDeterministic
+	for _, buildArgs := range [][]string{
+		{"build", "./..."},
+		{"vet", "./..."},
+	} {
+		cmd := exec.CommandContext(ctx, "go", buildArgs...)
+		cmd.Dir = wtPath
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return core.Outcome{
+				Status:       core.OutcomeStatusFail,
+				Kind:         core.OutcomeKindDefault,
+				FailureClass: &fc,
+				Notes:        fmt.Sprintf("auto_status inspection failed (go %s): %v\n%s", buildArgs[0], err, string(out)),
+			}, false
+		}
+	}
+	return core.Outcome{}, true
 }
 
 // dispatchDotToolNode executes a non-agentic shell node's tool_command in-process

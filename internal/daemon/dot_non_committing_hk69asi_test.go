@@ -255,29 +255,27 @@ func TestDotParser_NonCommittingAbsent_DefaultFalse(t *testing.T) {
 	}
 }
 
-// TestDotParser_AutoStatus_Rejected verifies that auto_status as a node
-// attribute produces a strict ParseError directing the author to
-// non_committing (hk-69asi WG-041 §I.4).
-func TestDotParser_AutoStatus_Rejected(t *testing.T) {
+// TestDotParser_AutoStatus_NonBooleanRejected verifies that a non-boolean
+// auto_status value (e.g. a policy name) produces a strict ParseError.
+// Boolean values ("true"/"false") are accepted per WG-041 §I.4; non-boolean
+// policy values are reserved for a future step (hk-oo4).
+func TestDotParser_AutoStatus_NonBooleanRejected(t *testing.T) {
 	t.Parallel()
 
 	src := `digraph {
   start_node = "n"
   terminal_node_ids = "n"
   n [type="agentic", agent_type="implementer", handler_ref="h",
-     idempotency_class="non-idempotent", auto_status="true"]
+     idempotency_class="non-idempotent", auto_status="some-policy"]
 }`
 
 	_, err := dot.Parse(src, "")
 	if err == nil {
-		t.Fatal("Parse: want error for auto_status attribute, got nil")
+		t.Fatal("Parse: want error for non-boolean auto_status value, got nil")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "auto_status") {
 		t.Errorf("error %q does not mention \"auto_status\"", msg)
-	}
-	if !strings.Contains(msg, "non_committing") {
-		t.Errorf("error %q does not mention \"non_committing\" (migration guidance)", msg)
 	}
 }
 

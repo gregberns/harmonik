@@ -11,9 +11,16 @@ import (
 // wrapUpWarningText is the prompt injected into the managed pane when the
 // context-window percentage crosses the warn threshold. It is NON-DESTRUCTIVE:
 // it asks the agent to wrap up without forcing a /clear or handoff.
+//
+// NOTE: deliberately does NOT include a /quit instruction. Agents without a
+// supervised respawn path (e.g. a bare captain with no --session-id / keeper
+// clear→resume rebind) would exit permanently if instructed to /quit here.
+// The keeper's own act-threshold cycle (Cycler.MaybeRun / RunForPrecompact)
+// drives the actual handoff+clear+resume sequence for agents that have one;
+// for agents without one, the warn injection should be advisory only.
 const wrapUpWarningText = "Context window is approaching its limit. " +
-	"Please wrap up your current work: commit any in-progress changes, " +
-	"write a brief handoff note if needed, then run /quit."
+	"Please wrap up your current work: commit any in-progress changes " +
+	"and write a brief handoff note if needed."
 
 // bufferName is the tmux buffer name used for keeper injections. Using a
 // keeper-specific name avoids clobbering buffers owned by the daemon's own

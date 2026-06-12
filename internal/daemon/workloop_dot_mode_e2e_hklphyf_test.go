@@ -305,7 +305,11 @@ func TestDotMode_E2E_InvalidWorkflowRefReopens(t *testing.T) {
 	}()
 
 	// Poll for the reopen rather than relying solely on loop exit: a workflow_load
-	// reopen keeps the bead pending in some queue configurations.
+	// reopen keeps the bead pending in some queue configurations. loopExited tracks
+	// whether the poll already drained loopDone so we don't block on it twice below
+	// (the loop can return on its own — via CancelOnQueueExit — before or after the
+	// reopen is observed; see TestDotMode_E2E_CapHit for the full hk-dju analysis).
+	loopExited := false
 	deadline := time.After(20 * time.Second)
 	for {
 		if len(ledger.reopenedIDs()) > 0 {
@@ -313,6 +317,7 @@ func TestDotMode_E2E_InvalidWorkflowRefReopens(t *testing.T) {
 		}
 		select {
 		case <-loopDone:
+			loopExited = true
 			goto assert
 		case <-deadline:
 			t.Fatalf("DOT-mode badref: timed out waiting for reopen; events=%v closed=%v reopened=%v",
@@ -323,6 +328,24 @@ func TestDotMode_E2E_InvalidWorkflowRefReopens(t *testing.T) {
 
 assert:
 	testCancel()
+
+	// Wait for the work-loop goroutine to fully exit before returning (unless the
+	// poll already drained loopDone), so no in-flight teardown writes race
+	// t.TempDir cleanup (hk-dju). The poll above can break on reopenedIDs() while
+	// runWorkLoop is still mid-teardown. testCancel() makes exitClean() drain via
+	// wg.Wait() (bounded by shutdownDrainTimeout=10s) and only then return down
+	// loopDone. This handler is a trivial `exit 0` (no worktree commits), so it
+	// rarely flakes, but the teardown-ordering defect is identical to
+	// TestDotMode_E2E_CapHit, so it gets the same barrier.
+	if !loopExited {
+		select {
+		case <-loopDone:
+		case <-time.After(30 * time.Second):
+			t.Fatalf("DOT-mode badref: runWorkLoop did not exit after testCancel(); "+
+				"events=%v closed=%v reopened=%v",
+				bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+		}
+	}
 
 	closed := ledger.closedIDs()
 	reopened := ledger.reopenedIDs()
@@ -979,6 +1002,17 @@ func TestDotMode_E2E_CapHit(t *testing.T) {
 
 	// Poll for the reopen (cap-hit terminates the run with a reopen, which may
 	// fire before the loop fully exits if the queue pauses on failure).
+	//
+	// loopExited tracks whether the poll already drained loopDone. The cap-hit
+	// terminal pauses the queue, which fires CancelOnQueueExit and makes
+	// runWorkLoop return ON ITS OWN — often microseconds before the poll observes
+	// the reopen (the reopen and the loop's return are emitted by the same
+	// goroutine in quick succession). The poll therefore frequently reaches the
+	// assert block via `case <-loopDone` (which consumes the buffered value)
+	// rather than via the reopen `break`. We must NOT then block on loopDone a
+	// second time below or the test deadlocks for the full safety timeout (hk-dju
+	// first-attempt regression). loopExited records which path we took.
+	loopExited := false
 	deadline := time.After(118 * time.Second)
 	for {
 		if len(ledger.reopenedIDs()) > 0 {
@@ -986,6 +1020,7 @@ func TestDotMode_E2E_CapHit(t *testing.T) {
 		}
 		select {
 		case <-loopDone:
+			loopExited = true
 			goto assertCapHit
 		case <-deadline:
 			t.Fatalf("DOT cap-hit E2E: timed out waiting for reopen; events=%v closed=%v reopened=%v",
@@ -996,6 +1031,32 @@ func TestDotMode_E2E_CapHit(t *testing.T) {
 
 assertCapHit:
 	testCancel()
+
+	// Wait for the work-loop goroutine to FULLY exit before returning, unless the
+	// poll above already drained loopDone (loopExited). When the poll breaks on
+	// the reopen BEFORE the loop returns, runWorkLoop is still mid-teardown: the
+	// in-flight beadRunOne goroutine keeps emitting events and tearing down its
+	// worktree, both of which write UNDER projectDir (== t.TempDir). If the test
+	// body returns now, t.TempDir's registered cleanup races those writes and
+	// os.RemoveAll fails with "directory not empty", marking the test FAIL even
+	// though every real assertion passed (hk-dju).
+	//
+	// testCancel() cancels the dispatch context, so runWorkLoop's exitClean()
+	// runs wg.Wait() (bounded by shutdownDrainTimeout=10s) and only then returns
+	// down loopDone. Blocking on loopDone here is the same deterministic-teardown
+	// barrier the non-polling sibling E2E tests get for free from their
+	// `select { case <-loopDone: }`. It resolves near-instantly because the
+	// reopen is one of the goroutine's last steps; the timeout is only a safety
+	// net so a genuinely-wedged loop fails loudly instead of hanging.
+	if !loopExited {
+		select {
+		case <-loopDone:
+		case <-time.After(30 * time.Second):
+			t.Fatalf("DOT cap-hit E2E: runWorkLoop did not exit after testCancel(); "+
+				"in-flight writes may still race t.TempDir cleanup; events=%v closed=%v reopened=%v",
+				bus.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
+		}
+	}
 
 	events := bus.eventTypes()
 	closed := ledger.closedIDs()

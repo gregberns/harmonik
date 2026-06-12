@@ -22,7 +22,7 @@ Choose one of three postures **before executing any step below**:
 |---|---|
 | Operator ending the session; all lanes drained or cleanly blocked | **Full shutdown**: stand down complete-lane crews, deploy banked commits, write HANDOFF.md, `comms leave`. |
 | Operator leaving for a break; active lanes still in flight | **Hand off**: record state in HANDOFF.md + crew missions, do NOT stop healthy crews; daemon keeps draining. The next captain runs STARTUP.md. |
-| Context approaching limit (~80–90%); fleet still healthy | **Keeper-driven restart**: do NOT stop crews manually — the keeper handles the cycle. Skip to Step 5 (state capture). |
+| Context approaching limit (~80–90%); fleet still healthy | **Keeper-driven restart**: do NOT stop crews manually AND do NOT self-`/quit` the captain — the keeper handles the cycle (in-process handoff → `/clear` → `/session-resume`). Refresh HANDOFF.md (Step 5/6) and let the keeper cycle you. Skip to Step 5 (state capture). |
 
 > **The daemon almost always keeps running.** The daemon process is supervisor-managed
 > and independent of your session. Only crews need explicit stand-down for complete
@@ -372,6 +372,17 @@ comm -23 \
 - **Don't arm session-keeper full-cycle unsupervised.** `.managed` markers make
   the watcher immediately Phase-2-live. The operator must confirm full-cycle vs.
   warn-only before hooks are wired (see Step 4, PIN example).
+
+- **The captain MUST NOT self-`/quit` on a keeper context-warning.** Wind-down is
+  the keeper's job (in-process handoff → `/clear` → `/session-resume`, rebinding to
+  the captain's minted `--session-id`). The keeper's warn injection text ends in
+  `/quit`, but the captain has **no supervised respawn wrapper today** — so a
+  captain that obeys `/quit` exits and stays dead, defeating the cycle. On a
+  context-warning, refresh HANDOFF.md and let the keeper cycle you; do NOT run
+  `/quit`. Launch the captain via `~/.claude/captain-tools/captain-launch.sh` so it
+  gets a stable `--session-id` (the thing the keeper rebinds to — STARTUP.md Step 6
+  "Keeper arming"). A bare `claude --remote-control captain` with no `--session-id`
+  cannot be cycled and is the historical dead-captain bug.
 
 - **`gh auth` workflow scope requires the `workflow` scope specifically** — it is NOT
   included in the default `repo` scope. Beads touching `.github/workflows/` will

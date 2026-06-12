@@ -153,21 +153,16 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > lane map to verify against live state in the boot sequence (§0.5 Step 1–3) — NOT
 > as gospel. Re-derive the live lanes from `crew list` + `kerf next` every boot.
 
-### Current lanes (status snapshot: 2026-06-11 ~10:25 PDT — fleet FULLY PARKED)
+### Lane snapshot (POINT-IN-TIME ONLY — re-derive live every boot)
 
-> **No live crews.** The 2-crew (chani/liet) state below was 2026-06-10; the fleet
-> was further consolidated to a single **gurney** churn crew, which was STOOD DOWN
-> overnight (2026-06-11 ~02:18 PDT) once its lane completed — clean `crew stop`,
-> mission files persist for respawn. Daemon is UP + idle (-c4, supervisor running);
-> the operator is AWAKE and deliberately running the fleet PARKED ("run fewer").
-> **Do NOT auto-re-establish the fleet** — re-spawning from zero against the standing
-> wind-down is the operator's call; re-derive live lanes from `crew list` +
-> `kerf next` every boot. **Captain session-keeper is ARMED** (operator-approved
-> 2026-06-11 ~12:29 PDT): full auto-cycle at **warn 25% / act 30%** on the fresh
-> `captain` session (watcher in detached tmux `hk-keeper-captain`; THIS session may be
-> `captain-old`). First handoff→/clear→resume at 30% (~296k tokens) is the validation
-> event. Always relaunch the watcher with `--warn-pct 25 --act-pct 30` (bare defaults
-> 80/90 defeat the intent on a 1M window).
+> The lane rows below are a **historical snapshot**, NOT current state and NOT a
+> standing order. **Per the operator's keep-the-fleet-moving directive, you
+> re-derive live lanes from `crew list` + `kerf next` every boot and AUTONOMOUSLY
+> staff a crew per KNOWN ready lane (§0).** A prior "run fewer / fleet parked"
+> wind-down has been LIFTED — do NOT carry it forward. Crews that were stood down
+> have persisted mission files; re-establish their lanes if `kerf next` still ranks
+> the work. **Session-keeper arming:** relaunch the watcher with
+> `--warn-pct 25 --act-pct 30` (bare 80/90 defaults defeat the intent on a 1M window).
 
 | crew | lane (initiative) | epic | live state (2026-06-11) |
 |---|---|---|---|
@@ -178,17 +173,21 @@ on its own named queue. Two crews never share an epic or touch the same files.
 | ~~duncan~~ | ~~codex-harness `hk-w4tmz`~~ | — | STOOD DOWN — codex 8/8 + queue-bug 3/3 complete |
 | ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra + session-keeper + logmine complete |
 
-**Pending operator (do NOT auto-resolve):** (1) re-spawn the fleet? on which lane(s)?;
-(2) next-initiative ranking — `standard-bead-dot` is the top KNOWN candidate. (Keeper
-arming — formerly item 3 — DONE 2026-06-11.) The gh
-`workflow`-scope beads remain externally-gated (operator is remote-only — do NOT
-recommend `gh auth refresh`).
+**Genuinely-new judgment still pending operator (the §0 surface-and-await set only):**
+ranking `standard-bead-dot` as a brand-NEW Phase-3 initiative — it has no existing
+`kerf next` priority, so surface-and-await before staffing it (a NEW-initiative
+ranking, §8). Everything already in `kerf next` / `br ready` you staff autonomously.
+The gh `workflow`-scope beads remain externally-gated (operator is remote-only — do
+NOT recommend `gh auth refresh`).
 
 ### Prioritized NEXT work (what to feed the fleet next)
 
-- **Next phase (pending operator ranking):** **standard-bead-dot** (per-bead DOT
-  workflow, the Phase-3 north-star keystone) is the top KNOWN candidate. Full
-  analysis + ~25 harmonik-embed proposals: `docs/retro/2026-06-10/SYNTHESIS.md`.
+- **Next phase (brand-NEW initiative — surface-and-await per §8):**
+  **standard-bead-dot** (per-bead DOT workflow, the Phase-3 north-star keystone) is
+  the top candidate but is NOT yet in `kerf next`, so ranking-it-in is the operator's
+  call (a NEW-initiative ranking, §8). Every OTHER item in this list is already
+  ranked and you staff it autonomously. Full analysis + ~25 harmonik-embed proposals:
+  `docs/retro/2026-06-10/SYNTHESIS.md`.
 - **Open product bug:** `hk-h8u7p` (P1) — daemon's concurrent `git worktree add`
   races `.git/index.lock` at MaxConcurrent>1 (the `--max-concurrent 4` workaround's
   root). Needs a product fix (serialize prod `CreateWorktree` / bounded retry).
@@ -564,6 +563,18 @@ across the restart, so no in-flight work is lost.
 emit a failure-surface, and do NOT re-`crew start` the crew — it returns under the
 same name and re-appears in `comms who` on its own. (A transient presence drop during
 the cycle is the "crew offline" edge above — a returning crew needs no action.)
+
+**The captain MUST NOT self-`/quit` on a keeper context-warning.** Your OWN session
+is keeper-managed too (`harmonik keeper --agent captain`), and wind-down is the
+KEEPER's job, not yours: it drives the in-process handoff → `/clear` →
+`/session-resume` cycle and rebinds to your minted `--session-id` (you MUST be
+launched via `~/.claude/captain-tools/captain-launch.sh`, which mints that id —
+STARTUP.md Step 6 "Keeper arming"). A captain that obeys the warn injection's
+`/quit` exits and, **lacking a supervised respawn wrapper** (until the durable
+respawn bead lands — Gap below), **stays dead**, defeating the whole cycle. So on a
+keeper context-warning, do NOT run `/quit`: refresh `HANDOFF.md` and let the keeper
+cycle you. (Gap: the keeper today only INJECTS in-process and has no respawn path
+for the captain — filed as the captain-restart-continuity follow-up bead.)
 
 ---
 

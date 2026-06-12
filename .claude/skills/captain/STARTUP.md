@@ -147,11 +147,10 @@ kerf next --format=json                                     # ranked feed (prior
 kerf map                                                     # works grouped by area
 ```
 
-> kerf is the priority source of truth — but **ranking which initiative a crew
-> works is the operator's call**, not yours (captain skill §8 / R-C4.6). You
-> ORGANIZE and SURFACE the plan; the operator assigns. If lanes are already
-> assigned in the handoff and verified live, you may proceed to re-establish them
-> without re-asking.
+> kerf is the priority source of truth — and **executing that existing ranking is
+> AUTONOMOUS** (captain skill §0 / R-C4.6). Organize the KNOWN `kerf next` / `br
+> ready` feed into lanes and STAFF them without asking. You surface-and-await ONLY
+> to rank a brand-NEW initiative that has no existing `kerf next` priority (§8).
 
 Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 
@@ -167,8 +166,9 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 - Aim to fill **every** non-conflicting lane — idle lanes are wasted throughput.
 
 SURFACE the plan to the operator (dual-channel — status line AND `comms send --to
-operator --topic status`). If the operator pre-assigned lanes in the handoff and
-they verified live, proceed; otherwise AWAIT lane assignments before Step 5.
+operator --topic status`) for VISIBILITY, then proceed to Step 5 to staff every
+KNOWN ready lane. Do NOT block on a lane-assignment reply for work already ranked in
+`kerf next` — surface-and-await only for a brand-NEW initiative (§8).
 
 ---
 
@@ -236,6 +236,36 @@ the operator).
 ---
 
 ## Step 6 — Arm the HEALTH watchers, THEN enter the SPARSE monitor loop
+
+### Keeper arming — the captain MUST be launched with a stable `--session-id`
+
+> **LOAD-BEARING — restart continuity.** The captain is a `claude --remote-control`
+> session, exactly like a crew. The session-keeper's in-process wind-down cycle
+> (handoff → `/clear` → `/session-resume`) can only rebind to the SAME conversation
+> if the session was launched with a STABLE, caller-minted `--session-id` to
+> `--resume`. A captain launched as a bare `claude --remote-control captain` (NO
+> `--session-id`, the historical mistake) has no id for the keeper to rebind — so
+> the keeper can only ever WARN it, and the warn injection's text ends in `/quit`;
+> when the captain obeys `/quit` it exits and, lacking a respawn wrapper, **stays
+> dead.** The minted `--session-id` is precisely what mirrors the crew model and
+> lets the clear→resume cycle survive. So launch the captain via the script below,
+> NEVER as a bare `claude --remote-control captain`:
+>
+> ```bash
+> # Launches the captain with a minted --session-id AND arms the keeper at 25/30:
+> ~/.claude/captain-tools/captain-launch.sh captain
+> #   ⇒ tmux session `captain` runs:
+> #      claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
+> #   ⇒ tmux session `hk-keeper-captain` runs:
+> #      harmonik keeper --agent captain --tmux captain --warn-pct 25 --act-pct 30
+> ```
+>
+> If you ever relaunch the keeper by hand, ALWAYS pass `--warn-pct 25 --act-pct 30`
+> (bare defaults are 80/90 ≈ 800k/900k tokens on a 1M window — that defeats the
+> intent). Until the durable supervised-respawn bead lands (see captain SKILL.md
+> §10 restart continuity), a captain that `/quit`s has no respawn path — so the
+> captain MUST NOT self-`/quit` on a keeper context-warning (wind-down is the
+> keeper's job; refresh HANDOFF.md and let the keeper cycle you).
 
 > **The captain watches HEALTH + LANES + DECISIONS — never RUNS.** Run-level
 > telemetry (per-bead `run_stale`, `heartbeat` with `active_runs`, every

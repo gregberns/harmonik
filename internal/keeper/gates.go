@@ -50,13 +50,20 @@ func ClearPrecompactTrigger(projectDir, agent string) error {
 	return nil
 }
 
+// crispIdleTolerance is the maximum age by which .ctx may postdate .idle and
+// still be considered a statusLine poll rather than real tool activity. The
+// statusLine hook rewrites .ctx every ~2s, so any .ctx refresh within this
+// window is a passive gauge update, not an agent action.
+const crispIdleTolerance = 10 * time.Second
+
 // CrispIdle reports whether the agent is at a crisp await-input boundary: the
-// .idle marker exists AND its mtime is strictly newer than the .ctx gauge file's
-// mtime. The Stop hook writes .idle only at await-input boundaries, so .idle
-// newer than .ctx means the agent stopped AFTER its last context activity.
+// .idle marker exists AND either (a) its mtime is newer than .ctx, or (b) .ctx
+// is only marginally newer (within crispIdleTolerance). The tolerance covers
+// the statusLine hook's ~2s .ctx refresh cadence: a .ctx update within 10s of
+// .idle is a passive poll, not agent tool activity.
 //
 // Returns false when the .idle marker is absent, when the .ctx gauge file
-// cannot be stat'd, or when .idle does not postdate .ctx.
+// cannot be stat'd, or when .ctx postdates .idle by more than the tolerance.
 func CrispIdle(projectDir, agent string) bool {
 	idleStat, err := os.Stat(idleMarkerPath(projectDir, agent))
 	if err != nil {
@@ -66,7 +73,13 @@ func CrispIdle(projectDir, agent string) bool {
 	if err != nil {
 		return false // no ctx yet — can't confirm ordering
 	}
-	return idleStat.ModTime().After(ctxStat.ModTime())
+	idleMtime := idleStat.ModTime()
+	ctxMtime := ctxStat.ModTime()
+	if idleMtime.After(ctxMtime) {
+		return true // .idle strictly newer — clean boundary
+	}
+	// .ctx is marginally newer: treat as a statusLine poll if within tolerance.
+	return ctxMtime.Sub(idleMtime) <= crispIdleTolerance
 }
 
 // HoldingDispatch reports whether the agent has in-flight queue work that the

@@ -60,23 +60,47 @@ func TestCrispIdle_TrueWhenIdleNewerThanCtx(t *testing.T) {
 	}
 }
 
-// TestCrispIdle_FalseWhenCtxNewerThanIdle verifies that when .ctx was updated
-// after .idle, the agent is NOT at an idle boundary.
-func TestCrispIdle_FalseWhenCtxNewerThanIdle(t *testing.T) {
+// TestCrispIdle_FalseWhenCtxMuchNewerThanIdle verifies that when .ctx was
+// updated well after .idle (beyond the tolerance window), the agent is NOT at
+// an idle boundary.
+func TestCrispIdle_FalseWhenCtxMuchNewerThanIdle(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
 	dir := keeperDir(t, projectDir)
-	agent := "ctx-newer-agent"
+	agent := "ctx-much-newer-agent"
 
-	past := time.Now().Add(-2 * time.Second)
+	// .idle is 30s in the past — well outside the 10s tolerance.
+	past := time.Now().Add(-30 * time.Second)
 	writeFileWithMtime(t, filepath.Join(dir, agent+".idle"), past)
 
-	// Touch .ctx now (after .idle).
+	// Touch .ctx now (30s newer than .idle).
 	touchFile(t, filepath.Join(dir, agent+".ctx"))
 
 	if keeper.CrispIdle(projectDir, agent) {
-		t.Error("CrispIdle: want false when .ctx is newer than .idle")
+		t.Error("CrispIdle: want false when .ctx is 30s newer than .idle")
+	}
+}
+
+// TestCrispIdle_TrueWhenCtxWithinTolerance verifies that a .ctx refresh within
+// the statusLine cadence tolerance (5s < 10s) is treated as a passive poll and
+// CrispIdle still returns true.
+func TestCrispIdle_TrueWhenCtxWithinTolerance(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	dir := keeperDir(t, projectDir)
+	agent := "ctx-within-tolerance-agent"
+
+	// .idle is 5s in the past — within the 10s tolerance.
+	past := time.Now().Add(-5 * time.Second)
+	writeFileWithMtime(t, filepath.Join(dir, agent+".idle"), past)
+
+	// Touch .ctx now (5s newer than .idle — a statusLine poll, not tool activity).
+	touchFile(t, filepath.Join(dir, agent+".ctx"))
+
+	if !keeper.CrispIdle(projectDir, agent) {
+		t.Error("CrispIdle: want true when .ctx is only 5s newer than .idle (within tolerance)")
 	}
 }
 

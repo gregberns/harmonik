@@ -46,7 +46,7 @@
 | Bead | Req | Title |
 |------|-----|-------|
 | hk-31q | AR-006 | AR-006: mechanism-tagged evaluation points MUST NOT invoke an LLM (ZFC violation sensor) |
-| hk-pca | AR-035 | AR-035: cross-reference stub for role-orthogonality (§4.7.AR-026) — verify traceability |
+| hk-pca | AR-035 | AR-035: cross-reference stub for role-orthogonality (§4.7.AR-026) — verify traceability | **RESOLVED** (2026-06-12): AR-026 is fully covered — reviewer-enforced by the scope-steward persona (architecture.md §10.2). AR-035 is a pure cross-reference stub, intentionally collapsed into AR-026 coverage per discipline §2.1a (ar-pilot.md line 69, discipline.md §2.1a worked example). conformance-auditor.md review confirms AR-035 "inherits AR-026's verification path." Subsumed by AR-026 coverage. |
 
 ---
 

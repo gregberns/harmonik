@@ -1,0 +1,158 @@
+// sub-workflow-example.dot — sub-workflow composition example.
+//
+// Demonstrates the sub-workflow node type: the commit gate phase is extracted
+// into a reusable child workflow (sub-workflow-commit-gate.dot) and composed
+// via a type="sub-workflow" node. The child's terminal Outcome escapes verbatim
+// to route the parent cascade (SW-006 / EM-036a):
+//
+//   child gate_ok exits 0   → SUCCESS → parent advances to review
+//   child gate_fail exits 1 → FAIL    → parent routes to close-needs-attention
+//
+// The expanded child nodes execute WITHIN the parent run — no new RunID is
+// allocated (SW-001 / SW-INV-001). Both sub_workflow_entered and
+// sub_workflow_exited events carry the parent run_id (SW-005).
+//
+// Topology:
+//   start
+//   → implement (agent: implementer; commit required)
+//   → commit_gate (sub-workflow: sub-workflow-commit-gate.dot)
+//     SUCCESS                   → review
+//     fallback (FAIL, RETRY...) → close-needs-attention
+//   → review (agent: reviewer)
+//     APPROVE                   → close
+//     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
+//     BLOCK                     → close-needs-attention
+//     fallback                  → close-needs-attention
+//
+// Key design decisions:
+//   D1: commit_gate is a sub-workflow node, NOT a shell tool node. The gate
+//       logic lives once in sub-workflow-commit-gate.dot and can be reused
+//       by multiple parent workflows without duplication.
+//   D2: The sub_workflow_ref uses the project-relative path form (SW-004
+//       tier-1 explicit ref). In production deployments the child graph
+//       would typically live at the project root (e.g. "commit-gate.dot").
+//   D3: sub-workflow nodes carry no idempotency_class (forbidden per WG-008).
+//       Idempotency of the expanded nodes is declared in the child graph.
+//   D4: The commit_gate unconditional fallback satisfies WG-011 and routes
+//       any non-SUCCESS child Outcome (FAIL, RETRY, structural) to
+//       close-needs-attention, ensuring the parent never silently advances
+//       on a broken gate.
+//
+// Spec refs:
+//   - specs/sub-workflow-dispatch.md SW-001..SW-010 (sub-workflow dispatch)
+//   - specs/workflow-graph.md §4 WG-006 (sub-workflow node attributes)
+//   - specs/workflow-graph.md §5 WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/workflow-graph.md §9 WG-027 (start_node attribute)
+//   - specs/execution-model.md §4.8 EM-034..EM-036a (expansion, events, outcome)
+//   - specs/execution-model.md §EM-043 (traversal cap)
+//
+// Source: hk-jlp (sub-workflow-dispatch exploration bead).
+// Pinned by: specs/sub-workflow-dispatch.md §5 SW-EX-001.
+
+digraph "sub-workflow-example" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="sub-workflow-example";
+    start_node="start";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: agentic implementer. Produces the change on first visit;
+    // addresses review feedback or gate failures on re-entry.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the bead change; commit required. On re-entry: address reviewer feedback or fix the gate failure."
+    ];
+
+    // commit_gate: sub-workflow node — expands sub-workflow-commit-gate.dot
+    // in place within the parent run. No new RunID is allocated (SW-001).
+    // Expanded child nodes run as if they were declared directly in this graph.
+    // The child's terminal Outcome (SUCCESS from tests, FAIL from gate_fail)
+    // escapes verbatim and drives the edges below (SW-006 / EM-036a).
+    // No idempotency_class — forbidden on sub-workflow nodes (WG-008).
+    commit_gate [
+        type="sub-workflow",
+        sub_workflow_ref="specs/examples/sub-workflow-commit-gate.dot",
+        workflow_version="1.0",
+        role="commit gate: build + vet + scenario tests via sub-workflow-commit-gate.dot"
+    ];
+
+    // review: agentic reviewer. Emits preferred_label (APPROVE / REQUEST_CHANGES
+    // / BLOCK) to drive the cascade.
+    review [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
+    ];
+
+    // close: terminal node — APPROVE path only.
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="APPROVE — change accepted and ready to merge"
+    ];
+
+    // close-needs-attention: terminal node for gate failures, BLOCK, cap-hit,
+    // and any unrecognized outcome.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="gate failure / BLOCK / cap-hit / structural — operator attention required"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+
+    // (1) Entry — unconditional.
+    start -> implement;
+
+    // (2) Implementer commits → commit_gate sub-workflow.
+    implement -> commit_gate;
+
+    // (3) Gate SUCCESS (child tests exits 0 → SUCCESS Outcome escapes) → review.
+    commit_gate -> review [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (4) Unconditional fallback — REQUIRED (WG-011). Catches gate FAIL (child
+    // gate_fail exits 1), RETRY, or any non-SUCCESS child Outcome.
+    commit_gate -> "close-needs-attention";
+
+    // (5) APPROVE → close.
+    review -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (6) REQUEST_CHANGES → loop back to implement (capped at 3 per EM-043).
+    review -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (7) BLOCK → close-needs-attention.
+    review -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (8) Unconditional fallback — REQUIRED (WG-011). Catches unrecognized
+    // preferred_label.
+    review -> "close-needs-attention";
+}

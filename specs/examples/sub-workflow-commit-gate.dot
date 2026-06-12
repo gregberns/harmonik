@@ -1,0 +1,95 @@
+// sub-workflow-commit-gate.dot — reusable commit gate as a sub-workflow.
+//
+// A two-step gate designed to be composed via a sub-workflow node in a parent
+// DOT workflow (see sub-workflow-example.dot). The child's terminal Outcome
+// escapes verbatim to the parent cascade per SW-006 / EM-036a:
+//
+//   gate_ok exits 0   → SUCCESS Outcome → parent advances to review
+//   gate_fail exits 1 → FAIL Outcome    → parent routes to close-needs-attention
+//
+// Topology:
+//   build_check (shell: go build + go vet)
+//     SUCCESS                   → tests (shell: scenario gate — terminal)
+//     fallback (FAIL, RETRY...) → gate_fail (shell: exit 1 — terminal)
+//
+// Key design decisions:
+//   D1: Two distinct terminal nodes so that build failures and test failures
+//       can be treated identically by the parent (both escape FAIL) while
+//       keeping the internal routing explicit and auditable.
+//   D2: gate_fail exits 1 explicitly, making the FAIL outcome deterministic
+//       and unambiguous to the parent cascade. A noop terminal would silently
+//       return SUCCESS even on the failure path.
+//   D3: The build_check unconditional fallback satisfies WG-011 and routes
+//       any non-SUCCESS (FAIL, RETRY, structural) to gate_fail, ensuring the
+//       parent never silently advances on a broken build.
+//
+// Spec refs:
+//   - specs/sub-workflow-dispatch.md SW-001..SW-006 (sub-workflow dispatch contract)
+//   - specs/workflow-graph.md §4 WG-006 (sub-workflow node attributes)
+//   - specs/workflow-graph.md §5 WG-011 (unconditional-edge fallback invariant)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//   - specs/execution-model.md §4.8 EM-036a (terminal outcome escape to parent)
+//   - specs/handler-contract.md §III.1 HC-063 (in-process shell handler)
+//
+// Source: hk-jlp (sub-workflow-dispatch exploration bead).
+// Pinned by: specs/sub-workflow-dispatch.md §5 SW-EX-001.
+
+digraph "sub-workflow-commit-gate" {
+    // ─── Graph-level attributes ───────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="sub-workflow-commit-gate";
+    start_node="build_check";
+    terminal_node_ids="tests,gate_fail";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // build_check: build + static-analysis gate. Non-terminal. Routes to tests
+    // on SUCCESS; falls through to gate_fail on any failure (build error, vet
+    // warning promoted to error, or infrastructure failure).
+    build_check [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="go build ./... && go vet ./...",
+        timeout="300",
+        role="build + vet gate; exit 0 = clean build, non-zero = build or vet failure"
+    ];
+
+    // tests: affected-package-scoped scenario gate (fail-open on infra errors).
+    // TERMINAL — its exit code is the Outcome that escapes to the parent
+    // cascade per SW-006 / EM-036a. Exit 0 = SUCCESS; non-zero = FAIL.
+    tests [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="bash scripts/scenario-gate.sh",
+        timeout="600",
+        role="scenario gate (affected-package-scoped, fail-open); exit 0 = tests pass"
+    ];
+
+    // gate_fail: TERMINAL for the build-failure path. Exits 1 so the escaped
+    // Outcome carries status=FAIL to the parent cascade, preventing the parent
+    // from advancing to the review phase on a broken build. A noop terminal
+    // would silently return SUCCESS even on this path (D2 above).
+    gate_fail [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="exit 1",
+        timeout="5",
+        role="build or vet failed — explicit FAIL outcome for parent outcome escape (SW-006)"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+
+    // (1) Build + vet passes → run the scenario gate.
+    build_check -> tests [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+
+    // (2) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any non-SUCCESS from build_check (FAIL+deterministic, transient,
+    // structural). Routes to gate_fail whose exit 1 escapes as FAIL to parent.
+    build_check -> gate_fail;
+}

@@ -527,6 +527,40 @@ All examples under this directory pin to `schema_version=1` at v1. Mixed-version
 - Static round-trip: `internal/workflow/examples_test.go` (loads every `.dot` in this directory through the C2 validator automatically).
 - Scenario harness: `internal/workflow/scenario_quality_gate_policy_hko52fm21_test.go` (drives synthetic outcomes through the real loader → cascade pipeline against nine scenarios covering the S2 path obligations: gate-allow happy path, gate-deny loop, gate-escalate-to-human, reviewer-REQUEST_CHANGES loop → approve, reviewer-BLOCK escalation, reviewer-fallback, gate-fallback/eval-failure, reviewer-cap-hit, and gate-deny-cap-hit).
 
+### `sub-workflow-example.dot` + `sub-workflow-commit-gate.dot`
+
+**Purpose.** Canonical worked examples for sub-workflow node composition. Two files are authored as a pair:
+
+- **`sub-workflow-example.dot`** (parent) — a bead workflow whose commit-gate phase is extracted into a child sub-workflow. Topology: start → implement → commit_gate (sub-workflow) → review → close / close-needs-attention. The sub-workflow node's terminal Outcome (SUCCESS from the child's `tests` node, FAIL from `gate_fail`) escapes verbatim to route the parent's `commit_gate → review` or `commit_gate → close-needs-attention` edge per SW-006.
+
+- **`sub-workflow-commit-gate.dot`** (child) — a reusable two-step commit gate: `build_check` (build + vet) routes to `tests` (scenario gate, terminal) on SUCCESS; the unconditional fallback routes to `gate_fail` (exit 1, terminal) on any non-SUCCESS. Both terminal nodes are shell nodes whose exit code IS the escaped Outcome per EM-036a; the `gate_fail` terminal exits 1 explicitly to produce a FAIL Outcome that the parent cascade routes as a gate failure.
+
+Together the two files demonstrate: (a) how to declare a `type="sub-workflow"` node with the required `sub_workflow_ref` and `workflow_version` attributes (WG-006); (b) how three-tier resolution (SW-004) locates the child graph; (c) how the child's terminal node outcome escapes to the parent (SW-006 / SW-INV-002); and (d) the authoring rule that a child terminal node must produce a meaningful Outcome — a noop terminal always returns SUCCESS, so a FAIL path needs a shell terminal with `exit 1`.
+
+**Schema version.** `schema_version=1`.
+
+**Spec anchors.**
+
+- Pinned by `specs/sub-workflow-dispatch.md §7 SW-EX-001` (worked examples, sub-workflow dispatch contract).
+- Pinned by `specs/sub-workflow-dispatch.md SW-001` — in-place expansion, single run identity. The parent `commit_gate` node expands into the child's nodes within the parent run; no new RunID is allocated.
+- Pinned by `specs/sub-workflow-dispatch.md SW-004` — three-tier graph resolution. `sub_workflow_ref="specs/examples/sub-workflow-commit-gate.dot"` resolves via tier-1 explicit ref (project-relative path).
+- Pinned by `specs/sub-workflow-dispatch.md SW-005` — lifecycle events carry the parent `run_id`. Both `sub_workflow_entered` and `sub_workflow_exited` are emitted with the parent run_id.
+- Pinned by `specs/sub-workflow-dispatch.md SW-006` — terminal outcome escape. The parent cascade routes on the child's terminal shell node exit code (SUCCESS/FAIL), not on a synthesized value.
+- Uses `type="sub-workflow"` with required `sub_workflow_ref` and `workflow_version` on the `commit_gate` node — per `specs/workflow-graph.md §4 WG-006`.
+- `sub-workflow` node carries NO `idempotency_class` (forbidden per `specs/workflow-graph.md §4 WG-007/WG-008`).
+- Uses `type="non-agentic"` with `handler_ref="shell"` and `tool_command=` for the gate nodes — per `specs/workflow-graph.md §4 WG-039` and `specs/handler-contract.md §III.1 HC-063`.
+- Uses `start_node` graph-level attribute — per `specs/workflow-graph.md §9 WG-027`.
+- Uses `terminal_node_ids` on both graphs — per `specs/workflow-graph.md §8 WG-021..WG-023`.
+- Uses `outcome.status == 'SUCCESS'` and `outcome.preferred_label` as edge-condition LHS — per the D4 LHS whitelist and `specs/handler-contract.md §4.2a + §6.1 RECORD Outcome`.
+- Uses `traversal_cap="3"` on the `review→implement` back-edge — per `specs/workflow-graph.md §6 WG-028` and `specs/execution-model.md §EM-043`.
+- Every branching node carries a final unconditional fallback edge — per `specs/workflow-graph.md §5 WG-011`.
+- Uses the D5 v1 edge-condition dialect (equality + `&&` only) — per `specs/workflow-graph.md §6 WG-013`.
+
+**Test surface.**
+
+- Static round-trip: both files pass `harmonik graph validate` and round-trip through the C2 DOT validator. They will be picked up by `internal/workflow/examples_test.go` (the auto-discovery test, once authored per the `Future examples` note in this README).
+- Scenario harness: end-to-end sub-workflow dispatch is covered by `internal/daemon/scenario_subworkflow_dispatch_hkx9l_test.go` (bead hk-x9l, three tests — SW-001/SW-INV-001, SW-006/SW-INV-002 success path, SW-006/SW-INV-002 fail path). All three pass as of 2026-06-11.
+
 ### Future examples
 
 `bead-process.dot` is **deferred** until its prerequisites land (tool-node handler contract, merge-node primitive, sub-workflow composition for review-loop). The candidate follow-up bead is `phase3-bead-process-example`. When the prerequisites land, `bead-process.dot` will be added as a sibling to `review-loop.dot` and will receive its own subsection here.

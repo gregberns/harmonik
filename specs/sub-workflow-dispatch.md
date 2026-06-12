@@ -151,10 +151,20 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 5. **Resolution order.** With both an explicit `sub_workflow_ref` and a `<projectDir>/workflow.dot` present, the explicit reference resolves (tier 1 wins); with neither present, the dispatch fails closed with `failure_class = structural` (SW-004).
 6. **No review-loop sub-workflow.** A `dot` workflow referencing a `review-loop`-mode sub-workflow is rejected (validator) / fails closed at dispatch (SW-010).
 
-## 7. Open questions
+## 7. Worked examples
+
+Two canonical worked examples are pinned in `specs/examples/`:
+
+- **`specs/examples/sub-workflow-example.dot`** (SW-EX-001) — parent workflow. Demonstrates a `type="sub-workflow"` node (`commit_gate`) that references `sub-workflow-commit-gate.dot` via the three-tier resolution (SW-004 tier 1 explicit ref). Topology: start → implement → commit_gate (sub-workflow) → review → close / close-needs-attention. The child's terminal Outcome (SUCCESS / FAIL) routes the parent cascade per SW-006.
+
+- **`specs/examples/sub-workflow-commit-gate.dot`** (SW-EX-001) — child sub-workflow. A two-step reusable commit gate: `build_check` (shell: build + vet) routes to `tests` (shell: scenario gate, terminal) on SUCCESS; the unconditional fallback routes to `gate_fail` (shell: exit 1, terminal) on any non-SUCCESS. The terminal node's exit code is the Outcome that escapes to the parent cascade per SW-006 / EM-036a.
+
+Both examples are valid under `graph validate` and round-trip through the C2 DOT validator. The scenario test coverage for SW-001 / SW-006 is in `internal/daemon/scenario_subworkflow_dispatch_hkx9l_test.go` (bead hk-x9l).
+
+## 8. Open questions
 None at draft. The dispatch contract reuses landed types (`SubWorkflowExpansion`, `SubWorkflowRunSpec`, `SubWorkflowRunner`, the entered/exited payloads) and binds already-`reviewed` requirements in `execution-model`, `workflow-graph`, and `handler-contract`.
 
-## 8. Cross-spec coordination
+## 9. Cross-spec coordination
 This spec is the dispatch-behavior consolidation point for the requirements owned elsewhere. The owning specs carry the normative definitions; this spec restates the dispatch obligations and MUST be kept consistent with them:
 - [execution-model.md §4.8 EM-034 / EM-034a / EM-034b / EM-034c / EM-035 / EM-036 / EM-036a] — expansion, namespacing, acyclicity, pin durability, checkpoint coverage, events, terminal outcome.
 - [execution-model.md §4.2 EM-007], §4.3 EM-012a, §4.3 EM-015d, §7.5 — handler-ref discipline, mode resolution, review-loop carve-out, DOT-mode binding.
@@ -162,7 +172,8 @@ This spec is the dispatch-behavior consolidation point for the requirements owne
 - [event-model.md §8.1.9 / §8.1.10] — the two lifecycle event names and payload field lists.
 - [handler-contract.md §5 HC-058 / HC-061 / HC-062] — per-node-type Outcome obligations, sub-workflow boundary no-emit rule, registered-key discipline.
 
-## 9. Revision history
+## 10. Revision history
 | Date | Version | Author | Summary |
 |---|---|---|---|
 | 2026-06-11 | 0.1.0 | agent (kerf `standard-bead-dot` work, epic hk-o7j) | Initial draft. Consolidates the sub-workflow dispatch contract for `workflow_mode = dot` into SW-001..SW-010 plus two invariants, to replace the out-of-scope stub at the `core.NodeTypeSubWorkflow` case in `internal/daemon/dot_cascade.go`. Binds expansion/namespacing/acyclicity/events/terminal-outcome to [execution-model.md §4.8 EM-034 family / EM-036 / EM-036a], the `SubWorkflowRunner` boundary to `internal/handler/runtime.go`, resolution to [workflow-graph.md §4 WG-006], and context discipline to [handler-contract.md §5 HC-058 / HC-061 / HC-062]. |
+| 2026-06-11 | 0.2.0 | agent (hk-jlp exploration bead) | Add §7 Worked examples (SW-EX-001): pins `specs/examples/sub-workflow-example.dot` (parent workflow with sub-workflow node) and `specs/examples/sub-workflow-commit-gate.dot` (child commit-gate sub-workflow). Renumber §7 Open questions → §8, §8 Cross-spec → §9, §9 Revision history → §10. Validated: both files pass `graph validate`; scenario test coverage confirmed (hk-x9l, all three tests PASS). |

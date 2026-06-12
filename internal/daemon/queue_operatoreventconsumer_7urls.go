@@ -258,9 +258,11 @@ func (c *QueueOperatorEventConsumer) transitionToPausedByDrain(ctx context.Conte
 // No-op when no matching queue is loaded or none is paused-by-drain.
 // The spec does not define a queue-level resume event; the transition is
 // observable only through queue-status responses.
+//
+// After transitioning, Wake() is signalled so the idle workloop unblocks
+// immediately instead of waiting for the next submit/append (hk-ekj).
 func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context, queueName string) error {
 	lq := c.cfg.QueueStore.LockForMutation()
-	defer lq.Done()
 
 	var names []string
 	if queueName != "" {
@@ -269,6 +271,7 @@ func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context, que
 		names = lq.LockedAllQueueNames()
 	}
 
+	var transitioned bool
 	for _, name := range names {
 		q := lq.LockedQueueByName(name)
 		if q == nil {
@@ -280,13 +283,24 @@ func (c *QueueOperatorEventConsumer) transitionToActive(ctx context.Context, que
 
 		q.Status = queue.QueueStatusActive
 		lq.LockedSetQueueByName(name, q)
+		transitioned = true
 
 		// Persist the resumed status.
 		if c.cfg.ProjectDir != "" {
 			if err := queue.Persist(ctx, c.cfg.ProjectDir, q); err != nil {
+				lq.Done()
 				return fmt.Errorf("queue-operator-drain: resume[%s]: persist: %w", name, err)
 			}
 		}
+	}
+
+	lq.Done()
+
+	// Wake the idle workloop so it re-evaluates dispatch immediately (hk-ekj).
+	// Without this, a workloop blocked in workloopIdleWait would not see the
+	// paused-by-drain → active transition until the next submit/append signal.
+	if transitioned {
+		c.cfg.QueueStore.Wake()
 	}
 
 	return nil

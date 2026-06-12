@@ -1325,6 +1325,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			for _, lq := range loadedQueues {
 				qs.SetQueue(lq)
 			}
+			// Explicit wake after all startup queues are installed so the
+			// workloop unblocks immediately if it reaches workloopIdleWait
+			// before any submit/append signal arrives (hk-ekj wake-gap fix).
+			// SetQueue above already fires the channel for each loaded queue,
+			// but a coalesced signal may have been consumed between iterations;
+			// a defensive Wake() here ensures at least one signal is present
+			// when the workloop first runs.
+			if len(loadedQueues) > 0 {
+				qs.Wake()
+			}
 		}
 	}
 

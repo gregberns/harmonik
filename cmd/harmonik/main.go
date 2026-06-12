@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -621,6 +622,31 @@ EXAMPLES
 	flag.StringVar(&codexBinaryFlag, "codex-binary", "",
 		"path to the codex executable (default: 'codex' resolved by PATH)")
 
+	// --agent-ready-timeout: HC-056 per-dispatch timeout for the agent_ready event.
+	// The daemon kills and reopens the bead when the agent does not signal ready
+	// within this window. Zero (the default) falls back to the compiled-in default
+	// (90s as of hk-hzj). Increase for slow-disk / high-concurrency environments
+	// where claude cold-start exceeds the default; decrease for fast NVMe boxes to
+	// surface hung spawns sooner.
+	//
+	// Bead ref: hk-hzj.
+	var agentReadyTimeoutFlag time.Duration
+	flag.DurationVar(&agentReadyTimeoutFlag, "agent-ready-timeout", 0,
+		"per-dispatch timeout for agent_ready event; 0 uses the built-in default (90s) (hk-hzj)")
+
+	// --spawn-stagger: minimum interval between consecutive tmux window creations.
+	// Under a concurrent dispatch burst all claude agents cold-start simultaneously,
+	// competing for disk I/O and CPU. Spreading window creation by this interval
+	// reduces the peak cold-start contention and lowers the probability of
+	// agent_ready_timeout under disk pressure. Zero (the default) disables
+	// staggering. A value of 2–5s is a reasonable starting point for
+	// --max-concurrent ≥ 4 on a disk-heavy box.
+	//
+	// Bead ref: hk-hzj.
+	var spawnStaggerFlag time.Duration
+	flag.DurationVar(&spawnStaggerFlag, "spawn-stagger", 0,
+		"minimum interval between consecutive agent window creations; 0 disables (hk-hzj)")
+
 	flag.Usage = harmonikUsage
 	flag.Parse()
 
@@ -769,9 +795,13 @@ EXAMPLES
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrentFlag,
 		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions)),
+		Substrate: daemon.NewTmuxSubstrate(tmuxAdapter, sessionName,
+			daemon.WithSpawnCap(maxSessions),
+			daemon.WithSpawnStagger(spawnStaggerFlag), // hk-hzj: spread concurrent cold-starts; 0 = disabled
+		),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)
+		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (90s)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
 		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
 		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch

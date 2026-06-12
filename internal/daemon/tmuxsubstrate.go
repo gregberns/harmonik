@@ -164,6 +164,20 @@ type tmuxSubstrate struct {
 	// daemon wires to emit a tmux_new_window_timeout event (hk-r1rup). waited is
 	// the duration spent blocked. Nil in tests that do not need the hook.
 	newWindowTimedOut func(waited time.Duration)
+
+	// spawnStagger, when positive, enforces a minimum interval between consecutive
+	// window-creation calls (hk-hzj). Under a concurrent dispatch burst multiple
+	// agent cold-starts compete for disk I/O and CPU simultaneously; spacing window
+	// creation by spawnStagger reduces the peak contention window. Zero disables
+	// staggering (the pre-hk-hzj behaviour). Set via WithSpawnStagger.
+	//
+	// lastWindowAt records when callNewWindowBounded last created a window.
+	// Both are accessed only inside callNewWindowBounded while newWindowMu is held,
+	// so they need no additional lock. Set via WithSpawnStagger.
+	//
+	// Bead ref: hk-hzj.
+	spawnStagger  time.Duration
+	lastWindowAt  time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
 }
 
 // TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
@@ -269,6 +283,32 @@ func WithNewWindowTimeout(d time.Duration) TmuxSubstrateOption {
 func WithNewWindowTimedOutHook(fn func(waited time.Duration)) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		s.newWindowTimedOut = fn
+	}
+}
+
+// WithSpawnStagger sets the minimum interval between consecutive tmux window
+// creations (hk-hzj). Under a concurrent dispatch burst multiple claude agents
+// cold-start simultaneously and compete for disk I/O and CPU. Spreading window
+// creation by d reduces the peak contention window and prevents agent_ready
+// timeouts caused by resource starvation during cold-start.
+//
+// A value <= 0 disables staggering (the default — SpawnWindow creates windows as
+// fast as the new-window mutex and semaphore allow). Production operators should
+// tune this based on observed agent_ready_timeout events under concurrent load.
+// A value of 2–5 seconds is a reasonable starting point for --max-concurrent ≥ 4
+// on a disk-heavy box; 0 is correct for fast NVMe with low utilisation.
+//
+// The stagger is enforced inside callNewWindowBounded while newWindowMu is held,
+// so consecutive windows are always separated by at least d regardless of how many
+// goroutines are concurrently waiting to spawn. The wait uses the caller's context,
+// so an operator SIGTERM cancels a pending stagger and returns ErrStructural.
+//
+// Bead ref: hk-hzj.
+func WithSpawnStagger(d time.Duration) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		if d > 0 {
+			s.spawnStagger = d
+		}
 	}
 }
 
@@ -627,6 +667,37 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, params tmux.Ne
 	// fires, this function returns, and the unlock runs).
 	s.newWindowMu.Lock()
 	defer s.newWindowMu.Unlock()
+
+	// hk-hzj: spawn stagger — enforce a minimum interval between consecutive
+	// window creations to reduce concurrent cold-start contention. Under a burst of
+	// N dispatches all claude agents start near-simultaneously, competing for disk
+	// I/O and CPU during cold-start; with disk at ≥90% utilisation this pushed
+	// cold-start past the (then-)30s agent_ready_timeout. Spacing window creation
+	// by spawnStagger gives each agent a head start before the next competes for
+	// the same resources.
+	//
+	// The stagger runs inside newWindowMu so lastWindowAt is updated atomically
+	// with window creation — no separate mutex needed. The wait uses ctx (not
+	// callCtx) so an operator SIGTERM cancels a pending stagger immediately without
+	// being subject to the new-window timeout. The mutex is held during the sleep;
+	// this extends how long newWindowMu is held per call by at most spawnStagger,
+	// which is acceptable since the 60s bound (defaultNewWindowTimeout) already
+	// allows multi-second holds for slow tmux servers.
+	if s.spawnStagger > 0 && !s.lastWindowAt.IsZero() {
+		elapsed := time.Since(s.lastWindowAt)
+		if elapsed < s.spawnStagger {
+			waitFor := s.spawnStagger - elapsed
+			select {
+			case <-time.After(waitFor):
+			case <-ctx.Done():
+				return tmux.Outcome{}, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn stagger: context cancelled: %w: %w",
+					ctx.Err(), handler.ErrStructural)
+			}
+		}
+	}
+	if s.spawnStagger > 0 {
+		s.lastWindowAt = time.Now()
+	}
 
 	callCtx := ctx
 	var cancel context.CancelFunc

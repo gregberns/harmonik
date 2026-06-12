@@ -3,7 +3,7 @@ package daemon
 // agentready.go — waitAgentReady: observe event bus until agent_ready or timeout.
 //
 // Implements HC-056: the daemon MUST observe an agent_ready event from each
-// launched session within agent_ready_timeout of process start (default 30s).
+// launched session within agent_ready_timeout of process start (default 90s).
 //
 // # Design
 //
@@ -13,7 +13,7 @@ package daemon
 // on each event; on first true it closes the ready channel.
 //
 // The outer function resolves the effective timeout (Config.AgentReadyTimeout
-// → defaultAgentReadyTimeout = 30s) and performs the three-way select:
+// → defaultAgentReadyTimeout = 90s) and performs the three-way select:
 //   - ready: return nil
 //   - time.After(timeout): return ErrAgentReadyTimeout
 //   - ctx.Done(): return ctx.Err()
@@ -39,12 +39,21 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// defaultAgentReadyTimeout is the HC-056 default: 30 seconds.
+// defaultAgentReadyTimeout is the HC-056 default: 90 seconds.
 // Informed by claude cold-start latency (≤5s typical, 10–15s cold disk cache)
-// plus margin for skill provisioning and one-time .claude/ filesystem warm-up.
+// plus margin for skill provisioning, one-time .claude/ filesystem warm-up,
+// and concurrent-burst CPU/disk contention under --max-concurrent ≥ 4.
+//
+// The prior 30s default was tuned for single-instance cold-start; under
+// concurrent dispatch bursts with high disk utilisation (≥90%) multiple
+// agents compete for I/O and CPU during cold-start, pushing the longest-
+// waiting agent past 30s. 90s provides headroom for a 4-wide burst under
+// moderate disk pressure while remaining far below the 30-min implementer
+// commit budget (hk-hzj). Operators may adjust per-environment via
+// --agent-ready-timeout.
 //
 // Spec ref: specs/handler-contract.md §4.9 HC-056.
-const defaultAgentReadyTimeout = 30 * time.Second
+const defaultAgentReadyTimeout = 90 * time.Second
 
 // ErrAgentReadyTimeout is the typed sentinel returned when no agent_ready event
 // arrives within the configured timeout window.
@@ -83,7 +92,7 @@ type agentEventSource interface {
 //  3. ctx is cancelled — returns ctx.Err().
 //
 // The effective timeout is cfg.AgentReadyTimeout when non-zero, falling back
-// to defaultAgentReadyTimeout (30s) per HC-056.
+// to defaultAgentReadyTimeout (90s) per HC-056.
 //
 // HC-056 "last-second arrival" posture: if an agent_ready event arrives
 // concurrently with timeout expiry, the ready case is preferred. Go's select

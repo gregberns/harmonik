@@ -141,6 +141,101 @@ func TestKeeperStatuslineScript_WithTokenCounts(t *testing.T) {
 	}
 }
 
+// TestKeeperStatuslineScript_1MModelInference verifies that the script infers
+// window_size=1000000 when the model contains "[1m]" and context_window_size is absent.
+func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// [1m] model payload: context_window_size is absent (Claude Code omits it for Opus-4.8 [1m]).
+	sampleJSON := `{"session_id":"opus-1m-session","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":15.0,"total_input_tokens":150000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=opus-agent",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "opus-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	if cf.Pct != 15.0 {
+		t.Errorf("pct = %v; want 15.0", cf.Pct)
+	}
+	if cf.Tokens != 150000 {
+		t.Errorf("tokens = %d; want 150000", cf.Tokens)
+	}
+	if cf.WindowSize != 1000000 {
+		t.Errorf("window_size = %d; want 1000000 (inferred from [1m] model)", cf.WindowSize)
+	}
+}
+
+// TestKeeperStatuslineScript_EnvWindowSizeOverride verifies that HARMONIK_KEEPER_WINDOW_SIZE
+// overrides window_size when context_window_size is absent from the payload.
+func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// Payload with no context_window_size and no recognizable model.
+	sampleJSON := `{"session_id":"env-override-session","context_window":{"used_percentage":20.0,"total_input_tokens":200000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=env-agent",
+		"HARMONIK_KEEPER_WINDOW_SIZE=500000",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "env-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	if cf.WindowSize != 500000 {
+		t.Errorf("window_size = %d; want 500000 (from HARMONIK_KEEPER_WINDOW_SIZE)", cf.WindowSize)
+	}
+}
+
 // TestKeeperStatuslineScript_SkipsOnMissingPct verifies that the script does
 // not write a .ctx file when the percentage field is absent from the input JSON.
 func TestKeeperStatuslineScript_SkipsOnMissingPct(t *testing.T) {

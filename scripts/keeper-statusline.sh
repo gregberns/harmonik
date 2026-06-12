@@ -28,11 +28,15 @@
 #   The file contains a single JSON line:
 #     {"pct":<float>,"tokens":<int>,"window_size":<int>,"session_id":<string>,"ts":"<RFC3339>"}
 #
-# Refs: hk-8vzek (session-keeper Phase-1), hk-cl74g (absolute-token gate fix).
+# Refs: hk-8vzek (session-keeper Phase-1), hk-cl74g (absolute-token gate fix),
+#       hk-67c (infer window_size from model id for [1m] models).
 set -euo pipefail
 
 AGENT="${HARMONIK_AGENT:-default}"
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
+# HARMONIK_KEEPER_WINDOW_SIZE: optional explicit override for window_size when
+# Claude Code omits context_window_size (e.g. [1m] models). Must be a positive integer.
+KEEPER_WINDOW_SIZE_OVERRIDE="${HARMONIK_KEEPER_WINDOW_SIZE:-0}"
 CTX_DIR="${PROJECT}/.harmonik/keeper"
 CTX_FILE="${CTX_DIR}/${AGENT}.ctx"
 TMP_FILE="${CTX_FILE}.tmp.$$"
@@ -58,6 +62,19 @@ WINDOW_SIZE="$(printf '%s' "${INPUT}" | jq -r '.context_window_size // 0' 2>/dev
 # Sanitise: replace non-integer values with 0.
 if ! printf '%s' "${TOKENS}" | grep -qE '^[0-9]+$'; then TOKENS=0; fi
 if ! printf '%s' "${WINDOW_SIZE}" | grep -qE '^[0-9]+$'; then WINDOW_SIZE=0; fi
+
+# Infer window_size when Claude Code omits context_window_size (e.g. [1m] models).
+# Priority: explicit env override → model-id detection → leave at 0 (pct-only fallback).
+if [ "${WINDOW_SIZE}" -eq 0 ]; then
+    if [ "${KEEPER_WINDOW_SIZE_OVERRIDE}" -gt 0 ] 2>/dev/null; then
+        WINDOW_SIZE="${KEEPER_WINDOW_SIZE_OVERRIDE}"
+    else
+        MODEL="$(printf '%s' "${INPUT}" | jq -r '.model // ""' 2>/dev/null || true)"
+        if printf '%s' "${MODEL}" | grep -qF '[1m]'; then
+            WINDOW_SIZE=1000000
+        fi
+    fi
+fi
 
 # Encode session_id as a JSON string (handles empty and special chars).
 SESSION_ID_JSON="$(printf '%s' "${SESSION_ID}" | jq -Rc . 2>/dev/null || printf '""')"

@@ -145,14 +145,17 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.WarnPct <= 0 {
 		c.WarnPct = 80.0
 	}
+	// ForceAct thresholds are derived from their corresponding act thresholds so
+	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
+	// context is above the act gate but below the force-clear gate (hk-6el).
 	if c.ForceActAbsTokens <= 0 {
-		c.ForceActAbsTokens = 380_000
+		c.ForceActAbsTokens = c.ActAbsTokens + 80_000
 	}
 	if c.ForceActPctCeil <= 0 {
-		c.ForceActPctCeil = 0.95
+		c.ForceActPctCeil = c.ActPctCeil + 0.10
 	}
 	if c.ForceActPct <= 0 {
-		c.ForceActPct = 95.0
+		c.ForceActPct = c.ActPct + 5.0
 	}
 	if c.ForceRetryInterval <= 0 {
 		c.ForceRetryInterval = 120 * time.Second

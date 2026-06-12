@@ -2155,3 +2155,98 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		t.Errorf("inject calls = %v; want none", spy.texts())
 	}
 }
+
+// TestCycler_ForceThresholdTracksActPct verifies that when --act-pct is configured
+// below the default 90%, the force-clear threshold is derived from the configured
+// act-pct (act+5) rather than the hardcoded 95 default. Without the fix, a session
+// at 36% would be stuck: above ActPct (35) but below the old ForceActPct (95), so
+// CrispIdle=false blocks it permanently. Refs: hk-6el, hk-0uu.
+func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "low-act-agent"
+		cycleID = "cyc-low-act"
+		prevSID = "sess-low-act-before"
+		newSID  = "sess-low-act-after"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(1, nonce)
+	readGaugeFn := gaugeReturnsNewSIDAfter(1, "", agent, prevSID, newSID)
+
+	// ActPct=35, ForceActPct left at zero → must default to 35+5=40.
+	// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
+	cfg := keeper.CyclerConfig{
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         35.0,
+		WarnPct:        25.0,
+		// ForceActPct intentionally omitted → must default to ActPct+5 = 40.0
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    200 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
+		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:         readHandoff,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         readGaugeFn,
+		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// pct=41: above ActPct (35) and above derived ForceActPct (40). CrispIdle=false
+	// must be bypassed so the cycle fires — verifies dead zone is eliminated.
+	cf := &keeper.CtxFile{Pct: 41.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	phases := jc.snapshot()
+	wantPhases := []string{"opened", "handoff_injected", "confirmed", "cleared", "resumed", "complete"}
+	if len(phases) != len(wantPhases) {
+		t.Fatalf("journal phases = %v; want %v", phases, wantPhases)
+	}
+	for i, p := range phases {
+		if p != wantPhases[i] {
+			t.Errorf("phase[%d] = %q; want %q", i, p, wantPhases[i])
+		}
+	}
+
+	// Also verify that pct=37 (in the old dead zone 35-40, but now just above ActPct)
+	// is still blocked by CrispIdle since it's below the new ForceActPct=40.
+	em2 := &keeper.RecordingEmitter{}
+	spy2 := &cycleSpyInjector{}
+	jc2 := &journalCapture{}
+	cfg2 := cfg
+	cfg2.ProjectDir = t.TempDir()
+	cfg2.InjectFn = spy2.inject
+	cfg2.WriteJournalFn = jc2.write
+	cfg2.ReadHandoff = func(_ string) (string, error) { return "", nil }
+	cfg2.ReadGaugeFn = func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}, time.Now(), nil
+	}
+	cycler2 := keeper.NewCycler(cfg2, em2)
+
+	cf2 := &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}
+	if err := cycler2.MaybeRun(context.Background(), cf2); err != nil {
+		t.Fatalf("MaybeRun (below force): %v", err)
+	}
+	if len(jc2.snapshot()) != 0 {
+		t.Errorf("below force threshold: journal phases = %v; want none", jc2.snapshot())
+	}
+}

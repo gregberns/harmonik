@@ -218,6 +218,23 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 	go test -tags=crash ./test/crash/...
 
 # ---------------------------------------------------------------------------
+# Release validation gate (hk-o4j13)
+# Invoked by the release CI workflow (hk-jdesv adds the .github/workflows step).
+# Runs each phase in order; any nonzero exit propagates immediately.
+#   1. lint               — golangci-lint full run
+#   2. go test -short     — unit suite, -race, skip heavy E2E (hk-p258q)
+#   3. scenario suite     — full -tags=scenario run with twins (see test-scenario)
+#   4. --version smoke    — verify the built binary starts and prints a version
+# ---------------------------------------------------------------------------
+.PHONY: release-validate
+release-validate: build-all  ## Release gate: lint + go test -short + scenario suite + --version smoke (hk-o4j13)
+	$(MAKE) lint
+	go test -short -race -count=1 ./...
+	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
+	@echo "release-validate: harmonik --version smoke"
+	@/tmp/harmonik --version
+
+# ---------------------------------------------------------------------------
 # Lint shorthand
 # ---------------------------------------------------------------------------
 .PHONY: lint

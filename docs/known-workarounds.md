@@ -68,6 +68,49 @@ Resolution: Orchestrator must persist markdown files via its own Write tool; do 
 
 ---
 
+## Release process
+
+**MANUAL RELEASE ESCAPE HATCH — pre-goreleaser CI (as of v0.1.0, 2026-06-10).**
+Symptom: `.goreleaser.yaml` and the tag-triggered CI workflow do not yet exist. Automated VALIDATE and CERTIFY stages cannot run.
+Resolution: cut releases manually until the goreleaser CI workflow lands (`specs/release-pipeline.md §9`).
+
+Steps:
+
+```bash
+VERSION=v0.y.z
+COMMIT=$(git rev-parse HEAD)
+
+# 1. Build for current platform (darwin/arm64 example):
+go build \
+  -ldflags "-X main.commitHash=${COMMIT} -X main.version=${VERSION}" \
+  -o harmonik ./cmd/harmonik
+
+# 2. Verify --version output matches the spec:
+./harmonik --version
+# Expected: harmonik v0.y.z (commit: <sha>)
+
+# 3. Create a GitHub pre-release:
+gh release create "${VERSION}" ./harmonik \
+  --title "${VERSION}" \
+  --notes "$(awk "/^## \[${VERSION#v}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md)" \
+  --prerelease
+
+# 4. Manually run VALIDATE gates (CI Tier 2 + scenario suite):
+make check-full
+go test -tags=scenario ./tests/scenarios/...
+
+# 5. If all gates pass, promote to stable (CERTIFY):
+gh release edit "${VERSION}" --prerelease=false
+
+# 6. Add ledger entry to internal/release/manifest.go by hand:
+#    Append a ReleaseEntry{Semver, CommitHash, Tag, Prerelease: false, CertifiedAt: "<RFC3339>"}
+#    Commit: chore(release): certify v0.y.z (Trivial: true)
+```
+
+Manual releases skip the automated per-gate failure reporting. Document any gate that was skipped or run manually in the CHANGELOG entry and commit body.
+
+---
+
 ## DOT-mode issues
 
 **DOT COMMIT_GATE SHELL NODE: `go` COMMAND NOT FOUND / EXIT 127 (first seen 2026-06-08, fixed hk-m5axg).**

@@ -118,15 +118,81 @@ Cross-refs: `docs/methodology/TESTING.md` (scenario-tier definition); `.claude/s
 
 ## Release process
 
-Triggered by pushing a signed tag `v0.y.z` to main. No "merge all PRs" step — main is the working branch and is always the release candidate.
+> **Normative spec:** `specs/release-pipeline.md`. This section is the practitioner reference; the spec wins on any conflict.
+>
+> **Current state (as of v0.1.0, 2026-06-10):** goreleaser CI workflow is not yet wired. v0.1.0 was cut by hand (see manual escape hatch below and `docs/known-workarounds.md §Manual release escape hatch`). Gaps are tracked in `specs/release-pipeline.md §9` and the `codename:release-pipeline` bead lane.
 
-1. Ensure `main` is green (latest `make check-full` pass; CI clean on latest commit).
+The pipeline has four stages triggered by pushing a signed semver tag to `main`:
+
+```
+CREATE → VALIDATE → CERTIFY → [ROLLBACK if needed]
+```
+
+No "merge all PRs" step — `main` is the working branch and is always the release candidate.
+
+### Pre-release checklist
+
+Before cutting a tag:
+
+1. Ensure `main` is green: `make check-full` passes, CI clean on latest commit.
 2. Update `CHANGELOG.md` (keep-a-changelog format; sections: Added / Changed / Deprecated / Fixed / Removed / Security / Spec).
-3. Tag: `git tag -s v0.y.z -m "v0.y.z"` and push.
-4. CI runs `goreleaser release --clean`, building `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` binaries for every harmonik binary (daemon, handlers compiled-in, CLI); publishes GitHub release with checksums.
-5. Changelog entry mirrored into the GitHub release body.
+3. Verify `internal/release/manifest.go` `BeadsVersion` matches the `br --version` of the tested environment.
 
-No binary signing pre-1.0 (parallel to MVH commit-hash decision in operator-nfr §7.2). Distribution is GitHub releases only until a user asks for Homebrew / apt / etc.
+### Stage 1 — CREATE
+
+```bash
+git tag -s v0.y.z -m "v0.y.z"
+git push origin v0.y.z
+```
+
+CI runs `goreleaser release --clean` using `.goreleaser.yaml` at the repo root. goreleaser:
+
+- Builds the binary matrix: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`.
+- Injects ldflags: `-X main.commitHash=$(git rev-parse HEAD) -X main.version=$(git describe --tags --exact-match)`.
+- Produces `harmonik_<os>_<arch>` binaries + `checksums.txt` (SHA-256 per binary).
+- Creates a GitHub **pre-release** with all artifacts attached.
+- Mirrors the `CHANGELOG.md` entry for this version into the GitHub release body.
+- Writes a ledger entry to `internal/release/manifest.go` with `Prerelease: true`.
+
+`harmonik --version` output after this stage: `harmonik v0.y.z (commit: <sha>)`.
+
+### Stage 2 — VALIDATE
+
+All three gates run in parallel; any failure yanks the pre-release automatically:
+
+| Gate | Command | Pass criterion |
+|------|---------|----------------|
+| CI Tier 2 | `make check-full` on the tagged commit | Exit 0 |
+| Scenario tests | `go test -tags=scenario ./tests/scenarios/...` | Exit 0, zero failures |
+| `--version` smoke | Download published binary, run `harmonik --version` | Matches `harmonik v0.y.z (commit: <sha>)` |
+
+On failure: CI deletes the GitHub pre-release and discards the pending ledger entry. A new tag must be pushed to re-run.
+
+### Stage 3 — CERTIFY
+
+When all VALIDATE gates pass, CI:
+
+1. Updates the ledger entry: `Prerelease: false`, `CertifiedAt` = current RFC3339 timestamp.
+2. Flips the GitHub release to non-pre-release via the GitHub API.
+3. Commits `internal/release/manifest.go` to `main`: `chore(release): certify v0.y.z\n\nRefs: hk-brc3z\nTrivial: true`.
+
+The release is now the current stable version. The supervisor may adopt this binary as the last-good binary.
+
+### Stage 4 — ROLLBACK
+
+A certified release may be yanked by a human operator (not automatic). Procedure:
+
+1. Set `Yanked: true`, `YankedReason: "<reason>"` in `internal/release/manifest.go`.
+2. Commit and push to `main`.
+3. Mark the GitHub release as pre-release again (or delete it).
+
+The supervisor script (`scripts/hk-keeper.sh`) refuses to launch a binary whose commit hash matches a yanked ledger entry, and falls back to the last-good binary on crash within 30 s of start. Full protocol: `specs/release-pipeline.md §7`.
+
+### Manual escape hatch (pre-goreleaser CI)
+
+Until `.goreleaser.yaml` and the CI workflow exist, cut releases manually. See `docs/known-workarounds.md §Manual release escape hatch` for the procedure and what VALIDATE / CERTIFY steps must be performed by hand.
+
+No binary signing pre-1.0. Distribution is GitHub releases only until a user asks for Homebrew / apt / etc.
 
 ## Git hygiene
 

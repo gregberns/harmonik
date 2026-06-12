@@ -36,6 +36,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -55,7 +56,9 @@ func (k *hk9vp51Killer) Kill(_ context.Context) error {
 }
 
 // hk9vp51LivenessQuitSender implements quitSender + paneLivenessChecker; alive
-// controls PaneHasActiveProcess.
+// controls PaneHasActiveProcess.  Does NOT implement paneOutputSizer, so the
+// hk-ukx budget-extension check sees no pane output growth and fires the kill at
+// commitPollTimeout (the 30-min ceiling that hk-ukx enforces).
 type hk9vp51LivenessQuitSender struct {
 	quitCalls atomic.Int64
 	alive     atomic.Bool
@@ -71,6 +74,24 @@ func (q *hk9vp51LivenessQuitSender) PaneHasActiveProcess(_ context.Context) bool
 }
 
 var _ daemon.PaneLivenessCheckerExported = (*hk9vp51LivenessQuitSender)(nil)
+
+// hk9vp51GrowingOutputQuitSender implements quitSender + paneLivenessChecker +
+// paneOutputSizer.  PaneOutputFingerprint returns an incrementing counter so
+// every call reports new output (simulating a session actively streaming to the
+// pane, e.g. a go-test loop or long LLM response).  This satisfies the hk-ukx
+// activity requirement, allowing the totalDeadline to be extended until the hard
+// ceiling fires.
+type hk9vp51GrowingOutputQuitSender struct {
+	hk9vp51LivenessQuitSender
+	outputCounter atomic.Int64
+}
+
+func (q *hk9vp51GrowingOutputQuitSender) PaneOutputFingerprint(_ context.Context) (string, bool) {
+	n := q.outputCounter.Add(1)
+	return fmt.Sprintf("%d 0", n), true
+}
+
+var _ daemon.PaneOutputSizerExported = (*hk9vp51GrowingOutputQuitSender)(nil)
 
 // hk9vp51SetBudget overrides the commit-budget timing package vars and returns a
 // restore function.  postQuitKillGrace is pinned to 1h so the post-commit
@@ -175,22 +196,32 @@ func TestPasteInjectQuitOnCommit_GuillotineReproduce(t *testing.T) {
 }
 
 // TestPasteInjectQuitOnCommit_HardCeilingKills verifies the absolute backstop: an
-// active pane that emits NO heartbeats survives the per-progress budget (liveness
-// keeps extending it) but is killed once the hard ceiling elapses, and emits the
-// implementer_budget_exceeded diagnostic with reason "hard-ceiling".
+// active pane that emits NO heartbeats but IS producing pane output (simulating
+// a go-test loop or active LLM streaming) survives the per-progress budget
+// (hk-ukx activity check: pane output growth extends the deadline) but is killed
+// once the hard ceiling elapses, and emits the implementer_budget_exceeded
+// diagnostic with reason "hard-ceiling".
+//
+// hk-ukx note: the stub uses hk9vp51GrowingOutputQuitSender (implements
+// paneOutputSizer with an incrementing counter) so the budget-extension's
+// activity check passes (pane output growing → extend), allowing the hard
+// ceiling to be the ultimate kill trigger.  A stub WITHOUT pane output growth
+// would fire the 30-min ceiling instead (see TestPasteInjectCommitBudget_IdleActivePane_HKukx).
 func TestPasteInjectQuitOnCommit_HardCeilingKills(t *testing.T) {
 	restore := hk9vp51SetBudget(
 		5*time.Millisecond,   // poll interval
-		40*time.Millisecond,  // per-progress budget (extended by liveness)
+		40*time.Millisecond,  // per-progress budget (extended by pane output growth)
 		120*time.Millisecond, // hard ceiling (fires after ~120ms)
 		5*time.Second,        // staleness (suppressed by liveness — must not fire)
-		5*time.Second,        // launch window (suppressed by liveness)
+		5*time.Second,        // launch window (launch deadline beyond hard ceiling → not reached)
 		10*time.Millisecond,  // kill delay
 	)
 	defer restore()
 
 	wtPath, headSHA := hk7srrdWorktree(t)
-	qs := &hk9vp51LivenessQuitSender{}
+	// Growing-output stub: pane active + output fingerprint changes every call →
+	// hk-ukx activity check extends totalDeadline, so hard ceiling is the kill.
+	qs := &hk9vp51GrowingOutputQuitSender{}
 	qs.alive.Store(true) // pane active but never commits and never beats
 	kl := &hk9vp51Killer{}
 	noChangeCh := make(chan struct{})
@@ -269,6 +300,81 @@ func TestPasteInjectQuitOnCommit_StaleBudgetKillsAndEmits(t *testing.T) {
 	pl := hk9vp51FindBudgetExceeded(t, bus)
 	if pl.Reason != "total-budget-stale" {
 		t.Errorf("implementer_budget_exceeded reason: want %q, got %q", "total-budget-stale", pl.Reason)
+	}
+	if !pl.Valid() {
+		t.Errorf("implementer_budget_exceeded payload invalid: %+v", pl)
+	}
+}
+
+// TestPasteInjectCommitBudget_IdleActivePane_HKukx is the hk-ukx regression:
+// an active pane with NO observable progress (no pane output growth, no worktree
+// change, no heartbeat) must be killed at commitPollTimeout, NOT extended to the
+// hard ceiling.
+//
+// Scenario (2026-06-12 incident): two runs hung at launch_initiated for 54–67
+// minutes because the idle Claude pane had an active child process
+// (PaneHasActiveProcess=true), causing the per-progress budget to be extended
+// indefinitely (up to the 90-min hard ceiling).  The fix (hk-ukx) requires
+// observable progress (worktree change OR pane output growth) before extending
+// the budget.  An idle Claude waiting for input has a stable fingerprint and is
+// killed at the 30-min commitPollTimeout boundary, not 90 min.
+//
+// This test uses hk9vp51LivenessQuitSender (PaneHasActiveProcess=true, NO
+// paneOutputSizer) to simulate the idle-Claude scenario.  The kill must fire at
+// ~budget (40ms), not at hardCeiling (120ms), with reason "total-budget-stale-active".
+func TestPasteInjectCommitBudget_IdleActivePane_HKukx(t *testing.T) {
+	restore := hk9vp51SetBudget(
+		5*time.Millisecond,   // poll interval
+		40*time.Millisecond,  // per-progress budget — must be the kill trigger
+		120*time.Millisecond, // hard ceiling — must NOT be reached (kill fires earlier)
+		5*time.Second,        // staleness (eventCh nil → skipped)
+		5*time.Second,        // launch window (launch deadline beyond budget → not the trigger)
+		5*time.Millisecond,   // kill delay
+	)
+	defer restore()
+
+	wtPath, headSHA := hk7srrdWorktree(t)
+	// Idle-Claude stub: pane active (alive=true) but NO paneOutputSizer → the
+	// hk-ukx activity check sees no progress → kills at commitPollTimeout.
+	qs := &hk9vp51LivenessQuitSender{}
+	qs.alive.Store(true) // active pane, idle agent (no progress)
+	kl := &hk9vp51Killer{}
+	noChangeCh := make(chan struct{})
+	bus := &stubEventCollector{}
+	runID := core.RunID{}
+
+	// Budget 40ms + kill delay 5ms + 3× poll = ~60ms max.  3s is the safety net.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	// nil eventCh: heartbeat/launch checks skipped; only commit-budget check fires.
+	daemon.ExportedPasteInjectQuitOnCommitWithBus(
+		ctx, qs, kl, wtPath, headSHA, noChangeCh, nil, nil, bus, runID)
+	elapsed := time.Since(start)
+
+	// Kill MUST have fired (ceiling enforced).
+	if got := kl.calls.Load(); got != 1 {
+		t.Errorf("Kill calls: want 1 (idle active pane must be killed at commitPollTimeout), got %d", got)
+	}
+	// noChangeTimeoutCh MUST be closed.
+	select {
+	case <-noChangeCh:
+		// expected
+	default:
+		t.Fatal("noChangeTimeoutCh was NOT closed — slot never freed (hk-ukx regression)")
+	}
+	// Kill must fire well before the hard ceiling (120ms), demonstrating the
+	// 30-min ceiling is enforced.  Allow 2× budget for scheduler jitter.
+	if elapsed >= 100*time.Millisecond {
+		t.Errorf("kill fired after %v — too close to hard ceiling (%v); 30-min ceiling not enforced (hk-ukx)",
+			elapsed, 120*time.Millisecond)
+	}
+	// Reason must be the new "active but no observable progress" tag.
+	pl := hk9vp51FindBudgetExceeded(t, bus)
+	if pl.Reason != "total-budget-stale-active" {
+		t.Errorf("implementer_budget_exceeded reason: want %q, got %q",
+			"total-budget-stale-active", pl.Reason)
 	}
 	if !pl.Valid() {
 		t.Errorf("implementer_budget_exceeded payload invalid: %+v", pl)

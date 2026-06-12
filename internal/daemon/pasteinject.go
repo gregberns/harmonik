@@ -729,6 +729,35 @@ func pasteInjectQuitOnCommit(
 		case <-ticker.C:
 			now := time.Now()
 
+			// hk-ukx: drain any heartbeats that arrived in eventCh between the
+			// last iteration and this tick.  Without this drain, the ticker case
+			// can fire before a buffered heartbeat is processed by the eventCh
+			// case, causing totalDeadline to look expired even though progress
+			// was imminent.  The drain is non-blocking (default: exit) and runs
+			// only for the heartbeat event type so other event types are not
+			// silently consumed.
+			if eventCh != nil {
+			drainHeartbeats:
+				for {
+					select {
+					case env, ok := <-eventCh:
+						if !ok {
+							eventCh = nil
+							break drainHeartbeats
+						}
+						if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+							drainNow := time.Now()
+							lastHeartbeat = drainNow
+							firstHeartbeatSeen = true
+							lastProgress = drainNow
+							totalDeadline = drainNow.Add(pollTimeout)
+						}
+					default:
+						break drainHeartbeats
+					}
+				}
+			}
+
 			// hk-9vp51: absolute hard-ceiling backstop — never extended by
 			// progress.  Bounds a truly-hung-but-pane-active implementer (one
 			// that emits heartbeats forever, or keeps the pane active, but never
@@ -743,18 +772,58 @@ func pasteInjectQuitOnCommit(
 
 			// hk-9vp51: per-progress commit-budget backstop.  Unlike the old flat
 			// wall-clock deadline, this fires only when the budget window has
-			// elapsed AND the pane is not making progress.  If the pane still has
-			// an active child process, treat it as progress-without-heartbeat
-			// (e.g. a long go-test loop that emits no agent_heartbeat): extend the
-			// budget rather than guillotine a working session.  A pane that has
-			// genuinely gone dark falls through to the kill.
+			// elapsed AND the pane is not making observable progress.
+			//
+			// hk-ukx: ACTIVITY-AWARE budget extension.  Previously an active child
+			// process alone was enough to extend the budget ("a long go-test loop
+			// that emits no agent_heartbeat").  But an idle Claude pane — one
+			// waiting for input with no pending tool calls — also has an active
+			// process, causing wedged runs to hang until the 90-min hardDeadline
+			// instead of the 30-min commitPollTimeout.  The fix mirrors the launch-
+			// verification block: require demonstrable progress (worktree change OR
+			// pane output growth) in addition to an active process before extending.
+			// A go-test loop produces pane output (test results streaming to the
+			// pane), so it still gets the extension.  An idle Claude waiting for
+			// input has a stable fingerprint and is killed at the 30-min boundary.
 			if now.After(totalDeadline) {
+				// Any buffered heartbeats were drained above; if totalDeadline
+				// is still expired, no heartbeat arrived in this budget window.
+				// Require observable progress before extending (hk-ukx).
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-commit: commit-budget %v elapsed but pane has active child process in %s; extending budget (hard ceiling %v)\n",
-						pollTimeout, wtPath, hardCeiling)
-					lastProgress = now
-					totalDeadline = now.Add(pollTimeout)
+					wtFP, wtOK := worktreeActivityFingerprint(ctx, wtPath)
+					budgetWorktreeProgressed := wtOK && wtFP != lastActivityFingerprint
+
+					budgetPaneOutputProgressed := false
+					if outputSizer != nil {
+						if fp, ok := outputSizer.PaneOutputFingerprint(ctx); ok && fp != lastPaneOutputFP {
+							budgetPaneOutputProgressed = true
+							lastPaneOutputFP = fp
+						}
+					}
+
+					if budgetWorktreeProgressed || budgetPaneOutputProgressed {
+						signal := "changed working tree"
+						if budgetPaneOutputProgressed && !budgetWorktreeProgressed {
+							signal = "pane output growth"
+						} else if budgetPaneOutputProgressed {
+							signal = "changed working tree + pane output growth"
+						}
+						if budgetWorktreeProgressed {
+							lastActivityFingerprint = wtFP
+						}
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-commit: commit-budget %v elapsed but pane is making progress (%s) in %s; extending budget (hard ceiling %v)\n",
+							pollTimeout, signal, wtPath, hardCeiling)
+						lastProgress = now
+						totalDeadline = now.Add(pollTimeout)
+					} else {
+						// Pane has active process but no observable progress —
+						// idle Claude or wedged session.  Fire the ceiling so the
+						// slot is freed within the 30-min window (hk-ukx).
+						fireNoChangePath("total-timeout waiting for new commit (pane active but no observable progress)",
+							"total-budget-stale-active", true)
+						return
+					}
 				} else {
 					fireNoChangePath("total-timeout waiting for new commit (pane inactive)",
 						"total-budget-stale", true)

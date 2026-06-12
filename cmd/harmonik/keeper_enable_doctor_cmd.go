@@ -419,6 +419,15 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				if !statusLineTypeIsCommand(settings) {
 					check("statusLine.type", false, `statusLine missing "type":"command" — Claude Code will reject settings.json; run: harmonik keeper enable to normalize`)
 				}
+				// Sub-check: ctx pollution canary (hk-67k). A literal HARMONIK_AGENT=<name>
+				// in the command overrides the inherited env var for ALL concurrent Claude
+				// Code sessions — every session writes the same .ctx file, clobbering the
+				// keeper's session-binding. Shell-expansion form (${HARMONIK_AGENT:-...}) is
+				// acceptable but unnecessary; the agent name is already derived from the tmux
+				// session name. Run `harmonik keeper enable` to write a clean command.
+				if strings.Contains(cmd, "HARMONIK_AGENT=") && !strings.Contains(cmd, "HARMONIK_AGENT=${") {
+					check("statusLine.agent_pollution", false, "statusLine.command has a literal HARMONIK_AGENT= that overrides all sessions' env var (ctx pollution, hk-67k) — run: harmonik keeper enable to normalize")
+				}
 			}
 		}
 	}

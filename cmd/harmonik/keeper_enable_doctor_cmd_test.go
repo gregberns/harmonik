@@ -595,9 +595,9 @@ func TestKeeperDoctor_RejectsPathTraversal(t *testing.T) {
 
 // TestKeeperDoctor_StatusLineTypeMissing verifies that doctor reports a failure
 // on the "statusLine.type" sub-check (hk-hs1) when the statusLine stanza has the
-// correct command (containing keeper-statusline.sh + HARMONIK_AGENT=) but is
-// missing the required "type":"command" field. Without that field Claude Code
-// rejects the entire settings.json and disables ALL hooks.
+// correct command (containing keeper-statusline.sh) but is missing the required
+// "type":"command" field. Without that field Claude Code rejects the entire
+// settings.json and disables ALL hooks.
 func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 	t.Parallel()
 
@@ -605,7 +605,8 @@ func TestKeeperDoctor_StatusLineTypeMissing(t *testing.T) {
 
 	// Write a settings.json whose statusLine command is otherwise canonical but
 	// deliberately omits the "type":"command" field.
-	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=orchestrator /scripts/keeper-statusline.sh"
+	// Agent name is NOT embedded per hk-nm32w — derived from tmux session name.
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
 			// "type" intentionally absent — this is the defect that hk-hs1 fixed.
@@ -639,7 +640,8 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 	cfg, _ := makeDoctorCfg(t, "orchestrator")
 
 	// Write a fully-normalized statusLine stanza with "type":"command".
-	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=orchestrator /scripts/keeper-statusline.sh"
+	// Agent name is NOT embedded per hk-nm32w — derived from tmux session name.
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " /scripts/keeper-statusline.sh"
 	settings := map[string]interface{}{
 		"statusLine": map[string]interface{}{
 			"type":    "command",
@@ -654,10 +656,78 @@ func TestKeeperDoctor_StatusLineTypePresent(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runKeeperDoctor(cfg, &stdout, &stderr)
 
-	// The statusLine.type check must NOT appear as a failure in the output.
+	// The statusLine.type check must NOT appear with the failure symbol in the output.
 	out := stdout.String()
-	if strings.Contains(out, "statusLine.type") && strings.Contains(out, "FAIL") {
-		t.Errorf("doctor should not report statusLine.type FAIL when type is present; stdout: %s", out)
+	if strings.Contains(out, "✗ statusLine.type") {
+		t.Errorf("doctor should not report statusLine.type failure when type is present; stdout: %s", out)
+	}
+}
+
+// TestKeeperDoctor_StatusLineAgentPollution verifies that doctor reports a failure
+// on the "statusLine.agent_pollution" sub-check (hk-67k) when a literal
+// HARMONIK_AGENT=<name> is embedded in the statusLine command. This override causes
+// ALL concurrent sessions to write the same .ctx file, clobbering session-binding.
+func TestKeeperDoctor_StatusLineAgentPollution(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+
+	// Write a settings.json with a literal HARMONIK_AGENT= in the command — the
+	// pre-hk-67k pattern that caused ctx pollution across all sessions.
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=captain /scripts/keeper-statusline.sh"
+	settings := map[string]interface{}{
+		"statusLine": map[string]interface{}{
+			"type":    "command",
+			"command": statusLineCmd,
+		},
+	}
+	raw, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	// Doctor must exit non-zero (pollution gap found).
+	if code == 0 {
+		t.Errorf("want non-zero exit (statusLine.agent_pollution), got 0\nstdout: %s", stdout.String())
+	}
+	// The pollution check key must appear in the output.
+	if !strings.Contains(stdout.String(), "statusLine.agent_pollution") {
+		t.Errorf("doctor output missing statusLine.agent_pollution check; stdout: %s", stdout.String())
+	}
+}
+
+// TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK verifies that doctor
+// does NOT flag a statusLine command that uses shell-expansion form
+// (${HARMONIK_AGENT:-captain}), which correctly defers to the inherited env var.
+func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+
+	// Shell-expansion form: crews inherit their own HARMONIK_AGENT; the captain
+	// (no env var set) falls back to the literal "captain". Not ideal vs the pure
+	// tmux-name approach, but not a pollution risk.
+	statusLineCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=${HARMONIK_AGENT:-captain} /scripts/keeper-statusline.sh"
+	settings := map[string]interface{}{
+		"statusLine": map[string]interface{}{
+			"type":    "command",
+			"command": statusLineCmd,
+		},
+	}
+	raw, _ := json.MarshalIndent(settings, "", "  ")
+	if err := os.WriteFile(cfg.settingsPath, raw, 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stderr)
+
+	// Shell-expansion form must NOT trigger the pollution check.
+	if strings.Contains(stdout.String(), "statusLine.agent_pollution") {
+		t.Errorf("doctor should not flag shell-expansion HARMONIK_AGENT as pollution; stdout: %s", stdout.String())
 	}
 }
 

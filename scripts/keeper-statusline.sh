@@ -13,10 +13,17 @@
 #
 # Usage
 #   Called automatically as the statusLine.command in ~/.claude/settings.json.
-#   Add to your settings.json:
-#     "statusLine": {
-#       "command": "HARMONIK_PROJECT=/path/to/project HARMONIK_AGENT=orchestrator /path/to/scripts/keeper-statusline.sh"
-#     }
+#   The recommended way to wire this is via `harmonik keeper enable`:
+#     harmonik keeper enable <agent> --project /path/to/project --scripts /path/to/scripts
+#   This writes a HARMONIK_AGENT-free command — agent name is derived from the
+#   tmux session name at runtime so ALL concurrent sessions share one entry (hk-nm32w).
+#
+#   If you wire it manually, do NOT hardcode HARMONIK_AGENT=<name> in the command:
+#   that overrides the inherited env var for EVERY concurrent Claude Code session,
+#   causing all sessions to write the same .ctx file (ctx pollution, hk-67k).
+#   Rely on the tmux-name fallback instead, or ensure each agent's process
+#   environment already has HARMONIK_AGENT=<name> set — which `harmonik crew start`
+#   does automatically via HARMONIK_AGENT=<name> in the crew env.
 #
 # Environment
 #   HARMONIK_PROJECT   Absolute path to the project root (fallback: $PWD).

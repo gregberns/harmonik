@@ -713,14 +713,17 @@ func dotE2ERequestChangesHandlerScript(t *testing.T, stateDir string) string {
 }
 
 // dotE2EAlwaysRequestChangesHandlerScript returns a /bin/sh handler script that
-// always emits REQUEST_CHANGES from the reviewer. This drives the
-// reviewer→implementer back-edge until the traversal_cap=3 fires.
+// always emits REQUEST_CHANGES from the reviewer. Both implementer and reviewer
+// invocations commit a file so that HEAD advances on EVERY agentic node entry.
+// This prevents the no-progress / review_fixup_stalled check
+// (dot_cascade.go: iterationCount>=2 && !headAdvanced) from short-circuiting
+// the run before the traversal_cap=3 fires.
 //
 // Invocation sequence for review-loop.dot (cap=3, fires on the 4th back-edge
 // attempt; total handler invocations: 4 implementer + 4 reviewer = 8):
 //
-//	invoc 1,3,5,7 → implementer (commit; HEAD advances)
-//	invoc 2,4,6,8 → reviewer    (REQUEST_CHANGES every time)
+//	invoc 1,3,5,7 → implementer (commit impl file; HEAD advances)
+//	invoc 2,4,6,8 → reviewer    (commit review file; write REQUEST_CHANGES; HEAD advances)
 //
 // After invoc 8 the cascade tries to traverse the back-edge a 4th time; the
 // cycle counter has already reached cap=3, so SelectNextEdge returns
@@ -744,6 +747,14 @@ func dotE2EAlwaysRequestChangesHandlerScript(t *testing.T, stateDir string) stri
 		"  git add dot-cascade-cap-impl-$N.txt\n" +
 		"  git commit -m \"dot-cascade: cap-impl commit $N\" >/dev/null 2>&1\n" +
 		"else\n" +
+		// Reviewer commits a review-notes file so HEAD advances at every agentic
+		// node entry. Without this commit, the no-progress check fires at
+		// iterationCount>=2 because priorIterHeadSHA (set at reviewer entry) equals
+		// the next implementer entry's HEAD, causing review_fixup_stalled before the
+		// traversal cap can fire (hk-zf0).
+		"  echo \"dot-cascade cap-review $N $$\" > dot-cascade-cap-review-$N.txt\n" +
+		"  git add dot-cascade-cap-review-$N.txt\n" +
+		"  git commit -m \"dot-cascade: cap-review commit $N\" >/dev/null 2>&1\n" +
 		"  mkdir -p .harmonik\n" +
 		"  printf '%s' '{\"schema_version\":1,\"verdict\":\"REQUEST_CHANGES\",\"flags\":[],\"notes\":\"always rc for cap test\"}' > .harmonik/review.json\n" +
 		"fi\n" +
@@ -884,10 +895,14 @@ func TestDotMode_E2E_RequestChangesBackEdge(t *testing.T) {
 }
 
 // TestDotMode_E2E_CapHit drives review-loop.dot through the REAL work loop with
-// a handler that always emits REQUEST_CHANGES from the reviewer. The
-// traversal_cap=3 on the reviewer→implementer back-edge fires after 3 successful
-// traversals; the 4th attempt returns FailureClassCompilationLoop and the daemon
-// reopens the bead as needs-attention.
+// a handler that always emits REQUEST_CHANGES from the reviewer. Both the
+// implementer and the reviewer commit a file on each invocation so that HEAD
+// advances at every agentic-node entry. This is required to prevent the
+// no-progress / review_fixup_stalled early-exit
+// (dot_cascade.go: iterationCount>=2 && !headAdvanced) from short-circuiting
+// the run before traversal_cap=3 fires. Without reviewer commits the check
+// triggers at the 3rd implementer entry (iterationCount=2, priorIterHeadSHA set
+// by the reviewer which did not commit) and the cap is never reached (hk-zf0).
 //
 // Walk: start → impl → rev(RC) → impl → rev(RC) → impl → rev(RC) → impl → rev(RC) → [cap_hit] → reopen
 //
@@ -1020,5 +1035,17 @@ assertCapHit:
 	// Assertion 4: run_failed fired (non-success terminal path).
 	if !dotE2EContains(events, string(core.EventTypeRunFailed)) {
 		t.Errorf("DOT cap-hit E2E: run_failed not emitted; got %v", events)
+	}
+
+	// Assertion 5: review_fixup_stalled MUST NOT be present.
+	// The run must fail via the traversal cap (SelectNextEdge cap=3), not the
+	// no-progress early-exit. Presence of review_fixup_stalled means the cap
+	// was never reached — the test is not exercising traversal_cap at all (hk-zf0).
+	for _, et := range events {
+		if et == string(core.EventTypeReviewFixupStalled) {
+			t.Errorf("DOT cap-hit E2E: review_fixup_stalled emitted — run short-circuited "+
+				"via no-progress check before reaching traversal_cap=3; events=%v", events)
+			break
+		}
 	}
 }

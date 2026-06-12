@@ -554,10 +554,34 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		return nil, timeoutErr
 	}
 	if outcome.Err != nil {
-		// Release the semaphore slot before returning the error — the window was
-		// never created so the slot is immediately available for reuse.
-		s.releaseSpawnSlot()
-		return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
+		// hk-yaj: if the spawn-target session was externally killed, try to
+		// re-ensure it and retry the window creation once before hard-failing.
+		// This is the lazy-recovery symmetric to the boot-time EnsureSession in
+		// main.go: boot ensures the session exists, SpawnWindow re-ensures it on
+		// the first ErrNoSession at dispatch time so the whole fleet does not stall
+		// until a daemon restart.
+		recovered := false
+		if errors.Is(outcome.Err, tmux.ErrNoSession) {
+			if se, ok := s.adapter.(sessionEnsurer); ok {
+				if ensErr := se.EnsureSession(ctx, s.sessionName, ""); ensErr == nil {
+					retryOutcome, retryTimeoutErr := s.callNewWindowBounded(ctx, params)
+					if retryTimeoutErr != nil {
+						s.releaseSpawnSlot()
+						return nil, retryTimeoutErr
+					}
+					if retryOutcome.Err == nil {
+						outcome = retryOutcome
+						recovered = true
+					}
+				}
+			}
+		}
+		if !recovered {
+			// Release the semaphore slot before returning the error — the window was
+			// never created so the slot is immediately available for reuse.
+			s.releaseSpawnSlot()
+			return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
+		}
 	}
 
 	// Track the spawned window handle for cleanup on wave completion / daemon
@@ -912,6 +936,17 @@ const crewStopQuitGrace = 30 * time.Second
 // tmux.Adapter interface to avoid breaking existing test doubles (hk-mmlqt).
 type sessionCreator interface {
 	NewSessionIn(ctx context.Context, params tmux.NewWindowIn) tmux.Outcome
+}
+
+// sessionEnsurer is an optional interface a tmux.Adapter may implement to
+// create-or-recover the named session (idempotent). SpawnWindow uses this on
+// ErrNoSession to lazily re-create the daemon's spawn-target session when it
+// has been externally killed, rather than hard-failing.
+//
+// Implemented by tmux.OSAdapter (EnsureSession method). NOT added to the
+// tmux.Adapter interface to avoid breaking existing test doubles (hk-yaj).
+type sessionEnsurer interface {
+	EnsureSession(ctx context.Context, name, workDir string) error
 }
 
 // crewSessionSpawner is an optional interface a Substrate may implement to

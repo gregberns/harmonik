@@ -543,6 +543,74 @@ func TestWatcher_LatchesUUIDv4AfterSkippingUUIDv7(t *testing.T) {
 	}
 }
 
+// TestWatcher_SelfHealsStaleUUIDv7InManaged verifies that when .managed already
+// holds a UUIDv7 (legacy pre-hk-lap state — e.g. daemon implementer SID was
+// latched before the latch-time guard landed), the watcher clears it, re-binds
+// to the live UUIDv4 gauge, and emits a normal warn event rather than staying
+// stuck in no_gauge:foreign_session forever. (Refs: hk-6mp, hk-lap)
+func TestWatcher_SelfHealsStaleUUIDv7InManaged(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "self-heal-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const staleV7SID = "019ebb07-0000-7000-8000-000000000001" // UUIDv7 in .managed
+	const liveV4SID = "f7e7210d-1234-4abc-8000-000000000002"  // UUIDv4 in gauge
+
+	// Simulate .managed already holding a stale UUIDv7.
+	storedSID := staleV7SID
+	var clearedToEmpty bool
+	var latchedSID string
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		ReadManagedSessionFn: func(_, _ string) (string, error) {
+			return storedSID, nil
+		},
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			if sessionID == "" {
+				clearedToEmpty = true
+				storedSID = "" // reflect the clear for subsequent reads
+			} else {
+				latchedSID = sessionID
+				storedSID = sessionID
+			}
+			return nil
+		},
+	}
+
+	// Write a UUIDv4 gauge above threshold — this is the live captain session.
+	writeCtxFile(t, projectDir, agent, 85.0, liveV4SID)
+
+	runWatcherFor(context.Background(), cfg, em, 120*time.Millisecond)
+
+	// The stale UUIDv7 must have been cleared.
+	if !clearedToEmpty {
+		t.Error("WriteManagedSessionFn was not called with empty sessionID — stale UUIDv7 not cleared")
+	}
+	// The live UUIDv4 must have been latched after the clear.
+	if latchedSID != liveV4SID {
+		t.Errorf("latched session_id = %q; want %q (live UUIDv4 after self-heal)", latchedSID, liveV4SID)
+	}
+	// And a warn must have fired (not stuck in no_gauge:foreign_session).
+	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
+	if len(warns) == 0 {
+		t.Error("want at least one session_keeper_warn after self-heal; got 0 (keeper stuck in foreign_session?)")
+	}
+}
+
 // TestWatcher_AcceptsManagedSession verifies that when .managed has a session_id
 // that matches the gauge, normal warn behaviour fires as expected.
 // Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).

@@ -31,7 +31,18 @@
 # Refs: hk-djdng (session-keeper Phase-2 foundation).
 set -euo pipefail
 
-AGENT="${HARMONIK_KEEPER_AGENT:-${1:-default}}"
+# Derive agent name: HARMONIK_KEEPER_AGENT → positional arg → tmux session name → "default".
+# The tmux fallback means a single global hook entry in ~/.claude/settings.json
+# works correctly for all concurrent agent sessions (hk-nm32w).
+if [ -n "${HARMONIK_KEEPER_AGENT:-}" ]; then
+    AGENT="${HARMONIK_KEEPER_AGENT}"
+elif [ -n "${1:-}" ]; then
+    AGENT="${1}"
+elif [ -n "${TMUX:-}" ]; then
+    AGENT="$(tmux display-message -p '#S' 2>/dev/null || echo default)"
+else
+    AGENT="default"
+fi
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
 KEEPER_DIR="${PROJECT}/.harmonik/keeper"
 IDLE_FILE="${KEEPER_DIR}/${AGENT}.idle"

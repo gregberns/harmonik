@@ -197,14 +197,17 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	}
 
 	// Build canonical commands.
-	statusLineCmd := fmt.Sprintf("HARMONIK_PROJECT=%s HARMONIK_AGENT=%s %s",
-		cfg.projectDir, cfg.agentName,
+	// Agent name is NOT embedded — scripts derive it from the tmux session name at
+	// runtime so a single global ~/.claude/settings.json entry works for all concurrent
+	// sessions on the machine without perturbing peer agents (hk-nm32w).
+	statusLineCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
+		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-statusline.sh"))
-	stopHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s HARMONIK_KEEPER_AGENT=%s %s",
-		cfg.projectDir, cfg.agentName,
+	stopHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
+		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh"))
-	precompactHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s HARMONIK_KEEPER_AGENT=%s %s",
-		cfg.projectDir, cfg.agentName,
+	precompactHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
+		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-precompact-hook.sh"))
 
 	// Merge stanzas (idempotent).
@@ -406,9 +409,10 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				check("statusLine", false, fmt.Sprintf("keeper-statusline.sh not found in statusLine.command — run: harmonik keeper enable %s ...", cfg.agentName))
 			} else {
 				check("statusLine", true, "keeper-statusline.sh wired")
-				// Sub-check: correct env-var name.
-				if !strings.Contains(cmd, "HARMONIK_AGENT=") {
-					check("statusLine.envvar", false, "statusLine.command missing HARMONIK_AGENT= — run: harmonik keeper enable to normalize")
+				// Sub-check: HARMONIK_PROJECT must be present (agent name is derived at
+				// runtime from the tmux session — it is no longer embedded, hk-nm32w).
+				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
+					check("statusLine.project", false, "statusLine.command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
 				}
 				// Sub-check: required "type":"command" field (hk-hs1). Without it
 				// Claude Code rejects the whole settings.json and disables all hooks.
@@ -429,8 +433,8 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("Stop hook", true, "keeper-stop-hook.sh wired")
-				if !strings.Contains(cmd, "HARMONIK_KEEPER_AGENT=") {
-					check("Stop hook.envvar", false, "Stop hook command uses wrong env-var (want HARMONIK_KEEPER_AGENT=) — run: harmonik keeper enable to normalize")
+				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
+					check("Stop hook.project", false, "Stop hook command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
 				}
 			}
 		}
@@ -446,8 +450,8 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("PreCompact hook", true, "keeper-precompact-hook.sh wired")
-				if !strings.Contains(cmd, "HARMONIK_KEEPER_AGENT=") {
-					check("PreCompact hook.envvar", false, "PreCompact hook command uses wrong env-var (want HARMONIK_KEEPER_AGENT=) — run: harmonik keeper enable to normalize")
+				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
+					check("PreCompact hook.project", false, "PreCompact hook command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
 				}
 			}
 		}

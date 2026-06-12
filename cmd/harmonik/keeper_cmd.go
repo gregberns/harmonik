@@ -290,10 +290,12 @@ BEHAVIOUR (Phase-2, .managed-gated)
      or stale (a missing statusLine.command is visible, not silent).
 
 GAUGE SETUP
-  Add to ~/.claude/settings.json:
+  Add to ~/.claude/settings.json (via: harmonik keeper enable <agent> ...):
     "statusLine": {
-      "command": "HARMONIK_PROJECT=/path/to/project HARMONIK_AGENT=<agent> /path/to/scripts/keeper-statusline.sh"
+      "command": "HARMONIK_PROJECT=/path/to/project /path/to/scripts/keeper-statusline.sh"
     }
+  The script derives the agent name from the tmux session name at runtime, so a
+  single global entry works for all concurrent sessions without perturbing peers.
 
 EXIT CODES (watcher mode)
   0  Success (no-op or clean signal shutdown)

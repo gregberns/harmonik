@@ -61,7 +61,18 @@
 # Refs: hk-aalsm (session-keeper Phase-2 PreCompact backstop).
 set -euo pipefail
 
-AGENT="${HARMONIK_KEEPER_AGENT:-${1:-default}}"
+# Derive agent name: HARMONIK_KEEPER_AGENT → positional arg → tmux session name → "default".
+# The tmux fallback means a single global hook entry in ~/.claude/settings.json
+# works correctly for all concurrent agent sessions (hk-nm32w).
+if [ -n "${HARMONIK_KEEPER_AGENT:-}" ]; then
+    AGENT="${HARMONIK_KEEPER_AGENT}"
+elif [ -n "${1:-}" ]; then
+    AGENT="${1}"
+elif [ -n "${TMUX:-}" ]; then
+    AGENT="$(tmux display-message -p '#S' 2>/dev/null || echo default)"
+else
+    AGENT="default"
+fi
 # Reject path-traversal agent names (fail-open = allow native compaction).
 case "$AGENT" in
     */*|*..*) exit 0 ;;

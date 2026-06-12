@@ -33,7 +33,17 @@
 #       hk-whd (robust .model extraction — handles nested {id,display_name} object form).
 set -euo pipefail
 
-AGENT="${HARMONIK_AGENT:-default}"
+# Derive agent name: explicit HARMONIK_AGENT env var → tmux session name → "default".
+# The tmux fallback means a single global statusLine entry in ~/.claude/settings.json
+# works correctly for all concurrent agent sessions; each session writes to its own
+# .ctx file keyed by the tmux session name (hk-nm32w).
+if [ -n "${HARMONIK_AGENT:-}" ]; then
+    AGENT="${HARMONIK_AGENT}"
+elif [ -n "${TMUX:-}" ]; then
+    AGENT="$(tmux display-message -p '#S' 2>/dev/null || echo default)"
+else
+    AGENT="default"
+fi
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
 # HARMONIK_KEEPER_WINDOW_SIZE: optional explicit override for window_size when
 # Claude Code omits context_window_size (e.g. [1m] models). Must be a positive integer.

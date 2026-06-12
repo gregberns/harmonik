@@ -83,8 +83,13 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("statusLine.command does not contain keeper-statusline.sh: %q", cmd)
 	}
-	if !strings.Contains(cmd, "HARMONIK_AGENT=orchestrator") {
-		t.Errorf("statusLine.command does not contain HARMONIK_AGENT=orchestrator: %q", cmd)
+	// hk-nm32w: agent name must NOT be embedded; scripts derive it from the tmux
+	// session name at runtime so all concurrent sessions share one settings entry.
+	if strings.Contains(cmd, "HARMONIK_AGENT=") {
+		t.Errorf("statusLine.command must not embed HARMONIK_AGENT= (hk-nm32w): %q", cmd)
+	}
+	if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
+		t.Errorf("statusLine.command missing HARMONIK_PROJECT=: %q", cmd)
 	}
 	// hk-hs1: statusLine MUST carry "type":"command". Without it Claude Code
 	// rejects the entire settings.json and disables ALL hooks.
@@ -97,8 +102,12 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !found {
 		t.Error("Stop hook not wired in settings.json")
 	}
-	if !strings.Contains(stopCmd, "HARMONIK_KEEPER_AGENT=orchestrator") {
-		t.Errorf("Stop hook command missing HARMONIK_KEEPER_AGENT=orchestrator: %q", stopCmd)
+	// hk-nm32w: agent name must NOT be embedded in hook commands.
+	if strings.Contains(stopCmd, "HARMONIK_KEEPER_AGENT=") {
+		t.Errorf("Stop hook command must not embed HARMONIK_KEEPER_AGENT= (hk-nm32w): %q", stopCmd)
+	}
+	if !strings.Contains(stopCmd, "HARMONIK_PROJECT=") {
+		t.Errorf("Stop hook command missing HARMONIK_PROJECT=: %q", stopCmd)
 	}
 
 	// PreCompact hook.
@@ -106,8 +115,12 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !found {
 		t.Error("PreCompact hook not wired in settings.json")
 	}
-	if !strings.Contains(pcCmd, "HARMONIK_KEEPER_AGENT=orchestrator") {
-		t.Errorf("PreCompact hook command missing HARMONIK_KEEPER_AGENT=orchestrator: %q", pcCmd)
+	// hk-nm32w: agent name must NOT be embedded in hook commands.
+	if strings.Contains(pcCmd, "HARMONIK_KEEPER_AGENT=") {
+		t.Errorf("PreCompact hook command must not embed HARMONIK_KEEPER_AGENT= (hk-nm32w): %q", pcCmd)
+	}
+	if !strings.Contains(pcCmd, "HARMONIK_PROJECT=") {
+		t.Errorf("PreCompact hook command missing HARMONIK_PROJECT=: %q", pcCmd)
 	}
 }
 
@@ -190,15 +203,16 @@ func TestKeeperEnable_KnownLiveWithDestructive(t *testing.T) {
 	}
 }
 
-// TestKeeperEnable_NormalizesEnvVars verifies that an existing stanza with the
-// wrong env-var name (HARMONIK_AGENT in a hook) is updated to HARMONIK_KEEPER_AGENT.
-func TestKeeperEnable_NormalizesEnvVars(t *testing.T) {
+// TestKeeperEnable_NormalizesStaleAgentCmd verifies that an existing stanza with a
+// legacy agent-embedded command is updated to the session-scoped form (hk-nm32w):
+// no HARMONIK_AGENT= or HARMONIK_KEEPER_AGENT= in the command, only HARMONIK_PROJECT=.
+func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 	t.Parallel()
 
 	cfg, settingsPath := makeEnableCfg(t, "orchestrator")
 
-	// Pre-populate settings with a Stop hook using the WRONG env-var.
-	badCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_AGENT=orchestrator " + filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh")
+	// Pre-populate settings with a Stop hook using the old agent-embedded format.
+	legacyCmd := "HARMONIK_PROJECT=" + cfg.projectDir + " HARMONIK_KEEPER_AGENT=orchestrator " + filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh")
 	initial := map[string]interface{}{
 		"hooks": map[string]interface{}{
 			"Stop": []interface{}{
@@ -207,7 +221,7 @@ func TestKeeperEnable_NormalizesEnvVars(t *testing.T) {
 					"hooks": []interface{}{
 						map[string]interface{}{
 							"type":    "command",
-							"command": badCmd,
+							"command": legacyCmd,
 						},
 					},
 				},
@@ -230,11 +244,12 @@ func TestKeeperEnable_NormalizesEnvVars(t *testing.T) {
 	if !found {
 		t.Fatal("Stop hook not found after normalization")
 	}
-	if !strings.Contains(updatedCmd, "HARMONIK_KEEPER_AGENT=") {
-		t.Errorf("Stop hook not normalized: still has wrong env-var in %q", updatedCmd)
+	// hk-nm32w: normalized command must NOT embed the agent name.
+	if strings.Contains(updatedCmd, "HARMONIK_KEEPER_AGENT=") {
+		t.Errorf("Stop hook still embeds HARMONIK_KEEPER_AGENT= after normalization (hk-nm32w): %q", updatedCmd)
 	}
-	if strings.Contains(updatedCmd, "HARMONIK_AGENT=orchestrator") && !strings.Contains(updatedCmd, "HARMONIK_KEEPER_AGENT=") {
-		t.Errorf("Stop hook still has HARMONIK_AGENT= after normalization: %q", updatedCmd)
+	if !strings.Contains(updatedCmd, "HARMONIK_PROJECT=") {
+		t.Errorf("Stop hook missing HARMONIK_PROJECT= after normalization: %q", updatedCmd)
 	}
 }
 
@@ -427,12 +442,13 @@ func makeDoctorCfg(t *testing.T, agent string) (doctorConfig, func()) {
 }
 
 // writeFullSettings writes a settings.json with all three keeper stanzas.
-func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, agent string) {
+// agent is unused in the command strings — hk-nm32w removed agent from commands.
+func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, _ string) {
 	t.Helper()
 	settings := map[string]interface{}{}
-	statusLineCmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_AGENT=" + agent + " " + filepath.Join(scriptsDir, "keeper-statusline.sh")
-	stopCmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=" + agent + " " + filepath.Join(scriptsDir, "keeper-stop-hook.sh")
-	pcCmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=" + agent + " " + filepath.Join(scriptsDir, "keeper-precompact-hook.sh")
+	statusLineCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-statusline.sh")
+	stopCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-stop-hook.sh")
+	pcCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-precompact-hook.sh")
 	mergeStatusLineStanza(settings, statusLineCmd)
 	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", stopCmd)
 	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", pcCmd)

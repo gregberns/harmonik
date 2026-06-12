@@ -518,6 +518,25 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-6r6xv.
 	protectBranches []string
+
+	// beadAuditLogger, when non-nil, is called in the pre-dispatch subsume check
+	// to determine whether a bead was explicitly reopened after a successful close
+	// (reopen-for-fix) rather than crash-restart-recovered.  The distinction
+	// matters because the pre-dispatch subsume check should NOT close a bead that
+	// a human deliberately reopened to apply a corrective fix.
+	//
+	// The function returns the bead's audit log (chronologically ordered list of
+	// events from the Beads ledger).  A "status_changed" event whose OldValue is
+	// "closed" signals a prior proper close followed by a reopen, meaning the
+	// commit referenced in main is stale/incomplete and the agent must run.
+	//
+	// When nil (tests), the check is skipped and the conservative crash-restart
+	// assumption applies (pre-dispatch subsume close fires as before).
+	//
+	// Production: wired to (*brcli.Adapter).AuditLog in newWorkLoopDeps.
+	//
+	// Bead ref: hk-wcv.
+	beadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -703,6 +722,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		emittedEpicsMu:      &sync.Mutex{},
 		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:     cfg.ProtectBranches,
+		beadAuditLogger:     adapter.AuditLog, // hk-wcv: reopen-for-fix bypass in pre-dispatch subsume check
 	}, nil
 }
 
@@ -2008,24 +2028,44 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Runs after emitRunStarted so the event log has a matching run_started;
 	// worktree cleanup is handled by the deferred wtCleanup above.
+	//
+	// hk-wcv: guard against incorrectly closing a bead that was explicitly
+	// reopened for a corrective fix. When the bead's audit trail contains a
+	// closed→open status transition, the bead was properly closed (not crash-
+	// interrupted) and then intentionally reopened because the prior commit was
+	// incomplete. In this case the pre-dispatch close must be skipped so the
+	// agent can produce a new, correct commit. The noCommitGuard and
+	// noChange-timeout paths both call beadAlreadySubsumedInMain independently
+	// and will handle crash-restart recovery correctly when the pre-dispatch
+	// close is skipped.
 	{
 		preDispatchTID, _ := deps.tidGen.Next()
 		if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
-			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, preDispatchTID, beadID, false); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (pre-dispatch-subsumed) %s: %v\n", beadID, closeErr)
-				// hk-hypbi: transient BrUnavailable after merge-already-on-main →
-				// emit success; intent file retained for BI-031 recovery on next startup.
-				if errors.Is(closeErr, brcli.BrUnavailable) {
-					emitDone(true, "close-transient-merged (pre-dispatch-subsumed)")
-				} else {
-					emitDone(false, fmt.Sprintf("close-error (pre-dispatch-subsumed): %v", closeErr))
-				}
+			if beadExplicitlyReopened(ctx, deps.beadAuditLogger, beadID) {
+				// Reopen-for-fix: prior commit is stale/incomplete. Skip the
+				// subsume close and let the agent produce a corrective commit.
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: pre-dispatch-subsume bypassed %s: closed→open in audit trail (reopen-for-fix)\n",
+					beadID)
 			} else {
-				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
-				emitDone(true, "pre-dispatch-subsumed: bead already in main")
+				// Crash-restart (or audit log unavailable): bead's commit is
+				// already on main and the bead was never properly closed. Close it.
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
+				if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, preDispatchTID, beadID, false); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (pre-dispatch-subsumed) %s: %v\n", beadID, closeErr)
+					// hk-hypbi: transient BrUnavailable after merge-already-on-main →
+					// emit success; intent file retained for BI-031 recovery on next startup.
+					if errors.Is(closeErr, brcli.BrUnavailable) {
+						emitDone(true, "close-transient-merged (pre-dispatch-subsumed)")
+					} else {
+						emitDone(false, fmt.Sprintf("close-error (pre-dispatch-subsumed): %v", closeErr))
+					}
+				} else {
+					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
+					emitDone(true, "pre-dispatch-subsumed: bead already in main")
+				}
+				return
 			}
-			return
 		}
 	}
 
@@ -3057,6 +3097,50 @@ func beadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID co
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimRight(line, "\r") == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// beadExplicitlyReopened returns true when the bead's audit log contains a
+// "status_changed" event whose OldValue is "closed", indicating the bead was
+// properly closed (not crash-interrupted) and then intentionally reopened.
+//
+// This is used by the pre-dispatch subsume check (hk-wcv) to distinguish
+// two cases where beadAlreadySubsumedInMain returns true:
+//
+//  1. Crash-restart: the daemon committed the bead's work to main, then
+//     crashed before CloseBead could complete. The reconciler auto-reopened
+//     the in-progress bead. No "closed" state ever existed in the ledger.
+//     → pre-dispatch subsume close SHOULD fire.
+//
+//  2. Reopen-for-fix: the daemon completed the bead (committed + closed),
+//     but the implementation was later found to be incomplete or incorrect.
+//     A human (or automated process) explicitly reopened the bead via
+//     `br update --status open`. The audit log will contain closed→open.
+//     → pre-dispatch subsume close MUST NOT fire; the agent must run.
+//
+// When auditLogger is nil or returns an error, returns false (conservative:
+// crash-restart assumption; the pre-dispatch close fires as before). The
+// noCommitGuard and noChange-timeout paths both call beadAlreadySubsumedInMain
+// independently and will still close the bead correctly for crash-restart
+// even when this function returns false due to audit log unavailability.
+//
+// Bead ref: hk-wcv.
+func beadExplicitlyReopened(ctx context.Context, auditLogger func(context.Context, core.BeadID) ([]brcli.AuditEvent, error), beadID core.BeadID) bool {
+	if auditLogger == nil {
+		return false
+	}
+	events, err := auditLogger(ctx, beadID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"daemon: workloop: beadExplicitlyReopened: AuditLog %s: %v (conservative: not bypassing pre-dispatch close)\n",
+			beadID, err)
+		return false
+	}
+	for _, e := range events {
+		if e.EventType == "status_changed" && e.OldValue == "closed" {
 			return true
 		}
 	}

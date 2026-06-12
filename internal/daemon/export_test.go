@@ -260,6 +260,15 @@ type WorkLoopDepsParams struct {
 	// ExportedWorkLoopDeps installs a fresh mutex so concurrent merges to the
 	// shared origin never race on refs/heads/main (hk-4f5ua / hk-bnm89).
 	MergeMu *sync.Mutex
+
+	// BeadAuditLogger, when non-nil, overrides the beadAuditLogger function
+	// used by the pre-dispatch subsume check to detect reopen-for-fix beads
+	// (hk-wcv). When nil (the test default), the check is skipped and the
+	// conservative crash-restart assumption applies (pre-dispatch close fires).
+	// Supply a non-nil value to exercise the bypass path in unit tests.
+	//
+	// Bead ref: hk-wcv.
+	BeadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -376,6 +385,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		mergeMu:                mergeMu,
 		emittedEpics:           make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:         &sync.Mutex{},
+		beadAuditLogger:        p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
 	}
 }
 
@@ -1567,6 +1577,13 @@ type quitSenderExported = quitSender
 // Bead: hk-trjef.
 func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
 	return beadAlreadySubsumedInMain(ctx, projectDir, beadID)
+}
+
+// ExportedBeadExplicitlyReopened exposes beadExplicitlyReopened for tests.
+//
+// Bead: hk-wcv.
+func ExportedBeadExplicitlyReopened(ctx context.Context, auditLogger func(context.Context, core.BeadID) ([]brcli.AuditEvent, error), beadID core.BeadID) bool {
+	return beadExplicitlyReopened(ctx, auditLogger, beadID)
 }
 
 // ExportedAutoCloseStaleBlockersOnClaimFailure exposes

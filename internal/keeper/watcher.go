@@ -439,6 +439,19 @@ func (w *Watcher) Run(ctx context.Context) error {
 					managedSID = "" // treat as unbound; fall through to latch path below
 				}
 
+				// Defense-in-depth: a daemon dispatch can transiently overwrite
+				// captain.ctx with its UUIDv7 session_id. When .managed holds a
+				// UUIDv4 (the real captain) and the gauge now carries a UUIDv7,
+				// skip-and-retain — keep the last good gauge in place rather than
+				// emitting no_gauge:foreign_session for one tick. The daemon ROOT
+				// fix (hk-lap) is the durable cure; this is the one-tick backstop.
+				// Refs: hk-y1h, epic hk-3js5m.
+				if managedSID != "" && !isUUIDv7(managedSID) && isUUIDv7(ctxFile.SessionID) {
+					slog.DebugContext(ctx, "keeper: transient UUIDv7 in .ctx while .managed is UUIDv4 — skipping tick, retaining last gauge",
+						"agent", w.cfg.AgentName, "managed_sid", managedSID, "ctx_sid", ctxFile.SessionID)
+					continue
+				}
+
 				if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
 					// Foreign session — treat as absent.
 					slog.DebugContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",

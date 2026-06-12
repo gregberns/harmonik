@@ -781,3 +781,53 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 		t.Errorf("want exactly 1 session_keeper_respawn_attempted (cooldown); got %d", len(events))
 	}
 }
+
+// TestWatcher_SkipsNoGaugeOnTransientUUIDv7WhenManagedIsUUIDv4 verifies that
+// when .managed holds a UUIDv4 (the real captain session) and captain.ctx is
+// transiently overwritten with a UUIDv7 (daemon implementer dispatch), the
+// watcher skips the tick without emitting no_gauge:foreign_session — retaining
+// the last good gauge state instead. (Refs: hk-y1h, hk-3js5m)
+func TestWatcher_SkipsNoGaugeOnTransientUUIDv7WhenManagedIsUUIDv4(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "uuid4-managed-uuid7-ctx-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const managedV4SID = "f7e7210d-1234-4abc-8000-000000000002" // UUIDv4 in .managed
+	const ctxV7SID = "019ebb07-0000-7000-8000-000000000001"     // UUIDv7 in .ctx (transient daemon overwrite)
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// .managed already bound to the captain's UUIDv4.
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return managedV4SID, nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+
+	// Write a gauge with a UUIDv7 — simulates daemon dispatch polluting captain.ctx.
+	writeCtxFile(t, projectDir, agent, 85.0, ctxV7SID)
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// Must emit NO no_gauge events — skip-and-retain means the last good gauge is kept.
+	noGaugeEvents := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
+	if len(noGaugeEvents) != 0 {
+		t.Errorf("want 0 session_keeper_no_gauge on transient UUIDv7 when managed is UUIDv4; got %d", len(noGaugeEvents))
+	}
+	// Must also emit no warn — the gauge pct (85) is above threshold but we skipped
+	// processing entirely, so warnArmed is not advanced and no warn fires.
+	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
+	if len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn on transient UUIDv7 skip; got %d", len(warns))
+	}
+}

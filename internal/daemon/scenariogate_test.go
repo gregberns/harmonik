@@ -142,6 +142,77 @@ func TestIsGenuineTestFailure(t *testing.T) {
 	require.False(t, isGenuineTestFailure(errors.New("plain"), "--- FAIL"))
 }
 
+// genuineFailResult builds the scenarioGateResult that classifyScenarioGateError
+// returns for a genuine exit-1 `--- FAIL` (the shape AllReachMerge /
+// CaptainCrewE2E produce when they flake under load).
+func genuineFailResult(t *testing.T) scenarioGateResult {
+	t.Helper()
+	out := []byte("--- FAIL: TestAllReachMerge (0.01s)\n    x_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
+	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), out, []string{"./internal/daemon/..."})
+	require.True(t, res.blocked, "precondition: a genuine FAIL must classify as blocked")
+	return res
+}
+
+func TestScenarioGateWithRetry_PassFirstRun(t *testing.T) {
+	// A clean first run never retries and never blocks.
+	calls := 0
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+		calls++
+		return scenarioGateResult{} // pass
+	})
+	require.False(t, res.blocked)
+	require.Equal(t, 1, calls, "a passing first run must NOT retry")
+}
+
+func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
+	// Genuine FAIL on run 1, pass on run 2 = load-induced flake → fail-open
+	// (hk-5em). This is the AllReachMerge / CaptainCrewE2E-under-load case the
+	// old gate false-blocked.
+	calls := 0
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+		calls++
+		if calls == 1 {
+			return genuineFailResult(t)
+		}
+		return scenarioGateResult{} // retry passes
+	})
+	require.False(t, res.blocked, "flaky red (fail run 1, pass run 2) must NOT block (fail-open)")
+	require.Empty(t, res.reason)
+	require.Equal(t, 2, calls, "a first-run FAIL must trigger exactly one retry")
+}
+
+func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
+	// Genuine FAIL on both runs = deterministic regression → BLOCK. A real
+	// code-break must still be caught; retry does not weaken coverage.
+	calls := 0
+	want := genuineFailResult(t)
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+		calls++
+		return genuineFailResult(t)
+	})
+	require.True(t, res.blocked, "a deterministic regression (FAIL on both runs) must BLOCK")
+	require.Contains(t, res.reason, "scenario_gate_failed")
+	require.Equal(t, want.reason, res.reason, "the retry's reason is returned")
+	require.Equal(t, 2, calls, "block requires the second (confirming) run")
+}
+
+func TestScenarioGateWithRetry_FlakyThenNonBlockInfra(t *testing.T) {
+	// Genuine FAIL on run 1, then a non-block infra outcome (e.g. timeout /
+	// SIGKILL) on retry → still fail-open. The retry being non-block for ANY
+	// reason means we did not confirm a deterministic regression.
+	calls := 0
+	res := scenarioGateWithRetry([]string{"./internal/daemon/..."}, func() scenarioGateResult {
+		calls++
+		if calls == 1 {
+			return genuineFailResult(t)
+		}
+		// Retry surfaces as a timeout (non-block per classifyScenarioGateError).
+		return classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
+	})
+	require.False(t, res.blocked, "an unconfirmed first-run FAIL (retry non-block) must NOT block")
+	require.Equal(t, 2, calls)
+}
+
 func TestFileToGoPackagePattern(t *testing.T) {
 	tests := []struct {
 		file string

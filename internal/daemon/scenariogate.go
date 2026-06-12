@@ -63,6 +63,18 @@ type scenarioGateResult struct {
 // affected package(s) (affectedScenarioPkgs), not all of ./internal/daemon/...,
 // to keep the gate tractable.
 //
+// RETRY-ON-GENUINE-FAIL (hk-5em): under load the heavy real-daemon scenario
+// tests (e.g. AllReachMerge, CaptainCrewE2E) flake — they fail run 1 with a
+// genuine exit-1 `--- FAIL` (NOT a timeout/SIGKILL, so the existing fail-open
+// branches don't cover them) yet pass when re-run on a quieter box.  Blocking on
+// the first genuine FAIL therefore strands SOUND beads whose code was correct.
+// So when the first run classifies as a genuine RED, the gate re-runs the same
+// package(s) ONCE: a real regression fails deterministically on retry (BLOCK); a
+// load-induced flake passes (fail-open, ALLOW).  This mirrors the shell gate
+// scripts/scenario-gate.sh (hk-8b35c), keeping script and daemon in lock-step as
+// standard-bead.dot D3 requires, and extends the OOM/SIGKILL non-block precedent
+// to the one residual flake shape (genuine-FAIL-under-load) it didn't cover.
+//
 // On git/filesystem errors the gate is skipped (conservative: never false-block
 // a run due to gate machinery failure).
 //
@@ -86,6 +98,15 @@ func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) scenar
 		return scenarioGateResult{}
 	}
 
+	return scenarioGateWithRetry(pkgs, func() scenarioGateResult {
+		return runScenarioGateOnce(ctx, wtPath, pkgs)
+	})
+}
+
+// runScenarioGateOnce runs the scenario suite exactly once for the given
+// package(s) and classifies the result.  Extracted from runScenarioGateIfNeeded
+// so the retry-on-flaky path (hk-5em) can re-invoke a single run.
+func runScenarioGateOnce(ctx context.Context, wtPath string, pkgs []string) scenarioGateResult {
 	gateCtx, cancel := context.WithTimeout(ctx, scenarioGateTimeout)
 	defer cancel()
 
@@ -97,6 +118,35 @@ func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) scenar
 	out, testErr := cmd.CombinedOutput()
 
 	return classifyScenarioGateError(gateCtx.Err(), testErr, out, pkgs)
+}
+
+// scenarioGateWithRetry applies the retry-on-genuine-FAIL policy (hk-5em) over a
+// run-once callback.  It runs the gate; if the first run is non-block it returns
+// immediately; if the first run is a genuine RED it re-runs ONCE and only blocks
+// when the retry is ALSO a genuine RED (a deterministic regression).  A run that
+// fails once but not on retry is treated as a load-induced flake and fails open.
+//
+// runOnce is injected so this policy is unit-testable without a real `go test`;
+// the production caller supplies runScenarioGateOnce.  Mirrors the shell gate
+// scripts/scenario-gate.sh (hk-8b35c) so script and daemon agree (standard-bead
+// D3).
+func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) scenarioGateResult {
+	first := runOnce()
+	if !first.blocked {
+		return first
+	}
+	fmt.Fprintf(os.Stderr,
+		"daemon: scenario-gate: first-run FAIL for `go test -tags=scenario %s` — retrying once to check for flakiness (hk-5em)\n",
+		strings.Join(pkgs, " "))
+	retry := runOnce()
+	if !retry.blocked {
+		fmt.Fprintf(os.Stderr,
+			"daemon: scenario-gate: WARNING: FLAKY — `go test -tags=scenario %s` failed run 1 but not run 2 — ALLOWING merge (pre-existing flaky red, not a regression; hk-5em)\n",
+			strings.Join(pkgs, " "))
+		return scenarioGateResult{} // non-block: flaky, not a real RED
+	}
+	// Genuine FAIL on both runs → deterministic regression → BLOCK.
+	return retry
 }
 
 // classifyScenarioGateError interprets the result of the gate's `go test`

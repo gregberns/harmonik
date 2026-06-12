@@ -242,6 +242,7 @@ func hfatalFixturePollHeldEvent(t *testing.T, bus *stubEventCollector, deadline 
 //
 // Bead ref: hk-qxtbq.
 func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	twinBin := hfatalFixtureTwinPath()

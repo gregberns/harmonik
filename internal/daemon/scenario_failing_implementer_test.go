@@ -306,6 +306,7 @@ func failImplRunIDFromJSONL(t *testing.T, jsonlPath string) string {
 //
 // Bead: hk-59lg8.
 func TestScenario_FailingImplementer_RunFailed(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 
 	// Locate the twin binary; skip when absent.

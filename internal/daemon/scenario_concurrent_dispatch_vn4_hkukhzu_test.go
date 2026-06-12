@@ -101,6 +101,7 @@ func vn4BootForTesting() func(ctx context.Context, cfg daemon.Config) <-chan err
 //
 // Bead: hk-ukhzu.
 func TestScenario_ConcurrentDispatch_VN4_AllReachMerge(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
 		N:                 3,
 		TwinScenario:      "single-happy-path",
@@ -291,6 +292,7 @@ var _ tmux.Adapter = (*vn4PaneFixtureAdapter)(nil)
 // documents the path and is the scaffold to finish once a socket stub lands
 // (follow-up: a hook-bridge socket fake for substrate-path scenario tests).
 func TestScenario_ConcurrentDispatch_VN4_WatchdogContention(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Skip("VN4 keystone: substrate-path run cannot reach a terminal state without " +
 		"hook-bridge socket wiring (agent_ready/outcome arrive over the socket, not " +
 		"stdout); see the test docstring's ALTITUDE BLOCKER. The channel-level fan-out " +

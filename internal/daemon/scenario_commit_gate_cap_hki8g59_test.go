@@ -152,6 +152,7 @@ exit 0
 // re-entry is bounded by the traversal cap and terminates as a run-failure —
 // NEVER an infinite loop.
 func TestScenario_CommitGateCapTerminates_hki8g59(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)

@@ -387,6 +387,7 @@ func (l *qsdBlockingLedger) BlocksEdge(_ context.Context, blocker, blocked core.
 //
 // Bead: hk-sk00a; regression guard for hk-24xn1.
 func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
@@ -543,6 +544,7 @@ func TestScenario_QueueSubmit_IdleWake_hk24xn1(t *testing.T) {
 //
 // Bead: hk-sk00a; regression guard for hk-nbjht.
 func TestScenario_QueueSubmit_DeferredUndefer_hknbjht(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH).
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {

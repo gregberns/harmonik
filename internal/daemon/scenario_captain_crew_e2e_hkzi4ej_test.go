@@ -720,6 +720,7 @@ func cc14QueueItemStatuses(t *testing.T, projectDir, queueName string) []string 
 //
 // Bead: hk-zi4ej.
 func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	const captainName = "cc14-captain"
 
 	// ── Preflight: locate twin + br ──────────────────────────────────────────

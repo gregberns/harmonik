@@ -381,6 +381,7 @@ func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 // Refs: hk-z0pmi, hk-5pg37, QM-002b Class A', QM-034, QM-027.
 // Bead: hk-ivzsl.
 func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 	// EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
 

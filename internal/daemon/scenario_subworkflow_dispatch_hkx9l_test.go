@@ -202,6 +202,7 @@ func swDispatchDeps(t *testing.T, collector *stubEventCollector, projectDir stri
 // sub_workflow_exited carry the parent run_id, and no extra run_id appears in
 // any event (SW-INV-001). The cascade completes with success=true.
 func TestScenario_SubWorkflowDispatch_InPlaceNoRunID(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)
@@ -292,6 +293,7 @@ func TestScenario_SubWorkflowDispatch_InPlaceNoRunID(t *testing.T) {
 // unconditional fallback (to "close-needs-attention"). This proves verbatim
 // outcome propagation per SW-006 / SW-INV-002.
 func TestScenario_SubWorkflowDispatch_TerminalOutcomeEscapes_Success(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)
@@ -360,6 +362,7 @@ func TestScenario_SubWorkflowDispatch_TerminalOutcomeEscapes_Success(t *testing.
 // "close-needs-attention") rather than the SUCCESS-conditioned edge (to "close").
 // This proves the FAIL Outcome propagates verbatim per SW-006 / SW-INV-002.
 func TestScenario_SubWorkflowDispatch_TerminalOutcomeEscapes_Fail(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)

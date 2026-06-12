@@ -217,6 +217,7 @@ func reviewHangFixtureAdapterRegistry(t *testing.T) *handlercontract.AdapterRegi
 // Source: docs/scenario-test-gap-audit-2026-05-18.md #5.
 // Bead: hk-nfhqd.
 func TestScenario_ReviewLoop_AgentReadyTimeoutRequeues(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// NOT parallel (hk-1o0cc de-flake): isolates the process-global
 	// ~/.claude.json trust config so EnsureWorktreeTrust does not contend on the
 	// real config's lock under load. See rlIsolateClaudeConfig.

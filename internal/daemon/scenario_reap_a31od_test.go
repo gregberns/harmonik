@@ -339,6 +339,7 @@ func reapScenExtractOrphanSweepPayload(t *testing.T, jsonlPath string) reapScenO
 //
 // Bead: hk-a31od.
 func TestScenario_Reap_BootOrphanSweepCounts(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 	// EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
 

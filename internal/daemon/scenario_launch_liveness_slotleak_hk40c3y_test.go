@@ -263,6 +263,7 @@ func llslEventCount(t *testing.T, jsonlPath, eventType string) int {
 //
 // Bead: hk-40c3y.
 func TestScenario_LaunchLiveness_SlotNoLeak_HK40C3Y(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	const n = 3
 
 	// Engage the REAL spawn semaphore via a fake-adapter *tmuxSubstrate. The cap

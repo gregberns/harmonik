@@ -211,6 +211,7 @@ func TestNewWindowMutex_SerializesConcurrentSpawns(t *testing.T) {
 // reopened) but NO tmux_new_window_timeout event was emitted — the operator never
 // saw WHY. This test's event assertion is the regression guard for that gap.
 func TestScenario_DotMode_NewWindowTimeoutEmitsDiagnosticAndReopens(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := implReadyFixtureProjectDir(t)

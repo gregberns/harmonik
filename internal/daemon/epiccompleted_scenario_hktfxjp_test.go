@@ -231,6 +231,7 @@ func hktfxjpDeps(t *testing.T, ledger beadLedger, bus handlercontract.EventEmitt
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestScenario_EpicCompleted_EmitsOnLastChildClose_hktfxjp(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	ctx := context.Background()
 
 	const (
@@ -289,6 +290,7 @@ func TestScenario_EpicCompleted_EmitsOnLastChildClose_hktfxjp(t *testing.T) {
 // AC-3 / AC-4 negative cases — bundled here to confirm the guard is not
 // trigger-happy (one still-open sibling → zero; no parent → zero).
 func TestScenario_EpicCompleted_NoEmitWhenNotComplete_hktfxjp(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	ctx := context.Background()
 
 	t.Run("AC-3_open_sibling", func(t *testing.T) {
@@ -341,6 +343,7 @@ func TestScenario_EpicCompleted_NoEmitWhenNotComplete_hktfxjp(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestScenario_EpicCompleted_AtMostOnceUnderSiblingRace_hktfxjp(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	ctx := context.Background()
 
 	const (
@@ -437,6 +440,7 @@ func TestScenario_EpicCompleted_AtMostOnceUnderSiblingRace_hktfxjp(t *testing.T)
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestScenario_EpicCompleted_BootSeedSurvivesRestart_hktfxjp(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	ctx := context.Background()
 
 	const (

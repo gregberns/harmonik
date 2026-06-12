@@ -304,6 +304,7 @@ func onNfrGetQueuePaused(t *testing.T, ch <-chan core.QueuePausedPayload, timeou
 //
 // Bead: hk-95a2r.
 func TestScenario_OperatorNFR_PauseWithRunInFlight(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	// ── 1. Build the event bus and wire subscribers (before Seal) ────────────

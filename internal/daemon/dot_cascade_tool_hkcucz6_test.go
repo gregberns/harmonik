@@ -157,6 +157,7 @@ func toolNodeCountEvents(events []string, eventType string) int {
 //   - node_dispatch_requested fired for start, run-tool, close (≥3 events).
 //   - node_dispatch_decided fired for each cascade decision (≥3 events).
 func TestScenario_ToolNode_Exit0_RoutesToCloseTerminal(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &stubEventCollector{}
@@ -215,6 +216,7 @@ func TestScenario_ToolNode_Exit0_RoutesToCloseTerminal(t *testing.T) {
 //   - result.TerminalNodeID = "close-needs-attention"
 //   - result.NeedsAttention = true
 func TestScenario_ToolNode_Exit3_DeterministicRoutesToFailTerminal(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &stubEventCollector{}
@@ -272,6 +274,7 @@ func TestScenario_ToolNode_Exit3_DeterministicRoutesToFailTerminal(t *testing.T)
 //   - result.NeedsAttention = true
 //   - Completes within ~5 s of the 1 s timeout.
 func TestScenario_ToolNode_TimeoutKill_TransientRoutesToFailTerminal(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &stubEventCollector{}
@@ -333,6 +336,7 @@ func TestScenario_ToolNode_TimeoutKill_TransientRoutesToFailTerminal(t *testing.
 //   - result.TerminalNodeID = ""
 //   - result.Summary contains "context cancelled"
 func TestScenario_ToolNode_CtxCancel_CanceledNeedsAttentionFalse(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &stubEventCollector{}

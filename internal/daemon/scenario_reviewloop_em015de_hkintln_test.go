@@ -268,6 +268,7 @@ func em015FixtureDeps(t *testing.T, projectDir, scriptPath string, bus *stubEven
 // Spec refs: specs/execution-model.md §4.3 EM-015d, §4.3 T-WM-021.
 // Bead: hk-intln. Refs: EM-015d.
 func TestScenario_EM015d_CapHit_RequestChanges3x(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	twinPath, twinAvailable := scenariotest.TwinBinaryPath()
 	if twinAvailable {
 		t.Logf("EM015d CapHit: twin binary found at %q", twinPath)
@@ -365,6 +366,7 @@ func TestScenario_EM015d_CapHit_RequestChanges3x(t *testing.T) {
 // Spec refs: specs/execution-model.md §4.3 EM-015d (BLOCK routing at §9 switch).
 // Bead: hk-intln. Refs: EM-015d.
 func TestScenario_EM015d_Block_ImmediateClose(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	twinPath, twinAvailable := scenariotest.TwinBinaryPath()
 	if twinAvailable {
 		t.Logf("EM015d Block: twin binary found at %q", twinPath)
@@ -476,6 +478,7 @@ func TestScenario_EM015d_Block_ImmediateClose(t *testing.T) {
 // Spec refs: specs/execution-model.md §4.3 EM-015e, §4.3 T-WM-022.
 // Bead: hk-intln. Refs: EM-015e.
 func TestScenario_EM015e_NoProgress_ReviewerNotLaunched(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	twinPath, twinAvailable := scenariotest.TwinBinaryPath()
 	if twinAvailable {
 		t.Logf("EM015e NoProgress: twin binary found at %q", twinPath)

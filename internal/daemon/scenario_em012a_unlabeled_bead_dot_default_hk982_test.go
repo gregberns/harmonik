@@ -274,6 +274,7 @@ func em012aStandardBeadDotPath(t *testing.T) string {
 //
 // Spec ref: execution-model.md §4.3.EM-012a tier 4 ("Built-in fallback: `dot`").
 func TestScenario_EM012a_TierFour_YieldsDotNeverSingle(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &modeResolveFixtureBus{}
@@ -306,6 +307,7 @@ func TestScenario_EM012a_TierFour_YieldsDotNeverSingle(t *testing.T) {
 //
 // Spec ref: execution-model.md §4.3.EM-012a tier 3 (daemon default) + PL-004a.
 func TestScenario_EM012a_TierThree_ProductionDefault_YieldsDot(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &modeResolveFixtureBus{}
@@ -328,6 +330,7 @@ func TestScenario_EM012a_TierThree_ProductionDefault_YieldsDot(t *testing.T) {
 // carrying non-workflow labels (e.g. area:, size:) still falls through to the
 // tier-4 dot fallback when no daemon default is set.
 func TestScenario_EM012a_UnrelatedLabels_TierFour_YieldsDot(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	bus := &modeResolveFixtureBus{}
@@ -364,6 +367,7 @@ func TestScenario_EM012a_UnrelatedLabels_TierFour_YieldsDot(t *testing.T) {
 // mode by default": after mode resolves to `dot` (via tier-4 or tier-3), the
 // embedded standard-bead.dot graph is the one that runs.
 func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := em012aProjectDir(t)

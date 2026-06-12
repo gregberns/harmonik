@@ -441,6 +441,7 @@ exit 0
 //	(c) [hk-8oy] review_fixup_stalled was NOT emitted — the reseed prevented the
 //	    HEAD-unchanged mis-classification.
 func TestScenario_ReviewLoop_ResumeReseedSavesIdleImplementer(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// NOT parallel: mutates package-level timing vars + contends on the
 	// process-global ~/.claude.json trust lock (see rlIsolateClaudeConfig).
 	rlIsolateClaudeConfig(t)

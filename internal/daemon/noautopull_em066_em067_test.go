@@ -99,6 +99,7 @@ func (c *countingLedger) ReopenBead(_ context.Context, _ string, _ brcli.Timeout
 // Spec ref: specs/execution-model.md §4.11.EM-066.
 // Bead: hk-h5lv2.
 func TestScenario_NoAutoPull_ZeroRunsStarted_EM066(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -174,6 +175,7 @@ func TestScenario_NoAutoPull_ZeroRunsStarted_EM066(t *testing.T) {
 // Spec ref: specs/execution-model.md §4.11.EM-066 opt-in branch.
 // Bead: hk-h5lv2.
 func TestScenario_AutoPull_BrReadyFallbackFires_EM066(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -250,6 +252,7 @@ func TestScenario_AutoPull_BrReadyFallbackFires_EM066(t *testing.T) {
 // Spec ref: specs/execution-model.md §4.11.EM-067.
 // Bead: hk-h5lv2.
 func TestScenario_BrReadyOperatorPauseGate_EM067(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

@@ -481,6 +481,7 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 //
 // Bead: hk-umemp.
 func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Locate the twin binary; skip when absent.
 	twinPath, ok := scenariotest.TwinBinaryPath()
 	if !ok {
@@ -733,6 +734,7 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 //
 // Bead: hk-umemp.
 func TestScenario_ConcurrentMultiQueue_N2_MidRunKill(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Locate br binary.
 	realBrPath := cmqBrPath(t)
 

@@ -234,6 +234,7 @@ func sweepQOPollOrphanSweepCompleted(t *testing.T, jsonlPath string, budget time
 //
 // Bead: hk-tutqk.
 func TestScenario_OrphanSweep_QueueOwnedBeadReset(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 	// EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
 

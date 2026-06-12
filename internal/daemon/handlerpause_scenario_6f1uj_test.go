@@ -95,6 +95,7 @@ func hpScenarioBudgetExhaustedPayload(t *testing.T, runID core.RunID) []byte {
 // specs/execution-model.md §4.6; specs/scenario-harness.md §4.
 // Bead: hk-6f1uj.
 func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	// handlerPausedCh receives payloads of handler_paused events delivered to

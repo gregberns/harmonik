@@ -53,6 +53,7 @@ import (
 // is emitted before the timeout fires. Pre-fix, no pre-exec message was ever
 // emitted on the DOT path and this assertion fails.
 func TestScenario_DotMode_EmitsLaunchInitiated(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := implReadyFixtureProjectDir(t)

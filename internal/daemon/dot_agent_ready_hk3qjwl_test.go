@@ -55,6 +55,7 @@ import (
 // The implementer handler hangs without signalling readiness, so the
 // waitAgentReady gate must fire agent_ready_timeout.
 func TestScenario_DotMode_ImplementerAgentReadyTimeout(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	// Reuse the review-loop implementer-ready fixtures (same package): a git

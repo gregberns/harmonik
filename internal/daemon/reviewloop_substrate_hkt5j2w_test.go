@@ -291,6 +291,7 @@ exit 0
 // Spec refs: specs/process-lifecycle.md §4.7 PL-021b; handler-contract.md §4.
 // Bead: hk-t5j2w.
 func TestScenario_ReviewLoop_SubstrateWired(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// NOT parallel (hk-1o0cc de-flake): isolates the process-global
 	// ~/.claude.json trust config so EnsureWorktreeTrust does not contend on the
 	// real config's lock under load. See rlIsolateClaudeConfig.

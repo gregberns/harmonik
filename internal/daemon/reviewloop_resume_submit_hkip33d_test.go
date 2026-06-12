@@ -437,6 +437,7 @@ exit 0
 //	    produces progress: the run completes APPROVE with no no_progress_detected
 //	    and no agent_ready_timeout.
 func TestScenario_ReviewLoop_ResumeSubmitReliable(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// NOT parallel (hk-1o0cc de-flake): two reasons.
 	//  1. This test mutates the package-level vars resumeSubmitRetryDelay /
 	//     resumeSubmitRetries (via the Exported* pointers) that production

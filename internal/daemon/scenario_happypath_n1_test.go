@@ -300,6 +300,7 @@ func scenarioN1PollRunTerminal(t *testing.T, jsonlPath string, budget time.Durat
 //
 // Bead: hk-jf2tb.
 func TestScenario_HappyPath_N1(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 	// EnsureWorktreeTrust from the running harmonik daemon's ~/.claude.json.lock.
 	// Parallelism would race on the process-wide env var across concurrent scenario tests.

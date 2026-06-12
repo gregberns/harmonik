@@ -130,6 +130,7 @@ func (s *brPriorityOrderStub) claimOrderSnapshot() []core.BeadID {
 // Spec refs: specs/beads-integration.md §4.a BI-013d; workloop.go:692.
 // Bead: hk-tul2a.
 func TestScenario_BrReadyPriorityClaimOrder_hktul2a(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

@@ -178,6 +178,7 @@ func implReadyFixtureAdapterRegistry(t *testing.T) *handlercontract.AdapterRegis
 //
 // Bead: hk-kunm4.
 func TestScenario_ReviewLoop_ImplementerAgentReadyTimeout(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// NOT parallel (hk-1o0cc de-flake): isolates the process-global
 	// ~/.claude.json trust config so EnsureWorktreeTrust does not contend on the
 	// real config's lock under load. See rlIsolateClaudeConfig.

@@ -321,6 +321,7 @@ func hktijajAdvanceMainOn(t *testing.T, ctx context.Context, projectDir, relPath
 //
 // Bead: hk-tijaj. Spec: specs/execution-model.md §4.12 EM-053.
 func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const (
@@ -524,6 +525,7 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 //
 // Bead: hk-tijaj. Spec: specs/execution-model.md §4.12 EM-052; mergeMu (hk-yyso7).
 func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const n = 5

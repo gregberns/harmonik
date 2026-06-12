@@ -40,6 +40,18 @@ import (
 // FAIL on a t.Fatal body, or a compile error on a malformed body), not a
 // no-Go-files build-constraint skip.
 //
+// The module needs a go.mod at the worktree root because the fixture project dir
+// is not itself a Go module. That root go.mod, however, also turns on the
+// post-merge build gate (workloop.go: `go build ./...` + `go vet ./...`, run when
+// go.mod is present in the merged tree). With ONLY the //go:build scenario probe
+// file, the untagged merge-time `go vet ./...` matches no packages and exits 1
+// ("no packages to vet") — a spurious merge_build_failed that wrongly reopened
+// the otherwise-mergeable compile-fail bead (hk-ti4). Committing a trivial
+// NON-test scenariopkg/doc.go gives that module one vettable package so the
+// merge-time build gate passes, while the bad/RED probe stays behind the scenario
+// tag and so is excluded from the untagged build/vet — the gate's own
+// `-tags=scenario` run still sees the real compile error / FAIL verdict.
+//
 // scenarioTestBody is inserted as the body of TestScenarioGateProbe(t).
 func scenarioGateWorktreeFactory(scenarioTestBody string) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
@@ -67,6 +79,14 @@ func scenarioGateWorktreeFactory(scenarioTestBody string) func(ctx context.Conte
 			return fail("scenarioGateWorktreeFactory: write go.mod: %w", wErr)
 		}
 
+		// A trivial NON-test file so the merge-time `go vet ./...` (which does
+		// NOT carry -tags=scenario, so it excludes probe_test.go) has a package
+		// to vet and exits 0 instead of failing with "no packages to vet"
+		// (hk-ti4).
+		if wErr := os.WriteFile(filepath.Join(pkgDir, "doc.go"), []byte("package scenariopkg\n"), 0o644); wErr != nil {
+			return fail("scenarioGateWorktreeFactory: write doc.go: %w", wErr)
+		}
+
 		// A scenario-tagged test. The //go:build scenario line makes the file
 		// scenario-touching (isScenarioTouching), so the gate runs it.
 		testSrc := "//go:build scenario\n\npackage scenariopkg\n\nimport \"testing\"\n\n" +
@@ -76,7 +96,7 @@ func scenarioGateWorktreeFactory(scenarioTestBody string) func(ctx context.Conte
 		}
 
 		for _, args := range [][]string{
-			{"add", "go.mod", "scenariopkg/probe_test.go"},
+			{"add", "go.mod", "scenariopkg/doc.go", "scenariopkg/probe_test.go"},
 			{"commit", "-m", "test(scenario): probe for " + runID},
 		} {
 			//nolint:gosec // G204: git args are test-internal literals

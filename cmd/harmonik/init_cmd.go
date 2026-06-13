@@ -2,43 +2,50 @@ package main
 
 // init_cmd.go — `harmonik init` subcommand implementation.
 //
-// # Purpose (hk-y171w)
+// # Purpose (hk-y171w, PL-029)
 //
 // First-time bootstrap of a new project for harmonik. Creates the .harmonik/
-// directory structure, writes project config files, initialises the beads
-// database, renders AGENTS.md from the template, and (optionally) starts the
-// supervisor.
+// directory structure, provisions fleet skills and scaffold files from the
+// binary-embedded asset bundle, writes project config files, initialises the
+// beads database, renders AGENTS.md from the embedded template, and (optionally)
+// starts the supervisor.
 //
 // # Steps
 //
 //  1. Precondition check (git repo present, binaries on PATH).
-//  2. FAIL-CLOSED guard: --target-branch MUST equal "main" until hk-m8vy2
-//     (merge-retarget) lands.
-//  3. Create .harmonik/ subdirectories (events/, worktrees/, beads-intents/).
-//  4. Run `br init --prefix <prefix>` to initialise the beads database
+//  2. Create .harmonik/ subdirectories (events/, worktrees/, beads-intents/,
+//     comms/, crew/, keeper/, queues/).
+//  3. Run `br init --prefix <prefix>` to initialise the beads database
 //     (skipped when .beads/ already exists, unless --force).
-//  5. Write .harmonik/config.yaml (project-level daemon defaults).
-//  6. Write .harmonik/branching.yaml (branching defaults).
-//  7. Write .harmonik/.gitignore (excludes runtime files from git).
-//  8. Render docs/templates/AGENTS.template.md → AGENTS.md (substitutes
+//  4. Write .harmonik/config.yaml (project-level daemon defaults).
+//  5. Write .harmonik/branching.yaml (branching defaults).
+//  6. Write .harmonik/.gitignore (excludes runtime files from git).
+//  7. Provision 8 fleet skills from the embedded asset bundle →
+//     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
+//     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}.
+//  8. Write scaffold files from the embedded asset bundle →
+//     AGENT_INDEX.md, STATUS.md, TASKS.md.
+//  9. Render embedded AGENTS.template.md → AGENTS.md (substitutes
 //     $PROJECT_DIR and $TARGET_BRANCH).
-//  9. Symlink CLAUDE.md → AGENTS.md.
-// 10. (Optional) Run `harmonik supervise start --watch-restart` unless
+// 10. Symlink CLAUDE.md → AGENTS.md.
+// 11. (Optional) Run `harmonik supervise start --watch-restart` unless
 //     --no-supervise is passed.
-// 11. (Optional) Smoke test when --smoke is passed.
+// 12. (Optional) Smoke test when --smoke is passed.
 //
 // # Idempotency
 //
 // By default each step is skipped when its output artifact already exists.
 // Pass --force to overwrite existing files (br init --force, file overwrites).
 //
-// # FAIL-CLOSED constraint
+// # --target-branch
 //
-// Until hk-m8vy2 (merge-retarget) lands, the daemon only merges completed work
-// to main. Passing --target-branch with a value other than "main" exits 1 with
-// a clear error. Remove this guard when hk-m8vy2 lands.
+// The real fail-closed enforcement of the target branch is owned by the daemon's
+// own boot guard (branching.yaml lands_on → TargetBranch with flag > file >
+// default precedence per WM-005b, plus protect-branch / forbid-default-main
+// enforcement). init passes --target-branch through to config.yaml and
+// branching.yaml without imposing its own guard.
 //
-// Bead ref: hk-y171w.
+// Bead refs: hk-y171w, hk-7iyh (fleet-portability T11).
 
 import (
 	"fmt"
@@ -126,17 +133,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		prefix = "hk"
 	}
 
-	// FAIL-CLOSED: --target-branch != "main" is not yet supported.
-	// Remove this guard when hk-m8vy2 (merge-retarget) lands.
-	if targetBranch != "main" {
-		fmt.Fprintf(stderr,
-			"harmonik init: --target-branch %q is not yet supported.\n"+
-				"The daemon currently merges all completed work to 'main' only.\n"+
-				"Tracking bead: hk-m8vy2 (merge-retarget). Until it lands, --target-branch must be \"main\".\n",
-			targetBranch)
-		return 1
-	}
-
 	// Run doctor checks.
 	if ok := runDoctorChecks(projectDir, stdout, stderr); !ok {
 		return 1
@@ -173,17 +169,27 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Step 8: render AGENTS.md from template.
+	// Step 8: provision 8 fleet skills from the embedded asset bundle.
+	if code := provisionSkills(projectDir, force, stdout, stderr); code != 0 {
+		return code
+	}
+
+	// Step 9: write scaffold files (AGENT_INDEX.md, STATUS.md, TASKS.md).
+	if code := provisionScaffolds(projectDir, force, stdout, stderr); code != 0 {
+		return code
+	}
+
+	// Step 10: render AGENTS.md from embedded template.
 	if code := renderAgentsMD(projectDir, targetBranch, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 9: symlink CLAUDE.md → AGENTS.md.
+	// Step 11: symlink CLAUDE.md → AGENTS.md.
 	if code := ensureClaudeMDSymlink(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 10: start supervisor (optional).
+	// Step 12: start supervisor (optional).
 	if !noSupervise {
 		if code := maybeStartSupervise(projectDir, stdout, stderr); code != 0 {
 			// Non-fatal: supervisor start failure is logged but does not abort init.
@@ -191,7 +197,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Step 11: smoke test (optional).
+	// Step 13: smoke test (optional).
 	if smoke {
 		if code := runSmokeTest(projectDir, stdout, stderr); code != 0 {
 			return code
@@ -247,13 +253,17 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 	return ok
 }
 
-// mkdirAll creates the required .harmonik/ subdirectories.
+// mkdirAll creates the required .harmonik/ subdirectories (PL-029d).
 func mkdirAll(projectDir string, stderr io.Writer) int {
 	dirs := []string{
 		filepath.Join(projectDir, ".harmonik"),
 		filepath.Join(projectDir, ".harmonik", "events"),
 		filepath.Join(projectDir, ".harmonik", "worktrees"),
 		filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		filepath.Join(projectDir, ".harmonik", "comms"),
+		filepath.Join(projectDir, ".harmonik", "crew"),
+		filepath.Join(projectDir, ".harmonik", "keeper"),
+		filepath.Join(projectDir, ".harmonik", "queues"),
 	}
 	for _, d := range dirs {
 		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -303,7 +313,6 @@ const configYAMLContent = `# harmonik project configuration
 version: 1
 daemon:
   # Branch harmonik merges completed bead branches into.
-  # FAIL-CLOSED: only "main" is supported until hk-m8vy2 (merge-retarget) lands.
   target_branch: %s
   # Maximum number of beads dispatched concurrently.
   # Disk/CPU knee is ~4–5 on a 10-core machine.
@@ -371,6 +380,9 @@ cognition/
 beads-intents/
 queue.json
 comms/
+crew/
+keeper/
+queues/
 `
 
 // writeHarmonikGitignore writes .harmonik/.gitignore.
@@ -389,9 +401,9 @@ func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Wri
 	return 0
 }
 
-// renderAgentsMD reads docs/templates/AGENTS.template.md, substitutes
-// $PROJECT_DIR and $TARGET_BRANCH, and writes AGENTS.md at the project root.
-// Skipped when AGENTS.md already exists and force is false.
+// renderAgentsMD reads the embedded AGENTS.template.md (foreign-repo variant),
+// substitutes $PROJECT_DIR and $TARGET_BRANCH, and writes AGENTS.md at the
+// project root. Skipped when AGENTS.md already exists and force is false.
 func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	outPath := filepath.Join(projectDir, "AGENTS.md")
 	if _, err := os.Stat(outPath); err == nil && !force {
@@ -399,12 +411,9 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 		return 0
 	}
 
-	templatePath := filepath.Join(projectDir, "docs", "templates", "AGENTS.template.md")
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
-	data, err := os.ReadFile(templatePath)
+	data, err := initSkillAssets.ReadFile("assets/templates/AGENTS.template.md")
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: read AGENTS.template.md from %s: %v\n", templatePath, err)
-		fmt.Fprintf(stderr, "harmonik init: hint: template should live at docs/templates/AGENTS.template.md in the harmonik repo\n")
+		fmt.Fprintf(stderr, "harmonik init: read embedded AGENTS.template.md: %v\n", err)
 		return 1
 	}
 
@@ -417,6 +426,92 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 		return 1
 	}
 	fmt.Fprintln(stdout, "harmonik init: wrote AGENTS.md")
+	return 0
+}
+
+// provisionSkills extracts the 8 fleet skills from the embedded asset bundle
+// into the project's .claude/skills/ directory (PL-029a).
+// Idempotent: skips files that already exist unless force is true.
+// Does NOT delete or overwrite sibling skill directories (PL-029e).
+func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) int {
+	skillsRoot := filepath.Join(projectDir, ".claude", "skills")
+	//nolint:gosec // G301: 0755 for .claude/skills/
+	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills: %v\n", err)
+		return 1
+	}
+
+	skillEntries, err := initSkillAssets.ReadDir("assets/skills")
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik init: read embedded assets/skills: %v\n", err)
+		return 1
+	}
+
+	for _, skillEntry := range skillEntries {
+		if !skillEntry.IsDir() {
+			continue
+		}
+		skillName := skillEntry.Name()
+		skillDir := filepath.Join(skillsRoot, skillName)
+		//nolint:gosec // G301
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			fmt.Fprintf(stderr, "harmonik init: mkdir .claude/skills/%s: %v\n", skillName, err)
+			return 1
+		}
+
+		fileEntries, err := initSkillAssets.ReadDir("assets/skills/" + skillName)
+		if err != nil {
+			fmt.Fprintf(stderr, "harmonik init: read embedded skill %s: %v\n", skillName, err)
+			return 1
+		}
+
+		for _, fileEntry := range fileEntries {
+			if fileEntry.IsDir() {
+				continue
+			}
+			destPath := filepath.Join(skillDir, fileEntry.Name())
+			if _, statErr := os.Stat(destPath); statErr == nil && !force {
+				continue
+			}
+			content, err := initSkillAssets.ReadFile("assets/skills/" + skillName + "/" + fileEntry.Name())
+			if err != nil {
+				fmt.Fprintf(stderr, "harmonik init: read embedded skill file %s/%s: %v\n", skillName, fileEntry.Name(), err)
+				return 1
+			}
+			//nolint:gosec // G306
+			if err := os.WriteFile(destPath, content, 0o644); err != nil {
+				fmt.Fprintf(stderr, "harmonik init: write .claude/skills/%s/%s: %v\n", skillName, fileEntry.Name(), err)
+				return 1
+			}
+		}
+		fmt.Fprintf(stdout, "harmonik init: provisioned .claude/skills/%s\n", skillName)
+	}
+	return 0
+}
+
+// provisionScaffolds writes the three minimal scaffold files (AGENT_INDEX.md,
+// STATUS.md, TASKS.md) from the embedded asset bundle (PL-029c).
+// Skipped when each file already exists and force is false.
+func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer) int {
+	scaffolds := []string{"AGENT_INDEX.md", "STATUS.md", "TASKS.md"}
+	for _, name := range scaffolds {
+		outPath := filepath.Join(projectDir, name)
+		if _, err := os.Stat(outPath); err == nil && !force {
+			fmt.Fprintf(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", name)
+			continue
+		}
+		content, err := initSkillAssets.ReadFile("assets/scaffolds/" + name)
+		if err != nil {
+			fmt.Fprintf(stderr, "harmonik init: read embedded scaffold %s: %v\n", name, err)
+			return 1
+		}
+		//nolint:gosec // G306
+		if err := os.WriteFile(outPath, content, 0o644); err != nil {
+			fmt.Fprintf(stderr, "harmonik init: write %s: %v\n", name, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "harmonik init: wrote %s\n", name)
+	}
 	return 0
 }
 
@@ -534,24 +629,28 @@ USAGE
 FLAGS
   --project DIR          Project directory (default: current working directory)
   --target-branch BRANCH Branch harmonik merges completed work into (default: main)
-                         FAIL-CLOSED: only "main" is supported until hk-m8vy2 lands
   --prefix PREFIX        Bead ID prefix for 'br init' (default: hk)
   --doctor               Run precondition checks only; do not modify anything
-  --force                Overwrite existing config files and reinitialise br database
+  --force                Overwrite existing files and reinitialise br database
   --smoke                Run a smoke test after init to verify the setup
   --no-supervise         Skip 'harmonik supervise start --watch-restart'
 
 WHAT IT DOES
   1. Checks preconditions (git repo, br/harmonik on PATH)
-  2. Creates .harmonik/ directory structure
+  2. Creates .harmonik/ directory structure (events/, worktrees/, beads-intents/,
+     comms/, crew/, keeper/, queues/)
   3. Initialises the beads database: br init --prefix <PREFIX>
   4. Writes .harmonik/config.yaml (project-level daemon defaults)
   5. Writes .harmonik/branching.yaml (branching strategy defaults)
   6. Writes .harmonik/.gitignore (excludes runtime files)
-  7. Renders docs/templates/AGENTS.template.md → AGENTS.md
-  8. Creates CLAUDE.md → AGENTS.md symlink
-  9. Starts the supervisor: harmonik supervise start --watch-restart
- 10. (--smoke) Runs basic sanity checks
+  7. Provisions 8 fleet skills from the binary-embedded asset bundle →
+     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
+     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}
+  8. Writes scaffold files: AGENT_INDEX.md, STATUS.md, TASKS.md
+  9. Renders embedded AGENTS.template.md → AGENTS.md
+ 10. Creates CLAUDE.md → AGENTS.md symlink
+ 11. Starts the supervisor: harmonik supervise start --watch-restart
+ 12. (--smoke) Runs basic sanity checks
 
 IDEMPOTENCY
   Each step is skipped when its output artifact already exists.
@@ -564,6 +663,7 @@ EXIT CODES
 EXAMPLES
   harmonik init
   harmonik init --project /path/to/project
+  harmonik init --target-branch integration
   harmonik init --doctor
   harmonik init --force --smoke
   harmonik init --no-supervise --prefix bd

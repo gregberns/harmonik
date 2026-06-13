@@ -91,6 +91,18 @@ type twinState struct {
 	// handoff does not rewrite the file. (/clear dedupe is token-level, not via
 	// this map — see handleLine.) Guarded by mu.
 	seen map[string]bool
+
+	// handoffArmed is set once a /session-handoff trigger has been observed and
+	// stays set until its nonce is found (or another recognized command closes
+	// it). It models the production directive's MULTI-LINE / bracketed-paste
+	// shape: cycle.go emits "/session-handoff <path>\n\n...verbatim: <nonce>",
+	// so the nonce arrives on a LATER line. A real Claude REPL ingests the whole
+	// bracketed paste as ONE prompt (paste-buffer's embedded '\n' bytes are not
+	// dispatched as key events — see internal/daemon/pasteinject.go:112-114), so
+	// the trigger and the nonce belong to the same logical prompt even though the
+	// twin's line-by-line stdin scan delivers them as separate lines. While
+	// armed, each subsequent line is scanned for the nonce marker. Guarded by mu.
+	handoffArmed bool
 }
 
 // nonceRe matches the verbatim keeper nonce comment, e.g.
@@ -273,34 +285,38 @@ func marshalStatusJSON(snap statusSnapshot) []byte {
 // mutated state (so the caller re-emits immediately). It is idempotent: a
 // redelivered identical command (the injector's settle+retry can double-deliver)
 // is a no-op. Blank lines are ignored.
+//
+// Multi-line /session-handoff: the production directive (cycle.go:553-556) is
+// MULTI-LINE — "/session-handoff <path>\n\n...verbatim: <nonce>" — so the nonce
+// lands on a LATER line. Real keeper.InjectText delivers it via tmux
+// paste-buffer (bracketed paste), and a real Claude REPL ingests the whole paste
+// as ONE prompt; but the twin's bufio.Scanner splits stdin on '\n', so the
+// trigger and the nonce arrive as separate handleLine calls. To stay faithful,
+// the twin arms on the trigger and scans subsequent lines for the nonce (the
+// rest of the same paste). A nonce on the SAME line as the trigger still works.
 func (s *twinState) handleLine(line string) bool {
 	if isBlank(line) {
+		// A blank line is part of a pasted handoff directive's body (cycle.go
+		// emits a "\n\n" between the trigger and the IMPORTANT/nonce line), so it
+		// must NOT disarm a pending handoff. It is otherwise ignored.
 		return false
 	}
 
 	switch {
 	case containsCmd(line, "/session-handoff"):
-		m := nonceRe.FindString(line)
-		if m == "" {
-			// No nonce — nothing the keeper polls for; ignore.
-			return false
-		}
+		// Arm for a possibly-multi-line directive, then try this same line for an
+		// inline nonce (the single-line case main_test.go already covers).
 		s.mu.Lock()
-		if s.seen[m] {
-			s.mu.Unlock()
-			return false // already wrote this nonce — idempotent.
-		}
-		s.seen[m] = true
-		path := s.handoffPath
+		s.handoffArmed = true
 		s.mu.Unlock()
-		// Write the verbatim nonce line into the HANDOFF file the keeper polls.
-		// A real handoff appends a body too; only the nonce line is load-bearing
-		// for the keeper's pollForNonce (strings.Contains).
-		_ = writeHandoffNonce(path, m) //nolint:errcheck // best-effort; keeper poll surfaces failures
-		return false                   // handoff does not change tokens/session_id.
+		return s.tryWriteNonce(line)
 
 	case containsCmd(line, "/clear"):
 		s.mu.Lock()
+		// A /clear ends any pending handoff scan (a real REPL would have ingested
+		// the handoff prompt by now; the keeper only injects /clear AFTER the
+		// nonce confirms, so an armed-but-unconfirmed handoff is stale).
+		s.handoffArmed = false
 		// Idempotent: a /clear only fires on a session that has grown above
 		// startTokens. The injector's settle+retry Enters can double-deliver the
 		// same /clear; the second lands on the already-cleared (start-tokens)
@@ -317,13 +333,53 @@ func (s *twinState) handleLine(line string) bool {
 		return true
 
 	case containsCmd(line, "/session-resume"):
-		// Resume holds the current (post-clear, low) state; nothing to mutate.
+		// Resume ends any pending handoff scan and holds the current (post-clear,
+		// low) state; nothing to mutate.
+		s.mu.Lock()
+		s.handoffArmed = false
+		s.mu.Unlock()
 		return false
 
 	default:
-		// Unknown injected line — ignore (e.g. plain prose, identity block).
+		// A non-command line while a handoff is armed is a continuation of the
+		// pasted directive (e.g. the "IMPORTANT: ...verbatim: <nonce>" line) —
+		// scan it for the nonce. Otherwise it is unrelated prose; ignore.
+		s.mu.Lock()
+		armed := s.handoffArmed
+		s.mu.Unlock()
+		if armed {
+			return s.tryWriteNonce(line)
+		}
 		return false
 	}
+}
+
+// tryWriteNonce scans line for the keeper nonce marker and, if present and not
+// already seen, writes it to the HANDOFF file the keeper polls and disarms the
+// pending-handoff scan. It is the shared body for the inline (same-line) and the
+// continuation-line (multi-line directive) paths. Returns false: writing the
+// handoff nonce never changes tokens/session_id, so the caller need not re-emit.
+func (s *twinState) tryWriteNonce(line string) bool {
+	m := nonceRe.FindString(line)
+	if m == "" {
+		// No nonce on this line yet — stay armed for a later line of the paste.
+		return false
+	}
+	s.mu.Lock()
+	// The nonce arrived; the directive is complete — disarm.
+	s.handoffArmed = false
+	if s.seen[m] {
+		s.mu.Unlock()
+		return false // already wrote this nonce — idempotent.
+	}
+	s.seen[m] = true
+	path := s.handoffPath
+	s.mu.Unlock()
+	// Write the verbatim nonce line into the HANDOFF file the keeper polls. A
+	// real handoff appends a body too; only the nonce line is load-bearing for
+	// the keeper's pollForNonce (strings.Contains).
+	_ = writeHandoffNonce(path, m) //nolint:errcheck // best-effort; keeper poll surfaces failures
+	return false                   // handoff does not change tokens/session_id.
 }
 
 // writeHandoffNonce writes the verbatim nonce line to the HANDOFF file. It

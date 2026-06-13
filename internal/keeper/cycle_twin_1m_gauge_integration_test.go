@@ -314,7 +314,9 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 		HandoffTimeout: 10 * time.Second,
 		ClearSettle:    5 * time.Second,
 		PollInterval:   150 * time.Millisecond,
-		InjectFn:       twFlattenInjectFn(),
+		// REAL, UNMODIFIED keeper.InjectText (no flatten): the twin parses the
+		// production MULTI-LINE /session-handoff directive natively (hk-fan).
+		InjectFn:       keeper.InjectText,
 	}
 	cycler := keeper.NewCycler(cfg, em)
 

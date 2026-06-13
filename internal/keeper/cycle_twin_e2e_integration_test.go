@@ -33,18 +33,17 @@ package keeper_test
 //   - scripts/keeper-statusline.sh + scripts/keeper-stop-hook.sh — the real
 //     pipeline, invoked by the twin on every emit.
 //
-// The ONE faithful adaptation: the production cycle.go emits the /session-handoff
-// directive as a MULTI-LINE string (nonce on a later line). The twin keys the
-// nonce on the SAME line as "/session-handoff" (it scans stdin line-by-line, and
-// tmux paste-buffer without -p delivers embedded newlines as real newline key
-// events that split the directive). twinInjectFn collapses the handoff directive
-// to a single logical line before handing it to the REAL keeper.InjectText, so
-// the twin's same-line matcher reacts. Every command — handoff, /clear,
-// /session-resume — still travels through the REAL tmux send-keys path; only the
-// directive's internal newlines are flattened. (FINDING: cycle.go's multi-line
-// directive and the twin's same-line matcher are mismatched; a real claude REPL
-// ingests the whole bracketed paste as one prompt, so this is a twin-fidelity
-// gap, not a keeper bug. Logged in the bead report.)
+// No injection adaptation: this test uses the production keeper.InjectText
+// verbatim as its InjectFn. The production cycle.go emits the /session-handoff
+// directive as a MULTI-LINE string (nonce on a later line), and keeper.InjectText
+// delivers it via tmux paste-buffer (bracketed paste). The twin parses that
+// real multi-line shape natively (hk-fan: it arms on the "/session-handoff"
+// trigger and scans the following lines of the same paste for the
+// <!-- KEEPER:<nonce> --> marker, modeling a real Claude REPL ingesting the
+// whole bracketed paste as one prompt — see internal/daemon/pasteinject.go:112-114).
+// The earlier twFlattenInjectFn workaround (which collapsed the directive's
+// embedded newlines to spaces before injection) is therefore GONE — every
+// command travels through the REAL, unmodified tmux send-keys path.
 //
 // # Safety contract (load-bearing — a live daemon/keeper/crew fleet runs here)
 //
@@ -269,20 +268,6 @@ func twWatchForReset(project, agent, prevSID string, stop <-chan struct{}, reset
 	}
 }
 
-// twFlattenInjectFn returns the keeper InjectFn used by the E2E: it collapses
-// any embedded newlines in the injected text to single spaces (so the twin's
-// same-line nonce matcher reacts to the /session-handoff directive) and then
-// delegates to the REAL keeper.InjectText, which performs the real tmux
-// load-buffer → paste-buffer → send-keys Enter sequence into the pane. Every
-// command travels through the real tmux send-keys path; only the directive's
-// internal newlines are flattened (see the file header FINDING).
-func twFlattenInjectFn() func(ctx context.Context, target, text string) error {
-	return func(ctx context.Context, target, text string) error {
-		single := strings.ReplaceAll(text, "\n", " ")
-		return keeper.InjectText(ctx, target, single)
-	}
-}
-
 // TestIntegration_TwinClearRestartCycle_E2E drives a FULL clear→restart cycle
 // end-to-end against the faithful session twin in a real tmux pane, through the
 // real statusLine pipeline and the real keeper.Cycler with real tmux injection.
@@ -358,11 +343,16 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		HandoffTimeout: 10 * time.Second,
 		ClearSettle:    5 * time.Second,
 		PollInterval:   150 * time.Millisecond,
-		// REAL tmux injection (flattened handoff). Everything else (ReadGaugeFn,
-		// ReadHandoff, CrispIdleFn, HoldingDispatchFn, IsManagedFn,
-		// SetManagedSessionFn, HandoffFilePath, TruncateHandoffFn, AppendHandoffFn,
-		// SetTmuxEnvFn, WriteJournalFn) uses the production defaults.
-		InjectFn: twFlattenInjectFn(),
+		// REAL, UNMODIFIED keeper.InjectText — the production InjectFn default,
+		// performing the real tmux load-buffer → paste-buffer → send-keys Enter
+		// sequence with the verbatim MULTI-LINE /session-handoff directive (no
+		// flatten). The twin now parses the multi-line directive natively
+		// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
+		// else (ReadGaugeFn, ReadHandoff, CrispIdleFn, HoldingDispatchFn,
+		// IsManagedFn, SetManagedSessionFn, HandoffFilePath, TruncateHandoffFn,
+		// AppendHandoffFn, SetTmuxEnvFn, WriteJournalFn) uses the production
+		// defaults.
+		InjectFn: keeper.InjectText,
 	}
 	cycler := keeper.NewCycler(cfg, em)
 

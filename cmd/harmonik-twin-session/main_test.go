@@ -51,6 +51,97 @@ func TestHandleLine_HandoffWritesNonce(t *testing.T) {
 	}
 }
 
+// TestHandleLine_MultiLineHandoffWritesNonce proves the twin extracts the nonce
+// from the REAL production directive shape, where the nonce is on a LATER line
+// than the "/session-handoff" trigger. cycle.go:553-556 emits exactly:
+//
+//	/session-handoff <path>\n\nIMPORTANT: include exactly this line verbatim in the handoff file: <nonce>
+//
+// keeper.InjectText pastes that as one bracketed paste; a real Claude REPL sees
+// it as one prompt, but the twin's bufio.Scanner splits stdin on '\n', so the
+// trigger and the nonce arrive as SEPARATE handleLine calls (see the
+// twin_paste_probe in the bead notes). The twin must arm on the trigger and
+// scan the continuation lines for the nonce — this is the hk-fan fix.
+func TestHandleLine_MultiLineHandoffWritesNonce(t *testing.T) {
+	st, handoff := newTestState(t)
+	const nonce = "<!-- KEEPER:cyc-20260612T010203-000001 -->"
+
+	// The exact lines a line-by-line stdin reader sees when keeper.InjectText
+	// pastes the production directive (cycle.go fmt.Sprintf). Line 1 carries the
+	// trigger (no nonce), line 2 is the blank "\n\n" gap, line 3 carries the
+	// nonce (no trigger).
+	lines := []string{
+		"/session-handoff " + handoff,
+		"",
+		"IMPORTANT: include exactly this line verbatim in the handoff file: " + nonce,
+	}
+	for _, l := range lines {
+		if changed := st.handleLine(l); changed {
+			t.Fatalf("handoff lines should not report a token/session change (line %q)", l)
+		}
+	}
+
+	got := readHandoff(t, handoff)
+	if !contains(got, nonce) {
+		t.Fatalf("multi-line handoff did not land the nonce.\nwant substring: %q\ngot: %q", nonce, got)
+	}
+}
+
+// TestHandleLine_MultiLineHandoffIdempotent proves a redelivered multi-line
+// directive (the injector's settle+retry Enters can double-deliver the whole
+// paste) does NOT rewrite the handoff file once the nonce is seen.
+func TestHandleLine_MultiLineHandoffIdempotent(t *testing.T) {
+	st, handoff := newTestState(t)
+	const nonce = "<!-- KEEPER:cyc-dup -->"
+	deliver := func() {
+		for _, l := range []string{
+			"/session-handoff " + handoff,
+			"",
+			"IMPORTANT: include exactly this line verbatim in the handoff file: " + nonce,
+		} {
+			st.handleLine(l)
+		}
+	}
+	deliver()
+	if !contains(readHandoff(t, handoff), nonce) {
+		t.Fatalf("first multi-line delivery did not land the nonce")
+	}
+	// Corrupt the file, redeliver the SAME directive; idempotency means the twin
+	// recognizes the already-seen nonce and does NOT rewrite.
+	if err := os.WriteFile(handoff, []byte("CORRUPTED"), 0o600); err != nil {
+		t.Fatalf("seed corruption: %v", err)
+	}
+	deliver()
+	if got := readHandoff(t, handoff); got != "CORRUPTED" {
+		t.Fatalf("redelivered multi-line handoff rewrote the file: %q", got)
+	}
+}
+
+// TestHandleLine_ClearDisarmsPendingHandoff proves a /clear that arrives while a
+// handoff is armed (trigger seen, nonce not yet) ends the scan, so a later
+// stray nonce-shaped line does not retroactively write a handoff. In production
+// the keeper only injects /clear AFTER the nonce confirms, so an armed-but-
+// unconfirmed handoff at /clear time is stale and must not capture later prose.
+func TestHandleLine_ClearDisarmsPendingHandoff(t *testing.T) {
+	st, handoff := newTestState(t)
+	st.tokens = 900_000 // so /clear actually fires
+	const nonce = "<!-- KEEPER:cyc-stale -->"
+
+	// Arm with a nonce-less trigger, then /clear before any nonce arrives.
+	if st.handleLine("/session-handoff " + handoff) {
+		t.Fatalf("nonce-less trigger should not report a change")
+	}
+	if !st.handleLine("/clear") {
+		t.Fatalf("/clear should report a state change")
+	}
+	// A stray nonce-shaped line AFTER the /clear must NOT write a handoff: the
+	// scan was disarmed.
+	st.handleLine("IMPORTANT: include exactly this line verbatim: " + nonce)
+	if got := readHandoff(t, handoff); got != "" {
+		t.Fatalf("stale post-/clear line wrote a handoff: %q", got)
+	}
+}
+
 func TestHandleLine_HandoffWithoutNonceIsNoop(t *testing.T) {
 	st, handoff := newTestState(t)
 	if st.handleLine("/session-handoff " + handoff) {

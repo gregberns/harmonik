@@ -51,7 +51,7 @@ skill, and from the **context-fill watcher** (`harmonik keeper`), which is the
 | `harmonik promote` | integration → target-branch promotion | landing a reviewed SHA, or opening the integration→main PR |
 
 Three of them resolve `--project` the same way (explicit flag → `$HARMONIK_PROJECT`
-→ cwd); always pass `--project /Users/gb/github/harmonik` explicitly from an
+→ cwd); always pass `--project $HARMONIK_PROJECT` explicitly from an
 orchestrator to avoid CWD drift (a known hazard with worktree sub-agents).
 
 ---
@@ -351,17 +351,17 @@ harmonik init --smoke  --project /path/to/repo
 
 # Deploy a rebuilt binary: rebuild, then restart the supervisor (re-reads config)
 go install ./cmd/harmonik
-harmonik supervise restart --project /Users/gb/github/harmonik --watch-restart
+harmonik supervise restart --project $HARMONIK_PROJECT --watch-restart
 # expect "(no socket)" for ~30s–1m during restart-backoff — that is normal
 
 # Inspect / pause / resume
-harmonik supervise status --project /Users/gb/github/harmonik --json
-harmonik supervise logs   --project /Users/gb/github/harmonik --lines 500
-harmonik supervise pause  --project /Users/gb/github/harmonik   # drain, block new dispatch
-harmonik supervise resume --project /Users/gb/github/harmonik
+harmonik supervise status --project $HARMONIK_PROJECT --json
+harmonik supervise logs   --project $HARMONIK_PROJECT --lines 500
+harmonik supervise pause  --project $HARMONIK_PROJECT   # drain, block new dispatch
+harmonik supervise resume --project $HARMONIK_PROJECT
 
 # Close a bead whose work merged but it's stuck in_progress
-harmonik reconcile --project /Users/gb/github/harmonik --target-branch main
+harmonik reconcile --project $HARMONIK_PROJECT --target-branch main
 
 # Promote reviewed work
 harmonik promote --dry-run abc1234                 # preview push-mode

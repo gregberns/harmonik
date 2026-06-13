@@ -13,7 +13,7 @@ description: >
 
 The dispatch model is **one persistent daemon per project + a shared queue**. The daemon (`harmonik --project . --no-auto-pull --max-concurrent N`, running in a detached tmux session) is the dispatcher; agents dispatch by **submitting beads to its queue**. Multiple agents/orchestrators share that single daemon — the shared queue IS the multi-agent coordination mechanism.
 
-When working in this project (`/Users/gb/github/harmonik`), the FIRST tool call of the working phase should be `kerf next` (ranked bead feed with work-context), then a proposed `harmonik queue submit` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
+When working in this project (`$HARMONIK_PROJECT`), the FIRST tool call of the working phase should be `kerf next` (ranked bead feed with work-context), then a proposed `harmonik queue submit` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
 
 ## Start the daemon once (if not already up)
 
@@ -21,7 +21,7 @@ When working in this project (`/Users/gb/github/harmonik`), the FIRST tool call 
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent N'
+  'harmonik --project $HARMONIK_PROJECT --no-auto-pull --max-concurrent N'
 ```
 
 - `--no-auto-pull` = **queue-only**: the daemon dispatches only work that arrives via the queue; it will NOT auto-drain `br ready` (safe default after the 2026-05-30 credit-burn incident).
@@ -41,7 +41,7 @@ tmux new-session -d -s harmonik-daemon \
 4. **Submit to the running daemon's queue.** `harmonik queue submit --beads id1,id2,id3` (or `harmonik queue submit /tmp/batch.json` for a hand-authored `QueueSubmitRequest`). This does NOT block — it returns the daemon-minted `queue_id`. The daemon spawns claude per bead, watches for completion, commits, merges to main **one-at-a-time**, pushes, and **auto-skips** any bead whose merge conflicts. Review-loop is on by default.
 5. **Arm a Monitor.** Submitting returns only the `queue_id`; without a Monitor you are blind from submit to group-completion. Run `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` in a Monitor call (it attaches to the running daemon, so one Monitor sees every bead regardless of which agent submitted it).
 6. **Stay active while the daemon works.** Append the next batch (`harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` on a stream group); drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.
-7. **On group completion.** Inspect outcomes via the subscribe stream / `.harmonik/events/events.jsonl`; `git -C /Users/gb/github/harmonik log --oneline -N` for landed commits. Run reviewer on any load-bearing commit, then submit/append the next batch.
+7. **On group completion.** Inspect outcomes via the subscribe stream / `.harmonik/events/events.jsonl`; `git -C $HARMONIK_PROJECT log --oneline -N` for landed commits. Run reviewer on any load-bearing commit, then submit/append the next batch.
 8. **When all in-flight work drains** (no more `pending` or `in_progress` beads in the group):
    ```bash
    harmonik keeper clear-dispatching <agent>

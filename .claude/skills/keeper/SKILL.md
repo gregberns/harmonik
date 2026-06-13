@@ -302,7 +302,7 @@ session is armed is a deployment fact to check, not infer.
 
 ```bash
 # Is the keeper actually armed for this agent? (run this first — settles the drift)
-harmonik keeper doctor <agent> --project /Users/gb/github/harmonik
+harmonik keeper doctor <agent> --project $HARMONIK_PROJECT
 
 # Wire the hooks (GLOBAL settings.json edit; --yes-destructive arms the reset cycle)
 harmonik keeper enable <agent> --tmux <pane> --yes-destructive

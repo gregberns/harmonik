@@ -43,7 +43,7 @@ harmonik comms recv --follow --json | head -60
 harmonik comms who --json
 harmonik crew list --json
 harmonik queue status --json
-git -C /Users/gb/github/harmonik log --oneline -3   # confirm main is current
+git -C $HARMONIK_PROJECT log --oneline -3   # confirm main is current
 ```
 
 Note any crew messages received that require action (bead banked, lane complete,
@@ -62,7 +62,7 @@ stood-down crew cannot re-bank or re-review; deploy now.
 
 ```bash
 # List banked branches
-git -C /Users/gb/github/harmonik branch --list 'bank/*' 'worktree-agent-*'
+git -C $HARMONIK_PROJECT branch --list 'bank/*' 'worktree-agent-*'
 
 # Confirm lull: no active reviewer panes
 harmonik subscribe --types heartbeat --heartbeat 1s --json | head -1
@@ -73,7 +73,7 @@ harmonik queue status --json    # check "active_runs" count
 
 ```bash
 # 1. Fetch and create a detached deploy worktree off origin/main
-git -C /Users/gb/github/harmonik fetch origin main
+git -C $HARMONIK_PROJECT fetch origin main
 git worktree add --detach /tmp/cap-deploy origin/main
 
 # 2. Cherry-pick reviewed SHAs in order (oldest first)
@@ -88,10 +88,10 @@ harmonik comms send --from captain --broadcast --topic announce -- \
 
 # 5. Push and ff-update local main (CRITICAL — skipping wedges the daemon)
 git -C /tmp/cap-deploy push origin HEAD:main
-git -C /Users/gb/github/harmonik merge --ff-only origin/main
+git -C $HARMONIK_PROJECT merge --ff-only origin/main
 
 # 6. Verify no divergence
-git -C /Users/gb/github/harmonik rev-parse main HEAD origin/main
+git -C $HARMONIK_PROJECT rev-parse main HEAD origin/main
 #    All three must agree.
 
 # 7. Clean up
@@ -230,7 +230,7 @@ update it with current ordered beads, any caveats, and the next action.
 ### 5c — Record banked branches
 
 ```bash
-git -C /Users/gb/github/harmonik branch --list 'bank/*' 'worktree-agent-*'
+git -C $HARMONIK_PROJECT branch --list 'bank/*' 'worktree-agent-*'
 ```
 
 Any remaining banked branches (not yet deployed) must be listed in HANDOFF.md with
@@ -238,12 +238,12 @@ their SHA and the review verdict so the next captain can deploy them.
 
 ### 5d — Clear staged debris (if safe)
 
-If `git -C /Users/gb/github/harmonik status` shows staged changes in the main working
+If `git -C $HARMONIK_PROJECT status` shows staged changes in the main working
 tree (e.g., leftover from a same-package bead merge), verify provenance before
 clearing:
 
 ```bash
-git -C /Users/gb/github/harmonik diff --cached --stat
+git -C $HARMONIK_PROJECT diff --cached --stat
 # Confirm: are these removals of a specific bead's code, or wanted changes?
 ```
 
@@ -251,8 +251,8 @@ If confirmed debris (leftover from a merge conflict resolution, not wanted):
 
 ```bash
 # Surgical restore — do NOT use git reset --hard (preserves untracked files like .beads/)
-git -C /Users/gb/github/harmonik restore --staged internal/queue/cancel.go  # example
-git -C /Users/gb/github/harmonik checkout -- internal/queue/cancel.go
+git -C $HARMONIK_PROJECT restore --staged internal/queue/cancel.go  # example
+git -C $HARMONIK_PROJECT checkout -- internal/queue/cancel.go
 ```
 
 ---
@@ -263,7 +263,7 @@ Write HANDOFF.md using the **captain handoff format** (tiered model):
 
 ```markdown
 <!-- PP-TRIAL:v2 <date> <branch> — CAPTAIN handoff. <1-line fleet status>.
-     Load /Users/gb/github/harmonik/.claude/skills/captain/STARTUP.md FIRST
+     Load $HARMONIK_PROJECT/.claude/skills/captain/STARTUP.md FIRST
      (project-local path — NOT ~/.claude/skills/), then this. HANDOFF.md is gitignored. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT -->

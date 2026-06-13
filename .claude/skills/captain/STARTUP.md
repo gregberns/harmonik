@@ -2,10 +2,10 @@
 
 > **Run this EVERY session, handoff or not.** The handoff is INPUT, not gospel.
 > **Path note:** every `.claude/skills/…` path in this file is **project-local**,
-> rooted at `/Users/gb/github/harmonik/.claude/skills/` — NOT the global
+> rooted at `$HARMONIK_PROJECT/.claude/skills/` — NOT the global
 > `~/.claude/skills/`. There is no captain/crew skill under `~/.claude/skills/`;
 > reading the global path returns "file does not exist." Read these files from the
-> repo dir (or just `ls /Users/gb/github/harmonik/.claude/skills/captain/` if unsure).
+> repo dir (or just `ls $HARMONIK_PROJECT/.claude/skills/captain/` if unsure).
 > This runbook is the captain's equivalent of the crew's boot sequence
 > (`.claude/skills/crew-launch/SKILL.md` § Boot sequence). It EXTENDS the captain
 > skill (`.claude/skills/captain/SKILL.md`) — that skill owns per-crew MECHANICS
@@ -31,12 +31,12 @@ that impossible. Do not skip a step because "the handoff already says so."
 
 ```bash
 echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
-# Expect: agent=captain  cwd=/Users/gb/github/harmonik
+# Expect: agent=captain  cwd=$HARMONIK_PROJECT
 ```
 
 - Your comms identity is **`captain`**. Pass `--from captain` on every `comms`
   op (shell `export` does NOT persist between tool calls — pass it explicitly).
-- CWD MUST stay `/Users/gb/github/harmonik` all session. Never `cd` into a
+- CWD MUST stay `$HARMONIK_PROJECT` all session. Never `cd` into a
   worktree (the daemon may `git worktree remove` it). Use `git -C <repo>` /
   `harmonik --project <repo>` for everything.
 

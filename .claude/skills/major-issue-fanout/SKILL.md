@@ -33,7 +33,7 @@ grep "019eae67" .harmonik/events/events.jsonl
 
 # RIGHT — structured, ordered, complete:
 jq 'select(.run_id == "019eae67-b1f0-7e4c-8f96-14e2ad3c3353")' \
-  /Users/gb/github/harmonik/.harmonik/events/events.jsonl
+  $HARMONIK_PROJECT/.harmonik/events/events.jsonl
 
 # RIGHT — live stream, filtered:
 harmonik subscribe --json \
@@ -77,11 +77,11 @@ harmonik subscribe --json --types run_failed,run_stale,launch_stall_detected \
 br show <bead_id> --format json
 
 # Recent commits:
-git -C /Users/gb/github/harmonik log --oneline -20
+git -C $HARMONIK_PROJECT log --oneline -20
 
 # Run stale goroutine count:
 jq 'select(.event_type == "run_stale") | {run_id, goroutine_count, active_run_count}' \
-  /Users/gb/github/harmonik/.harmonik/events/events.jsonl | tail -5
+  $HARMONIK_PROJECT/.harmonik/events/events.jsonl | tail -5
 ```
 
 ### Step 3 — Fan out 10–15 agents at DISTINCT angles

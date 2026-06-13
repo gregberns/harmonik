@@ -469,7 +469,7 @@ EXAMPLES
 		return runSubscribeSubcommand(os.Args[2:])
 	}
 
-	// harmonik smoke — 4-signal end-to-end verification of a live daemon (hk-4rkrg).
+	// harmonik smoke — 5-signal end-to-end verification of a live daemon (hk-4rkrg).
 	// Creates a smoke bead, submits it to the queue, and asserts
 	// run_started → run_completed + commit-on-branch + reviewer_verdict + bead_closed.
 	// Exit codes: 0 pass, 1 failure, 2 timeout, 17 daemon not running.

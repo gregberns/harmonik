@@ -2,7 +2,7 @@ package main
 
 // smoke.go — `harmonik smoke` subcommand (hk-4rkrg).
 //
-// Runs a 4-signal self-checking end-to-end verification over a live daemon.
+// Runs a 5-signal self-checking end-to-end verification over a live daemon.
 // Creates a minimal smoke bead, submits it to the daemon's queue, subscribes
 // to events, and asserts the full dispatch→commit→review→closure arc:
 //
@@ -235,7 +235,7 @@ func smokeCreateBead(projectDir string, stdout, stderr io.Writer) (string, int) 
 	}
 
 	ts := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	title := fmt.Sprintf("smoke: 4-signal self-check %s", ts)
+	title := fmt.Sprintf("smoke: 5-signal self-check %s", ts)
 	body := `Smoke verification task (harmonik smoke, hk-4rkrg).
 
 Append exactly one line to docs/smoke-log.md (create the file if it does not exist):
@@ -244,7 +244,7 @@ Append exactly one line to docs/smoke-log.md (create the file if it does not exi
 Where <BEAD_ID> is the bead ID shown in the agent-task.md header and
 <ISO_TIMESTAMP> is the current UTC time in RFC 3339 format.
 
-Then commit with message: smoke(<BEAD_ID>): 4-signal verification
+Then commit with message: smoke(<BEAD_ID>): 5-signal verification
 
 This task is complete when the file is updated and committed.`
 
@@ -568,7 +568,7 @@ func smokePrintResults(stdout io.Writer, beadID string, result smokeResult) {
 	fmt.Fprintln(stdout)
 }
 
-const smokeUsage = `harmonik smoke — 4-signal end-to-end verification of a live daemon
+const smokeUsage = `harmonik smoke — 5-signal end-to-end verification of a live daemon
 
 USAGE
   harmonik smoke [flags]

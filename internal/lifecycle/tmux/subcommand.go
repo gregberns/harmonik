@@ -179,11 +179,27 @@ func DefaultSessionName(projectDir string) string {
 // the supervisor's session and a `grep harmonik-*-flywheel` would find "0
 // sessions" — the symptom that mis-diagnosed hk-9vp51 as a launch wedge).
 //
-// hk-9vp51 fix-forward: this is the ONE session ResolveDaemonSpawnSession
-// excludes; every other ambient session (including the operator's `hk
-// tmux-start` session) is a valid, already-existing spawn target.
+// hk-9vp51 fix-forward: ResolveDaemonSpawnSession excludes this session (and
+// the flywheel session — see FlywheelSessionName) as spawn targets; every other
+// ambient session is a valid, already-existing spawn target.
 func SupervisorSessionName(projectDir string) string {
 	return "hk-" + tmuxStartHashDir(projectDir) + "-daemon-supervise"
+}
+
+// FlywheelSessionName returns the tmux session name for the flywheel (shim)
+// pane that the new `harmonik supervise start` supervisor creates.
+// Format: harmonik-<project_hash>-flywheel (PL-019f, PL-006a).
+//
+// hk-u9ji: on supervisor-revive via DaemonWatchdog, the daemon is spawned
+// with Setsid:true but inherits $TMUX from the flywheel pane's session. The
+// revived daemon therefore sees liveSession="harmonik-<hash>-flywheel" and —
+// before this fix — used the flywheel session as the spawn target (needEnsure
+// false, no EnsureSession call), leaving harmonik-<hash>-default uncreated.
+// Excluding the flywheel session forces the fallback to DefaultSessionName with
+// needEnsure=true, causing EnsureSession to (re)create -default on every start
+// including supervisor-revive.
+func FlywheelSessionName(projectDir string) string {
+	return "harmonik-" + tmuxStartHashDir(projectDir) + "-flywheel"
 }
 
 // ResolveDaemonSpawnSession decides which tmux session the daemon should spawn
@@ -192,37 +208,44 @@ func SupervisorSessionName(projectDir string) string {
 //
 // hk-9vp51 fix-forward (option (a) — LOW RISK): keep dispatch-time live-session
 // resolution — which ALWAYS resolves to a session that exists right now — and
-// EXCLUDE ONLY the supervisor's own session. Concretely:
+// EXCLUDE system sessions that must not receive implementer windows. Concretely:
 //
 //   - liveSession is a normal session (operator's tmux-start session, an ambient
 //     `harmonik` session, etc.) → use it verbatim. It provably exists at this
 //     instant (the daemon is running inside it), so SpawnWindow can never hit
 //     "session does not exist". needEnsure is false.
-//   - liveSession is empty (display-message failed) OR is the supervisor session
-//     → fall back to the deterministic per-project DefaultSessionName and signal
-//     needEnsure=true so the caller EnsureSessions it before constructing the
-//     substrate. This is the only case where we depart from the live session,
-//     and it is exactly the case the original sub-fix #3 over-generalised: it
-//     ALWAYS switched to the deterministic name (even when the live session was
-//     fine) and that boot-created session did not persist to dispatch time,
-//     breaking every spawn. Here we switch ONLY when forced, and the fallback is
-//     ensured-and-kept-alive by the caller (a detached tmux session with a live
-//     shell persists; the #4 coordinator reaper only targets "-flywheel"
-//     sessions, never this "-default" one).
+//   - liveSession is empty (display-message failed), the old per-project
+//     supervisor session (SupervisorSessionName), OR the flywheel shim session
+//     (FlywheelSessionName) → fall back to the deterministic per-project
+//     DefaultSessionName and signal needEnsure=true so the caller EnsureSessions
+//     it before constructing the substrate.
+//
+// The flywheel case (hk-u9ji): on supervisor-revive via DaemonWatchdog,
+// Setsid:true detaches the daemon from the shim's process group but $TMUX is
+// still inherited. The revived daemon's tmux display-message therefore returns
+// the flywheel session name. Without excluding it the daemon would use the
+// flywheel as its spawn target (needEnsure=false, no EnsureSession call),
+// leaving harmonik-<hash>-default uncreated and causing a spawn outage.
+//
+// This is the only case where we depart from the live session. The fallback is
+// ensured-and-kept-alive by the caller (a detached tmux session with a live
+// shell persists; the #4 coordinator reaper only targets "-flywheel" sessions,
+// never this "-default" one).
 //
 // Returns the chosen session name and whether the caller must EnsureSession it
-// (true only for the fallback). The returned name is never the supervisor
-// session and is never empty.
+// (true only for the fallback). The returned name is never a system session and
+// is never empty.
 func ResolveDaemonSpawnSession(projectDir, liveSession string) (session string, needEnsure bool) {
 	live := strings.TrimSpace(liveSession)
-	if live == "" || live == SupervisorSessionName(projectDir) {
-		// Forced fallback: the ambient session is unusable as a spawn target.
+	if live == "" || live == SupervisorSessionName(projectDir) || live == FlywheelSessionName(projectDir) {
+		// Forced fallback: the ambient session is unusable as a spawn target
+		// (empty, old supervisor session, or new flywheel shim session).
 		// Use the deterministic daemon-owned session and require the caller to
 		// ensure it exists (and keep it alive for the daemon's lifetime).
 		return DefaultSessionName(projectDir), true
 	}
-	// The live session exists right now (we are running in it) and is not the
-	// supervisor's — use it verbatim. No EnsureSession needed.
+	// The live session exists right now (we are running in it) and is not a
+	// system session — use it verbatim. No EnsureSession needed.
 	return live, false
 }
 

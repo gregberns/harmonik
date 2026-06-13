@@ -827,9 +827,9 @@ EXAMPLES
 		return 1
 	}
 
-	// hk-9vp51 (fix-forward, option (a)): resolve the implementer spawn-target
-	// session at DISPATCH/boot time from the LIVE session the daemon runs inside
-	// — which always exists — then EXCLUDE only the supervisor's own session.
+	// hk-9vp51 + hk-u9ji: resolve the implementer spawn-target session at boot
+	// from the LIVE session the daemon runs inside, then EXCLUDE system sessions
+	// that must not receive implementer windows.
 	//
 	// We ask tmux for the current session via `display-message -p
 	// '#{session_name}'` (exec.Command, not OSAdapter, because no window handle
@@ -837,16 +837,18 @@ EXAMPLES
 	//   - operator's `hk tmux-start` session, or an ambient `harmonik` session →
 	//     use it verbatim; it provably exists right now so SpawnWindow can never
 	//     hit "session does not exist".
-	//   - the supervisor's `hk-daemon-supervise` session (the daemon inherited
-	//     $TMUX from /tmp/hk-daemon-supervise.sh) → fall back to the deterministic
-	//     per-project DefaultSessionName and EnsureSession it, so implementer
-	//     windows land in the daemon's own session, NOT the supervisor's.
+	//   - the old per-project supervisor `hk-daemon-supervise` session, OR the
+	//     new flywheel shim session `harmonik-<hash>-flywheel` (daemon inherited
+	//     $TMUX on supervisor-revive via DaemonWatchdog — see hk-u9ji) →
+	//     fall back to the deterministic per-project DefaultSessionName and
+	//     EnsureSession it, so implementer windows land in the daemon's own
+	//     session, NOT the system session.
 	//
 	// This deliberately does NOT switch the whole mechanism to a boot-time
 	// deterministic name (the original sub-fix #3 did that and the created
 	// session did not persist to dispatch time → every spawn failed in 0.6s,
 	// reverted fe94e0b1). We keep the always-exists live session and only depart
-	// from it for the one unusable case.
+	// from it for the unusable system-session cases.
 	liveSession := ""
 	if out, dmErr := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil { //nolint:gosec // G204: arguments are hard-coded constants
 		// display-message failure is non-fatal: ResolveDaemonSpawnSession treats
@@ -864,20 +866,20 @@ EXAMPLES
 		return 1
 	}
 
-	// hk-9vp51: when we fell back to the deterministic daemon-owned session
-	// (live session was the supervisor's, or display-message failed), ensure it
-	// exists BEFORE constructing the substrate. A detached session with a live
-	// shell persists for the daemon's whole lifetime, and the #4 coordinator
-	// reaper only targets "-flywheel" sessions (never this "-default" one), so it
-	// is guaranteed present at dispatch time. When we kept the live session
-	// (needEnsureSession=false) it already exists — we are running inside it — so
-	// we must NOT re-create it.
+	// hk-9vp51 + hk-u9ji: when we fell back to the deterministic daemon-owned
+	// session (live session was the supervisor's, the flywheel's, or
+	// display-message failed), ensure it exists BEFORE constructing the substrate.
+	// A detached session with a live shell persists for the daemon's whole
+	// lifetime, and the #4 coordinator reaper only targets "-flywheel" sessions
+	// (never this "-default" one), so it is guaranteed present at dispatch time.
+	// When we kept the live session (needEnsureSession=false) it already exists —
+	// we are running inside it — so we must NOT re-create it.
 	if needEnsureSession {
 		if ensErr := tmuxAdapter.EnsureSession(ctx, sessionName, projectDir); ensErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik: cannot ensure daemon tmux session %q: %v\n", sessionName, ensErr)
 			return 1
 		}
-		fmt.Fprintf(os.Stderr, "harmonik: spawning implementer windows into daemon-owned session %q (ambient session was supervisor/empty)\n", sessionName)
+		fmt.Fprintf(os.Stderr, "harmonik: spawning implementer windows into daemon-owned session %q (ambient session was supervisor/flywheel/empty)\n", sessionName)
 	}
 
 	// hk-xb5yi: resolve spawn cap. HARMONIK_MAX_CONCURRENT_SESSIONS env var

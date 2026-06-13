@@ -90,6 +90,41 @@ func TestResolveDaemonSpawnSession_SupervisorSessionExcluded(t *testing.T) {
 	}
 }
 
+// TestResolveDaemonSpawnSession_FlywheelSessionExcluded proves that the flywheel
+// shim session (harmonik-<hash>-flywheel) is excluded from the spawn target just
+// like the old supervisor session.
+//
+// hk-u9ji: on supervisor-revive via DaemonWatchdog, the daemon is spawned with
+// Setsid:true but inherits $TMUX from the flywheel pane. The revived daemon's
+// tmux display-message therefore returns the flywheel session name. Without this
+// exclusion the daemon would use the flywheel as its spawn target
+// (needEnsure=false, no EnsureSession call), leaving harmonik-<hash>-default
+// uncreated and causing a spawn outage.
+func TestResolveDaemonSpawnSession_FlywheelSessionExcluded(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	want := DefaultSessionName(projectDir)
+
+	flywheelName := FlywheelSessionName(projectDir)
+	for _, live := range []string{flywheelName, "  " + flywheelName + "  "} {
+		live := live
+		t.Run(live, func(t *testing.T) {
+			t.Parallel()
+			got, needEnsure := ResolveDaemonSpawnSession(projectDir, live)
+			if got == FlywheelSessionName(projectDir) {
+				t.Fatalf("ResolveDaemonSpawnSession(%q) returned the flywheel session — hk-u9ji: daemon must not spawn implementers into the flywheel pane", live)
+			}
+			if got != want {
+				t.Errorf("ResolveDaemonSpawnSession(%q) session = %q, want %q (deterministic fallback)", live, got, want)
+			}
+			if !needEnsure {
+				t.Errorf("ResolveDaemonSpawnSession(%q) needEnsure = false, want true (fallback session must be ensured on supervisor-revive)", live)
+			}
+		})
+	}
+}
+
 func TestResolveDaemonSpawnSession_EmptyLiveFallsBack(t *testing.T) {
 	t.Parallel()
 
@@ -111,15 +146,18 @@ func TestResolveDaemonSpawnSession_EmptyLiveFallsBack(t *testing.T) {
 	}
 }
 
-// TestResolveDaemonSpawnSession_FallbackIsNeverSupervisor proves the fallback
-// name (DefaultSessionName) can never collide with the supervisor session name,
-// closing the loop on invariant (1) for the fallback branch.
-func TestResolveDaemonSpawnSession_FallbackIsNeverSupervisor(t *testing.T) {
+// TestResolveDaemonSpawnSession_FallbackIsNeverSupervisorOrFlywheel proves the
+// fallback name (DefaultSessionName) can never collide with the supervisor or
+// flywheel session names, closing the loop on invariant (1) for the fallback branch.
+func TestResolveDaemonSpawnSession_FallbackIsNeverSupervisorOrFlywheel(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	if DefaultSessionName(dir) == SupervisorSessionName(dir) {
 		t.Fatal("DefaultSessionName collides with SupervisorSessionName — fallback could spawn into the supervisor session")
+	}
+	if DefaultSessionName(dir) == FlywheelSessionName(dir) {
+		t.Fatal("DefaultSessionName collides with FlywheelSessionName — fallback could spawn into the flywheel session")
 	}
 }
 

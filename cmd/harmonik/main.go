@@ -550,6 +550,22 @@ EXAMPLES
 		return runDigestSubcommand(os.Args[2:])
 	}
 
+	// harmonik project-hash [--project DIR] — read-only PL-006a hash printer.
+	// Prints the first 12 hex chars of SHA-256(realpath(project_root)) and exits 0.
+	// No daemon required; side-effect-free. Shell scripts use this to obtain the
+	// project hash without reimplementing SHA-256 in bash.
+	//
+	// Exit codes: 0 success, 1 argument or path-resolution error.
+	// Spec ref: specs/process-lifecycle.md §4.2 PL-031.
+	// Bead ref: hk-dmw.
+	if len(os.Args) >= 2 && os.Args[1] == "project-hash" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runProjectHashSubcommand(subArgs)
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

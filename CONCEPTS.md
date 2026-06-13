@@ -171,6 +171,38 @@ implement-review-merge loop is what virtually all work runs on today; DOT workfl
 forward-looking way to go beyond it, and the surface is still settling. Reach for the
 default loop first, and treat DOT workflows as the place harmonik is growing into.
 
+## Scheduled jobs
+
+Most of what the daemon does is reactive — it works the beads you put in front of it. A
+**scheduled job** lets the daemon also act on its own clock: a recurring job that fires at a
+set time without anyone submitting anything. A scheduled job is a simple pairing of two
+things — a **schedule** (when to fire) and an **action** (what to do when it does). It's
+deliberately generic: harmonik itself owns the firing, checking on each pass of the daemon's
+normal work loop whether any job is due, so a schedule is not tied to crews or to any one
+kind of task — it's a plain recurring trigger the daemon honors.
+
+There are two kinds of action a job can take. A **command** action runs an ordinary shell
+command — a script, a maintenance task, anything you'd run from a terminal. A **spawn-crew**
+action starts a crew, exactly as if you'd launched one by hand, which means a scheduled crew
+spawn is billed and guarded the same way every other crew spawn is. Starting a crew is just
+*one* thing a schedule can do, not the reason schedules exist; the primitive knows nothing
+about crews beyond it being one available action.
+
+The cadence in this first version is daily: a job fires once a day at a wall-clock time you
+choose, in your local timezone or a named one. Two sensible behaviors keep it well-mannered.
+First, because the daemon can't fire while it's switched off, a job that misses its time
+while the daemon was down will catch up — but only once, and only if the missed fire was
+recent (within the last day). A daemon that was off for a week therefore fires a single
+catch-up run on restart, never a week's backlog. Second, if a job's previous run is somehow
+still going when its next fire comes due, the daemon skips the new fire rather than stacking
+a second copy on top. Both behaviors can be turned off per job if you want the raw cadence.
+
+You manage scheduled jobs with the `harmonik schedule` command — adding, listing, enabling,
+disabling, removing, and firing one on demand. The schedule list lives in a small file the
+daemon reads, so changes you make take effect on its next pass whether or not it was running
+when you made them. *Available after the next daemon rebuild.* (See
+[CLI-REFERENCE](CLI-REFERENCE.md) for the exact `schedule` commands.)
+
 ---
 
 ## How it all fits together
@@ -186,5 +218,5 @@ each epic and drives it on its own queue, and a **captain** organizes the whole 
 into lanes and staffs a crew per lane. These concurrent agents coordinate over the **comms
 bus**, and a **keeper** keeps each long-running agent fresh as its context fills. When a
 bead needs more than the default implement-review-merge path, a **DOT workflow** defines
-that process as a graph. Throughout, the deterministic Go skeleton — daemon, queue, merge
+that process as a graph. Recurring work — a periodic harvest, a nightly job — runs as a **scheduled job** the daemon fires on its own clock. Throughout, the deterministic Go skeleton — daemon, queue, merge
 pipeline, review gate — is what makes the probabilistic agents safe to turn loose at scale.

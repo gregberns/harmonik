@@ -620,6 +620,69 @@ harmonik crew list --json | jq -s '.'
 
 ---
 
+## `harmonik schedule`
+
+> **(new in hk-0es; documented from source — not yet in the live `--help`; runs after the next daemon rebuild.)** The installed binary that produced the rest of this reference predates this command, so `schedule` does **not yet appear in the live `--help` menu** (it is absent from the subcommand list above) and `harmonik schedule --help` does not run on the installed binary. This section is documented directly from `cmd/harmonik/schedule.go`; it becomes live after the next daemon rebuild.
+
+**Purpose:** the generic recurring-job primitive — register jobs the daemon fires on a daily clock. Each job pairs a schedule (when) with an action (what): run a shell **command**, or **spawn a crew**.
+
+**Usage:** `harmonik schedule <verb> [flags]`
+
+All verbs read and write `.harmonik/schedules.json` directly, so they work **whether or not the daemon is running** — there is no daemon connection and therefore **no exit-17 path**. A running daemon notices the file change and picks it up on its next poll tick; when no daemon is up the change takes effect on next boot.
+
+**Verbs**
+| Verb | Meaning |
+|---|---|
+| `add` | Add a scheduled job |
+| `list` | List scheduled jobs (id, enabled, next-fire, last-fire, action summary) |
+| `remove <id>` | Remove a job by id |
+| `enable <id>` | Enable a job by id |
+| `disable <id>` | Disable a job by id |
+| `run-now <id>` | Fire a job on the daemon's next tick (honours overlap policy); when the daemon is down it fires on next boot |
+
+### `schedule add`
+
+**Usage:** `harmonik schedule add --id <id> --schedule "daily@HH:MM [tz]" --action <command|spawn-crew> [action flags]`
+
+**Flags**
+| Flag | Meaning | Default |
+|---|---|---|
+| `--id <id>` | Unique job id (**required**) | — |
+| `--schedule "daily@HH:MM [tz]"` | Daily fire time (**required**); `tz` is `local` or an IANA zone (e.g. `America/New_York`). v1 supports the `daily` kind only. | tz = `local` |
+| `--action <command\|spawn-crew>` | Action kind (**required**) | — |
+| `--crew <c>` | Crew name (**required** for `spawn-crew`) | — |
+| `--queue <q>` | Named queue the crew binds to (**required** for `spawn-crew`) | — |
+| `--mission <path>` | Mission/handoff path the crew seeds from (`spawn-crew`, optional) | — |
+| `-- <argv...>` | Command and its args (**required** for `command`; must be last, after `--`) | — |
+| `--overlap-policy <skip\|allow>` | Skip a fire while the prior run is still active, or always fire | `skip` |
+| `--catchup <coalesce-within-window\|off>` | Fire one coalesced catch-up for a recent missed fire, or never catch up | `coalesce-within-window` |
+| `--catchup-window <dur>` | Bound catch-up eligibility (Go duration, e.g. `24h`) | schedule interval (24h for daily) |
+| `--project DIR` | Project directory | current working directory |
+
+### `schedule list`
+
+**Usage:** `harmonik schedule list [--json] [--project DIR]` — plain text shows one row per job (id, enabled/disabled, next-fire, last-fire, action summary), sorted by id; `--json` emits one JSON object per line (NDJSON).
+
+### `schedule remove | enable | disable | run-now`
+
+**Usage:** `harmonik schedule <verb> <id> [--project DIR]` — each takes the job id as a positional argument.
+
+**Exit codes:** 0 success · 1 argument error / job not found / persistence failure · 2 unrecognised verb. (No exit-17 — these verbs never connect to the daemon.)
+
+**Examples**
+```bash
+harmonik schedule add --id nightly-crew --schedule "daily@02:00 America/New_York" \
+  --action spawn-crew --crew nightowl --queue night --mission /tmp/mission.md
+harmonik schedule add --id rotate-logs --schedule "daily@00:30" \
+  --action command -- /usr/bin/logrotate /etc/logrotate.conf
+harmonik schedule list --json
+harmonik schedule disable nightly-crew
+harmonik schedule run-now rotate-logs
+harmonik schedule remove rotate-logs
+```
+
+---
+
 ## See also
 
 - [README.md](README.md) — project intro and the documentation map.

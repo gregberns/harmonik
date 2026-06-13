@@ -816,6 +816,7 @@ This is plain round-robin — every candidate queue is treated equally. **Weight
 - **group_index** — 0-based dense integer index of a group within the queue; immutable after submit. (see §2.3)
 - **paused-by-failure** — queue-level lifecycle state entered when an active group reaches `complete-with-failures`; no further dispatches; survives daemon restart. (see §8.3)
 - **paused-by-drain** — queue-level lifecycle state entered when the daemon enters operator-pause / shutdown drain per [operator-nfr.md §4.7 ON-027]; survives daemon restart. (see §8.5)
+- **cancelled** — queue-level terminal state set when the operator cancels the run (SIGINT/SIGTERM or global timeout) before all groups reach a terminal state; `queue.json` is left on disk with this status so the next daemon start can overwrite it cleanly without triggering the QM-027 "already active" guard; exit code 1 is returned to the operator. (see §2.2, hk-ppt32)
 - **deferred-for-ledger-dep** — transient `ItemStatus` for an item whose Beads `blocks` edge is open; resolves to `pending` when the blocker closes. (see §2.7, §6.6)
 - **durable landmark** — the final `queue_group_completed` event of a queue, treated as the queue-completion observable per QM-033. (see §5.5)
 - **single-writer discipline** — all queue mutations serialize through one writer goroutine per QM-060. (see §9.1)

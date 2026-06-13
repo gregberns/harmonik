@@ -23,14 +23,16 @@ package main
 //  7. Provision 8 fleet skills from the embedded asset bundle →
 //     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
 //     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}.
-//  8. Write scaffold files from the embedded asset bundle →
+//  8. Provision versioned captain-tools scripts to ~/.claude/captain-tools/
+//     (only-if-absent; --force refreshes). C1↔C3 seam (ON-058b, hk-da3k).
+//  9. Write scaffold files from the embedded asset bundle →
 //     AGENT_INDEX.md, STATUS.md, TASKS.md.
-//  9. Render embedded AGENTS.template.md → AGENTS.md (substitutes
+// 10. Render embedded AGENTS.template.md → AGENTS.md (substitutes
 //     $PROJECT_DIR and $TARGET_BRANCH).
-// 10. Symlink CLAUDE.md → AGENTS.md.
-// 11. (Optional) Run `harmonik supervise start --watch-restart` unless
+// 11. Symlink CLAUDE.md → AGENTS.md.
+// 12. (Optional) Run `harmonik supervise start --watch-restart` unless
 //     --no-supervise is passed.
-// 12. (Optional) Smoke test when --smoke is passed.
+// 13. (Optional) Smoke test when --smoke is passed.
 //
 // # Idempotency
 //
@@ -45,7 +47,7 @@ package main
 // enforcement). init passes --target-branch through to config.yaml and
 // branching.yaml without imposing its own guard.
 //
-// Bead refs: hk-y171w, hk-7iyh (fleet-portability T11).
+// Bead refs: hk-y171w, hk-7iyh (fleet-portability T11), hk-da3k (fleet-portability T12).
 
 import (
 	"fmt"
@@ -174,22 +176,27 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Step 9: write scaffold files (AGENT_INDEX.md, STATUS.md, TASKS.md).
+	// Step 9: provision captain-tools scripts to ~/.claude/captain-tools/ (C1↔C3 seam).
+	if code := provisionCaptainTools(force, stdout, stderr); code != 0 {
+		return code
+	}
+
+	// Step 10: write scaffold files (AGENT_INDEX.md, STATUS.md, TASKS.md).
 	if code := provisionScaffolds(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 10: render AGENTS.md from embedded template.
+	// Step 11: render AGENTS.md from embedded template.
 	if code := renderAgentsMD(projectDir, targetBranch, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 11: symlink CLAUDE.md → AGENTS.md.
+	// Step 12: symlink CLAUDE.md → AGENTS.md.
 	if code := ensureClaudeMDSymlink(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
-	// Step 12: start supervisor (optional).
+	// Step 13: start supervisor (optional).
 	if !noSupervise {
 		if code := maybeStartSupervise(projectDir, stdout, stderr); code != 0 {
 			// Non-fatal: supervisor start failure is logged but does not abort init.
@@ -197,7 +204,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// Step 13: smoke test (optional).
+	// Step 14: smoke test (optional).
 	if smoke {
 		if code := runSmokeTest(projectDir, stdout, stderr); code != 0 {
 			return code
@@ -489,6 +496,50 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 	return 0
 }
 
+// provisionCaptainTools extracts the versioned captain-tools scripts from the
+// binary-embedded asset bundle into ~/.claude/captain-tools/ (C1↔C3 seam,
+// ON-058b, hk-da3k).
+//
+// Idempotent: skips files that already exist unless force is true.
+// With --force: overwrites existing scripts so a stale hardcoded version is
+// replaced by the binary-embedded one (rollout note: live boxes may carry a
+// stale ~/.claude/captain-tools/captain-launch.sh).
+func provisionCaptainTools(force bool, stdout, stderr io.Writer) int {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik init: cannot determine home directory: %v\n", err)
+		return 1
+	}
+	destDir := filepath.Join(homeDir, ".claude", "captain-tools")
+	//nolint:gosec // G301: 0755 for ~/.claude/captain-tools/
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: mkdir ~/.claude/captain-tools: %v\n", err)
+		return 1
+	}
+
+	scripts := []struct {
+		name    string
+		content []byte
+	}{
+		{"captain-launch.sh", captainLaunchSh},
+	}
+
+	for _, s := range scripts {
+		destPath := filepath.Join(destDir, s.name)
+		if _, statErr := os.Stat(destPath); statErr == nil && !force {
+			fmt.Fprintf(stdout, "harmonik init: ~/.claude/captain-tools/%s already exists — skipping (use --force to refresh)\n", s.name)
+			continue
+		}
+		//nolint:gosec // G306: 0755 so the shell script is executable
+		if err := os.WriteFile(destPath, s.content, 0o755); err != nil {
+			fmt.Fprintf(stderr, "harmonik init: write ~/.claude/captain-tools/%s: %v\n", s.name, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "harmonik init: provisioned ~/.claude/captain-tools/%s\n", s.name)
+	}
+	return 0
+}
+
 // provisionScaffolds writes the three minimal scaffold files (AGENT_INDEX.md,
 // STATUS.md, TASKS.md) from the embedded asset bundle (PL-029c).
 // Skipped when each file already exists and force is false.
@@ -646,11 +697,13 @@ WHAT IT DOES
   7. Provisions 8 fleet skills from the binary-embedded asset bundle →
      .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
      harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}
-  8. Writes scaffold files: AGENT_INDEX.md, STATUS.md, TASKS.md
-  9. Renders embedded AGENTS.template.md → AGENTS.md
- 10. Creates CLAUDE.md → AGENTS.md symlink
- 11. Starts the supervisor: harmonik supervise start --watch-restart
- 12. (--smoke) Runs basic sanity checks
+  8. Provisions versioned captain-tools scripts → ~/.claude/captain-tools/
+     (only-if-absent; --force refreshes stale copies)
+  9. Writes scaffold files: AGENT_INDEX.md, STATUS.md, TASKS.md
+ 10. Renders embedded AGENTS.template.md → AGENTS.md
+ 11. Creates CLAUDE.md → AGENTS.md symlink
+ 12. Starts the supervisor: harmonik supervise start --watch-restart
+ 13. (--smoke) Runs basic sanity checks
 
 IDEMPOTENCY
   Each step is skipped when its output artifact already exists.

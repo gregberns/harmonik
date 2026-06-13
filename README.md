@@ -37,6 +37,20 @@ you can reason about; the agents are the part that scales.
 
 ---
 
+## Documentation
+
+New here? Read these in order, then keep the references on hand.
+
+- **[OVERVIEW.md](OVERVIEW.md)** — what harmonik is, who it's for, and its honest limits.
+- **[CONCEPTS.md](CONCEPTS.md)** — the core ideas (daemon, beads, queues, worktrees, review-loop, crews) in plain English.
+- **[INSTALL.md](INSTALL.md)** — prerequisites and setup.
+- **[QUICKSTART.md](QUICKSTART.md)** — run your first bead end to end.
+- **[CLI-REFERENCE.md](CLI-REFERENCE.md)** — every command, flag, and exit code.
+- **[OPERATING-GUIDE.md](OPERATING-GUIDE.md)** — day-2 operations and troubleshooting.
+- **[CONFIGURATION.md](CONFIGURATION.md)** — every config key, daemon flag, and environment variable.
+
+---
+
 ## Prerequisites
 
 | Tool | Purpose | Install |
@@ -150,31 +164,24 @@ br create --title="Fix the login redirect" --type=task --priority=2
 
 ### 5. Submit a batch
 
-Create a queue file (e.g. `/tmp/batch.json`):
-
-```json
-{
-  "schema_version": 1,
-  "groups": [
-    {
-      "group_index": 0,
-      "kind": "stream",
-      "status": "pending",
-      "created_at": "2026-01-01T00:00:00Z",
-      "items": [
-        { "bead_id": "hk-abc12", "status": "pending" }
-      ]
-    }
-  ]
-}
-```
-
-Validate then submit:
+Submit beads straight to the running daemon by id — no file needed:
 
 ```bash
-harmonik queue dry-run /tmp/batch.json   # validate without persisting
-harmonik queue submit  /tmp/batch.json   # accept; prints queue_id
+harmonik queue dry-run --beads hk-abc12              # validate without persisting
+harmonik queue submit  --beads hk-abc12              # accept; prints queue_id
 ```
+
+Submit several at once, optionally to a named queue:
+
+```bash
+harmonik queue submit --beads hk-abc,hk-def,hk-ghi   # multiple beads to the default queue
+harmonik queue submit --queue myqueue --beads hk-abc,hk-def
+```
+
+Absent `--queue`, beads go to the `main` queue. For advanced submits (multiple groups, or
+mixing `wave` and `stream` kinds in one request) you can still hand a JSON `QueueSubmitRequest`
+file to `submit` / `dry-run` (`harmonik queue submit /tmp/batch.json`), but the `--beads` form
+is the normal path.
 
 ### 6. Monitor progress
 
@@ -203,7 +210,9 @@ Each completed bead prints a `run_completed` event. Failures print `run_failed` 
 
 ---
 
-## Further reading
+## For agent operators
+
+These docs are for setting up and running **automated agent workflows** (implementers, reviewers, orchestrators) — not the human-facing getting-started path above.
 
 - **[AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md)** — operating manual for agents
   (implementers, reviewers, orchestrators): session discipline, bead lifecycle, monitoring patterns,
@@ -222,6 +231,6 @@ Each completed bead prints a `run_completed` event. Failures print `run_failed` 
 
 - **2026-05-14 — Phase 1 OPERATIONAL GREEN**: harmonik runs Claude end-to-end on a bead with
   zero human input (smoke v13).
-- **2026-06-03 — Integration-branch P0 landed**: `protect_branches` + `--target-branch` /
+- **2026-06-03 — Integration-branch protection landed**: `protect_branches` + `--target-branch` /
   `--protect-branch` / `--forbid-default-main` flags enforced fail-closed at boot, dispatch,
-  and in-merge (`codename:productization` gate beads hk-6r6xv / hk-mkxw1 / hk-sul12 / hk-eun55).
+  and in-merge.

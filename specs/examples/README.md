@@ -569,8 +569,13 @@ Together the two files demonstrate: (a) how to declare a `type="sub-workflow"` n
 
 See [`authoring-notes.md`](authoring-notes.md) for guidance on:
 
-- **`auto_status` is rejected** — use `non_committing="true"` instead (the ingest
-  error is actionable and names the replacement).
+- **`auto_status` is accepted (deny-side `FAIL` gate)** — an implementer-class
+  `agentic` node may carry `auto_status="true"` to enable a deterministic,
+  daemon-authoritative deny-side outcome-derivation gate (FAIL + failure_class;
+  never APPROVE/BLOCK/verdict/SUCCESS). It is ORTHOGONAL to `non_committing`
+  (deny-side derivation vs. commit-or-not); the two may co-occur. Value domain is
+  `{"true","false"}` at v1; forward-compatible with a future
+  `auto_status="<policy-name>"` string form. See WG-053.
 - **Pairing `non_committing` nodes** with a downstream validating tool node
   (WG-041 authoring obligation).
 - **Reviewer-node `prompt`** — accepted by the parser but inert at v1; use `role`

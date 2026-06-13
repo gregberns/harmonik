@@ -307,6 +307,32 @@ Twin parity (§4.8) MUST flag any handler that emits an Outcome on a node bound 
 
 Tags: mechanism
 
+#### HC-068 — `.harmonik/auto_status.json` is a daemon-validated deny-side outcome-derivation INPUT
+
+An implementer-class `agentic` node carrying `auto_status="true"` per [workflow-graph.md §4 WG-053] MAY leave a post-run marker file at `${workspace_path}/.harmonik/auto_status.json` inside the worktree. The marker is a **daemon-validated INPUT to the deny-side outcome-derivation gate** of [execution-model.md §7.5.6 EM-068], NOT an authoritative self-report: the daemon retains classification authority exactly as for any handler-emitted `failure_class` hint per [execution-model.md §4.1 EM-005c] and HC-059. The marker mirrors the on-disk reviewer-verdict bus (`.harmonik/review.json` per [workspace-model.md §6.2 / §4.7 WM-027a], read by the daemon's `ReadReviewVerdict` path): it is the worktree-local file the daemon reads to recover an agent-supplied deny-side signal.
+
+**Optionality.** The marker is OPTIONAL. When absent, the deny-side gate runs C1 only (the daemon's own work-product inspection per [execution-model.md §7.5.6 EM-068]); the run is conforming. The marker's absence is NOT an error and MUST NOT be treated as a malformed outcome (contrast `.harmonik/review.json`'s absence, which IS malformed per WM-027a(e), because a reviewer is obligated to write one; an `auto_status` node has no write obligation).
+
+**Read timing.** The daemon MUST read `${workspace_path}/.harmonik/auto_status.json` AFTER the node's `agent_completed` event (per §4.3) and BEFORE finalizing the node's Outcome (the deny-side gate of EM-068 runs in the same window the reviewer-verdict read of WM-027a(b) occupies for a `review-loop` reviewer). The marker is read at most once per node dispatch.
+
+**Validation (parse-or-reject).** The daemon MUST validate the marker and MUST ignore (treat as absent) any marker that fails validation, emitting a `failure_class_disagreement`-class log per HC-059's discipline when an ignored marker carried a status the daemon overrode:
+- **Parse.** A marker that is not well-formed JSON, or whose `schema_version` is not daemon-readable per the N-1 rule, MUST be ignored (gate falls back to C1-only).
+- **`status` MUST be `"FAIL"`.** A marker whose `status` is anything other than the literal `"FAIL"` MUST be ignored. In particular `SUCCESS`, `APPROVE`, `BLOCK`, and `REQUEST_CHANGES` are NON-conforming `status` values for this marker and MUST NOT derive any Outcome: the marker is a DENY-SIDE input only (D1; the reviewer is the sole APPROVE/BLOCK authority per [execution-model.md §4.3 EM-015d]). A non-`FAIL` `status` is ignored, not an error.
+- **`failure_class` MUST be one of the six.** When `status == "FAIL"`, the marker's `failure_class` MUST be one of the six values of [execution-model.md §8] (`transient`, `structural`, `deterministic`, `canceled`, `budget_exhausted`, `compilation_loop`). A marker omitting `failure_class`, or carrying an out-of-set value, leaves the daemon to back-fill from its own classification per HC-059. A marker-supplied `failure_class = compilation_loop` MUST be overridden to `structural` per HC-059 (compilation-loop is daemon-only; the handler lacks the per-node attempt history) and logged via `failure_class_disagreement`.
+
+**Authority.** The marker-supplied `failure_class` is an overridable HINT exactly like a handler-emitted `Outcome.failure_class` per HC-059; the daemon's classification is AUTHORITATIVE on disagreement (D3, cross-ref [execution-model.md §4.1 EM-005c] / HC-059). The daemon MUST NOT treat the marker as the final Outcome; it feeds the EM-068 gate, which the daemon owns.
+
+**On-disk lifecycle.** `${workspace_path}/.harmonik/auto_status.json` is daemon-local control-plane state, NOT work product: it MUST be excluded from checkpoint commits via the [workspace-model.md §4.3 WM-013e] `.gitignore` hygiene set and MUST NOT pollute the squash-merge commit per [workspace-model.md §4.5 WM-019] (mirrors `.harmonik/review.json` per WM-027a(d)). There is NO mid-loop per-iteration archival of the marker at v1 (contrast `.harmonik/review.iter-<N>.json` per WM-027a(c)); the C3 multi-iteration / reviewer-loop-re-entry surface is DEFERRED.
+
+**v1 schema.** At v1 the marker is a JSON object with fields:
+- `schema_version` (integer, REQUIRED) — daemon-set N-1 readable per [workspace-model.md §6.4].
+- `status` (string, REQUIRED) — MUST be the literal `"FAIL"`; any other value ⇒ marker ignored.
+- `failure_class` (string, REQUIRED when honored) — one of the six [execution-model.md §8] values.
+- `notes` (string, OPTIONAL) — freeform human-readable rationale; the engine MUST NOT parse it (mirrors `Outcome.notes` per [execution-model.md §4.1 EM-005]).
+- `signals` (object, OPTIONAL) — freeform agent-supplied evidence map; retained for audit, NOT routed as edge-LHS.
+
+Tags: mechanism, normative
+
 ### 4.3 Concurrency model
 
 #### HC-011 — Daemon owns exactly one watcher goroutine per active session
@@ -1435,6 +1461,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-13 | 0.5.5 | agent (hk-2j90) | **New HC-068 (§4.2a) — `.harmonik/auto_status.json` daemon-validated deny-side INPUT mirroring review.json/ReadReviewVerdict; status must be FAIL, failure_class ∈ the six, compilation_loop→structural per HC-059; daemon retains authority; gitignored; no mid-loop archival; C3 deferred. Refs: hk-2j90.** |
 | 2026-06-01 | 0.5.4 | agent (hk-7k48y T12) | **Agent-comms skill (N3) added to §10.2 test scenarios.** Added agent-comms skill reference to the HC-046–HC-050 test-scenario list: end-to-end agent-comms skill provisioning test; normative N3 requirement (at-least-once delivery, dedupe-by-`event_id`); skill file at `.claude/skills/agent-comms/SKILL.md`. Version bump 0.5.3 → 0.5.4. No HC IDs added or renumbered. |
 | 2026-05-31 | 0.5.3 | agent (hk-sx9r.30) | **ON-025 egress and workspace-escape enforcement at provisioning (HC-048b); `egress_whitelist` in LaunchSpec.** Added `egress_whitelist : List<String> | None` to `LaunchSpec` RECORD (§6.1): propagated from role's `permission_schema.egress_whitelist` at claim time per [control-points.md §4.11.CP-059]; `None` = unrestricted. Updated HC-006 optional-fields list to include `egress_whitelist`. Added **HC-048b** — Fail provisioning on egress-policy or workspace-escape violation: (1) egress-policy check compares skill manifest's `egress_domains[]` against `egress_whitelist[]` patterns (no-op when whitelist is `None` or skill declares no domains); (2) workspace-escape check rejects any provisioning path resolving outside `workspace_path` per [operator-nfr.md §4.7.ON-024]. On check failure: emit `skills_provisioned` with only successfully-installed skills plus `rejected_skills[]?`, then fail-launch with `ErrSkillProvisioningFailed`. Updated §9 test scenarios for HC-046–HC-050 with 6 new egress/workspace-escape cases (d–i). Front matter corrected: `version: 0.4.0 → 0.5.3` (front matter had drifted from changelog; this commit reconciles). New IDs: HC-048b. No existing IDs renumbered. Cross-spec: control-points.md v0.4.2 adds CP-059; event-model.md adds `rejected_skills[]?` to §8.3.8. |
 | 2026-05-28 | 0.5.2 | agent (hk-9j49t) | **`transient_exit_codes` reserved in HC-063 (attractor-parity v2).** Formalized the `transient_exit_codes` reservation as a normative bold block within §4.1 HC-063. The inline prose ("author-declared per-command transient exit codes are reserved") was promoted to a standalone `**transient_exit_codes is reserved.**` paragraph following the auto_status pattern of [workflow-graph.md §4 WG-041]. Clarifies: (1) every non-zero exit is `deterministic` at v1; (2) `transient_exit_codes` is NOT accepted as a tool-node attribute at v1; (3) the reservation targets a future schema version enabling per-exit-code `transient` classification for retryable infra failures; (4) deferred until operator demand surfaces. No HC IDs added or renumbered. See companion WG-039 amendment in workflow-graph.md. Refs: hk-9j49t. |

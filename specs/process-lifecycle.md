@@ -227,6 +227,81 @@ The on-disk location of the `workflow_mode` field is the daemon's existing proje
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+#### PL-004b — Operational config resolution (workflow_mode, max_concurrent, target_branch)
+
+The daemon's three operational configuration scalars — `workflow_mode`, `max_concurrent`, and
+`target_branch` — MUST each resolve through the precedence chain **explicit flag > checked-in
+config file > built-in default**. "Explicit flag" means a flag the operator actually passed on
+the daemon command line (detected by a was-set probe over the parsed flag set, e.g.
+`flag.Visit`), NOT a flag left at its compiled-in default value; a flag whose value equals its
+default but was not passed MUST be treated as absent for precedence purposes, so that an
+operator who omits the flag yields to the config file rather than silently overriding it.
+
+The config file surface for `workflow_mode` and `max_concurrent` is the per-project
+`config.yaml` `daemon:` block (the same project-config surface PL-004a reads at PL-005 step 0).
+The daemon MUST parse a `daemon:` mapping carrying optional `workflow_mode` (string),
+`max_concurrent` (integer), and `target_branch` (string) keys. Unknown sibling keys under
+`daemon:` MUST be tolerated (silently ignored) consistent with the forward-compatibility
+posture of the existing `agents:` block. This requirement extends the existing project-config
+loader, which until now parsed only `schema_version` and the `agents:` block and left these
+three scalars flag-or-default; PL-004b makes the loader read the `daemon:` block and feed it
+into the precedence chain above.
+
+**`workflow_mode` resolution and floor.** When `--workflow-mode` was NOT explicitly passed and
+the `config.yaml` `daemon.workflow_mode` value is present and non-empty, the daemon MUST use the
+config value; otherwise the flag (or its default) wins. A config-supplied `workflow_mode` value
+MUST be validated through the existing `core.WorkflowMode(v).Valid()` gate before use; an
+invalid value MUST cause the daemon to refuse startup (fail-fast), consistent with the
+malformed-config "refuse to start" contract for the project-config surface. The resolved
+`workflow_mode` MUST honor the PL-004a review floor: the config surface MUST NOT be a path by
+which the daemon-level default resolves to the no-review `single` shape. A `config.yaml`
+`daemon.workflow_mode: single` is therefore NOT a valid daemon-level default — the floor of
+PL-004a (`dot → review-loop`, NEVER `single` from the daemon-level default or built-in
+fallback) governs the config-resolved value exactly as it governs the in-process
+`workflow_mode_default`; the only path to `single` remains an explicit per-bead `workflow:single`
+label audited via the `review_bypassed` event. The config read of `workflow_mode` is the
+concrete realization of the PL-004a obligation that the field "MUST be read exactly once during
+PL-005 step 0"; PL-004b implements that read. PL-004b MUST NOT contradict the PL-004a four-tier
+precedence chain — it is the daemon-level (tier-3) config-file read PL-004a already mandates,
+and resolution against higher-precedence per-project / per-task tiers remains owned by
+[execution-model.md §4.3 EM-012a].
+
+**`max_concurrent` resolution.** When `--max-concurrent` was NOT explicitly passed and the
+`config.yaml` `daemon.max_concurrent` value is **greater than zero**, the daemon MUST use the
+config value; otherwise the flag (or its default) wins. A `daemon.max_concurrent` value `≤ 0`
+in config MUST be treated as "not configured" and MUST defer to the flag-or-default, mirroring
+the existing `≤ 0` spawn-cap guard; a non-positive config value MUST NOT lower the effective
+concurrency ceiling to a non-dispatching state.
+
+**`target_branch` resolution.** `target_branch` MUST resolve through the existing
+`branching.yaml` `lands_on` chain, NOT through a second competing surface. The authoritative
+daemon read of the target branch is the `branching.yaml lands_on` → `TargetBranch` resolution
+with `flag > file > default` precedence per [workflow-graph/workspace-model WM-005b] and the
+hk-sul12 daemon boot guard (protect-branch / forbid-default-main fail-closed enforcement). A
+`config.yaml` `daemon.target_branch` key, if present, is observability/symmetry only and MUST
+defer to `branching.yaml`; the daemon MUST NOT let `config.yaml target_branch` override the
+`branching.yaml`-resolved value. The fail-closed enforcement of a non-default target branch
+(the branch must exist and MUST NOT be a member of `protect_branches`) is owned by the daemon's
+hk-sul12 boot guard, not by this requirement.
+
+**Resolution timing.** Flag-vs-config resolution for all three scalars MUST be performed before
+the daemon's `Config` struct is constructed, so the daemon's existing validation gates operate
+on already-resolved values; the daemon MUST NOT re-read these scalars after that point. The
+project-config file MAY be read more than once during startup (the resolver read plus the
+existing `agents:`-block read are both idempotent reads of the same file). Because `harmonik
+init` writes all three keys into the project's checked-in config (PL-029), a freshly-initialized
+project is fully configured by its checked-in `config.yaml` / `branching.yaml` with no
+per-launch flags.
+
+This requirement closes a pre-existing PL-004a spec/code conformance gap: PL-004a already
+MANDATES the daemon-level `workflow_mode` config read "exactly once during PL-005 step 0", but
+the project-config loader historically never read the field (it parsed only `schema_version` +
+`agents:`), leaving the init-written `daemon:` block inert. PL-004b is the conformance fix, not
+net-new behavior.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.2 Startup sequence
 
 #### PL-005 — Startup order is deterministic
@@ -279,7 +354,14 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 The daemon MUST compute a stable `project_hash` at startup as the first 12 hexadecimal characters of `SHA-256(realpath(project_root))` (case-fold ambiguity remains tracked under OQ-PL-008). The hash MUST be stable across restarts (the same project root yields the same hash). The hash is used to:
 
-(a) Scope tmux session names (`harmonik-<project_hash>-<session_name>`).
+(a) Scope tmux session names (`harmonik-<project_hash>-<session_name>`). The launch-layer session names that MUST carry this prefix are, at minimum:
+  - the daemon's own spawn-target session (`-default`) and per-run implementer/reviewer sessions (`-flywheel`), as established by PL-006a / PL-019;
+  - **crew sessions: `harmonik-<project_hash>-crew-<name>`** (replacing any prior unqualified crew session name), where `<name>` is the crew name;
+  - **the captain session: `harmonik-<project_hash>-captain`**;
+  - **keeper sessions: `harmonik-<project_hash>-keeper-<role>`**, where `<role>` distinguishes per-role keepers.
+
+  The supervisor session MUST use a **distinct prefix** (`hk-<project_hash>-daemon-supervise`) so it remains OUTSIDE the swept `harmonik-<project_hash>-` orphan-sweep namespace and requires no PL-006d sentinel exemption. The single hashing scheme of this clause MUST be reused for every name above; no second hashing scheme is permitted. The canonical builder for `harmonik-`-prefixed names is `lifecycle.TmuxSessionName(project_hash, session_name)` = `"harmonik-" + project_hash + "-" + session_name`. The captain, keeper, and crew names are minted by the launch tooling (captain-launch.sh, crew-launch) and only become subject to this clause once that tooling lands; until then those sessions retain their current outside-the-prefix names so nothing regresses. The read-only `harmonik project-hash [--project DIR]` subcommand (owned by C3/ON-058) exposes the PL-006a hash to shell-layer scripts without reimplementing SHA-256 in bash.
+
 (b) Scope a provenance marker on every handler subprocess spawned by the daemon.
 
 The provenance marker MUST be implemented by BOTH of the following to permit disambiguation across OS and tool differences: (i) setting the environment variable `HARMONIK_PROJECT_HASH=<project_hash>` on every spawned subprocess (readable via `/proc/<pid>/environ` on Linux); (ii) setting the subprocess's process group (PGID) to a deterministic per-project value as concretized below.
@@ -289,6 +371,8 @@ The daemon MUST call `syscall.Setsid()` immediately on startup (PL-005 step 0) b
 Subprocess trees that internally call `setsid` (e.g., handler wrappers using nohup-style tricks) escape the PGID marker; such handlers are out of conformance with PL-INV-005 and the orphan sweep cannot reap their descendants. This hazard is tracked as OQ-PL-011 (handler-side PGID-break disclosure).
 
 The orphan sweep (PL-006) MUST match on the environment variable on Linux and on the PGID on darwin (where `/proc/<pid>/environ` is not available); darwin-specific fallback mechanics are tracked as OQ-PL-008.
+
+> NOTE (window-naming carve-out): the `hk-<hash6>-` WINDOW-name prefix used for `$TMUX`-reuse mode per [workspace-model.md §4.1 WM-002a] / PL-021b §4 is a SESSION-INTERNAL window sentinel and is UNAFFECTED by this amendment. PL-006a clause (a) concerns SESSION names only.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -319,20 +403,35 @@ In production the interface is satisfied by `*brcli.Adapter` (`Adapter.SweepClos
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
-#### PL-006d — Orphan-sweep exclusion for coordinator/orchestrator tmux sessions
+#### PL-006d — Orphan-sweep exclusion for LIVE-OWNED launch-layer tmux sessions
 
-The orphan sweep of §PL-006 MUST NOT kill tmux sessions or windows that are actively owned by a live supervisor process per §PL-019. Without this exclusion, a daemon restart's sweep would inadvertently kill the flywheel pane (session name `harmonik-<project_hash>-flywheel`), terminating the cognition loop mid-cycle. This defect is tracked as hk-hc3qq.
+The orphan sweep of §PL-006 MUST NOT kill tmux sessions or windows that are actively owned by a provably-live launch-layer owner. Without this exclusion, a daemon restart's sweep would inadvertently kill a live coordinator pane (e.g. the flywheel pane `harmonik-<project_hash>-flywheel`, or a crew pane mid-bead), terminating in-flight cognition or crew work. The original flywheel defect is tracked as hk-hc3qq.
 
-**Exclusion mechanism (sentinel-file approach).** When `harmonik supervise start` creates the supervisor tmux session, it MUST write a sentinel file at `.harmonik/cognition/supervisor.sentinel` (content: `schema_version=1\n`) before issuing `tmux new-session`. The sentinel file MUST be removed by `harmonik supervise stop` or by the watch-shim on clean exit; it survives a supervisor crash and is re-written on `harmonik supervise restart`.
+**Two sweepers, two kill rules (why this exclusion is load-bearing).** A prefix-matched session is reachable by BOTH of the daemon's session sweepers, which have DIFFERENT kill rules:
+1. The UNCONDITIONAL session sweeper (`lifecycle.SweepOrphanTmuxSessions`) kills EVERY prefix-matched session not present in the exclude set; it applies NO orphan test. This path is lethal to a live crew mid-bead.
+2. The orphan-TEST session sweeper (`ltmux.SweepOrphanTmuxSessions`) kills only a session classified orphaned by `sessionIsOrphaned` (all windows running only `zsh`, OR a dead first-pane PID). A crew idle at a `zsh` prompt BETWEEN tasks is classified orphaned and would be killed by this path.
 
-The orphan sweep MUST check for the sentinel BEFORE `tmux kill-session` against any session matching the `harmonik-<project_hash>-` prefix:
-1. For each candidate session whose name matches the prefix, probe `.harmonik/cognition/supervisor.sentinel` via `stat(2)`.
-2. If the sentinel is present AND `kill(supervisor_pid, 0) == 0` for the PID in `.harmonik/cognition/supervisor.pid`, the session MUST be SKIPPED. The daemon MUST emit a structured-log entry at INFO with key `orphan_sweep_skipped_coordinator_session` naming the session.
-3. If the sentinel is absent OR the sentinel is present but the supervisor PID is no longer live (stale sentinel from a prior crash), the session is treated as an ordinary orphan and killed per the normal PL-006 path. The sweep MUST remove the stale sentinel via `unlink` + `fsync(parent_directory_fd)`.
+The exclude set MUST be consulted BEFORE either sweeper acts AND before any `sessionIsOrphaned` classification. Therefore an excluded LIVE session is never reaped by either path, even when it is idle-at-`zsh`.
 
-**Impact on `daemon_orphan_sweep_completed` event.** The payload MUST gain a new integer field `coordinator_sessions_skipped: <integer ≥ 0>`. Additive payload extension consistent with PL-021c precedent; consumers MUST tolerate unknown integer fields per [event-model.md §6.3] N-1 compatibility.
+**Owner-proof mechanisms.** For each candidate session matching the `harmonik-<project_hash>-` prefix, the sweep MUST add the session to `excludedTmuxSessions` if and only if one of the following owner-proofs holds at sweep time:
 
-Cross-spec coordination: [event-model.md §8.7.14] `daemon_orphan_sweep_completed` payload schema requires the `coordinator_sessions_skipped` field addition.
+(i) **Supervisor / flywheel (UNCHANGED).** A sentinel file `.harmonik/cognition/supervisor.sentinel` (content: `schema_version=1\n`) is present AND `kill(supervisor_pid, 0) == 0` for the PID in `.harmonik/cognition/supervisor.pid`. `harmonik supervise start` writes the sentinel before `tmux new-session`; `harmonik supervise stop` / the watch-shim removes it on clean exit; it is re-written on `restart`. A present-but-stale sentinel (supervisor PID no longer live) is NOT an owner-proof: the session is treated as an ordinary orphan and killed, and the sweep MUST remove the stale sentinel via `unlink` + `fsync(parent_directory_fd)`.
+
+(ii) **Captain / keeper (NEW; C3-written).** A sentinel file `.harmonik/cognition/captain.sentinel` is present AND `kill(captain_pid, 0) == 0` for the PID in `.harmonik/cognition/captain.pid`. These sentinel files are written by the C3 launch tooling (captain-launch.sh) — generalizing the existing `supervisor.sentinel`/`supervisor.pid` probe. UNTIL the C3 writer lands, no `captain.sentinel`/`captain.pid` exists, the probe finds nothing, and this owner-proof is a NO-OP (no false skip, no regression); captain/keeper sessions retain their current outside-the-prefix names until then.
+
+(iii) **Crew (NEW; registry-record + live-pane-PID).** The crew has a durable registry record `.harmonik/crew/<name>.json` (written BEFORE spawn — the "this name is ours" marker) AND its tmux pane PID is live at sweep time. Because the crew `Record` carries NO stored PID field, liveness MUST be a LIVE pane-PID probe (no schema change): probe the session's first-pane PID (`adapter.WindowPanePID(WindowHandle(session_name + ":"))`) and test `kill(pid, 0)`:
+  - **alive (`0` / `EPERM`)** → the crew session is excluded from BOTH sweep paths.
+  - **dead (`ESRCH`), `pid <= 0`, or the session is absent from the live session list** → the crew session is NOT excluded (it is a genuine orphan and is reaped by the normal sweep path), AND its stale registry record MUST be garbage-collected (`crew.Remove(<name>)`), mirroring the stale-sentinel removal of mechanism (i).
+  - **session launch-in-flight (record present, session not yet enumerated by this sweep's snapshot)** → exclude conservatively; it is not enumerated by the snapshot anyway.
+
+**Impact on `daemon_orphan_sweep_completed` event.** The payload MUST gain two new integer fields in addition to the existing `coordinator_sessions_skipped`:
+  - `crew_sessions_skipped: <integer ≥ 0>` — count of live crew sessions excluded by mechanism (iii).
+  - `captain_sessions_skipped: <integer ≥ 0>` — count of live captain/keeper sessions excluded by mechanism (ii).
+Both additions are additive payload extensions consistent with the PL-021c precedent (`tmux_windows_killed`) and the `coordinator_sessions_skipped` precedent; consumers MUST tolerate unknown integer fields per [event-model.md §6.3] N-1 compatibility.
+
+**Determinism (PL-007 preserved).** Each owner-proof is read-only liveness at sweep time (the same `kill(pid, 0)` discipline already used by `sessionIsOrphaned` and mechanism (i)). The exclusion decision is therefore deterministic given the filesystem + process state, preserving PL-007.
+
+Cross-spec coordination: [event-model.md §8.7.14] `daemon_orphan_sweep_completed` payload schema requires the `crew_sessions_skipped` and `captain_sessions_skipped` field additions (additive, N-1-tolerant — same handling as the existing `coordinator_sessions_skipped` and `bead_in_progress_reset` additions).
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -563,6 +662,8 @@ Tags: cognition
 > NOTE: The conformance profile for PL-019 is post-MVH: an implementation MAY conform to Core MVH without ever running a supervisor process. §10.1 retains the "Post-MVH" carve-out. The normative text above is the stable contract for any post-MVH implementation; its presence here (rather than only in cognition-loop.md) is because the daemon-side obligations — refusing to start the supervisor, honoring the orphan-sweep exclusion, and keeping the `.harmonik/cognition/` subtree unowned — are daemon-lifecycle requirements.
 >
 > INFORMATIVE: The cognition tag on PL-019 names the delegation path: role = supervisor/cognition process (orchestrator-agent in prior framing); model-class = Claude Code (Sonnet or Opus per project configuration); spec: [cognition-loop.md]. The PL-018 LLM-free invariant is unaffected; the daemon layer is unchanged.
+
+> NOTE (canonical per-project supervisor; legacy `/tmp` script retired): `harmonik supervise` (per §PL-019: per-project flywheel tmux session `harmonik-<project_hash>-flywheel`, per-project `.harmonik/cognition/` subtree, per-project `supervisor.lock`) is the canonical per-project supervisor and the supervisor-of-record for the last-good-binary guard of [release-pipeline.md §7.2]. The hand-authored `/tmp/hk-daemon-supervise.sh` artifact is legacy/out-of-band and is NOT part of the supported surface; a de-hardcoded `scripts/hk-supervise.sh` is the supported out-of-band shell fallback. Both the in-binary supervisor and the shell fallback derive their per-project session name and resources from the PL-006a `project_hash`. The supervisor session uses the `hk-` prefix (`hk-<project_hash>-daemon-supervise`) — deliberately OUTSIDE the `harmonik-<project_hash>-` orphan-sweep namespace — so it requires no PL-006d sentinel exemption. The project-qualified naming of captain, keeper, and crew sessions (all under the `harmonik-<project_hash>-` prefix per PL-006a) is the launch-layer's published contract extended by the fleet-portability amendments.
 
 #### PL-020 — Composition root is `internal/daemon`
 
@@ -824,6 +925,130 @@ Verb obligations:
 - **`logs [--lines <n, default 200>] [--follow]`** — `tmux capture-pane -p -S -<n>` for snapshot; `--follow` wraps `tmux pipe-pane` to a temp file. The pane IS the log surface at v1.
 
 The daemon-not-running path for `start`/`restart` MUST be: socket-probe `ECONNREFUSED` against `.harmonik/daemon.sock` → exit 17, stderr directive `"daemon not running; start with: harmonik daemon"`.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+### 4.11 Initialization contract
+
+#### PL-029 — Portable project initialization contract
+
+`harmonik init`, when run from an **installed harmonik binary** against a **foreign repository**
+(any git repository that is NOT the harmonik source tree), MUST exit `0` and MUST produce a
+**bootable, self-consistent** harmonik project. "Bootable, self-consistent" means: the fleet
+skills a captain / crew / keeper require are present, the runtime directories the launch layer
+expects exist, the rendered `AGENTS.md` references only artifacts that exist after init, and
+the checked-in config fully configures the daemon with no per-launch flags. `init` MUST NOT
+depend on the presence of the harmonik source tree on disk; in particular it MUST NOT read any
+provisioning input by path from `<projectDir>/docs/`, `<projectDir>/.claude/`, or any other
+location that exists only in the harmonik source checkout.
+
+**(a) Fleet-skill provisioning from a binary-embedded asset bundle.** `init` MUST provision
+exactly the following **8 fleet skills** into the project's `.claude/skills/` directory, one
+subdirectory per skill: `captain`, `crew-launch`, `keeper`, `harmonik-dispatch`,
+`harmonik-lifecycle`, `agent-comms`, `beads-cli`, `major-issue-fanout`. The skill payload MUST
+be read from a binary-embedded filesystem (`embed.FS`) compiled into the harmonik binary; `init`
+MUST NOT copy the skills from disk and MUST NOT symlink them to a global location
+(`~/.claude/skills/` or equivalent). The three reviewer / scaffold skills `agent-reviewer`,
+`agent-config-reviewer`, and `go-subsystem-add` are harmonik-internal and are NOT
+boot-load-bearing for the captain / crew / keeper; they MUST NOT be provisioned by `init`. The
+embedded fleet-skill payload is approximately 180KB.
+
+The embedded skill assets MUST be a `go:generate`-produced snapshot of the in-repo
+`.claude/skills/` directory, kept in lockstep with the source via a CI diff-check that fails the
+build when the embedded copy diverges from source. This is the same embed-with-sync-discipline
+precedent the daemon already applies to the embedded canonical graph (`//go:embed
+standard-bead.dot` at `internal/daemon/standardgraph.go:26`); the init asset bundle is the first
+directory-form embed in the `cmd/harmonik` package.
+
+**(b) Embedded AGENTS template.** `init` MUST render the project's `AGENTS.md` from a template
+read from the same binary-embedded filesystem, NOT from a disk path. (The legacy behavior, which
+`os.ReadFile`s `<projectDir>/docs/templates/AGENTS.template.md` and therefore fails on every
+repository except the harmonik source tree, MUST be removed.) The in-repo
+`docs/templates/AGENTS.template.md` remains the single source of truth for the template; the
+`go:generate` step copies it into the embedded asset bundle. `init` MUST substitute exactly two
+template variables into the rendered output: `$PROJECT_DIR` and `$TARGET_BRANCH`.
+
+**(c) Self-consistent render — minimal scaffolds + reference pruning.** The rendered `AGENTS.md`
+MUST be self-consistent: every artifact it references MUST be one of — (i) created by `init`
+itself, (ii) operator-owned outside the repo (`~/.claude/CLAUDE.md`), (iii) a live CLI
+(`harmonik`, `br`, `kerf`), or (iv) pruned from the foreign-repo template variant. To satisfy
+this, `init` MUST write **three minimal committed scaffold files** at the project root —
+`AGENT_INDEX.md`, `STATUS.md`, and `TASKS.md` — each a roughly five-line stub that introduces no
+onward dangling links. The embedded AGENTS template MUST be a **foreign-repo variant** whose
+in-repo-only references (to harmonik's own `docs/orchestrator-rules.md`,
+`docs/known-workarounds.md`, `docs/orchestration-protocol-v2.md`,
+`docs/components/internal/kerf.md`, the kerf-beta-feedback / `KERF-FEEDBACK.md` block, and the
+`STATUS.md#decisions-locked-in` deep link) are pruned or reduced to a non-dangling note. Seeding
+a full knowledge base is explicitly OUT of scope for `init`; the requirement is
+non-danglingness of the rendered links, NOT knowledge-base completeness.
+
+**(d) Runtime directories and gitignore.** `init` MUST create the runtime directories
+`.harmonik/comms`, `.harmonik/crew`, `.harmonik/keeper`, and `.harmonik/queues`, and MUST ensure
+the project's `.harmonik/.gitignore` ignores `crew/`, `keeper/`, and `queues/` (the `comms/`
+directory is already ignored).
+
+**(e) Idempotency, `--force`, and never-clobber-siblings.** Every provisioning step `init`
+performs MUST be idempotent: on a re-run, each step MUST skip when its output already exists
+unless `--force` is passed. `--force` MUST refresh stale embedded assets (so a binary upgrade
+can refresh provisioned skills via `init --force`). The skill-provisioning step MUST write ONLY
+the eight fleet-skill subdirectories under `.claude/skills/`; it MUST NOT delete, overwrite, or
+otherwise touch sibling skill directories that a foreign repository may already contain.
+
+**(f) Removal of the phantom target-branch guard.** `init` MUST NOT carry a fail-closed guard
+that refuses a non-default `--target-branch` value. (The legacy guard fail-closed any
+`--target-branch ≠ main` pending a bead, `hk-m8vy2`, which does not exist; the merge-retarget
+capability that guard waited on has already shipped.) `init` MUST pass a supplied
+`--target-branch` through to the project's `branching.yaml` `lands_on` key; the REAL
+fail-closed enforcement of the target branch is owned by the daemon's own boot guard (hk-sul12:
+`branching.yaml lands_on` → `TargetBranch` with `flag > file > default` precedence per
+WM-005b, plus protect-branch / forbid-default-main enforcement). `init` MUST also scrub the
+stale phantom-bead references from its own usage text and doc blocks.
+
+> NOTE (embed-staleness maintenance cost): The binary-embedded asset bundle (the 8 fleet skills +
+> the AGENTS template) is a `go:generate` snapshot of the in-repo `.claude/skills/` and
+> `docs/templates/AGENTS.template.md`. It will silently drift from source without a guard. The
+> mitigation is a `go:generate` regeneration step plus a CI diff-check that fails the build when
+> the embedded copy differs from source — the same ongoing-maintenance discipline already
+> documented for the embedded `standard-bead.dot` at `internal/daemon/standardgraph.go:8-9`.
+>
+> HARD SEQUENCING CONSTRAINT (C1 consumes C2's de-hardcoded skills): The embedded
+> `assets/skills/` bundle is a `go:generate` snapshot of `.claude/skills/`. As of 2026-06-13,
+> several fleet skills still contain the literal string `/Users/gb/github/harmonik`. **C2's
+> skill-path de-hardcoding (per PL-030) MUST land before C1 regenerates and embeds the asset
+> bundle**, else `init` would ship skills with the literal harmonik source path baked in. This is
+> the load-bearing cross-component ordering constraint: C2 → regenerate assets → C1 land.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### PL-030 — Portable skill-resolution convention (`$HARMONIK_PROJECT`)
+
+Shipped agent skills, agent-readable docs, and launch scripts that reference a path inside the
+project root MUST resolve the project root portably and MUST NOT contain a literal hard-coded
+absolute project path (e.g. `/Users/gb/github/harmonik`).
+
+**(a) Resolution source.** Such references MUST resolve the project root from the environment
+variable `$HARMONIK_PROJECT` in shell- and agent-readable contexts, or from the phrase
+`<project root>` in prose. `$HARMONIK_PROJECT` is already injected by every fleet launch path
+(keeper hooks, the crew launch spec = `"HARMONIK_PROJECT=" + project_dir`, and read by the
+promote command); this convention adds NO new injection point. The documented fallback chain is
+`$HARMONIK_PROJECT → git rev-parse --show-toplevel`, so a hand-launched session that forgot to
+export the variable still resolves the root.
+
+**(b) Project-local-NOT-global disambiguation MUST survive as prose.** Each reference to a
+PROJECT-LOCAL skill or file (under the project root's `.claude/skills/…`) MUST preserve, as
+prose at the reference site, the disambiguation that it is the project-local artifact and
+explicitly NOT the global `~/.claude/skills/…` copy — for example: "Read
+`$HARMONIK_PROJECT/.claude/skills/captain/STARTUP.md` — the PROJECT-LOCAL skill, NOT
+`~/.claude/skills/captain/`." The "NOT `~/.claude/skills/`" warning MUST survive; the literal
+absolute path MUST NOT. (This preserves the disambiguation intent originally encoded by
+hardcoding the absolute path, which prevented a captain with a populated GLOBAL
+`~/.claude/skills/` from misreading the relative project-local skill as the global copy.)
+
+**(c) Scope.** This convention governs published agent-facing artifacts (skills, agent docs,
+launch scripts). References to genuinely global artifacts (e.g. `~/.claude/captain-tools/…`
+scripts owned outside the project) are out of scope and are left as-is.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

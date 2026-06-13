@@ -252,12 +252,32 @@ A certified release may be yanked by a human operator. Yank is NOT an automatic 
 
 ### 7.2 Supervisor last-good guard
 
-The supervisor script (`hk-daemon-supervise.sh` or its successor) MUST implement the last-good-binary protocol:
+The per-project supervisor — `harmonik supervise` (the in-binary supervisor-of-record per
+[process-lifecycle.md §4.6 PL-019]; the `/tmp/hk-daemon-supervise.sh` artifact is retired from
+the supported surface), or a de-hardcoded out-of-band shell fallback (`scripts/hk-supervise.sh`;
+no hardcoded PROJECT or BIN; resolves PROJECT from `$HK_PROJECT` / argument / `git rev-parse`,
+BIN from `command -v harmonik` with `$HOME/go/bin/harmonik` fallback, failing loudly if neither)
+— MUST implement the last-good-binary protocol:
 
-1. **On binary adoption:** before adopting a newly-installed binary as the last-good binary, the supervisor MUST query the release ledger. If the binary's `commitHash` matches an entry with `Yanked: true`, the supervisor MUST refuse adoption and log `refused_yank: <semver> <reason>`.
-2. **Last-good tracking:** the supervisor persists the path to the last known-good binary in a state file (e.g. `/tmp/hk-last-good-binary` for pre-1.0; `~/.harmonik/state/last-good-binary` for post-1.0). The last-good binary is updated only when a new binary is adopted successfully (daemon started and ran for ≥30s without crash).
-3. **On crash-restart:** if the current binary crashes within 30s of start, the supervisor falls back to the last-good binary. If the last-good binary is the same as the current binary (first install or unknown regression), the supervisor backs off exponentially and alerts the operator (via stderr) rather than spinning.
-4. **Refuse-to-start for yanked binaries:** if the operator manually installs a binary whose commit hash appears in a yanked ledger entry, `harmonik` (the binary itself) MUST check the embedded ledger on startup and exit with code `9` (yanked-binary) and message `FATAL: this binary (v<semver>, <sha>) has been yanked: <reason>`. This self-check is belt-and-suspenders over the supervisor guard.
+1. **On binary adoption:** before adopting a newly-installed binary as the last-good binary, the
+   supervisor MUST query the release ledger. If the binary's `commitHash` matches an entry with
+   `Yanked: true`, the supervisor MUST refuse adoption and log `refused_yank: <semver> <reason>`.
+2. **Last-good tracking:** the supervisor persists the path to the last known-good binary in the
+   per-project state file `<projectDir>/.harmonik/state/last-good-binary` (this replaces the
+   former machine-global `/tmp/hk-last-good-binary` pre-1.0 path; the per-project path is the
+   standing location for all releases, realizing the prior post-1.0 target). The last-good binary
+   is updated only when a new binary is adopted successfully (daemon started and ran for ≥30s
+   without crash). An absent state file on first read is a fresh start (no migration from the old
+   `/tmp` path).
+3. **On crash-restart:** if the current binary crashes within 30s of start, the supervisor falls
+   back to the last-good binary. If the last-good binary is the same as the current binary (first
+   install or unknown regression), the supervisor backs off exponentially and alerts the operator
+   (via stderr) rather than spinning.
+4. **Refuse-to-start for yanked binaries:** if the operator manually installs a binary whose
+   commit hash appears in a yanked ledger entry, `harmonik` (the binary itself) MUST check the
+   embedded ledger on startup and exit with code `9` (yanked-binary) and message `FATAL: this
+   binary (v<semver>, <sha>) has been yanked: <reason>`. This self-check is belt-and-suspenders
+   over the supervisor guard.
 
 ### 7.3 State machine
 

@@ -931,6 +931,119 @@ No read-side aggregation key is emitted on the event itself; the keys are the 5-
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
+### 4.12 Multi-tenant global-surface isolation
+
+#### ON-058 — Multi-tenant global-surface isolation
+
+Harmonik's contributions to surfaces shared across all projects on one machine — the
+global `~/.claude/settings.json` keeper hook stanzas, the `~/.claude/captain-tools/`
+scripts, and `/tmp/hk-*` daemon-state files — MUST be project-namespaced so that N
+harmonik fleets coexist on one machine without one project's bootstrap, enable, or
+restart perturbing another project's live state. A merge into any shared surface MUST
+be additive: it MUST NOT rewrite, relocate, or delete a peer project's harmonik
+contribution, nor any non-harmonik contribution the operator placed there.
+
+**(a) Keeper hook stanzas in `~/.claude/settings.json`.**
+
+The `hooks.<Event>` surface (e.g. `hooks.Stop`, `hooks.PreCompact`) is a JSON array of
+matcher-groups; the Claude Code harness fires every group whose matcher matches the
+event. Harmonik MUST treat it as additive and MUST NOT assume merge-or-overwrite-by-type.
+
+1. **Project-keyed dedup.** When `harmonik keeper enable` installs or normalizes a keeper
+   Stop/PreCompact hook group, it MUST deduplicate existing groups on the PAIR
+   `(script basename, HARMONIK_PROJECT=<projectDir>)`, NOT on script basename alone. A
+   candidate group matches an existing group only when BOTH the keeper script basename
+   AND the `HARMONIK_PROJECT=<projectDir>` value (for this project's resolved root) are
+   present in the group's command. A basename match with a different `HARMONIK_PROJECT`
+   value MUST NOT match; it MUST fall through to an additive append, producing a second
+   sibling group in the array.
+2. **Coexistence.** Two distinct projects MUST therefore produce two distinct sibling
+   groups in the `hooks.<Event>` array. The harness fires all matching groups; each
+   group writes only to its own `$HARMONIK_PROJECT/.harmonik/keeper/<agent>.{idle,ctx}`
+   path. There MUST NOT be a single dispatcher hook keyed off cwd or a project registry.
+3. **Non-perturbation.** An enable for project B MUST NOT rewrite project A's group's
+   `HARMONIK_PROJECT` value, command, or env; and MUST NOT touch any non-keeper hook
+   group the operator authored. The in-place normalize path MUST be guarded so it only
+   ever rewrites the group matching THIS project's `(basename, HARMONIK_PROJECT)` pair.
+4. **Doctor scope.** `harmonik keeper doctor` MUST validate the presence and correctness
+   of THIS project's keeper group (matched on the same `(basename, HARMONIK_PROJECT)`
+   pair); it MUST NOT report a green check merely because some other project's keeper
+   group exists.
+
+**(b) The `statusLine` scalar singleton.**
+
+`statusLine` is a scalar object (`statusLine.command`); the harness permits exactly one.
+Harmonik MUST write a SINGLE project-agnostic `statusLine.command` stanza shared by all
+projects:
+
+1. The keeper `statusLine` command MUST NOT carry a `HARMONIK_PROJECT=<dir>` prefix
+   (this prefix is stripped from the statusLine command ONLY; it is retained on the
+   Stop/PreCompact hook commands per (a)). The command is the bare keeper statusline
+   script path.
+2. Project routing for the statusLine path MUST be resolved at runtime from each Claude
+   session's inherited `HARMONIK_PROJECT` environment variable: the statusline script
+   MUST resolve `PROJECT` as `${HARMONIK_PROJECT:-${PWD}}` and write the context gauge
+   to `$PROJECT/.harmonik/keeper/<agent>.ctx`. Because each fleet session inherits
+   `HARMONIK_PROJECT` from its launch environment, a single shared stanza routes each
+   session's `.ctx` write to the correct project.
+3. A cwd-walk dispatcher for statusLine is PROHIBITED as a conformance path: the
+   statusLine JSON piped by Claude Code does not carry `cwd`/`workspace`, so cwd-based
+   project resolution is impossible.
+4. **Env-unset guard.** If `$HARMONIK_PROJECT` is unset at statusLine runtime (operator
+   launched a bare `claude` outside fleet tooling), the script MUST fall back to `$PWD`.
+   A fleet session's CWD is its project root, so the `.ctx` write still lands correctly.
+5. Because all projects converge on the identical project-agnostic stanza, the merge
+   after the first enable is a no-op; it MUST remain additive and idempotent.
+
+**(c) The `~/.claude/captain-tools/` scripts.**
+
+1. The captain-tools scripts (at minimum `captain-launch.sh` and `crewlog.sh`) MUST be
+   version-controlled in `scripts/captain-tools/` and embedded in the harmonik binary.
+2. `harmonik init` MUST provision the embedded captain-tools scripts to
+   `~/.claude/captain-tools/` ONLY IF the target file is absent; it MUST NOT clobber an
+   operator-modified copy already present.
+3. The provisioned scripts MUST contain no literal absolute project path. They MUST
+   resolve the project root at runtime as `${HK_PROJECT:-${HARMONIK_PROJECT:-$(git
+   rev-parse --show-toplevel)}}`, and MUST derive any per-project session-name
+   qualifier and per-project resource path from the runtime-resolved project root and
+   the per-project hash of `harmonik project-hash` (the read-only subcommand that prints
+   the PL-006a `project_hash` without requiring a running daemon) — not from a
+   compiled-in path.
+
+**(d) Per-project daemon state under `.harmonik/` or hash-qualified `/tmp`.**
+
+Every harmonik-owned daemon-state artifact that is today a machine-global `/tmp/hk-*`
+file or an unqualified shared tmux session MUST either live under the project's own
+`<projectDir>/.harmonik/` subtree, OR carry the PL-006a `<project_hash>` qualifier:
+
+1. **Last-good binary.** The pre-1.0 last-good-binary state file MUST be
+   `<projectDir>/.harmonik/state/last-good-binary` (NOT the machine-global
+   `/tmp/hk-last-good-binary`). Absent file on first read MUST be treated as a fresh
+   start; there is no migration from the old `/tmp` path.
+2. **Daemon log and keeper-launcher session.** The daemon-log default and the
+   keeper-launcher tmux session MUST be project-qualified by `<project_hash>`:
+   `/tmp/hk-<project_hash>-daemon.log` and a `<project_hash>`-suffixed keeper-launcher
+   session name. The keeper-launcher session MUST NOT carry the `harmonik-` prefix (so
+   it stays outside the PL-006 orphan-sweep namespace); a bare-prefixed, hash-suffixed
+   name preserves both sweep-immunity and per-project distinctness. Operator overrides
+   (`$HK_LOG` / `$HK_SESS`) MUST still take precedence.
+3. **Supervisor of record.** The in-binary `harmonik supervise` (per-project flywheel
+   tmux session, per-project `.harmonik/cognition/`, per-project `supervisor.lock`;
+   zero `/tmp` globals) is the canonical per-project supervisor. Any hand-authored
+   `/tmp/hk-daemon-supervise.sh` recovery artifact is NOT part of the supported surface.
+
+**(e) Project-hash derivation.** All shell-layer call sites that need the per-project
+hash MUST obtain it from the read-only `harmonik project-hash [--project DIR]` subcommand
+rather than reimplementing SHA-256 in shell, and MUST guard the call so that a stale
+binary lacking the subcommand degrades gracefully (the un-qualified name is the fallback)
+rather than failing the launch. Subcommand contract: prints exactly the PL-006a
+`project_hash` (first 12 hex chars of `SHA-256(realpath(project_root))`) followed by a
+single newline; exit 0; `--project DIR` defaults to CWD; side-effect-free (no daemon, no
+`$TMUX` required); non-zero + empty stdout on error for shell-guard degradation.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ## 5. Invariants
 
 #### ON-INV-001 — N-1 compat window holds across every versioned artifact

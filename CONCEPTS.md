@@ -127,6 +127,41 @@ One detail every consumer must honor: delivery is *at-least-once*, so each messa
 a unique ID and recipients must ignore any duplicate they've already handled. (See
 [CLI-REFERENCE](CLI-REFERENCE.md) for the exact `comms` commands.)
 
+## Human-in-the-loop decisions
+
+Sometimes an agent reaches a point it cannot proceed past without a human call: a risky
+migration, a policy question, a choice between options that only the operator can weigh.
+The **decisions** surface is the agent→human dual of the comms bus — instead of messaging
+another agent, the agent raises a question that a human must answer.
+
+An agent calls `harmonik decisions raise` with a question and a set of allowed options.
+The daemon mints a `decision_id`, emits a `decision_needed` event, and returns the id to
+the agent. The agent then either polls with `harmonik decisions wait <id>` or passes
+`--wait` to `raise` to block inline. Meanwhile the daemon tracks the decision as *open*
+until a terminal arrives.
+
+An operator sees every open decision with `harmonik decisions list` — the "what-needs-me"
+queue — and resolves one with `harmonik decisions answer <id> <option>`. The daemon
+validates that the chosen option is one of the raised options, emits `decision_resolved`,
+and wakes the blocked agent. Only the **first** answer counts: resolving an already-answered
+decision is a no-op (first-writer-wins), so concurrent operators cannot race each other
+into an inconsistent state.
+
+An agent can also cancel its own open decision (`harmonik decisions withdraw`) if it
+determines the question is no longer relevant — for example, if the bead that prompted it
+was withdrawn.
+
+Two housekeeping rules keep the open-decision list clean. An open decision whose blocked
+agent has gone offline for more than ~10 minutes is flagged **orphaned-pending** in the
+list output; the **keeper** tick then emits `decision_withdrawn(orphaned)` to reap it.
+The displayed flag is read-only — no event is emitted by the list command itself.
+
+Three event types drive the whole surface: `decision_needed` (raise), `decision_resolved`
+(answer), and `decision_withdrawn` (withdraw or keeper-orphan-reap). These are durable in
+the `events.jsonl` log, so the daemon can reconstruct the open-decision set from scratch
+after a restart. (See [CLI-REFERENCE](CLI-REFERENCE.md) for the exact `decisions` commands
+and [OPERATING-GUIDE](OPERATING-GUIDE.md) for the operator workflow.)
+
 ## Keeper
 
 Any long-running agent eventually fills its context window — the amount of conversation it
@@ -216,7 +251,11 @@ target branch — `main` by default, or a protected **integration branch** when 
 `main` isn't safe. For larger efforts, an **epic** groups related beads, a **crew** owns
 each epic and drives it on its own queue, and a **captain** organizes the whole backlog
 into lanes and staffs a crew per lane. These concurrent agents coordinate over the **comms
-bus**, and a **keeper** keeps each long-running agent fresh as its context fills. When a
-bead needs more than the default implement-review-merge path, a **DOT workflow** defines
-that process as a graph. Recurring work — a periodic harvest, a nightly job — runs as a **scheduled job** the daemon fires on its own clock. Throughout, the deterministic Go skeleton — daemon, queue, merge
-pipeline, review gate — is what makes the probabilistic agents safe to turn loose at scale.
+bus**, and a **keeper** keeps each long-running agent fresh as its context fills. When an
+agent reaches a decision it cannot make on its own, it raises a **human-in-the-loop
+decision** and blocks; the operator answers via `harmonik decisions answer` and the agent
+continues. When a bead needs more than the default implement-review-merge path, a **DOT
+workflow** defines that process as a graph. Recurring work — a periodic harvest, a nightly
+job — runs as a **scheduled job** the daemon fires on its own clock. Throughout, the
+deterministic Go skeleton — daemon, queue, merge pipeline, review gate — is what makes the
+probabilistic agents safe to turn loose at scale.

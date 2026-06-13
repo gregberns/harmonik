@@ -323,6 +323,76 @@ harmonik queue resume alpha-q
 
 ---
 
+## 9. Answer a pending decision (human-in-the-loop)
+
+Agents can raise questions they cannot answer themselves — a migration risk, a policy call,
+a choice between options only the operator can weigh. When an agent does this it blocks,
+and the decision sits in an open queue until you respond.
+
+### See what is waiting
+
+```bash
+harmonik decisions list
+```
+
+Output is one line per open decision:
+
+```
+question · option-a|option-b · blocked-agent · context-link · decision_id
+```
+
+If the blocked agent has been offline for more than ~10 minutes, the line ends with
+`[orphaned-pending]` — the keeper will reap it on its next tick, but you can also answer
+it first if you still want to unblock it.
+
+To inspect one decision in detail:
+
+```bash
+harmonik decisions show <decision_id>
+```
+
+### Answer a decision
+
+```bash
+harmonik decisions answer <decision_id> <option>
+```
+
+`<option>` must be one of the options listed for that decision. On success, the daemon
+emits `decision_resolved`, wakes the blocked agent, and prints the `event_id`. Answering
+an already-answered decision is a no-op (exit 0, no event) — first-writer-wins, so
+answering twice is safe.
+
+```bash
+# Example: list open decisions, then answer one
+harmonik decisions list
+harmonik decisions answer 0192f5a1-... ship
+```
+
+To record who answered:
+
+```bash
+harmonik decisions answer 0192f5a1-... ship --resolver alice
+```
+
+### What happens next
+
+Once answered, the blocked agent's `harmonik decisions wait` (or `raise --wait`) returns
+with the chosen option, and the agent continues. The decision disappears from
+`harmonik decisions list`. The `decision_resolved` event is durable in `events.jsonl`, so
+the full history is always auditable.
+
+### If a decision should be discarded
+
+If you decide the question is no longer relevant (for example, the bead that prompted it
+was withdrawn), you can let the keeper reap it automatically once the agent goes offline,
+or raise it with the agent and ask it to run:
+
+```bash
+harmonik decisions withdraw <decision_id> --reason self_obsoleted
+```
+
+---
+
 ## Troubleshooting
 
 ### Exit-code cheat sheet

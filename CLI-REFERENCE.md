@@ -566,29 +566,132 @@ harmonik digest --json
 
 ## `harmonik decisions`
 
-> **(documented from source; available after the next daemon rebuild.)** The installed binary that produced the rest of this reference predates this command, so `decisions` is not in the live `--help` menu yet; this section is documented directly from `cmd/harmonik/decisions.go`.
+**Purpose:** the agent→human decision surface. An agent raises a question the operator must answer; the agent blocks until it receives the answer. Verbs are split into **agent side** (raise / wait / withdraw) and **operator side** (list / show / answer).
 
-**Purpose:** the agent→human decision surface — an agent raises a decision the operator must make, then blocks until it is answered. Only the **agent-side** verbs have landed:
+**Usage:** `harmonik decisions <verb> [flags]`
 
-| Verb | Meaning |
-|---|---|
-| `raise` | Emit a decision-needed request and print the minted `decision_id`. With `--wait`, also block until answered and print the chosen option. |
-| `wait` | Block until a decision's terminal arrives; print the chosen option (resolved) or the withdrawal reason. |
-| `withdraw` | Cancel your own open decision (default reason `self_obsoleted`). |
+**Exit codes (all verbs):** 0 success · 1 argument error or op rejected · 2 unrecognised verb · 17 daemon not running (socket missing / ECONNREFUSED).
 
-**`raise` flags:** `--question TEXT` (required) · `--option VALUE` (repeatable, at least one required) · `--context LINK` · `--from NAME` (default `$HARMONIK_AGENT`) · `--wait` · `--socket PATH` · `--project DIR`.
+---
 
-**`wait`:** `harmonik decisions wait <decision_id> [--socket PATH] [--project DIR]`.
+### Agent-side verbs
 
-**`withdraw` flags:** `harmonik decisions withdraw <decision_id>` · `--reason self_obsoleted|orphaned` (default `self_obsoleted`) · `--from NAME` · `--socket PATH` · `--project DIR`.
+#### `raise`
 
-**Exit codes:** 0 success · 1 argument error or op rejected · 2 unrecognised verb · 17 daemon not running (socket missing / ECONNREFUSED).
+Emit a `decision_needed` event and print the minted `decision_id`. With `--wait`, also block (§4 N8 arm-then-check) until the decision is answered and print the chosen option.
 
-> **Operator verbs (`list` / `show` / `answer`) have landed; their full documentation is coming in a dedicated human-in-the-loop section.**
+```
+harmonik decisions raise --question "..." --option A --option B [--option ...] [flags]
+```
 
-**Example**
+| Flag | Default | Description |
+|---|---|---|
+| `--question TEXT` | — | The question the human must answer. **Required.** |
+| `--option VALUE` | — | An enumerated choice. Repeatable; at least one required. |
+| `--context LINK` | — | Free-form context pointer (bead id, codename, run_id). |
+| `--from NAME` | `$HARMONIK_AGENT` | Emitting (blocked) agent name. |
+| `--wait` | off | After raising, block until answered and print the chosen option. |
+| `--socket PATH` | `<project>/.harmonik/daemon.sock` | Override socket path. |
+| `--project DIR` | cwd | Project directory. |
+
+**Output:** the minted `decision_id` (one line). With `--wait`: the `decision_id` first, then the chosen option (or `withdrawn: <reason>`) once answered.
+
+**Exit codes:** 0 success · 1 argument error or daemon rejected the op · 17 daemon not running.
+
+#### `wait`
+
+Block until a specific decision's terminal arrives. Holds an open subscribe stream with the N8 arm-then-check ordering: arm first, then re-project the durable log; if already terminal, return immediately. Prints the chosen option on resolve, or `withdrawn: <reason>` on withdrawal. Dedupes on `event_id`; applies the first terminal (first-writer-wins).
+
+```
+harmonik decisions wait <decision_id> [--socket PATH] [--project DIR]
+```
+
+**Exit codes:** 0 terminal arrived (or stream closed cleanly) · 1 argument error or read failure · 17 daemon not running.
+
+#### `withdraw`
+
+Cancel your own open decision. Emits `decision_withdrawn` with reason `self_obsoleted` (default). Prints the emitted `event_id`.
+
+```
+harmonik decisions withdraw <decision_id> [--reason self_obsoleted] [--from NAME] [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reason REASON` | `self_obsoleted` | Withdrawal reason: `self_obsoleted` or `orphaned`. Agents use `self_obsoleted`; the keeper is the sole emitter of `orphaned`. |
+| `--from NAME` | `$HARMONIK_AGENT` | Agent name recorded as the withdrawer. |
+| `--socket PATH` | `<project>/.harmonik/daemon.sock` | Override socket path. |
+| `--project DIR` | cwd | Project directory. |
+
+**Exit codes:** 0 success · 1 argument error or daemon rejected the op · 17 daemon not running.
+
+---
+
+### Operator-side verbs
+
+#### `list`
+
+Show every open decision across all agents — the "what-needs-me" queue. Renders each decision as:
+
+```
+question · options · blocked_agent · context_link · decision_id
+```
+
+An open decision whose `blocked_agent` is Offline (past the ~10-minute presence cutoff, not merely Stale) is flagged `[orphaned-pending]` in the output — display only; no event is emitted. (The keeper tick reaps it.) This is a pure read; no aggregator process need be running.
+
+```
+harmonik decisions list [--json] [--socket PATH] [--project DIR]
+```
+
+`--json` emits a machine-readable JSON array. Output is sorted by `decision_id` for stable diffing.
+
+**Exit codes:** 0 success · 1 argument error or daemon rejected the op · 17 daemon not running.
+
+#### `show`
+
+Show one open decision by id. Equivalent to `decisions list` filtered to a single `decision_id`, with the same orphaned-pending flag. Exits 1 if no open decision has that id.
+
+```
+harmonik decisions show <decision_id> [--json] [--socket PATH] [--project DIR]
+```
+
+**Exit codes:** 0 success · 1 argument error, unknown id, or daemon rejected the op · 17 daemon not running.
+
+#### `answer`
+
+Resolve an open decision. Emits `decision_resolved` for `<decision_id>` with the chosen `<option>`, which must be one of that decision's options (rejected otherwise). Resolving an unknown or already-answered `decision_id` is a **no-op** (exit 0, no event) — first-writer-wins. Prints the emitted `event_id` on success, or a `no-op:` note on a no-op.
+
+```
+harmonik decisions answer <decision_id> <option> [--value <text>] [--resolver <name>] [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--value TEXT` | — | Optional free-text answer (v1.1 hook; parsed but not acted on in v1). |
+| `--resolver NAME` | `operator` | Who answered. |
+| `--socket PATH` | `<project>/.harmonik/daemon.sock` | Override socket path. |
+| `--project DIR` | cwd | Project directory. |
+
+**Exit codes:** 0 success or no-op on unknown/answered id · 1 argument error, bad option (not in the decision's options), or op rejected · 17 daemon not running.
+
+---
+
+**Examples**
 ```bash
+# Agent: raise and block until answered
 harmonik decisions raise --question "Ship v2?" --option ship --option hold --wait
+
+# Agent: raise without blocking, store the id, wait later
+DECISION=$(harmonik decisions raise --question "Proceed with migration?" --option yes --option no)
+harmonik decisions wait "$DECISION"
+
+# Operator: see what needs answering
+harmonik decisions list
+harmonik decisions show 0192f5a1-...
+
+# Operator: answer a pending decision
+harmonik decisions answer 0192f5a1-... ship
+harmonik decisions answer 0192f5a1-... ship --resolver alice
 ```
 
 ---
